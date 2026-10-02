@@ -600,12 +600,13 @@ BOM preservation и прежний original-task recovery. Source-only implement
 focused proof не закрывают полную c1 integration/UI приёмку либо финальную валидацию
 документов; задачи 12.1–12.2 остаются открыты.
 
-**Proposed c1 OpenCode checkpoint, 2026-10-02 — not yet accepted.** Пользователь
+**Accepted Q24 c1 OpenCode checkpoint, 2026-10-03.** Пользователь
 согласовал upstream сохранение всех четырёх project configs (opencode.json,
 opencode.jsonc, .opencode/opencode.json, .opencode/opencode.jsonc), без
 удаления/переноса и competing JSON при наличии любого из них. Следующее предложение
-об installed ownership-path migration отдельно ожидает architecture checkpoint;
-оно не разрешает зависимую JSONC runtime реализацию и не закрывает 12.2.
+об installed ownership-path migration принято отдельным прямым ответом Q24.
+Зависимая JSONC runtime реализация разрешена в этих границах; само принятие
+не закрывает integration/live приёмку 12.2–12.3.
 
 Причина: ITL сейчас читает/пишет fixed root opencode.json, сериализует весь JSON,
 а existing client-managed.json хранит только client/owner names. Эффективный
@@ -615,7 +616,7 @@ project-relative filepath и provenance; старый names-only record отно
 к legacy root opencode.json, не присваивает same-name вклад в другом слое.
 Новые writes в JSONC/nested config не выводят ownership из одного совпадения имени.
 
-Предлагается один stateless config-path/JSONC contract у existing clientcfg owner,
+Принят один stateless config-path/JSONC contract у existing clientcfg owner,
 без нового coordinator, очереди или recovery records. Read учитывает native merge
 project layers; write меняет только доказанные managed fields losslessly, сохраняя
 comments, BOM, line endings и bytes вне этих полей. Наличие нескольких файлов само
@@ -637,12 +638,13 @@ custom/inline/managed configs, client membership, permissions или business fi
 Внешнее перекрытие project contribution не объявляется effective attachment.
 
 Альтернативы fixed root writer/whole-document serialization и принудительная
-консолидация файлов отвергнуты в предложении: первая теряет comments/реальную
+консолидация файлов отвергнуты: первая теряет comments/реальную
 config selection, вторая меняет штатную layering семантику и user configs.
-Acceptance остаётся proposed в test-plan.md: same-name foreign, nested JSONC,
+Acceptance согласована в test-plan.md и ещё не выполнена: same-name foreign, nested JSONC,
 absence/path race, last-owner removal, rollback и effective Product Docs.
-Без принятого checkpoint зависимая реализация не начинается; исторические
-checkbox/proofs, source-only Stage A и production pins не меняются.
+Реализация следует принятому checkpoint; исторические checkbox/proofs не
+повышаются до новой приёмки. Source-only Stage A опубликован в develop
+`f5466e6ff98e95bae989a80d65809d1bff2bc31e`; его pins остаются r36.
 
 Source-only e130 registration record сохраняется, но его qualification integrity
 pending: P1 deterministic cache alias подменил два requested test files чужими

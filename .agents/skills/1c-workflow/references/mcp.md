@@ -7,13 +7,29 @@ Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Va
 - ROCTUP MCP Toolkit is the preferred branch-local data channel for `itldev/*` infobases and does not require web publication.
 - vibecoding1c MCP is managed by ITL helper actions and natural-language requests.
 - Vanessa UI MCP is separate branch-local runtime tooling for user-mode inspection, recording, and debugging. It is not the Vanessa Automation verification runner.
-- External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
+- External MCP entries are user-provided or future integrations. Preserve entries without proven ITL ownership. The managed receipt binds ownership to a client, physical config and server key; the existing legacy marker rules do not grant ownership in another config layer.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
 - A configured auxiliary contour may add `itl-roctup-aux-<id>` and `itl-vanessa-ui-aux-<id>`. These are separate compact facades with separate runtime ownership; the primary `itl-roctup-data` and `itl-vanessa-ui` entries are unchanged. See `auxiliary-contours.md`.
 
 Qualify each family against the current client surface independently. Unavailable or unexposed remote `vibecoding1c` tools do not make the pre-registered branch-local `itl-roctup-data` or `itl-vanessa-ui` facades unavailable. When a concrete task routes to either facade, inspect both direct tools and every client-supported deferred/lazy catalog before declaring it unavailable or falling back; in Codex search `ALL_TOOLS` for the hyphenated logical name and normalized underscore name. A deferred facade counts as exposed. Do not call either facade without the concrete data or runtime question required by its skill.
 
 Do not paste MCP license keys into chat or tracked files. Helper-managed private keys and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`; helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`); ignored project/worktree state lives under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+
+## OpenCode project configuration
+
+OpenCode can combine `opencode.json`, `opencode.jsonc`,
+`.opencode/opencode.json` and `.opencode/opencode.jsonc`. The clientcfg owner
+reads their effective entries and physical provenance; it edits only proved
+managed contributions in their existing files. Legacy names-only ownership
+means root `opencode.json`. A same-name foreign override remains user-owned;
+resolve the reported collision and repeat the original reconciliation. The
+existing final-set and rollback owners protect all four paths, including absence.
+
+The observed stock Desktop backend 1.18.11 adds `$schema` to schema-less configs
+when loading them and can change BOM/newlines. ITL does not perform this host
+rewrite. Keep the client's changes; if they race an ITL update, follow the
+reported preserved-state reconciliation and rebuild its plan. Configuration
+observation alone proves neither MCP attachment nor a successful tool call.
 
 ## Availability, recovery and return to work
 
@@ -125,6 +141,18 @@ Rules:
 13. For Cursor, distinguish entries present in `.cursor/mcp.json` from the per-chat Agent MCP switches. ITL can report configured and missing managed entries, but Cursor exposes no supported workflow interface for reading those switches. Init, branch creation/refresh, and `/itl-status` therefore state that switch status is not observable and require the user to enable all ITL servers in `+ -> MCP Servers`, then open a new Agent chat. Never infer switch enablement from config presence or endpoint health.
 
 Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MCP path in ITL projects. ITL owns MCP client config and removes default upstream endpoints after rules install/update only after ready vibecoding1c replacements have been written. If selection or state is incomplete, preserve upstream entries as a working fallback and run `vibecoding1c-mcp-setup` when ready.
+
+## SPPR project knowledge
+
+The shared registry advertises logical server `sppr` as `sppr-knowledge`.
+Workflow setup/select connects its remote endpoint; installed projects do not
+provision the OData collector or store 1C credentials. After the host publishes
+the endpoint, refresh the registry, select `-McpServerId sppr -McpProvider remote`
+and write the active client config through the existing helper actions.
+The corpus follows the server's explicit project allowlist, independently of
+the installed project's infobase. Search is top-k; use `list_sppr_relations`
+continuations for complete stored relations and `read_sppr_object` for fields.
+`sppr_index_status` reports freshness and extraction/vector gaps without scanning.
 
 ## Vanessa UI MCP
 

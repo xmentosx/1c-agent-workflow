@@ -63,3 +63,42 @@ existing legacy prompts and modified legacy rules are reported and preserved.
 #### Scenario: Adapter file exists but the host cannot discover it
 - **WHEN** a fresh context cannot invoke the generated command or role
 - **THEN** the capability is unqualified and the installer cannot report full client readiness
+
+### Requirement: CL5 OpenCode layers preserve physical ownership and user bytes
+ITL SHALL support opencode.json, opencode.jsonc, .opencode/opencode.json and
+.opencode/opencode.jsonc without moving, deleting or consolidating existing
+project configs. Effective reads SHALL use the qualified native merge order and
+retain physical provenance separately from write authority. Legacy names-only
+MCP ownership SHALL grant ownership only in root opencode.json. JSONC edits
+SHALL preserve comments, BOM, newlines and bytes outside authorized edit spans.
+Configuration, Product Docs and doctor SHALL use the same effective reader;
+configuration alone MUST NOT establish an attached or working MCP connection.
+The existing final-set owner SHALL bind all four path presence/hash inputs before
+the first write. The existing snapshot/recovery owner SHALL preserve all four
+original states, including absence, while commit selection MUST NOT acquire
+ownership of user config files. A newer recovery executor SHALL preserve the
+recorded target's config scope. Global configuration remains outside this scope.
+
+#### Scenario: Existing nested JSONC is the only project config
+- **WHEN** an explicit ITL reconciliation configures managed MCP
+- **THEN** it edits that file without creating root JSON and preserves foreign MCP, comments, BOM and CRLF
+
+#### Scenario: Foreign contribution overrides a legacy root-owned key
+- **WHEN** reconciliation requests that key in a different project layer
+- **THEN** it preserves configs and ownership, reports the existing collision continuation and completes the same operation after explicit supported resolution
+
+#### Scenario: A previously absent config appears after planning
+- **WHEN** the final-set writer observes changed presence or bytes in any of the four paths
+- **THEN** it preserves the edits and refuses before writing; a new plan completes the original reconciliation
+
+#### Scenario: Last managed owner is detached
+- **WHEN** another layer contains a foreign contribution with the same name
+- **THEN** detach removes only proved physical contributions, preserves foreign/shared entries and reports the actual effective remaining configuration
+
+#### Scenario: Recovery uses a newer executor for an older recorded target
+- **WHEN** the recorded target supports only root JSON
+- **THEN** the executor does not widen its writes to other layers and the existing snapshot remains sufficient for the original operation
+
+#### Scenario: Native loading is claimed
+- **WHEN** the release qualifies OpenCode project-layer behavior
+- **THEN** it records the actual runtime version and effective observation separately from source-fixture proof

@@ -95,4 +95,7 @@ build/tooling-probe/
 .mcp.json
 .cursor/mcp.json
 opencode.json
+opencode.jsonc
+.opencode/opencode.json
+.opencode/opencode.jsonc
 .agent-1c/remote-work/

@@ -4858,8 +4858,7 @@ function Remove-AiRules1cManagedMcpConfig {
 function Get-AiRules1cMcpClientConfigPaths {
     try {
         return @(Get-AgentTargets | ForEach-Object {
-            $adapter = Get-ItlClientAdapter -Client ([string]$_)
-            Join-Path $script:ProjectRoot $adapter.mcpPath
+            Get-ItlClientMcpConfigPaths -Client ([string]$_)
         } | Select-Object -Unique)
     } catch {
         return @()
@@ -5353,14 +5352,24 @@ function Get-WorkflowUpdateClientSurfacePaths {
     return @($paths | Select-Object -Unique)
 }
 
+function Get-WorkflowUpdateClientConfigRelativePaths {
+    param([string]$Client)
+    $root = (Get-FullPathNormalized $script:ProjectRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    return @(Get-ItlClientMcpConfigPaths -Client $Client | ForEach-Object {
+        $absolute = Get-FullPathNormalized ([string]$_)
+        if (-not $absolute.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Invalid project client config path outside '$script:ProjectRoot': '$absolute'."
+        }
+        ConvertTo-WorkflowUpdateRepoPath -Path $absolute.Substring($root.Length)
+    })
+}
+
 function Get-WorkflowUpdateExpectedClientWritePaths {
     param([Parameter(Mandatory = $true)][string]$SourceRoot)
 
     $paths = [System.Collections.Generic.List[string]]::new()
     foreach ($client in @(Get-AgentTargets)) {
-        $adapter = Get-ItlClientAdapter -Client $client
-        if ($adapter.mcpPath) {
-            $mcpPath = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$adapter.mcpPath)
+        foreach ($mcpPath in @(Get-WorkflowUpdateClientConfigRelativePaths -Client $client)) {
             if (-not $paths.Contains($mcpPath)) { $paths.Add($mcpPath) }
         }
         $files = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $SourceRoot
@@ -5462,6 +5471,17 @@ function New-WorkflowUpdatePathMatcher {
     return [pscustomobject]@{ Exact = $exact; Directory = $directory }
 }
 
+function New-WorkflowUpdateCommitPathMatcher {
+    param([string[]]$ManagedPathSpecs)
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ManagedPathSpecs
+    # Capturing a layered client config for rollback never makes its user
+    # content Git-owned, even under a positive directory spec such as .opencode.
+    $excluded = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode')) { [void]$excluded.Add($path) }
+    $matcher | Add-Member -NotePropertyName Excluded -NotePropertyValue $excluded
+    return $matcher
+}
+
 function Test-WorkflowUpdatePathAllowed {
     param(
         [string]$Path,
@@ -5473,6 +5493,7 @@ function Test-WorkflowUpdatePathAllowed {
     if ($null -eq $Matcher) {
         $Matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ManagedPathSpecs
     }
+    if ($Matcher.PSObject.Properties['Excluded'] -and $Matcher.Excluded.Contains($normalizedPath)) { return $false }
     if ($Matcher.Exact.Contains($normalizedPath)) {
         return $true
     }
@@ -5502,7 +5523,7 @@ function Refresh-WorkflowUpdateManagedIndexStat {
         return
     }
 
-    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $pathSpecs
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $pathSpecs
     $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
     if ($trackedManagedPaths.Count -gt 0) {
@@ -5521,9 +5542,10 @@ function Refresh-WorkflowUpdateManagedIndexStat {
         }
     }
 
+    if ($trackedManagedPaths.Count -eq 0) { return }
     $statusOutput = @(Get-WorkflowGitLiteralPathRecords -Arguments @(
         "status", "--porcelain=v1", "-z", "--untracked-files=no"
-    ) -LiteralPaths @($pathSpecs | ForEach-Object { ':(literal)' + $_ }))
+    ) -LiteralPaths @($trackedManagedPaths | ForEach-Object { ':(literal)' + $_ }))
     if ($statusOutput.Count -gt 0) {
         throw "update-workflow refreshed only equivalent managed index entries, but a fresh Git process still reports tracked changes."
     }
@@ -5609,14 +5631,15 @@ function Commit-WorkflowUpdate {
         @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
         @(Get-WorkflowUpdateDeletedLegacyPaths) + @($runtimeTracked) + @($snapshotOwnedPaths)
     ) | Select-Object -Unique
+    $commitMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $managedPathSpecs
     $trackedChanges = @(Get-WorkflowUpdateTrackedChangePaths)
-    $unexpectedTracked = @($trackedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+    $unexpectedTracked = @($trackedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher) })
     if ($unexpectedTracked.Count -gt 0) {
         throw "update-workflow produced tracked changes outside its managed allowlist and will not commit them: $($unexpectedTracked -join ', ')"
     }
 
     $managedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
     $changes = @($trackedChanges + $managedUntracked + $runtimeTracked | Select-Object -Unique)
     if ($changes.Count -eq 0) {
         return [pscustomobject]@{
@@ -5628,7 +5651,7 @@ function Commit-WorkflowUpdate {
 
     $message = Get-WorkflowUpdateCommitMessage -Source $Source
     $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
     return Invoke-WithRunStatusHeartbeat {
         Set-RunStage -Stage "workflow-update.commit" -Detail "Staging the managed workflow update in master."
         if ($unstagedManagedTracked.Count -gt 0) {
@@ -5642,7 +5665,7 @@ function Commit-WorkflowUpdate {
             Invoke-Git (@('rm', '-r', '-f', '--cached', '--ignore-unmatch', '--') + $runtimeLiterals)
         }
         $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
-        $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+        $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher) })
         if ($unexpectedStaged.Count -gt 0) {
             throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
         }
@@ -5661,7 +5684,7 @@ function Commit-WorkflowUpdate {
             throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
         }
         $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher })
         if ($remainingManagedUntracked.Count -gt 0) {
             throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
         }
@@ -7137,8 +7160,9 @@ function Restore-CompletedWorkflowUpdate {
         Assert-WorkflowUpdateRollbackTarget -Completed $target
         Assert-WorkflowUpdateSnapshotCurrentState -Pending $target
         $specs = @($target.snapshot.records | ForEach-Object { [string]$_.relativePath })
+        $commitMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $specs
         $ownedStaged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z') | Where-Object {
-            Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $specs
+            Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $commitMatcher
         })
         if ($ownedStaged.Count -gt 0) { throw "WORKFLOW_UPDATE_ROLLBACK_INDEX_CHANGED: owned index paths changed after update: $($ownedStaged -join ', '). Preserve them for reconciliation." }
         $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths $specs -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
@@ -7294,12 +7318,48 @@ function Test-WorkflowSourceUiTestingPolicy {
             $node.Name -ieq 'Invoke-UiTestingPolicyTransition'
     }, $true)
 }
+function Test-WorkflowSourceLayeredOpenCodeConfig {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path), [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ieq 'Get-ItlClientMcpConfigPaths'
+    }, $true)
+}
+
+function Assert-WorkflowUpdateMcpConfigSnapshot {
+    param([AllowNull()][object]$Pending)
+    if ($null -eq $Pending -or 'opencode' -notin @(Get-AgentTargets) -or
+        -not (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) { return }
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($Pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $missing = @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | Where-Object {
+        -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher)
+    })
+    if ($missing.Count -eq 0) { return }
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its parent captures all OpenCode project config inputs in the existing transaction before repeating the same post-copy. Preserve current files and the pending snapshot; do not edit its receipt manually. Original candidate: '$($Pending.receipt.sourceRoot)'."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "WORKFLOW_UPDATE_MCP_LEGACY_SNAPSHOT: missing OpenCode input backups: $($missing -join ', '). No post-copy config has been written. $continuation"
+}
+
 function Add-WorkflowDotEnvPolicySnapshotPaths {
     param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Pending)
     $policies = @('caveman')
     if (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'ui-testing' }
-    $missing = @($policies | Where-Object {
-        $relative = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'
+    $admissions = @($policies | ForEach-Object {
+        [pscustomobject]@{ relativePath = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'; policy = [string]$_ }
+    })
+    if ('opencode' -in @(Get-AgentTargets) -and (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) {
+        $admissions += @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | ForEach-Object {
+            [pscustomobject]@{ relativePath = [string]$_; policy = '' }
+        })
+    }
+    $missing = @($admissions | Where-Object {
+        $relative = [string]$_.relativePath
         @($Snapshot.records | Where-Object {
             $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
             $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
@@ -7313,9 +7373,8 @@ function Add-WorkflowDotEnvPolicySnapshotPaths {
     $records = @($Snapshot.records)
     $parents = ConvertTo-Agent1cHashtable -Object $Snapshot.parentStates
     $added = $false
-    foreach ($policy in $policies) {
-        $descriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
-        $relative = '.agent-1c/migrations/' + [string]$descriptor.migrationId + '.json'
+    foreach ($admission in $admissions) {
+        $relative = [string]$admission.relativePath
         $covered = @($records | Where-Object {
             $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
             $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
@@ -7329,11 +7388,14 @@ function Add-WorkflowDotEnvPolicySnapshotPaths {
         $backup = ''
         if ($existed) {
             if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
-                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' is not a policy receipt file; preserve it and resolve its owner before repeating the source-side update."
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' is not an admitted file; preserve it and resolve its owner before repeating the source-side update."
             }
-            $policyReceipt = Read-Utf8Text -Path $target | ConvertFrom-Json -ErrorAction Stop
-            if ([string]$policyReceipt.migrationId -cne [string]$descriptor.migrationId -or [string]$policyReceipt.status -notin @('applying','completed')) {
-                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' does not belong to this policy; preserve it and resolve its owner before repeating the source-side update."
+            if ($admission.policy) {
+                $descriptor = Get-DotEnvPolicyTransitionDescriptor -Policy ([string]$admission.policy)
+                $policyReceipt = Read-Utf8Text -Path $target | ConvertFrom-Json -ErrorAction Stop
+                if ([string]$policyReceipt.migrationId -cne [string]$descriptor.migrationId -or [string]$policyReceipt.status -notin @('applying','completed')) {
+                    throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' does not belong to this policy; preserve it and resolve its owner before repeating the source-side update."
+                }
             }
             $index = $records.Count
             do { $backup = Join-Path $Snapshot.root ('item-' + $index); $index++ } while (Test-Path -LiteralPath $backup)
@@ -8106,72 +8168,84 @@ function Assert-UiTestingPolicyUpdateSnapshot {
 }
 
 function Invoke-WorkflowPackageFilePostCopy {
-    $policyPending = Get-WorkflowUpdatePendingSnapshot
-    Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
-    $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
-    $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
-        Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
-    } else { 'unknown' }
-    Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
-    Ensure-OneCSessionLimitDotEnv | Out-Null
-    $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
-    $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
-    # Native installer diagnostics must remain visible without becoming part
-    # of this structured result on the already-current rules route.
-    & {
-    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
-    Ensure-GitIgnore
-    Ensure-ItlPinnedOpenSpecGitAttributes | Out-Null
-    Sync-ItlVanessaLibraries
-    Update-UserRules
-    Sync-WorkflowManagedDependencyLockEntries | Out-Null
-    Install-YAxUnit | Out-Null
-    Update-RoctupMcp
-    Sync-VanessaAutomationDependencyLock | Out-Null
-    Install-VanessaAutomation
-    Update-VanessaMcpArtifacts
-    Sync-ItlOnDemandMcpDependencyLock | Out-Null
-    Install-ItlOnDemandMcp | Out-Null
+    $previousOpenCodeMode = Get-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
+    $previousOpenCodeModeValue = if ($null -ne $previousOpenCodeMode) { $previousOpenCodeMode.Value } else { $null }
+    try {
+        $policyPending = Get-WorkflowUpdatePendingSnapshot
+        $script:ItlOpenCodeOperationConfigPathsMode = if ($null -eq $policyPending -or (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$policyPending.receipt.sourceRoot))) { 'layered' } else { 'legacy-root' }
+        Assert-WorkflowUpdateMcpConfigSnapshot -Pending $policyPending
+        Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
+        $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
+        $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
+            Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
+        } else { 'unknown' }
+        Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
+        Ensure-OneCSessionLimitDotEnv | Out-Null
+        $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
+        $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
+        # Native installer diagnostics must remain visible without becoming part
+        # of this structured result on the already-current rules route.
+        & {
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
+        Ensure-GitIgnore
+        Ensure-ItlPinnedOpenSpecGitAttributes | Out-Null
+        Sync-ItlVanessaLibraries
+        Update-UserRules
+        Sync-WorkflowManagedDependencyLockEntries | Out-Null
+        Install-YAxUnit | Out-Null
+        Update-RoctupMcp
+        Sync-VanessaAutomationDependencyLock | Out-Null
+        Install-VanessaAutomation
+        Update-VanessaMcpArtifacts
+        Sync-ItlOnDemandMcpDependencyLock | Out-Null
+        Install-ItlOnDemandMcp | Out-Null
 
-    if ($SkipAiRules) {
-        Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
-        $migrationPlan = Get-AiRulesMigrationPlan
-        if ($migrationPlan.status -eq "eligible") {
-            Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
-        }
-        Sync-KiloItlCommandSurface
-    } else {
-        $migration = Invoke-AiRulesBaselineMigration
-        Assert-AiRulesBaselineMigrationResult -Migration $migration
-        if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
-            Update-AiRules1c
-        }
-    }
-    # ai_rules_1c owns the installed root. A pre-installer bridge edit would
-    # invalidate its recorded hash and prevent new upstream AGENTS.md install.
-    Update-AgentGuidanceBridge
-
-    Install-ItlUiTools -BestEffort
-    Sync-ItlClientSurfaces
-    foreach ($client in @(Get-AgentTargets)) {
-        Sync-ItlClientUserEnvironment -Client $client
-    }
-    $previousPolicyWorkflowCommit = Get-CavemanPolicyPreviousWorkflowCommit
-    Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
-    if ($applyUiTestingPolicy) {
-        if ($beforeUiTestingSupport -ceq 'unknown') {
-            Write-Host 'UI_TESTING transition remains pending: the original update snapshot cannot prove the previous rules capability. Preserve its manifest and backups for reconciliation; no UI policy has been written.'
-        } elseif (Test-AiRulesUiTestingPolicySupport) {
-            Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -FirstSupportedRules:($beforeUiTestingSupport -ceq 'unsupported') -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+        if ($SkipAiRules) {
+            Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+            $migrationPlan = Get-AiRulesMigrationPlan
+            if ($migrationPlan.status -eq "eligible") {
+                Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
+            }
+            Sync-KiloItlCommandSurface
         } else {
-            Write-Host 'UI_TESTING transition remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules; the one-time transition will then resume.'
+            $migration = Invoke-AiRulesBaselineMigration
+            Assert-AiRulesBaselineMigrationResult -Migration $migration
+            if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
+                Update-AiRules1c
+            }
         }
-    }
-    } | Out-Host
+        # ai_rules_1c owns the installed root. A pre-installer bridge edit would
+        # invalidate its recorded hash and prevent new upstream AGENTS.md install.
+        Update-AgentGuidanceBridge
 
-    return [pscustomobject]@{
-        aiRulesPathsBefore = @($aiRulesPathsBefore)
-        clientSurfacePathsBefore = @($clientSurfacePathsBefore)
+        Install-ItlUiTools -BestEffort
+        Sync-ItlClientSurfaces
+        foreach ($client in @(Get-AgentTargets)) {
+            Sync-ItlClientUserEnvironment -Client $client
+        }
+        $previousPolicyWorkflowCommit = Get-CavemanPolicyPreviousWorkflowCommit
+        Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+        if ($applyUiTestingPolicy) {
+            if ($beforeUiTestingSupport -ceq 'unknown') {
+                Write-Host 'UI_TESTING transition remains pending: the original update snapshot cannot prove the previous rules capability. Preserve its manifest and backups for reconciliation; no UI policy has been written.'
+            } elseif (Test-AiRulesUiTestingPolicySupport) {
+                Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -FirstSupportedRules:($beforeUiTestingSupport -ceq 'unsupported') -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+            } else {
+                Write-Host 'UI_TESTING transition remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules; the one-time transition will then resume.'
+            }
+        }
+        } | Out-Host
+
+        return [pscustomobject]@{
+            aiRulesPathsBefore = @($aiRulesPathsBefore)
+            clientSurfacePathsBefore = @($clientSurfacePathsBefore)
+        }
+    } finally {
+        if ($null -ne $previousOpenCodeMode) {
+            Set-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -Value $previousOpenCodeModeValue
+        } else {
+            Remove-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -11781,7 +11855,7 @@ function New-WorkflowBranchCommitPlan {
     $oldHead = Get-CurrentCommit
     $runtimeTracked = @(Get-WorkflowTrackedExecutionRuntimePaths)
     $ownedSpecs = @(@($ManagedPathSpecs) + @($runtimeTracked) | Select-Object -Unique)
-    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ownedSpecs
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $ownedSpecs
     # A restored package can retain the indexed size and timestamp. Build from
     # owned content in a fresh index rather than trusting worktree stat diffs.
     $candidatePaths = @(
@@ -11896,7 +11970,7 @@ function Read-WorkflowBranchCommitPlanReceipt {
     }
     $specs = @($receipt.managedPathSpecs | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
     $paths = @($receipt.managedPaths | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
-    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $specs
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $specs
     $unexpected = @($paths | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) })
     if ($unexpected.Count -gt 0) {
         throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: changed paths outside the owned write-set in '$path': $($unexpected -join ', ')."

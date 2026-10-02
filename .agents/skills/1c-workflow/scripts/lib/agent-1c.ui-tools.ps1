@@ -252,19 +252,13 @@ function Install-ItlUiTools {
 function Get-ItlConfiguredMcpKeys {
     param([string]$Client = "")
     if (-not $Client) { $Client = Get-ItlActiveClient }
-    $adapter = Get-ItlClientAdapter -Client $Client
-    $path = Join-Path $script:ProjectRoot $adapter.mcpPath
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
-    if ($adapter.mcpFormat -eq "toml") {
-        $text = Read-Utf8Text -Path $path
-        return @([regex]::Matches($text, '(?im)^\s*\[mcp_servers\.(?:"(?<quoted>[^"]+)"|(?<plain>[^\]\s]+))\]') | ForEach-Object {
-            if ($_.Groups['quoted'].Success) { $_.Groups['quoted'].Value } else { $_.Groups['plain'].Value }
-        } | Select-Object -Unique)
+    try {
+        return @((Read-ItlClientMcpEntries -Client $Client).Keys | ForEach-Object { [string]$_ })
+    } catch {
+        # Preserve the existing best-effort JSON observation and TOML read errors.
+        if ((Get-ItlClientAdapter -Client $Client).mcpFormat -eq "toml") { throw }
+        return @()
     }
-    try { $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) } catch { return @() }
-    $containerName = [string]$adapter.mcpContainer
-    if (-not $config.Contains($containerName)) { return @() }
-    return @((ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]).Keys | ForEach-Object { [string]$_ })
 }
 
 function Get-ItlUiToolStatus {

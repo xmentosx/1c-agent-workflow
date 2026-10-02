@@ -494,9 +494,30 @@ function Test-ItlGitPathTracked {
     }
 }
 
+function Get-ItlClientMcpConfigPaths {
+    param([string]$Client = '', [string]$ProjectRoot = $script:ProjectRoot)
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    $relativePaths = if ($Client -eq 'opencode') {
+        @('opencode.json', 'opencode.jsonc', '.opencode/opencode.json', '.opencode/opencode.jsonc')
+    } else { @([string](Get-ItlClientAdapter -Client $Client).mcpPath) }
+    return @($relativePaths | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $ProjectRoot $_)) })
+}
+
+function Get-ItlClientMcpWritePaths {
+    param([string]$Client = '')
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    if ($Client -ne 'opencode') { return @(Get-ItlClientMcpConfigPaths -Client $Client) }
+    $paths = @(Get-ItlOpenCodeOperationConfigPaths)
+    $state = Read-ItlManagedMcpState
+    $owned = @(Get-ItlOpenCodeMcpBindings -State $state | ForEach-Object { Join-Path $script:ProjectRoot $_.relativePath } | Where-Object { $_ -in $paths } | Select-Object -Unique)
+    $existing = @($paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    return @($owned + @($(if ($existing.Count) { $existing[-1] } else { $paths[0] })) | Select-Object -Unique)
+}
+
 function Assert-ItlClientConfigWritable {
     param(
         [string]$Client,
+        [string]$Path = '',
         [switch]$ExplicitMigration
     )
 
@@ -509,7 +530,10 @@ function Assert-ItlClientConfigWritable {
         }
     }
 
-    $trackedConfig = $(if ($adapter.trackedMcpConfig) { [string]$adapter.mcpPath } else { "" })
+    $trackedConfig = $(if ($adapter.trackedMcpConfig -and $Client -ne 'opencode') { [string]$adapter.mcpPath } else { "" })
+    if ($Client -eq 'opencode' -and $Path) {
+        $trackedConfig = Get-ItlOpenCodeConfigRelativePath -Path $Path
+    }
     if ($trackedConfig -and (Test-ItlGitPathTracked -RelativePath $trackedConfig) -and -not $ExplicitMigration) {
         throw "TRACKED_CLIENT_CONFIG: '$trackedConfig' is tracked. ITL will not modify it without an explicit client-config migration."
     }
@@ -641,6 +665,7 @@ function ConvertFrom-ItlMcpTomlValue {
 function Read-ItlClientMcpEntries {
     param([string]$Client = "")
     if (-not $Client) { $Client = Get-ItlActiveClient }
+    if ($Client -eq 'opencode') { return (Get-ItlOpenCodeMcpView).entries }
     $adapter = Get-ItlClientAdapter -Client $Client
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     $entries = [ordered]@{}
@@ -713,6 +738,9 @@ function Get-ItlClientMcpEnablementObservation {
             $managedServerIds += @($owners[$ownerKey] | ForEach-Object { [string]$_ } | Where-Object { $_ })
         }
     }
+    if ($Client -eq 'opencode') {
+        $managedServerIds = @(Get-ItlOpenCodeMcpBindings -State $managedState | ForEach-Object { $_.name })
+    }
     $managedServerIds = @($managedServerIds | Sort-Object -Unique)
     $configuredManagedServerIds = @($managedServerIds | Where-Object { $_ -in $configuredServerIds })
     $missingManagedServerIds = @($managedServerIds | Where-Object { $_ -notin $configuredServerIds })
@@ -721,7 +749,7 @@ function Get-ItlClientMcpEnablementObservation {
     return [pscustomobject]@{
         applicable = ($observationMode -eq "private-client-state")
         client = $Client
-        configPath = [string]$adapter.mcpPath
+        configPath = $(if ($Client -eq 'opencode') { @((Get-ItlOpenCodeMcpView).layers | Where-Object state -NE 'absent' | ForEach-Object { $_.relativePath }) -join ', ' } else { [string]$adapter.mcpPath })
         configuredServerIds = @($configuredServerIds)
         disabledServerIds = @($disabledServerIds)
         connectionState = "not-observed"
@@ -773,6 +801,9 @@ function Get-ItlManagedMcpOwnerKeys {
 
     if (-not $Client) { $Client = Get-ItlActiveClient }
     $state = Read-ItlManagedMcpState
+    if ($Client -eq 'opencode') {
+        return @(Get-ItlOpenCodeMcpBindings -State $state -OwnerKey "$Client/$Owner" | ForEach-Object { $_.name } | Select-Object -Unique)
+    }
     if (-not $state.Contains("owners")) {
         return @()
     }
@@ -945,6 +976,54 @@ function Copy-ItlClientMcpOwnershipFromProof {
     }
 }
 
+function ConvertTo-ItlClientMcpEntry {
+    param([object]$Endpoint, [string]$Owner, [string]$Client)
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $entry = if ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "local-array") {
+        $local = [ordered]@{
+            type = "local"
+            command = @($endpoint.command) + @($endpoint.args)
+            enabled = $true
+            timeout = ([int]$endpoint.toolTimeoutSeconds * 1000)
+        }
+        $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+        if ($environment.Count -gt 0) { $local["environment"] = $environment }
+        $local
+    } elseif ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "pi") {
+        $local = [ordered]@{ lifecycle = "eager"; transport = "stdio"; command = $endpoint.command; args = @($endpoint.args) }
+        $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+        if ($environment.Count -gt 0) { $local["env"] = $environment }
+        $local
+    } elseif ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "zcode") {
+        $local = [ordered]@{ type = "stdio"; command = $endpoint.command; args = @($endpoint.args) }
+        $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+        if ($environment.Count -gt 0) { $local["env"] = $environment }
+        $local
+    } elseif ($endpoint.transport -eq "stdio") {
+        $local = [ordered]@{ command = $endpoint.command; args = @($endpoint.args) }
+        $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+        if ($environment.Count -gt 0) { $local["env"] = $environment }
+        $local
+    } elseif ($adapter.mcpRemoteFormat -eq "remote-timeout") {
+        [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true; timeout = ([int]$endpoint.toolTimeoutSeconds * 1000) }
+    } elseif ($adapter.mcpRemoteFormat -eq "remote") {
+        [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true }
+    } elseif ($adapter.mcpRemoteFormat -eq "qwen-http") {
+        [ordered]@{ httpUrl = $endpoint.url }
+    } elseif ($adapter.mcpRemoteFormat -eq "cline-http") {
+        [ordered]@{ type = "streamableHttp"; url = $endpoint.url }
+    } elseif ($adapter.mcpRemoteFormat -eq "pi-http") {
+        [ordered]@{ lifecycle = "eager"; transport = "streamable-http"; url = $endpoint.url }
+    } else {
+        [ordered]@{ type = "http"; url = $endpoint.url }
+    }
+    if ($Owner -eq "vibecoding1c") {
+        $entry["managedBy"] = "vibecoding1c-mcp"
+        $entry["family"] = "vibecoding1c"
+    }
+    return $entry
+}
+
 function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
@@ -954,6 +1033,10 @@ function Write-ItlClientMcpEndpoints {
         [switch]$PlanOnly,
         [string[]]$FinalSetOwnerKeys = @(),
         [string[]]$ReplaceAiRulesServerIds = @(),
+        [AllowNull()][object]$ExpectedInputStates = $null,
+        [string]$ExpectedOwnerState = '',
+        [object[]]$PreparedClaims = @(),
+        [object[]]$FinalSetClaims = @(),
         [switch]$ReturnReceipt
     )
 
@@ -983,6 +1066,10 @@ function Write-ItlClientMcpEndpoints {
             }
         }
     })
+
+    if ($Client -eq 'opencode') {
+        return (Write-ItlOpenCodeMcpEndpoints -Endpoints $normalized -Owner $Owner -PreserveOwnedKeys $PreserveOwnedKeys -FinalSetOwnerKeys $FinalSetOwnerKeys -ExpectedInputStates $ExpectedInputStates -ExpectedOwnerState $ExpectedOwnerState -PreparedClaims $PreparedClaims -FinalSetClaims $FinalSetClaims -PlanOnly:$PlanOnly -ReturnReceipt:$ReturnReceipt)
+    }
 
     $beforeFileState = Get-ItlMcpFileState -Path $path
     $beforeOwnerState = Get-ItlMcpFileState -Path (Get-ItlManagedMcpStatePath)
@@ -1156,48 +1243,7 @@ function Write-ItlClientMcpEndpoints {
     }
     $written = @()
     foreach ($endpoint in $normalized) {
-        $entry = if ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "local-array") {
-            $local = [ordered]@{
-                type = "local"
-                command = @($endpoint.command) + @($endpoint.args)
-                enabled = $true
-                timeout = ([int]$endpoint.toolTimeoutSeconds * 1000)
-            }
-            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
-            if ($environment.Count -gt 0) { $local["environment"] = $environment }
-            $local
-        } elseif ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "pi") {
-            $local = [ordered]@{ lifecycle = "eager"; transport = "stdio"; command = $endpoint.command; args = @($endpoint.args) }
-            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
-            if ($environment.Count -gt 0) { $local["env"] = $environment }
-            $local
-        } elseif ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "zcode") {
-            $local = [ordered]@{ type = "stdio"; command = $endpoint.command; args = @($endpoint.args) }
-            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
-            if ($environment.Count -gt 0) { $local["env"] = $environment }
-            $local
-        } elseif ($endpoint.transport -eq "stdio") {
-            $local = [ordered]@{ command = $endpoint.command; args = @($endpoint.args) }
-            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
-            if ($environment.Count -gt 0) { $local["env"] = $environment }
-            $local
-        } elseif ($adapter.mcpRemoteFormat -eq "remote-timeout") {
-            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true; timeout = ([int]$endpoint.toolTimeoutSeconds * 1000) }
-        } elseif ($adapter.mcpRemoteFormat -eq "remote") {
-            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true }
-        } elseif ($adapter.mcpRemoteFormat -eq "qwen-http") {
-            [ordered]@{ httpUrl = $endpoint.url }
-        } elseif ($adapter.mcpRemoteFormat -eq "cline-http") {
-            [ordered]@{ type = "streamableHttp"; url = $endpoint.url }
-        } elseif ($adapter.mcpRemoteFormat -eq "pi-http") {
-            [ordered]@{ lifecycle = "eager"; transport = "streamable-http"; url = $endpoint.url }
-        } else {
-            [ordered]@{ type = "http"; url = $endpoint.url }
-        }
-        if ($Owner -eq "vibecoding1c") {
-            $entry["managedBy"] = "vibecoding1c-mcp"
-            $entry["family"] = "vibecoding1c"
-        }
+        $entry = ConvertTo-ItlClientMcpEntry -Endpoint $endpoint -Owner $Owner -Client $Client
         $previousKey = [string]$endpoint.name
         $ownedAlias = $false
         if (-not $beforeContainer.Contains($previousKey)) {
@@ -1271,11 +1317,12 @@ function Write-ItlClientMcpEndpointSet {
         $ownerKeys += $key
     }
     $plans = @()
+    $finalSetClaims = @()
     $claims = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
     $fileStates = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
     $ownerPath = Get-ItlManagedMcpStatePath
     $ownerState = Get-ItlMcpFileState -Path $ownerPath
-    foreach ($path in @($AdditionalInputPaths | Where-Object { $_ } | Select-Object -Unique)) {
+    foreach ($path in @($AdditionalInputPaths | Where-Object { $_ -and $_ -ine $ownerPath } | Select-Object -Unique)) {
         $fileStates[$path] = Get-ItlMcpFileState -Path $path
     }
     foreach ($request in $Requests) {
@@ -1286,18 +1333,27 @@ function Write-ItlClientMcpEndpointSet {
         if ($plan.beforeOwnerState -cne $ownerState -or ($fileStates.ContainsKey($plan.path) -and $fileStates[$plan.path] -cne $plan.beforeFileState)) {
             throw 'CLIENT_MCP_FINAL_SET_CHANGED: config/ownership changed during preflight; preserve those edits and rebuild the final set before writing.'
         }
-        $fileStates[$plan.path] = $plan.beforeFileState
+        $planInputs = if ($plan.PSObject.Properties.Name -contains 'inputStates') { $plan.inputStates } else { $single = [ordered]@{}; $single[$plan.path] = $plan.beforeFileState; $single }
+        foreach ($path in $planInputs.Keys) {
+            if ($fileStates.ContainsKey($path) -and $fileStates[$path] -cne $planInputs[$path]) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: a project layer changed during preflight; preserve it and rebuild the final set.' }
+            $fileStates[$path] = $planInputs[$path]
+        }
         $adapter = Get-ItlClientAdapter -Client ([string]$request.client)
-        foreach ($name in @($plan.entries.Keys)) {
+        $planClaims = if ($plan.PSObject.Properties.Name -contains 'claims') { @($plan.claims) } else { @($plan.entries.Keys | ForEach-Object { [pscustomobject]@{path=$plan.path;name=[string]$_;entry=$plan.entries[$_]} }) }
+        foreach ($claim in $planClaims) {
+            $name = [string]$claim.name
             $containerName = [string](Get-StateValue -State $adapter -Name 'mcpContainer' -Default 'mcp_servers')
-            $key = ([string]$plan.path).ToLowerInvariant() + '|' + $containerName + '|' + [string]$name
-            $signature = Get-ItlMcpOwnedSemanticSignature -Container $plan.entries -Names @([string]$name)
+            $key = ([string]$claim.path).ToLowerInvariant() + '|' + $containerName + '|' + $name
+            $claimContainer = [ordered]@{}; $claimContainer[$name] = $claim.entry
+            $signature = Get-ItlMcpOwnedSemanticSignature -Container $claimContainer -Names @($name)
             if ($claims.ContainsKey($key) -and ($adapter.mcpFormat -eq 'toml' -or $claims[$key] -cne $signature)) {
                 throw "CLIENT_MCP_OWNER_CONFLICT: desired owners provide different settings for '$name' in '$($adapter.mcpPath)'. No client MCP config or ownership was written."
             }
             $claims[$key] = $signature
+            $finalSetClaims += [pscustomobject]@{ownerKey=$plan.ownerKey;path=[string]$claim.path;name=$name;entry=$claim.entry}
         }
-        $plans += [pscustomobject]@{ arguments=$arguments; path=[string]$plan.path }
+        if ($arguments.Client -eq 'opencode') { $arguments['PreparedClaims'] = @($plan.claims) }
+        $plans += [pscustomobject]@{ arguments=$arguments; path=[string]$plan.path; releaseCleanup=$false }
     }
     # Check every input before the first write, including a later client's file.
     foreach ($path in @($fileStates.Keys)) {
@@ -1305,19 +1361,35 @@ function Write-ItlClientMcpEndpointSet {
     }
     if ((Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: ownership changed after preflight; no MCP config was written. Preserve it and rebuild the final set.' }
     if ($PlanOnly) { return @($plans.path | Select-Object -Unique) }
-    foreach ($plan in $plans) {
-        if ((Get-ItlMcpFileState -Path $plan.path) -cne $fileStates[$plan.path] -or
-            (Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState) {
+    $executionPlans = [Collections.Generic.List[object]]::new()
+    foreach ($plan in $plans) { $executionPlans.Add($plan) }
+    for ($planIndex = 0; $planIndex -lt $executionPlans.Count; $planIndex++) {
+        $plan = $executionPlans[$planIndex]
+        $changedInputs = @($fileStates.Keys | Where-Object { (Get-ItlMcpFileState -Path $_) -cne $fileStates[$_] })
+        if ($changedInputs.Count -or (Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState) {
             throw "CLIENT_MCP_FINAL_SET_CHANGED: '$($plan.path)' or ownership changed before its write; completed writes remain owned. Preserve the edits and repeat the original owner reconciliation."
         }
         $arguments = $plan.arguments
+        if ($arguments.Client -eq 'opencode') { $arguments['ExpectedInputStates'] = $fileStates; $arguments['ExpectedOwnerState'] = $ownerState; $arguments['FinalSetClaims'] = $finalSetClaims }
         $receipt = Write-ItlClientMcpEndpoints @arguments -ReturnReceipt
         if ((Get-ItlMcpFileState -Path $receipt.path) -cne $receipt.fileState -or
             (Get-ItlMcpFileState -Path $ownerPath) -cne $receipt.ownerState) {
             throw 'CLIENT_MCP_FINAL_SET_WRITE_UNCONFIRMED: actual bytes differ from the intended writer result; preserve current and before state through the original owner recovery.'
         }
         $fileStates[$receipt.path] = [string]$receipt.fileState
+        if ($receipt.PSObject.Properties.Name -contains 'fileStates') {
+            foreach ($path in $receipt.fileStates.Keys) {
+                if ((Get-ItlMcpFileState -Path $path) -cne $receipt.fileStates[$path]) { throw 'CLIENT_MCP_FINAL_SET_WRITE_UNCONFIRMED: project layer differs from its intended writer result; preserve current state through the original owner recovery.' }
+                $fileStates[$path] = [string]$receipt.fileStates[$path]
+            }
+        }
         $ownerState = [string]$receipt.ownerState
+        if ($receipt.PSObject.Properties.Name -contains 'deferredOwnerRelease' -and $receipt.deferredOwnerRelease) {
+            if ($plan.releaseCleanup) { throw 'CLIENT_MCP_OWNER_CONFLICT: final-set handoff was not confirmed; preserve the physical ownership and repeat the original reconciliation.' }
+            # Retain the releasing owner's physical proof through an interruption.
+            # Remove that borrowed proof only after the receiving owners execute.
+            $executionPlans.Add([pscustomobject]@{arguments=$arguments;path=$plan.path;releaseCleanup=$true})
+        }
     }
     return @($plans.path | Select-Object -Unique)
 }
@@ -1329,6 +1401,7 @@ function Remove-ItlLegacyBranchMcpEntries {
     # recorded by newer legacy versions.
     Write-ItlClientMcpEndpoints -Endpoints @() -Owner "branch-runtime" -Client $Client | Out-Null
     $adapter = Get-ItlClientAdapter -Client $Client
+    if ($Client -eq 'opencode') { return }
     if ($adapter.mcpFormat -eq "toml") { return }
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
@@ -2148,14 +2221,14 @@ function Sync-ItlClientMcpConfig {
 
 function Test-ItlMcpFailurePreservesCurrentState {
     param([string]$Message)
-    return $Message -match 'CLIENT_MCP_(?:USER_COLLISION|OWNER_CONFLICT|FINAL_SET_|PATH_NOT_FILE|OWNER_STATE_INVALID)|MIMOCODE_CONFIG_COLLISION'
+    return $Message -match 'CLIENT_MCP_(?:USER_COLLISION|OWNER_CONFLICT|FINAL_SET_|PATH_NOT_FILE|OWNER_STATE_INVALID|CONTAINER_INVALID)|CLIENT_JSONC_|MIMOCODE_CONFIG_COLLISION'
 }
 
 function Get-ItlMcpMigrationPreservePaths {
     # A detach may already have removed its client from project.json. Protect
     # all adapter config paths, including that client's late edit and receipts.
     return @(
-        @((Get-ItlClientAdapterRegistry).Values | ForEach-Object { Join-Path $script:ProjectRoot $_.mcpPath }) +
+        @((Get-ItlClientAdapterRegistry).Keys | ForEach-Object { Get-ItlClientMcpConfigPaths -Client $_ }) +
         @(Get-ItlManagedMcpStatePath)
     ) | Select-Object -Unique
 }
@@ -2375,7 +2448,24 @@ function Show-ItlDoctor {
         $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $managedMcp["owners"]
         $ownedCount = 0
         foreach ($ownerKey in @($owners.Keys | Where-Object { $_ -like "$client/*" })) { $ownedCount += @($owners[$ownerKey]).Count }
-        if ($ownedCount -gt 0 -and -not (Test-Path -LiteralPath $mcpPath -PathType Leaf)) {
+        if ($client -eq 'opencode') {
+            try {
+                $view = Get-ItlOpenCodeMcpView
+                $bindings = @(Get-ItlOpenCodeMcpBindings -State $managedMcp)
+                $missingBindings = @($bindings | Where-Object {
+                    $binding = $_
+                    $physical = @($view.layers | Where-Object relativePath -CEQ $binding.relativePath)
+                    -not $physical.Count -or -not $physical[0].entries.Contains($binding.name)
+                })
+                $overridden = @($bindings | Where-Object {
+                    $binding = $_
+                    @($view.provenance[$binding.name] | Where-Object { $_ -and $_.relativePath -cne $binding.relativePath }).Count -gt 0
+                })
+                $checks.Add([pscustomobject]@{status=$(if ($missingBindings.Count) { 'FAIL' } elseif ($overridden.Count) { 'WARN' } elseif ($bindings.Count) { 'OK' } else { 'SKIP' });name='mcp';detail="active=opencode; managedPhysicalEntries=$($bindings.Count); missingPhysicalEntries=$($missingBindings.Count); externalLayerOverrides=$($overridden.Count); config=$(@($view.layers | Where-Object state -NE 'absent' | ForEach-Object { $_.relativePath }) -join ', '); connection=not-observed"})
+            } catch {
+                $checks.Add([pscustomobject]@{status='FAIL';name='mcp';detail=$_.Exception.Message})
+            }
+        } elseif ($ownedCount -gt 0 -and -not (Test-Path -LiteralPath $mcpPath -PathType Leaf)) {
             $checks.Add([pscustomobject]@{ status = "FAIL"; name = "mcp"; detail = "managed endpoints exist but active config is missing: $($adapter.mcpPath)" })
         } else {
             $checks.Add([pscustomobject]@{ status = $(if ($ownedCount -gt 0) { "OK" } else { "SKIP" }); name = "mcp"; detail = "active=$client; managedEndpoints=$ownedCount; config=$($adapter.mcpPath)" })

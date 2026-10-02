@@ -2880,7 +2880,10 @@ function Ensure-GitIgnore {
         ".opencode/plugins/itl-workspace.js",
         ".mcp.json",
         ".cursor/mcp.json",
-        "opencode.json"
+        "opencode.json",
+        "opencode.jsonc",
+        ".opencode/opencode.json",
+        ".opencode/opencode.jsonc"
     )
 
     $templatePath = Join-Path $script:ProjectRoot "templates\gitignore.append"

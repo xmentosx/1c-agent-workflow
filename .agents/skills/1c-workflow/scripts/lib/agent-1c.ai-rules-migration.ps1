@@ -833,7 +833,7 @@ function Invoke-AiRulesMigrationCandidatePreflight {
 }
 
 function Get-AiRulesMigrationSnapshotRelativePaths {
-    return @(
+    $paths = @(
         ".agent-1c\project.json",
         ".agent-1c\dependency-lock.json",
         ".agent-1c\client-surface.json",
@@ -868,6 +868,7 @@ function Get-AiRulesMigrationSnapshotRelativePaths {
         "opencode.json",
         ".agents"
     )
+    return @(@($paths) + @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode') | Select-Object -Unique)
 }
 
 function New-AiRulesMigrationSnapshot {

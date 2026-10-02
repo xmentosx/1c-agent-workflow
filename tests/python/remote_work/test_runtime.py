@@ -1169,9 +1169,49 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
             self.assertEqual("process-identity-and-heartbeat-verified", worker["liveness"])
             self.assertEqual("running", worker["status"])
         finally:
-            if worker_process.poll() is None:
-                worker_process.terminate()
-            worker_process.communicate(timeout=10)
+            owned_handles = []
+            kernel = None
+            try:
+                if os.name == "nt":
+                    import ctypes as c
+                    from ctypes import wintypes as w
+                    kernel = c.WinDLL("kernel32", use_last_error=True)
+                    kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+                    kernel.OpenProcess.restype = w.HANDLE
+                    kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+                    kernel.WaitForSingleObject.restype = w.DWORD
+                    kernel.CloseHandle.argtypes = [w.HANDLE]
+                    telemetry = self.spool / "runs/one/resource-telemetry.jsonl"
+                    self.assertTrue(telemetry.is_file(), "the running job must retain owned child telemetry")
+                    complete = [line for line in telemetry.read_text(encoding="utf-8").splitlines(keepends=True)
+                                if line.endswith("\n")]
+                    self.assertTrue(complete, "owned child telemetry must contain a complete record")
+                    owned_children = json.loads(complete[-1])["processes"]
+                    self.assertTrue(owned_children, "the running job must identify its owned children")
+                    for child in owned_children:
+                        handle = kernel.OpenProcess(0x100000 | 0x1000 | 0x0400, False, child["pid"])
+                        self.assertTrue(handle, "the fixture must retain the owned child process handle")
+                        try:
+                            observed = common.process_memory_snapshot(child["pid"], handle)
+                            self.assertEqual(child["creationId"], observed["creationId"])
+                        except BaseException:
+                            kernel.CloseHandle(handle)
+                            raise
+                        owned_handles.append(handle)
+            finally:
+                try:
+                    if worker_process.poll() is None:
+                        worker_process.terminate()
+                    worker_process.communicate(timeout=10)
+                    # PID queries can fail during termination before the process object is signaled.
+                    deadline = time.monotonic() + 5
+                    for handle in owned_handles:
+                        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+                        self.assertEqual(0, kernel.WaitForSingleObject(handle, remaining_ms),
+                                         "owned child must signal completion before fixture cleanup")
+                finally:
+                    for handle in owned_handles:
+                        kernel.CloseHandle(handle)
 
     @unittest.skipUnless(os.name == "nt", "worker Job Object ownership is Windows-only")
     def test_killed_worker_closes_owned_child_and_next_worker_only_reconciles(self):

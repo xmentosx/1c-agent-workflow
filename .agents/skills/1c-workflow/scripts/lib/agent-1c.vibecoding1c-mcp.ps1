@@ -579,7 +579,7 @@ function Get-Vibecoding1cMcpSelectedProvider {
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
-    if ($id -eq "mantis") {
+    if ($id -in @("mantis", "sppr")) {
         return "remote"
     }
     if ($McpProvider -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
@@ -743,6 +743,7 @@ function Get-Vibecoding1cMcpAiRules1cClientName {
         "data" { return "1c-data-mcp" }
         "bookstack" { return "BookStack-product-docs-mcp" }
         "mantis" { return "itl-mantis-ticket-mcp" }
+        "sppr" { return "sppr-knowledge" }
         default { return "" }
     }
 }
@@ -1091,16 +1092,8 @@ function Get-Vibecoding1cMcpProductDocsStatus {
     $clientConfigured = $false
     try {
         $activeClient = Get-ItlActiveClient
-        $adapter = Get-ItlClientAdapter -Client $activeClient
-        $configPath = Join-Path $script:ProjectRoot $adapter.mcpPath
-        if ($activeClient -eq "codex") {
-            $clientConfigured = Test-Vibecoding1cMcpCodexConfigContainsName -Path $configPath -ClientName $clientName
-        } elseif (Test-Path -LiteralPath $configPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            $config = Read-Utf8Text -Path $configPath | ConvertFrom-Json
-            $containerName = $(if ($activeClient -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
-            $container = $config.PSObject.Properties[$containerName].Value
-            $clientConfigured = ($container -and @($container.PSObject.Properties.Name) -contains $clientName)
-        }
+        $entries = Read-ItlClientMcpEntries -Client $activeClient
+        $clientConfigured = $entries.Contains($clientName)
     } catch {
         $clientConfigured = $false
     }
@@ -1574,16 +1567,16 @@ function Set-Vibecoding1cMcpSelection {
         } else {
             [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "defaultProvider" -Default "remote")
         }
-        if ($id -eq "mantis") {
+        if ($id -in @("mantis", "sppr")) {
             $provider = "remote"
         }
-        if (-not $McpProvider -and $id -ne "mantis" -and ($McpServerId -or $providerMode -eq "each") -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
+        if (-not $McpProvider -and $id -notin @("mantis", "sppr") -and ($McpServerId -or $providerMode -eq "each") -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
             $answer = (Read-Host ((Get-Agent1cUtf8Text "0J/RgNC+0LLQsNC50LTQtdGAIE1DUC3RgdC10YDQstC10YDQsCAnezB9JyBbcmVtb3RlL2xvY2FsXSwg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4gezF9") -f $id, $provider)).Trim().ToLowerInvariant()
             if ($answer -eq "remote" -or $answer -eq "local") {
                 $provider = $answer
             }
         }
-        if ($id -eq "mantis") {
+        if ($id -in @("mantis", "sppr")) {
             $provider = "remote"
         }
         $localScope = if ($McpLocalScope) {
@@ -2082,6 +2075,21 @@ function Add-Vibecoding1cMcpVirtualServersToManifest {
     }
     if ((-not $hasMantis) -and (Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled)) {
         $servers += Get-Vibecoding1cMcpMantisTicketServerDefinition
+    }
+    # SPPR is hosted centrally. Advertise it only when the shared registry contains
+    # the endpoint; installed projects never provision a collector or its secrets.
+    if (@($servers | Where-Object { $_.id -eq "sppr" }).Count -eq 0) {
+        $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+        if (Test-Path -LiteralPath $registryPath -PathType Leaf) {
+            $registry = Read-Vibecoding1cMcpRegistry
+            $sppr = @(Get-Vibecoding1cMcpRegistryServers -Registry $registry | Where-Object {
+                (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "id" -Default "") -eq "sppr" -and
+                (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "family" -Default "") -eq "vibecoding1c"
+            })
+            if ($sppr.Count -gt 0) {
+                $servers += [pscustomobject]@{ id = "sppr"; title = "SPPR project knowledge"; scope = "global" }
+            }
+        }
     }
     $manifestHash["servers"] = $servers
     return [pscustomobject]$manifestHash

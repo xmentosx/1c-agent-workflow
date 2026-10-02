@@ -174,19 +174,21 @@ the same public RegisterChange reused exactly those 35 passed shards and ran
 the remaining Compact 38/0/0 in 228.079 seconds. No assertion, timeout or original
 workload changed. Source registration remains distinct from native file-only proof.
 
-## Proposed c1 OpenCode checkpoint acceptance — pending decision
+## Accepted Q24 c1 OpenCode checkpoint acceptance — pending execution
 
 Upstream preservation of all four project configs is accepted separately.
 The ownership-path migration and lossless JSONC operation described in design.md
-remain proposed, not yet accepted or executed. Dependent runtime changes wait for
-the architecture checkpoint. No historical pass/checkbox qualifies these cases,
-and tasks 12.1–12.2 remain open.
+were accepted directly by the user on 2026-10-03 and remain unexecuted.
+Dependent runtime implementation follows that checkpoint. No historical
+pass/checkbox qualifies these cases; tasks 12.1–12.3 remain open until their
+current source/fork acceptance is recorded. Q24 owner proof is recorded below;
+final source registration remains pending.
 
 Use existing clientcfg/final-set/snapshot/reconcile owners and the original
 operation through each continuation. Preserve the original root-JSON assertions,
 foreign MCP/headers/enabled policy, Unicode+space paths and tracked-config refusal.
 
-| RED scenario | Required observation after the proposed adaptation |
+| RED scenario | Required observation after the accepted adaptation |
 |---|---|
 | Only .opencode/opencode.jsonc exists with comments, BOM, CRLF and external MCP | Upstream update preserves it byte-exact; explicit ITL configuration uses that existing file without creating competing root JSON, changes only authorized managed fields and preserves every byte outside the edit spans |
 | Legacy root-owned MCP key also appears as a foreign same-name contribution in a later project layer | Names-only legacy ownership grants only root JSON; the foreign contribution is not adopted/deleted. Existing collision/reconcile preserves all configs and ownership; an explicit supported resolution then completes the same requested operation |
@@ -204,3 +206,25 @@ connection on the qualified version. No global config scan/write, permissions
 change, dependency provisioning or second coordinator is introduced by this plan.
 Strict OpenSpec 1.13.1 validation passed after the third Q23 file-only evidence
 was recorded. It does not qualify pending source registration or live UI execution.
+
+Q24 owner observations, 2026-10-03: native PS5/Pester snapshot/rollback suite
+40/0 and effective Product Docs/UI consumer suite 7/0. Initial integrated batch
+74/6 retained the actual parser-consumer, empty-array, alias and final-set
+receipt defects; causal repairs passed. The remaining new test indexing error
+was corrected to the existing shallow managed-state API, retaining equivalent
+physical ownership and raw-file assertions. Direct ownership-read race and
+interrupted multi-file continuation passed 2/0. Independent review found the
+release-first transfer defect; retained physical proof plus the existing
+ephemeral final-set claims fixed it, and release-first/receive-first/interrupt
+continuation passed 3/0 with a later tracked user JSONC untouched. Current full
+registration is still required; these counts are not a new combined gate total.
+
+Native OpenCode 1.18.11 loads the actual four-layer project and the production
+writer's entry. First schema-less loading passed effective projection but failed
+the original whole-project byte-invariance assertion: stock loadConfig inserts
+`$schema`, changing BOM/newlines in some files. This is observed host behavior,
+not an ITL write. The same fixture/profile was relaunched after that actual host
+transition, with no manual schema/BOM repair or fixture recreation: projection,
+normal exit and all 3693 project records unchanged passed. The first RED remains
+retained; second-launch idempotence does not replace first-load preservation.
+No model, MCP tool/connection or current-fork native plugin proof is inferred.
