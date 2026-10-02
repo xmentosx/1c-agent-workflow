@@ -19,6 +19,11 @@ param(
     [string]$ReleaseCapabilities = ""
 )
 
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
 $pesterWorkersExplicit = $PSBoundParameters.ContainsKey("PesterWorkers")
 $effectiveMode = $(if ($Mode -eq "Fast") { "Smoke" } else { $Mode })

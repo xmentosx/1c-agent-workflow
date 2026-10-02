@@ -456,3 +456,18 @@ No decoder fallback, gate assertion or process authority changed. Receipt in F:
 `build/transport-error-proof-20261002/qualification.json`, SHA256
 `d0997592d69ab39f4a5de4c660e02d0690deeb8bfd3e65ecc0051d976f3636f8`.
 Normal registration must qualify the resulting clean committed head.
+
+Head `8f4d2b257722f8ddaab716123f5a0b466195f384` then registered normally:
+225/0/0, 502.286 seconds, ten executed and nine reused workers. The authoritative
+run SHA256 is `a0392d5fcc27c17d32642531bcb70a4907fa3a2855cc2f2ddf96707d0787b535`.
+Its real over-target warning exposed the same missing startup encoding in
+check.ps1 itself; the original passed result and OEM stdout are retained.
+Check now initializes UTF-8 before every warning. The source startup and actual
+over-target emitter, through the actual delivery child owner, reproduced the
+bad bytes and passed after correction (RED 0/1, GREEN 1/0, 3.015 seconds).
+The successful exit 0, 300-second target, 1200-second hard budget and exact
+whitespace-and-Cyrillic summary path are preserved. Only this new case was run;
+the previous three cases were not repeated. F receipt:
+`build/transport-warning-proof-20261002/qualification.json`, SHA256
+`ee9ccbd910a49410b9890bcc14e71b9a0dae23c934de0f1f6dd30f5d4806e3ef`.
+The follow-up registration selects the delta from the already registered head.
