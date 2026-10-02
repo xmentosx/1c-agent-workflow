@@ -68,3 +68,15 @@ cache writer. The actual writer/reader regression and original continuation
 assertions pass; generic converters and strict reuse guards remain unchanged.
 This captured-input proof precedes normal registration of the final clean
 support commit; neither it nor preparation of a Plan authorizes publication.
+
+The entrypoint's deliberate Plan-compatibility test ownership makes the exact
+stabilization inventory 18 tests. Its model includes the measured support
+SourceDeliveryPlan suite time, 28.801 seconds, with ordering weight 29; the
+original contract and hard-budget reserve assertions remain strict. Evidence:
+`build/support-local-quality-selection-20261002/qualification.json`.
+The shard orchestrator also establishes UTF-8 before reporting a failed worker.
+The exact owner regression, existing Unicode case and inventory case passed
+3/3 in 13.001 seconds with captured inputs unchanged. All four raw streams
+decode as strict UTF-8, while the deliberate worker/aggregate failure retains
+exit 1. `build/support-transport-proof-20261002/qualification.json` retains the
+source owner's original RED evidence; no broader gate or installed run occurred.
