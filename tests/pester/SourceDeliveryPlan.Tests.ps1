@@ -395,3 +395,85 @@ Describe 'Delivery v3 immutable selective plan' {
         [int]$seedParallel.budgetSeconds | Should -Be 1800
     }
 }
+
+Describe 'E2E client delivery inputs' {
+    It 'binds the plan and publication identity to explicit client selection' {
+        & {
+            $stand=Join-Path $TestDrive 'client plan путь'
+            New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c')|Out-Null
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode","codex"]}}',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c/release-e2e.json'),'{}',[Text.UTF8Encoding]::new($false))
+            $script:E2EProjectRoot=$stand
+            $AgentTarget='kilocode';$before=Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop)
+            $AgentTarget='codex';(Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop))|Should -Not -Be $before
+            $AgentTarget='kilocode';(Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop))|Should -Be $before
+            $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-candidate.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-DevelopPublicationEnvironmentIdentity'},$false)).Extent.Text))
+            function Invoke-RepositoryGit {param($RepositoryRoot,$Arguments,[switch]$AllowFailure)[pscustomobject]@{exitCode=0;stdout=$(if($Arguments[0] -eq 'rev-parse'){'a'*40}else{''})}}
+            $publication=Get-DevelopPublicationEnvironmentIdentity
+            $AgentTarget='codex';(Get-DevelopPublicationEnvironmentIdentity)|Should -Not -Be $publication
+        }
+    }
+
+    It 'forwards the optional selection across source gate and check runner boundaries' {
+        & {
+            $tokens=$null;$errors=$null
+            foreach($file in @('source-delivery.ps1','source-delivery-supervisor.ps1','check.ps1','invoke-develop-e2e.ps1','invoke-release-e2e.ps1')){
+                $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('scripts/'+$file)),[ref]$tokens,[ref]$errors)
+                @($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'AgentTarget'}).Count|Should -Be 1
+            }
+            $source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-process.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($source.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-SourceGate'},$false)).Extent.Text))
+            $script:Root=$RepoRoot;$script:GateScript=Join-Path $TestDrive 'fixture gate.ps1'
+            [IO.File]::WriteAllText($script:GateScript,'# process boundary is mocked',[Text.UTF8Encoding]::new($false))
+            $CoverageContract=@();$AiRulesSource='';$E2EProjectRoot='';$ReleaseResumeMode='Auto';$AgentTarget='kilocode'
+            function Start-DeliveryProcess {param($ArgumentList,$WorkingDirectory,$StandardOutputPath,$StandardErrorPath)$script:capturedClientArguments=$ArgumentList;throw 'fixture launch boundary'}
+            function Close-DeliveryProcessJob {param($JobHandle,$Process,$PriorErrorMessage)}
+            function Stop-DeliveryProcessTree {param($Process)}
+            function Write-DeliveryRunRecord {param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability)'fixture-record'}
+            function Update-DeliveryOperation {param($Values)}
+            foreach($mode in @('Develop','Release')){
+                {Invoke-SourceGate -Mode $mode -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
+                ([regex]::Matches($script:capturedClientArguments,'-AgentTarget kilocode')).Count|Should -Be 1
+            }
+            $AgentTarget=''
+            {Invoke-SourceGate -Mode Develop -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
+            $script:capturedClientArguments|Should -Not -Match 'AgentTarget'
+            $check=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+            $E2EProjectRoot=$TestDrive;$repoRoot=$RepoRoot;$script:developRulesSource=$RepoRoot;$rawPath='raw.json';$Journey='upgrade'
+            $releaseRulesSource=$RepoRoot;$releaseHelperPath='helper.ps1';$e2eReportPath='release.json';$AgentTarget='kilocode'
+            foreach($variable in @('developArguments','releaseE2EArguments')){
+                $assignment=$check.Find({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -ceq $variable -and $n.Operator -eq 'Equals'},$true)
+                $append=$check.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -like ('if (-not [[]string[]]::IsNullOrWhiteSpace($AgentTarget))*$'+$variable+' +=*')},$true)
+                $assignment|Should -Not -BeNullOrEmpty;$append|Should -Not -BeNullOrEmpty
+                . ([scriptblock]::Create($assignment.Extent.Text+"`n"+$append.Extent.Text))
+                $forwarded=Get-Variable -Name $variable -ValueOnly
+                @($forwarded|Where-Object{$_ -ceq '-AgentTarget'}).Count|Should -Be 1
+                $forwarded[[Array]::IndexOf($forwarded,'-AgentTarget')+1]|Should -BeExactly 'kilocode'
+            }
+        }
+    }
+}
+Describe 'Pinned supervisor client option compatibility' {
+    It 'preserves explicit intent on old authority and delegates it once after support is present' {
+        & {
+            $tokens=$null;$errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Assert-DeliveryBootstrapAgentTargetSupport'},$false)).Extent.Text))
+            $legacy=[Management.Automation.Language.Parser]::ParseInput('param([string]$Action) $Action',[ref]$tokens,[ref]$errors)
+            $bound=@{Action='Plan';AgentTarget='kilocode'}
+            {Assert-DeliveryBootstrapAgentTargetSupport $legacy ('a'*40) $bound}|Should -Throw '*DELIVERY_E2E_CLIENT_OPTION_UNSUPPORTED*Publish*same explicit command*'
+            $bound.AgentTarget|Should -BeExactly 'kilocode'
+            {Assert-DeliveryBootstrapAgentTargetSupport $legacy ('a'*40) @{Action='Plan'}}|Should -Not -Throw
+            $current=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-supervisor.ps1'),[ref]$tokens,[ref]$errors)
+            {Assert-DeliveryBootstrapAgentTargetSupport $current ('b'*40) $bound}|Should -Not -Throw
+            $bound.Count|Should -Be 2;$bound.AgentTarget|Should -BeExactly 'kilocode'
+            # Execute the entrypoint's actual bound-parameter projection; no publication.
+            $projection=$ast.Find({param($n)$n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Extent.Text -ceq 'foreach ($entry in $PSBoundParameters.GetEnumerator()) { $arguments[$entry.Key] = $entry.Value }'},$true)
+            $projection|Should -Not -BeNullOrEmpty
+            $projectBoundParameters=[scriptblock]::Create('param($Action,$AgentTarget) $arguments=@{};'+$projection.Extent.Text+';return $arguments')
+            $delegated=& $projectBoundParameters @bound
+            $delegated.Count|Should -Be 2;$delegated.AgentTarget|Should -BeExactly 'kilocode'
+        }
+    }
+}

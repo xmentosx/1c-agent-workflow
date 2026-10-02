@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
@@ -281,6 +281,8 @@ Describe "Develop E2E journey qualification router" {
         $fork = [pscustomobject]@{ commit='c' * 40; tree='d' * 40; tag='test-tag' }
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
         $before = Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand
+        $kiloIdentity = Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand -AgentTarget kilocode
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand -AgentTarget codex) | Should -Not -Be $kiloIdentity
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nEXPORT_PATH=src/cf`n", [Text.UTF8Encoding]::new($false))
         (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand) | Should -Be $before
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`n", [Text.UTF8Encoding]::new($false))

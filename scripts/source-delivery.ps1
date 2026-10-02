@@ -10,6 +10,7 @@ param(
     [string[]]$CoverageContract = @(),
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
     [string]$GateScript = "",
     [string]$ComponentFinalizerScript = "",
@@ -72,6 +73,13 @@ if ($Action -eq "Status") {
     $statusArguments["BootstrapSupervisor"] = $statusAuthorityBootstrap
     & $localSupervisor @statusArguments
     return
+}
+
+function Assert-DeliveryBootstrapAgentTargetSupport {
+    param([object]$SupervisorAst, [string]$SupervisorCommit, [Collections.IDictionary]$BoundParameters)
+    if ($BoundParameters.Keys -notcontains 'AgentTarget') { return }
+    if ($SupervisorAst.ParamBlock -and @($SupervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AgentTarget' }).Count -gt 0) { return }
+    throw "DELIVERY_E2E_CLIENT_OPTION_UNSUPPORTED: pinned supervisor '$SupervisorCommit' predates -AgentTarget. Publish the source-only E2E client-selection support through the existing delivery channel, then repeat this same explicit command. For that support publication only, omit -AgentTarget when each target has one configured client and it is the intended client. Do not switch supervisor authority or silently drop an explicit selection."
 }
 
 function Resolve-DeliveryBootstrapCommonGitDirectory {
@@ -222,6 +230,7 @@ try {
     $parseErrors = $null
     $supervisorAst = [Management.Automation.Language.Parser]::ParseFile($supervisorPath, [ref]$tokens, [ref]$parseErrors)
     if ($parseErrors.Count -gt 0) { throw "Delivery supervisor script has parse errors: $supervisorPath" }
+    Assert-DeliveryBootstrapAgentTargetSupport -SupervisorAst $supervisorAst -SupervisorCommit $supervisorCommit -BoundParameters $arguments
     if ($supervisorAst.ParamBlock -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "SupervisorChannel" }).Count -gt 0) {
         $arguments["SupervisorChannel"] = $selectedChannel
     }

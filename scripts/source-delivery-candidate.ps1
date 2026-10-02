@@ -115,6 +115,7 @@ function Get-DevelopPublicationEnvironmentIdentity {
     $identity = [ordered]@{
         schemaVersion = 1
         projectRoot = $projectRoot.ToLowerInvariant()
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $projectRoot -AgentTarget ([string](Get-Variable -Name AgentTarget -ValueOnly -ErrorAction SilentlyContinue))
         projectConfig = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".agent-1c\project.json")
         standConfig = Get-DeliveryFileIdentity -Path $standConfigPath
         devEnv = $(if (Test-Path -LiteralPath (Join-Path $projectRoot ".dev.env") -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path (Join-Path $projectRoot ".dev.env") } else { "missing" })

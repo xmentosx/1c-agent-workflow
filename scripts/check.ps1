@@ -8,6 +8,7 @@ param(
     [string]$AiRulesSource = "",
     [switch]$Offline,
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
     [string]$DevelopQualificationPath = "build\test-results\qualification\develop.json",
@@ -194,7 +195,7 @@ function Ensure-DevelopE2ERoute {
         [string]$Reason = "owner-selected public journey"
     )
     $routePath = Join-Path $script:developQualificationRoot ("develop-e2e-$Journey.json")
-    $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+    $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
     $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
     if (Restore-DevelopE2EQualification -RepositoryRoot $repoRoot -OutputPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256) {
         if (@($script:stages | Where-Object { [string]$_['name'] -eq "develop-e2e-$Journey" }).Count -eq 0) {
@@ -206,7 +207,9 @@ function Ensure-DevelopE2ERoute {
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
         $journeyHardSeconds = if ($Journey -eq "upgrade") { 1200 } else { 2100 }
-        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey) -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
+        $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey)
+        if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $developArguments += @("-AgentTarget", $AgentTarget) }
+        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments $developArguments -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
         if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
         $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $result = @($raw.journeys | Where-Object { [string]$_.name -eq $Journey }) | Select-Object -First 1
@@ -214,7 +217,7 @@ function Ensure-DevelopE2ERoute {
             [string]$raw.candidate.tree -ne $tree -or @($raw.requestedJourneys).Count -ne 1 -or [string]$raw.requestedJourneys[0] -ne $Journey -or [string]$result.status -ne "passed") {
             throw "Develop E2E $Journey did not qualify the exact candidate tree: $([string]$raw.error)"
         }
-        $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $Plan -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -JourneyResult $result
         [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
@@ -713,7 +716,7 @@ function Write-DevelopQualification {
 }
 
 function Get-DevelopE2EIdentitySha256 {
-    param([object]$ReleaseContext, [object]$ForkIdentity, [string]$ProjectRoot)
+    param([object]$ReleaseContext, [object]$ForkIdentity, [string]$ProjectRoot, [string]$AgentTarget = "")
 
     $root = [IO.Path]::GetFullPath($ProjectRoot)
     $projectConfig = Join-Path $root ".agent-1c\project.json"
@@ -725,6 +728,7 @@ function Get-DevelopE2EIdentitySha256 {
         vanessaAutomationSha256 = [string]$ReleaseContext.artifacts.vanessaAutomation.sha256
         managedPackageSha256 = [string]$ReleaseContext.managedPackage.sha256
         projectRoot = $root.ToLowerInvariant()
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $root -AgentTarget $AgentTarget
         projectConfigSha256 = $(if (Test-Path -LiteralPath $projectConfig -PathType Leaf) { (Get-FileHash -LiteralPath $projectConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
         standConfigSha256 = $(if (Test-Path -LiteralPath $standConfig -PathType Leaf) { (Get-FileHash -LiteralPath $standConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
         devEnvSha256 = $(if (Test-Path -LiteralPath $devEnv -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path $devEnv } else { "" })
@@ -822,7 +826,7 @@ try {
     $releaseDevelopIdentitySha256 = ""
     $releaseDevelopStandStateSha256 = ""
     if ($effectiveMode -eq "Release") {
-        $releaseDevelopIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $releaseDevelopIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $releaseDevelopStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
         if (-not $releaseDevelopProof) { throw "Release requires a reusable route-aware Develop qualification with the current runtime identity. Run Develop once before Release." }
@@ -1007,7 +1011,7 @@ try {
 
     if ($effectiveMode -eq "Develop") {
         $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
-        $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $developFullProof = if ($existingQualification) { [pscustomobject]@{ qualification = $existingQualification } } else { $null }
         $exactDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $developFullProof -ExpectedIdentitySha256 $developIdentitySha256 -ExpectedStandStateSha256 $developStandStateSha256
@@ -1063,7 +1067,7 @@ try {
         }
         foreach ($journey in $plannedJourneys) {
             $routePath = Ensure-DevelopE2ERoute -Journey $journey -Plan $effectivePlan -Reason "owner-selected public $journey journey"
-            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
+            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
             if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
             $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $commit; evidenceTree = $tree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
@@ -1107,6 +1111,7 @@ try {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
             $releaseProgressPaths = @($outputRoot, (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"))
             $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
+            if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
             if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
             Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }

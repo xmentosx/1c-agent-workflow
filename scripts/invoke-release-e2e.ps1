@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$AiRulesSource,
     [string]$HelperPath = "",
     [string]$OutputPath = "",
+    [string]$AgentTarget = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ResumeMode = "Auto",
     [string]$Capabilities = ""
@@ -12,6 +13,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+. (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $AiRulesSource = [System.IO.Path]::GetFullPath($AiRulesSource)
@@ -201,7 +203,8 @@ function Start-E2EHelperAtRoot {
         "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", (ConvertTo-NativeArgument $HelperPath),
         "-ProjectRoot", (ConvertTo-NativeArgument $Root),
-        "-Action", (ConvertTo-NativeArgument $Action)
+        "-Action", (ConvertTo-NativeArgument $Action),
+        "-AgentTarget", (ConvertTo-NativeArgument (Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget))
     )
     if ($BranchName) {
         $parts += @("-DevBranchName", (ConvertTo-NativeArgument $BranchName))
@@ -1541,6 +1544,7 @@ if ($LASTEXITCODE -ne 0 -or -not $workflowCommit -or -not $workflowTree) { throw
 $runnerSha256 = Get-E2ECanonicalTextSha256 -Path $PSCommandPath
 $helperSha256 = Get-E2ECanonicalTextSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
+$clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
 
@@ -1651,6 +1655,7 @@ function Get-E2EStageInputFiles {
             $resolved.Add([System.IO.Path]::GetFullPath($path)) | Out-Null
         }
     }
+    $resolved.Add((Join-Path $workflowRoot "scripts/stand-env-identity.ps1")) | Out-Null
     $resolved.Add((Join-Path $stageModuleRoot ([string]$definition.moduleFile))) | Out-Null
     return @($resolved | Sort-Object -Unique)
 }
@@ -1675,6 +1680,7 @@ function Get-E2EStageFingerprint {
         schemaVersion = 2; name = $Name; version = [int]$definition.version
         aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
         inputs = $inputs; dependencies = $dependencies; stageConfiguration = $stageConfiguration
+        clientSelection = $clientSelectionIdentity
     }
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -1891,7 +1897,8 @@ function Test-E2EStageInputsUnchanged {
     if (-not $definition) { return $false }
     $patterns = @($definition.paths) + @(
         "scripts/release-e2e/$([string]$definition.moduleFile)",
-        "scripts/release-e2e/common.ps1"
+        "scripts/release-e2e/common.ps1",
+        "scripts/stand-env-identity.ps1"
     )
     foreach ($dependency in @($definition.dependsOn)) {
         if (-not (Test-E2EStageInputsUnchanged -Name ([string]$dependency) -QualifiedCommit $QualifiedCommit)) { return $false }
@@ -1927,6 +1934,7 @@ function Find-E2ECompletedCapabilityCache {
             if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
+                [string]$identity["clientSelection"] -cne $clientSelectionIdentity -or
                 [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
             $cacheContinuation = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree
             if (-not $cacheContinuation) { Write-Verbose "Completed capability cache has no exact Targeted continuation: $($file.FullName)"; continue }
@@ -1984,6 +1992,7 @@ function Restore-E2EInterruptedCapabilityStage {
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["initialHead"] -ne [string]$checkpoint["identity"]["initialHead"] -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
+                [string]$identity["clientSelection"] -cne $clientSelectionIdentity -or
                 [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
                 -not $cache["stages"].Contains($Name)) { continue }
             if (-not (Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree)) { continue }
@@ -2078,6 +2087,7 @@ function Import-E2ECapabilityCache {
             $script:ReleaseE2EStageDefinitions.Contains($stageName) -and
             [string]$cache["identity"]["aiRulesCommit"] -eq $aiRulesCommit -and
             [string]$cache["identity"]["aiRulesTree"] -eq $aiRulesTree -and
+            [string]$cache["identity"]["clientSelection"] -ceq $clientSelectionIdentity -and
             [string]$cache["identity"]["projectConfigSha256"] -eq $projectConfigSha256 -and
             (Test-E2EStageInputsUnchanged -Name $stageName -QualifiedCommit ([string]$cache["identity"]["workflowCommit"]))) {
             $checkpoint["stages"][$stageName]["fingerprint"] = Get-E2EStageFingerprint -Name $stageName
@@ -2121,12 +2131,13 @@ if ($checkpoint) {
         [string]$identity.runnerSha256 -eq $runnerSha256 -and
         [string]$identity.aiRulesCommit -eq $aiRulesCommit -and
         [string]$identity.helperSha256 -eq $helperSha256 -and
+        [string]$identity["clientSelection"] -ceq $clientSelectionIdentity -and
         [string]$identity.projectConfigSha256 -eq $projectConfigSha256
     if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) {
         $crossReleaseReuse = $true
         $previousWorkflowCommit = [string]$identity.workflowCommit
         $previousRunnerSha256 = [string]$identity.runnerSha256
-        $releaseContinuationProof = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree
+        $releaseContinuationProof = if ([string]$identity["clientSelection"] -ceq $clientSelectionIdentity) { Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree } else { $null }
         if ($releaseContinuationProof) {
             foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 [void](Restore-E2EInterruptedCapabilityStage -Name $stageName)
@@ -2238,6 +2249,7 @@ if (-not $checkpoint) {
     }
     [void](Sync-E2EWorktreeFromMaster)
     $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
+    $clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
     New-Item -ItemType Directory -Force -Path $releaseRunRoot | Out-Null
     $baselineStateFiles = Save-E2EStateFiles -StateCopyPath $baselineStateCopyPath -EnvCopyPath $baselineEnvCopyPath
     $initialHead = (& git -C $worktreePath rev-parse HEAD).Trim()
@@ -2257,6 +2269,7 @@ if (-not $checkpoint) {
             aiRulesTree = $aiRulesTree
             helperSha256 = $helperSha256
             projectConfigSha256 = $projectConfigSha256
+            clientSelection = $clientSelectionIdentity
         }
         expectedHead = $initialHead
         snapshots = [ordered]@{}

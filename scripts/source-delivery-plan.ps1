@@ -226,6 +226,7 @@ function Get-DeliveryPlanEnvironmentIdentity {
     $clientBuildSha256 = if (-not $clientBuild) { 'unset' } elseif (Test-Path -LiteralPath $clientBuild -PathType Leaf) { Get-DeliveryFileSha256 -Path $clientBuild } else { 'missing' }
     return [ordered]@{
         environmentIdentitySchemaVersion=3; mode=$Mode; standRoot=$standRoot; standFiles=$fileIdentity
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $standRoot -AgentTarget ([string](Get-Variable -Name AgentTarget -ValueOnly -ErrorAction SilentlyContinue))
         aiRules=$rulesIdentity; vanessaSourceBuildSha256=$sourceBuildSha256
         clientMcpSourceBuildSha256=$clientBuildSha256
         powershell="$($PSVersionTable.PSEdition)-$($PSVersionTable.PSVersion)"

@@ -10,6 +10,7 @@ param(
     [string[]]$CoverageContract = @(),
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
     [string]$GateScript = "",
     [string]$ComponentFinalizerScript = "",

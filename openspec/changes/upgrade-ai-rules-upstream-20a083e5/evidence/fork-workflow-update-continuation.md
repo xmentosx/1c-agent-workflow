@@ -1,10 +1,11 @@
 # Same-fork continuation after a package update
 
-Status 2026-10-02: finalization source C passed registration and public package
-rollout to all eight stand roots, with preserved business and fork state and a
-clean fixture. Task 9.6 remains open: SAME fork continuation then refused an
-ambient Codex client that is not attached to this Kilo stand. The source recovery
-wrapper is being adapted to pass the existing explicit client selection.
+Status 2026-10-02: task 9.6 completed. Qualified C package rollout and public
+SAME fork continuation through qualified D retained all eight stand roots,
+original fork/history and database generation. Independent read-only review
+verified receipt hashes and the exact installed owner control flow. Automated
+Develop/Release client binding remains a separate source acceptance prerequisite
+for publication; no publication or real-project installation is claimed.
 
 The historical Release fixture already committed facade compatibility 0.4.15
 with dependency lock 0.4.14. Public creation of `rel-e2e-r6` stopped during MCP
@@ -299,3 +300,129 @@ A separate read-only audit found the same missing explicit stand-client binding
 in the existing Develop and Release coordinators. Their automated helper routes
 must be corrected and qualified before publication gates. This does not replace
 the required public SAME fork retry or weaken ordinary client-membership guards.
+
+## Completed public SAME fork continuation
+
+The source-only recovery wrapper was committed as
+`6d3514749d7e8c8ed7fe09f55972bffffd817cb0` and passed normal RegisterChange:
+43 passed, 0 failed, 0 skipped, two executed workers with no reuse, 113.721
+seconds, clean tracked state. Authoritative run
+`20261002-022555-911-targeted-6b5b6abcd05447278096e752a49410e1.json`, SHA256
+`fb8553adca29b4c375866b328827f8295b762e5abc19056a8587327fe7a4a175`.
+
+From that exact clean executor, the public recovery utility continued the SAME
+`rel-e2e-r6` with explicit `-AgentTarget kilocode`: exit 0 in 68.065 seconds.
+The installed workflow remained qualified C
+`99f572b1b07c9f3393fedda052803422be08eb10`; no second package update, installed
+helper patch, client attachment, ambient-variable rewrite or new fork was used.
+The public utility verified completion and switched the owned Release pointer
+from r5 to r6, retaining its old JSON backup. Actual installed compact run
+`compact-20261002-053209-398-3d8a473b` ended `succeeded` for `fork-dev-branch`
+and the same r6 target.
+
+Retained executor checkout:
+`C:\Users\xment\.codex\worktrees\migration-proof-docs\1c-agent-workflow`.
+All following relative paths are under its ignored
+`build/stand-client-continuation-proof-20261002/` directory:
+
+| Receipt | SHA256 |
+|---|---|
+| `rebuild-finish.json` | `9728b098fcd95cf75d3feeba11d5cd2f58c1602f53f25087c5b5a16de27c417f` |
+| `rebuild-owned-stand-r6.log` | `1bbf49ce885a48001e584e07fb3b99a4219e39358623f121169f56fb6626eda3` |
+| `restore-predicates-after.json` | `4ac15e3dc3abf93e56df39ba3c93df19e366b90b6f8fb9bc326ccf3b1139dac7` |
+| `afterresume-preservation.json` | `4e5f49ca58c129df082010a459e53a43602962e5c17f1ecc4394305637855d55` |
+| `same-fork-completion.json` | `19f188d81985303ef130e492a3cf68249d0f581d25d0c537208e8393e1fab770` |
+
+The joint completion proof passed all nine checks. The original fork ID
+`472b2130c4e24d2f8113282204c6876c`, original business anchor
+`ce1ea252306ab1bf4fcb3244beb773586a6bc134`, infobase generation
+`a3aa86876ffe4db584d34ad3c9c90a76`, launcher ID and target paths remained
+unchanged. All 18 restore predicates and 29 retained history hashes passed;
+state reads were stable. All eight roots preserved business source/test trees,
+business index/status and branch identity settings. The r6 unsafe-action
+protection remained confirmed and its initialization became `ready`.
+
+The recorded ready time `2026-10-02T05:32:55.7135190+03:00` is
+`02:32:55.7135190Z`, within the actual public run interval
+`02:31:57.4403686Z`–`02:33:07.9633455Z`. The first derived joint receipt failed
+only this interval check: PowerShell 7 JSON decoding produced DateTime objects,
+whose subsequent string cast discarded the timezone. That failed receipt
+(`same-fork-completion.timestamp-parser-first.json`, SHA256
+`13f57b2674d239db645f1de4e607345d27393d4a9b4172d1f87298e87589790d`)
+is retained. Native PowerShell 5.1 validation parses the original ISO strings
+as DateTimeOffset; the live receipts and interval assertion are unchanged and
+no live rerun was made to replace this evidence.
+
+Restore reuse is a joint control-flow proof: successful ready state inside this
+run, exact installed owner bytes matching C runtime SHA256
+`2e5bf9ef3ff7adc941db88258a5591ddec096cc0bac75ee6aca16ffefeac9c61`, retained
+original fork/history predicates, and the owner's final
+`baseRestoreProven=False` with `forkVerificationInherited=false`. Its successful
+fresh-restore function returns True, so this final state shows reuse of the
+already restored database while prior verification remains history. Stage
+names, process absence and database metadata alone are not this proof. No final
+database byte hash or exclusive filesystem trace is claimed. D's raw runtime
+checkout hash differs due to line endings; D is the qualified source utility
+executor, while C is the qualified installed runtime owner.
+
+This evidence completes the public failed-fork/update/continuation path.
+Automated Develop/Release client binding still needs its own source acceptance
+before publication; publication, real-project installation and native Kilo
+GUI/model qualification are not implied by this result.
+
+Independent read-only review checked all ten joint-receipt SHA references,
+actual installed public status, both qualified source identities, the ready-time
+interval, 18 predicates, 29 history hashes, eight-root preservation and the
+installed restore/initialization control flow. No material finding remained.
+Together with the earlier paused merge, initialize and full refresh proofs,
+this closes task 9.6. The timestamp correction was verifier-only; original
+failure receipts, topology and public operation were retained.
+
+## Source E2E client binding qualification
+
+The Develop/Release source coordinators now pass an explicit client selection
+to the installed helper for each actual target root. The existing stateless
+`stand-env-identity.ps1` owns source selection: an explicit input is preserved;
+otherwise the sole configured `aiRules.tools` client is selected. Ambiguity has
+the same-command `-AgentTarget` continuation. Fresh bootstrap and all its
+subsequent calls retain their existing Kilo choice. Installed membership,
+attachments, ambient detection, guards and project configuration are unchanged.
+The selected input and configured stand clients bind the existing plan,
+qualification, checkpoint and completed/interrupted cache identities. A pinned
+legacy supervisor without the parameter returns a typed diagnosis rather than
+discarding explicit intent or changing publication authority.
+
+Native Windows PowerShell 5.1/Pester 5.8.0 focused acceptance passed 49/49, no
+failed or skipped cases, in 263.130 seconds (worker 262.734 seconds). The original
+full Release orchestration, including interrupted continuation and harness-only
+seed reuse, passed in 180.65 seconds. All 17 source/test/document input hashes
+were unchanged during the run. This is proof of captured working inputs over
+base `6d3514749d7e8c8ed7fe09f55972bffffd817cb0`, not qualification of the
+unchanged base commit; normal registration qualifies the final committed head.
+
+Receipt in the E checkout:
+`build/e2e-client-selection-proof-20261002/run-9a43317763c346cf8c9e42cd021e859b/independent-qualification.json`,
+SHA256 `9d0b97d4e7dd04f4eeb45c17c53bb45b3a16ef5a382464421789bf0f46c100d6`;
+JUnit SHA256
+`0a773a042af12ec771b241f94802d7e92258bf6bd4a849e235f8a398f311d736`.
+The independent receipt verifies actual XML and all raw before/current hashes;
+an earlier wrapper display projection of its embedded array is retained as
+history and was not used as source qualification.
+
+Initial failures were retained. Missing installed-client fixture metadata,
+native mock parameters and a cloned fixture's new dependency were repaired at
+their owning fixtures, preserving topology, workload and original assertions.
+Catalog parity also exposed a real missing shared stage-registration input,
+which was fixed at its owner. The final original cache-continuation failure was
+a real source defect: PS5 decorated the new JSON identity string and the cache
+converter persisted `{ Length: ... }`. A causal run disproved the dirty-HEAD
+hypothesis and preserved the exact cache/checkpoint/Git evidence. Casting only
+the stateless getter result to an ordinary string fixes this transport boundary;
+a regression exercises the actual cache writer and reader. Generic converters,
+reuse guards and the original seed-reuse assertion were not weakened.
+
+These tests launch native fixture processes, not installed helpers, 1C or MCP.
+The bounded support-stage backport separately qualifies source argument
+transport against its older runtime; E's new installed-client guard proof is
+not asserted for that older runtime. Publication and real-project rollout
+remain tasks 10.6 and 11.1–11.3.
