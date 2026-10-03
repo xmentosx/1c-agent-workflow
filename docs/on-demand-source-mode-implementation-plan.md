@@ -1,7 +1,9 @@
 # Итоговый план on-demand-режима исходников конфигурации
 
 Согласовано 2026-10-04 после ревью исходного unified-плана и grill.
-План сверён с origin/develop f5466e6ff98e95bae989a80d65809d1bff2bc31e.
+Актуализировано 2026-10-04 по опубликованному origin/develop
+f5466e6ff98e95bae989a80d65809d1bff2bc31e и зарегистрированной переработке
+workflow до 2a3b5f2c75e587f3a1fe187ee7ecbf6ca52e70fa.
 Это план будущей реализации: возможности платформы, helper-тесты и установленная
 приёмка ещё не доказаны. OpenSpec не выбран; дальнейшая формализация использует
 [существующий процесс](source-planning.md) при выборе пользователя.
@@ -40,7 +42,39 @@
 нужное состояние и не требуют запрещённой XML-выгрузки. Наличие полного бинарного
 снимка не заменяет доказательство работоспособности частичных исходников.
 
-## Что уже есть в workflow
+## Основание актуализации и зависимость от выпуска
+
+Source-delivery Status подтвердил следующие связанные записи очереди:
+
+| QueueId | Зарегистрированный head |
+|---|---|
+| codex/ai-rules-migration-decisions | dc4c0703c7852b7e9722f2fa80778402030ef167 |
+| codex/ai-rules-stand-continuation | a5a89eb9baa4355557f61911564976e17bd2b2a8 |
+| codex/migration-update-finalize | 99f572b1b07c9f3393fedda052803422be08eb10 |
+| codex/migration-stand-client | 6d3514749d7e8c8ed7fe09f55972bffffd817cb0 |
+| codex/migration-gate-inventory | 2a3b5f2c75e587f3a1fe187ee7ecbf6ca52e70fa |
+
+Это последовательная цепочка от 69612acc8cabecf8ee55f3aa485e999c774a73c7:
+интеграция upstream 20a083e5, новые load/verification/update owners и их
+последующие исправления. На момент сверки цепочка не входит в origin/develop.
+Контракты ниже прочитаны из её конечного Git-среза; это не утверждение
+публикации, установки или завершения всей приёмки переработки.
+
+Основная постановка выпуска — [upgrade-ai-rules-upstream-20a083e5](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/design.md).
+В её зарегистрированном tasks остаются открыты publication/real-project rollout
+и Q23: полная c1-интеграция и essential UI policy. Код перехода Q23 уже есть,
+но старые evidence и checkbox не квалифицируют новые правила. Поэтому план
+on-demand не объявляет essential доступным по одному новому helper или setting.
+
+Нативные примитивы этапа 0 можно исследовать независимо на разрешённом стенде.
+Интеграционные этапы используют финальный installable candidate переработки:
+фиксируются workflow commit/tree, действительный controlled-fork commit,
+платформа и tool/CLI pins. Текущий template lock с историческим r36 и прежняя
+квалификация не заменяют финальные inputs выпуска. После публикации сверить
+фактическую integration identity; при изменении относящегося к on-demand owner
+обновить только зависимый пункт плана и его проверку.
+
+## Существующие механизмы и изменения зарегистрированного выпуска
 
 Использовать существующих владельцев, а не планировать эти механизмы заново:
 
@@ -54,9 +88,28 @@
   snapshot safety и независимый отчёт каждой ветки в refresh-all;
 - managed close/delete/reset/fork и текущий контракт свежей проверки.
 
+Зарегистрированная переработка добавляет готовые точки адаптации:
+
+- единый checked load с native DT до editable mutation, Gate 6 перед UpdateDBCfg,
+  restoration duty, byte-exact возврат cursor и lastGate6Evidence;
+- schema-2 obligations, retained и one-off proof, aggregate readiness, v5
+  fingerprint с релевантными dependency/checker inputs и точными ИБ/generations;
+- file-only update основного проекта и зарегистрированных worktree, сохранение
+  business staging/pending merge/fork и продолжение исходной операции новым helper;
+- desired/actual набор клиентов и MCP ownership вместо предположения об одном
+  текущем клиенте; plugin вызывает существующего ITL owner;
+- project-pinned OpenSpec CLI 1.13.1, шесть фаз и локальный openspec/.
+  Внешний store вынесен в отдельную задачу и не является возможностью этого выпуска.
+
+Это существующие owners будущей базы реализации, а не новые подсистемы on-demand.
+Их источник — зарегистрированные lifecycle.ps1, verification-selection.ps1,
+verification-result.md, verification-suite-selection.md и
+workflow-update-recovery.md на указанном head.
 Основные контракты находятся в [branch lifecycle](../.agents/skills/1c-workflow/references/branch-lifecycle.md)
-и [архитектуре пакета](package-architecture.md). Ни режим, ни его внутренние
-refs не реализованы этим документом.
+и [архитектуре пакета](package-architecture.md); после интеграции используются
+также [verification result](../.agents/skills/1c-workflow/references/verification-result.md)
+и [suite selection](../.agents/skills/1c-workflow/references/verification-suite-selection.md).
+Сам on-demand и его внутренние refs этими изменениями не реализованы.
 
 Нынешний sourceGenerationId относится к файловому источнику. Пустое значение
 для серверного источника не доказывает согласованность его ревизии и seed;
@@ -69,10 +122,12 @@ refs не реализованы этим документом.
 точные команды, результаты, объекты/байты и времена. Live-стенд и операции
 эксперимента выбираются отдельно в пределах разрешения пользователя.
 
-Сначала измерить нынешний full-сценарий от создания проекта до первой свежей
-проверки изменения. Использовать его как сравнимую базу, отдельно учитывая seed,
-выгрузку, загрузку и проверку. Численные обещания ускорения не придумывать до
-измерений; итог эксперимента показывает выигрыш и перенесённые расходы.
+Сначала измерить full-сценарий на финальной базе выпуска от создания проекта до
+первой свежей проверки изменения. Использовать его как сравнимую базу, отдельно
+учитывая seed, выгрузку, snapshot, Gate 6, загрузку и aggregate assessment.
+Прежние full-замеры не описывают расходы новой цепочки. Численные обещания
+ускорения не придумывать до измерений; итог эксперимента показывает выигрыш
+и перенесённые расходы.
 
 Обязательные вопросы к платформе:
 
@@ -95,6 +150,9 @@ refs не реализованы этим документом.
    обращения к уже изменившемуся текущему источнику.
 10. Стабильная идентичность эффективной конфигурации при техническом пересоздании
     cursor, добавлении неизменённого контекста и изменении/возврате файла.
+11. Частичный XML-пакет проходит существующий checked load: нужные platform checks
+    видят полную editable configuration базы, ошибка восстанавливает DT и веточный
+    cursor, а ни validation, ни recovery не требуют полного XML-дерева.
 
 Эксперимент обязан выбрать нативный путь, который предотвращает полный дамп.
 Обнаружение уже начавшейся полной выгрузки не выполняет запрет режима.
@@ -110,8 +168,10 @@ refs не реализованы этим документом.
 ## Этап 1 — модель состояния и архитектурный checkpoint
 
 Lifecycle пакета владеет проектным режимом, состоянием ветки и переходами
-capture/merge/load. Execution guard владеет нативным выполнением. Общий Git
-хранит техническую историю через внутренние refs; пользовательские itldev/*
+capture/merge/load. Verification coordinator владеет obligations, receipts и
+readiness; checked-load owner владеет Gate 6 и snapshot. Execution guard владеет
+нативным выполнением. Общий Git хранит техническую историю через внутренние refs;
+пользовательские itldev/*
 остаются рабочими ветками. Не вводить второй coordinator или общий lease.
 
 До реализации сохраняемого состояния и взаимодействия новых операций оформить
@@ -142,8 +202,17 @@ refs, снимки, ресурсы, affected callers, путь отмены/во
 
 Технический shadow-коммит, номер транзакции, путь и поколение хранения не являются
 идентичностью эффективной конфигурации. Неизменённая материализация и cursor-only
-коммит не обесценивают проверку. Реальное изменение обесценивает её.
+коммит не обесценивают проверку. Реальное изменение обесценивает зависящее от него
+evidence; общий passed заново оценивает тот же assessor после правильной загрузки.
 lastAppliedBaselineCommit не может заменять доказательство загруженного состояния.
+
+Новая версия уже связывает load/verification с целевой ИБ и её поколением.
+Для on-demand требуется адаптация входной идентичности, а не второй реестр
+готовности: Get-ConfigSourceFingerprint и существующий load-state принимают
+доказанный effective source, verification owner использует его вместе с
+идентичностями требований, runner/checker и выбранных obligations.
+Gate 6 подтверждает editable configuration до apply; его passed receipt
+сам по себе не доказывает завершённые UpdateDBCfg и Enterprise normalization.
 
 ## Этап 2 — init, seed и транзакционный захват источника
 
@@ -195,13 +264,30 @@ Load-пакет рассчитывается от успешно загруже�
 загрузить изменение, вернуть файл и загрузить возврат при неизменном shadow.
 Пустой Git diff baseline не может оставлять прежнее изменение в базе.
 
-До мутации базы создаётся штатный снимок либо доказанный путь восстановления
-точного состояния. Перед нативной загрузкой отмечается pending-операция.
+Частичный пакет передаётся в существующий load/check/apply owner. При checked-load
+триггере его native DT или уже принадлежащий enclosing operation точный snapshot
+создаётся до editable mutation. Внутри этого owner порядок остаётся:
+editable load → проверка неизменности входа → применимый Gate 6 →
+UpdateDBCfg → нормализация → фиксация загруженного состояния.
+BSL/XML и неизвестная дельта не маскируются под binary-only ради пропуска проверок.
+Прямой объединённый load+apply обходить эту границу не может.
+Для доказанной binary-only дельты сохраняются нынешние applicability и direct path;
+сам on-demand не добавляет Gate 6 без его существующего триггера.
+
+Перед нативной загрузкой отмечается pending-операция в существующем lifecycle
+состоянии; отдельный универсальный on-demand recovery-журнал не вводится.
 После сбоя последняя успешная идентичность остаётся историческим доказательством,
 а текущее состояние считается неподтверждённым до reconciliation/restore:
 нельзя утверждать, что база всё ещё содержит старую конфигурацию.
 Завершение load и нормализации фиксирует новую загруженную идентичность;
 успешная загрузка сама по себе не делает проверку свежей.
+
+Gate-6 failure восстанавливает точную базу и byte-exact веточный cursor через
+нынешнюю restoration duty; source cursor захвата не подменяется этим cursor.
+Ошибка applicability/check не включает full-load fallback. При неудаче restore
+сохраняются snapshot/hash и обе диагностики. Потеря completion ACK после
+доказанного успешного apply не превращается в повторный rollback.
+Capture baseline/cursor остаются согласованными с подтверждённым итогом owner.
 
 Принятая source-ревизия и её cursor переключаются на подготовленный baseline
 только после успешного веточного применения. Их фиксация согласована с записью
@@ -256,10 +342,80 @@ Refresh-all делает один source-sync, закрепляет master SHA �
 | source indexes, поиск, validators | Отсутствие файла не выдаётся за отсутствие объекта; bounded материализация |
 | repository object locks | Нынешние object-level ownership и результаты без ложного подтверждения |
 | reset, close, delete | Безопасные снимки, retirement и точная очистка собственной ветки |
+| update-workflow и rollback | File-only переход пакета с сохранением режима, baseline и paused operation |
+| attach/detach/switch client, plugin | Desired/actual membership, сохранность MCP ownership и существующий dispatcher |
+| локальный OpenSpec | Project-pinned CLI, локальные требования и их input identity без зависимости от внешнего store |
 
 Для полного пользовательского цикла «изменить → проверить → получить результат»
 неподдержанные штатные операции должны быть устранены до обычного включения.
 Файловые тесты не отменяют текущую поддержку серверных full-проектов.
+
+### Проверка через текущего verification owner
+
+Schema-2 obligation описывает результат, inputs, admissible proof, retention
+и cadence. On-demand не требует сохранённой suite для каждого изменения:
+достаточный one-off result и retained proof оцениваются одним существующим
+Get-VerificationCurrentProofAssessment вместе с loaded readiness и event log.
+Отсутствующая обоснованно suite отличается от zero tests, invalid JUnit и
+отсутствующего due proof. Полный итог по-прежнему проходит canonical unfiltered
+assessment; допустимое reuse не заставляет заново запускать неизменённые UI tests.
+
+В зарегистрированном коде Get-VerificationObligationInputIdentity получает
+inputPaths из полного effective Git tree; wildcard без файлов даёт
+matching-files=<none>. Для частичного дерева это не доказывает отсутствие объекта.
+Нужно адаптировать единый source-identity contract: материализовать минимальные
+declared inputs или доказать их точные native identities в принятом baseline.
+Неопределённый input остаётся неизвестным и получает acquisition continuation,
+а не пустой fingerprint с ложным reuse. Gates 1–3 и source validators используют
+тот же принцип; глубина берётся из принятой verification policy.
+Acquisition выполняется в разрешённом подготовительном шаге владельца.
+Read-only assessor в status/export/close не материализует файлы, не запускает
+1С и не меняет baseline/receipts для устранения недостающего proof.
+
+Сохраняются v5/relevant dependency и checker identities, revisions локальных
+требований, ИБ/generations и hashes артефактов. Техническая материализация не
+меняет semantic inputIdentity. Реальное изменение одного obligation инвалидирует
+его proof; независимый retained result может сохраниться после правильной загрузки.
+Workflow-only commit и истечение named invocation сами по себе не делают proof
+stale; новый relevant checker или неизвестная совместимость требуют нового proof.
+Пустой inventory не становится полным passed без реально достаточного evidence.
+
+UI_TESTING и сохранённая Vanessa остаются разными маршрутами. Essential
+используется только при actual installed-rules support; для важного изменённого
+UI после разрешённого deploy требуется конкретное expected/actual evidence.
+Saved Vanessa switch, широкий no-UI запрет и provider policy сохраняются.
+Файловое обновление и read-only acquisition не запускают UI, Gate 6 или loop.
+Canonical repair и scenario-loop используют существующий ID, scope и budget;
+on-demand recovery не создаёт новую попытку или скрытую сессию.
+
+### Продолжение после обновления workflow
+
+Использовать новую per-root update/snapshot/reconcile реализацию. File-only
+update обновляет helper/rules/client surfaces доступных worktree без source
+merge, чтения источника, load или автоматических тестов. Pending/failed lifecycle
+и MERGE_HEAD при остановленных процессах сами по себе не блокируют update.
+Сохраняются business index/stages, разрешённые конфликты, исходные operation ID,
+target master/source revision, native snapshots, cursor и prepared capture.
+После обновления повтор исходной команды продолжает её точную операцию.
+
+Новые on-demand поля входят в совместимость состояния существующих owners.
+Передача новому helper и scoped workflow commit не превращают техническое
+обновление в новый source-sync. Fork сохраняет original business anchor и
+снимок базы; принятие замены пакета проходит retained completed-update chain.
+Update/rollback не переключают режим исходников, не заменяют baseline текущим
+master и не откатывают foreign/user bytes. Для старого пакета без on-demand
+capability нужен адресный путь установки совместимого helper до зависимой
+операции; трактовать такой проект как full нельзя.
+
+Регенерация нескольких клиентов сохраняет их membership, MCP ownership и
+branch settings. При переносе на другой хост новые bindings создаёт тот же owner;
+исторические live процессы/leases и неподтверждённые ownership не наследуются.
+Локальные openspec/ и requirement revisions идут с проектными документами.
+Если формализация будет выбрана, source использует scripts/source-openspec.ps1
+с pin 1.13.1, installed project — свой resolver; выбор external store остаётся
+зависимым отказом текущего выпуска, без автоматической локальной замены.
+
+### Переносимый checkpoint и ограниченное хранение
 
 Переносимый checkpoint включает accepted baseline, нужное историческое содержимое,
 cursor/provenance, изменения ветки, необходимые snapshot-поколения и проверяемый
@@ -272,7 +428,10 @@ manifest. Обычный Git clone не предполагает наличие 
 Приёмка второго хоста восстанавливает проект без первого хоста и без замены
 исторического baseline новым текущим источником. Проверяются manifest/hashes,
 затем создаются новые локальные bindings. Проверка не объявляется свежей без
-требуемого доказательства для восстановленной базы.
+требуемого доказательства для восстановленной базы. Новый target/base или runner
+generation оценивается нынешним receipt owner; перенос artifacts не переносит
+их применимость к другой ИБ автоматически. Сохраняются referenced retained и
+one-off artifacts, а не только файл последнего общего результата.
 
 Хранятся поколения, нужные активным веткам и явно сохранённым архивам;
 глобального архива всех XML-версий нет. Reset переключает ветку на новый baseline
@@ -288,7 +447,7 @@ Git GC и удаление snapshot должны учитывать ссылки
 
 Обязательные сценарии:
 
-- новый проект до первого свежего check и result без полного XML-дампа;
+- новый проект до свежего полного результата проверки и result без полного XML-дампа;
 - cursor-only и материализация контекста сохраняют freshness;
 - изменение/загрузка/возврат файла корректно меняют базу и freshness;
 - две ветки разных ревизий; обновление одной не меняет cursor другой;
@@ -300,6 +459,22 @@ Git GC и удаление snapshot должны учитывать ссылки
 - ручные правки в Конфигураторе не теряются при materialize/refresh/check;
 - отмена и потеря helper на каждой границе capture/ref/load/normalize/restore;
 - неизвестные эффекты загрузки не становятся ложным loaded/fresh доказательством;
+- частичный load проходит Gate 6; ошибка check возвращает DT и нужный cursor,
+  snapshot recovery failure сохраняет доказательства, lost ACK не отменяет successful apply;
+- wildcard inputPaths нематериализованного объекта не дают ложный пустой input;
+  добавление неизменённого контекста сохраняет proof, изменение требования/объекта
+  выбирает его obligation, независимый proof сохраняется;
+- достаточный one-off без retained suite даёт полный assessment; missing receipt,
+  unknown generation и zero-test runner его не дают; named/filtered scope не
+  выдаётся за доказательство всех due obligations;
+- обновление пакета во время paused capture/merge/load/fork сохраняет anchor,
+  business staging и cursor; исходная команда продолжается новым helper без
+  нового source target, нового loop budget и переключения режима;
+- два клиента, attach/detach failure, MCP ownership и локальный OpenSpec
+  сохраняются при update, rollback и переносе; file-only update не запускает 1С;
+- Q23 проверяется на фактически поддерживающем rules candidate; essential UI
+  evidence и saved Vanessa не подменяют друг друга; сохраняются приоритет no-UI,
+  switch/provider policy и разрешения конкретного named invocation;
 - независимая ветка продолжает работу при сбое другой; guard ограничен своей фазой;
 - reset/fork/close/delete, повторная команда и восстановление на другом хосте;
 - whitespace + Cyrillic в одном Windows-пути, NUL-delimited Git paths,
@@ -317,6 +492,8 @@ merge preservation, rollback и artifact SHA.
 Собирать существующими средствами времена init/cursor, seed copy/hash,
 ожидания guard, native export, Git/shadow, merge, load, normalization, check/result
 и переносимости, вместе с количеством объектов/файлов и байт.
+Snapshot/Gate 6, выполнение due obligations и reuse выделяются в этих фазах
+отдельно: сравниваются одни final release inputs и одинаковый workload.
 Показать полный путь до первого проверенного изменения относительно нынешнего
 full и объяснить стоимость sync-master при разных количествах веток.
 
@@ -327,6 +504,14 @@ full и объяснить стоимость sync-master при разных к
 
 Связные реализации проверяются и регистрируются по
 [local-quality-gate](local-quality-gate.md): один локальный commit и RegisterChange
-на завершённую доработку. Публикация, установка и live-приёмка имеют отдельные
-доказательства. Новые runtime-барьеры проходят оригинальный сценарий вместе с
+на завершённую доработку. Адаптации продолжают owner tests зарегистрированной
+версии: DesignerBatchChecks, VerificationAggregateAssessment/ProofReuse,
+PendingMergeWorkflowTransition, WorkflowUpdateRollback, DevBranchLifecycle,
+ClientMembership/MultiClientMcpOwnership и OpenSpecCliRuntime. Новые regressions
+связываются с владельцем в актуальном quality-contracts catalog; прежнее чужое
+evidence не выдаётся за proof изменённых on-demand inputs.
+Публикация, установка и live-приёмка имеют отдельные
+доказательства. Актуализация плана добавляется к собственной зарегистрированной
+очереди; она не заменяет immutable candidate или незавершённые доказательства
+текущего выпуска переработки. Новые runtime-барьеры проходят оригинальный сценарий вместе с
 agent-owned продолжением; чужие ресурсы и независимая работа не блокируются.
