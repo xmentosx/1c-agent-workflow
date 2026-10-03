@@ -5,8 +5,19 @@ Describe "Immutable workflow artifact cache isolation" {
         $script:RepoRoot = $context.RepoRoot
         $script:HelperPath = $context.HelperPath
         $script:SavedArtifactCacheEnvironment = @{}
-        foreach ($name in @("ITL_ARTIFACT_CACHE_ROOT", "DEPENDENCY_MODE", "ROCTUP_MCP_TOOLKIT_EPF", "ROCTUP_MCP_VERSION", "ROCTUP_MCP_SHA256")) {
-            $script:SavedArtifactCacheEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        foreach ($name in @("ITL_ARTIFACT_CACHE_ROOT", "DEPENDENCY_MODE", "ROCTUP_MCP_TOOLKIT_EPF", "ROCTUP_MCP_VERSION", "ROCTUP_MCP_SHA256",
+                "ROCTUP_MCP_INSTALL_ROOT", "VANESSA_AUTOMATION_ROOT", "VANESSA_AUTOMATION_EPF", "VANESSA_MCP_CLIENT_CFE_PATH", "VANESSA_MCP_VA_EXTENSION_CFE_PATH")) {
+            foreach ($key in @($name, "AGENT_1C_$name")) {
+                $script:SavedArtifactCacheEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+            }
+        }
+    }
+
+    BeforeEach {
+        # Each case owns its exact cache and branch .env inputs; the parent may
+        # carry a valid source-build path that must not replace those inputs.
+        foreach ($name in @($script:SavedArtifactCacheEnvironment.Keys)) {
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
         }
     }
 

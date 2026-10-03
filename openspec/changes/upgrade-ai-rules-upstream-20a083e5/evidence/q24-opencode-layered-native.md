@@ -208,3 +208,33 @@ Receipt `build/q24-refresh-pin-causal/qualification.json` SHA256:
 No runtime guard was weakened. The preceding CFE proof becomes historical when
 the helper inputs change; a new clean native build and full registration are
 required before paired publication.
+
+## Candidate override isolation, 2026-10-03
+
+Registration of 49baa5aa completed 994 passed and one failed case: 17 executed
+and nine reused files, 722.708 s worker span (824.344 s full gate). All 295
+DevBranchLifecycle cases passed. The isolated queue remained empty and source
+Git clean. Its complete failed summary, original JUnit, relevant shards and
+gate logs are retained under publication checkout
+`build/q24-register-red-49baa5aa`. Corrected retention receipt SHA256:
+`49915827151f5c93f2013a837d18c26c13bf6b5fa42442151c046ddab3a78dae`.
+The first retention tree probe's unquoted PowerShell argument failed and is
+preserved separately; it is not an exact-tree receipt.
+
+The sole failure was the unchanged stale-cache ArtifactCacheIsolation case.
+Its old project dotenv competed with the exact new CFE path inherited from
+the registering process; the normal process-first lookup correctly returned
+that external override. The fixture now captures ten relevant cache/path
+inputs and their exact AGENT_1C_ aliases, clears those inputs before each case
+and restores their original values afterward. No runtime precedence, candidate
+gate environment or dedicated source-provider input changed. All five original
+test bodies, old paths, dotenv, workload and assertions remain identical.
+
+Native PS5.1/Pester 5.8 passed all five cases together in 4.791 s under the same
+actual final CFE override (5222a74b). All 20 environment values were restored;
+the exact CFE and 32 captured focused source inputs were unchanged. This is
+distinct from the native owner's 43-input qualification. Independent review
+found no material findings. Receipt
+`build/q24-cache-fixture-causal/qualification.json` SHA256:
+`9e3e1432af2f509e60a5b6f3c94a1151f279a548857e03cc2697648399bfebd6`.
+Final complete registration remains pending; unstarted files are not passes.
