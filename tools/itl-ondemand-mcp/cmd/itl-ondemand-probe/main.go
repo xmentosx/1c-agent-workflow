@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -151,6 +152,7 @@ func run() error {
 	helper := flag.String("helper", "", "agent-1c.ps1 path")
 	tool := flag.String("tool", "", "safe live tool to call")
 	argumentsJSON := flag.String("arguments-json", "{}", "tool arguments")
+	sequencePath := flag.String("sequence-json", "", "JSON file of ordered inner calls [{name,arguments}], using one facade session")
 	instances := flag.Int("instances", 1, "number of simultaneous facade clients")
 	output := flag.String("output", "", "evidence JSON path")
 	idleTimeout := flag.Duration("idle-timeout", 10*time.Minute, "facade backend idle timeout")
@@ -159,14 +161,25 @@ func run() error {
 	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
 	vanessaSecondaryFeature := flag.String("vanessa-secondary-feature", "", "second release feature file for Vanessa cold reloadAndRun smoke")
 	flag.Parse()
-	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || *tool == "" {
-		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool are required")
+	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || (*tool == "" && *sequencePath == "") {
+		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool or --sequence-json are required")
 	}
 	if *family != "roctup" && *family != "vanessa-ui" {
 		return fmt.Errorf("invalid --family %q", *family)
 	}
 	if *instances < 1 || *instances > 2 {
 		return fmt.Errorf("--instances must be 1 or 2")
+	}
+	var sequence []probeCall
+	if *sequencePath != "" {
+		if *tool != "" || *argumentsJSON != "{}" || *instances != 1 || *vanessaSmoke || *verifyIdle {
+			return fmt.Errorf("--sequence-json uses one session and cannot combine with --tool, --arguments-json, multiple instances, --vanessa-ui-smoke, or --verify-idle")
+		}
+		var err error
+		sequence, err = readProbeSequence(*sequencePath, *catalog)
+		if err != nil {
+			return err
+		}
 	}
 	var arguments any
 	if err := json.Unmarshal([]byte(*argumentsJSON), &arguments); err != nil {
@@ -179,6 +192,9 @@ func run() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout(*vanessaSmoke))
 	defer cancel()
+	if sequence != nil {
+		return runSequenceProbe(ctx, *exe, *family, *projectRoot, *catalog, *helper, *idleTimeout, *output, sequence, expectedCount)
+	}
 	connected := make([]*probeSession, 0, *instances)
 	connectedTestClients := 0
 	maxConcurrentSessions := 0
@@ -354,17 +370,156 @@ func run() error {
 		evidence["vanessaSecondaryFeature"] = *vanessaSecondaryFeature
 		evidence["vanessaScenarioEvidencePassed"] = vanessaScenarioEvidencePassed
 	}
-	raw, _ := json.MarshalIndent(evidence, "", "  ")
-	if *output != "" {
-		if err := os.MkdirAll(filepath.Dir(*output), 0o755); err != nil {
+	return writeProbeEvidence(*output, evidence)
+}
+
+func writeProbeEvidence(output string, evidence any) error {
+	raw, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		return err
+	}
+	if output != "" {
+		if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(*output, append(raw, '\n'), 0o600); err != nil {
+		if err := os.WriteFile(output, append(raw, '\n'), 0o600); err != nil {
 			return err
 		}
 	}
 	fmt.Println(string(raw))
 	return nil
+}
+
+type probeCall struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+type probeCallEvidence struct {
+	Name      string              `json:"name"`
+	Arguments map[string]any      `json:"arguments"`
+	Result    *mcp.CallToolResult `json:"result,omitempty"`
+	Error     string              `json:"error,omitempty"`
+}
+
+func readProbeSequence(path, catalogPath string) ([]probeCall, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("sequence JSON is not valid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	var calls []probeCall
+	if err := decoder.Decode(&calls); err != nil {
+		return nil, fmt.Errorf("decode sequence JSON: %w", err)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, fmt.Errorf("sequence JSON must contain one array")
+	}
+	if len(calls) == 0 {
+		return nil, fmt.Errorf("sequence JSON must contain at least one call")
+	}
+	catalogRaw, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return nil, err
+	}
+	var catalog struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(catalogRaw, &catalog); err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(catalog.Tools))
+	for _, tool := range catalog.Tools {
+		known[tool.Name] = true
+	}
+	for index := range calls {
+		if calls[index].Name == "" || !known[calls[index].Name] {
+			return nil, fmt.Errorf("sequence call %d names an unknown catalog tool %q", index+1, calls[index].Name)
+		}
+		if calls[index].Arguments == nil {
+			calls[index].Arguments = map[string]any{}
+		}
+	}
+	return calls, nil
+}
+
+func executeProbeSequence(ctx context.Context, session *mcp.ClientSession, calls []probeCall, closeOwned func() error) (records []probeCallEvidence, err error) {
+	defer func() {
+		if closeErr := closeOwned(); closeErr != nil {
+			if err == nil {
+				err = fmt.Errorf("close owned facade: %w", closeErr)
+			} else {
+				err = fmt.Errorf("%w; close owned facade: %v", err, closeErr)
+			}
+		}
+	}()
+	for _, call := range calls {
+		if err := ctx.Err(); err != nil {
+			return records, err
+		}
+		result, callErr := callInnerTool(ctx, session, call.Name, call.Arguments)
+		record := probeCallEvidence{Name: call.Name, Arguments: call.Arguments, Result: result}
+		if callErr == nil && (result == nil || result.IsError) {
+			callErr = fmt.Errorf("tool returned an error result")
+		}
+		if callErr != nil {
+			record.Error = callErr.Error()
+		}
+		records = append(records, record)
+		if callErr != nil {
+			return records, fmt.Errorf("sequence call %d %s: %w", len(records), call.Name, callErr)
+		}
+	}
+	return records, nil
+}
+
+func runSequenceProbe(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration, output string, calls []probeCall, expectedCount int) error {
+	item, err := connect(ctx, exe, family, projectRoot, catalog, helper, idleTimeout)
+	if err != nil {
+		return err
+	}
+	var exitWait, guardWait, wallWait time.Duration
+	cleanupPassed := false
+	closeOwned := func() error {
+		var closeErr error
+		exitWait, guardWait, wallWait, closeErr = item.closeMeasured()
+		if closeErr == nil {
+			_, closeErr = waitForStateCount(filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", family), 0, 30*time.Second)
+		}
+		cleanupPassed = closeErr == nil
+		return closeErr
+	}
+	var records []probeCallEvidence
+	if item.count != gatewayPublicToolCount {
+		err = fmt.Errorf("facade gateway tools/list count=%d, expected=%d", item.count, gatewayPublicToolCount)
+		if closeErr := closeOwned(); closeErr != nil {
+			err = fmt.Errorf("%w; close owned facade: %v", err, closeErr)
+		}
+	} else {
+		records, err = executeProbeSequence(ctx, item.session, calls, closeOwned)
+	}
+	evidence := map[string]any{
+		"schemaVersion": 2, "family": family, "publicToolCount": item.count, "catalogToolCount": expectedCount,
+		"sequenceCalls": records, "requestedCallCount": len(calls), "sequenceCompleted": err == nil,
+		"cleanupPassed": cleanupPassed, "ownedProcessExitWaitMs": exitWait.Milliseconds(),
+		"executionGuardWaitMs": guardWait.Milliseconds(), "facadeCloseWaitMs": wallWait.Milliseconds(),
+		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err != nil {
+		evidence["error"] = err.Error()
+	}
+	if writeErr := writeProbeEvidence(output, evidence); writeErr != nil {
+		return fmt.Errorf("sequence outcome %v; write evidence: %w", err, writeErr)
+	}
+	return err
 }
 
 func callWithFacadeHandoff(ctx context.Context, session *mcp.ClientSession, releasePrevious func() error, name string, arguments any, wait time.Duration) (*mcp.CallToolResult, bool, error) {

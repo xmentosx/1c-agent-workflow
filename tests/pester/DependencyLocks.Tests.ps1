@@ -152,17 +152,17 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-410951e7-r36"
+        $project.aiRules.ref | Should -Be "itl-main-c1fb8e6-r40"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r36"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-c1fb8e6-r40"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "451c5a52e5b614c67406445d4af4b636da043aec"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "25b603215b3893f94fbd382e9a03fa99db4678e5"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
-        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 36
+        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb"
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 40
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
@@ -193,7 +193,7 @@
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
         $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.15"
-        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
+        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "5222a74bd1a8ea95f885dacd2d393bb4e574f54304d3e71ef66e99bd0f223b21"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
@@ -285,18 +285,43 @@
         }
     }
 
-    It "updates canonical pins without replacing compatibility runtime metadata" {
+    It "updates canonical pins without replacing compatibility runtime metadata for <clientPolicy>" -TestCases @(
+        @{ clientPolicy = 'published legacy baseline'; expectedClientSource = 'compatibility-manifest' }
+        @{ clientPolicy = 'current owned pin'; expectedClientSource = 'workflow-pinned' }
+    ) {
+        param($clientPolicy, $expectedClientSource)
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-runtime-metadata-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh"}'
-            $manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $templatePath = Join-Path $RepoRoot "templates\dependency-lock.json"
+            if ($clientPolicy -eq 'published legacy baseline') {
+                # Exact client entry published at f5466e6ff98e95bae989a80d65809d1bff2bc31e.
+                # Get-WorkflowTemplatePath resolves this fixture-local canonical input.
+                $canonical.dependencies.vanessaMcp.clientMcp = [pscustomobject]@{
+                    version = 'v0.6.5'
+                    assetName = 'client_mcp.cfe'
+                    url = 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+                    sha256 = 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+                    source = 'template baseline'
+                    updatedAt = '2026-05-26T19:34:34Z'
+                }
+                New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'templates') | Out-Null
+                $templatePath = Join-Path $tempRoot 'templates\dependency-lock.json'
+                [IO.File]::WriteAllText($templatePath, ($canonical | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            } else {
+                $canonical.dependencies.vanessaMcp.clientMcp.source | Should -BeExactly 'workflow-pinned'
+                $canonical.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Not -Contain 'updatedAt'
+            }
+            $canonicalBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($templatePath))
+            $manifest = $canonical | ConvertTo-Json -Depth 20 | ConvertFrom-Json
             $manifest.dependencies.roctupMcpToolkit.version = "v0"
             $manifest.dependencies.roctupMcpToolkit.source = "compatibility-manifest"
             $manifest.dependencies.roctupMcpToolkit.updatedAt = "runtime-roctup"
             $manifest.dependencies.vanessaMcp.clientMcp.version = "v0"
             $manifest.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
-            $manifest.dependencies.vanessaMcp.clientMcp.updatedAt = "runtime-vanessa"
+            $manifest.dependencies.vanessaMcp.clientMcp | Add-Member -NotePropertyName updatedAt -NotePropertyValue "runtime-vanessa" -Force
             $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
             Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
@@ -305,11 +330,15 @@
                 Sync-WorkflowManagedDependencyLockEntries | Out-Null
                 Read-DependencyLockManifest
             }
-            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $first.dependencies.roctupMcpToolkit.version | Should -Be $canonical.dependencies.roctupMcpToolkit.version
             $first.dependencies.roctupMcpToolkit.source | Should -Be "compatibility-manifest"
             $first.dependencies.vanessaMcp.clientMcp.version | Should -Be $canonical.dependencies.vanessaMcp.clientMcp.version
-            $first.dependencies.vanessaMcp.clientMcp.source | Should -Be "compatibility-manifest"
+            $first.dependencies.vanessaMcp.clientMcp.source | Should -Be $expectedClientSource
+            $first.dependencies.vanessaMcp.clientMcp.updatedAt | Should -Not -BeNullOrEmpty
+            foreach ($property in @($canonical.dependencies.vanessaMcp.clientMcp.PSObject.Properties | Where-Object { $_.Name -notin @('source', 'updatedAt') })) {
+                ($first.dependencies.vanessaMcp.clientMcp.($property.Name) | ConvertTo-Json -Depth 20 -Compress) |
+                    Should -BeExactly ($property.Value | ConvertTo-Json -Depth 20 -Compress)
+            }
 
             $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
             & {
@@ -317,6 +346,7 @@
                 Sync-WorkflowManagedDependencyLockEntries | Out-Null
             }
             (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($templatePath)) | Should -BeExactly $canonicalBytes
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

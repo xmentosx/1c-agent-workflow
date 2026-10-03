@@ -306,3 +306,34 @@ The native component's 43 inputs remain frozen; this test-only repair does not
 require a rebuild. Independent read-only review found no material findings;
 strict OpenSpec validation passed after this evidence update. Complete
 registration and final installed acceptance remain pending.
+
+## Final dependency-lock fixture, 2026-10-03
+
+Registration of f7e63714 reached every selected file: 2,068 passed and two
+failed cases, nine executed and 80 reused files, 497.072 s worker span. Both
+failures were in DependencyLocks. Source stayed clean and the isolated queue
+empty. The complete summary, aggregate/original JUnit, shard and gate logs are
+retained under publication checkout `build/q24-register-red-f7e63714`;
+complete retention-v2 receipt SHA256:
+`6d9e7db59cd6520f0752a62bcbe3aa52d57feecb945b3bab5b86666199c9ba61`.
+The first receipt, before adding the aggregate JUnit, is preserved separately.
+
+The wiring test still asserted the former r36 rules and external CFE. Its exact
+expectations now follow the accepted r40/25b60321/c1fb8e6/5222a74b pins. The
+runtime-metadata fixture also assumed an existing updatedAt property and the
+legacy template-baseline source policy. The unchanged synchronizer preserves
+custom source only under that legacy policy; the owned pin requires its
+canonical workflow-pinned source. The original path/topology, version, ROCTUP
+and repeat assertions are retained for both policies. The legacy branch uses
+the complete actual published f5466e6 entry through the real fixture-local
+template resolver; the owned branch checks every canonical client field,
+including correspondingSource. Eight other original case bodies are unchanged.
+
+Native PS5.1/Pester 5.8 retained original RED 0/2 in 1.416 s and passed the full
+corrected file once, 11/0/0 in 13.578 s. All 43 focused test inputs were frozen
+and all 26 environment values restored; this focused inventory is separate
+from the native component inventory. Independent review found no material
+findings. Receipt `build/q24-dependency-lock-causal/qualification.json` SHA256:
+`030120cf5599e61353f9e7bb786a570a364dcbd19ecf334277e927eb1bdfd00d`.
+Runtime, production pins and exact CFE remain unchanged. Complete registration
+and final installed acceptance remain pending.
