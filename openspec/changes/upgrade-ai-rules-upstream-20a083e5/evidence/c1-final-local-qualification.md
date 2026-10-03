@@ -442,3 +442,22 @@ exactly to the original HEAD (`unrelated-fixture-restoration.json`). The exercis
 rollback and default fixture bodies and runtime remained unchanged. These focused
 receipts and earlier copy/cutover runs retain their actual input identities;
 final exact-source registration and native qualification are still pending.
+
+## Native producer after package-content correction
+
+Clean producer `26c72eb82ab9bc15fcdeb3c6762f9e70c6e3ec3e`, tree
+`fc5fa690b5b560ea6222508c8010752c3d06c21a`, passed the existing native builder
+and all three Gate6 steps (modules, applicability and configuration, each
+exitCode0/dumpResult0). All44 recorded inputs match both clean source checkouts;
+original DT restoration and owned process release are confirmed. Actual CFE
+SHA256 is `29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6`;
+source ZIP remains `409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc`.
+Native provenance in the delivery checkout's
+`build/third-party/client-mcp/v0.6.5-itl-r1/candidate-parent-26c72eb8/candidate.provenance.json`
+has SHA256 `e87531d5c9e71236dd8c505305b82ae50a30fedbd80c06233f83003e8f87a871`.
+The invocation, stdout/stderr and independent input/asset/Gate6 verification are
+retained in `build/c1-native-parent-26c72eb8/`. The production lock and existing
+exact pin assertion now refer to these actual bytes. Previous producers and
+failed-publication receipts remain historical evidence. Registration, public
+Develop qualification, component publication and live essential UI acceptance
+remain separate, pending steps.
