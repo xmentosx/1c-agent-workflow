@@ -6,6 +6,8 @@ testResults.xml
 *.cfe
 *.dt
 *.mdmp
+__pycache__/
+*.pyc
 !.agents/skills/1c-workflow/assets/vanessa-service/service-infobase.dt
 *.log
 logs/

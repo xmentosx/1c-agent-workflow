@@ -2825,6 +2825,8 @@ function Ensure-GitIgnore {
         "*.cfe",
         "*.dt",
         "*.mdmp",
+        "__pycache__/",
+        "*.pyc",
         "*.log",
         "logs/",
         ".tx/",
@@ -2895,7 +2897,7 @@ function Ensure-GitIgnore {
     # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("*.mdmp", "__pycache__/", "*.pyc", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath

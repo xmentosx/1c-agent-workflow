@@ -20,6 +20,7 @@ $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $startedAt = [DateTime]::UtcNow
@@ -141,6 +142,7 @@ function Get-ManagedPackageInventory {
         if (-not (Test-Path -LiteralPath $fullRoot -PathType Container)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $fullRoot -Recurse -File | Sort-Object FullName)) {
             $relative = $file.FullName.Substring($Root.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+            if (-not (Test-WorkflowPackageContentPath -RelativePath $relative)) { continue }
             $entries.Add([ordered]@{ path = $relative; sha256 = Get-ManagedTextOrBinarySha256 -Path $file.FullName }) | Out-Null
         }
     }

@@ -5852,7 +5852,8 @@ function Invoke-WorkflowManagedPathReplace {
     param(
         [string]$SourcePath,
         [string]$TargetPath,
-        [switch]$Directory
+        [switch]$Directory,
+        [switch]$PackageContentOnly
     )
 
     Assert-WorkflowManagedTargetPath -Path $TargetPath
@@ -5869,7 +5870,11 @@ function Invoke-WorkflowManagedPathReplace {
     $movedAside = $false
     try {
         if ($Directory) {
-            Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Recurse -Force -ErrorAction Stop
+            if ($PackageContentOnly) {
+                Copy-WorkflowPackageDirectoryContent -SourcePath $SourcePath -DestinationPath $stagingPath
+            } else {
+                Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Recurse -Force -ErrorAction Stop
+            }
         } else {
             Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Force -ErrorAction Stop
         }
@@ -6079,7 +6084,7 @@ function Copy-WorkflowManagedDirectory {
         throw "Workflow package managed directory is missing: $RelativePath"
     }
 
-    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath -Directory
+    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath -Directory -PackageContentOnly
     Write-Host "Updated workflow directory: $RelativePath"
 }
 
@@ -7403,7 +7408,8 @@ function Restore-CompletedWorkflowUpdate {
         try { Restore-WorkflowUpdateOwnedPaths -Target $target -Pending $pending }
         catch { throw "WORKFLOW_UPDATE_ROLLBACK_INCOMPLETE: $($_.Exception.Message) Repeat the same source-side command with -Recovery restore -SnapshotId $SnapshotId; the recovery snapshot is preserved." }
         $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @($target.snapshot.records | ForEach-Object { [string]$_.relativePath }) `
-            -Message ("chore: restore ITL workflow before snapshot " + $SnapshotId.Substring(0, 7)) -AllowMaster
+            -Message ("chore: restore ITL workflow before snapshot " + $SnapshotId.Substring(0, 7)) -AllowMaster `
+            -RestoreTrackedFromCommit ([string]$target.receipt.preUpdateHead)
         Save-WorkflowBranchCommitPlanReceipt -Snapshot $pending.snapshot -Plan $plan
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase rollback-commit-ready -Details $details
         $pending = Get-WorkflowUpdatePendingSnapshot
@@ -12059,7 +12065,8 @@ function New-WorkflowBranchCommitPlan {
     param(
         [Parameter(Mandatory = $true)][string[]]$ManagedPathSpecs,
         [string]$Message = 'chore: update ITL workflow in development branch',
-        [switch]$AllowMaster
+        [switch]$AllowMaster,
+        [string]$RestoreTrackedFromCommit = ''
     )
 
     $branchRef = (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
@@ -12071,20 +12078,34 @@ function New-WorkflowBranchCommitPlan {
     $runtimeTracked = @(Get-WorkflowTrackedExecutionRuntimePaths)
     $ownedSpecs = @(@($ManagedPathSpecs) + @($runtimeTracked) | Select-Object -Unique)
     $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $ownedSpecs
+    $restoredIgnoredPaths = @()
+    if ($RestoreTrackedFromCommit) {
+        # Completed rollback supplies its recorded before-commit after its existing checks. Raw
+        # backups may restore ignored files that were tracked before update.
+        $priorTracked = @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', $RestoreTrackedFromCommit, '--') |
+            Where-Object { (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher) -and -not (Test-WorkflowExecutionRuntimePath -Path $_) })
+        if ($priorTracked.Count -gt 0) {
+            $priorLiterals = @($priorTracked | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            $restoredIgnoredPaths = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--others', '--ignored', '--exclude-standard', '-z') -LiteralPaths $priorLiterals |
+                Where-Object { Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf })
+        }
+    }
+    $restoredIgnoredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in $restoredIgnoredPaths) { [void]$restoredIgnoredSet.Add([string]$path) }
     # A restored package can retain the indexed size and timestamp. Build from
     # owned content in a fresh index rather than trusting worktree stat diffs.
     $candidatePaths = @(
         @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', $oldHead, '--')) +
         @(Get-GitPathList -Arguments @('ls-files', '-z')) +
         @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z')) +
-        $runtimeTracked |
+        $restoredIgnoredPaths + $runtimeTracked |
             Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher } |
             Select-Object -Unique
     )
     $literalPaths = @($candidatePaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
     $indexedChanged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', $oldHead, '--') |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
-    $copyLiterals = @($candidatePaths | Where-Object { -not (Test-WorkflowExecutionRuntimePath -Path $_) } |
+    $copyLiterals = @($candidatePaths | Where-Object { -not (Test-WorkflowExecutionRuntimePath -Path $_) -and -not $restoredIgnoredSet.Contains([string]$_) } |
         ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
     $candidateIndexStateBefore = if ($literalPaths.Count -gt 0) {
         @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
@@ -12099,6 +12120,10 @@ function New-WorkflowBranchCommitPlan {
         Invoke-Git @('read-tree', $oldHead)
         if ($copyLiterals.Count -gt 0) {
             Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '-A') -LiteralPaths $copyLiterals
+        }
+        if ($restoredIgnoredPaths.Count -gt 0) {
+            $restoredLiterals = @($restoredIgnoredPaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '-f') -LiteralPaths $restoredLiterals
         }
         if ($runtimeTracked.Count -gt 0) {
             $runtimeLiterals = @($runtimeTracked | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })

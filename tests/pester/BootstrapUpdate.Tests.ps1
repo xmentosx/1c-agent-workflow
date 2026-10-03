@@ -3429,3 +3429,114 @@ Start-Sleep -Seconds 20
         }
     }
 }
+
+Describe 'Managed package Python runtime cache boundary' -Tag 'PackageContent' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $repoRoot = $context.RepoRoot
+        $helperPath = $context.HelperPath
+        $installerPath = $context.InstallerPath
+        function New-PackageCacheFixture {
+            param([string]$Root)
+            $relative = '.agents/skills/itl-remote-runner'
+            $source = Join-Path $Root 'Исходный пакет'
+            $target = Join-Path $Root 'Установленный проект'
+            foreach ($base in @($source,$target)) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $base ($relative + '/scripts/__pycache__')) | Out-Null
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/module.py')), [byte[]]@(35,32,208,175,13,10))
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/__pycache__/module.cpython-313.pyc')), [byte[]]@(0,13,255,10,33))
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/legacy.pyc')), [byte[]]@(0,255,45))
+                [IO.File]::WriteAllText((Join-Path $base ($relative + '/scripts/not__pycache__.txt')), 'keep', [Text.UTF8Encoding]::new($false))
+                New-Item -ItemType Directory -Force -Path (Join-Path $base ($relative + '/scripts/Пустая папка')) | Out-Null
+                $dotfile=Join-Path $base ($relative + '/scripts/.settings')
+                [IO.File]::WriteAllBytes($dotfile,[byte[]]@(0,255,13,10))
+                (Get-Item -LiteralPath $dotfile -Force).Attributes=[IO.FileAttributes]::Hidden
+            }
+            [pscustomobject]@{source=$source;target=$target;relative=$relative}
+        }
+    }
+
+    It 'bootstrap copies source bytes while excluding ignored Python runtime cache' {
+        $fixture = New-PackageCacheFixture -Root (Join-Path $TestDrive 'Bootstrap копия с пробелом')
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile($installerPath,[ref]$tokens,[ref]$errors)
+        foreach($name in @('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Get-FullPathNormalized','Assert-ManagedTargetPath','Copy-ManagedDirectory')) {
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $module=Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1'
+        if(Test-Path -LiteralPath $module){. $module}
+        Copy-ManagedDirectory -SourceRoot $fixture.source -TargetRoot $fixture.target -RelativePath $fixture.relative
+        $scripts=Join-Path $fixture.target ($fixture.relative+'/scripts')
+        (Test-Path -LiteralPath (Join-Path $scripts '__pycache__')) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $scripts 'legacy.pyc')) | Should -BeFalse
+        (Get-FileHash -LiteralPath (Join-Path $scripts 'module.py')).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/module.py'))).Hash
+        [IO.File]::ReadAllText((Join-Path $scripts 'not__pycache__.txt')) | Should -BeExactly 'keep'
+        (Test-Path -LiteralPath (Join-Path $scripts 'Пустая папка') -PathType Container) | Should -BeTrue
+        (Get-FileHash -LiteralPath (Join-Path $scripts '.settings')).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/.settings'))).Hash
+        ((Get-Item -LiteralPath (Join-Path $scripts '.settings') -Force).Attributes -band [IO.FileAttributes]::Hidden) | Should -Not -Be 0
+        (Test-Path -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/__pycache__/module.cpython-313.pyc'))) | Should -BeTrue
+    }
+
+    It 'master commits removal of historical tracked cache and ignores regenerated cache without hiding Python source' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Master пакет с пробелом')
+        & git -C $fixture.target init -q -b master; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target config user.name 'Package content test'; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target config user.email 'package@example.invalid'; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target add --all; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target commit -qm baseline; $LASTEXITCODE | Should -Be 0
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        # Use the delivered template as well as the fallback exercised by the
+        # branch regression; neither policy silently untracks old cache files.
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.target 'templates') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'templates/gitignore.append') -Destination (Join-Path $fixture.target 'templates/gitignore.append')
+        Ensure-GitIgnore
+        $cache=$fixture.relative+'/scripts/__pycache__/module.cpython-313.pyc'
+        @(Get-GitPathList -Arguments @('ls-files','-z','--',$cache)) | Should -Contain $cache
+        Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $fixture.relative
+        $source=[pscustomobject]@{root=$repoRoot;commit=('c'*40);ref='master';repo='fixture';source='path'}
+        $result=Commit-WorkflowUpdate -Source $source
+        $result.created | Should -BeTrue
+        @(Get-GitPathList -Arguments @('ls-tree','-r','--name-only','-z','HEAD','--',$cache)) | Should -HaveCount 0
+        @(Get-GitPathList -Arguments @('status','--porcelain=v1','-z')) | Should -HaveCount 0
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $fixture.target $cache)) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $fixture.target $cache),[byte[]]@(128,0,255))
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',$cache)) | Should -HaveCount 0
+        [IO.File]::WriteAllText((Join-Path $fixture.target ($fixture.relative+'/scripts/module.py')), '# user source change',[Text.UTF8Encoding]::new($false))
+        @(Get-GitPathList -Arguments @('diff','--name-only','-z','--',($fixture.relative+'/scripts/module.py'))) | Should -Contain ($fixture.relative+'/scripts/module.py')
+    }
+
+    It 'ignores Python runtime output with a legacy delivered gitignore template' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Старый шаблон Git с пробелом')
+        & git -C $fixture.target init -q; $LASTEXITCODE | Should -Be 0
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.target 'templates') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $fixture.target 'templates/gitignore.append'), ".dev.env`n", [Text.UTF8Encoding]::new($false))
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        Ensure-GitIgnore
+        $scripts=$fixture.relative+'/scripts'
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',($scripts+'/__pycache__'),($scripts+'/legacy.pyc'))) | Should -HaveCount 0
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',($scripts+'/module.py'))) | Should -Contain ($scripts+'/module.py')
+        (Test-Path -LiteralPath (Join-Path $fixture.target ($scripts+'/legacy.pyc'))) | Should -BeTrue
+    }
+
+    It 'runtime package filtering leaves raw snapshots and raw replacement byte-exact' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Rollback копия с пробелом')
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        $before=Get-WorkflowUpdatePathState -RelativePath $fixture.relative
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @($fixture.relative)
+        try {
+            Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $fixture.relative
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/__pycache__'))) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/legacy.pyc'))) | Should -BeFalse
+            (Get-FileHash -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/module.py'))).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/module.py'))).Hash
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/Пустая папка')) -PathType Container) | Should -BeTrue
+            (Get-FileHash -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/.settings'))).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/.settings'))).Hash
+            ((Get-Item -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/.settings')) -Force).Attributes -band [IO.FileAttributes]::Hidden) | Should -Not -Be 0
+            Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            (Get-WorkflowUpdatePathState -RelativePath $fixture.relative) | Should -BeExactly $before
+            Invoke-WorkflowManagedPathReplace -SourcePath (Join-Path $fixture.source $fixture.relative) -TargetPath (Join-Path $fixture.target $fixture.relative) -Directory
+            (Get-WorkflowUpdatePathState -RelativePath $fixture.relative) | Should -BeExactly $before
+        } finally { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
+    }
+}

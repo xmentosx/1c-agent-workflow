@@ -5,7 +5,7 @@
     $repoRoot = $context.RepoRoot
 
     function New-WorkflowRollbackFixture {
-        param([string]$Root, [switch]$PendingInterruption, [switch]$MetadataCachedPackage)
+        param([string]$Root, [switch]$PendingInterruption, [switch]$MetadataCachedPackage, [switch]$PackageCache)
         New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c/mcp'), (Join-Path $Root 'src/cf') | Out-Null
         [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".dev.env`n.agent-1c/mcp/`n.agent-1c/snapshots/`n.agent-1c/tmp/`n", [Text.UTF8Encoding]::new($false))
@@ -13,6 +13,14 @@
         [IO.File]::WriteAllText((Join-Path $Root 'src/cf/Модуль.bsl'), 'business baseline', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.dev.env'), "CAVEMAN=On`n", [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/mcp/client-managed.json'), '{"owners":{"old":"keep"}}', [Text.UTF8Encoding]::new($false))
+        $cacheRoot='.agents/skills/itl-remote-runner'
+        if ($PackageCache) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $Root ($cacheRoot+'/scripts/__pycache__')) | Out-Null
+            [IO.File]::AppendAllText((Join-Path $Root '.gitignore'), "__pycache__/`n*.pyc`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $Root ($cacheRoot+'/scripts/module.py')), '# before source',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllBytes((Join-Path $Root ($cacheRoot+'/scripts/__pycache__/tracked.pyc')),[byte[]]@(0,255,13,10))
+            [IO.File]::WriteAllBytes((Join-Path $Root ($cacheRoot+'/scripts/__pycache__/untracked.pyc')),[byte[]]@(0,128,10,13))
+        }
         & git -C $Root init -q -b master
         & git -C $Root config user.name 'Workflow Rollback Test'
         & git -C $Root config user.email 'rollback@example.invalid'
@@ -25,16 +33,28 @@
             [IO.File]::SetLastWriteTimeUtc((Join-Path $Root 'AGENT-INSTALL.md'), $packageTime)
         }
         & git -C $Root add --all
+        if ($PackageCache) { & git -C $Root add -f -- ($cacheRoot+'/scripts/__pycache__/tracked.pyc') }
         & git -C $Root commit -qm baseline
         $LASTEXITCODE | Should -Be 0
         $beforeHead = (& git -C $Root rev-parse HEAD).Trim()
         $saved = & {
             . $helperPath -ProjectRoot $Root -Action help *> $null
             $source = [pscustomobject]@{ root=$repoRoot; commit=('b' * 40); ref='master'; repo='fixture'; source='path' }
-            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md', '.dev.env', '.agent-1c/mcp/client-managed.json') `
+            $snapshotPaths=@('AGENT-INSTALL.md', '.dev.env', '.agent-1c/mcp/client-managed.json')
+            if ($PackageCache) { $snapshotPaths += $cacheRoot }
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths $snapshotPaths `
                 -SnapshotParent (Join-Path $Root '.agent-1c/snapshots/workflow-update')
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
             [IO.File]::WriteAllText((Join-Path $Root 'AGENT-INSTALL.md'), 'new package', [Text.UTF8Encoding]::new($false))
+            if ($PackageCache) {
+                $candidate=Join-Path $Root '.agent-1c/tmp/new package source'
+                New-Item -ItemType Directory -Force -Path (Join-Path $candidate ($cacheRoot+'/scripts/__pycache__')) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $candidate ($cacheRoot+'/scripts/module.py')), '# after source',[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllBytes((Join-Path $candidate ($cacheRoot+'/scripts/__pycache__/new.pyc')),[byte[]]@(0,200))
+                Copy-WorkflowManagedDirectory -SourceRoot $candidate -RelativePath $cacheRoot
+                & git -C $Root add -A -- $cacheRoot
+                $LASTEXITCODE | Should -Be 0
+            }
             if ($MetadataCachedPackage) {
                 [IO.File]::SetLastWriteTimeUtc((Join-Path $Root 'AGENT-INSTALL.md'), $packageTime)
             }
@@ -198,6 +218,37 @@ Describe 'Completed workflow rollback through the existing update owner' {
         (Get-WorkflowUpdateRecoveryStatus).retainedCount | Should -Be 2
     }
 
+    It 'completed rollback restores prior tracked ignored package cache but never adopts untracked cache' -Tag 'PackageContentRollback' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Полный откат Python с пробелом') -PackageCache
+        $tracked='.agents/skills/itl-remote-runner/scripts/__pycache__/tracked.pyc'
+        $untracked='.agents/skills/itl-remote-runner/scripts/__pycache__/untracked.pyc'
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        Set-RollbackSourceFixture
+        $beforeTree=(Get-GitOutput @('rev-parse',($fixture.beforeHead+'^{tree}'))).Trim()
+        $beforeRecords=@(Get-GitPathList -Arguments @('ls-tree','-r','-z',$fixture.beforeHead,'--',$tracked)) -join "`0"
+        $beforeBlob=(Get-GitOutput @('rev-parse',($fixture.beforeHead+':'+$tracked))).Trim()
+        @(Get-GitPathList -Arguments @('ls-tree','-r','--name-only','-z','HEAD','--',$tracked,$untracked)) | Should -HaveCount 0
+        $business=Join-Path $fixture.root 'src/cf/Модуль.bsl'
+        [IO.File]::WriteAllText($business,'business staged',[Text.UTF8Encoding]::new($false))
+        Invoke-Git @('add','--','src/cf/Модуль.bsl')
+        $businessBefore=@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0"
+        [IO.File]::WriteAllText($business,'business unstaged',[Text.UTF8Encoding]::new($false))
+        Restore-CompletedWorkflowUpdate -SnapshotId $fixture.id
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $fixture.root $tracked))) | Should -BeExactly ([Convert]::ToBase64String([byte[]]@(0,255,13,10)))
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $fixture.root $untracked))) | Should -BeExactly ([Convert]::ToBase64String([byte[]]@(0,128,10,13)))
+        (@(Get-GitPathList -Arguments @('ls-tree','-r','-z','HEAD','--',$tracked)) -join "`0") | Should -BeExactly $beforeRecords
+        @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--',$tracked)) | Should -Be @("100644 $beforeBlob 0`t$tracked")
+        (Get-GitOutput @('rev-parse','HEAD^{tree}')).Trim() | Should -BeExactly $beforeTree
+        @(Get-GitPathList -Arguments @('ls-files','-z','--',$untracked)) | Should -HaveCount 0
+        (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0") | Should -BeExactly $businessBefore
+        [IO.File]::ReadAllText($business) | Should -BeExactly 'business unstaged'
+        $restoredHead=Get-CurrentCommit
+        Restore-CompletedWorkflowUpdate -SnapshotId $fixture.id
+        Get-CurrentCommit | Should -BeExactly $restoredHead
+        (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0") | Should -BeExactly $businessBefore
+        Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+    }
+
     It 'commits restored same-size package bytes when Git stat metadata remains unchanged' {
         $fixture = New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Откат workflow с пробелом и сохранёнными метаданными') -MetadataCachedPackage
         $package = Join-Path $fixture.root 'AGENT-INSTALL.md'
@@ -311,7 +362,7 @@ Describe 'Completed workflow rollback through the existing update owner' {
 Describe 'Branch workflow finalization preserves unrelated index entries' -Tag 'WorkflowFinalize' {
     BeforeAll {
         function New-FinalizationFixture {
-            param([string]$Root, [switch]$BusinessConflict)
+            param([string]$Root, [switch]$BusinessConflict, [switch]$PackageCache)
             $utf8=[Text.UTF8Encoding]::new($false)
             New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c'),(Join-Path $Root 'src/cf') | Out-Null
             [IO.File]::WriteAllText((Join-Path $Root '.gitignore'),".agent-1c/tmp/`n.agent-1c/snapshots/`n",$utf8)
@@ -324,6 +375,12 @@ Describe 'Branch workflow finalization preserves unrelated index entries' -Tag '
             [IO.File]::WriteAllText((Join-Path $Root 'src/cf/Модуль.bsl'),'base',$utf8)
             [IO.File]::WriteAllText((Join-Path $Root 'src/cf/Другой модуль.bsl'),'baseline',$utf8)
             $known=@{ 'README.md'=@((Get-FileHash (Join-Path $Root 'README.md')).Hash); 'DEVELOPER-GUIDE.ru.md'=@((Get-FileHash (Join-Path $Root 'DEVELOPER-GUIDE.ru.md')).Hash); 'VANESSA-TESTS-GUIDE.md'=@('0'*64) }
+            if ($PackageCache) {
+                $package = Join-Path $Root '.agents/skills/itl-remote-runner/scripts'
+                New-Item -ItemType Directory -Force -Path (Join-Path $package '__pycache__') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $package 'module.py'), "# original source`r`n", $utf8)
+                [IO.File]::WriteAllBytes((Join-Path $package '__pycache__/module.cpython-313.pyc'), [byte[]]@(0,255,13,10,44))
+            }
             & git -C $Root init -q -b itldev/finalize;$LASTEXITCODE|Should -Be 0
             & git -C $Root config user.name 'Finalization fixture';$LASTEXITCODE|Should -Be 0
             & git -C $Root config user.email 'finalize@example.invalid';$LASTEXITCODE|Should -Be 0
@@ -343,6 +400,45 @@ Describe 'Branch workflow finalization preserves unrelated index entries' -Tag '
             & git -C $Root add -- 'src/cf/Другой модуль.bsl';$LASTEXITCODE|Should -Be 0
             [IO.File]::WriteAllText((Join-Path $Root 'src/cf/Другой модуль.bsl'),'unstaged business',$utf8)
             [pscustomobject]@{root=$Root;known=$known}
+        }
+    }
+
+    It 'retires tracked Python cache through the branch owner and restores raw backups without touching business stages' -Tag 'PackageContent' {
+        $fixture=New-FinalizationFixture -Root (Join-Path $TestDrive 'Пакет Python и конфликт бизнеса') -BusinessConflict -PackageCache
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $relative='.agents/skills/itl-remote-runner'
+            $cache=$relative+'/scripts/__pycache__/module.cpython-313.pyc'
+            $businessBefore=@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0"
+            $merge=(Get-GitOutput @('rev-parse','--path-format=absolute','--git-path','MERGE_HEAD')).Trim()
+            $mergeBefore=(Get-FileHash -LiteralPath $merge).Hash
+            $source=Join-Path $TestDrive 'Новая копия Python с пробелом'
+            New-Item -ItemType Directory -Force -Path (Join-Path $source ($relative+'/scripts/__pycache__')) | Out-Null
+            [IO.File]::WriteAllText((Join-Path $source ($relative+'/scripts/module.py')), "# new source`r`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllBytes((Join-Path $source $cache), [byte[]]@(0,128,44))
+            $before=Get-WorkflowUpdatePathState -RelativePath $relative
+            $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @($relative)
+            try {
+                Ensure-GitIgnore
+                Copy-WorkflowManagedDirectory -SourceRoot $source -RelativePath $relative
+                (Test-Path -LiteralPath (Join-Path $fixture.root $cache)) | Should -BeFalse
+                $plan=New-WorkflowBranchCommitPlan -ManagedPathSpecs @($relative,'.gitignore')
+                @($plan.managedPaths) | Should -Contain $cache
+                Apply-WorkflowBranchCommitPlan -Plan $plan | Out-Null
+                @(Get-GitPathList -Arguments @('ls-tree','-r','--name-only','-z','HEAD','--',$cache)) | Should -HaveCount 0
+                @(Get-GitPathList -Arguments @('ls-files','-z','--',$cache)) | Should -HaveCount 0
+                (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0") | Should -BeExactly $businessBefore
+                (Get-FileHash -LiteralPath $merge).Hash | Should -BeExactly $mergeBefore
+                [IO.File]::ReadAllText((Join-Path $fixture.root 'src/cf/Другой модуль.bsl')) | Should -BeExactly 'unstaged business'
+                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+                (Get-WorkflowUpdatePathState -RelativePath $relative) | Should -BeExactly $before
+                # A historical tracked cache is still part of the raw rollback.
+                # It remains ignored for subsequent package/update admission.
+                $ignored=Get-GitPathList -Arguments @('ls-files','--others','--ignored','--exclude-standard','-z','--',$cache)
+                @($ignored) | Should -Contain $cache
+                (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0") | Should -BeExactly $businessBefore
+                (Get-FileHash -LiteralPath $merge).Hash | Should -BeExactly $mergeBefore
+            } finally { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
         }
     }
 

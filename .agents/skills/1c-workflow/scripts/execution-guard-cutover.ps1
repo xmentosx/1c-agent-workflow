@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot 'lib/agent-1c.package-content.ps1')
 
 function Get-CutoverFullPath([string]$Path) {
     if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).Path $Path }
@@ -162,7 +163,11 @@ function Copy-CutoverManagedPath([string]$PackageRoot, [string]$WorktreeRoot, [s
         Remove-Item -LiteralPath $destination -Recurse:$Directory -Force -ErrorAction Stop
     }
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
-    Copy-Item -LiteralPath $source -Destination $destination -Recurse:$Directory -Force -ErrorAction Stop
+    if ($Directory) {
+        Copy-WorkflowPackageDirectoryContent -SourcePath $source -DestinationPath $destination
+    } else {
+        Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+    }
 }
 
 function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRoot) {

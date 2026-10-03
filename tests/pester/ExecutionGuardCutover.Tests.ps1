@@ -166,6 +166,8 @@
         $branchRoot = Join-Path $TestDrive 'Ветка с пробелом'
         $unmanagedRoot = Join-Path $TestDrive 'Пользовательская ветка'
         $package = Join-Path $TestDrive 'Новый package'
+        . (Join-Path $context.RepoRoot 'scripts/git-path-list.ps1')
+        $cacheRelative='.agents/skills/itl-remote-runner/scripts/__pycache__/legacy.cpython-313.pyc'
         New-Item -ItemType Directory -Path $repo -Force | Out-Null
         & git -C $repo init --quiet
         & git -C $repo symbolic-ref HEAD refs/heads/master
@@ -177,6 +179,8 @@
         [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $oldHelper) 'old-only.ps1'), 'legacy helper', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $oldHelper) 'stable.txt'), "same LF`n", [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $repo 'notes.txt'), 'original', [Text.UTF8Encoding]::new($false))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $repo $cacheRelative)) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $repo $cacheRelative),[byte[]]@(0,255,13,10))
         [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
         & git -C $repo -c core.safecrlf=false add --all
         & git -C $repo commit --quiet -m 'fixture'
@@ -212,6 +216,15 @@
         & git -C $branchRoot add -f -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
         & git -C $branchRoot commit --quiet -m 'fixture: accidentally track execution runtime' -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
 
+        $businessBefore=@(Get-RepositoryGitPathList -RepositoryRoot $branchRoot -Arguments @('ls-files','--stage','-z','--','notes.txt')) -join "`0"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $package $cacheRelative)) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $package $cacheRelative),[byte[]]@(0,128,13,10))
+        $looseCache='.agents/skills/itl-remote-runner/scripts/generated.pyc'
+        [IO.File]::WriteAllBytes((Join-Path $package $looseCache),[byte[]]@(0,255,50))
+        $pythonSource='.agents/skills/itl-remote-runner/scripts/module.py'
+        [IO.File]::WriteAllText((Join-Path $package $pythonSource),"# source transport`r`n",[Text.UTF8Encoding]::new($false))
+        $cacheBefore=(Get-FileHash -LiteralPath (Join-Path $package $cacheRelative)).Hash
+        $unmanagedCacheBefore=(Get-FileHash -LiteralPath (Join-Path $unmanagedRoot $cacheRelative)).Hash
         # The managed add emits a successful Git stderr warning on Windows.
         [IO.File]::WriteAllText((Join-Path $package '.agents/skills/1c-workflow/v2.txt'), "v2`n", [Text.UTF8Encoding]::new($false))
         & git -C $repo config core.autocrlf true
@@ -220,6 +233,16 @@
         $result = & $cutover -ProjectRoot $repo -PackageRoot $package -PrepareManagedWorktrees
 
         $result.worktrees | Should -HaveCount 2
+        foreach($root in @($branchRoot)) {
+            (Test-Path -LiteralPath (Join-Path $root $cacheRelative)) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $root $looseCache)) | Should -BeFalse
+            @(Get-RepositoryGitPathList -RepositoryRoot $root -Arguments @('ls-tree','-r','--name-only','-z','HEAD','--',$cacheRelative,$looseCache)) | Should -HaveCount 0
+            (Get-FileHash -LiteralPath (Join-Path $root $pythonSource)).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $package $pythonSource)).Hash
+        }
+        (@(Get-RepositoryGitPathList -RepositoryRoot $branchRoot -Arguments @('ls-files','--stage','-z','--','notes.txt')) -join "`0") | Should -BeExactly $businessBefore
+        (Get-FileHash -LiteralPath (Join-Path $package $cacheRelative)).Hash | Should -BeExactly $cacheBefore
+        (Get-FileHash -LiteralPath (Join-Path $unmanagedRoot $cacheRelative)).Hash | Should -BeExactly $unmanagedCacheBefore
+        (Get-FileHash -LiteralPath (Join-Path $repo $cacheRelative)).Hash | Should -BeExactly $unmanagedCacheBefore
         (Get-Content -LiteralPath (Join-Path $branchRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8) | Should -Be 'new v2 helper'
         Test-Path -LiteralPath (Join-Path $branchRoot '.agents/skills/1c-workflow/scripts/old-only.ps1') | Should -BeFalse
         (& git -C $branchRoot log -1 --pretty=%s) | Should -Be 'chore: activate execution guards v2'

@@ -398,6 +398,88 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "compares managed Python sources independently of generated caches for <Kind>" -TestCases @(
+        @{ Kind = 'cache-only'; ExpectedDrift = $false },
+        @{ Kind = 'modified-source'; ExpectedDrift = $true },
+        @{ Kind = 'missing-source'; ExpectedDrift = $true },
+        @{ Kind = 'extra-source'; ExpectedDrift = $true }
+    ) {
+        param([string]$Kind, [bool]$ExpectedDrift)
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-package-cache проверка " + [guid]::NewGuid().ToString('N'))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot 'workflow исходники')
+            $relativeSource = '.agents/skills/itl-remote-runner/scripts/itl_remote/probe.py'
+            $sourcePath = Join-Path $fixture.root $relativeSource
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourcePath) | Out-Null
+            $sourceBytes = [Text.Encoding]::UTF8.GetBytes("# проверка пакета`r`nvalue = 7`r`n")
+            [IO.File]::WriteAllBytes($sourcePath, $sourceBytes)
+            & git -C $fixture.root add -- $relativeSource
+            & git -C $fixture.root commit -m 'owned Python package source' | Out-Null
+            $candidateCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $e2eRoot = Join-Path $tempRoot 'e2e стенд'
+            $worktreeRoot = Join-Path $tempRoot 'e2e ветка'
+            New-Item -ItemType Directory -Force -Path $e2eRoot | Out-Null
+            & git -C $e2eRoot init -b master | Out-Null
+            & git -C $e2eRoot config user.email 'tests@example.invalid'
+            & git -C $e2eRoot config user.name 'Release Tests'
+            foreach ($name in @('.agents', 'templates', 'scripts', 'AGENT-INSTALL.md', 'install-agent-1c-workflow.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $fixture.root $name) -Destination $e2eRoot -Recurse
+            }
+            $lock = $fixture.lock | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.commit = $candidateCommit
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/dependency-lock.json') -Value $lock
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/project.json') -Value ([ordered]@{ masterBranch='master' })
+            [IO.File]::WriteAllText((Join-Path $e2eRoot '.gitignore'), ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e.json`n__pycache__/`n*.pyc`n", [Text.UTF8Encoding]::new($false))
+            $cacheRelative = '.agents/skills/itl-remote-runner/scripts/itl_remote/__pycache__/probe.cpython-313.pyc'
+            $cachePath = Join-Path $e2eRoot $cacheRelative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cachePath) | Out-Null
+            [IO.File]::WriteAllBytes($cachePath, [byte[]](243,13,13,10,0,0,0,0,1,0,0,0,7,0,0,0,128,0))
+            # Reproduce the actual stand: a generated cache can already be tracked by an older package commit.
+            & git -C $e2eRoot add -- .
+            & git -C $e2eRoot add -f -- $cacheRelative
+            & git -C $e2eRoot commit -m 'stand baseline including historical Python cache' | Out-Null
+            & git -C $e2eRoot worktree add --quiet -b 'itldev/package-cache' $worktreeRoot master
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c/release-e2e.json') -Value ([ordered]@{
+                schemaVersion=1; devBranchName='package-cache'; worktreePath=$worktreeRoot
+            })
+            Write-Utf8Json -Path (Join-Path $worktreeRoot '.agent-1c/dev-branches/package-cache.json') -Value ([ordered]@{
+                unsafeActionProtectionConfirmed=$true
+            })
+            $markerPath = Join-Path $e2eRoot 'tests/features/workflow-release-e2e.feature'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $markerPath) | Out-Null
+            [IO.File]::WriteAllText($markerPath, "# release marker`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- tests/features/workflow-release-e2e.feature
+            & git -C $e2eRoot commit -m 'fixture marker' | Out-Null
+            $installedSource = Join-Path $e2eRoot $relativeSource
+            switch ($Kind) {
+                'modified-source' { [IO.File]::WriteAllText($installedSource, "# changed source`r`nvalue = 14`r`n", [Text.UTF8Encoding]::new($false)) }
+                'missing-source' { Remove-Item -LiteralPath $installedSource }
+                'extra-source' { [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $installedSource) 'foreign.py'), "value = 99`n", [Text.UTF8Encoding]::new($false)) }
+            }
+            if ($Kind -ne 'cache-only') {
+                & git -C $e2eRoot add -- .agents/skills/itl-remote-runner
+                & git -C $e2eRoot commit -m "stand $Kind difference" | Out-Null
+            }
+            $outputPath = Join-Path $tempRoot 'release-context.json'
+            $beforeCacheHash = (Get-FileHash -LiteralPath $cachePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($ExpectedDrift) {
+                @($context.issues.code) | Should -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+                ($context.issues | Where-Object code -eq 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT' | Select-Object -First 1).message | Should -Match (([regex]::Escape($(if ($Kind -eq 'extra-source') { '.agents/skills/itl-remote-runner/scripts/itl_remote/foreign.py' } else { $relativeSource }))) + '(?:$|,)')
+            } else {
+                @($context.issues.code) | Should -Not -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+            }
+            @($context.issues.code) | Should -Not -Contain 'RELEASE_STAND_WORKFLOW_COMMIT_DRIFT'
+            $context.stand.projectRoot | Should -BeExactly $e2eRoot
+            (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $sourceHash
+            (Get-FileHash -LiteralPath $cachePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $beforeCacheHash
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath)) | Should -BeExactly ([Convert]::ToBase64String($sourceBytes))
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
     It "rejects invalid UTF-8 in changed PowerShell before test execution" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-encoding-" + [guid]::NewGuid().ToString("N"))
         try {

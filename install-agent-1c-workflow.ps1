@@ -341,7 +341,7 @@ function Copy-ManagedDirectory {
     if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $targetPath -Recurse -Force
     }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+    Copy-WorkflowPackageDirectoryContent -SourcePath $sourcePath -DestinationPath $targetPath
     Write-Host "Installed workflow directory: $RelativePath"
 }
 
@@ -487,6 +487,7 @@ if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
 
 $projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
 $sourceRootFull = Resolve-Agent1cFullPath -Path $SourceRoot
+. (Join-Path $scriptRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1')
 $callerRoot = Resolve-Agent1cFullPath -Path (Get-Location).Path
 
 if (-not (Test-Path -LiteralPath $sourceRootFull -PathType Container -ErrorAction SilentlyContinue)) {

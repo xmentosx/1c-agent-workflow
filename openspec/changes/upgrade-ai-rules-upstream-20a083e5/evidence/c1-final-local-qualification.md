@@ -364,3 +364,81 @@ PowerShell 5.1/Pester 5.8, with strict UTF-8 output and 53 input hashes unchange
 Its receipt is `build/c1-cfe-pin-assertion-causal/qualification.json`, SHA256
 `b5d02acb8583cf92ec707cd45ecd3cfed33ba6d300fccf34279fc783640e1caa`.
 This is focused test-contract correction, not a passed retry of the source gate.
+## Managed package Python cache transport correction
+
+The public candidate `31d65d9a81df459abd88e8d8bc07309b` (source `8e8abb04`, tree
+`00e88942`) stopped at Release preflight before gates or push. The dedicated main
+stand contained 16 **tracked** remote-runner `__pycache__/*.cpython-313.pyc` files;
+all 16 SHA256 values exactly matched ignored Python output in the source delivery
+checkout S. The clean candidate and H contained none. The installed commit
+`8af83dd67390b2a05278095fa862f95b33243a09` had admitted them during the C5 package
+update. The separate installed C5 versus candidate8e8 workflow identity mismatch
+still requires the ordinary exact-candidate update; this fix does not waive it.
+
+One stateless package-content predicate now applies the existing source
+`__pycache__/` and `*.pyc` policy to bootstrap copying, package-only staged update
+copying, managed-worktree execution-guard cutover and Release package inventory. The installed ignore template and fallback
+prevent subsequent generated cache from becoming new package content. Snapshot,
+raw replacement and rollback retain their original byte-preserving behavior;
+tracked historical cache deletions remain in the existing commit owner's scope.
+Real `.py` changes still fail managed-package agreement. No state, schema, gate,
+coordinator or new runtime authority was introduced.
+
+Causal evidence is under `build/package-content-causal`: the first run retained a
+real update-copy RED and an incomplete bootstrap AST-fixture setup failure. A
+second bootstrap setup failure is retained separately; the completed fixture's
+`red-bootstrap-complete` run then reproduced the same real cache-copy RED without
+runtime changes. The connected native Windows PowerShell 5.1/Pester 5.8 batch
+passed **6/0/0 in 16.144 s**, including historical tracked-cache retirement with
+staged/unmerged business entries preserved, raw backup restoration, and the
+unchanged atomic-copy failure and equivalent-stat regressions. After explicit
+hidden-dotfile, empty Unicode-directory and legacy-template assertions were added,
+only the four affected bootstrap/copy cases ran again: **4/0/0 in 7.295 s**.
+These are separate input versions, not a newly claimed combined whole-file run.
+Both runs retained strict UTF-8 stdout/stderr and unchanged captured inputs.
+
+`build/package-content-causal/ownership/selection.json` records the actual pure
+resolver result: changing only the shared module selects the existing lifecycle,
+bootstrap-update and source-quality-gate contracts; bootstrap, rollback and
+readiness all include it in their owner input sets. No owner test lists or budgets
+changed. Historical cache reuse is not claimed. Readiness's separate causal and
+positive results remain under `build/package-cache-readiness-causal`.
+
+This source change alters native producer inputs, now 44 through the existing
+authoritative getter. The earlier `69cdd41c...` build remains historical proof of
+its recorded producer; it does not qualify this changed runtime. A new native
+build, ordinary registration and the original public continuation remain pending.
+The existing execution-guard cutover is a fourth package ingress: it copies from
+main/source into managed child worktrees before its existing temporary-index
+commit. It now consumes the same predicate for directory copying; file copying,
+cutover state and guards are unchanged. Its actual existing managed-worktree
+fixture reproduces regeneration in the source and historical tracked bytecode in
+the branch. `cutover-red-correct-scope` failed the cache-absence assertion;
+`cutover-green-correct-scope` passed **1/0/0 in 8.976 s**, retaining all original
+assertions and exact staged business, main/source and unrelated-worktree bytes.
+The two earlier cutover attempts are retained as an incorrect newly added test
+expectation: cutover intentionally does not replace main itself, so requiring
+main cache removal was invalid. Only that new assertion's scope was corrected;
+the fixture paths, workload and original assertions were retained.
+Review additionally reproduced a completed-rollback boundary: when an older
+package had force-tracked bytecode despite its ignore rule, raw restoration
+recovered the file but the inverse commit omitted it. The unchanged public
+rollback path now supplies its recorded `preUpdateHead`, after the existing rollback checks, to the commit
+planner. Only prior tracked, currently ignored, existing restored files inside
+the snapshot write-set are force-staged as exact literals in the temporary
+index; execution runtime stays excluded. Ordinary planning has no new input or
+forced adoption. A file that was never tracked remains outside Git even when its
+raw backup is restored. No receipt schema or recovery transition changed.
+
+`completed-rollback-red-parsed-assertion` proves the missing original HEAD entry
+before this correction; an earlier assertion-syntax mistake is retained in
+`completed-rollback-red`. The same public rollback plus the original completed
+rollback/business-index and default unmerged-index cases passed **3/0/0 in
+18.762 s**. The new case checks exact original HEAD tree, blob/mode/index, raw
+tracked and untracked cache bytes, business staging, and idempotent repetition.
+After that batch, review removed an accidental duplicate fixture setup from an
+unrelated receipt-recovery fixture; its normalized function AST was restored
+exactly to the original HEAD (`unrelated-fixture-restoration.json`). The exercised
+rollback and default fixture bodies and runtime remained unchanged. These focused
+receipts and earlier copy/cutover runs retain their actual input identities;
+final exact-source registration and native qualification are still pending.

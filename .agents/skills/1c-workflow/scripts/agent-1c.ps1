@@ -416,6 +416,7 @@ $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
 $script:Agent1cModuleFiles = @(
     "agent-1c.immutable-download.ps1",
     "agent-1c.core.ps1",
+    "agent-1c.package-content.ps1",
     "agent-1c.openspec-cli.ps1",
     "agent-1c.ports.ps1",
     "agent-1c.sessions.ps1",
