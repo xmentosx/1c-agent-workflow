@@ -195,7 +195,7 @@ Describe "Release gate scripts" {
         $developE2eText | Should -Match 'developDevBranchName'
         $developE2eText | Should -Match 'developWorktreePath'
         $developE2eText | Should -Match 'Develop and Release worktree paths must differ'
-        $developE2eText | Should -Match '(?s)Invoke-InstalledAction -Name "upgrade-refresh-branch".*?Set-DevelopStandVanessaFeature -Root \$standBranchRoot.*?Invoke-InstalledAction -Name "upgrade-check"'
+        $developE2eText | Should -Match '(?s)Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch".*?Set-DevelopStandVanessaFeature -Root \$standBranchRoot.*?Invoke-InstalledAction -Name "upgrade-check"'
     }
 
     It "owns and idempotently commits the upgrade-journey Vanessa fixture" {
@@ -266,6 +266,38 @@ Describe "Release gate scripts" {
         $journeyParameter | Should -Not -BeNullOrEmpty
         $journeyParameter.DefaultValue.SafeGetValue() | Should -Be "all"
         @($journeyParameter.Attributes | Where-Object TypeName -match "ValidateSet" | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("upgrade", "fresh", "all")
+
+        $provision = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-DevelopTimedOperation' -and
+                @($node.CommandElements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -eq 'provision-project' }).Count -eq 1
+        }, $true))
+        $provision.Count | Should -Be 1
+        $operation = @($provision[0].CommandElements | Where-Object { $_ -is [Management.Automation.Language.ScriptBlockExpressionAst] })
+        $operation.Count | Should -Be 1
+        & {
+            $ProjectRoot = Join-Path $TestDrive 'Исходный стенд с пробелами'
+            $FreshProjectsRoot = Join-Path $TestDrive 'Новые проекты с пробелами'
+            $freshRoot = Join-Path $FreshProjectsRoot 'p Проект\новый'
+            New-Item -ItemType Directory -Path (Join-Path $ProjectRoot '.agent-1c') -Force | Out-Null
+            $sourceConfig = Join-Path $ProjectRoot '.agent-1c/project.json'
+            $sourceEnv = Join-Path $ProjectRoot '.dev.env'
+            [IO.File]::WriteAllText($sourceConfig, '{}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($sourceEnv, "UI_TESTING=essential`r`nITL_VANESSA_TESTING=off`r`nUSER_SETTING=keep`r`nEXPORT_PATH=old`r`nITL_ACTIVE_CONTEXT_UPDATED_AT=old`r`n", [Text.UTF8Encoding]::new($true))
+            $sourceEnvHash = (Get-FileHash -LiteralPath $sourceEnv).Hash
+            $sourceConfigHash = (Get-FileHash -LiteralPath $sourceConfig).Hash
+            $body = $operation[0].ScriptBlock.Extent.Text
+            & ([scriptblock]::Create($body.Substring(1, $body.Length - 2)))
+            $seed = [IO.File]::ReadAllLines((Join-Path $freshRoot '.dev.env'), [Text.Encoding]::UTF8)
+            @($seed | Where-Object { $_ -match '^UI_TESTING=' }).Count | Should -Be 0
+            $seed | Should -Contain 'ITL_VANESSA_TESTING=off'
+            $seed | Should -Contain 'USER_SETTING=keep'
+            $seed | Should -Contain 'SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed'
+            @($seed | Where-Object { $_ -match '^(EXPORT_PATH|ITL_ACTIVE_CONTEXT_UPDATED_AT)=' }).Count | Should -Be 0
+            (Get-FileHash -LiteralPath $sourceEnv).Hash | Should -BeExactly $sourceEnvHash
+            (Get-FileHash -LiteralPath $sourceConfig).Hash | Should -BeExactly $sourceConfigHash
+            (Get-FileHash -LiteralPath (Join-Path $freshRoot '.agent-1c/project.json')).Hash | Should -BeExactly $sourceConfigHash
+        }
 
         $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
         $text | Should -Match '\$requestedJourneys = if \(\$Journey -eq "all"\) \{ @\("upgrade", "fresh"\) \} else \{ @\(\$Journey\) \}'
@@ -1323,6 +1355,189 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = $oldServerResetFixture
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe 'Develop upgrade manifest continuation' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        $tokens=$null; $errors=$null
+        $owner=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-develop-e2e.ps1'),[ref]$tokens,[ref]$errors)
+        if ($errors) { throw 'Develop owner must parse' }
+        foreach ($name in @('Read-CompactSummary','Repair-DevelopUpgradeManifestConflict','Invoke-DevelopUpgradeRefresh')) {
+            $definition=$owner.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$false)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        function New-DevelopManifestMergeFixture {
+            param([string]$Root,[string]$Case='valid')
+            $utf8=[Text.UTF8Encoding]::new($false)
+            $main=Join-Path $Root 'Стенд main'; $branch=Join-Path $Root 'Ветка r40'
+            New-Item -ItemType Directory -Force -Path $main | Out-Null
+            [void](Invoke-RepositoryGit $main @('init','--quiet','--initial-branch=master'))
+            [void](Invoke-RepositoryGit $main @('config','user.email','tests@example.invalid'))
+            [void](Invoke-RepositoryGit $main @('config','user.name','ITL Tests'))
+            [void](Invoke-RepositoryGit $main @('config','core.autocrlf','false'))
+            [IO.File]::WriteAllText((Join-Path $main '.gitignore'),".agents/`n.agent-1c/`nlogs/`n",$utf8)
+            $rule='правило с пробелом.md'
+            [IO.File]::WriteAllText((Join-Path $main $rule),"old rule`n",$utf8)
+            [IO.File]::WriteAllText((Join-Path $main 'business.txt'),"base business`n",$utf8)
+            $baseManifest=[ordered]@{
+                protocol=1;source='controlled-fixture';version='itl-main-410951e7-r36';installedAt='2026-07-17T03:06:46Z';updatedAt='2026-09-23T14:05:54Z'
+                tools=@('kilocode');language='ru';mcpServers=@('1C-docs-mcp')
+                files=[ordered]@{$rule=@{source='content/rules/rule.md';installedHash=(Get-FileHash -LiteralPath (Join-Path $main $rule)).Hash.ToLowerInvariant()}}
+                foreignFiles=@{kilocode=@('.kilo/commands/itl-status.md')}
+                integrations=@{openspec=@{detected=$true;scaffolded=$true;artifactsBundleVersion='1.2.0';files=@('openspec/changes/README.md','openspec/specs/README.md')}}
+            }
+            [IO.File]::WriteAllText((Join-Path $main '.ai-rules.json'),($baseManifest|ConvertTo-Json -Depth 12),$utf8)
+            [void](Invoke-RepositoryGit $main @('add','--all'))
+            [void](Invoke-RepositoryGit $main @('commit','--quiet','-m','old r36 common baseline'))
+            $base=(Invoke-RepositoryGit $main @('rev-parse','HEAD')).stdout.Trim()
+            [void](Invoke-RepositoryGit $main @('worktree','add','--quiet','-b','itldev/fixture',$branch,$base))
+            foreach ($rootPath in @($main,$branch)) {
+                [IO.File]::WriteAllText((Join-Path $rootPath $rule),"same current rule`n",$utf8)
+                $m=$baseManifest|ConvertTo-Json -Depth 12|ConvertFrom-Json
+                $m.version='itl-main-c1fb8e6-r40'
+                $m.updatedAt=if($rootPath -eq $main){'2026-10-03T05:20:27Z'}else{'2026-10-03T07:46:37Z'}
+                $m.integrations.openspec.artifactsBundleVersion='1.13.1'
+                $m.files.$rule.installedHash=(Get-FileHash -LiteralPath (Join-Path $rootPath $rule)).Hash.ToLowerInvariant()
+                $m.foreignFiles.kilocode=@('.kilo/commands/itl-status.md',$(if($rootPath -eq $main){'.kilo/commands/itl-switch-client.md'}else{'.kilo/commands/itl-result.md'}))
+                if ($rootPath -eq $branch) {
+                    New-Item -ItemType Directory -Force -Path (Join-Path $branch 'openspec')|Out-Null
+                    [IO.File]::WriteAllText((Join-Path $branch 'openspec/project.md'),"generated branch context`n",$utf8)
+                    $m.files|Add-Member -NotePropertyName 'openspec/project.md' -NotePropertyValue @{source='<auto-generated:1c-rules>';installedHash=(Get-FileHash -LiteralPath (Join-Path $branch 'openspec/project.md')).Hash.ToLowerInvariant()}
+                    $m.integrations.openspec|Add-Member -NotePropertyName projectMdGenerated -NotePropertyValue $true
+                    if ($Case -eq 'unknown-top') {$m|Add-Member -NotePropertyName branchSecretPolicy -NotePropertyValue 'preserve me'}
+                    if ($Case -eq 'unknown-integration') {$m.integrations|Add-Member -NotePropertyName branchPolicy -NotePropertyValue @{enabled=$true}}
+                    if ($Case -eq 'branch-only-rule') {
+                        [IO.File]::WriteAllText((Join-Path $branch 'branch-rule.md'),"branch custom rule`n",$utf8)
+                        $m.files|Add-Member -NotePropertyName 'branch-rule.md' -NotePropertyValue @{source='content/rules/branch.md';installedHash=(Get-FileHash -LiteralPath (Join-Path $branch 'branch-rule.md')).Hash.ToLowerInvariant()}
+                    }
+                    if ($Case -eq 'version-mismatch') {$m.version='different controlled version'}
+                } elseif ($Case -eq 'forged-hash') { $m.files.$rule.installedHash=('f'*64) }
+                if ($Case -eq 'business-conflict') { [IO.File]::WriteAllText((Join-Path $rootPath 'business.txt'),("business "+$rootPath+"`n"),$utf8) }
+                [IO.File]::WriteAllText((Join-Path $rootPath '.ai-rules.json'),($m|ConvertTo-Json -Depth 12),$utf8)
+                [void](Invoke-RepositoryGit $rootPath @('add','--all'))
+                [void](Invoke-RepositoryGit $rootPath @('commit','--quiet','-m','independent current workflow update'))
+            }
+            $target=(Invoke-RepositoryGit $main @('rev-parse','HEAD')).stdout.Trim()
+            $before=(Invoke-RepositoryGit $branch @('rev-parse','HEAD')).stdout.Trim()
+            $merge=Invoke-RepositoryGit $branch @('merge','--no-ff','--no-commit',$target) -AllowFailure
+            $merge.exitCode|Should -Be 1
+            @(Get-RepositoryGitPathList $branch @('diff','--name-only','--diff-filter=U','-z'))|Should -Contain '.ai-rules.json'
+            $lib=Join-Path $branch '.agents/skills/1c-workflow/scripts/lib'
+            New-Item -ItemType Directory -Force -Path $lib|Out-Null
+            foreach ($name in @('runtime-values','core','vanessa','lifecycle','ai-rules-migration')) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$name.ps1") -Destination $lib
+            }
+            $statePath=Join-Path $main '.agent-1c/dev-branches/fixture.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path $statePath)|Out-Null
+            [IO.File]::WriteAllText($statePath,(@{devBranch='itldev/fixture';devBranchName='fixture';safeDevBranchName='fixture';worktreePath=$branch;mainWorktreePath=$main}|ConvertTo-Json),$utf8)
+            # The real installed transaction owner writes the pending fixture;
+            # the source recovery never fabricates or edits this record.
+            $module=New-Module -ArgumentList $branch -ScriptBlock {
+                param($Root)
+                $script:ProjectRoot=$Root
+                foreach($name in @('runtime-values','core','vanessa','lifecycle','ai-rules-migration')){. (Join-Path $Root ".agents/skills/1c-workflow/scripts/lib/agent-1c.$name.ps1")}
+            }
+            try {
+                & $module {
+                    param($Before,$Target,$WrongParent)
+                    $state=Read-DevBranchState -Name fixture
+                    Set-PendingDevBranchMergeTransaction -State $state -Operation refresh-dev-branch -Branch itldev/fixture -BranchCommit $Before -TargetCommit $Target -Stage conflicts -AllowedPaths @(Get-DevBranchMergeIndexPaths) -ConflictPaths @(Get-DevBranchMergeUnmergedPaths)
+                    if ($WrongParent) { Update-DevBranchState -State (Read-DevBranchState -Name fixture) -Updates @{pendingMergeTargetCommit=$WrongParent} }
+                } $before $target $(if($Case -eq 'parent-mismatch'){$base}else{''})
+            } finally {Remove-Module $module -ErrorAction SilentlyContinue}
+            if ($Case -eq 'stage-mismatch') {
+                $blob=(Invoke-RepositoryGit $branch @('rev-parse',($base+':.ai-rules.json'))).stdout.Trim()
+                [void](Invoke-RepositoryGit $branch @('update-index','-z','--index-info') -StandardInput ("100644 $blob 3`t.ai-rules.json"+[char]0))
+            }
+            $logs=Join-Path $branch 'logs';New-Item -ItemType Directory $logs|Out-Null
+            $stdout=Join-Path $logs 'initial failed.stdout.json';$stderr=Join-Path $logs 'initial failed.stderr.log'
+            [IO.File]::WriteAllText($stdout,(@{action='refresh-dev-branch';status='failed';errorCategory='merge-conflict';requiredAction='agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'}|ConvertTo-Json -Compress),$utf8)
+            [IO.File]::WriteAllText($stderr,$merge.stderr,$utf8)
+            return @{main=$main;root=$branch;base=$base;branch=$before;target=$target;statePath=$statePath;result=[pscustomobject]@{exitCode=1;stdout=$stdout;stderr=$stderr};rule=$rule}
+        }
+    }
+
+    It 'continues the same public refresh after the real three-block manifest conflict without promoting the first failure' {
+        & {
+            $fixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive 'Публичный refresh')
+            $script:manifestRefreshCalls=New-Object 'Collections.Generic.List[object]'
+            $steps=New-Object 'Collections.Generic.List[object]'
+            $rawBefore=(Get-FileHash -LiteralPath $fixture.result.stdout).Hash
+            $stateBefore=(Get-FileHash -LiteralPath $fixture.statePath).Hash
+            $otherBefore=@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z')|Where-Object {$_ -notmatch "`t\.ai-rules\.json$"})
+            function Invoke-InstalledAction {
+                param($Name,$Root,$Action,$AdditionalArguments,$TimeoutSeconds,[switch]$AllowFailure)
+                $script:manifestRefreshCalls.Add(@{name=$Name;root=$Root;action=$Action;arguments=@($AdditionalArguments);allowFailure=[bool]$AllowFailure})
+                if($script:manifestRefreshCalls.Count -eq 1){$steps.Add(@{name=$Name;status='failed'});return $fixture.result}
+                @(Get-RepositoryGitPathList $Root @('diff','--name-only','--diff-filter=U','-z')).Count|Should -Be 0
+                # The simulated public owner alone completes the real merge;
+                # the source repair is forbidden to create this commit.
+                [void](Invoke-RepositoryGit $Root @('commit','--quiet','--no-edit'))
+                $stdout=Join-Path (Split-Path $fixture.result.stdout) 'retry.stdout.json'
+                [IO.File]::WriteAllText($stdout,'{"action":"refresh-dev-branch","status":"succeeded"}',[Text.UTF8Encoding]::new($false))
+                $steps.Add(@{name=$Name;status='passed'})
+                return [pscustomobject]@{exitCode=0;stdout=$stdout;stderr=$fixture.result.stderr}
+            }
+            $result=Invoke-DevelopUpgradeRefresh -Name upgrade-refresh-branch -Root $fixture.root -BranchName fixture
+            $result.exitCode|Should -Be 0
+            @($steps.status)|Should -Be @('failed','passed')
+            @($script:manifestRefreshCalls.name)|Should -Be @('upgrade-refresh-branch','upgrade-refresh-branch-semantic-repair')
+            @($script:manifestRefreshCalls.root|Select-Object -Unique)|Should -Be @($fixture.root)
+            @($script:manifestRefreshCalls.action|Select-Object -Unique)|Should -Be @('refresh-dev-branch')
+            @($script:manifestRefreshCalls|ForEach-Object {$_.arguments}).Count|Should -Be 0
+            (Get-FileHash -LiteralPath $fixture.result.stdout).Hash|Should -BeExactly $rawBefore
+            (Get-FileHash -LiteralPath $fixture.statePath).Hash|Should -BeExactly $stateBefore
+            (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD^1')).stdout.Trim()|Should -BeExactly $fixture.branch
+            (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD^2')).stdout.Trim()|Should -BeExactly $fixture.target
+            (@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z')|Where-Object {$_ -notmatch "`t\.ai-rules\.json$"})-join [char]0)|Should -BeExactly ($otherBefore-join [char]0)
+            $m=Get-Content -LiteralPath (Join-Path $fixture.root '.ai-rules.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $m.updatedAt|Should -BeExactly '2026-10-03T05:20:27Z'
+            $m.integrations.openspec.projectMdGenerated|Should -BeTrue
+            $m.files.'openspec/project.md'.source|Should -BeExactly '<auto-generated:1c-rules>'
+            @($m.foreignFiles.kilocode)|Should -Be @('.kilo/commands/itl-status.md','.kilo/commands/itl-switch-client.md','.kilo/commands/itl-result.md')
+            $body=Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/invoke-develop-e2e.ps1') -Raw -Encoding UTF8
+            $body|Should -Match '(?s)Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch".*?Assert-FreshVerificationResult.*?upgrade-export.*?Assert-TrackedClean'
+        }
+    }
+
+    It 'retains the original merge and failure for unsupported <Case> semantics' -ForEach @(
+        @{Case='unknown-top'},@{Case='unknown-integration'},@{Case='branch-only-rule'},@{Case='forged-hash'},
+        @{Case='business-conflict'},@{Case='parent-mismatch'},@{Case='stage-mismatch'},@{Case='version-mismatch'}
+    ) {
+        & {
+            $fixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive ("Отказ $Case")) $Case
+            $before=(Get-FileHash -LiteralPath (Join-Path $fixture.root '.ai-rules.json')).Hash
+            $stateBefore=(Get-FileHash -LiteralPath $fixture.statePath).Hash
+            $indexBefore=@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0
+            $rawBefore=(Get-FileHash -LiteralPath $fixture.result.stdout).Hash
+            $script:manifestRefusalCalls=0
+            function Invoke-InstalledAction {param($Name,$Root,$Action,$AdditionalArguments,$TimeoutSeconds,[switch]$AllowFailure) $script:manifestRefusalCalls++;return $fixture.result}
+            {Invoke-DevelopUpgradeRefresh -Name upgrade-refresh-branch -Root $fixture.root -BranchName fixture}|Should -Throw 'upgrade-refresh-branch failed with exit code 1*'
+            $script:manifestRefusalCalls|Should -Be 1
+            (Get-FileHash -LiteralPath (Join-Path $fixture.root '.ai-rules.json')).Hash|Should -BeExactly $before
+            (Get-FileHash -LiteralPath $fixture.statePath).Hash|Should -BeExactly $stateBefore
+            (@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0)|Should -BeExactly $indexBefore
+            (Get-FileHash -LiteralPath $fixture.result.stdout).Hash|Should -BeExactly $rawBefore
+            (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD')).stdout.Trim()|Should -BeExactly $fixture.branch
+            (Invoke-RepositoryGit $fixture.root @('rev-parse','MERGE_HEAD')).stdout.Trim()|Should -BeExactly $fixture.target
+        }
+    }
+
+    It 'preserves a later manifest edit instead of overwriting the returned conflict' {
+        $fixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive 'Поздняя правка')
+        $script:lateManifestPath=Join-Path $fixture.root '.ai-rules.json'
+        $indexBefore=@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0
+        Mock Read-CompactSummary {
+            param($ProcessResult)
+            [IO.File]::AppendAllText($script:lateManifestPath,"`nuser late repair`n",[Text.UTF8Encoding]::new($false))
+            [IO.File]::ReadAllText($ProcessResult.stdout,[Text.UTF8Encoding]::new($false))|ConvertFrom-Json
+        }
+        (Repair-DevelopUpgradeManifestConflict -Root $fixture.root -BranchName fixture -ProcessResult $fixture.result)|Should -BeFalse
+        [IO.File]::ReadAllText($script:lateManifestPath)|Should -Match 'user late repair'
+        (@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0)|Should -BeExactly $indexBefore
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD')).stdout.Trim()|Should -BeExactly $fixture.branch
     }
 }
 

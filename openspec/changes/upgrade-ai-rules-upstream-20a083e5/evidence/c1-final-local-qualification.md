@@ -486,3 +486,84 @@ The failed 1040-case gate is retained in
 is `e2c007bb89421cede67d6cea013699764ee078fff58a884ff702047c7c62d821`.
 Only fixture setup and this evidence changed; all 44 native producer inputs and
 the qualified 29f CFE remain unchanged. Final registration/publication remain pending.
+
+## Registered 6a candidate and original upgrade continuation failure
+
+Public RegisterChange subsequently passed for clean commit
+`6a98343c770ad60a0eea566adcea777519533301`, tree
+`c80f4a4292942f964b7d9881c5de525f2c6126e3`: 1120 passed, zero failed/skipped,
+48 selected files (36 executed, 12 reused), 1663.441 seconds. All 11 original
+PendingMergeWorkflowTransition cases passed. The immutable local receipt is
+`build/c1-register-passed-6a98343c/retention.json`.
+
+The ordinary public update installed that exact candidate in the master and
+seven existing development worktrees. All eight remained tracked-clean, with
+zero changes under `src/cf`/`src/cfe`, zero tracked Python cache artifacts and
+`UI_TESTING=essential`. This proves file-only installation, not refresh or UI
+verification. The family receipt
+`build/c1-stand-update-6a98343c/family-qualification.json` has SHA256
+`20b432688f5d3321ce83378bd1f9abcaa2fdcc6c51bf8374ffa6b12ced0df3d5`.
+
+The first actual Develop attempt stopped before Pester/static qualification.
+Its upgrade update passed; ordinary branch refresh returned the documented
+manifest-only merge conflict. The independent branch and master updates share
+the r36 ancestor `1d3a52b8dfa862f09594de89d95b566d5d7ab014`. All 302 common
+manifest file entries agree. The branch also owns generated
+`openspec/project.md`; timestamps and recorded foreign command lists differ.
+Taking the whole master manifest would discard branch intent. The existing
+branch-lifecycle contract requires semantic repair, staging and the same public
+refresh command; the unattended journey had no implementation of that step.
+The original ten raw logs/reports and publication-attempt record are retained
+under `build/c1-publish-failed-6a98343c-upgrade/`, with retention SHA256
+`0a0836475af76384ca3ef0eb58fcc7caec36bc189a6a4552ead1833c7cd926cf`.
+
+A read-only proposal reconstructed from immutable parents preserves the branch
+generated context and compatible foreign lists. The existing strict
+Test-AiRulesPendingMergeManifestProvenance admitted it against actual branch
+bytes, without changing its HEAD. That diagnostic receipt
+`build/upgrade-refresh-conflict-causal/read-only-proposal-qualification.json`
+has SHA256 `d6838e9debc18cd7455800bebde2d5d75660ab79bbde25546644b60b5a7e383a`.
+It is causal evidence, not a successful live refresh. The repair belongs only
+to the source acceptance driver; production merge guards, fixture ancestry,
+workflow runtime and the 44 qualified native build inputs remain unchanged.
+Fresh Develop/Release, publication and essential UI proof remain pending.
+
+## Source acceptance driver and current Q24 owner checks
+
+The source driver now attempts the existing semantic continuation only for the
+recorded manifest-only conflict. Exact pending transaction parents and all three
+Git index stages must agree; the installed provenance verifier admits the
+proposal before its sole manifest write/staging. Unknown metadata, ownership,
+hashes, other conflicts or a later edit preserve the original failure. The same
+public refresh completes the merge; source repair creates no merge commit and
+does not change lifecycle state. Original verification/export assertions remain.
+
+Focused native PS5/Pester evidence is deliberately separate: the first selected
+batch executed 12 cases (30 discovered), with 11 passed and one failing mock
+recursion fixture, in 314.3934913 seconds. The fixture-only late-edit injection
+correction passed that exact case, 1/0 in 37.4506312 seconds. The corrected fresh
+seed excludes only UI_TESTING from copied stand settings, preserving the Vanessa
+switch and other setup. Its actual extracted provision AST passed the original
+structured-journey case, 1/0 in 1.0498371 seconds. All captured inputs were stable;
+no aggregate new 12/0 gate is claimed. Final distinct-run receipt SHA256 is
+`8ca208ebe86c11a0c57ddd0a1dbfb1b79f2b7bb1f9b37dc7ca5bca6eff1297c4`, in
+`build/upgrade-refresh-conflict-causal/source-driver-focused/final-qualification.json`.
+
+The current Q24 directly owned native batch passed all 139 cases in five whole
+files: OpenCodeConfigLayers21, ClientJsonc34, MultiClientMcpOwnership25,
+LayeredClientObservation7 and WorkflowUpdateRollback52. It had zero failures,
+skips or NotRun, took 270.8616077 seconds and retained all 57 input hashes. This
+is working-tree owner proof with only the three named source/evidence changes,
+not a clean-tree Full result. Its result SHA256 is
+`63fff9adee23afba00cbe611815bd0f367fdd1694d69e93c9e58bd91efd0064e`, in
+`build/q24-final-current-runtime-qualification/result.json`.
+The original ClientAdapters root configuration case also passed separately,
+1/0/0 in 3.0022859 seconds with 58 input hashes unchanged. The remaining 40 cases
+were intentionally excluded; that ignored driver's inherited whole-file NotRun
+rule returned exit1. Its raw result/JUnit remain unchanged, and neither a whole
+ClientAdapters pass nor a combined 140-case gate is claimed.
+
+Final public registration must qualify this coherent clean source candidate.
+The changed source driver, its tests and this evidence are outside all 44 native
+producer inputs; the qualified CFE/source ZIP remain valid. Live fresh default,
+Develop/Release qualification and publication are still required.

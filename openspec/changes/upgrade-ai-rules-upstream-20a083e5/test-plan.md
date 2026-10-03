@@ -174,7 +174,7 @@ the same public RegisterChange reused exactly those 35 passed shards and ran
 the remaining Compact 38/0/0 in 228.079 seconds. No assertion, timeout or original
 workload changed. Source registration remains distinct from native file-only proof.
 
-## Accepted Q24 c1 OpenCode scoped acceptance — final source gate pending
+## Accepted Q24 c1 OpenCode scoped acceptance — owner checks complete
 
 Upstream preservation of all four project configs is accepted separately.
 The ownership-path migration and lossless JSONC operation described in design.md
@@ -183,8 +183,8 @@ retained owner results are recorded below, together with a separate exact-fork
 preservation run and an actual native configuration-loading observation.
 Historical Full258 qualifies its recorded tree. The fresh-helper correction
 still requires a new exact source gate; no historical pass is relabelled as
-qualification of that correction. Tasks 12.1–12.3 remain open until their
-respective current-source and live acceptance is complete.
+qualification of that correction. Current Q24 owner checks below close 12.3.
+Tasks 12.1–12.2 and public delivery retain their separate live/gate boundaries.
 
 Use existing clientcfg/final-set/snapshot/reconcile owners and the original
 operation through each continuation. Preserve the original root-JSON assertions,
@@ -246,3 +246,22 @@ becoming user-owned. This is separate evidence, not part of the canonical
 `a3bd9fc4c04f3c2cca281d8c6f8a396f41fee6d8ed0a7251aecd0ccad7324dc6`.
 The forthcoming fresh-helper correction still requires its own source gate;
 this focused installer result does not close task 12.3 by itself.
+
+Current Q24 closure, 2026-10-03: native PS5/Pester owner batch passed 139/0/0,
+with zero NotRun, in 270.8616077 seconds across five whole files (21/34/25/7/52).
+All 57 selected inputs remained unchanged. The original ClientAdapters root
+configuration case separately passed 1/0/0 in 3.0022859 seconds with all 58 inputs
+unchanged; the other 40 cases were intentionally filtered. Its ignored driver's
+whole-file NotRun exit rule returned exit1 and remains retained, without changing
+the actual result/JUnit or claiming a whole-file pass. The exact unchanged fork
+preservation and stock native-loader observations above supply their separate
+boundaries; native preservation 7/7 is not seven live application launches.
+Together these cover all eight accepted Q24 rows and close source task 12.3,
+without claiming GUI/model/plugin execution or customer rollout. Coverage matrix
+`build/q24-final-closure-audit.md` SHA256
+`6d03af1112ca7059d3bee005424400d578219ab9d4997de3432db59eef996c3a`;
+qualification `build/q24-final-current-runtime-qualification/qualification.json`
+SHA256 `a63b5f8048dab5cc7760eb391315633b070a73630c609bccb4fd905baf51b471`.
+Planned Develop-only driver/evidence changes are outside these owner inputs.
+The coherent clean candidate still requires public registration; no historical
+Full is relabelled, and Develop/Release publication/live UI tasks remain open.
