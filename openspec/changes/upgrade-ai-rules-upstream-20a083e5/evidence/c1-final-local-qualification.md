@@ -69,3 +69,47 @@ changes retain their existing seven-suite selection. The failed Full measured
 this additional consumer suite at 4.707 s. A bounded static review of the 53
 uncompleted suites found no additional confirmed stale assertions; they still
 require actual Full qualification.
+
+## Final-tag fork receipt and its source consumer
+
+The next public attempt used source `f3736e07`, tree
+`dc3467dd6d3d2431d5e0797d8734855f61238959`. Its source Pester inventory
+completed all 110 files: 2,321 passed, zero failed and zero skipped. Overall
+Full still failed: fork-check exhausted its existing 600-second budget.
+Develop journeys and publication did not run. The original candidate, queue
+and results are retained in the publication checkout's
+`build/c1-full-pester-passed-fork-timeout-f3736e07/retention.json`, SHA256
+`6dc7b36520d69f18c2b2d1ff63ab0bd12a5b45579809455ef7415a42a2d797c7`.
+These passed source shards are not a passed Full or Develop result.
+
+The historical native fork Full qualified exact commit `25b60321` with
+`upstreamRef=explicit`, before its final annotated r40 tag. That tag declares
+`refs/heads/main`, so the old receipt correctly fails canonical provenance
+matching. Its measured duration was 762.583 seconds, exceeding the workflow
+fallback budget. The old receipt is preserved unchanged; a separate actual
+native Full from the final tag supplies new evidence. No timeout or acceptance
+assertion is weakened.
+
+The workflow consumer also expected exactly two script entries, whereas the
+current fork Full producer and publisher qualify three, including
+`scripts/full-check-contract.ps1`. The owning correction requires the exact
+three-script inventory when that helper exists. A genuinely helper-absent
+legacy fork retains its exact two-script contract. Existing commit/tree,
+clean-state, upstream provenance, file hashes and JUnit checks remain intact.
+
+Eight new cases invoke the real consumer extracted from its source AST.
+Native Windows PowerShell 5.1/Pester 5.8 reproduced two causal failures
+(6 passed, 2 failed), then passed all eight cases and the existing static
+qualification case: 9 passed, zero failed/skipped, 1.414 seconds. All 39
+captured inputs remained unchanged during each run. Receipt:
+`build/fork-consumer-causal-49b963cdf6fb4f2b8be3505b589d670e/qualification.json`,
+SHA256 `5dab49fe2d1ca707ac65e2022810a44ef620d2f78a74ab3388ac9b2e8a4cf387`.
+
+The managed init reference now describes accepted Q21 behavior: the existing
+update owner rolls out to eligible registered branches, defers live activity,
+and resumes update recovery from master. Business-command continuation stays
+separate. This is a documentation alignment, with no runtime or native-producer
+change. The earlier 39-check migration proof keeps its original source identity;
+it is not relabelled as an execution from this correction's head. Final-tag
+Full, public delivery, fresh defaults and live EV9 still require their own
+actual results.

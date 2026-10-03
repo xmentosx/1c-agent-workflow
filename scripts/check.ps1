@@ -437,6 +437,9 @@ function Test-ForkQualification {
         $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot "tests") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $SourceRoot })
         if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $SourceRoot)) { return $false }
         $requiredScripts = @("scripts/check.ps1", "scripts/publish-fork-release.ps1")
+        if (Test-Path -LiteralPath (Join-Path $SourceRoot "scripts\full-check-contract.ps1")) {
+            $requiredScripts += "scripts/full-check-contract.ps1"
+        }
         if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $SourceRoot)) { return $false }
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $SourceRoot ([string]$q.junit.path).Replace('/', '\') }
         if (-not (Test-Path $junit -PathType Leaf)) { return $false }
