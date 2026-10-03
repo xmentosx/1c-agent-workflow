@@ -3,9 +3,60 @@
     $context = Initialize-WorkflowPesterContext
     $launcher = Join-Path $context.RepoRoot 'scripts/update-installed-workflow.ps1'
     $helperPath = $context.HelperPath
+    # Actual published f5466e6 metadata: rule-edit admission assumes an installable
+    # target. The current source candidate may correctly remain pending instead.
+    $verifiedRulesSource = Join-Path $TestDrive 'Опубликованный verified f546 source'
+    $verifiedTemplates = Join-Path $verifiedRulesSource 'templates'
+    New-Item -ItemType Directory -Force -Path $verifiedTemplates | Out-Null
+    [IO.File]::WriteAllText((Join-Path $verifiedTemplates 'project.json'), '{"aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-410951e7-r36"}}', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $verifiedTemplates 'dependency-lock.json'), '{"dependencies":{"aiRules1c":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-410951e7-r36","commit":"451c5a52e5b614c67406445d4af4b636da043aec","upstreamRepo":"https://github.com/comol/ai_rules_1c.git","upstreamRef":"refs/heads/main","upstreamCommit":"410951e74fd3e6b7a763cf49757935b9a34d3f31","downstreamRevision":36,"compatibilityStatus":"passed","compatibilityCheckedAt":"2026-09-23T01:33:44Z"}}}', [Text.UTF8Encoding]::new($false))
+    $verifiedBaseline = & {
+        . $helperPath -ProjectRoot $verifiedRulesSource -Action help *> $null
+        Get-AiRulesBaselineTarget -TemplateRoot $verifiedRulesSource
+    }
+    $verifiedBaseline.isConfigured | Should -BeTrue
+    $verifiedBaseline.commit | Should -Be '451c5a52e5b614c67406445d4af4b636da043aec'
 }
 
 Describe 'Durable update snapshot continuation' {
+    It 'refuses a pending source through public update before managed files or policy are copied' {
+        $project = Join-Path $TestDrive 'Pending public source Кириллица с пробелом'
+        $sourceRoot = Join-Path $TestDrive 'Pending source кандидат с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $project '.agent-1c'), (Join-Path $sourceRoot 'templates') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $verifiedTemplates 'project.json') -Destination (Join-Path $sourceRoot 'templates/project.json')
+        $pendingLock = [IO.File]::ReadAllText((Join-Path $verifiedTemplates 'dependency-lock.json')).Replace('"compatibilityStatus":"passed"','"compatibilityStatus":"pending"')
+        [IO.File]::WriteAllText((Join-Path $sourceRoot 'templates/dependency-lock.json'), $pendingLock, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $project 'managed.txt'), 'Installed managed bytes Кириллица', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $sourceRoot 'managed.txt'), 'Candidate must not be copied', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $project '.dev.env'), "CAVEMAN=On`r`nUI_TESTING=manual`r`n", [Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText((Join-Path $project '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
+        $watchedPaths = @('managed.txt','.dev.env','.agent-1c/project.json')
+        $before = @($watchedPaths | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $project $_) -Algorithm SHA256).Hash })
+        $sourceLockHash = (Get-FileHash -LiteralPath (Join-Path $sourceRoot 'templates/dependency-lock.json') -Algorithm SHA256).Hash
+        $result = & {
+            . $helperPath -ProjectRoot $project -Action help *> $null
+            $script:PendingSourceFixture = [pscustomobject]@{root=$sourceRoot;commit=('9'*40)}
+            $script:UnexpectedCopyCalls = 0
+            function Resolve-WorkflowPackageSource { $script:PendingSourceFixture }
+            function Assert-WorkflowPackageUpdateContext { param([switch]$DeferCleanCheck) }
+            function Assert-WorkflowTrackedGitClean {}
+            function Assert-WorkflowUpdateCommitIdentity {}
+            function Invoke-WorkflowLocalPatchStep { param($Step,$Operation,$Source,$Plan) }
+            function Get-WorkflowPackageCopyDirectoryPaths { $script:UnexpectedCopyCalls++; @() }
+            function Get-WorkflowPackageCopyFilePaths { $script:UnexpectedCopyCalls++; @('managed.txt') }
+            $target = Get-AiRulesBaselineTarget -TemplateRoot $sourceRoot
+            $failure = try { Update-WorkflowPackage *> $null; 'not-blocked' } catch { $_.Exception.Message }
+            [pscustomobject]@{failure=$failure;configured=$target.isConfigured;status=$target.compatibilityStatus;copyCalls=$script:UnexpectedCopyCalls}
+        }
+        $result.configured | Should -BeFalse
+        $result.status | Should -Be 'pending'
+        $result.failure | Should -Match 'compatibilityStatus=pending.*blocked before managed files are copied'
+        $result.copyCalls | Should -Be 0
+        @($watchedPaths | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $project $_) -Algorithm SHA256).Hash }) | Should -Be $before
+        (Get-FileHash -LiteralPath (Join-Path $sourceRoot 'templates/dependency-lock.json') -Algorithm SHA256).Hash | Should -Be $sourceLockHash
+        Test-Path -LiteralPath (Join-Path $project '.agent-1c/snapshots/workflow-update') | Should -BeFalse
+    }
+
     It 'finishes normal update after the successful fresh child without replaying parent post-copy' {
         $project = Join-Path $TestDrive 'Завершённый fresh child в обычном update'
         $sourceRoot = Join-Path $TestDrive 'Источник обычного update'
@@ -213,7 +264,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
             . $helperPath -ProjectRoot $project -Action help *> $null
             $marked = @(Get-AiRulesManifestUserModifiedPaths)
             $errorText = ''
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; $ready = $true }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; $ready = $true }
             catch { $ready = $false; $errorText = $_.Exception.Message }
             [pscustomobject]@{marked=$marked;ready=$ready;error=$errorText}
         }
@@ -241,7 +292,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         $result = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
             $marked = @(Get-AiRulesManifestUserModifiedPaths)
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; 'not-blocked' }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; 'not-blocked' }
             catch { [pscustomobject]@{marked=$marked;error=$_.Exception.Message} }
         }
         $result.marked | Should -Contain 'AGENTS.md'
@@ -265,7 +316,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         [IO.File]::WriteAllText((Join-Path $project '.dev.env'), "CAVEMAN=On`n", [Text.UTF8Encoding]::new($false))
         $errorText = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; 'not-blocked' }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; 'not-blocked' }
             catch { $_.Exception.Message }
         }
         $errorText | Should -Match 'WORKFLOW_UPDATE_RULES_USER_MODIFIED:.*AGENTS.md'
@@ -296,7 +347,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         [IO.File]::WriteAllText((Join-Path $project '.ai-rules.json'), ($manifest | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
         $errorText = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; 'not-blocked' }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; 'not-blocked' }
             catch { $_.Exception.Message }
         }
         $errorText | Should -Match 'WORKFLOW_UPDATE_RULES_USER_MODIFIED:.*example.md'
@@ -351,10 +402,10 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
             $conflicts = @()
             $inventory = @()
             $writeSetError = try { $conflicts = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $project); '' } catch { $_.Exception.Message }
-            $preflightError = try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; '' } catch { $_.Exception.Message }
+            $preflightError = try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; '' } catch { $_.Exception.Message }
             $snapshotError = try { $inventory = @(Get-WorkflowUpdateSnapshotRelativePaths); '' } catch { $_.Exception.Message }
             [IO.File]::WriteAllText($rule, "Actual user rule edit Кириллица`r`n", $encoding)
-            $localEditError = try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; '' } catch { $_.Exception.Message }
+            $localEditError = try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; '' } catch { $_.Exception.Message }
             [IO.File]::WriteAllText($rule, "Installed project rules`r`n", $encoding)
             [pscustomobject]@{marked=$markedPaths;entries=$entries;conflicts=$conflicts;writeSetError=$writeSetError;preflightError=$preflightError;snapshotError=$snapshotError;inventory=$inventory;localEditError=$localEditError}
         }
@@ -449,7 +500,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
             [pscustomobject]@{
                 marked=@(Get-AiRulesManifestUserModifiedPaths)
                 writeSetError=$(try { Get-WorkflowUpdateRootWriteSetConflicts -Root $project | Out-Null; '' } catch { $_.Exception.Message })
-                preflightError=$(try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; '' } catch { $_.Exception.Message })
+                preflightError=$(try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; '' } catch { $_.Exception.Message })
                 snapshotError=$(try { Get-WorkflowUpdateSnapshotRelativePaths | Out-Null; '' } catch { $_.Exception.Message })
             }
         }
@@ -498,7 +549,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         $result = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
             $markedPaths = @(Get-AiRulesManifestUserModifiedPaths)
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; $failure = '' }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; $failure = '' }
             catch { $failure = $_.Exception.Message }
             [pscustomobject]@{markedPaths=$markedPaths;failure=$failure}
         }
@@ -536,7 +587,7 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         $manifestHash = (Get-FileHash -LiteralPath $manifestPath).Hash
         $errorText = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
-            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $context.RepoRoot; 'not-blocked' }
+            try { Assert-WorkflowUpdateRulesRootReady -SourceRoot $verifiedRulesSource; 'not-blocked' }
             catch { $_.Exception.Message }
         }
         $errorText | Should -Match ('WORKFLOW_UPDATE_RULES_USER_MODIFIED:.*' + [regex]::Escape($RelativePath))

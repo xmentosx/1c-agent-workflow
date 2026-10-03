@@ -238,3 +238,41 @@ found no material findings. Receipt
 `build/q24-cache-fixture-causal/qualification.json` SHA256:
 `9e3e1432af2f509e60a5b6f3c94a1151f279a548857e03cc2697648399bfebd6`.
 Final complete registration remains pending; unstarted files are not passes.
+
+## Verified source fixture and pending-source refusal, 2026-10-03
+
+Registration of 6c601bff completed 1,487 passed and 16 failed cases in the
+single SourceUpgradeHandoff file: 40 executed and 24 reused files, 291.979 s
+worker span (376.871 s full gate). Its source remained clean and queue empty.
+Summary, JUnit, original shard and gate logs are retained under publication
+checkout `build/q24-register-red-6c601bff`; retention receipt SHA256:
+`cb2cd6c3856535ae48f597003f1cd82593584e9c96c7969b495873300809f089`.
+Remaining unstarted files are not claimed as passes.
+
+Those unit cases passed the current source templates directly to rules-root
+admission. The c1 candidate deliberately remains compatibility pending until
+the public qualification promoter runs, so it cannot supply that admission's
+verified target precondition. Normal public update still invokes the actual
+source-installability guard first and refuses pending before copying; neither
+runtime guard nor production compatibility status changed.
+
+The unit fixture now uses actual immutable published f5466e6 rules metadata
+(r36/451c5a52, passed), checked against the original Git data through the shared
+UTF-8 transport. BeforeAll proves the target is configured. Only nine source
+arguments changed; all original It bodies are identical after reversing those
+substitutions, including project topology, Unicode, user policy, foreign paths,
+hash preservation and refusal assertions. The existing CRLF positive now also
+reaches the real rules guard instead of passing through the pending early return.
+A new public-update negative retains the real source-installability owner and
+proves pending refusal, zero copy-owner calls, unchanged managed/env/project/
+source-lock bytes and no snapshot.
+
+Native PS5.1/Pester 5.8 retained the original two RED cases (0/2, 2.130 s) and
+passed the complete corrected owning file once: 58/0/0 in 43.040 s under the
+actual CFE 5222a74b override. Captured inputs stayed unchanged and environment
+was restored. The existing cross-checkout lock LF/CRLF difference is recorded
+separately with identical normalized UTF-8 content. Independent review found
+no material findings. Receipt `build/q24-upgrade-fixture-causal/qualification.json`
+SHA256: `13785a22d2e6c3e1b90271395098ec8df1d7d8d8fd9b5d1981f4d8882d0640c8`.
+Native component inputs and the production pending pin remain unchanged;
+complete registration, installed canaries and paired publication are still pending.
