@@ -646,3 +646,24 @@ has SHA256 `f8630a542410082536e7be51221dfd3ec4ba510029461449c441f9e8abb4adbc`:
 27 literal-line updates in five test files, 1675 Should commands and 206 It
 declarations preserved, native PS5 parse0, original BOM/CRLF and all 44 runtime
 inputs unchanged. This is static preservation evidence, not test execution.
+
+The next public registration of `afffa3bf` retained 235 passes, one failure and
+zero skips; its remaining serial file did not execute. The unchanged current
+OnDemandMcp assertion correctly rejected the separately packaged compatibility
+catalog's old r1 tuple. The earlier production-source search did not cover this
+assets layer. Original failed results remain in
+`build/c1-register-failed-afffa3bf/retention.json`, SHA256
+`4b0c040b3c8e3ae0a6d8768ddbb3656f22be14abf85d92bcdf955464133b74c6`.
+
+The bounded follow-up aligns exactly seven existing compatibility metadata
+fields with the accepted r4 lock. Qualification, status, protocols, facade and
+backend versions, the other backend family, tests and assertion semantics are
+unchanged. The catalog is loaded separately by the existing runtime; it is not
+a Go embedded or compiled input. All 32 recorded Go/builder inputs and all 44
+qualified native client inputs retain their hashes, so no binary rebuild or
+new native qualification is claimed. Static admission is
+`build/vanessa-r4-production-pin-causal/compatibility-afffa3bf/admission.json`,
+SHA256 `bf3b855e50dacbf28c4322b4c757077417585efa1f34eed8d8c976bb3f9ddfe6`.
+The existing `mcp-hosts` coverage contract owns registration of this metadata
+correction. Current Targeted, live Develop/Release, UI and publication remain
+pending; prior failed runs are not combined into a passing result.
