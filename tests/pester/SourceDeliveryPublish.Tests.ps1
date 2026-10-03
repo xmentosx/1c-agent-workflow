@@ -139,6 +139,21 @@ Describe "Source develop queue and delivery" {
             $missing.installable | Should -BeFalse
             $missing.aiRulesStatus | Should -Be "missing"
             (Get-DependencyLockInstallability -Lock ([pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99"; compatibilityStatus = "passed" } } })).installable | Should -BeTrue
+            $canonicalLock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            # Only the controlled-fork status is test-local; every other entry is the actual source template.
+            $canonicalLock.dependencies.aiRules1c.compatibilityStatus = 'passed'
+            $canonicalState = Get-DependencyLockInstallability -Lock $canonicalLock
+            $canonicalState.installable | Should -BeTrue -Because (@($canonicalState.blockers | ForEach-Object { "$($_.name)=$($_.status)" }) -join ', ')
+            $canonicalState.aiRulesStatus | Should -Be 'passed'
+            @($canonicalState.blockers).Count | Should -Be 0
+            $canonicalLock.dependencies.openSpecCli.PSObject.Properties.Name | Should -Not -Contain 'compatibilityStatus'
+            Add-Member -InputObject $canonicalLock.dependencies -MemberType NoteProperty -Name unknownPendingDependency -Value ([pscustomobject]@{ compatibilityStatus = 'pending' })
+            $unknownPending = Get-DependencyLockInstallability -Lock $canonicalLock
+            $unknownPending.installable | Should -BeFalse
+            $unknownPending.aiRulesStatus | Should -Be 'passed'
+            @($unknownPending.blockers).Count | Should -Be 1
+            $unknownPending.blockers[0].name | Should -Be 'unknownPendingDependency'
+            $unknownPending.blockers[0].status | Should -Be 'pending'
             $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
             $publisher.IndexOf('[void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
             $publisher.IndexOf('Assert-ComponentPublicationFinalizerPreflight') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')

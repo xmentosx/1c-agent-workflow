@@ -38,8 +38,7 @@
       "packageLockSha256": "7fa9c50d3a7e194687346641755beffadb33c03486411e92fc3f84c09a5e06d4",
       "scope": "project-versioned",
       "minimumNode": "20.19.0",
-      "sourceRegistry": "https://registry.npmjs.org/",
-      "compatibilityStatus": "pending"
+      "sourceRegistry": "https://registry.npmjs.org/"
     },
     "agentBrowser": {
       "version": "0.33.1",
