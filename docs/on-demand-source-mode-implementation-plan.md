@@ -1,479 +1,517 @@
-# On-demand configuration source mode implementation plan
-
-This source-maintenance plan defines an optional ITL mode that avoids a full
-configuration XML dump during project initialization and normal branch work.
-It is not installed-project guidance and does not change the existing full-source
-mode unless the project explicitly selects the new mode.
-
-## Goals
-
-- Make initial project creation viable for very large configurations without
-  dumping the complete configuration to `src/cf/**`.
-- Keep using native 1C `ConfigDumpInfo.xml` version tracking to determine source
-  changes. ITL must not implement its own configuration-diff engine.
-- Give every development branch an independent source baseline so branches may
-  remain on different source revisions without sharing one synthetic delta.
-- Preserve the existing semantic difference between full refresh and lite refresh:
-  full refresh may update the source infobase from repository storage; lite refresh
-  only captures the current state already present in the source infobase.
-- Serialize each native export of the shared source infobase by the
-  execution-scoped exact-base guard and show a visible wait instead of failing
-  merely because another branch is currently exporting its delta.
-- Keep branch merge/load work independent after its source export has completed,
-  so unrelated branch work can proceed concurrently.
-- Bound accumulated materialized XML by the lifetime of each branch baseline and
-  recreate that baseline on branch reset.
-## Non-goals
-
-- Do not replace Git with a custom content store.
-- Do not keep a global archive of every XML version ever observed.
-- Do not introduce a workflow-computed global source delta and repartition it
-  between branches.
-- Do not silently fall back to a full XML dump in on-demand mode.
-- Do not change existing `full` projects automatically.
-- Do not infer deletion from a file being absent from a partial source tree.
-
-## Project mode
-
-Introduce one project-level source representation setting, provisionally:
-
-```text
-SOURCE_EXPORT_MODE=full|on-demand
-```
-
-`full` remains the default and retains the current behavior. New projects may
-select `on-demand` in initialization. Existing projects require an explicit
-migration operation before changing modes.
-
-In `on-demand`, every lifecycle path must either support the partial source
-representation or stop with an actionable unsupported-operation result. A full
-`/DumpConfigToFiles` is never an automatic recovery fallback.
-
-## Core branch model
-
-For each ready configuration development branch:
-
-```text
-itldev/<name>       user development branch
-itlbase/<name>      workflow-owned shadow baseline branch
-```
-The shadow baseline is machine-owned and is never a user development workspace.
-Its worktree/export area is workflow-managed runtime. It contains only source
-artifacts that became relevant after the branch baseline was created.
-
-Each branch state records at least:
-
-- shadow baseline ref and worktree/export path;
-- source-baseline revision identity;
-- source `ConfigDumpInfo.xml` identity and checksum;
-- current shadow-baseline commit;
-- last shadow-baseline commit successfully applied to the branch infobase;
-- explicit structural operations that cannot be represented by file presence
-  alone, including deletions;
-- source provenance needed to prove that the cursor belongs to the configured
-  source infobase/repository context.
-
-The `ConfigDumpInfo.xml` stored for `itlbase/<name>` is a **source cursor**.
-It is used only to ask 1C for changes between that branch's accepted source
-baseline and the current source infobase. It must not be reused as a cursor for
-the diverged development infobase.
-
-## Phase 0 — platform capability spike
-
-Before changing lifecycle behavior, prove the required 1C primitives on the
-supported platform range with a technical configuration large enough to expose
-performance and partial-dump behavior.
-
-Verify and retain evidence for:
-
-1. obtaining an initial version cursor without a full XML source dump;
-2. exporting changes to an empty staging directory relative to an arbitrary
-   saved `ConfigDumpInfo.xml`;
-3. exporting a selected existing object to a partial/empty source area without
-   requiring a complete previous XML tree;
-4. how additions, renames and deletions are represented by native change export;
-5. whether a new result `ConfigDumpInfo.xml` fully advances the supplied cursor
-   after a successful incremental export;
-6. whether two independent cursors from different source revisions can both be
-   advanced directly to the same current source state;
-7. behavior when the source configuration repository is updated between cursor
-   creation and export;
-8. interaction between partial load and a separate development-infobase cursor
-   used to detect Configurator-side edits;
-9. failure behavior for incompatible/corrupt cursors and whether 1C attempts an
-   implicit full dump.
-
-The spike must select native platform behavior wherever available. If a required
-primitive cannot be proved without a full source tree, stop this design phase and
-revise the representation instead of emulating platform object version logic.
-
-## Phase 1 — initialization without full XML
-
-Add the `on-demand` branch to `Initialize-Project`.
-
-Initialization must:
-
-1. prepare and validate source/repository settings exactly as today;
-2. reserve the source infobase through existing database admission;
-3. apply the existing source repository update policy where initialization
-   currently does so;
-4. capture the initial source version cursor without dumping all source files;
-5. persist a project source-revision record containing cursor hash, source
-   identity and repository provenance;
-6. create/refresh the branch seed without requiring a fingerprint of a complete
-   `src/cf/**` tree;
-7. install workflow/rules/tooling as today;
-8. commit only the on-demand project metadata required for reproducibility.
-
-Resume must recognize every completed on-demand stage and never restart a full
-XML dump. The initialization readiness proof changes from "baseline source tree
-committed" to "source revision cursor + seed/provenance committed and valid".
-
-Seed compatibility must be redesigned explicitly. In on-demand mode it is bound
-to the source revision identity/cursor provenance rather than to a hash of every
-XML file. Existing full-mode fingerprint semantics remain unchanged.
-
-## Phase 2 — create a branch and its shadow baseline
-
-`new-dev-branch` in on-demand mode creates the ordinary isolated branch
-infobase from the compatible seed, then creates `itlbase/<name>`.
-
-At creation time:
-
-1. obtain a cursor that describes the exact source state associated with the
-   branch baseline;
-2. create the shadow branch/worktree with no full configuration source tree;
-3. store that cursor and provenance in the shadow baseline;
-4. record the shadow ref/path and cursor identity in dev-branch state;
-5. record `lastAppliedBaselineCommit` as the initial shadow commit;
-6. finish branch normalization/runtime setup as today.
-
-The source cursor and copied branch infobase must describe one coherent baseline.
-If creation cannot prove this relationship, it must not mark the branch ready.
-
-The shadow worktree should live in ignored workflow runtime and must not appear as
-another user-editable project. Path-budget and cleanup behavior must be covered by
-the same Windows whitespace+Cyrillic path rules as normal worktrees.
-## Phase 3 — native per-branch source capture
-
-Add one shared helper that advances a specific branch shadow baseline from its
-own source cursor. This helper is the only normal path that asks 1C to determine
-source changes for that branch.
-
-Conceptual operation:
-
-```text
-source infobase current state
-        +
-itlbase/<name>/ConfigDumpInfo.xml
-        |
-        v
-1C incremental export into empty staging
-        |
-        v
-validated patch + new ConfigDumpInfo.xml
-        |
-        v
-transactional update of itlbase/<name>
-```
-
-Rules:
-
-- 1C determines changed objects; ITL does not diff configuration versions itself.
-- Export starts in an empty transaction staging directory; never copy the whole
-  current baseline tree merely to make partial export transactional.
-- Apply only files/structural operations represented by the native result.
-- Update the cursor only after the complete patch has been validated and the
-  shadow baseline commit is durable.
-- An interrupted export retains old cursor authority until continuation proves
-  the new shadow commit and cursor were both installed.
-- Failure never falls back to a full XML export.
-## Phase 4 — `itl-refresh` semantics
-
-In on-demand mode, full refresh keeps its current source-synchronizing meaning.
-
-Source phase:
-
-1. acquire the source-infobase database admission;
-2. apply `SOURCE_REPOSITORY_UPDATE_MODE` exactly as the existing full workflow
-   defines it (`workflow` updates from repository storage; `external` captures
-   the source infobase as currently maintained outside ITL);
-3. perform any seed/global source-state maintenance that belongs to full refresh;
-4. advance **only the current branch's** `itlbase/<name>` using its own
-   `ConfigDumpInfo.xml`;
-5. release source-infobase admission as soon as this capture is durable.
-
-Branch phase then runs without the source admission:
-
-6. compute Git changes from `lastAppliedBaselineCommit` to the new shadow commit;
-7. merge those source changes with branch-owned changes;
-8. validate the resulting partial source set;
-9. partially load the resulting change set into the branch infobase;
-10. normalize as required;
-11. advance `lastAppliedBaselineCommit` only after successful branch application;
-12. mark verification stale exactly as required by the changed effective state.
-
-The source infobase must not remain locked while Designer/Enterprise work runs
-against the development infobase.
-
-## Phase 5 — `itl-refresh-lite` semantics
-`itl-refresh-lite` **does access the source infobase in on-demand mode**, because
-its shadow baseline must reflect the source infobase's current configuration.
-It does **not** update that source infobase from repository storage and does not
-refresh/rebuild seed.
-
-Source phase:
-
-1. wait for source-infobase admission;
-2. do not call `ConfigurationRepositoryUpdateCfg` or equivalent repository
-   synchronization;
-3. read the current source infobase exactly as it stands;
-4. advance the current branch's shadow baseline using that branch's own cursor;
-5. release source-infobase admission immediately after the shadow update commits.
-
-Branch phase is the same as full refresh: merge the newly captured shadow delta,
-partially update the branch infobase, normalize if needed, and advance
-`lastAppliedBaselineCommit` only on success.
-
-This preserves the full-source-mode distinction:
-
-```text
-itl-refresh
-  = synchronize source according to repository policy
-  + capture current branch delta
-  + apply branch
-
-itl-refresh-lite
-  = capture current source state without repository synchronization
-  + apply branch
-```
-
-## Source-infobase waiting and concurrency
-
-Reuse `execution-guards-v2` only for the bounded native export. Do not introduce a
-second ad-hoc lock file or retain ownership during the later branch apply phase.
-
-Two concurrent lite refreshes for different branches behave as:
-
-```text
-task1: [wait/admit source][export task1 delta][release]----[apply task1]---->
-task2: [--------wait source---------][export task2 delta][release]-[apply task2]->
-```
-
-Requirements:
-
-- contention is waiting, not an immediate failure;
-- waiting remains bounded/cancellable by the existing coordinator contract;
-- owner diagnostics remain visible in run status;
-- admission is acquired before lifecycle locks where required by the existing
-  deadlock-prevention contract;
-- no partial resource set survives a failed admission attempt;
-- after source capture, each branch owns only its branch resources and different
-  branch apply phases may run concurrently;
-- source read/export operations must not be serialized by a broader global
-  lifecycle lock for longer than the actual shared-source critical section.
-
-## `refresh-all-dev-branches`
-
-In on-demand mode, refresh-all must not synthesize one global XML delta.
-
-Correctness-first flow:
-
-1. synchronize the source infobase once using the normal full-refresh repository
-   policy;
-2. pin/prove the source state for the aggregate operation;
-3. for every active branch, run native incremental export using that branch's own
-   `ConfigDumpInfo.xml`;
-4. keep the per-branch exports serialized while they require the shared source
-   infobase;
-5. after each branch's capture is durable, allow its apply phase to run in the
-   existing bounded branch-worker pool where safe;
-6. report each branch's captured source revision, shadow commit and apply result.
-
-Optimization of repeated native exports is explicitly deferred until measurement
-proves it necessary. Correctness must not be traded for a workflow-computed
-cross-branch delta.
-
-## Phase 6 — materialize an object for development
-
-A branch may need to edit an object that has never appeared in its partial trees.
-
-Introduce an internal "ensure source object" operation that:
-
-1. proves the development infobase is at the branch's accepted effective state;
-2. exports only the requested object/required structural parts;
-3. records the source-side baseline content in `itlbase/<name>` when needed for
-   future three-way merge;
-4. materializes the editable copy in `itldev/<name>`;
-5. records provenance so simply reading/materializing an object is not treated as
-   a product modification.
-
-Do not recursively materialize every dependency. Expand the working set only when
-analysis or editing requires another object.
-
-A separate development-infobase cursor/proof is required to distinguish
-Configurator-side edits from source-baseline materialization. Its exact mechanism
-must be selected from Phase 0 evidence; do not reuse the source cursor against the
-development infobase after branch divergence.
-## Phase 7 — additions, deletions and structural changes
-
-Represent deletion explicitly. File absence in a partial tree means "not
-materialized" unless a structural change record proves deletion.
-
-The shadow/dev change model must distinguish:
-
-- unchanged but absent;
-- materialized for context;
-- modified;
-- added;
-- deleted.
-
-Prefer native 1C change metadata for determining source-side structural changes.
-Persist a compact manifest/tombstone only where Git file presence cannot express
-the native operation unambiguously.
-
-Merge rules include:
-
-- branch deletes / source unchanged -> retain branch deletion;
-- branch deletes / source deletes -> compatible deletion;
-- branch deletes / source modifies -> semantic conflict;
-- branch modifies / source deletes -> semantic conflict;
-- both modify -> normal three-way merge using the materialized common baseline.
-
-Loading a structural change must build the minimum platform-valid package,
-including required owner/root descriptors. Never interpret an incomplete local
-tree as a full configuration.
-
-## Phase 8 — reset and bounded accumulation
-
-`reset-dev-branch` in on-demand mode establishes a new current baseline instead
-of continuing the old shadow history indefinitely.
-Reset flow:
-
-1. checkpoint/archive branch-owned work using the existing reset safety contract;
-2. obtain/prove the new source baseline and compatible seed;
-3. recreate the branch infobase as the reset contract requires;
-4. create a new `itlbase/<name>` generation with a fresh source cursor and an
-   effectively empty materialized source set;
-5. bind the dev-branch state to that new shadow generation;
-6. set the new shadow commit as `lastAppliedBaselineCommit`;
-7. retire the previous shadow ref/worktree only after the new generation is ready.
-
-If bounded **Git object storage** is also a requirement, reset must make obsolete
-shadow history unreachable except for explicit retained archives, and normal Git
-GC may reclaim it later. Merely deleting files from the current tree does not
-remove reachable historical blobs. This storage behavior must be documented and
-tested separately from current-tree size.
-
-## Phase 9 — adapt the remaining lifecycle
-
-Every command that currently assumes a complete `src/cf/**` tree needs an
-explicit on-demand contract. At minimum review:
-
-- `update-dev-branch-base` and partial-load fallback behavior;
-- `loadfrom1cbase` / `getconfigfiles`;
-- `check-dev-branch` freshness fingerprints;
-- result export and repository-transfer object mapping;
-- `sync-dev-branches`, including three-way baseline construction;
-- `fork-dev-branch`;
-- `lock-config-repository-objects`;
-- merge preservation and source-integrity validators;
-- extension mode, which should remain full-only until an equivalent contract is
-  intentionally designed and proven;
-- source indexes/search tools that currently infer non-existence from missing files.
-
-For on-demand mode, effective configuration identity is no longer "hash every file
-under the complete source root". Define a versioned fingerprint from:
-
-```text
-accepted source baseline identity
-+ shadow baseline generation/commit
-+ branch-owned effective changes
-+ structural-operation manifest
-```
-
-Materializing additional unchanged context must not stale verification. Changing
-effective configuration content must stale it.
-
-A full Designer load fallback may only be used if ITL can first construct and
-prove a complete effective configuration by a supported path that does not
-silently perform the prohibited full source dump. Until such a recovery path is
-implemented, on-demand mode should fail closed with a specific recovery action.
-
-## Implementation order
-
-1. Phase 0 native capability spike and retained evidence.
-2. Project setting and initialization representation.
-3. Shadow branch lifecycle and branch creation.
-4. Per-branch native source capture helper.
-5. `itl-refresh-lite` with source waiting and no repository update.
-6. `itl-refresh` with repository policy + seed/global maintenance.
-7. Branch apply/partial load and development-infobase cursor handling.
-8. On-demand object materialization.
-9. Add/delete/structural-change support.
-10. Reset and shadow-generation retirement.
-11. Refresh-all pipelining.
-12. Verification/export/sync/fork/repository-lock adaptations.
-13. Optional migration from existing `full` projects after the new-project path
-    has passed installed acceptance.
-
-Do not enable the mode by default before all completion-critical lifecycle paths
-used by configuration branches have an explicit contract and installed acceptance.
-
-## Required regression and acceptance matrix
-
-At minimum cover:
-
-- new project initialization completes without a full XML dump;
-- resume at every initialization/source-capture transaction boundary;
-- two branches created from different source states keep different cursors;
-- advancing one branch cursor never mutates another branch cursor;
-- lite refresh captures newer **current source DB** state without repository update;
-- full refresh performs the configured repository update policy before capture;
-- two simultaneous lite refreshes wait on the source DB and then both succeed;
-- source admission is released before branch database load/normalization;
-- different branch apply phases can overlap after their source captures;
-- one object modified repeatedly in source yields the correct current branch delta;
-- branch/source modify the same object and receive a valid three-way merge/conflict;
-- branch deletion vs source unchanged/modified/deleted cases;
-- source deletion vs branch modification;
-- a newly materialized unchanged object does not count as a branch modification;
-- manual Configurator-side edits are detected rather than overwritten silently;
-- reset installs a new shadow generation and no longer depends on the old cursor;
-- corrupt/incompatible cursor fails without starting a full XML dump;
-- cancellation/interruption preserves the old authoritative cursor until recovery;
-- whitespace+Cyrillic project/worktree paths;
-- file and server source/branch infobases where supported.
-## Performance evidence
-
-Record phase timings and data volume separately so improvements cannot be hidden
-by moving cost elsewhere:
-
-- initialization cursor capture;
-- seed creation/copy;
-- per-branch native incremental source export;
-- shadow transaction/Git commit;
-- dev merge;
-- partial Designer load;
-- Enterprise normalization;
-- verification.
-
-Acceptance for the new mode is not merely "init is faster". The primary user
-scenario must reach a fresh verified first change without ever requiring a full
-configuration XML dump.
-
-For refresh-all, report source-export time per branch and total serialized source
-critical-section time. Optimize only after measurements show that independent
-native per-cursor exports are the dominant remaining cost.
-
-## Delivery discipline
-
-Implement each coherent source change with focused owner tests and the normal
-source-repository delivery contract. Do not weaken database admission, merge
-preservation, fresh verification, seed safety or recovery semantics to make the
-partial-source representation easier.
-
-The new mode should prefer automatic acquisition of missing context and waiting
-for owned shared resources. User intervention is reserved for genuine semantic
-conflicts, unsafe ownership ambiguity, unsupported platform behavior, or a real
-risk of data loss.
+# Итоговый план on-demand-режима исходников конфигурации
+
+Согласовано 2026-10-04 после ревью исходного unified-плана и grill.
+Актуализировано 2026-10-04 по опубликованному origin/develop
+f5466e6ff98e95bae989a80d65809d1bff2bc31e и зарегистрированной переработке
+workflow до 2a3b5f2c75e587f3a1fe187ee7ecbf6ca52e70fa.
+Это план будущей реализации: возможности платформы, helper-тесты и установленная
+приёмка ещё не доказаны. OpenSpec не выбран; дальнейшая формализация использует
+[существующий процесс](source-planning.md) при выборе пользователя.
+
+## Цель и согласованные границы
+
+Новый проект на большой конфигурации должен дойти до первого изменения и свежей
+проверки без полной выгрузки конфигурации в XML. Последующая работа материализует
+только необходимые объекты, структурный контекст и изменения источника.
+Разницу версий конфигурации определяет 1С; ITL организует Git-слияние, загрузку,
+транзакцию и доказательства, не создавая свой движок сравнения конфигураций.
+
+1. Режим исходников выбирается при создании проекта и остаётся неизменным.
+   Full сохраняет нынешнее поведение и остаётся значением по умолчанию.
+   Миграции и переключения режимов отсутствуют, включая recovery.
+2. On-demand запрещает полный XML-дамп, в том числе исключительный fallback
+   после предупреждения. Обычные структурные изменения входят в проверку
+   применимости режима. Неподдержанная возможность препятствует его выпуску
+   для соответствующего сценария.
+3. Refresh-lite сохраняет нынешний контракт: точный подготовленный master SHA,
+   без чтения/обновления исходной базы и без изменений seed. Захват источника
+   выполняется в sync-master или в source-фазе полного refresh.
+4. Доказательство начинается с файлового пилота. Серверная топология проходит
+   самостоятельную проверку и приёмку; файловая не доказывает серверную.
+5. Для обычного использования требуется переносимость базового состояния веток
+   на другой компьютер и восстановление после потери локального runtime.
+   Однохостовое ограничение допустимо только в явно обозначенном пилоте.
+
+Согласованные причины и альтернативы записаны в
+[ADR-0006](adr/0006-on-demand-source-mode-contract.md) и
+[ADR-0007](adr/0007-on-demand-portable-baselines.md).
+Расширения остаются в full до отдельного доказанного on-demand-контракта.
+
+Запрет относится к полному XML-дереву. Копия файловой базы, DT/CF-снимок и
+восстановление базы допустимы через существующие операции, если они доказывают
+нужное состояние и не требуют запрещённой XML-выгрузки. Наличие полного бинарного
+снимка не заменяет доказательство работоспособности частичных исходников.
+
+## Основание актуализации и зависимость от выпуска
+
+Source-delivery Status подтвердил следующие связанные записи очереди:
+
+| QueueId | Зарегистрированный head |
+|---|---|
+| codex/ai-rules-migration-decisions | dc4c0703c7852b7e9722f2fa80778402030ef167 |
+| codex/ai-rules-stand-continuation | a5a89eb9baa4355557f61911564976e17bd2b2a8 |
+| codex/migration-update-finalize | 99f572b1b07c9f3393fedda052803422be08eb10 |
+| codex/migration-stand-client | 6d3514749d7e8c8ed7fe09f55972bffffd817cb0 |
+| codex/migration-gate-inventory | 2a3b5f2c75e587f3a1fe187ee7ecbf6ca52e70fa |
+
+Это последовательная цепочка от 69612acc8cabecf8ee55f3aa485e999c774a73c7:
+интеграция upstream 20a083e5, новые load/verification/update owners и их
+последующие исправления. На момент сверки цепочка не входит в origin/develop.
+Контракты ниже прочитаны из её конечного Git-среза; это не утверждение
+публикации, установки или завершения всей приёмки переработки.
+
+Основная постановка выпуска — [upgrade-ai-rules-upstream-20a083e5](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/design.md).
+В её зарегистрированном tasks остаются открыты publication/real-project rollout
+и Q23: полная c1-интеграция и essential UI policy. Код перехода Q23 уже есть,
+но старые evidence и checkbox не квалифицируют новые правила. Поэтому план
+on-demand не объявляет essential доступным по одному новому helper или setting.
+
+Нативные примитивы этапа 0 можно исследовать независимо на разрешённом стенде.
+Интеграционные этапы используют финальный installable candidate переработки:
+фиксируются workflow commit/tree, действительный controlled-fork commit,
+платформа и tool/CLI pins. Текущий template lock с историческим r36 и прежняя
+квалификация не заменяют финальные inputs выпуска. После публикации сверить
+фактическую integration identity; при изменении относящегося к on-demand owner
+обновить только зависимый пункт плана и его проверку.
+
+## Существующие механизмы и изменения зарегистрированного выпуска
+
+Использовать существующих владельцев, а не планировать эти механизмы заново:
+
+- [execution-guards-v2](../.agents/skills/itl-remote-runner/references/execution-ownership.md)
+  для точной ограниченной нативной фазы, унаследованного execution context,
+  ожидания, отмены и завершения принадлежащих ей процессов;
+- action-aware deadlines, отдельный heartbeat и phase-timings;
+- ускоренный full-путь с повторным использованием файлового seed при неизменной
+  конфигурации и нативным update-экспортом при изменении;
+- exact-master pin, merge preservation, возобновление исходной lifecycle-команды,
+  snapshot safety и независимый отчёт каждой ветки в refresh-all;
+- managed close/delete/reset/fork и текущий контракт свежей проверки.
+
+Зарегистрированная переработка добавляет готовые точки адаптации:
+
+- единый checked load с native DT до editable mutation, Gate 6 перед UpdateDBCfg,
+  restoration duty, byte-exact возврат cursor и lastGate6Evidence;
+- schema-2 obligations, retained и one-off proof, aggregate readiness, v5
+  fingerprint с релевантными dependency/checker inputs и точными ИБ/generations;
+- file-only update основного проекта и зарегистрированных worktree, сохранение
+  business staging/pending merge/fork и продолжение исходной операции новым helper;
+- desired/actual набор клиентов и MCP ownership вместо предположения об одном
+  текущем клиенте; plugin вызывает существующего ITL owner;
+- project-pinned OpenSpec CLI 1.13.1, шесть фаз и локальный openspec/.
+  Внешний store вынесен в отдельную задачу и не является возможностью этого выпуска.
+
+Это существующие owners будущей базы реализации, а не новые подсистемы on-demand.
+Их источник — зарегистрированные lifecycle.ps1, verification-selection.ps1,
+verification-result.md, verification-suite-selection.md и
+workflow-update-recovery.md на указанном head.
+Основные контракты находятся в [branch lifecycle](../.agents/skills/1c-workflow/references/branch-lifecycle.md)
+и [архитектуре пакета](package-architecture.md); после интеграции используются
+также [verification result](../.agents/skills/1c-workflow/references/verification-result.md)
+и [suite selection](../.agents/skills/1c-workflow/references/verification-suite-selection.md).
+Сам on-demand и его внутренние refs этими изменениями не реализованы.
+
+Нынешний sourceGenerationId относится к файловому источнику. Пустое значение
+для серверного источника не доказывает согласованность его ревизии и seed;
+серверный примитив должен быть выбран в эксперименте.
+
+## Этап 0 — измерения и эксперимент с возможностями 1С
+
+До изменений lifecycle выполнить ограниченный эксперимент на технической
+конфигурации и представительной большой конфигурации. Зафиксировать версии 1С,
+точные команды, результаты, объекты/байты и времена. Live-стенд и операции
+эксперимента выбираются отдельно в пределах разрешения пользователя.
+
+Сначала измерить full-сценарий на финальной базе выпуска от создания проекта до
+первой свежей проверки изменения. Использовать его как сравнимую базу, отдельно
+учитывая seed, выгрузку, snapshot, Gate 6, загрузку и aggregate assessment.
+Прежние full-замеры не описывают расходы новой цепочки. Численные обещания
+ускорения не придумывать до измерений; итог эксперимента показывает выигрыш
+и перенесённые расходы.
+
+Обязательные вопросы к платформе:
+
+1. Получение первоначального ConfigDumpInfo.xml без полного XML-дерева.
+2. Нативная дельта в пустой staging относительно произвольного сохранённого
+   cursor; независимые cursor веток R0 и R1 к одной ревизии R2.
+3. Достаточный экспорт одного объекта, Configuration.xml и обязательных
+   родительских/подчинённых описаний без полной предыдущей выгрузки.
+4. Создание, удаление, переименование, перемещение, PredefinedData и другие
+   структурные изменения; доказательство отсутствия неявного полного дампа.
+5. Согласованность исходной ревизии, cursor и seed для файловой и серверной баз;
+   смена источника между нативными фазами.
+6. Возможность захвата от неизменяемого снимка либо доказуемого ограждения ревизии
+   без удержания одного guard на весь набор веток.
+7. Отдельное доказательство состояния веточной базы, включая ручные изменения
+   в Конфигураторе и состояние после прерванной частичной загрузки.
+8. Исторический общий предок: объект не был материализован на R0, источник
+   перешёл на R1, ветка осталась на R0 и начинает редактировать этот объект.
+9. Перенос cursor/снимка на другой хост и создание такого же baseline без
+   обращения к уже изменившемуся текущему источнику.
+10. Стабильная идентичность эффективной конфигурации при техническом пересоздании
+    cursor, добавлении неизменённого контекста и изменении/возврате файла.
+11. Частичный XML-пакет проходит существующий checked load: нужные platform checks
+    видят полную editable configuration базы, ошибка восстанавливает DT и веточный
+    cursor, а ни validation, ни recovery не требуют полного XML-дерева.
+
+Эксперимент обязан выбрать нативный путь, который предотвращает полный дамп.
+Обнаружение уже начавшейся полной выгрузки не выполняет запрет режима.
+Если требуемый примитив не доказан, реализация зависимого этапа не начинается.
+Сохраняются результаты и конкретная причина; пересматривается представление
+внутри on-demand, а не предлагается переключение режима существующего проекта.
+
+Выход: таблица поддержанных платформ/топологий/операций, выбранные примитивы,
+измерения и решение go/no-go для зависимых этапов. Для обычного изменения и
+структурных операций требуется путь завершения исходной задачи; одной
+диагностики отказа недостаточно для приёмки режима.
+
+## Этап 1 — модель состояния и архитектурный checkpoint
+
+Lifecycle пакета владеет проектным режимом, состоянием ветки и переходами
+capture/merge/load. Verification coordinator владеет obligations, receipts и
+readiness; checked-load owner владеет Gate 6 и snapshot. Execution guard владеет
+нативным выполнением. Общий Git хранит техническую историю через внутренние refs;
+пользовательские itldev/*
+остаются рабочими ветками. Не вводить второй coordinator или общий lease.
+
+До реализации сохраняемого состояния и взаимодействия новых операций оформить
+checkpoint по package-architecture в текущем плане: перечислить новые записи,
+refs, снимки, ресурсы, affected callers, путь отмены/восстановления, границы
+переносимости и расходы. Выбранная форма не даёт authority над чужими процессами
+и не добавляет elevation или новый машинный сервис. Принятые продуктовые
+границы этого документа уже согласованы; новая authority требует своего checkpoint.
+
+Режим хранится в канонических отслеживаемых настройках проекта с версией схемы.
+Имя SOURCE_EXPORT_MODE предварительное. Локальная среда не может его
+переопределять; ветки, обновление workflow и восстановление наследуют тот же
+режим. Для старых full-проектов отсутствие нового поля означает full.
+Непоследовательное состояние блокирует лишь зависимую операцию и возвращает
+продолжение через владельца; не запускает конвертацию.
+
+| Состояние | Смысл и доказательство |
+|---|---|
+| Ревизия источника | Нативно доказанная версия конфигурации и provenance конкретного источника |
+| Пара seed/cursor | Неизменяемое поколение, hash и доказательство одной исходной ревизии |
+| Принятая ревизия ветки | Источник, уже включённый в эффективную конфигурацию ветки |
+| Подготовленный захват | Отдельный кандидат для точной принятой ревизии и целевого master SHA |
+| Материализованный контекст | Доступные исходники и историческое базовое содержимое нужных объектов |
+| Изменения ветки | Собственное эффективное содержимое и явные структурные операции |
+| Желаемая конфигурация | Каноническая идентичность результата source baseline + изменений ветки |
+| Успешно загруженная конфигурация | Подтверждённое состояние базы после load и обязательной нормализации |
+| Проверка | Независимое доказательство результата для загруженной конфигурации |
+
+Технический shadow-коммит, номер транзакции, путь и поколение хранения не являются
+идентичностью эффективной конфигурации. Неизменённая материализация и cursor-only
+коммит не обесценивают проверку. Реальное изменение обесценивает зависящее от него
+evidence; общий passed заново оценивает тот же assessor после правильной загрузки.
+lastAppliedBaselineCommit не может заменять доказательство загруженного состояния.
+
+Новая версия уже связывает load/verification с целевой ИБ и её поколением.
+Для on-demand требуется адаптация входной идентичности, а не второй реестр
+готовности: Get-ConfigSourceFingerprint и существующий load-state принимают
+доказанный effective source, verification owner использует его вместе с
+идентичностями требований, runner/checker и выбранных obligations.
+Gate 6 подтверждает editable configuration до apply; его passed receipt
+сам по себе не доказывает завершённые UpdateDBCfg и Enterprise normalization.
+
+## Этап 2 — init, seed и транзакционный захват источника
+
+Init получает начальную ревизию/cursor, строит согласованный seed, фиксирует
+минимальную проектную метаинформацию и готовит workflow обычным путём.
+Ready требует доказанной пары seed/cursor; полного дерева src/cf не требуется.
+
+Новое поколение seed готовится рядом со старым. Старую авторитетную пару нельзя
+удалять до проверки нового поколения и переключения. Использовать текущий
+full-helper с удалением прежнего seed без адаптации нельзя. Доступность и размер
+снимков измеряются отдельно; initial full XML-export helper здесь не применяется.
+
+Каждый capture выполняется из accepted cursor конкретной ветки в пустой staging.
+Нативный результат включает доказанный список файлов/структурных операций,
+новый cursor и целевую ревизию. Затем проверяются provenance, полнота нужного
+пакета, byte-preserving транспорт и отсутствие неподдержанного fallback.
+Старый accepted baseline сохраняется до веточного применения.
+
+Долговечная запись кандидата и переключение refs выполняются транзакционно с
+проверкой ожидаемого исходного состояния. Возобновление распознаёт уже
+завершённую фиксацию по её идентичностям; неизвестную нативную мутацию не повторяет
+автоматически. Подготовленный захват не означает, что база ветки его приняла.
+
+Нативная фаза получает точный guard. Перед ожиданием освобождаются lifecycle/Git
+locks; после получения повторно проверяются цели и выбранное состояние.
+Ни JSON-диагностика, ни завершённый execution не удерживают дальнейшую работу.
+Branch load не удерживает guard исходной базы.
+
+## Этап 3 — ветка, материализация и загрузка
+
+New-dev-branch создаёт базу из согласованного seed и собственный baseline/cursor.
+Первоначальная загруженная идентичность доказывается созданием базы и штатной
+нормализацией. Shadow refs и staging не становятся пользовательскими worktree.
+
+Материализация запрашивает только нужный объект и обязательный структурный
+контекст. Историческое базовое содержимое берётся из доказанного baseline
+принятой ревизии, editable copy соответствует эффективному состоянию ветки.
+Из текущей базы ветки нельзя получить общий предок после её ручного изменения.
+Привязка к более новому текущему источнику также не заменяет исторический R0.
+Необходимые снимки сохраняются до появления доказанного заменяющего пути.
+
+Отсутствующий файл означает «не материализован», а не «объект удалён».
+Удаление/добавление/переименование представлены явными нативно подтверждёнными
+операциями. Обе стороны merge имеют один доказанный общий предок.
+Конфликты изменений/удалений проходят нынешний semantic merge recovery.
+
+Load-пакет рассчитывается от успешно загруженной эффективной конфигурации к
+желаемой, включая обратные изменения. Обязательная регрессия: изменить файл,
+загрузить изменение, вернуть файл и загрузить возврат при неизменном shadow.
+Пустой Git diff baseline не может оставлять прежнее изменение в базе.
+
+Частичный пакет передаётся в существующий load/check/apply owner. При checked-load
+триггере его native DT или уже принадлежащий enclosing operation точный snapshot
+создаётся до editable mutation. Внутри этого owner порядок остаётся:
+editable load → проверка неизменности входа → применимый Gate 6 →
+UpdateDBCfg → нормализация → фиксация загруженного состояния.
+BSL/XML и неизвестная дельта не маскируются под binary-only ради пропуска проверок.
+Прямой объединённый load+apply обходить эту границу не может.
+Для доказанной binary-only дельты сохраняются нынешние applicability и direct path;
+сам on-demand не добавляет Gate 6 без его существующего триггера.
+
+Перед нативной загрузкой отмечается pending-операция в существующем lifecycle
+состоянии; отдельный универсальный on-demand recovery-журнал не вводится.
+После сбоя последняя успешная идентичность остаётся историческим доказательством,
+а текущее состояние считается неподтверждённым до reconciliation/restore:
+нельзя утверждать, что база всё ещё содержит старую конфигурацию.
+Завершение load и нормализации фиксирует новую загруженную идентичность;
+успешная загрузка сама по себе не делает проверку свежей.
+
+Gate-6 failure восстанавливает точную базу и byte-exact веточный cursor через
+нынешнюю restoration duty; source cursor захвата не подменяется этим cursor.
+Ошибка applicability/check не включает full-load fallback. При неудаче restore
+сохраняются snapshot/hash и обе диагностики. Потеря completion ACK после
+доказанного успешного apply не превращается в повторный rollback.
+Capture baseline/cursor остаются согласованными с подтверждённым итогом owner.
+
+Принятая source-ревизия и её cursor переключаются на подготовленный baseline
+только после успешного веточного применения. Их фиксация согласована с записью
+загруженной идентичности через тот же pending-журнал; потеря helper после native
+success требует reconciliation точного состояния, а не повторного выбора источника.
+
+Восстановление повторяет исходную helper-команду с закреплёнными входами и
+snapshot-контрактом. Полная загрузка допустима только из доказанного полного
+эффективного снимка без полной XML-выгрузки; обычный fallback incomplete-tree
+в полный load использовать нельзя.
+
+## Этап 4 — sync-master, refresh и refresh-all
+
+Sync-master применяет существующую политику SOURCE_REPOSITORY_UPDATE_MODE,
+получает единую ревизию R и согласованный seed, затем подготавливает захваты
+для активных ready-веток относительно их независимых принятых cursor.
+Master фиксирует конкретную ревизию/набор доказательств для последующего lite.
+Повторный sync до применения веткой не теряет изменения от её accepted baseline.
+
+Если ревизия источника изменилась между захватами, смешанный набор R1/R2 не
+публикуется как один успешный sync. Способ снимка или проверки ограждения выбирает
+этап 0. Guard не растягивается на весь цикл; захваты остаются нативными per-cursor.
+Глобальная workflow-дельта с ручным распределением по веткам не вводится.
+
+Refresh-lite использует точный master SHA и соответствующий подготовленный
+кандидат, проверяет accepted identity ветки, сливает и применяет результат.
+Он не читает источник и не обновляет seed. Недостающий кандидат даёт продолжение
+через штатный source-sync, не скрытое чтение источника.
+Full refresh выполняет source-sync, затем тот же branch apply.
+
+Refresh-all делает один source-sync, закрепляет master SHA и ревизию R, затем
+запускает нынешние независимые lite workers. Успех каждой ветки доказывает именно
+эти входы. Ошибка отдельной ветки сохраняет её transaction и requiredAction;
+результаты остальных веток сохраняются в aggregate. Повторение не меняет pin.
+
+Стоимость sync растёт с количеством активных веток. Измерить её до оптимизаций,
+включая время всех нативных захватов и суммарное ожидание source guard.
+Оптимизация повторных экспортов допустима лишь с сохранением нативных cursor,
+исторического предка и точного aggregate pin.
+
+## Этап 5 — остальной lifecycle и переносимость
+
+До включения обычного режима каждый потребитель полного дерева получает
+доказанный on-demand-путь либо обоснованную границу применимости:
+
+| Группа | Обязательный результат |
+|---|---|
+| check, update-dev-branch-base | Правильные freshness, load-set, test selection и свежий результат |
+| getconfigfiles, loadfrom1cbase | Учет ручных изменений без подмены source cursor веточным |
+| result и перенос в хранилище | Полный пользовательский результат, точное сопоставление объектов |
+| sync-dev-branches, fork/adopt | Независимое состояние, исторический предок и сохранение режима |
+| source indexes, поиск, validators | Отсутствие файла не выдаётся за отсутствие объекта; bounded материализация |
+| repository object locks | Нынешние object-level ownership и результаты без ложного подтверждения |
+| reset, close, delete | Безопасные снимки, retirement и точная очистка собственной ветки |
+| update-workflow и rollback | File-only переход пакета с сохранением режима, baseline и paused operation |
+| attach/detach/switch client, plugin | Desired/actual membership, сохранность MCP ownership и существующий dispatcher |
+| локальный OpenSpec | Project-pinned CLI, локальные требования и их input identity без зависимости от внешнего store |
+
+Для полного пользовательского цикла «изменить → проверить → получить результат»
+неподдержанные штатные операции должны быть устранены до обычного включения.
+Файловые тесты не отменяют текущую поддержку серверных full-проектов.
+
+### Проверка через текущего verification owner
+
+Schema-2 obligation описывает результат, inputs, admissible proof, retention
+и cadence. On-demand не требует сохранённой suite для каждого изменения:
+достаточный one-off result и retained proof оцениваются одним существующим
+Get-VerificationCurrentProofAssessment вместе с loaded readiness и event log.
+Отсутствующая обоснованно suite отличается от zero tests, invalid JUnit и
+отсутствующего due proof. Полный итог по-прежнему проходит canonical unfiltered
+assessment; допустимое reuse не заставляет заново запускать неизменённые UI tests.
+
+В зарегистрированном коде Get-VerificationObligationInputIdentity получает
+inputPaths из полного effective Git tree; wildcard без файлов даёт
+matching-files=<none>. Для частичного дерева это не доказывает отсутствие объекта.
+Нужно адаптировать единый source-identity contract: материализовать минимальные
+declared inputs или доказать их точные native identities в принятом baseline.
+Неопределённый input остаётся неизвестным и получает acquisition continuation,
+а не пустой fingerprint с ложным reuse. Gates 1–3 и source validators используют
+тот же принцип; глубина берётся из принятой verification policy.
+Acquisition выполняется в разрешённом подготовительном шаге владельца.
+Read-only assessor в status/export/close не материализует файлы, не запускает
+1С и не меняет baseline/receipts для устранения недостающего proof.
+
+Сохраняются v5/relevant dependency и checker identities, revisions локальных
+требований, ИБ/generations и hashes артефактов. Техническая материализация не
+меняет semantic inputIdentity. Реальное изменение одного obligation инвалидирует
+его proof; независимый retained result может сохраниться после правильной загрузки.
+Workflow-only commit и истечение named invocation сами по себе не делают proof
+stale; новый relevant checker или неизвестная совместимость требуют нового proof.
+Пустой inventory не становится полным passed без реально достаточного evidence.
+
+UI_TESTING и сохранённая Vanessa остаются разными маршрутами. Essential
+используется только при actual installed-rules support; для важного изменённого
+UI после разрешённого deploy требуется конкретное expected/actual evidence.
+Saved Vanessa switch, широкий no-UI запрет и provider policy сохраняются.
+Файловое обновление и read-only acquisition не запускают UI, Gate 6 или loop.
+Canonical repair и scenario-loop используют существующий ID, scope и budget;
+on-demand recovery не создаёт новую попытку или скрытую сессию.
+
+### Продолжение после обновления workflow
+
+Использовать новую per-root update/snapshot/reconcile реализацию. File-only
+update обновляет helper/rules/client surfaces доступных worktree без source
+merge, чтения источника, load или автоматических тестов. Pending/failed lifecycle
+и MERGE_HEAD при остановленных процессах сами по себе не блокируют update.
+Сохраняются business index/stages, разрешённые конфликты, исходные operation ID,
+target master/source revision, native snapshots, cursor и prepared capture.
+После обновления повтор исходной команды продолжает её точную операцию.
+
+Новые on-demand поля входят в совместимость состояния существующих owners.
+Передача новому helper и scoped workflow commit не превращают техническое
+обновление в новый source-sync. Fork сохраняет original business anchor и
+снимок базы; принятие замены пакета проходит retained completed-update chain.
+Update/rollback не переключают режим исходников, не заменяют baseline текущим
+master и не откатывают foreign/user bytes. Для старого пакета без on-demand
+capability нужен адресный путь установки совместимого helper до зависимой
+операции; трактовать такой проект как full нельзя.
+
+Регенерация нескольких клиентов сохраняет их membership, MCP ownership и
+branch settings. При переносе на другой хост новые bindings создаёт тот же owner;
+исторические live процессы/leases и неподтверждённые ownership не наследуются.
+Локальные openspec/ и requirement revisions идут с проектными документами.
+Если формализация будет выбрана, source использует scripts/source-openspec.ps1
+с pin 1.13.1, installed project — свой resolver; выбор external store остаётся
+зависимым отказом текущего выпуска, без автоматической локальной замены.
+
+### Переносимый checkpoint и ограниченное хранение
+
+Переносимый checkpoint включает accepted baseline, нужное историческое содержимое,
+cursor/provenance, изменения ветки, необходимые snapshot-поколения и проверяемый
+manifest. Обычный Git clone не предполагает наличие внутренних refs.
+Необходимые inputs сохраняются штатным способом вне утрачиваемого runtime;
+место и правила хранения выбираются при настройке конкретного проекта.
+Секреты, локальные подключения, процессы, PID/порты и активные execution guards
+не переносятся и не попадают в Git.
+
+Приёмка второго хоста восстанавливает проект без первого хоста и без замены
+исторического baseline новым текущим источником. Проверяются manifest/hashes,
+затем создаются новые локальные bindings. Проверка не объявляется свежей без
+требуемого доказательства для восстановленной базы. Новый target/base или runner
+generation оценивается нынешним receipt owner; перенос artifacts не переносит
+их применимость к другой ИБ автоматически. Сохраняются referenced retained и
+one-off artifacts, а не только файл последнего общего результата.
+
+Хранятся поколения, нужные активным веткам и явно сохранённым архивам;
+глобального архива всех XML-версий нет. Reset переключает ветку на новый baseline
+только после готовности новой базы и состояния. Close сохраняет своё нынешнее
+значение; delete удаляет лишь принадлежащие ветке refs/runtime/артефакты.
+Git GC и удаление snapshot должны учитывать ссылки других веток и checkpoints.
+
+## Этап 6 — приёмка и включение
+
+Файловый пилот допускается после доказательства зависимых примитивов, lifecycle
+и безопасного восстановления. Для обычного использования дополнительно требуется
+переносимость. Серверное включение требует той же матрицы с собственным live-proof.
+
+Обязательные сценарии:
+
+- новый проект до свежего полного результата проверки и result без полного XML-дампа;
+- cursor-only и материализация контекста сохраняют freshness;
+- изменение/загрузка/возврат файла корректно меняют базу и freshness;
+- две ветки разных ревизий; обновление одной не меняет cursor другой;
+- источник R0 → R1 при нематериализованном историческом объекте ветки;
+- совпадающие и конфликтующие изменения, add/delete/rename и родительские XML;
+- источник меняется в середине sync/refresh-all: нет смешанного успешного результата;
+- lite при недоступном источнике успешно применяет полностью подготовленный target;
+- повреждённый cursor не запускает полный дамп; есть зависимое recovery;
+- ручные правки в Конфигураторе не теряются при materialize/refresh/check;
+- отмена и потеря helper на каждой границе capture/ref/load/normalize/restore;
+- неизвестные эффекты загрузки не становятся ложным loaded/fresh доказательством;
+- частичный load проходит Gate 6; ошибка check возвращает DT и нужный cursor,
+  snapshot recovery failure сохраняет доказательства, lost ACK не отменяет successful apply;
+- wildcard inputPaths нематериализованного объекта не дают ложный пустой input;
+  добавление неизменённого контекста сохраняет proof, изменение требования/объекта
+  выбирает его obligation, независимый proof сохраняется;
+- достаточный one-off без retained suite даёт полный assessment; missing receipt,
+  unknown generation и zero-test runner его не дают; named/filtered scope не
+  выдаётся за доказательство всех due obligations;
+- обновление пакета во время paused capture/merge/load/fork сохраняет anchor,
+  business staging и cursor; исходная команда продолжается новым helper без
+  нового source target, нового loop budget и переключения режима;
+- два клиента, attach/detach failure, MCP ownership и локальный OpenSpec
+  сохраняются при update, rollback и переносе; file-only update не запускает 1С;
+- Q23 проверяется на фактически поддерживающем rules candidate; essential UI
+  evidence и saved Vanessa не подменяют друг друга; сохраняются приоритет no-UI,
+  switch/provider policy и разрешения конкретного named invocation;
+- независимая ветка продолжает работу при сбое другой; guard ограничен своей фазой;
+- reset/fork/close/delete, повторная команда и восстановление на другом хосте;
+- whitespace + Cyrillic в одном Windows-пути, NUL-delimited Git paths,
+  точный UTF-8 round-trip и byte-preserving CF/CFE-транспорт;
+- файловые и серверные источники/ветки, версии платформы и режимы repository policy;
+- unchanged full-путь сохраняет прежний результат и поддерживаемые топологии.
+
+Использовать helper-регрессии для транзакций/состояния и реальный установленный
+путь для конечного результата. Не заменять live-проверку наличием файлов,
+настроек или fixture. Не ослаблять свежий check, Vanessa/YAxUnit applicability,
+merge preservation, rollback и artifact SHA.
+
+## Доказательства, завершение и доставка
+
+Собирать существующими средствами времена init/cursor, seed copy/hash,
+ожидания guard, native export, Git/shadow, merge, load, normalization, check/result
+и переносимости, вместе с количеством объектов/файлов и байт.
+Snapshot/Gate 6, выполнение due obligations и reuse выделяются в этих фазах
+отдельно: сравниваются одни final release inputs и одинаковый workload.
+Показать полный путь до первого проверенного изменения относительно нынешнего
+full и объяснить стоимость sync-master при разных количествах веток.
+
+Каждый этап завершается своим перечисленным результатом и доказательством.
+На дату согласования завершены только решения и план; этапы 0–6 не выполнены.
+Реализация начинается с этапа 0, без обещания работоспособности недоказанных
+примитивов. Новая находка уточняет зависимое решение, сохраняя согласованные границы.
+
+Связные реализации проверяются и регистрируются по
+[local-quality-gate](local-quality-gate.md): один локальный commit и RegisterChange
+на завершённую доработку. Адаптации продолжают owner tests зарегистрированной
+версии: DesignerBatchChecks, VerificationAggregateAssessment/ProofReuse,
+PendingMergeWorkflowTransition, WorkflowUpdateRollback, DevBranchLifecycle,
+ClientMembership/MultiClientMcpOwnership и OpenSpecCliRuntime. Новые regressions
+связываются с владельцем в актуальном quality-contracts catalog; прежнее чужое
+evidence не выдаётся за proof изменённых on-demand inputs.
+Публикация, установка и live-приёмка имеют отдельные
+доказательства. Актуализация плана добавляется к собственной зарегистрированной
+очереди; она не заменяет immutable candidate или незавершённые доказательства
+текущего выпуска переработки. Новые runtime-барьеры проходят оригинальный сценарий вместе с
+agent-owned продолжением; чужие ресурсы и независимая работа не блокируются.
