@@ -118,11 +118,14 @@ Describe 'Checked load proof continuation and current MCP exemption' {
                         'source changed' { [IO.File]::AppendAllText((Join-Path $f.sourceRoot $f.module),"`r`n// позднее изменение",[Text.UTF8Encoding]::new($false)) }
                         'receipt changed' { [IO.File]::AppendAllText($f.evidence,"`r`n",[Text.UTF8Encoding]::new($false)) }
                         'result changed' { [IO.File]::WriteAllText((Join-Path $f.root '.agent-1c/proofs/result.json'),'{"isError":true}',[Text.UTF8Encoding]::new($false)) }
+                        {$_ -in @('partial native failure','partial then module failure')} {
+                            if($DesignerArgs -contains '-partial'){$code=101;$log='Original partial native load failed before the editable boundary.'}
+                        }
                         'owner drift' { Update-DevBranchState -State (Read-DevBranchStateFile $f.statePath) -Updates @{devBranchInfoBasePath=(Join-Path $f.root 'Другая база');customSetting='поздний выбор'} }
                     }
                 }
                 '/CheckModules' {
-                    if($f.fault -in @('module failure','restore uncertain','borrowed failure','owner drift')){$code=101;$log='Ошибка компиляции текущего модуля.'}
+                    if($f.fault -in @('module failure','restore uncertain','borrowed failure','owner drift','partial then module failure')){$code=101;$log='Ошибка компиляции текущего модуля.'}
                 }
                 '/CheckConfig' {$code=101;$log='ОбщийМодуль.Прежний.Модуль Возможно ошибочный метод: "ПрежнийМетод"'}
                 '/UpdateDBCfg' {$f.applied=$true}
@@ -146,6 +149,80 @@ Describe 'Checked load proof continuation and current MCP exemption' {
     }
 
     AfterEach {$script:OneCNativeOperationJournal=$null;$script:VerificationEvidencePath=''}
+
+    It 'keeps an explicit full load strict despite matching small-change MCP evidence' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '-partial'
+        $result.loadModeUsed | Should -BeExactly 'full'
+        $f.applied | Should -BeTrue
+        $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
+        $configuration.nativePassed | Should -BeFalse
+        $configuration.assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
+        $configuration.assessment.cleanPassed | Should -BeFalse
+    }
+
+    It 'uses strict full fallback and the proved previous state after a covered partial native load fails safely' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault='partial native failure'
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $loads=@($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})
+        $loads.Count | Should -Be 2
+        $loads[0].arguments | Should -Contain '-partial'
+        $loads[1].arguments | Should -Not -Contain '-partial'
+        $loads[1].arguments | Should -Not -Contain '/UpdateDBCfg'
+        $result.loadModeUsed | Should -BeExactly 'full-fallback'
+        $result.configLoadStatus | Should -BeExactly 'fallback-succeeded'
+        $result.partialError | Should -Match 'Original native /LoadConfigFromFiles failed with 101'
+        $f.applied | Should -BeTrue
+        $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
+        $configuration.nativePassed | Should -BeFalse
+        $configuration.assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
+        $configuration.assessment.cleanPassed | Should -BeFalse
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
+        $state.customSetting | Should -BeExactly 'сохранить'
+    }
+
+    It 'refuses a full fallback module error even when the failed partial had complete MCP coverage' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault='partial then module failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*CheckModules*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Contain '/CheckModules'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Not -Contain '/UpdateDBCfg'
+        @($f.calls|Where-Object{$_.arguments[0] -eq '/RestoreIB'}).Count | Should -Be 2
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.lastConfigDesignerFingerprint | Should -BeExactly $f.previous.fingerprint
+        $state.lastGate6Evidence.id | Should -BeExactly 'previous-proof'
+    }
+
+    It 'does not compare a borrowed partial failure against an unconfirmed previous database baseline' {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $script:OneCNativeOperationJournal=New-OneCNativeOperationJournal
+        $dt=Join-Path $f.root '.agent-1c/enclosing.dt'
+        [IO.File]::Copy($f.database,$dt,$true)
+        $duty=Register-OneCDatabaseRestorationDuty -State ([pscustomobject]@{infoBaseKind='file';devBranchInfoBasePath=$f.infoBase}) -SnapshotPath $dt -Policy always
+        $f.fault='partial native failure'
+        {Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'} | Should -Throw '*GATE6_*'
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/LoadConfigFromFiles','/LoadConfigFromFiles','/CheckModules','/CheckConfig')
+        $f.applied | Should -BeFalse
+        $duty.payload.status | Should -BeExactly 'pending'
+        (Read-DevBranchStateFile $f.statePath).lastConfigDesignerFingerprint | Should -BeNullOrEmpty
+        [IO.File]::ReadAllBytes($dt) | Should -Be ([byte[]](1,2,3,4))
+    }
 
     It 'applies an actually admitted current MCP proof through snapshot editable load revalidation and one database boundary' {
         $f=$script:continuationFixture

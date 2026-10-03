@@ -2246,7 +2246,7 @@ function Invoke-ConfigLoadDesignerAttempt {
             -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
     }
     $legacyBaseline = $null
-    if (-not $ExtensionName -and $null -ne $LegacyContext) {
+    if (-not $ExtensionName -and $RequireGate6 -and $null -ne $LegacyContext) {
         $baselineLogsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
         New-Item -ItemType Directory -Force -Path $baselineLogsPath | Out-Null
         $baselineResultPath = New-TimestampedFilePath -Directory $baselineLogsPath -Prefix '1c-gate6-before-' -Extension '.result'
@@ -2414,7 +2414,7 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full'}) `
@@ -2513,17 +2513,25 @@ function Invoke-ConfigLoadWithFallback {
                 throw
             }
 
-            if ($RequireGate6 -or $ExtensionName) {
+            if ($RequireGate6 -or $ExtensionName -or $null -ne $StaticCoverageContext) {
                 Write-Warning "Partial config load failed after Designer received -listFile; its infobase snapshot was restored. Running one checked full-load fallback in the same branch infobase."
             } else {
                 Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
             }
             Write-Warning "Partial load log: $partialLogPath"
+            # A full retry cannot reuse partial MCP coverage. Previous-source
+            # comparison needs confirmed restoration of the failed partial's
+            # target and cursor, not only the earlier state declaration.
+            $fullFallbackLegacyContext = $null
+            if ($null -ne $LegacyContext -and $partialException.Exception.Data.Contains('ItlConfigLoadSnapshotRestored') -and
+                $partialException.Exception.Data['ItlConfigLoadSnapshotRestored'].cursorRestored) {
+                $fullFallbackLegacyContext = $LegacyContext
+            }
             $fullNativeSucceeded = $false
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                        -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
+                    -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $fullFallbackLegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full-fallback'}) `
@@ -3685,7 +3693,9 @@ function Load-ConfigFromFiles {
             -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
         if ($null -eq $staticCoverageContext) { $requireGate6 = $true }
     }
-    $legacyContext = if ($requireGate6) { New-PlatformGate6LegacyContext -State $State -ChangeSet $changeSet `
+    # Capture the previous-state binding before invalidation, even when the
+    # partial load is covered: its full fallback still needs strict checks.
+    $legacyContext = if ($ContentKind -eq 'configuration') { New-PlatformGate6LegacyContext -State $State -ChangeSet $changeSet `
         -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath } else { $null }
 
     $listFilePath = ""
@@ -3701,6 +3711,7 @@ function Load-ConfigFromFiles {
         $loadStateHash = ConvertTo-Agent1cHashtable -Object $State
         $loadStateHash[$fingerprintField] = ""
         $loadStateHash["configLoadStatus"] = "pending"
+        $loadStateHash["lastGate6Evidence"] = $null
         $loadState = [pscustomobject]$loadStateHash
         Update-DevBranchState -State $loadState -Updates @{
             $fingerprintField = ""

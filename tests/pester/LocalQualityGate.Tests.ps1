@@ -544,7 +544,18 @@ exit $exitCode
             "tests/pester/CompactItlRunner.Tests.ps1",
             "tests/pester/LifecycleOperationLock.Tests.ps1")
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
-        @($selection.tests).Count | Should -Be 57
+        $gate6Tests = @(
+            "tests/pester/PlatformGate6Trigger.Tests.ps1",
+            "tests/pester/PlatformLegacyContext.Tests.ps1",
+            "tests/pester/PlatformLegacyDiagnostics.Tests.ps1",
+            "tests/pester/PlatformLegacyImpact.Tests.ps1",
+            "tests/pester/PlatformLoadContinuation.Tests.ps1",
+            "tests/pester/PlatformSourceCoverage.Tests.ps1")
+        # Retain the original observed 57-file cohort; the six newly owned
+        # Gate 6 files extend current inventory rather than replacing it.
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 63
+        foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
         foreach ($test in @("DevBranchLifecycle", "CompactItlRunner", "DependencyLocks")) {
             @($selection.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
         }
@@ -568,7 +579,7 @@ exit $exitCode
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 63
+        @($currentSelection.tests).Count | Should -Be 69
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
             "tests/pester/DevelopE2EQualification.Tests.ps1",

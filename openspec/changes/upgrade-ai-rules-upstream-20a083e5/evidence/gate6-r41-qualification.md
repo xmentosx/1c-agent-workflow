@@ -57,6 +57,26 @@ raw-result races, точный rollback, неизменный proof и повт�
 native 1C и validator responses в этом unit batch — явные collaborators.
 Полный публичный `/itl-check` и новый native candidate не заявлены этим proof.
 
+Последняя проверка выявила перенос partial MCP coverage в автоматический Full
+fallback. Явный Full уже защищался sentinel. Сохранены отдельные native PS5
+результаты **RED 1/2 → 7/1 → affected 1/0**; первый отказ GREEN batch обнаружил
+устаревший in-memory `lastGate6Evidence` при записи fallback-failed. Owner
+исправляет invalidated projection, Full всегда идёт через strict ladder, а
+прежний legacy context допускается только после confirmed DT/cursor restoration.
+Qualification SHA-256
+`a15be3ce86162c951f56fd222ea33d278f4efa24d8a889fa1f69c7a3cde77ff4`.
+Новый общий 8/0 не заявлен; финальная registration проверяет целые owner files.
+
+Первый source RegisterChange r41 остановил scheduling после LocalQualityGate
+**48/1**: inventory ожидал 57, получил 63 после добавления шести Gate 6 files.
+Test contract сохраняет исходный observed 57-file cohort, отдельно требует
+все шесть новых paths (current 63; с шестью quality files — 69). Тот же
+original It прошёл **1/0**, 2,541 с, inputs unchanged; остальные 48 не повторены.
+Qualification SHA-256
+`ceaa2bb8ac961544bd0fdb195711150e9905f47a54e96e6cf434d0f7b8f1d473`.
+Исходный count failure сохранён побайтно. Runtime watchdogs, budgets и
+все прежние capacity assertions не изменены; новый общий 49/0 не заявлен.
+
 ## Исходный стенд
 
 Guarded export основной CF дал 19 286 файлов, совпадающих с checkout по
