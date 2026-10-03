@@ -698,7 +698,7 @@ $record | Add-Member -NotePropertyName detail -NotePropertyValue $message -Force
 $record | Add-Member -NotePropertyName exitCode -NotePropertyValue 1 -Force; $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue $now -Force
 $record | Add-Member -NotePropertyName finishedAt -NotePropertyValue $now -Force; $record | Add-Member -NotePropertyName continuationPid -NotePropertyValue $PID -Force
 $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $lifecyclePath -Encoding UTF8
-[ordered]@{ schemaVersion=1; status="failed"; action=$Action; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
+[ordered]@{ schemaVersion=1; status="failed"; action=$Action; pid=$PID; projectRoot=$ProjectRoot; startedAt=$now; updatedAt=$now; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
 [Console]::Error.WriteLine("ITL failure: status=failed; errorCategory=runner; requiredAction=none; completion=failed.")
 [Console]::Error.WriteLine($message)
 exit 1

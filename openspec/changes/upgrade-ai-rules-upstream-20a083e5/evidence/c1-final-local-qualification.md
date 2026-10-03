@@ -113,3 +113,111 @@ change. The earlier 39-check migration proof keeps its original source identity;
 it is not relabelled as an execution from this correction's head. Final-tag
 Full, public delivery, fresh defaults and live EV9 still require their own
 actual results.
+
+## Passed preliminary Full and stopped stand preparation
+
+The canonical final-tag fork receipt now exists for exact `25b60321`,
+upstream `refs/heads/main` at `c1fb8e6`: native Full passed 166/0/0 and all
+18 stages, with clean/reusable evidence. Its qualification SHA256 is
+`1c1437c52c50711c821f5767b0f529ff6fa71e38262f5fd2d7f9c7119a459393`.
+The old explicit-ref receipt remains historical. The corrected actual workflow
+consumer accepted the new receipt and rejected the old one.
+
+Public RegisterChange for `2584738f` passed 140/0/0 in 583.430 seconds.
+The next public PublishDevelop preliminary Full passed all eight stages and
+all 110 Pester files: 2,329/0/0 in 577.715 seconds. Its retained receipt is
+`build/c1-full-passed-2584738f/retention.json` in the publication checkout,
+SHA256 `de3df3403c32798693f97b09c9b1818971dbd9bfc7df927cb92ab366ab7efa42`.
+This qualifies source `2584738f`, tree
+`66f7986d42b5926652e255691bbd9aa8b282b372`; it does not qualify final
+Develop journeys or later source changes.
+
+The existing evidence-backed promoter changed only the rules compatibility
+status and timestamp, producing `c6c829b6`, tree
+`e10ff12efa49258c74c8f988531b9db2513b1806`. The first invocation stopped at
+the existing immutable-plan mismatch after promotion. Resumption with the
+retained promoted plan restored that exact candidate. Release readiness then
+correctly refused the old installed stand before starting Develop. Neither
+attempt published a remote ref.
+
+Preparing only the owned stand through the public source-side compact
+`update-workflow` installed the c6/r40 files and committed the main scope.
+The first registered branch reached `post-copy-running`, but the compact
+runner stopped the operation with `RUNNER_STATUS_STALE` at the unchanged
+120-second watchdog. The branch receipt and output still progressed while
+the outer status stopped refreshing: the watched original helper was PID
+17132, the fresh helper was PID 55396, and the last outer stage timestamp
+was `2026-10-03T08:21:05.9923914+03:00`. The branch transaction updated at
+08:22:56.688; the runner stopped its owned tree at 08:23:06.849. This is a
+fresh-helper status-transport failure, not an exhausted overall deadline.
+
+The original invocation and exact stdout/stderr are retained in
+`build/c1-release-stand-update-c6c829b6/`. Main and branch snapshots keep
+their exact c6 payload and phases. Recovery must use the existing update owner
+from main, retain that payload, and then apply a newer candidate separately.
+No receipt reset, lifecycle bypass, business merge, database update, UI or
+saved Vanessa run is justified by this package-only failure.
+
+The earlier 39-case file-only proof did not execute this compact fresh-process
+watchdog boundary. Its source identity is retained; it is not promoted to
+proof of the new fix. Any correction to a lifecycle/native helper also changes
+the client_mcp native-build input inventory, so the old 61036 producer receipt
+and CFE SHA cannot be relabelled as qualification of the correction. The
+original stand continuation and a new exact-input native build remain required.
+
+## Fresh-helper correction: bounded causal results
+
+The existing fresh-process owner now gives each invocation a private diagnostic
+status channel. The original parent remains the only writer of the compact
+runner's external status and publishes through the existing native-wait monitor.
+It relays actual terminal fields immediately, continues to relay a later terminal
+failure, and never replaces a terminal result with running. The authoritative
+lifecycle record, operation generation, original owner, locks, payload and
+recovery phases stay unchanged. A nested legacy final writer is accepted only
+when its PID and terminal status/exit also match that same authoritative operation.
+Native output remains live through optional UTF-8 line callbacks; other native
+capture callers retain their previous default behavior. The original absolute
+deadline and owned process-tree cleanup remain enforced.
+
+The initial exact-c6 fixture runs failed before entering the continuation.
+Retained native stderr proved a separate legacy argument serialization defect:
+`OperationOwnerPid` received the Cyrillic word `с` instead of an integer when
+another argument contained whitespace, Cyrillic and a final backslash. These
+results are argument-transport failures, not short watchdog reproductions.
+The original argument and assertions remain in the regression; shared native
+quoting supplies the correction. The actual unchanged c6 stand refusal above
+remains the watchdog RED.
+
+Native Windows PowerShell 5.1/Pester 5.8 selected 16 relevant cases. The first
+correction batch passed 14 and failed 2 in 292.4685669 seconds, with captured
+inputs unchanged. Its unchanged-watchdog case waited 126 seconds silently and
+passed in 132.8915554 seconds. Receipt
+`build/fresh-helper-native-wait-causal/after-2/result.json`, SHA256
+`7391d1d670a55720b23294d2db015a692c954eeb83189249737b2fa4f887a33c`,
+remains a partial batch, not an all-green qualification.
+
+The two failures had concrete causes: the new caller read an OrderedDictionary
+through a property-only accessor and missed the valid nested continuation PID;
+the test read live stderr with a file-share mode incompatible with the writer.
+Direct existing-record access and an explicit shared-read test stream corrected
+these boundaries without changing workload or assertions. The two affected
+cases then passed 2/0/0 in 25.7890747 seconds, inputs unchanged. Their distinct
+receipt is `build/fresh-helper-native-wait-causal/after-nested-streaming/result.json`,
+SHA256 `b096d5887c4b55d677c13852fa78a4b07c98385cef084cac366826a9202df4d0`.
+These results are not arithmetically merged or relabelled as one exact-tree gate.
+The source owner must qualify the final committed bytes through RegisterChange;
+the stopped original stand update and exact-input native producer still require
+their original acceptance paths. The additional 126-second regression explains
+the measured focused-check cost; runtime watchdog and deadline budgets are not
+increased.
+
+Final formatting restored eight bare line feeds to the existing CRLF style in
+the lifecycle implementation and test fixture, preserving BOM, non-EOL payload
+and the token stream after EOL-only normalization. Native PS5 parsed all four
+runtime/test files without errors. Historical focused hashes remain historical;
+`build/fresh-helper-native-wait-causal/final-eol-freeze.json` records the change.
+One separate ten-second native-transport observation measured 10.6073464 seconds
+wall time for 10.096051 seconds of child work, 43 wait callbacks and 265.625 ms
+parent CPU. It proved the exact Unicode/trailing-backslash argument round trip.
+This is not a comparative benchmark or a measurement of the complete lifecycle
+relay; `steady-native-capture-10s.json` preserves that scope explicitly.

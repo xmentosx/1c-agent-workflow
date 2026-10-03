@@ -6721,7 +6721,11 @@ function Invoke-ItlNativeProcessCapture {
         [string[]]$Arguments = @(),
         [string]$WorkingDirectory = $script:ProjectRoot,
         [ValidateRange(0, 86400)][int]$TimeoutSeconds = 0,
-        [scriptblock]$OnTimeout = $null
+        [scriptblock]$OnTimeout = $null,
+        [scriptblock]$OnWait = $null,
+        [DateTime]$DeadlineUtc = [DateTime]::MaxValue,
+        [scriptblock]$OnStdoutLine = $null,
+        [scriptblock]$OnStderrLine = $null
     )
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -6741,9 +6745,59 @@ function Invoke-ItlNativeProcessCapture {
         if (-not $process.Start()) {
             throw "Native process did not start: $FilePath"
         }
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        if ($TimeoutSeconds -eq 0) {
+        $streaming = $null -ne $OnStdoutLine -or $null -ne $OnStderrLine
+        $stdoutDone = $false; $stderrDone = $false
+        $stdoutText = [Text.StringBuilder]::new(); $stderrText = [Text.StringBuilder]::new()
+        $stdoutTask = if ($streaming) { $process.StandardOutput.ReadLineAsync() } else { $process.StandardOutput.ReadToEndAsync() }
+        $stderrTask = if ($streaming) { $process.StandardError.ReadLineAsync() } else { $process.StandardError.ReadToEndAsync() }
+        if ($null -ne $OnWait -or $streaming) {
+            $startedAtUtc = [DateTime]::UtcNow
+            $deadline = $DeadlineUtc
+            if ($TimeoutSeconds -gt 0 -and $startedAtUtc.AddSeconds($TimeoutSeconds) -lt $deadline) {
+                $deadline = $startedAtUtc.AddSeconds($TimeoutSeconds)
+            }
+            try {
+                while (-not $process.HasExited -or $(if ($streaming) { -not $stdoutDone -or -not $stderrDone } else { -not $stdoutTask.IsCompleted -or -not $stderrTask.IsCompleted })) {
+                    if ([DateTime]::UtcNow -ge $deadline) {
+                        throw "NATIVE_PROCESS_TIMEOUT: PID $($process.Id) exceeded its original deadline or left its output pipe open. Repeat the original operation after fixing its native prerequisite."
+                    }
+                    if ($streaming) {
+                        foreach ($stream in @('stdout','stderr')) {
+                            for ($lineCount = 0; $lineCount -lt 64; $lineCount++) {
+                                $task = if ($stream -eq 'stdout') { $stdoutTask } else { $stderrTask }
+                                $done = if ($stream -eq 'stdout') { $stdoutDone } else { $stderrDone }
+                                if ($done -or -not $task.IsCompleted) { break }
+                                $line = $task.GetAwaiter().GetResult()
+                                if ($null -eq $line) {
+                                    if ($stream -eq 'stdout') { $stdoutDone = $true } else { $stderrDone = $true }
+                                    break
+                                }
+                                if ($stream -eq 'stdout') {
+                                    [void]$stdoutText.AppendLine($line)
+                                    if ($null -ne $OnStdoutLine) { & $OnStdoutLine $line }
+                                    $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                                } else {
+                                    [void]$stderrText.AppendLine($line)
+                                    if ($null -ne $OnStderrLine) { & $OnStderrLine $line | Out-Null }
+                                    $stderrTask = $process.StandardError.ReadLineAsync()
+                                }
+                            }
+                        }
+                    }
+                    if ($null -ne $OnWait) { & $OnWait $process $startedAtUtc $deadline | Out-Null }
+                    if (-not $process.HasExited) { $process.WaitForExit(250) | Out-Null }
+                    else { Start-Sleep -Milliseconds 50 }
+                }
+                if ($null -ne $OnWait) { & $OnWait $process $startedAtUtc $deadline | Out-Null }
+            } catch {
+                $failure = $_
+                $cleanup = if ($null -ne $OnTimeout) { & $OnTimeout $process } else { Stop-NativeProcessForSafety -Process $process }
+                if (-not [bool](Get-StateValue -State $cleanup -Name 'confirmed' -Default $false)) {
+                    throw "$($failure.Exception.Message) Owned cleanup was not confirmed: $([string](Get-StateValue -State $cleanup -Name 'error' -Default ''))"
+                }
+                throw $failure
+            }
+        } elseif ($TimeoutSeconds -eq 0) {
             $process.WaitForExit()
         } else {
             $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -6760,8 +6814,8 @@ function Invoke-ItlNativeProcessCapture {
         }
         return [pscustomobject]@{
             exitCode = $process.ExitCode
-            stdout = [string]$stdoutTask.Result
-            stderr = [string]$stderrTask.Result
+            stdout = $(if ($streaming) { $stdoutText.ToString() } else { [string]$stdoutTask.Result })
+            stderr = $(if ($streaming) { $stderrText.ToString() } else { [string]$stderrTask.Result })
         }
     } finally {
         $process.Dispose()

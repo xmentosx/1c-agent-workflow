@@ -635,6 +635,64 @@ function Test-WorkflowHelperChangedSince {
     return (@($changed | Where-Object { $_ }).Count -gt 0)
 }
 
+function Publish-Agent1cFreshProcessRunStatus {
+    param([object]$Process, [object]$Relay, [DateTime]$StartedAtUtc, [DateTime]$DeadlineUtc)
+
+    if (-not $Relay.statusPath) { return }
+    $record = $null
+    if ($Relay.operationId) {
+        $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+        if ($null -eq $record -or [string]$record.operationId -cne $Relay.operationId -or
+            [int]$record.pid -ne $Relay.ownerPid -or [string]$record.startedAt -cne $Relay.operationStartedAt) {
+            throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh wait operation generation changed' operationId='$($Relay.operationId)'"
+        }
+    }
+    $childStatus = $null
+    if (Test-Path -LiteralPath $Relay.childStatusPath -PathType Leaf) {
+        try {
+            $candidate = ConvertTo-Agent1cHashtable (Read-Utf8Text -Path $Relay.childStatusPath | ConvertFrom-Json)
+            $childStartedAt = [DateTime]::Parse([string]$candidate.startedAt).ToUniversalTime()
+            $childUpdatedAt = [DateTime]::Parse([string]$candidate.updatedAt).ToUniversalTime()
+            # An older executor may share its private channel with a nested
+            # continuation. Its final writer is bound by the existing operation
+            # terminal, not by a new process inventory or broader admission.
+            $nestedWriterPid = if ($null -ne $record -and $record.Contains('continuationPid')) { [int]$record['continuationPid'] } else { 0 }
+            $nestedTerminal = $nestedWriterPid -gt 0 -and
+                [string]$record.status -in @('succeeded','failed','cancelled') -and
+                [string]$candidate.status -ceq [string]$record.status -and
+                [int]$candidate.pid -eq $nestedWriterPid -and
+                [int]$candidate.exitCode -eq [int]$record.exitCode
+            if ([int]$candidate.schemaVersion -eq 1 -and ([int]$candidate.pid -eq $Process.Id -or $nestedTerminal) -and
+                [string]$candidate.action -ceq $Relay.action -and
+                $childStartedAt -ge $StartedAtUtc.AddSeconds(-5) -and $childStartedAt -le [DateTime]::UtcNow.AddSeconds(5) -and
+                $childUpdatedAt -ge $childStartedAt -and $childUpdatedAt -le [DateTime]::UtcNow.AddSeconds(5) -and
+                [string]$candidate.status -in @('running','succeeded','failed','cancelled')) {
+                $childStatus = $candidate
+            }
+        } catch { $childStatus = $null }
+    }
+    if ($null -ne $childStatus -and [string]$childStatus.status -ne 'running') {
+        # The original parent is the only external writer. Forward terminal
+        # immediately, including cleanup time, and never replace it with running.
+        $childStatus.pid = $PID
+        $terminalText = ($childStatus | ConvertTo-Json -Depth 10) + [Environment]::NewLine
+        if ($terminalText -cne [string]$Relay.terminalText) {
+            Write-Utf8TextAtomic -Path $Relay.statusPath -Value $terminalText
+            $Relay.terminalText = $terminalText
+        }
+        $Relay.terminalForwarded = $true
+        return
+    }
+    if ($Relay.terminalForwarded -or $Process.HasExited) { return }
+    $lastPublished = $Relay.monitor.lastPublishedAtUtc
+    Publish-NativeWaitRunStatus -Process $Process -Monitor $Relay.monitor -StartedAtUtc $StartedAtUtc -DeadlineUtc $DeadlineUtc
+    if ($null -ne $childStatus -and $Relay.monitor.lastPublishedAtUtc -ne $lastPublished) {
+        $childStatus.pid = $PID
+        $childStatus.updatedAt = (Get-Date).ToString('o')
+        Write-Utf8TextAtomic -Path $Relay.statusPath -Value (($childStatus | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    }
+}
+
 function Invoke-Agent1cFreshProcess {
     param(
         [string]$ScriptPath = $script:Agent1cScriptPath,
@@ -669,24 +727,64 @@ function Invoke-Agent1cFreshProcess {
         $reexecArguments.Add("-OperationContinuation") | Out-Null
     }
 
+    $statusPath = if ($RunStatusPath) { Resolve-RunFilePath -Path $RunStatusPath } else { '' }
+    $childStatusPath = if ($statusPath) { "$statusPath.fresh-$PID-$([guid]::NewGuid().ToString('N')).json" } else { '' }
+    if ($childStatusPath) {
+        # Replace exactly one status argument; nested fresh helpers own their
+        # own private channel and retain the same signed lifecycle generation.
+        for ($index = $reexecArguments.Count - 1; $index -ge 0; $index--) {
+            if ($reexecArguments[$index] -ieq '-RunStatusPath') {
+                $reexecArguments.RemoveAt($index)
+                if ($index -lt $reexecArguments.Count) { $reexecArguments.RemoveAt($index) }
+            }
+        }
+        $reexecArguments.Add('-RunStatusPath') | Out-Null
+        $reexecArguments.Add($childStatusPath) | Out-Null
+    }
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", $ScriptPath
     ) + @($reexecArguments.ToArray()) + @($AdditionalArguments)
 
+    . (Join-Path $script:Agent1cCoreRoot 'itl-runner-timeout.ps1')
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds((Resolve-ItlRunnerTimeout -ProjectRoot $script:ProjectRoot -Action $Action).seconds)
+    $inheritedDeadline = [Environment]::GetEnvironmentVariable('ITL_RUNNER_DEADLINE_UTC', 'Process')
+    if ($inheritedDeadline) { $deadlineUtc = [DateTime]::Parse($inheritedDeadline).ToUniversalTime() }
+    $launchedAction = $Action
+    for ($index = 0; $index -lt ($arguments.Count - 1); $index++) {
+        if ($arguments[$index] -ieq '-Action') { $launchedAction = [string]$arguments[$index + 1] }
+    }
+    $freshRelay = @{
+        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''
+        action = $launchedAction
+        monitor = New-NativeWaitRunStatusMonitor -LogPaths @($RunLogPath)
+        operationId = $(if ($continuesLifecycleOperation) { $script:LifecycleOperationId } else { '' })
+        ownerPid = $(if ($continuesLifecycleOperation) { $continuationOwnerPid } else { $PID })
+        operationStartedAt = $(if ($continuesLifecycleOperation) { [string]$script:LifecycleOperationRecord.startedAt } else { '' })
+    }
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        & powershell @arguments 2>&1 | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                [Console]::Error.WriteLine([string]$_)
-            } else {
-                if ($ReturnExitStatus) { Write-Host $_ } else { Write-Output $_ }
-            }
+        $nativeResult = $null
+        Invoke-ItlNativeProcessCapture -FilePath 'powershell.exe' -Arguments $arguments -DeadlineUtc $deadlineUtc -OnTimeout {
+            param($process)
+            Stop-ItlUiToolProcessTree -Process $process
+        } -OnWait {
+            param($process, $startedAtUtc, $waitDeadlineUtc)
+            Publish-Agent1cFreshProcessRunStatus -Process $process -Relay $freshRelay -StartedAtUtc $startedAtUtc -DeadlineUtc $waitDeadlineUtc
+        } -OnStdoutLine {
+            param($line)
+            Write-Output $line
+        } -OnStderrLine {
+            param($line)
+            [Console]::Error.WriteLine($line)
+        } | ForEach-Object {
+            if ($null -ne $_.PSObject.Properties['exitCode'] -and $null -ne $_.PSObject.Properties['stdout']) { $nativeResult = $_ }
+            elseif ($ReturnExitStatus) { Write-Host $_ }
+            else { Write-Output $_ }
         }
-        $pipelineSucceeded = $?
-        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($pipelineSucceeded) { 0 } else { 1 }
+        $exitCode = [int]$nativeResult.exitCode
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
@@ -711,6 +809,13 @@ function Invoke-Agent1cFreshProcess {
                 $exitCode = 1
             }
         }
+    }
+    if ($statusPath -and -not $freshRelay.terminalForwarded -and $exitCode -eq 0) {
+        $message = "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh process did not write valid terminal run status' scriptPath='$ScriptPath'. Repeat the original action through its helper."
+        Set-RunFailureContext -Category 'runner'
+        Write-RunStatus -Status 'failed' -ExitCode 1 -ErrorMessage $message
+        [Console]::Error.WriteLine($message)
+        $exitCode = 1
     }
     if ($ReturnExitStatus) { return [pscustomobject]@{ exitCode = [int]$exitCode } }
     exit $exitCode

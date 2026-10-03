@@ -174,15 +174,17 @@ the same public RegisterChange reused exactly those 35 passed shards and ran
 the remaining Compact 38/0/0 in 228.079 seconds. No assertion, timeout or original
 workload changed. Source registration remains distinct from native file-only proof.
 
-## Accepted Q24 c1 OpenCode checkpoint acceptance — pending execution
+## Accepted Q24 c1 OpenCode scoped acceptance — final source gate pending
 
 Upstream preservation of all four project configs is accepted separately.
 The ownership-path migration and lossless JSONC operation described in design.md
-were accepted directly by the user on 2026-10-03 and remain unexecuted.
-Dependent runtime implementation follows that checkpoint. No historical
-pass/checkbox qualifies these cases; tasks 12.1–12.3 remain open until their
-current source/fork acceptance is recorded. Q24 owner proof is recorded below;
-final source registration remains pending.
+were accepted directly by the user on 2026-10-03. Their implementation and
+retained owner results are recorded below, together with a separate exact-fork
+preservation run and an actual native configuration-loading observation.
+Historical Full258 qualifies its recorded tree. The fresh-helper correction
+still requires a new exact source gate; no historical pass is relabelled as
+qualification of that correction. Tasks 12.1–12.3 remain open until their
+respective current-source and live acceptance is complete.
 
 Use existing clientcfg/final-set/snapshot/reconcile owners and the original
 operation through each continuation. Preserve the original root-JSON assertions,
@@ -202,7 +204,7 @@ foreign MCP/headers/enabled policy, Unicode+space paths and tracked-config refus
 Record exact source/fork/client runtime identities and before/after physical
 config/owner hashes. Source fixtures prove their contract only; a separate actual
 OpenCode runtime observation is required for the claimed loading order/effective
-connection on the qualified version. No global config scan/write, permissions
+MCP configuration on the qualified version. No global config scan/write, permissions
 change, dependency provisioning or second coordinator is introduced by this plan.
 Strict OpenSpec 1.13.1 validation passed after the third Q23 file-only evidence
 was recorded. It does not qualify pending source registration or live UI execution.
@@ -228,3 +230,19 @@ transition, with no manual schema/BOM repair or fixture recreation: projection,
 normal exit and all 3693 project records unchanged passed. The first RED remains
 retained; second-launch idempotence does not replace first-load preservation.
 No model, MCP tool/connection or current-fork native plugin proof is inferred.
+
+The distinct upstream preservation contract was checked separately on the
+unchanged clean r40 fork `25b603215b3893f94fbd382e9a03fa99db4678e5`, tree
+`3fd218ac6d37bcddac2c8ab51ac5128f76803248`. Unmodified
+`tools/tests/opencode-config-preservation.ps1` passed 7/7, exit 0, in
+23.3072515 seconds under native Windows PowerShell 5.1. All 509 tracked raw
+file hashes and clean state remained unchanged. Each of the four existing
+config paths survived init, forced old-manifest update, repeat and scoped
+remove byte-exact; additional cases covered two existing configs with another
+client, full removal, malformed input preservation and a newly created config
+becoming user-owned. This is separate evidence, not part of the canonical
+166-case Full receipt. Retained qualification:
+`build/q24-closure-audit/fork-preservation/qualification.json`, SHA256
+`a3bd9fc4c04f3c2cca281d8c6f8a396f41fee6d8ed0a7251aecd0ccad7324dc6`.
+The forthcoming fresh-helper correction still requires its own source gate;
+this focused installer result does not close task 12.3 by itself.
