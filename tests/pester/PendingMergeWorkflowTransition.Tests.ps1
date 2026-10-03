@@ -21,6 +21,9 @@
         $cutover = '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $main $cutover)) | Out-Null
         Copy-Item -LiteralPath (Join-Path $RepositoryRoot $cutover) -Destination (Join-Path $main $cutover)
+        $packageContent = '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $main $packageContent)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $RepositoryRoot $packageContent) -Destination (Join-Path $main $packageContent)
         & git -C $main add --all
         & git -C $main commit --quiet -m base
         & git -C $main worktree add --quiet -b itldev/moved $old
@@ -539,6 +542,9 @@ Describe 'Workflow commit over a stopped development merge' {
         $cutoverPath = Join-Path $branch '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cutoverPath) | Out-Null
         Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1') -Destination $cutoverPath
+        $packageContentPath = Join-Path (Split-Path -Parent $cutoverPath) 'lib/agent-1c.package-content.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $packageContentPath) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1') -Destination $packageContentPath
         & git -C $branch add --all
         $legacyCheckpoint = Join-Path $branch '.agent-1c/execution-checkpoints/legacy.json'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyCheckpoint) | Out-Null

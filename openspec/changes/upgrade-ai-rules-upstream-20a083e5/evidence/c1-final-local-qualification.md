@@ -461,3 +461,28 @@ exact pin assertion now refer to these actual bytes. Previous producers and
 failed-publication receipts remain historical evidence. Registration, public
 Develop qualification, component publication and live essential UI acceptance
 remain separate, pending steps.
+
+## Registration diagnostics and fixture dependency correction
+
+The first `f66243cb` registration stopped with 562 passed and one failed case:
+the original UTF-8 stdout read received a sharing violation after child exit.
+Its retained failure and one unchanged native-PS5 focused pass are separate;
+the historical holder remains unknown and no runtime fix is claimed.
+The next public registration executed the whole DesignerMemoryGuard file,
+passing all 10 cases, and the rollback file, passing all 52 cases. That registration
+stopped separately at 1038 passed/two failed cases in PendingMergeWorkflowTransition.
+Both synthetic initial installs copied the current cutover script without its
+new sibling library while explicitly mocking out ordinary package copying.
+Production bootstrap/update/cutover copy the complete workflow directory;
+recovery executes the recorded target's own script. The two initial fixture
+installs now include the real library before their base commits. The original
+move, stopped operation, business staging, write-set and all 172 Should AST
+expressions remain unchanged. The four affected original cases passed 4/0/0
+in 26.508 s on Windows PowerShell 5.1/Pester 5.8, with 56 captured inputs unchanged.
+Proof is retained in `build/pending-merge-cutover-fixture-causal/focused/`;
+`result.json` SHA256 is `b2206f1f8572bf1455fe916915a9ff53387a0f8cfae1cdc201c6b1108afae42d`.
+The failed 1040-case gate is retained in
+`build/c1-register-f66243cb-diagnostic-retry-failed-final/`; its retention SHA256
+is `e2c007bb89421cede67d6cea013699764ee078fff58a884ff702047c7c62d821`.
+Only fixture setup and this evidence changed; all 44 native producer inputs and
+the qualified 29f CFE remain unchanged. Final registration/publication remain pending.
