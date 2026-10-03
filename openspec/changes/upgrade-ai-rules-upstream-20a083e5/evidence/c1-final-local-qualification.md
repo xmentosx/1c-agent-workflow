@@ -221,3 +221,30 @@ wall time for 10.096051 seconds of child work, 43 wait callbacks and 265.625 ms
 parent CPU. It proved the exact Unicode/trailing-backslash argument round trip.
 This is not a comparative benchmark or a measurement of the complete lifecycle
 relay; `steady-native-capture-10s.json` preserves that scope explicitly.
+
+## New exact-input native producer
+
+The coherent clean correction commit is `862406ca9c5430c13e601a1e5cb085acb3838d12`,
+tree `1a95de71251d3e98cff50415678026a3a743c5c4`. The existing native builder
+executed from that clean producer in a new unique output directory and private
+service infobase. All 43 input hashes still matched after completion. The actual
+modules, applicability and configuration Gate 6 steps each returned process exit
+0 and dumpResult 0; the original DT was restored and owned processes released.
+
+Actual CFE SHA256 is
+`f454fd9b7cd75547346c2dabe871e39c19a6c0dc086ce91e53bc314d2ba65a77`.
+The corresponding-source ZIP remains byte-identical at
+`409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc`,
+with the same 54 metadata files and source fingerprint
+`sha256:997a67585cc064777162d2c66a14f99fa02780cb072aad3bc43272a6a3c66b13`.
+The lock now pins these actual bytes. The CFE output is not assumed deterministic;
+the unchanged source ZIP does not authorize reusing the old producer receipt.
+
+New native provenance is retained in the publication checkout at
+`build/third-party/client-mcp/v0.6.5-itl-r1/candidate-parent-862406ca/candidate.provenance.json`,
+SHA256 `e1a676d5427f8939485813b5238f5d3912845177182b183df150fb0a7449af82`.
+The public builder invocation and exact output are separately retained in
+`build/c1-native-parent-862406ca/`. Earlier CFE/DT/provenance remain unchanged.
+This native result is not final Develop/Release capability proof, remote asset
+publication or installed live acceptance. Those original delivery paths remain
+required.
