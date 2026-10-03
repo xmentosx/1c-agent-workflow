@@ -276,3 +276,33 @@ no material findings. Receipt `build/q24-upgrade-fixture-causal/qualification.js
 SHA256: `13785a22d2e6c3e1b90271395098ec8df1d7d8d8fd9b5d1981f4d8882d0640c8`.
 Native component inputs and the production pending pin remain unchanged;
 complete registration, installed canaries and paired publication are still pending.
+
+## Legacy GitHub fallback fixture, 2026-10-03
+
+Registration of 5c985557 completed 2,000 passed and one failed case: 27 executed
+and 59 reused files, 328.523 s worker span. The only failure was in
+GitHubDependencyFallback; three unstarted files are not passes. Source Git
+remained clean and the isolated queue empty. Summary, JUnit, original shard
+and gate logs are retained under publication checkout
+`build/q24-register-red-5c985557`; retention receipt SHA256:
+`8415f5c7a5587cd783bd03868bb67ab9ba73d778c4d4fec4a1dfd48de14851e7`.
+
+The original legacy request asked for `client_mcp.cfe`, while the current lock
+correctly describes `client_mcp.v0.6.5-itl-r1.cfe`. The unchanged fallback owner
+refuses this incompatible asset name. The legacy positive now temporarily uses
+the complete actual published f5466e6 client entry, with exact byte restoration
+in finally. All three original requests and assertions, and every other original
+case, remain unchanged. A separate negative retains the current owned pin and
+the same legacy request: one actual mocked rate-limit response still produces
+the strict refusal and leaves lock bytes unchanged. No runtime mapping,
+production pin, artifact acquisition policy or gate assertion was weakened.
+
+Native PS5.1/Pester 5.8 retained the original RED (0/1, 1.701 s) and passed the
+complete corrected file once (14/0/0, 2.511 s), under actual CFE 5222a74b.
+All 37 captured inputs were unchanged and all 26 environment values restored.
+Receipt `build/q24-github-fallback-causal/qualification.json` SHA256:
+`22d9f40cf84b50b74a72987b05f59a01a2d7cebe85afa6bbd16e901a27c312b3`.
+The native component's 43 inputs remain frozen; this test-only repair does not
+require a rebuild. Independent read-only review found no material findings;
+strict OpenSpec validation passed after this evidence update. Complete
+registration and final installed acceptance remain pending.

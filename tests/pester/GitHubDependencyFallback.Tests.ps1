@@ -54,17 +54,58 @@ Describe "GitHub dependency rate-limit fallback" {
             throw $exception
         }
 
-        $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
-        $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
-        $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
-        @($roctup, $client, $extension) | ForEach-Object {
-            $_.source | Should -Be "dependency-lock rate-limit fallback"
-            $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
+        $lockPath = $script:DependencyLockPath
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $manifest = Read-DependencyLockManifest
+        # Published f5466e6ff98e95bae989a80d65809d1bff2bc31e retained this legacy API asset.
+        # Only this entry belongs to the legacy request; the other two pins stay current.
+        $manifest.dependencies.vanessaMcp.clientMcp = [pscustomobject]@{
+            version = 'v0.6.5'
+            assetName = 'client_mcp.cfe'
+            url = 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+            sha256 = 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+            source = 'template baseline'
+            updatedAt = '2026-05-26T19:34:34Z'
         }
-        $roctup.name | Should -Be "MCP_Toolkit.epf"
-        $client.name | Should -Be "client_mcp.cfe"
-        $extension.name | Should -Be "VAExtension.1.32-itl-r1.cfe"
-        $extension.expectedSha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
+        try {
+            [IO.File]::WriteAllText($lockPath, ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
+            $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
+            $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
+            @($roctup, $client, $extension) | ForEach-Object {
+                $_.source | Should -Be "dependency-lock rate-limit fallback"
+                $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
+            }
+            $roctup.name | Should -Be "MCP_Toolkit.epf"
+            $client.name | Should -Be "client_mcp.cfe"
+            $extension.name | Should -Be "VAExtension.1.32-itl-r1.cfe"
+            $extension.expectedSha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
+            $client.version | Should -BeExactly 'v0.6.5'
+            $client.url | Should -BeExactly 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+            $client.expectedSha256 | Should -BeExactly 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly ([Convert]::ToBase64String($savedLock))
+    }
+
+    It "does not borrow the current owned client asset for a rate-limited legacy asset request" {
+        $lockPath = $script:DependencyLockPath
+        $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
+        $current = (Read-DependencyLockManifest).dependencies.vanessaMcp.clientMcp
+        $current.assetName | Should -BeExactly 'client_mcp.v0.6.5-itl-r1.cfe'
+        $current.sha256 | Should -Match '^[a-f0-9]{64}$'
+        Mock Invoke-RestMethod {
+            $exception = [System.Exception]::new("API rate limit exceeded")
+            $exception.Data["StatusCode"] = 403
+            throw $exception
+        }
+
+        {
+            Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
+        } | Should -Throw '*GitHub API rate limit reached while resolving GitHub release asset 1c-neurofish/onec-client-mcp-devkit/client_mcp.cfe*complete compatible dependency lock*'
+        Assert-MockCalled Invoke-RestMethod -Times 1 -Exactly
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $before
     }
 
     It "uses the immutable workflow-pinned Vanessa asset without a mutable publication flag or releases-latest query" {
