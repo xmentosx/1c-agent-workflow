@@ -567,3 +567,57 @@ Final public registration must qualify this coherent clean source candidate.
 The changed source driver, its tests and this evidence are outside all 44 native
 producer inputs; the qualified CFE/source ZIP remain valid. Live fresh default,
 Develop/Release qualification and publication are still required.
+
+## 2026-10-03: restore the qualified Vanessa pair to the production pins
+
+Public registration of clean `db12e9d7`, tree
+`547e82ac9ba3c249d32b63fc7a6bdcda5b5f135c`, passed 135 owner checks with
+zero failures. The ordinary file-only update then passed for all eight owned
+stand roots: exact workflow/rules/client identities, clean tracked state,
+zero changed `src/cf` or `src/cfe` paths, and unchanged UI/Vanessa settings.
+The stopped refresh retained target `56f477c8`; its updated branch anchor was
+recorded by the existing owner. Receipt
+`build/c1-stand-update-db12e9d7/family-qualification.json` has SHA256
+`67e83eb5683c8156b712bf9317a2228f39b91f64a6cef17ca21cf6dc9bb5aea7`.
+
+Actual Develop resumed that refresh successfully through the documented
+semantic repair and repeated public command. The original target and subsequent
+refresh to current master both passed, with unchanged configuration fingerprints
+and Designer skipped. The following original unfiltered check failed: native
+Gate 6 configuration result 101 reported the same seven old VAExtension
+diagnostics retained in `va-extension-html-handlers.md`. Static/Full, fresh,
+Release and publication were not reached. Immutable failed-run retention is
+`build/c1-publish-failed-db12e9d7-gate6/retention.json`, SHA256
+`68a5493675b9608c96cf08e65fd9372840b31c49bc9b443ab8218d6302708b4f`.
+
+The candidate still pinned the published r1 pair. Update and native load logs,
+installed locks and actual cached CFE hashes all agree; this was production
+dependency selection, not an unexplained stale cache. The Gate 6 arguments are
+unchanged from the pre-c1 owner. The already qualified r4 correction had been
+left unpublished and had not yet been promoted to the production lock.
+
+The bounded correction promotes both existing Vanessa lock tuples together to
+r4 and updates their five existing golden assertions. It preserves the version,
+protocol, client29 and every other dependency. No runtime, BSL, check flags,
+scenario, paths, workload or native producer source is changed. The original
+r1 result stays failed; its pin expectation is superseded by the accepted,
+qualified component correction described in `vanessa-native-acceptance.md`.
+
+The exact immutable r4 archive is SHA256
+`84aabfbf77511abd432c235625afb543aa3c182654e08a24bda3c4312c7d5f4c`;
+its EPF is `b1e5d7111115b6cea4fdf64774f31de2f485579f024e6af81c2b361ecabd4e1b`
+and paired CFE is
+`24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c`.
+Archive entries, embedded manifest, patch and component build sources match the
+retained producer `c281b5f2`, its native three-step pass and three runtime cases.
+This reuses an exact historical artifact; it does not claim a new producer or
+unchanged generic helper inputs. Existing delivery extracts and verifies the
+paired CFE, selects required `extension-smoke`/`config-cadence` capabilities,
+and publishes the pair only after current candidate qualification. The separate
+`ondemand-mcp` capability and its two-backend acceptance remain required.
+The retained causal/admission receipt is
+`build/vanessa-r4-production-pin-causal/admission.json`, SHA256
+`05272c322ba2556ec2aaaa2e446643c5383b18fcd793bfcba3d56fefc7f913ff`.
+
+The next candidate still requires public registration, the same unfiltered
+stand check, fresh default/UI acceptance and all selected publication stages.
