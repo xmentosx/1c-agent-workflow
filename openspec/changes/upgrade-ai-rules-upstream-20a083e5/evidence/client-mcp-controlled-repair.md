@@ -136,3 +136,24 @@ build/third-party/client-mcp/v0.6.5-itl-r1/candidate-runtime-692d72ac/candidate.
 Earlier artifacts and failures remain historical. This build confirms native
 compilation, source and rollback, not remote installability or live Vanessa
 service/client acceptance. Those remain with the paired publication owner.
+
+## Legacy cleanup producer, 2026-10-03
+
+The final OpenCode legacy-marker repair changed two helper inputs after that
+build. Clean source 61036cf0b89ac5341e759139a45ae4b9ffabd387 was therefore
+qualified once more in the isolated publication checkout. All 43 raw inputs
+match both source checkouts; no format normalization was needed for this pair.
+Native modules/applicability/configuration returned exit/dump 0/0 for every
+step, the exact before DT was restored and owned processes were released.
+
+The current production pin is CFE SHA256
+5222a74bd1a8ea95f885dacd2d393bb4e574f54304d3e71ef66e99bd0f223b21.
+The corresponding-source ZIP remains
+409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc.
+Native receipt SHA256:
+1d707689f927a6a03db0bf489b053766a575d1f11ac67df665da0ef54a856636,
+publication checkout
+build/third-party/client-mcp/v0.6.5-itl-r1/candidate-legacy-61036cf0/candidate.provenance.json.
+The preceding 3f81 build retains its historical identity. Final pin/document
+changes do not alter the 43 native inputs; public registration, actual service
+acceptance and paired remote publication still own their respective proofs.

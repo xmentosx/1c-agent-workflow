@@ -124,7 +124,7 @@
         "assetName": "client_mcp.v0.6.5-itl-r1.cfe",
         "releaseTag": "client-mcp-v0.6.5-itl-r1",
         "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.cfe",
-        "sha256": "3f81dd9f90b32254224c984a4bfe20e3f19a2a0f97d6c7589828c4c4286571bb",
+        "sha256": "5222a74bd1a8ea95f885dacd2d393bb4e574f54304d3e71ef66e99bd0f223b21",
         "source": "workflow-pinned",
         "correspondingSource": {
           "assetName": "client_mcp.v0.6.5-itl-r1.sources.zip",
