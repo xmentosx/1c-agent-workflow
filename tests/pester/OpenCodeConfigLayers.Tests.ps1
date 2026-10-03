@@ -316,4 +316,145 @@
             (Read-ItlClientMcpEntries -Client opencode).future.url | Should -Be 'https://future.invalid'
         }
     }
+
+    It 'Q24 legacy cleanup removes only physical <Marker> markers with lossless JSONC and repeat' -Tag Q24LegacyCleanup -ForEach @(@{Marker='itl-branch-mcp'},@{Marker='vanessa-mcp'},@{Marker='vanessa-ui-mcp'}) {
+        $root = New-OpenCodeConfigFixture ('OpenCode старый маркер '+$Marker)
+        $text = [string][char]0xfeff + "{`r`n // keep project comment`r`n `"mcp`": {`r`n `"legacy`": {`"url`":`"https://old.invalid`",`"managedBy`":`"$Marker`"},`r`n // keep external comment`r`n `"foreign`": {`"url`":`"https://user.invalid/*ok*/`",`"headers`":{`"A`":`"a,}`"},`"enabled`":false},`r`n },`r`n `"outside`": `"literal ,] remains`",`r`n}`r`n"
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $text
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            # Ordinary empty reconciliation must not grant marker cleanup authority.
+            Write-ItlClientMcpEndpoints -Client opencode -Owner branch-runtime -Endpoints @() | Out-Null
+            (Read-ItlClientMcpEntries -Client opencode).Contains('legacy') | Should -BeTrue
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            $path = Join-Path $root '.opencode/opencode.jsonc'
+            $after = [Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($path))
+            $after[0] | Should -Be ([char]0xfeff)
+            $after | Should -Match '// keep project comment'
+            $after | Should -Match '// keep external comment'
+            $after | Should -Match ([regex]::Escape('"foreign": {"url":"https://user.invalid/*ok*/","headers":{"A":"a,}"},"enabled":false}'))
+            $after | Should -Match ([regex]::Escape('"outside": "literal ,] remains"'))
+            $after -replace "`r`n", '' | Should -Not -Match "`n"
+            (Read-ItlClientMcpEntries -Client opencode).Contains('legacy') | Should -BeFalse
+            @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime').Count | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $root 'opencode.json') | Should -BeFalse
+            $configSha = (Get-FileHash -LiteralPath $path).Hash
+            $ownerSha = (Get-FileHash -LiteralPath (Get-ItlManagedMcpStatePath)).Hash
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            (Get-FileHash -LiteralPath $path).Hash | Should -Be $configSha
+            (Get-FileHash -LiteralPath (Get-ItlManagedMcpStatePath)).Hash | Should -Be $ownerSha
+        }
+    }
+
+    It 'Q24 legacy cleanup preserves foreign same-name and higher priority proved physical owner' -Tag Q24LegacyCleanup {
+        $root = New-OpenCodeConfigFixture 'OpenCode маркер и чужой владелец'
+        Write-OpenCodeFixtureText $root 'opencode.json' '{"mcp":{"legacy":{"url":"https://old.invalid","managedBy":"itl-branch-mcp"},"shared":{"url":"https://shared.invalid","managedBy":"vanessa-mcp","enabled":false}}}'
+        $foreign = '{/* foreign same-name */"mcp":{"legacy":{"url":"https://user.invalid"}},"theme":"user"}'
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $foreign
+        Write-OpenCodeFixtureText $root '.agent-1c/mcp/client-managed.json' '{"schemaVersion":1,"owners":{"opencode/another":["shared"]}}'
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            $view = Get-ItlOpenCodeMcpView
+            $view.layers[0].entries.Contains('legacy') | Should -BeFalse
+            $view.layers[0].entries.shared.managedBy | Should -Be 'vanessa-mcp'
+            $view.entries.shared.enabled | Should -BeFalse
+            $view.entries.legacy.url | Should -Be 'https://user.invalid'
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -BeExactly $foreign
+            @(Get-ItlManagedMcpOwnerKeys -Client opencode -Owner another) | Should -Contain 'shared'
+            @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime').Count | Should -Be 0
+        }
+    }
+
+    It 'Q24 legacy cleanup keeps future nested markers and names-only scope on a recorded old target' -Tag Q24LegacyCleanup {
+        $root = New-OpenCodeConfigFixture 'OpenCode старый target маркеры'
+        Write-OpenCodeFixtureText $root 'opencode.json' '{"mcp":{"rootNamed":{"url":"https://owned.invalid"},"legacy":{"url":"https://old.invalid","managedBy":"itl-branch-mcp"}}}'
+        $nested = '{/* future */"mcp":{"rootNamed":{"url":"https://user.invalid"},"future":{"managedBy":"vanessa-ui-mcp","url":"https://future.invalid"}}}'
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $nested
+        Write-OpenCodeFixtureText $root '.agent-1c/mcp/client-managed.json' '{"schemaVersion":1,"owners":{"opencode/branch-runtime":["rootNamed"]},"pathOwners":{"opencode/branch-runtime":{".opencode/opencode.jsonc":["future"]}}}'
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:ItlOpenCodeOperationConfigPathsMode = 'legacy-root'
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            (Read-ItlClientMcpEntries -Client opencode).Count | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -BeExactly $nested
+            $remaining = @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime')
+            $remaining.Count | Should -Be 1
+            $remaining[0].relativePath | Should -Be '.opencode/opencode.jsonc'
+            $remaining[0].name | Should -Be 'future'
+            Remove-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script
+        }
+    }
+
+    It 'Q24 legacy cleanup preserves a late new layer and completes the same cleanup on fresh capture' -Tag Q24LegacyCleanup {
+        $root = New-OpenCodeConfigFixture 'OpenCode очистка поздний файл'
+        $nested = '{/* original */"mcp":{"legacy":{"url":"https://old.invalid","managedBy":"itl-branch-mcp"}}}'
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $nested
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $original = ${function:Get-ItlMcpFileState};$script:cleanupRootReads = 0
+            function Get-ItlMcpFileState {
+                param([string]$Path)
+                if ($Path -eq (Join-Path $script:ProjectRoot 'opencode.json')) {
+                    $script:cleanupRootReads++
+                    if ($script:cleanupRootReads -eq 2) { [IO.File]::WriteAllText($Path, '{"description":"late user"}', [Text.UTF8Encoding]::new($false)) }
+                }
+                & $original -Path $Path
+            }
+            { Remove-ItlLegacyBranchMcpEntries -Client opencode } | Should -Throw '*CLIENT_MCP_FINAL_SET_CHANGED*'
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -BeExactly $nested
+            [IO.File]::ReadAllText((Join-Path $root 'opencode.json')) | Should -BeExactly '{"description":"late user"}'
+            Test-Path -LiteralPath (Get-ItlManagedMcpStatePath) | Should -BeFalse
+            Set-Item -LiteralPath function:Get-ItlMcpFileState -Value $original
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            (Read-ItlClientMcpEntries -Client opencode).Contains('legacy') | Should -BeFalse
+            [IO.File]::ReadAllText((Join-Path $root 'opencode.json')) | Should -BeExactly '{"description":"late user"}'
+            @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime').Count | Should -Be 0
+        }
+    }
+
+    It 'Q24 legacy cleanup resumes physical partial progress without adopting remaining markers' -Tag Q24LegacyCleanup {
+        $root = New-OpenCodeConfigFixture 'OpenCode очистка прерванные слои'
+        Write-OpenCodeFixtureText $root 'opencode.json' '{"mcp":{"rootLegacy":{"managedBy":"itl-branch-mcp","url":"https://root.invalid"}},"keep":"root"}'
+        $nested = '{/* keep */"mcp":{"nestedLegacy":{"managedBy":"vanessa-mcp","url":"https://nested.invalid"}},"keep":"nested"}'
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $nested
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $original = ${function:Write-Utf8TextAtomic}
+            function Write-Utf8TextAtomic {
+                param([string]$Path,[string]$Value)
+                if ($Path -eq (Join-Path $script:ProjectRoot '.opencode/opencode.jsonc')) { throw 'fixture cleanup second physical write interrupted' }
+                & $original -Path $Path -Value $Value
+            }
+            { Remove-ItlLegacyBranchMcpEntries -Client opencode } | Should -Throw '*cleanup second physical write interrupted*'
+            (Get-ItlOpenCodeMcpView).layers[0].entries.Contains('rootLegacy') | Should -BeFalse
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -BeExactly $nested
+            @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime').Count | Should -Be 0
+            Set-Item -LiteralPath function:Write-Utf8TextAtomic -Value $original
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            (Read-ItlClientMcpEntries -Client opencode).Count | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -Match '/\* keep \*/'
+            @(Get-ItlOpenCodeMcpBindings -State (Read-ItlManagedMcpState) -OwnerKey 'opencode/branch-runtime').Count | Should -Be 0
+        }
+    }
+
+    It 'Q24 legacy cleanup retains tracked marker bytes then completes after explicit supported untracking' -Tag Q24LegacyCleanup {
+        $root = New-OpenCodeConfigFixture 'OpenCode очистка tracked маркер'
+        $nested = '{/* tracked */"mcp":{"legacy":{"managedBy":"itl-branch-mcp","url":"https://old.invalid"}}}'
+        Write-OpenCodeFixtureText $root '.opencode/opencode.jsonc' $nested
+        & git -C $root init *> $null
+        & git -C $root config user.email 'test@example.com'
+        & git -C $root config user.name 'Test User'
+        & git -C $root add -- .opencode/opencode.jsonc
+        & git -C $root commit -m base *> $null
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            { Remove-ItlLegacyBranchMcpEntries -Client opencode } | Should -Throw '*TRACKED_CLIENT_CONFIG*.opencode/opencode.jsonc*'
+            [IO.File]::ReadAllText((Join-Path $root '.opencode/opencode.jsonc')) | Should -BeExactly $nested
+            Test-Path -LiteralPath (Get-ItlManagedMcpStatePath) | Should -BeFalse
+            & git -C $root rm --cached -- .opencode/opencode.jsonc *> $null
+            Remove-ItlLegacyBranchMcpEntries -Client opencode
+            (Read-ItlClientMcpEntries -Client opencode).Contains('legacy') | Should -BeFalse
+        }
+    }
 }

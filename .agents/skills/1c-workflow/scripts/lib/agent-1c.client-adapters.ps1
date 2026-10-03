@@ -1399,11 +1399,14 @@ function Write-ItlClientMcpEndpointSet {
 function Remove-ItlLegacyBranchMcpEntries {
     param([string]$Client = "")
     if (-not $Client) { $Client = Get-ItlActiveClient }
+    if ($Client -eq 'opencode') {
+        Write-ItlOpenCodeMcpEndpoints -Endpoints @() -Owner 'branch-runtime' -RemoveLegacyManagedEntries | Out-Null
+        return
+    }
     # Generic owner cleanup handles Codex managed text blocks and any JSON keys
     # recorded by newer legacy versions.
     Write-ItlClientMcpEndpoints -Endpoints @() -Owner "branch-runtime" -Client $Client | Out-Null
     $adapter = Get-ItlClientAdapter -Client $Client
-    if ($Client -eq 'opencode') { return }
     if ($adapter.mcpFormat -eq "toml") { return }
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }

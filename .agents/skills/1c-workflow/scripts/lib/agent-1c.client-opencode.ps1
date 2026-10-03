@@ -112,7 +112,10 @@ function Set-ItlOpenCodeMcpOwnerBindings {
 }
 
 function Write-ItlOpenCodeMcpEndpoints {
-    param([object[]]$Endpoints, [string]$Owner, [string[]]$PreserveOwnedKeys = @(), [string[]]$FinalSetOwnerKeys = @(), [AllowNull()][object]$ExpectedInputStates = $null, [string]$ExpectedOwnerState = '', [object[]]$PreparedClaims = @(), [object[]]$FinalSetClaims = @(), [switch]$PlanOnly, [switch]$ReturnReceipt)
+    param([object[]]$Endpoints, [string]$Owner, [string[]]$PreserveOwnedKeys = @(), [string[]]$FinalSetOwnerKeys = @(), [AllowNull()][object]$ExpectedInputStates = $null, [string]$ExpectedOwnerState = '', [object[]]$PreparedClaims = @(), [object[]]$FinalSetClaims = @(), [switch]$PlanOnly, [switch]$ReturnReceipt, [switch]$RemoveLegacyManagedEntries)
+    if ($RemoveLegacyManagedEntries -and ($Owner -cne 'branch-runtime' -or @($Endpoints).Count)) {
+        throw 'CLIENT_MCP_LEGACY_CLEANUP_INVALID: legacy marker cleanup requires the original empty branch-runtime reconciliation; repeat Remove-ItlLegacyBranchMcpEntries.'
+    }
     $view = Get-ItlOpenCodeMcpView
     $ownerPath = Get-ItlManagedMcpStatePath
     $beforeOwnerState = Get-ItlMcpFileState -Path $ownerPath
@@ -190,7 +193,21 @@ function Write-ItlOpenCodeMcpEndpoints {
         $nextBindings += [pscustomobject]@{ownerKey=$stateKey;relativePath=$layer.relativePath;name=$name}
         $claims += [pscustomobject]@{path=$layer.path;name=$name;entry=$entry}
     }
-    foreach ($binding in $bindings) {
+    # Old explicit markers prove only deletion at the captured physical path.
+    # They are never added to current or next persisted ownership bindings.
+    $legacyRemovals = @()
+    if ($RemoveLegacyManagedEntries) {
+        foreach ($layer in $view.layers) {
+            foreach ($name in $layer.entries.Keys) {
+                $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $layer.entries[$name] -Name managedBy -Default '')
+                if ($managedBy -in @('itl-branch-mcp','vanessa-mcp','vanessa-ui-mcp') -and
+                    -not @($bindings | Where-Object { $_.relativePath -ceq $layer.relativePath -and $_.name -ceq $name }).Count) {
+                    $legacyRemovals += [pscustomobject]@{ownerKey=$stateKey;relativePath=$layer.relativePath;name=[string]$name}
+                }
+            }
+        }
+    }
+    foreach ($binding in @($bindings) + @($legacyRemovals)) {
         if (@($nextBindings | Where-Object { $_.relativePath -ceq $binding.relativePath -and $_.name -ceq $binding.name }).Count) { continue }
         $physicalPath = Join-Path $script:ProjectRoot $binding.relativePath
         $receivers = @($FinalSetClaims | Where-Object { $_.ownerKey -cne $stateKey -and $_.path -ieq $physicalPath -and $_.name -ceq (ConvertTo-ItlClientMcpKey -Name $binding.name -Client opencode) })
@@ -200,7 +217,9 @@ function Write-ItlOpenCodeMcpEndpoints {
                 @($receivers | Where-Object { $_.ownerKey -ceq $proof.ownerKey -and $_.name -ceq $proof.name -and $proof.relativePath -ceq $binding.relativePath }).Count -gt 0
             })
             if (-not $confirmed.Count) {
-                $nextBindings += $binding
+                # A pending receiver can preserve the old marker contribution,
+                # but cannot turn this deletion-only proof into durable ownership.
+                if (-not @($legacyRemovals | Where-Object { $_.relativePath -ceq $binding.relativePath -and $_.name -ceq $binding.name }).Count) { $nextBindings += $binding }
                 $deferredOwnerRelease = $true
                 continue
             }

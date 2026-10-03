@@ -164,3 +164,47 @@ their causal corrections. The production lock/URL and native build/publication
 qualification remain authoritative; these cases do not prove remote installability
 or qualify the previous CFE after helper inputs changed. A clean final native
 build, complete registration and paired publication are still required.
+
+## Final registration findings and preservation, 2026-10-03
+
+Registration of the isolated b6c07373 candidate ended with 703 passed and two
+failed cases (13 executed files, 790.495 s worker span). Its queue stayed empty
+and its source checkout stayed clean. The original summaries, shard plans,
+results, JUnit and logs are retained under the publication clone's
+`build/q24-register-red-b6c07373`; retention receipt SHA256 is
+`9c0fd3886680e2426ac4c768b58482ccd2254b6f8bf0759fc30339293be3cc1d`.
+Unstarted files and earlier shard files do not constitute passed registration.
+
+The unchanged ten-client OnDemandMcp case exposed a real OpenCode migration
+defect: old explicit workflow markers were skipped when physical owner bindings
+were absent, so an obsolete service could remain alongside its replacement.
+Cleanup now routes through the existing layered writer. Captured physical
+`itl-branch-mcp`, `vanessa-mcp` and `vanessa-ui-mcp` markers prove deletion only;
+they never become persisted ownership. Other proved owners, unrelated entries,
+comments/BOM, legacy root scope, four-file/owner compare-and-swap and partial
+write continuation remain protected. The original case remained unchanged:
+native RED 0/1 became GREEN 22/0/0 with all existing layer cases and eight added
+regressions, in 16.641 s. Independent final review found no material findings.
+
+The green batch used a BOM-bearing predecessor of the ASCII-only library.
+Restoring its original UTF-8 without BOM changed no body bytes, tokens or AST;
+native PS5.1 parsed all three owner files without errors. These distinct proofs
+are recorded in `build/q24-legacy-marker-causal/final-qualification.json`, SHA256
+`28f3f83bcc025da51446655d4ca3ded33cbcc5eec790af4869f75d973f1ca74a`.
+Complete registration and native qualification of the final bytes remain pending.
+
+The other failure was an outdated refresh fixture expectation. Relabelling a
+current workflow-owned client pin as `compatibility-manifest` is noncanonical;
+the unchanged runtime correctly refused it. The positive fixture now seeds the
+actual published f5466e6 legacy client entry and invokes the actual managed-lock
+synchronization owner before refresh. It proves the canonical new pin, one
+workflow-only lock commit, updated load identity and clean Git. The original
+corruption topology remains a strict negative with no HEAD advance, unchanged
+corrupted bytes and retained dirty lock; the existing unmanaged-change negative
+is unchanged. Native PS5.1/Pester 5.8 passed these three cases together in
+6.098 s, with environment restored and captured source inputs unchanged.
+Receipt `build/q24-refresh-pin-causal/qualification.json` SHA256:
+`ec73fe7f53172dc8da6a97a8a05136c78afa4305d5f16c6b92bd6a4578f62981`.
+No runtime guard was weakened. The preceding CFE proof becomes historical when
+the helper inputs change; a new clean native build and full registration are
+required before paired publication.

@@ -9659,30 +9659,102 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $tempRoot ".agent-1c\dependency-lock.json")
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            # Published f5466e6 legacy client entry precedes the owned component.
+            # Commit that real old pin, then exercise the actual synchronization owner.
+            $lock.dependencies.vanessaMcp.clientMcp = [pscustomobject]@{
+                version = "v0.6.5"
+                assetName = "client_mcp.cfe"
+                url = "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe"
+                sha256 = "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
+                source = "template baseline"
+                updatedAt = "2026-05-26T19:34:34Z"
+            }
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "base" *> $null
             $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
-            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
-            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $lock.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
-            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
-                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
-                [pscustomobject]@{
-                    subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
-                    paths = @(& git -C $tempRoot show --format= --name-only HEAD | Where-Object { $_ })
-                    status = @(& git -C $tempRoot status --porcelain)
+                $refreshDependencyModeBefore = [Environment]::GetEnvironmentVariable('DEPENDENCY_MODE', 'Process')
+                try {
+                    [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'fresh', 'Process')
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $sync = Sync-WorkflowManagedDependencyLockEntries
+                    $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
+                    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
+                    $actualLock = Read-Utf8Text -Path $lockPath | ConvertFrom-Json
+                    $canonicalLock = New-DefaultDependencyLockManifest
+                    [pscustomobject]@{
+                        synchronized = $sync.changed
+                        synchronizedEntries = @($sync.entries)
+                        clientPin = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue $actualLock.dependencies.vanessaMcp.clientMcp) -Depth 20 -Compress
+                        canonicalClientPin = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue $canonicalLock.dependencies.vanessaMcp.clientMcp) -Depth 20 -Compress
+                        head = Get-CurrentCommit
+                        loadCommit = $loadResult.currentCommit
+                        subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
+                        paths = @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD'))
+                        status = @(& git -C $tempRoot status --porcelain)
+                    }
+                } finally {
+                    [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', $refreshDependencyModeBefore, 'Process')
                 }
             }
 
+            $result.synchronized | Should -BeTrue
+            $result.synchronizedEntries | Should -Contain 'vanessaMcp'
+            $result.clientPin | Should -BeExactly $result.canonicalClientPin
+            $result.head | Should -Not -Be $beforeCommit
+            $result.loadCommit | Should -Be $result.head
             $result.subject | Should -Be "chore: persist branch refresh state"
             @($result.paths).Count | Should -Be 1
             $result.paths[0] | Should -Be ".agent-1c/dependency-lock.json"
             @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects a noncanonical current workflow-managed dependency pin during refresh" {
+        # Original observed failure: current owned pin was relabelled as a legacy
+        # compatibility source without calling the synchronization owner.
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-sync-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination $lockPath
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+            $corruptHash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try {
+                    Complete-RefreshConfigDumpInfoPostcondition -LoadResult ([pscustomobject]@{ currentCommit = $beforeCommit }) -ExportPath "src/cf"
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match "^REFRESH_TRACKED_STATE_UNEXPECTED:"
+            $message | Should -Match "dependency-lock.json"
+            ((& git -C $tempRoot rev-parse HEAD) -join "").Trim() | Should -Be $beforeCommit
+            (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash | Should -BeExactly $corruptHash
+            $trackedDirty = @(& {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', '--'))
+            })
+            @($trackedDirty).Count | Should -Be 1
+            $trackedDirty[0] | Should -Be ".agent-1c/dependency-lock.json"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
