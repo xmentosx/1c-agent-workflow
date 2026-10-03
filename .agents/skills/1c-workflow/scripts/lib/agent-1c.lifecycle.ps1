@@ -5441,8 +5441,10 @@ function ConvertTo-WorkflowUpdateRepoPath {
 }
 
 function Get-WorkflowUpdateClientSurfacePaths {
+    param([AllowNull()][object]$State = (Read-ItlClientSurfaceState))
+
     $paths = [System.Collections.Generic.List[string]]::new()
-    $state = Read-ItlClientSurfaceState
+    $state = ConvertTo-Vibecoding1cMcpHashtable -Object $State
     $clients = ConvertTo-Vibecoding1cMcpHashtable -Object $state["clients"]
     foreach ($client in @($clients.Keys)) {
         $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $clients[$client]
@@ -6801,6 +6803,93 @@ function Get-WorkflowUpdateSnapshotBeforeState {
     return $state
 }
 
+function Get-WorkflowUpdateRetainedMasterCommitDetails {
+    param([Parameter(Mandatory = $true)][object]$Pending)
+
+    $receipt = $Pending.receipt
+    if ([string]$receipt.phase -cne 'master-committed' -or
+        [string]$receipt.preUpdateHead -notmatch '^[a-f0-9]{40}$' -or
+        [string]$receipt.branchRef -cne ('refs/heads/' + (Get-MasterBranch)) -or
+        (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -cne [string]$receipt.branchRef) {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: retained-detail recovery requires this original committed master snapshot; preserve it and repeat its exact source-side recovery.'
+    }
+    Assert-WorkflowUpdateRecordedSource -Receipt $receipt
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending $Pending
+    $workflow = Get-DependencyLockEntry -Name 'workflowPackage'
+    if ([string](Get-ConfigValueFromObject -Object $workflow -Path 'commit' -Default '') -cne [string]$receipt.sourceCommit -or
+        [string](Get-ConfigValueFromObject -Object $workflow -Path 'ref' -Default '') -cne [string]$receipt.sourceRef) {
+        throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained commit details require the installed lock of the recorded package; restore that exact binding before repeating recovery.'
+    }
+    $before = ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+    $actualBefore = Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Pending.snapshot
+    if ($before.Count -ne $actualBefore.Count) {
+        throw 'WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: retained-detail recovery requires the complete original before-state inventory.'
+    }
+    foreach ($relative in @($actualBefore.Keys)) {
+        if (-not $before.Contains($relative) -or [string]$before[$relative] -cne [string]$actualBefore[$relative]) {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' before backup changed; preserve the snapshot and recover its exact before bytes."
+        }
+    }
+    $manifests = @{}
+    foreach ($relative in @('.ai-rules.json','.agent-1c/client-surface.json')) {
+        $records = @($Pending.snapshot.records | Where-Object { [string]$_.relativePath -ceq $relative })
+        if ($records.Count -ne 1 -or -not $before.Contains($relative)) {
+            throw "WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: original ownership manifest '$relative' was not captured; preserve the snapshot for exact reconciliation."
+        }
+        if ($records[0].existed) {
+            if ($records[0].wasDirectory -or [string]$before[$relative] -notmatch '^file:[a-f0-9]{64}$') {
+                throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' is not a hash-bound original file."
+            }
+            $manifests[$relative] = Read-Utf8Text -Path $records[0].backupPath | ConvertFrom-Json -ErrorAction Stop
+        } elseif ([string]$before[$relative] -ceq 'absent') {
+            $manifests[$relative] = $null
+        } else {
+            throw "WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID: '$relative' has no proved original absent state."
+        }
+    }
+    $rulesBefore = @(Get-AiRules1cManifestFileEntries -Manifest $manifests['.ai-rules.json'] | ForEach-Object {
+        ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.target)
+    })
+    $surfaceBefore = @()
+    if (($null -ne $manifests['.ai-rules.json'] -and $null -eq $manifests['.ai-rules.json'].PSObject.Properties['files']) -or
+        ($null -ne $manifests['.agent-1c/client-surface.json'] -and
+        ([int](Get-ConfigValueFromObject -Object $manifests['.agent-1c/client-surface.json'] -Path 'schemaVersion' -Default 0) -ne 1 -or
+        $null -eq $manifests['.agent-1c/client-surface.json'].PSObject.Properties['clients']))) {
+        throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: original manifest ownership fields are missing; preserve the before backups for exact reconciliation.'
+    }
+    $surfaceBefore = @(Get-WorkflowUpdateClientSurfacePaths -State $manifests['.agent-1c/client-surface.json'])
+    $source = [pscustomobject]@{root=[string]$receipt.sourceRoot;commit=[string]$receipt.sourceCommit;ref=[string]$receipt.sourceRef;repo=[string]$receipt.sourceRepo;source=[string]$receipt.sourceKind}
+    $head = Get-CurrentCommit
+    $parents = @(Get-GitCommitParents -Commit $head)
+    if ($parents.Count -ne 1 -or $parents[0] -cne [string]$receipt.preUpdateHead -or
+        (Get-GitOutput @('show','-s','--format=%s',$head)).Trim() -cne (Get-WorkflowUpdateCommitMessage -Source $source)) {
+        throw 'WORKFLOW_UPDATE_MASTER_HEAD_CHANGED: retained details cannot be recovered from a different parent, merge or commit subject; preserve the snapshot for exact reconciliation.'
+    }
+    $paths = @(Get-GitPathList -Arguments @('diff-tree','--no-commit-id','--name-only','-r','-z',[string]$receipt.preUpdateHead,$head,'--') |
+        ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_) })
+    $fixed = @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+    $fixedMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs $fixed
+    $oldMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($fixed + $rulesBefore + $surfaceBefore + @('.ai-rules.json','.agent-1c/client-surface.json'))
+    $snapshotMatcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($Pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $retired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit ([string]$receipt.preUpdateHead) -NewCommit $head)
+    foreach ($path in $paths) {
+        $business = Test-OneCSourceRepoPath -RepoPath $path
+        $businessTests = @(@('tests',(Get-VanessaConfiguredFeaturesPath),(Get-YAxUnitTestsPath)) | Where-Object {
+            Test-RepoPathUnderRoot -RepoPath $path -Root $_
+        }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $fixedMatcher)
+        $newLiteral = @($Pending.snapshot.records | Where-Object {
+            [string]$_.relativePath -ceq $path -and -not $_.existed -and [string]$before[$path] -ceq 'absent'
+        }).Count -eq 1
+        if ($business -or $businessTests -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $snapshotMatcher) -or
+            (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and -not $newLiteral -and $path -cnotin $retired)) {
+            throw "WORKFLOW_UPDATE_MASTER_COMMIT_PATHS_CHANGED: '$path' has no immutable before/snapshot workflow ownership; preserve the original commit and snapshot for reconciliation."
+        }
+    }
+    $details = @{preCommitHead=[string]$receipt.preUpdateHead;aiRulesPathsBefore=@($rulesBefore);clientSurfacePathsBefore=@($surfaceBefore | Select-Object -Unique);plannedChangePaths=@($paths)}
+    Assert-WorkflowUpdateMasterCommitCheckpoint -Receipt ([pscustomobject]$details) -Source $source | Out-Null
+    return $details
+}
+
 function Save-WorkflowUpdateSnapshotReceipt {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -6815,6 +6904,25 @@ function Save-WorkflowUpdateSnapshotReceipt {
     if ($null -ne $prior -and ([string]$prior.operation -cne 'update-workflow' -or
         [string]$prior.projectRoot -cne [string]$Snapshot.targetRoot -or [string]$prior.snapshotRoot -cne [string]$Snapshot.root)) {
         throw "WORKFLOW_UPDATE_RECEIPT_INVALID: refusing to replace another transaction at '$receiptPath'."
+    }
+    $recoveredDetails = @{}
+    if ($null -ne $prior -and [string]$prior.phase -ceq 'master-committed') {
+        $missing = @(@('preCommitHead','aiRulesPathsBefore','clientSurfacePathsBefore','plannedChangePaths') | Where-Object {
+            $null -eq $prior.PSObject.Properties[$_]
+        })
+        if ($missing.Count -gt 0 -and $missing.Count -ne 4) {
+            throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: only a fully lost detail set can be reconstructed; preserve the partially missing receipt for exact reconciliation.'
+        }
+        if ($missing.Count -eq 4) {
+            if ([string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorRoot' -Default '') -eq '' -or
+                [string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorCommit' -Default '') -notmatch '^[a-f0-9]{40}$') {
+                throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: missing details have no recorded executor-rebinding provenance; preserve the receipt for exact reconciliation.'
+            }
+            if ([string]$Source.root -cne [string]$prior.sourceRoot -or [string]$Source.commit -cne [string]$prior.sourceCommit) {
+                throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained-detail recovery cannot substitute another package source.'
+            }
+            $recoveredDetails = Get-WorkflowUpdateRetainedMasterCommitDetails -Pending ([pscustomobject]@{snapshot=$Snapshot;receipt=$prior;receiptPath=$receiptPath})
+        }
     }
     $beforeState = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['beforePathState']) {
         ConvertTo-Agent1cHashtable -Object $prior.beforePathState
@@ -6870,16 +6978,18 @@ function Save-WorkflowUpdateSnapshotReceipt {
         completedHead = $(if ($Phase -eq 'post-copy-complete' -and $hasGit) { Get-CurrentCommit } else { '' })
         updatedAt = (Get-Date).ToString('o')
     }
+    $reserved = @($receipt.Keys)
+    if ($null -ne $prior) {
+        foreach ($property in @($prior.PSObject.Properties)) {
+            if ($reserved -notcontains [string]$property.Name) { $receipt[[string]$property.Name] = $property.Value }
+        }
+    }
+    foreach ($name in @($recoveredDetails.Keys)) { $receipt[[string]$name] = $recoveredDetails[$name] }
     foreach ($name in @($Details.Keys)) {
-        if ($receipt.Contains([string]$name)) {
+        if ($reserved -contains [string]$name) {
             throw "WORKFLOW_UPDATE_RECEIPT_DETAIL_CONFLICT: '$name' is a reserved receipt field."
         }
         $receipt[[string]$name] = $Details[$name]
-    }
-    foreach ($name in @('recoveryExecutorRoot','recoveryExecutorCommit')) {
-        if (-not $receipt.Contains($name) -and $null -ne $prior -and $null -ne $prior.PSObject.Properties[$name]) {
-            $receipt[$name] = [string]$prior.$name
-        }
     }
     Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 }

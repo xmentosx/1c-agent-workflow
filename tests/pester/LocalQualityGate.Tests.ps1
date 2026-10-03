@@ -525,8 +525,65 @@ exit $exitCode
         $overhead = 15.0
         $three = & $estimate $parallel $serial 3 $overhead
         $four = & $estimate $parallel $serial 4 $overhead
-        $three | Should -BeGreaterThan ([double]$catalog.budgets.targetedHardSeconds)
+        # This E measurement motivated four workers under the then-current 20-minute budget.
+        # A later capacity correction must not rewrite that historical comparison.
+        $historicalHardSeconds = 1200.0
+        $three | Should -BeGreaterThan $historicalHardSeconds
+        ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
         ([double]$catalog.budgets.targetedHardSeconds - $four) | Should -BeGreaterThan 200
+    }
+    It "fits the observed lifecycle cohort and mandatory serial tail without changing runtime watchdogs" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $historicalPaths = @(
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/c1-final-local-qualification.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/test-plan.md",
+            "templates/dependency-lock.json",
+            "tests/pester/CompactItlRunner.Tests.ps1",
+            "tests/pester/LifecycleOperationLock.Tests.ps1")
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
+        @($selection.tests).Count | Should -Be 57
+        foreach ($test in @("DevBranchLifecycle", "CompactItlRunner", "DependencyLocks")) {
+            @($selection.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
+        # Source 0bc3ff21: prelude and the actual 55-file parallel cohort before the hard stop.
+        $preludeSeconds = 84.859
+        $parallelSpanSeconds = 917.257
+        # Historical complete 38-case Compact plus the nine new passed durations from after-2,
+        # and two corrected cases from after-nested-streaming. This is a capacity model,
+        # not a claim that the complete 49-case file has passed or a new tracked timing weight.
+        $oldCompactSeconds = 239.771
+        $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
+        $dependencySeconds = 14.161
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $estimatedCriticalPath | Should -BeGreaterThan 1200
+        ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
+        # Updating this catalog also selects its six directly owned quality files.
+        # Keep that self-selected workload, including the mandatory serial ReleaseGate.
+        $currentSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($historicalPaths + @(
+            "docs/local-quality-gate.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/tasks.md",
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+            "tests/quality-contracts.json"))
+        @($currentSelection.tests).Count | Should -Be 63
+        @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
+            "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
+            "tests/pester/DevelopE2EQualification.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1",
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/ReleaseGate.Tests.ps1",
+            "tests/pester/ReleaseReadiness.Tests.ps1")
+        # Current scheduler weights/four lanes with the retained per-file observations:
+        # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
+        $currentParallelSpanSeconds = 936.459
+        $serialReleaseSeconds = 198.938
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
+        ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
+        [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
     }
     It "routes only exact named entrypoint AST changes and falls back for shared or unknown impact" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")

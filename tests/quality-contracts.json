@@ -5,7 +5,7 @@
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
     "targetedTargetSeconds": 300,
-    "targetedHardSeconds": 1200,
+    "targetedHardSeconds": 2100,
     "fullTargetSeconds": 600,
     "fullHardSeconds": 2700,
     "developTargetSeconds": 1500,

@@ -248,3 +248,78 @@ The public builder invocation and exact output are separately retained in
 This native result is not final Develop/Release capability proof, remote asset
 publication or installed live acceptance. Those original delivery paths remain
 required.
+
+## Stopped recovery and registration after 0bc3ff21
+
+Public RegisterChange for exact commit
+`0bc3ff2186db48fb18f17fcfcc24ac38c82e5115`, tree
+`4ac4498b68ef436926957adcfed007870c78e63a`, failed at its existing
+1200-second overall hard limit. The old successful pester-shards summary is
+stale and is not evidence for this attempt. Current failed check-summary and
+actual worker 56 output are retained in `build/c1-register-failed-0bc3ff21/`,
+retention SHA256 `12a1417cbcb7036220ed0499506284eb03f2fea296e3e26be598dfc7ac2be066`.
+
+The parallel cohort ran until 06:54:27Z; DevBranchLifecycle alone passed
+295/0/0 in 917.257 seconds. The serial Compact worker then ran 25 passing cases
+until 06:57:45Z. Its next fixture started one second before the overall deadline.
+This demonstrates insufficient total gate capacity, not a proven hang in that
+fixture. Test assertions, the Ctrl+C serialization boundary and installed
+120-second stale watchdog remain unchanged. No passing exact Targeted record
+was produced; the registered queue remains at 2584738f and activeOperation is
+null according to public Status after failure.
+
+The new executor also reached the original stopped main update without the
+old stale-watchdog failure. It then failed because the existing receipt writer
+replaced phase details during executor binding: aiRulesPathsBefore,
+clientSurfacePathsBefore, preCommitHead and plannedChangePaths were lost.
+The original snapshot 471126 remains master-committed with its source c6c829b
+pinned. Its hash-bound before manifests and original single-parent Git commit
+survive. Normal owner recovery must validate these proofs and preserve details;
+empty defaults, direct receipt edits and replay of completed post-copy are not
+acceptance. This observation is retained in `build/c1-recovery-old-payload-0bc3ff21/`
+and does not qualify completion of the old update or publication of the new one.
+
+## Receipt owner correction and source gate capacity
+
+The receipt writer now retains prior nonreserved phase details before applying
+explicit overrides. Reserved transaction fields still reject caller overrides.
+Only the original master-committed executor-rebinding shape with all four
+commit-detail fields absent permits reconstruction. The existing owner validates
+recorded source and installed lock, every hash-bound before backup, current
+snapshot state, branch, sole parent and exact update subject. It uses old AI and
+client manifests, literal original snapshot capture and fixed workflow ownership;
+current expanded claims, business paths and user OpenCode configs grant no rights.
+The existing commit checkpoint runs before atomic receipt replacement. No package
+post-copy, business merge, tests, UI or database load is replayed by reconstruction.
+
+Read-only review of the actual original 1d3a52b8 -> 2b456cf3 commit confirmed
+295/295 NUL-delimited paths against that independent ownership. The original
+471126 transaction stayed byte-identical at SHA256
+`d3503cf0` prefix until the later public continuation; this paragraph records
+read-only scope proof, not successful live recovery.
+
+Scoped native Windows PowerShell 5.1/Pester 5.8 proofs remain distinct:
+original runtime RED 0/2 in 6.3260437 seconds; first correction 10/2 in
+39.8846114 seconds; corrected reconstruction 1/0 in 5.507203 seconds;
+negative boundaries 8/0 in 20.7592364 seconds. Inputs were unchanged per run.
+The final freeze receipt is `build/workflow-receipt-details-causal/final-owner-freeze.json`,
+SHA256 `f76c2246155aebadd4c7a17b53f1037890c95fd3e0804e29fbdb283cc03ad23c`.
+Independent review found no material issues. These partial runs are not a whole
+Rollback suite, exact Targeted pass or original stand completion.
+
+Current source selection also owns the gate-capacity correction and therefore
+contains 63 files, six more than the failed 57-file attempt. Its observed-component
+capacity model is 1739.981 seconds including the mandatory serial Release tail.
+The initially proposed 1800-second limit left only 60 seconds of model margin;
+the final catalog allows 2100 seconds (35 minutes), leaving 360 seconds. This is
+a composite capacity model, not a measured complete Compact49 or a promised run
+duration. Source-only target stays five minutes; installed watchdogs, deadlines,
+serial isolation, worker limits and no-progress checks are unchanged. Full already
+allowed 2700 seconds; its old table entry is corrected to 45 minutes.
+
+Original historical three/four-worker comparison at 1200 seconds is preserved.
+Focused capacity tests and the initial fixture failure remain separate receipts.
+Final2100 proof is `build/targeted-capacity-20261003/final2100/final-qualification.json`,
+SHA256 `37a0708191e98231b067da0a0e64a37399ae4285c549cf6f7886326b306262f4`.
+The current63 case passed 1/0 in 1.918 seconds with unchanged inputs. The normal
+public RegisterChange is still required to qualify the coherent final commit.
