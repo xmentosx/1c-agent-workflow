@@ -621,3 +621,28 @@ The retained causal/admission receipt is
 
 The next candidate still requires public registration, the same unfiltered
 stand check, fresh default/UI acceptance and all selected publication stages.
+
+The first repin commit `792cdff6`, tree
+`4922e3260d4aeafbf41b03ed107564be90610810`, did not register: Targeted
+retained 55 passes, six failures and zero skips. Five failures still expected
+production r1 literals; the sixth fixture archive still contained the r1 paired
+filename while its copied current lock correctly required r4. Original results
+and logs remain in `build/c1-register-failed-792cdff6/retention.json`, SHA256
+`30b94aa91a2f7b3010463a924aa8ea25d8e2edcd5cad33a0bab3f47785b84fff`.
+
+The follow-up completes current production consumers in the artifact integration,
+GitHub fallback, MCP configuration and generated on-demand manifest tests, plus
+the bootstrap fixture's canonical archive fallback. It changes exact current
+pin expectations and the paired fixture filename, preserving test identities,
+assertions, negative cases, mocked transport, Unicode paths and workloads.
+Independent historical r1 component/own-lock fixtures remain unchanged.
+The production-source search found no remaining old pair literals in runtime,
+scripts, templates or Go sources; no runtime or build edit is needed.
+The failed registration is not relabelled as passed, and the follow-up still
+requires its own public registration and current live publication qualification.
+Static follow-up receipt
+`build/vanessa-r4-production-pin-causal/test-consumers-792cdff6/amendment.json`
+has SHA256 `f8630a542410082536e7be51221dfd3ec4ba510029461449c441f9e8abb4adbc`:
+27 literal-line updates in five test files, 1675 Should commands and 206 It
+declarations preserved, native PS5 parse0, original BOM/CRLF and all 44 runtime
+inputs unchanged. This is static preservation evidence, not test execution.
