@@ -323,3 +323,22 @@ Final2100 proof is `build/targeted-capacity-20261003/final2100/final-qualificati
 SHA256 `37a0708191e98231b067da0a0e64a37399ae4285c549cf6f7886326b306262f4`.
 The current63 case passed 1/0 in 1.918 seconds with unchanged inputs. The normal
 public RegisterChange is still required to qualify the coherent final commit.
+
+## Native producer for e3b70610
+
+The clean source correction e3b706106a30c9f06bc381782db975bd50a94e68
+(tree 3f37ecffef3aab601ce1a56231bea234837c952a) ran the existing native
+builder in a new private service base/output. All43 recorded input hashes
+matched afterwards. Gate6 modules/applicability/configuration each passed
+exitCode0/dumpResult0; original DT restored and owned processes released.
+Actual CFE SHA256 is
+`69cdd41c7052d12174760e399f5de2cfc8cf72174c57868839b7698c4ae397e2`;
+source ZIP remains
+`409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc`.
+Native provenance at the delivery checkout
+`build/third-party/client-mcp/v0.6.5-itl-r1/candidate-parent-e3b70610/candidate.provenance.json`
+has SHA256 `cee01c5df2690662d9eb577fef1a0a68de811fd3f0d09e72aa389dd35adca653`.
+Its public invocation/stdout/stderr are retained in `build/c1-native-parent-e3b70610/`.
+The lock pins these actual bytes; earlier producers stay historical. No final
+Develop/Release capability, component publication or live UI acceptance is
+claimed by this native build.
