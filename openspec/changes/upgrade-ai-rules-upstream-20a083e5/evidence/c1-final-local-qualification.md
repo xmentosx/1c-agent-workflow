@@ -342,3 +342,25 @@ Its public invocation/stdout/stderr are retained in `build/c1-native-parent-e3b7
 The lock pins these actual bytes; earlier producers stay historical. No final
 Develop/Release capability, component publication or live UI acceptance is
 claimed by this native build.
+## C5 exact client pin assertion correction
+
+Public RegisterChange for c5bbc9830a356b60c339d32fe5382ead8a1a893f
+failed after 1841.069 seconds. The final DependencyLocks worker reported
+10 passed and one failure: its exact current-template assertion still expected
+historical CFE `5222a74b...`, while the qualified E3 producer and C5 lock contain
+`69cdd41c7052d12174760e399f5de2cfc8cf72174c57868839b7698c4ae397e2`.
+The original worker plan/result/JUnit/stdout/stderr and failed gate summary are
+retained under `build/c1-cfe-pin-assertion-causal/original-red/`.
+
+Only that expected literal was updated. Other tuple/source/policy assertions
+and historical fixtures are unchanged; the bounded current-test scan found no
+other fixed `5222a74b...` expectation. All43 authoritative producer inputs match
+E3 provenance in both source checkouts; actual CFE/source ZIP, all three Gate6
+log/result hashes and recorded restored/released flags were independently checked.
+No native rebuild, runtime or production pin change was needed.
+
+The original affected case passed 1/0 in 1.751 seconds under native Windows
+PowerShell 5.1/Pester 5.8, with strict UTF-8 output and 53 input hashes unchanged.
+Its receipt is `build/c1-cfe-pin-assertion-causal/qualification.json`, SHA256
+`b5d02acb8583cf92ec707cd45ecd3cfed33ba6d300fccf34279fc783640e1caa`.
+This is focused test-contract correction, not a passed retry of the source gate.
