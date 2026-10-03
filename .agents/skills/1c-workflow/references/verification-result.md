@@ -113,8 +113,11 @@ before `/UpdateDBCfg`. Each check needs a zero process exit, a fresh numeric
 `/DumpResult=0`, and a UTF-8 `/Out` log without remaining warnings or errors.
 For main configuration loads, changed BSL/XML or an unknown/full-load delta
 selects `/CheckModules` and `/CheckConfig` before apply; a known binary-only
-delta keeps the existing direct path. There is currently no persisted MCP
-validator proof that can exclude relevant metadata or modules from this ladder.
+delta keeps the existing direct path. A selected small partial quick-fix may
+omit the ladder only with complete, current raw MCP proof for every changed
+BSL/XML input. Missing, stale or incomplete proof uses the platform fallback.
+See [platform validation evidence](platform-validation-evidence.md) for the
+existing `VerificationEvidencePath` input and its exact-source contract.
 `GATE6_CHECK_FAILED` stops database apply and restores the owned DT snapshot;
 correct the named source finding and repeat the original ITL operation.
 A failed applicability check does not trigger the partial-load full fallback;
@@ -127,9 +130,17 @@ not replayed as rollback after a lost completion acknowledgement.
 The proof is recorded under
 `lastGate6Evidence` with source, editable-load arguments/log hash, target,
 modes, snapshot identity and check artifact hashes.
-Every passed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
+Every completed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
 beside its result and log files, including tooling installs that do not update
-the source-load state.
+the source-load state. Compilation and extension applicability remain strict.
+Managed main-CF structural findings may continue only when the load owner
+proves complete unchanged before/after findings outside the change and its
+impact scope, with matching source, target, snapshot and native check inputs.
+This records `accepted-with-preexisting-findings`, the original nonzero native
+result and `nativePassed=false`; it is not a clean platform pass. New, increased,
+inside-scope, unclassified or unbound findings stop apply with the existing
+rollback and retry route. Agents must not create a baseline by editing State,
+suppress warnings or repair unrelated product objects to satisfy this gate.
 Empty/CFE extension initialization uses the same ladder inside its existing
 infobase snapshot; a failed check restores that snapshot before retrying the
 original initialization after a source repair.

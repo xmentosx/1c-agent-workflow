@@ -4,6 +4,91 @@
 }
 
 Describe 'Designer Gate 6 batch verdict' {
+    It 'continues only bound unchanged outside-scope structural findings (<Case>)' -TestCases @(
+        @{ Case='legacy'; allowed=$true },
+        @{ Case='increased'; allowed=$false },
+        @{ Case='unknown'; allowed=$false },
+        @{ Case='inside'; allowed=$false },
+        @{ Case='changed-before-log'; allowed=$false },
+        @{ Case='changed-before-result'; allowed=$false }
+    ) {
+        param($Case,$allowed)
+        $root = Join-Path $TestDrive ('Прежние замечания 1С ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $actual = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:calls = [Collections.Generic.List[object]]::new()
+            $script:configurationCheckNumber = 0
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $script:calls.Add(@($DesignerArgs))
+                if ($DesignerArgs[0] -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
+                if ($DesignerArgs[0] -eq '/LoadConfigFromFiles') {
+                    if ($Case -eq 'changed-before-log') {
+                        [IO.File]::WriteAllText($script:beforeLogPath, 'ОбщаяФорма.Подменённая.Форма Отсутствует обработчик: "ПриОткрытии"', [Text.UTF8Encoding]::new($false))
+                    }
+                    if ($Case -eq 'changed-before-result') {
+                        [IO.File]::WriteAllText($script:beforeResultPath, '0', [Text.UTF8Encoding]::new($false))
+                    }
+                }
+                $script:LastLogPath = Join-Path $script:ProjectRoot ("legacy-$($script:calls.Count).log")
+                $text = 'Ошибок: 0; предупреждений: 0'
+                $code = 0
+                if ($DesignerArgs[0] -eq '/CheckConfig') {
+                    $script:configurationCheckNumber++
+                    $text = 'ОбщаяФорма.Прежняя.Форма Отсутствует обработчик: "ПриОткрытии"'
+                    if ($script:configurationCheckNumber -eq 2) {
+                        if ($Case -eq 'increased') { $text += "`r`n" + $text }
+                        if ($Case -eq 'unknown') { $text += "`r`nНеизвестный отказ платформы" }
+                        if ($Case -eq 'changed-before-log') { $text = 'ОбщаяФорма.Подменённая.Форма Отсутствует обработчик: "ПриОткрытии"' }
+                    }
+                    $code = 101
+                }
+                [IO.File]::WriteAllText($script:LastLogPath,$text,[Text.UTF8Encoding]::new($false))
+                $index = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if ($index -ge 0) { [IO.File]::WriteAllText($DesignerArgs[$index+1],[string]$code,[Text.UTF8Encoding]::new($false)) }
+                if ($DesignerArgs[0] -eq '/CheckConfig' -and $script:configurationCheckNumber -eq 1) {
+                    $script:beforeLogPath=$script:LastLogPath; $script:beforeResultPath=$DesignerArgs[$index+1]
+                }
+                if ($code -ne 0) {
+                    $errorObject = [InvalidOperationException]::new('Original native CheckConfig failed with 101')
+                    $errorObject.Data['ItlDesignerBatchResult'] = [pscustomobject]@{exitCode=$code;logPath=$script:LastLogPath;
+                        operation='/CheckConfig';infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;ownedProcessesReleased=$true}
+                    throw $errorObject
+                }
+            }
+            $legacy = [pscustomobject]@{sourceFingerprint='source';infoBaseKind='file';infoBasePath='C:\База 1С';binding=[pscustomobject]@{previousFingerprint='previous'};
+                changedOwners=$(if ($Case -eq 'inside') { @('ОбщаяФорма.Прежняя') } else { @('ОбщийМодуль.Изменённый') });
+                unchangedOwnersProof=@(
+                    [pscustomobject]@{owner='ОбщаяФорма.Прежняя';beforeSha256=('a'*64);afterSha256=('a'*64)},
+                    [pscustomobject]@{owner='ОбщаяФорма.Подменённая';beforeSha256=('b'*64);afterSha256=('b'*64)})}
+            $receipt = $null
+            $failure = try {
+                $receipt = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $legacy.infoBasePath -InfoBaseKind file -RequireGate6 `
+                    -LegacyContext $legacy -SourceFingerprint 'source' -DesignerArgs @('/LoadConfigFromFiles',$root,'/UpdateDBCfg') -User '' -Password ''
+                ''
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{failure=$failure;receipt=$receipt;operations=@($script:calls | ForEach-Object { $_[0] })}
+        }
+        if ($allowed) {
+            $actual.failure | Should -BeNullOrEmpty
+            $actual.operations | Should -Contain '/UpdateDBCfg'
+            $actual.operations | Should -Not -Contain '/RestoreIB'
+            $actual.receipt.schemaVersion | Should -Be 2
+            $configuration = @($actual.receipt.steps | Where-Object step -eq 'configuration')[0]
+            $configuration.exitCode | Should -Be 101
+            $configuration.dumpResult | Should -Be 101
+            $configuration.nativePassed | Should -BeFalse
+            $configuration.assessment.status | Should -Be 'accepted-with-preexisting-findings'
+            $actual.receipt.legacyBaseline.dumpResult | Should -Be 101
+        } else {
+            $actual.failure | Should -Match 'GATE6_CHECK_FAILED'
+            $actual.operations | Should -Not -Contain '/UpdateDBCfg'
+            $actual.operations | Should -Contain '/RestoreIB'
+        }
+    }
+
     It 'leaves an unavailable platform target unverified before any editable mutation' {
         $root = Join-Path $TestDrive ('Недоступная база 1С ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null

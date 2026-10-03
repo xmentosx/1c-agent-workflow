@@ -1,5 +1,8 @@
 # Локальная квалификация c1 upstream — 2026-10-02
 
+Историческая квалификация r40. Текущие D13/r41 policy и новые helper bytes
+квалифицируются отдельно: [r41 proof](gate6-r41-qualification.md).
+
 Аудированный upstream — `c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb`.
 Новый controlled fork построен линейно от него; прежний downstream не влит
 через merge. Текущий чистый локальный commit —

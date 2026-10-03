@@ -7934,13 +7934,29 @@ function Invoke-Designer {
         $stableArtifactRecovered = [bool]$recoveredArtifactState.ready
     }
     if ($result.exitCode -ne 0 -and -not $stableArtifactRecovered) {
-        throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"
+        $nativeFailure = [InvalidOperationException]::new("1C Designer failed with exit code $($result.exitCode). Log: $logPath")
+        # Preserve the failed native verdict. Only the checked-load owner may
+        # assess a completed CheckConfig diagnostic result against its baseline.
+        $nativeFailure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{
+            exitCode = [int]$result.exitCode
+            logPath = $logPath
+            operation = [string]$DesignerArgs[0]
+            infoBaseKind = $InfoBaseKind
+            infoBasePath = $InfoBasePath
+            ownedProcessesReleased = [bool]$ownedReleaseConfirmed
+        }
+        throw $nativeFailure
     }
 
     $operationLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
     if ($operationLogState.state -eq "failure") {
         $failureLabel = if ($operationKind -like "repository-update*") { "repository update" } else { $operationKind }
-        throw "1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath"
+        $nativeFailure = [InvalidOperationException]::new("1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath")
+        $nativeFailure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{
+            exitCode = [int]$result.exitCode; logPath = $logPath; operation = [string]$DesignerArgs[0]
+            infoBaseKind = $InfoBaseKind; infoBasePath = $InfoBasePath; ownedProcessesReleased = [bool]$ownedReleaseConfirmed
+        }
+        throw $nativeFailure
     }
 
     if ($operationKind -eq "dump-config-to-files") {

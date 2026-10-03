@@ -1461,11 +1461,11 @@
     {
       "path": "content/rules/designer-batch-checks.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "disposition": "resolved",
+      "reason": "Accepted D13 / EV8a-EV8c: managed main-CF may continue with complete proven unchanged outside-impact structural findings while retaining the failed native result; strict compilation, applicability, unknown inputs, snapshot and rollback remain. Previous decision: adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
       "upstreamSha256": "784d0907cc1738cf99299c2129a4b3075d70fd432d0a50d937ad70b1b7e8faf1",
       "baselineSha256": "<absent>",
-      "resultSha256": "784d0907cc1738cf99299c2129a4b3075d70fd432d0a50d937ad70b1b7e8faf1"
+      "resultSha256": "0fa07cff3acb1862b5733bd5b5771a94034fc23fe977eb7de18e59976c0562ec"
     },
     {
       "path": "content/rules/dev-standards-architecture.md",
@@ -1912,10 +1912,10 @@
       "path": "content/rules/verification-gates.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "reason": "Accepted D13 / EV8a-EV8c: small partial main-CF skips the platform ladder only with complete exact saved-input MCP proof; managed legacy structural continuation retains native failure and strict default gates. Previous decision: Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
       "upstreamSha256": "507ce33fa6010ccd326bd723e9a353cc7add8cebc0464b2932129d3d47107dd8",
       "baselineSha256": "d6dc3ac926404a69099719a92e78b80ac8d7a8281b4f5eafc1d25216fd1a8de8",
-      "resultSha256": "7a073c75615e1e4d9760a97a9011befdcc89965e502ecb127bf8ebbc88d62a70"
+      "resultSha256": "675781df08caf584fcd7ecbba6294454a74b4ecac87d92a1b2ceb4a73fe5450e"
     },
     {
       "path": "content/rules/verification-policy.md",

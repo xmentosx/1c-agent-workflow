@@ -216,8 +216,9 @@ ITL load/check/apply owner. Триггеры: применение расшир�
 native process ownership, timeout, Unicode transport и маскирование секретов
 остаются общими; upstream пример с прямым Start-Process не становится ITL launcher.
 
-Pass требует согласованного process exit, свежего числового `/DumpResult` и
-отсутствия errors/warnings в `/Out`. Отсутствующий result, timeout и nonzero
+Clean pass требует согласованного process exit, свежего числового `/DumpResult` и
+отсутствия errors/warnings в `/Out`. Для основной CF действует уточнение D13;
+отсутствующий result, timeout и необъяснённый nonzero
 считаются отказом; success-фраза нейтрализует только свой фрагмент, не остаток
 строки с предупреждением/ошибкой. Evidence связывает source/artifact и загруженную
 конфигурацию, точную ИБ/extension, platform, modes и три сигнала. Повторное
@@ -226,6 +227,66 @@ Pass требует согласованного process exit, свежего ч
 Нет разрешённой платформы/dev-test ИБ — Gate 6 честно unverified с причиной:
 это не новое безусловное запрещение выдачи результата и не разрешение применять
 изменения в production либо обходить действующие ITL требования к apply.
+
+### D13. Принятое уточнение Gate 6 и исходная приёмка (2026-10-04)
+
+Пользователь принял три связанные части: вернуть условность Gate 6 при малой
+проверенной CF правке; сохранить работу со старыми структурными замечаниями;
+устранить текущий блокер на исходном PM5 стенде. Проверка fresh на 356698ca
+остановилась на настоящей ошибке компиляции в старом корпусе. После временного
+исправления процедура→функция CheckModules прошёл, полный CheckConfig выдал
+631 строку (398 «возможно ошибочных», 216 отсутствующих обработчиков, 17 ссылок).
+Два изученных metadata-to-handler несоответствия уже присутствовали в initial
+48f011. Все 631 не признаны ни дефектами продукта, ни безопасными исключениями.
+Исходная база и repository binding восстановлены; apply и публикация не выполнены.
+
+Архитектурный checkpoint: invariant — достоверная проверка текущего артефакта
+без требования исправлять посторонние старые замечания. Владелец остаётся
+существующий ITL load/check/apply helper; controlled fork описывает ту же
+политику, но не исполняет второй deployment loop. Предыдущая версия и текущий
+артефакт сравниваются только в разрешённом dev/test scope с подтверждённой
+source/target/layer identity. Evidence привязан к операции и исходным bytes;
+глобальный baseline, whitelist, сервис, новый coordinator и installed migration
+не вводятся. Не расширяются ресурсы guard, клиенты, платформы или полномочия.
+Cancellation, timeout, snapshot и restoration duty остаются у прежнего owner.
+
+Для малой partial CF загрузки helper учитывает текущую MCP validation coverage
+с сохранёнными inputs/raw results, а не boolean «passed». Full/unknown load и
+применимость расширения остаются вне этого исключения. MCP исключение сохраняет
+snapshot и раздельные editable load/apply; source и исходные evidence bytes
+повторно проверяются после load, до первого apply. После подтверждённого точного
+DT rollback прежний Designer proof восстанавливается тем же load owner вместе с
+cursor, чтобы повтор исходной команды не терял доказанную прежнюю конфигурацию.
+Это не passed-кандидат; uncertain/borrowed rollback и потерянный apply ACK не
+восстанавливают proof автоматически. Структурная проверка
+полной CF сохраняет весь native Out, exit и DumpResult. Только доказанные
+неизменившиеся замечания вне scope допускают продолжение с явным legacy
+assessment; новые, усилившиеся, внутри scope и неизвестные не разрешаются
+автоматически. Такой результат не называется clean Gate 6. Компиляция и
+применимость расширений остаются блокирующими. Автоматический blanket WARN для
+любого CheckConfig=101 отвергнут; массовый ремонт старой PM5 выходит за scope.
+
+Current corpus acceptance: подтвердить фактические runtime расширения и
+происхождение snapshot/export, исправить известную ошибку компиляции только в
+owned стенде, затем пройти прежнюю fresh journey, Vanessa, export и refresh.
+Сохранить исходные reproducer/failed receipts и equivalent regression новых
+findings среди legacy. Смена корпуса или ослабление проверок не является
+решением. Runtime cost сравнивается с уже измеренной полной проверкой; каждый
+добавленный platform run должен закрывать конкретную evidence gap.
+
+Уточнение фактической проверки: 2026-10-04 guarded read-only export основной CF
+содержал те же 19 286 файлов и exact raw SHA, что checkout стенда; guard был
+освобождён, HEAD/status не изменены. Реальный before CheckConfig снова дал 631
+структурную строку и известную compiler ошибку procedure-return в трёх режимах.
+Распознанная прежняя compiler ошибка не переносится в legacy: только настоящий
+строгий after CheckModules может подтвердить её устранение в области исправления.
+Неполная compiler пара и любая иная неизвестная строка остаются unresolved.
+Repository-disconnected status сохраняется отдельно как атрибут read-only
+проверки, а не объявляется исправленной ошибкой или чистым platform результатом.
+В production неизвестное влияние descriptor/API/dependency изменений означает
+отсутствие legacy admission. Одноразовый ремонт owned стенда использует реальный
+before export/snapshot и явно разобранные зависимости; фиктивный passed State
+для исходной базы запрещён.
 
 ### D5. Один repair session для двух входов
 

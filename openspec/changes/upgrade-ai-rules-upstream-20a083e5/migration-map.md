@@ -80,6 +80,8 @@ Q21 заменяет прежний запрет обновления рабоч
 | P1 Execution-guard cutover обновляет часть веток вне обычной миграции | Q21: полноценный файловый update всех доступных roots у одного owner; guard transition — его этап | D11; IM2/IM6; 9.3, 9.5, 9.6 |
 | P1 Resume зависит от движущегося master | Входы операции закреплены независимо от нового helper; ignored files из exact fork/client/render, main только проверенный cache | D11; IM6; 9.7 |
 | P1 Gate 6 не включён в ITL apply | Условная platform ladder и три сигнала внутри существующего load/check/apply, с recovery | D4; EV8; 3.6, 10.2, 10.4 |
+| P1 Малую правку блокируют старые замечания всей CF | Полная matching MCP coverage сохраняет условность; подтверждённые неизменные outside-scope findings получают non-clean assessment, строгие новые ошибки остаются блокирующими | D13; EV8a/EV8b; 13.1–13.3 |
+| P1 Условный load может применить устаревший proof, а rollback теряет прежнюю identity | Существующий snapshot/split-load owner повторно сверяет proof до apply и возвращает прежний Designer proof только после подтверждённого exact rollback/cursor restore | D13; EV8a/EV8b; 13.2/13.3 |
 | P2 Истечение one-off permission обесценивает proof | Authorization provenance отдельно от достаточности; обычный check/export переиспользует proof при persistent off | D3/D4; EV3/EV4; 4.2, 4.4 |
 | P2 CLI mutations обходят store-write owner | Внешний store не включён в текущий релиз; staging/batch/journal и native archive остаются обязательными до его будущего включения | `add-external-openspec-store`; OS3 |
 | P2 Приёмка ограничена r36 | Главный baseline — реальный published master/r33 со старым helper; r36 и legacy classes дополнительно | Context/D12; RQ1; 9.4, 10.4 |

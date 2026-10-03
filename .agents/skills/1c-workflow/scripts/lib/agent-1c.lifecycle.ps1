@@ -1775,7 +1775,7 @@ function New-ConfigDumpInfoLoadSnapshot {
 }
 
 function Restore-ConfigDumpInfoLoadSnapshot {
-    param([object]$Snapshot)
+    param([object]$Snapshot, [AllowNull()][object]$Failure = $null)
 
     if (-not $Snapshot) {
         return
@@ -1796,11 +1796,11 @@ function Restore-ConfigDumpInfoLoadSnapshot {
             $Snapshot.preserveBackup = $true
             throw "ConfigDumpInfo rollback failed for '$($Snapshot.path)'. Recovery snapshot was preserved at '$($Snapshot.backupPath)': $($_.Exception.Message)"
         }
-        return
-    }
-
-    if (Test-Path -LiteralPath $Snapshot.path -PathType Leaf) {
+    } elseif (Test-Path -LiteralPath $Snapshot.path -PathType Leaf) {
         Remove-Item -LiteralPath $Snapshot.path -Force -ErrorAction Stop
+    }
+    if ($null -ne $Failure -and $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) {
+        $Failure.Exception.Data['ItlConfigLoadSnapshotRestored'].cursorRestored = $true
     }
 }
 
@@ -1836,6 +1836,7 @@ function Invoke-DesignerGate6CheckLadder {
         [string]$ExtensionName = '',
         [string]$SourceFingerprint = '',
         [object]$EditableLoad = $null,
+        [AllowNull()][object]$LegacyBaseline = $null,
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
         [string[]]$RuntimeModes = @('-ThinClient', '-Server', '-ExternalConnection')
@@ -1859,15 +1860,46 @@ function Invoke-DesignerGate6CheckLadder {
         $resultPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-gate6-$($step.name)-" -Extension '.result'
         if (Test-Path -LiteralPath $resultPath) { Remove-Item -LiteralPath $resultPath -Force }
         try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
-                -DesignerArgs (@($step.args) + @('/DumpResult', $resultPath)) | Out-Null
+            $check = Invoke-PlatformGate6NativeCheck -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                -User $User -Password $Password -Arguments $step.args -ResultPath $resultPath
         } catch {
             throw "GATE6_CHECK_PROCESS_FAILED: step=$($step.name); result=$resultPath; log=$script:LastLogPath; $($_.Exception.Message)"
         }
-        $logPath = [string]$script:LastLogPath
-        $verdict = Get-DesignerBatchCheckVerdict -ExitCode 0 -ResultPath $resultPath -LogPath $logPath
+        $logPath = $check.logPath
+        $verdict = $check.verdict
+        $assessment = $null
+        if (-not $verdict.passed -and $step.name -eq 'configuration' -and -not $ExtensionName -and $null -ne $LegacyBaseline) {
+            $before = $LegacyBaseline.check.verdict
+            $baselineArtifactsUnchanged = $false
+            try {
+                $baselineArtifactsUnchanged =
+                    (Get-FileHash -LiteralPath $LegacyBaseline.check.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.logSha256 -and
+                    (Get-FileHash -LiteralPath $LegacyBaseline.check.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.resultSha256 -and
+                    (Get-FileHash -LiteralPath $LegacyBaseline.snapshot.path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $LegacyBaseline.snapshot.sha256
+            } catch { $baselineArtifactsUnchanged = $false }
+            $codesMatch = $before.exitCode -eq $verdict.exitCode -and $before.resultCode -eq $verdict.resultCode -and
+                $verdict.exitCode -in @(0,101) -and $verdict.resultCode -in @(0,101)
+            $bindingMatched = $baselineArtifactsUnchanged -and $codesMatch -and $LegacyBaseline.platformPath -ceq (Get-PlatformPath) -and
+                ([string]::Join('|',[string[]]$LegacyBaseline.runtimeModes) -ceq [string]::Join('|',[string[]]$modes)) -and
+                [string]$LegacyBaseline.context.sourceFingerprint -ceq $SourceFingerprint -and
+                $LegacyBaseline.context.infoBaseKind -ceq $InfoBaseKind -and
+                (Test-ItlOnDemandInfoBaseMatch -First $LegacyBaseline.context.infoBasePath -Second $InfoBasePath) -and
+                $LegacyBaseline.snapshot.sha256 -ceq $EditableLoad.snapshot.sha256
+            $assessment = Compare-ItlPlatformStructuralDiagnostics `
+                -Before $LegacyBaseline.parsedDiagnostics `
+                -After (Get-ItlPlatformStructuralDiagnostics -LogPath $logPath) -BindingMatched $bindingMatched `
+                -ChangedOwners $LegacyBaseline.context.changedOwners -UnchangedOwnersProof $LegacyBaseline.context.unchangedOwnersProof `
+                -CompilationPassedAfter (@($evidence | Where-Object { $_.step -eq 'modules' -and $_.nativePassed }).Count -eq 1)
+            $assessmentPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-legacy-assessment-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $assessmentPath -Value (($assessment | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $assessment = [pscustomobject]@{status=$assessment.status;applyAllowed=[bool]$assessment.applyAllowed;cleanPassed=$false;
+                evidencePath=$assessmentPath;evidenceSha256=(Get-FileHash -LiteralPath $assessmentPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+        }
         if (-not $verdict.passed) {
-            throw "GATE6_CHECK_FAILED: step=$($step.name); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | '). Do not apply the database configuration; correct the source and repeat the original operation."
+            if ($null -eq $assessment -or -not $assessment.applyAllowed) {
+                throw "GATE6_CHECK_FAILED: step=$($step.name); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | '). Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
+            }
+            Write-Warning "GATE6_LEGACY_FINDINGS: native CheckConfig did not pass; unchanged proven outside-scope findings permit apply. Assessment: $($assessment.evidencePath)"
         }
         $evidence.Add([pscustomobject]@{
             step = $step.name
@@ -1876,12 +1908,14 @@ function Invoke-DesignerGate6CheckLadder {
             resultSha256 = (Get-FileHash -LiteralPath $resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
             logPath = $logPath
             logSha256 = (Get-FileHash -LiteralPath $logPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            exitCode = 0
+            exitCode = [int]$verdict.exitCode
             dumpResult = [int]$verdict.resultCode
+            nativePassed = [bool]$verdict.passed
+            assessment = $assessment
         })
     }
     $receipt = [pscustomobject]@{
-        schemaVersion = 1
+        schemaVersion = $(if ($null -ne $LegacyBaseline) { 2 } else { 1 })
         sourceFingerprint = $SourceFingerprint
         infoBaseKind = $InfoBaseKind
         infoBasePath = $InfoBasePath
@@ -1890,6 +1924,11 @@ function Invoke-DesignerGate6CheckLadder {
         platformPath = Get-PlatformPath
         runtimeModes = @($modes)
         steps = @($evidence.ToArray())
+        legacyBaseline = $(if ($null -ne $LegacyBaseline) { [pscustomobject]@{binding=$LegacyBaseline.context.binding;
+            snapshotSha256=$LegacyBaseline.snapshot.sha256;platformPath=$LegacyBaseline.platformPath;
+            logPath=$LegacyBaseline.check.logPath;logSha256=$LegacyBaseline.logSha256;
+            resultPath=$LegacyBaseline.check.resultPath;resultSha256=$LegacyBaseline.resultSha256;
+            exitCode=$LegacyBaseline.check.verdict.exitCode;dumpResult=$LegacyBaseline.check.verdict.resultCode} } else { $null })
         completedAt = (Get-Date).ToString('o')
     }
     $receiptPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-evidence-' -Extension '.json'
@@ -1899,19 +1938,216 @@ function Invoke-DesignerGate6CheckLadder {
 }
 
 function Test-MainConfigurationGate6Required {
-    param([Parameter(Mandatory = $true)][object]$ChangeSet)
+    param([Parameter(Mandatory = $true)][object]$ChangeSet,
+        [string]$ValidationEvidencePath = '', [string]$SourceFingerprint = '',
+        [string]$InfoBaseKind = '', [string]$InfoBasePath = '')
 
-    # There is no persisted, exact-source MCP validation proof for these paths.
-    # A missing Designer diff also cannot establish that metadata/modules are
-    # absent, so the platform check is required for that load.
+    # Full, deleted and unknown inputs cannot use a partial static proof.
     if ([bool](Get-StateValue -State $ChangeSet -Name 'requiresFullLoad' -Default $false)) { return $true }
+    if (@(Get-StateValue -State $ChangeSet -Name 'missingFiles' -Default @()).Count -gt 0) { return $true }
     $files = @($ChangeSet.files | Where-Object { $_ })
     if ($files.Count -eq 0) { return $true }
-    foreach ($file in $files) {
-        $path = ([string]$file).Replace('\', '/')
-        if ($path.StartsWith('<') -or $path -match '(?i)\.(bsl|xml)$') { return $true }
+    if (@($files | Where-Object { ([string]$_).StartsWith('<') }).Count -gt 0) { return $true }
+    $relevant = @($files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' })
+    if ($relevant.Count -eq 0) { return $false }
+    if ($ValidationEvidencePath -and $SourceFingerprint) {
+        $smallDelta = $false
+        try {
+            $limit = 40
+            $configuredLimit = [string](Get-EnvValue -Name 'QUICKFIX_MAX_LINES')
+            if ($configuredLimit -and (-not [int]::TryParse($configuredLimit,[ref]$limit) -or $limit -le 0)) { return $true }
+            $owners = @($relevant | ForEach-Object { Get-PlatformGate6MetadataOwner -RelativePath ([string]$_) } | Select-Object -Unique)
+            if ($owners.Count -eq 1 -and $owners[0]) {
+                $total = 0
+                $records = @(Get-GitPathList -Arguments @('diff','--numstat','-z','--no-renames',$ChangeSet.previousTreeObjectId,$ChangeSet.currentTreeObjectId))
+                if ($records.Count -gt 0) {
+                    $smallDelta = $true
+                    foreach ($record in $records) {
+                        if ($record -notmatch '^(?<added>[0-9]+)\t(?<removed>[0-9]+)\t(?<path>.+)$') { $smallDelta=$false;break }
+                        if ([IO.Path]::GetFileName([string]$Matches.path) -ieq 'ConfigDumpInfo.xml') { continue }
+                        $total += [int]$Matches.added + [int]$Matches.removed
+                    }
+                    $smallDelta = $smallDelta -and $total -le $limit
+                }
+            }
+        } catch { $smallDelta=$false }
+        if (-not $smallDelta) { return $true }
+        $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $ValidationEvidencePath `
+            -SourceRoot $ChangeSet.absoluteExportPath -SourceFingerprint $SourceFingerprint `
+            -Files $relevant -ProjectRoot $script:ProjectRoot -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        if ($coverage.covered) { return $false }
+        Write-Host "Gate 6 static coverage unavailable: $($coverage.reason). Using the platform fallback."
     }
-    return $false
+    return $true
+}
+
+function Get-PlatformGate6MetadataOwner {
+    param([string]$RelativePath)
+    $parts = $RelativePath.Replace('\','/').Split('/')
+    if ($parts.Count -lt 2) { return '' }
+    $label = Get-ConfigRepositoryMetadataCollectionLabel -Collection $parts[0]
+    if (-not $label -or $label -ceq $parts[0]) { return '' }
+    return $label + '.' + [IO.Path]::GetFileNameWithoutExtension($parts[1])
+}
+
+function Get-PlatformGate6OwnerHashes {
+    param([string]$TreeObjectId)
+    $records = @(Get-GitPathList -Arguments @('ls-tree','-r','-z',$TreeObjectId))
+    $groups = @{}
+    foreach ($record in $records) {
+        if ($record -notmatch '^[0-9]{6} blob (?<blob>[a-f0-9]{40,64})\t(?<path>.+)$') { continue }
+        $path = [string]$Matches.path
+        $blob = [string]$Matches.blob
+        $owner = Get-PlatformGate6MetadataOwner -RelativePath $path
+        if (-not $owner) { continue }
+        if (-not $groups.ContainsKey($owner)) { $groups[$owner] = [Collections.Generic.List[string]]::new() }
+        $groups[$owner].Add($path + [char]0 + $blob)
+    }
+    $hashes = @{}
+    foreach ($owner in $groups.Keys) {
+        $items = [string[]]$groups[$owner].ToArray()
+        [Array]::Sort($items,[StringComparer]::Ordinal)
+        $hashes[$owner] = Get-DotEnvPolicyTextHash -Text ([string]::Join([char]0,$items))
+    }
+    return $hashes
+}
+
+function New-PlatformGate6LegacyContext {
+    param([object]$State,[object]$ChangeSet,[string]$SourceFingerprint,
+        [string]$InfoBaseKind,[string]$InfoBasePath)
+    if ($null -eq $State) { return $null }
+    $beforeFingerprint = [string](Get-StateValue -State $State -Name 'lastConfigDesignerFingerprint' -Default '')
+    $previousTree = [string](Get-StateValue -State $ChangeSet -Name 'previousTreeObjectId' -Default '')
+    $currentTree = [string](Get-StateValue -State $ChangeSet -Name 'currentTreeObjectId' -Default '')
+    if ($beforeFingerprint -notmatch '^v2\|git-tree-sha256\|[a-f0-9]{64}$' -or
+        $previousTree -notmatch '^[a-f0-9]{40,64}$' -or $currentTree -notmatch '^[a-f0-9]{40,64}$' -or
+        [string](Get-StateValue -State $State -Name 'configLoadStatus' -Default '') -notin @('passed','fallback-succeeded') -or
+        [string](Get-StateValue -State $State -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $State -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return $null }
+    $binding = [ordered]@{ previousFingerprint=$beforeFingerprint; previousTree=$previousTree; currentTree=$currentTree }
+    if ([string](Get-StateValue -State $State -Name 'loadReason' -Default '') -eq 'branch-copy-seed') {
+        $seedFingerprint = [string](Get-StateValue -State $State -Name 'branchSeedConfigurationFingerprint' -Default '')
+        $sourceKey = [string](Get-StateValue -State $State -Name 'branchSeedSourceKey' -Default '')
+        $syncId = [string](Get-StateValue -State $State -Name 'branchSeedSyncId' -Default '')
+        if ($seedFingerprint -cne $beforeFingerprint -or -not $sourceKey -or -not $syncId) { return $null }
+        $binding.seedSourceKey=$sourceKey; $binding.seedSyncId=$syncId; $binding.seedConfigurationFingerprint=$seedFingerprint
+    } elseif (-not [string](Get-StateValue -State $State -Name 'lastConfigDesignerLoadedAt' -Default '')) { return $null }
+    try {
+        $previousRecords = @(Get-GitPathList -Arguments @('ls-tree','-r','-z',$previousTree) | Where-Object {
+            $separator = ([string]$_).IndexOf("`t")
+            $separator -ge 0 -and [IO.Path]::GetFileName(([string]$_).Substring($separator + 1)) -ine 'ConfigDumpInfo.xml'
+        })
+        $previousTreeFingerprint = 'v2|git-tree-sha256|' + (Get-DotEnvPolicyTextHash -Text ([string]::Join([char]0,[string[]]$previousRecords)))
+        if ($previousTreeFingerprint -cne $beforeFingerprint) { return $null }
+        $impact = Test-ItlPlatformLegacySourceImpact -ProjectRoot $script:ProjectRoot `
+            -PreviousTreeObjectId $previousTree -CurrentTreeObjectId $currentTree
+        if (-not $impact.proven) { return $null }
+        $beforeHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $previousTree
+        $afterHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $currentTree
+        $proof = [Collections.Generic.List[object]]::new()
+        foreach ($owner in $afterHashes.Keys) {
+            if ($beforeHashes.ContainsKey($owner) -and $beforeHashes[$owner] -ceq $afterHashes[$owner]) {
+                $proof.Add([pscustomobject]@{owner=$owner;beforeSha256=$beforeHashes[$owner];afterSha256=$afterHashes[$owner]})
+            }
+        }
+        return [pscustomobject]@{schemaVersion=1;sourceFingerprint=$SourceFingerprint;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;
+            binding=[pscustomobject]$binding;changedOwners=@($impact.impactOwners);unchangedOwnersProof=@($proof.ToArray());sourceImpact=$impact}
+    } catch { return $null }
+}
+
+function New-PlatformGate6StaticCoverageContext {
+    param([object]$ChangeSet,[string]$EvidencePath,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath)
+    $files = @($ChangeSet.files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' })
+    if (-not $EvidencePath -or $files.Count -eq 0) { return $null }
+    try {
+        $path = Resolve-ItlPlatformEvidencePath -Path $EvidencePath -BaseRoot $script:ProjectRoot -ContainedRoot $script:ProjectRoot
+        $sha256 = Get-ItlPlatformEvidenceHash -Path $path
+        $context = [pscustomobject]@{evidencePath=$path;evidenceSha256=$sha256;sourceRoot=$ChangeSet.absoluteExportPath;
+            sourceFingerprint=$SourceFingerprint;projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot);
+            files=$files;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath}
+        Assert-PlatformGate6StaticCoverageCurrent -Context $context -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        return $context
+    } catch { return $null }
+}
+
+function Assert-PlatformGate6StaticCoverageCurrent {
+    param([object]$Context,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath)
+    if ($Context.sourceFingerprint -cne $SourceFingerprint -or $Context.infoBaseKind -cne $InfoBaseKind -or
+        $Context.projectRoot -ine [IO.Path]::GetFullPath($script:ProjectRoot) -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $Context.infoBasePath -Second $InfoBasePath)) {
+        throw 'GATE6_STATIC_SOURCE_PROOF_CHANGED: target or source binding changed; preserve evidence and repeat the original operation.'
+    }
+    $current = Get-ConfigSourceFingerprint -ExportPath $Context.sourceRoot
+    if ($current.fingerprint -cne $SourceFingerprint) {
+        throw 'GATE6_SOURCE_CHANGED: source tree changed during the MCP-exempt editable load; repeat the original operation with current source evidence.'
+    }
+    try { $sameReceipt = (Get-ItlPlatformEvidenceHash -Path $Context.evidencePath) -ceq $Context.evidenceSha256 }
+    catch { $sameReceipt = $false }
+    if (-not $sameReceipt) {
+        throw 'GATE6_STATIC_SOURCE_PROOF_CHANGED: captured MCP receipt changed; preserve evidence and repeat the original operation.'
+    }
+    $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $Context.evidencePath -SourceRoot $Context.sourceRoot `
+        -SourceFingerprint $SourceFingerprint -Files $Context.files -ProjectRoot $script:ProjectRoot -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    if (-not $coverage.covered -or (Get-ItlPlatformEvidenceHash -Path $Context.evidencePath) -cne $Context.evidenceSha256) {
+        throw "GATE6_STATIC_SOURCE_PROOF_CHANGED: original complete MCP proof is no longer eligible ($($coverage.reason)); preserve evidence and repeat the original operation."
+    }
+}
+
+function Restore-ConfigLoadPreviousDesignerProof {
+    param([object]$PreviousState,[object]$Failure,[string]$ContentKind,[string]$InfoBaseKind,[string]$InfoBasePath)
+    if ($null -eq $PreviousState -or -not $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) { return }
+    $restoration = $Failure.Exception.Data['ItlConfigLoadSnapshotRestored']
+    $previousStatus = [string](Get-StateValue -State $PreviousState -Name 'configLoadStatus' -Default '')
+    $path = [string](Get-StateValue -State $PreviousState -Name 'statePath' -Default '')
+    $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $treeField = Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind
+    $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
+    $previousFingerprint = [string](Get-StateValue -State $PreviousState -Name $fingerprintField -Default '')
+    if (-not $restoration.cursorRestored -or $restoration.infoBaseKind -cne $InfoBaseKind -or
+        $restoration.projectRoot -ine [IO.Path]::GetFullPath($script:ProjectRoot) -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $restoration.infoBasePath -Second $InfoBasePath) -or
+        [string](Get-StateValue -State $PreviousState -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $PreviousState -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath) -or
+        $previousStatus -notin @('passed','fallback-succeeded') -or -not $previousFingerprint -or -not $path) { return }
+    $current = Read-DevBranchStateFile -Path $path
+    # Preserve other current state fields; only the same owner's invalidated
+    # proof may be recovered after exact DT and cursor restoration.
+    if ([string](Get-StateValue -State $current -Name $fingerprintField -Default '') -or
+        [string](Get-StateValue -State $current -Name $treeField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $treeField -Default '') -or
+        [string](Get-StateValue -State $current -Name $loadedAtField -Default '') -cne [string](Get-StateValue -State $PreviousState -Name $loadedAtField -Default '') -or
+        [string](Get-StateValue -State $current -Name 'configLoadStatus' -Default '') -notin @('pending','fallback-failed','memory-limit-exceeded','memory-monitor-failed') -or
+        $null -ne (Get-StateValue -State $current -Name 'lastGate6Evidence' -Default $null) -or
+        [string](Get-StateValue -State $current -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $current -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return }
+    Update-DevBranchState -State $current -Updates @{
+        $fingerprintField=$previousFingerprint
+        $treeField=(Get-StateValue -State $PreviousState -Name $treeField -Default '')
+        $loadedAtField=(Get-StateValue -State $PreviousState -Name $loadedAtField -Default '')
+        configLoadStatus=$previousStatus
+        lastGate6Evidence=(Get-StateValue -State $PreviousState -Name 'lastGate6Evidence' -Default $null)
+    }
+}
+
+function Invoke-PlatformGate6NativeCheck {
+    param([string]$InfoBasePath,[string]$InfoBaseKind,[string]$User,[string]$Password,
+        [string[]]$Arguments,[string]$ResultPath)
+    $exitCode = 0
+    $nativeError = ''
+    try {
+        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            -DesignerArgs (@($Arguments) + @('/DumpResult',$ResultPath)) | Out-Null
+    } catch {
+        $native = $_.Exception.Data['ItlDesignerBatchResult']
+        if ($null -eq $native -or $Arguments[0] -cne '/CheckConfig' -or $native.operation -cne '/CheckConfig' -or
+            -not $native.ownedProcessesReleased -or $native.infoBaseKind -cne $InfoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $native.infoBasePath -Second $InfoBasePath)) { throw }
+        $exitCode = [int]$native.exitCode
+        $nativeError = $_.Exception.Message
+    }
+    $logPath = [string]$script:LastLogPath
+    $verdict = Get-DesignerBatchCheckVerdict -ExitCode $exitCode -ResultPath $ResultPath -LogPath $logPath
+    return [pscustomobject]@{verdict=$verdict;nativeError=$nativeError;logPath=$logPath;resultPath=$ResultPath}
 }
 
 function New-DesignerGate6Snapshot {
@@ -1982,6 +2218,8 @@ function Invoke-ConfigLoadDesignerAttempt {
         [string[]]$DesignerArgs,
         [string]$ExtensionName = '',
         [switch]$RequireGate6,
+        [AllowNull()][object]$StaticCoverageContext = $null,
+        [AllowNull()][object]$LegacyContext = $null,
         [string]$SourceFingerprint = '',
         [string]$User,
         [string]$Password,
@@ -1989,7 +2227,7 @@ function Invoke-ConfigLoadDesignerAttempt {
         [AllowNull()][object]$EnclosingSnapshot = $null
     )
 
-    if (-not $ExtensionName -and -not $RequireGate6) {
+    if (-not $ExtensionName -and -not $RequireGate6 -and $null -eq $StaticCoverageContext) {
         Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
             -NativeEffectContract $NativeEffectContract -DesignerArgs $DesignerArgs | Out-Null
         return $null
@@ -2003,6 +2241,26 @@ function Invoke-ConfigLoadDesignerAttempt {
     $snapshot = New-DesignerGate6Snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -EnclosingSnapshot $EnclosingSnapshot
     $applySucceeded = $false
     try {
+    if ($null -ne $StaticCoverageContext) {
+        Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    }
+    $legacyBaseline = $null
+    if (-not $ExtensionName -and $null -ne $LegacyContext) {
+        $baselineLogsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+        New-Item -ItemType Directory -Force -Path $baselineLogsPath | Out-Null
+        $baselineResultPath = New-TimestampedFilePath -Directory $baselineLogsPath -Prefix '1c-gate6-before-' -Extension '.result'
+        $baseline = Invoke-PlatformGate6NativeCheck -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            -Arguments @('/CheckConfig','-ConfigLogIntegrity','-IncorrectReferences','-ThinClient','-Server','-ExternalConnection','-HandlersExistence','-ExtendedModulesCheck') -ResultPath $baselineResultPath
+        $baselineParsed = Get-ItlPlatformStructuralDiagnostics -LogPath $baseline.logPath
+        $baselineLogSha256 = (Get-FileHash -LiteralPath $baseline.logPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($baselineParsed.rawSha256 -cne $baselineLogSha256) {
+            throw 'GATE6_BASELINE_CHANGED: the before-load diagnostic log changed while it was captured; no editable load was performed. Repeat the original operation with stable evidence.'
+        }
+        $legacyBaseline = [pscustomobject]@{context=$LegacyContext;snapshot=$snapshot;platformPath=(Get-PlatformPath);
+            runtimeModes=@('-ThinClient','-Server','-ExternalConnection');check=$baseline;parsedDiagnostics=$baselineParsed;
+            logSha256=$baselineLogSha256;resultSha256=(Get-FileHash -LiteralPath $baseline.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    }
     $loadArgs = @($DesignerArgs | Where-Object { $_ -cne '/UpdateDBCfg' })
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
         -NativeEffectContract $NativeEffectContract -DesignerArgs $loadArgs | Out-Null
@@ -2030,14 +2288,21 @@ function Invoke-ConfigLoadDesignerAttempt {
         } else { '' })
         completedAt = (Get-Date).ToString('o')
     }
-    $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
-        -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -User $User -Password $Password
+    $evidence = $null
+    if ($null -ne $StaticCoverageContext) {
+        Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
+            -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        Write-Host 'Gate 6 native ladder skipped only for the unchanged complete MCP source proof revalidated after editable load.'
+    } else {
+        $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -User $User -Password $Password
+    }
     # This is the first database apply. A failed or missing check never reaches it.
     $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
     $contentKind = if ($ExtensionName) { 'extension' } else { 'configuration' }
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
         -NativeEffectContract ([pscustomobject]@{ schemaVersion=1; kind='update-db-cfg'; project=[IO.Path]::GetFullPath($script:ProjectRoot)
-            sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence }) `
+            sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence; staticCoverage=$StaticCoverageContext }) `
         -DesignerArgs $applyArgs | Out-Null
     $applySucceeded = $true
     if ($snapshot.owned) {
@@ -2061,6 +2326,12 @@ function Invoke-ConfigLoadDesignerAttempt {
                 -RestorationDuty $snapshot.duty -DesignerArgs @('/RestoreIB', $snapshot.path) | Out-Null
             Complete-OneCDatabaseRestorationDuty -Duty $snapshot.duty -Resolution restored
             $snapshot.completed = $true
+            # Only this confirmed owned restoration can recover the previous
+            # loaded-source proof. It never marks the failed candidate passed.
+            $originalFailure.Exception.Data['ItlConfigLoadSnapshotRestored'] = [pscustomobject]@{
+                projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot); infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath
+                snapshotPath=$snapshot.path; snapshotSha256=$snapshot.sha256; cursorRestored=$false
+            }
         } catch {
             throw "GATE6_SNAPSHOT_RECOVERY_FAILED: $($originalFailure.Exception.Message) Rollback is unconfirmed; preserve snapshot '$($snapshot.path)' (SHA256 $($snapshot.sha256)) and diagnostics '$failureLogPath'. Restore this exact target through the existing snapshot recovery owner before repeating the original operation. Recovery: $($_.Exception.Message)"
         } finally {
@@ -2110,6 +2381,8 @@ function Invoke-ConfigLoadWithFallback {
         [ValidateSet('configuration','extension')][string]$ContentKind = 'configuration',
         [string]$ExtensionName = "",
         [switch]$RequireGate6,
+        [AllowNull()][object]$StaticCoverageContext = $null,
+        [AllowNull()][object]$LegacyContext = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("Auto", "Partial", "Full")]
@@ -2141,13 +2414,13 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                    -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -SourceFingerprint $SourceFingerprint `
+                    -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full'}) `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg"))
             } catch {
-                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $_
                 throw
             }
             Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
@@ -2170,7 +2443,7 @@ function Invoke-ConfigLoadWithFallback {
         $partialNativeSucceeded = $false
         try {
             $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
-                -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -SourceFingerprint $SourceFingerprint `
+                -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                 -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                     sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                     exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='partial'}) `
@@ -2192,13 +2465,13 @@ function Invoke-ConfigLoadWithFallback {
             # load and must never trigger a second native mutation.
             if ($partialNativeSucceeded) { throw }
             if ($script:ConfigLoadAfterEditableBoundary) {
-                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $_
                 throw
             }
             $partialException = $_
             $partialLogPath = $script:LastLogPath
             $partialMessage = $partialException.Exception.Message
-            Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+            Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $partialException
             if ($partialMessage -match '^GATE6_') {
                 # The load succeeded but its platform check did not. A full
                 # load retry cannot repair the source defect or authorize apply.
@@ -2250,7 +2523,7 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
-                        -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -SourceFingerprint $SourceFingerprint `
+                        -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                         sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
                         exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full-fallback'}) `
@@ -2271,7 +2544,7 @@ function Invoke-ConfigLoadWithFallback {
                 if ($fullNativeSucceeded) { throw }
                 $fullException = $_
                 $fullLogPath = $script:LastLogPath
-                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $fullException
                 if ($State) {
                     Update-DevBranchState -State $State -Updates @{
                         configLoadStatus = "fallback-failed"
@@ -2283,7 +2556,11 @@ function Invoke-ConfigLoadWithFallback {
                         lastLogPath = $fullLogPath
                     }
                 }
-                throw "ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery."
+                $combinedFailure = [InvalidOperationException]::new("ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery.")
+                if ($fullException.Exception.Data.Contains('ItlConfigLoadSnapshotRestored')) {
+                    $combinedFailure.Data['ItlConfigLoadSnapshotRestored'] = $fullException.Exception.Data['ItlConfigLoadSnapshotRestored']
+                }
+                throw $combinedFailure
             }
         }
     } finally {
@@ -3396,7 +3673,20 @@ function Load-ConfigFromFiles {
             -AdditionalRelativePaths $sourceIntegrityRelativePaths
     }
 
-    $requireGate6 = $ContentKind -eq 'configuration' -and (Test-MainConfigurationGate6Required -ChangeSet $changeSet)
+    $validationEvidencePath = ''
+    $evidenceParameter = Get-Variable -Name VerificationEvidencePath -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $evidenceParameter) { $validationEvidencePath = [string]$evidenceParameter.Value }
+    $requireGate6 = $ContentKind -eq 'configuration' -and (Test-MainConfigurationGate6Required -ChangeSet $changeSet `
+        -ValidationEvidencePath $validationEvidencePath -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)
+    $staticCoverageContext = $null
+    if ($ContentKind -eq 'configuration' -and -not $requireGate6 -and
+        @($changeSet.files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' }).Count -gt 0) {
+        $staticCoverageContext = New-PlatformGate6StaticCoverageContext -ChangeSet $changeSet -EvidencePath $validationEvidencePath `
+            -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        if ($null -eq $staticCoverageContext) { $requireGate6 = $true }
+    }
+    $legacyContext = if ($requireGate6) { New-PlatformGate6LegacyContext -State $State -ChangeSet $changeSet `
+        -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath } else { $null }
 
     $listFilePath = ""
     if ($Mode -ne "Full") {
@@ -3418,6 +3708,7 @@ function Load-ConfigFromFiles {
             lastGate6Evidence = $null
         }
     }
+    try {
     $orchestration = Invoke-ConfigLoadWithFallback `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
@@ -3432,8 +3723,20 @@ function Load-ConfigFromFiles {
         -ContentKind $ContentKind `
         -ExtensionName $ExtensionName `
         -RequireGate6:$requireGate6 `
+        -StaticCoverageContext $staticCoverageContext `
+        -LegacyContext $legacyContext `
         -Mode $Mode `
         -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full")
+    } catch {
+        $loadFailure = $_
+        try {
+            Restore-ConfigLoadPreviousDesignerProof -PreviousState $State -Failure $loadFailure `
+                -ContentKind $ContentKind -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+        } catch {
+            Write-Warning "Previous Designer proof was not restored after checked rollback: $($_.Exception.Message). Preserve diagnostics and repeat the original operation through its recovery owner."
+        }
+        throw $loadFailure
+    }
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")

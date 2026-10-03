@@ -48,6 +48,35 @@ project env now to realize a choice accepted for its future update.
 
 ## Behavioural acceptance (EV9, D4.1)
 
+## Accepted Gate 6 compatibility continuation (EV8a–EV8c, D13)
+
+Retain the 356698ca fresh failure, native module/configuration logs and restored
+source snapshot. Confirm the same PM5 corpus/installed extensions and repair only
+the proven procedure-return compilation defect in the owned stand. Do not replace
+the reproducer or declare all 631 lines harmless. Test the original full fresh
+journey and small partial changes separately:
+
+| Case | Required evidence |
+|---|---|
+| Small partial quick-fix with complete raw MCP coverage | Current saved input/request/result hashes and provider/capability identity; no automatic full CF ladder |
+| Stale/missing/partial coverage, full/unknown/deleted inputs or large delta | Applicable platform route retained; original-command continuation |
+| Bound unchanged structural findings outside change scope | Complete before/after diagnostic multiset and immutable source-owner proofs; native failure retained, explicit accepted-with-preexisting-findings, apply/Vanessa/export/refresh complete |
+| New/increased/inside-scope/unknown finding | Apply stops, raw diagnostics retained and snapshot rollback works |
+| Baseline log/result changed during editable load | Captured original SHA/raw remain authoritative; no apply and existing rollback |
+| Existing descriptor/API change has unknown dependency impact | No legacy admission merely from an unchanged caller hash |
+| Known previous procedure-return compiler finding | Resolved-before record only with exact repair scope and actual strict current modules proof; unknown/incomplete pairs still stop |
+| Same count with different finding, wrong corpus/target/platform/modes or absent object proof | Cannot subtract previous findings |
+| Compile or extension applicability failure | Original strict reproducer still blocks and restores; legacy assessment cannot authorize it |
+| Clean current CheckConfig without usable baseline | Clean operation succeeds without a new baseline prerequisite |
+
+Baseline evidence stays operation-local with the existing exact-target snapshot
+and seed/previous-load binding, not a persistent whitelist. Record actual added
+check time against the retained native log timestamps. A new source/fork tree
+requires its applicable registration and public delivery qualification; old
+Targeted/Full proofs remain historical unless their existing reuse contract matches.
+
+### Essential UI behavioural acceptance
+
 After a separately authorized important UI change reaches an owned dev/test base,
 capture a fresh managed ITL Vanessa UI expected/actual trace on the exact artifact
 and target. Record effective UI/provider policy and actual observed steps/result.
