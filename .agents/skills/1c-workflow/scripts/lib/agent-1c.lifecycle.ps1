@@ -11908,6 +11908,7 @@ function Initialize-Project {
             Set-RunStage -Stage "init.dump-config" -Detail "Dumping the server source configuration"
             $dumpResult = Dump-ConfigToFiles
             Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            Ensure-OneCSourceGitAttributes | Out-Null
             $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
             Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the server branch seed"
@@ -11934,6 +11935,7 @@ function Initialize-Project {
                     -SourceGenerationId $sourceGenerationId | Out-Null
             } else {
                 Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+                Ensure-OneCSourceGitAttributes | Out-Null
                 $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
                 Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
                 Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
@@ -12058,6 +12060,7 @@ function Sync-Master {
             Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative configuration for a legacy seed"
             $dumpResult = Dump-ConfigToFiles
             Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            Ensure-OneCSourceGitAttributes | Out-Null
             $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
             Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
             Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
@@ -12072,6 +12075,7 @@ function Sync-Master {
         Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+        Ensure-OneCSourceGitAttributes | Out-Null
         $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
         Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
         Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
