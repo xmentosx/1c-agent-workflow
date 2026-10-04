@@ -72,14 +72,42 @@ function Get-ItlPlatformRawResult {
     return $result
 }
 
+function Read-ItlPlatformSourceText {
+    param([string]$Path, [string]$ExpectedHash)
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($hash -cne $ExpectedHash.ToLowerInvariant()) { throw 'Source changed during decode' }
+    $text = ([Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    # Strip the encoding marker only, not whitespace, EOLs or another source character.
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $text = $text.Substring(1) }
+    return $text
+}
+
+function Get-ItlPlatformCodeDescriptor {
+    param([string]$Code)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash(([Text.UTF8Encoding]::new($false, $true)).GetBytes($Code)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    # The published descriptor counts Unicode characters and newline separators,
+    # including the final empty line. Its sha256 field is a 16-hex prefix.
+    return [pscustomobject]@{
+        chars = $Code.Length - [regex]::Matches($Code, '[\uD800-\uDBFF][\uDC00-\uDFFF]').Count
+        lines = [regex]::Matches($Code, '\n').Count + 1
+        sha256 = $hash.Substring(0, 16)
+    }
+}
+
 function Test-ItlPlatformBslResult {
-    param([object]$Result, [object]$Arguments, [object]$Checker, [string]$InputPath, [string]$SourceRoot, [string]$ProjectRoot)
+    param([object]$Result, [object]$Arguments, [object]$Checker, [string]$InputPath, [string]$SourceRoot, [string]$ProjectRoot, [string]$InputText)
     $data = Get-ItlPlatformEvidenceValue $Result 'structuredContent'
     if ($null -eq $data) { return $false }
     if ($data.PSObject.Properties['status'] -and [string]$data.status -notin @('ok', 'success', 'succeeded', 'passed')) { return $false }
     if ($data.PSObject.Properties['error'] -and $data.error) { return $false }
+    $capability = [string]$Checker.capability
     $provenance = Get-ItlPlatformEvidenceValue $data 'provenance'
-    if ([string](Get-ItlPlatformEvidenceValue $provenance 'tool') -cne 'syntaxcheck_file' -or
+    if ([string](Get-ItlPlatformEvidenceValue $provenance 'tool') -cne $capability -or
         ([string](Get-ItlPlatformEvidenceValue $provenance 'analyzer_version')).Trim() -cne ([string]$Checker.versionOrId).Trim() -or
         [string](Get-ItlPlatformEvidenceValue $provenance 'file_metrics_scope') -cne 'whole_file') { return $false }
     $summary = Get-ItlPlatformEvidenceValue $data 'summary'
@@ -90,8 +118,10 @@ function Test-ItlPlatformBslResult {
     if ($diagnostics -isnot [Array] -or ($total -isnot [int] -and $total -isnot [long]) -or
         ($returned -isnot [int] -and $returned -isnot [long]) -or $total -lt 0 -or $total -ne $returned -or
         $returned -ne $diagnostics.Count -or $truncated -isnot [bool] -or $truncated) { return $false }
+    $asides = Get-ItlPlatformEvidenceValue $data 'diagnostic_asides'
+    if ($null -ne $asides -and $asides -isnot [Array]) { return $false }
     $filters = Get-ItlPlatformEvidenceValue $data 'filters'
-    foreach ($name in @('line_filter_applied', 'severity_filter_applied', 'suppression_applied')) {
+    foreach ($name in @('line_filter_applied', 'severity_filter_applied', 'suppression_applied', 'plugins_applied')) {
         $flag = Get-ItlPlatformEvidenceValue $filters $name
         if ($flag -isnot [bool] -or $flag) { return $false }
     }
@@ -99,16 +129,35 @@ function Test-ItlPlatformBslResult {
     $rewrite = Get-ItlPlatformEvidenceValue $data 'request_rewrite'
     $applied = Get-ItlPlatformEvidenceValue $rewrite 'applied'
     if ($applied -isnot [bool] -or $applied) { return $false }
+    $changedBy = Get-ItlPlatformEvidenceValue $rewrite 'changed_by'
+    if ($null -ne $changedBy -and ($changedBy -isnot [Array] -or $changedBy.Count -ne 0)) { return $false }
+    $descriptor = Get-ItlPlatformCodeDescriptor -Code $InputText
+    $fileName = [string](Get-ItlPlatformEvidenceValue $Arguments 'file_name')
     foreach ($side in @('requested', 'used')) {
-        $file = Get-ItlPlatformEvidenceValue (Get-ItlPlatformEvidenceValue $rewrite $side) 'file_path'
-        if ([string]::IsNullOrWhiteSpace([string]$file) -or
-            (Resolve-ItlPlatformSourceFile -Path $file -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $InputPath) { return $false }
+        $rewritten = Get-ItlPlatformEvidenceValue $rewrite $side
+        $code = Get-ItlPlatformEvidenceValue $rewritten 'code'
+        # A local path alone cannot establish which bytes a remote checker read.
+        # Both modes require the actual provider's saved input descriptor.
+        $chars = Get-ItlPlatformEvidenceValue $code 'chars'
+        $lines = Get-ItlPlatformEvidenceValue $code 'lines'
+        if (($chars -isnot [int] -and $chars -isnot [long]) -or $chars -ne $descriptor.chars -or
+            ($lines -isnot [int] -and $lines -isnot [long]) -or $lines -ne $descriptor.lines -or
+            [string](Get-ItlPlatformEvidenceValue $code 'sha256') -cne $descriptor.sha256) { return $false }
+        $reportedName = Get-ItlPlatformEvidenceValue $rewritten 'file_name'
+        if (($fileName -or $null -ne $reportedName) -and -not [string]::Equals([string]$reportedName, $fileName, [StringComparison]::Ordinal)) { return $false }
+        if ($capability -eq 'syntaxcheck_file') {
+            $file = Get-ItlPlatformEvidenceValue $rewritten 'file_path'
+            if ([string]::IsNullOrWhiteSpace([string]$file) -or
+                (Resolve-ItlPlatformSourceFile -Path $file -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $InputPath) { return $false }
+        }
     }
     foreach ($diagnostic in $diagnostics) {
         $severity = [string](Get-ItlPlatformEvidenceValue $diagnostic 'severity')
         if ($severity.ToLowerInvariant() -notin @('warning', 'major', 'minor', 'information', 'info', 'hint')) { return $false }
         $file = [string](Get-ItlPlatformEvidenceValue $diagnostic 'file')
-        if ($file -and (Resolve-ItlPlatformSourceFile -Path $file -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $InputPath) { return $false }
+        if ($file -and $capability -eq 'syntaxcheck' -and -not [string]::Equals($file, $fileName, [StringComparison]::Ordinal)) { return $false }
+        if ($file -and $capability -eq 'syntaxcheck_file' -and
+            (Resolve-ItlPlatformSourceFile -Path $file -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $InputPath) { return $false }
     }
     return $true
 }
@@ -185,9 +234,11 @@ function Test-ItlPlatformSourceCoverage {
                 (Get-ItlPlatformEvidenceHash -Path $input) -cne ([string]$entry.inputSha256).ToLowerInvariant()) { throw 'Different source bytes' }
             $reason = 'CHECKER_IDENTITY_INVALID'
             $checker = $entry.checker
-            $capability = if ([IO.Path]::GetExtension($input) -ieq '.bsl') { 'syntaxcheck_file' } else { 'verify_xml' }
+            $isBsl = [IO.Path]::GetExtension($input) -ieq '.bsl'
+            $capability = [string]$checker.capability
             if ([string]::IsNullOrWhiteSpace([string]$checker.server) -or [string]::IsNullOrWhiteSpace([string]$checker.versionOrId) -or
-                [string]$checker.capability -cne $capability) { throw 'Missing actual checker identity' }
+                ($isBsl -and $capability -cnotin @('syntaxcheck', 'syntaxcheck_file')) -or
+                (-not $isBsl -and $capability -cne 'verify_xml')) { throw 'Missing actual checker identity' }
             $reason = 'ARTIFACT_UNUSABLE'
             $artifactRoot = [IO.Path]::GetDirectoryName($EvidencePath)
             $requestPath = Resolve-ItlPlatformEvidencePath -Path ([string]$entry.request.path) -BaseRoot $artifactRoot -ContainedRoot $ProjectRoot
@@ -200,16 +251,22 @@ function Test-ItlPlatformSourceCoverage {
             $call = if ($request.PSObject.Properties['method']) { $request.params } else { $request }
             $reason = 'REQUEST_INPUT_MISMATCH'
             if ([string]$call.name -cne $capability -or $null -eq $call.arguments) { throw 'Different requested capability' }
+            $text = Read-ItlPlatformSourceText -Path $input -ExpectedHash ([string]$entry.inputSha256)
             if ($capability -eq 'syntaxcheck_file') {
                 if ((Resolve-ItlPlatformSourceFile -Path ([string]$call.arguments.file_path) -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $input) { throw 'Different requested file' }
+            } elseif ($capability -eq 'syntaxcheck') {
+                $code = Get-ItlPlatformEvidenceValue $call.arguments 'code'
+                if ($code -isnot [string] -or -not [string]::Equals($code, $text, [StringComparison]::Ordinal)) { throw 'Different requested complete BSL bytes' }
+                $fileName = [string](Get-ItlPlatformEvidenceValue $call.arguments 'file_name')
+                if ($fileName -and -not [string]::Equals($fileName, [IO.Path]::GetFileName($input), [StringComparison]::OrdinalIgnoreCase) -and
+                    (Resolve-ItlPlatformSourceFile -Path $fileName -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot) -ine $input) { throw 'Different requested module name' }
             } else {
-                $text = ([Text.UTF8Encoding]::new($false, $true)).GetString([IO.File]::ReadAllBytes($input)).TrimStart([char]0xFEFF)
-                if ([string]::IsNullOrWhiteSpace([string]$call.arguments.object_type) -or [string]$call.arguments.xml_content -cne $text) { throw 'Different requested XML bytes' }
+                if ([string]::IsNullOrWhiteSpace([string]$call.arguments.object_type) -or -not [string]::Equals([string]$call.arguments.xml_content, $text, [StringComparison]::Ordinal)) { throw 'Different requested XML bytes' }
             }
             $reason = 'CHECKER_RESULT_UNUSABLE'
             $result = Get-ItlPlatformRawResult -Request $request -Response $response
-            $valid = if ($capability -eq 'syntaxcheck_file') {
-                Test-ItlPlatformBslResult -Result $result -Arguments $call.arguments -Checker $checker -InputPath $input -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot
+            $valid = if ($isBsl) {
+                Test-ItlPlatformBslResult -Result $result -Arguments $call.arguments -Checker $checker -InputPath $input -SourceRoot $SourceRoot -ProjectRoot $ProjectRoot -InputText $text
             } else { Test-ItlPlatformXmlResult -Result $result -Checker $checker }
             if (-not $valid) { throw 'Actual checker result does not prove zero errors' }
             if ((Get-ItlPlatformEvidenceHash -Path $input) -cne ([string]$entry.inputSha256).ToLowerInvariant()) { $reason = 'SOURCE_INPUT_CHANGED'; throw 'Source changed during proof read' }

@@ -59,6 +59,9 @@ journey and small partial changes separately:
 | Case | Required evidence |
 |---|---|
 | Small partial quick-fix with complete raw MCP coverage | Current saved input/request/result hashes and provider/capability identity; no automatic full CF ladder |
+| Actual provider exposes only full-text syntaxcheck | Entire saved UTF-8 module equals raw request; actual requested/used code hash prefix, Unicode character and newline counts match; analyzer, whole-file scope and complete unfiltered diagnostics retained |
+| Unbound remote file path or changed full-text/name descriptor | No MCP exemption; no invented mount identity or padded provider SHA; ordinary platform continuation |
+| Encoding BOM followed by another U+FEFF, nonempty diagnostic tags | Remove only the encoding marker and compare BSL/XML text ordinally; subsequent source characters remain significant, while ordinary published diagnostic tags do not suppress valid coverage |
 | Stale/missing/partial coverage, full/unknown/deleted inputs or large delta | Applicable platform route retained; original-command continuation |
 | Bound unchanged structural findings outside change scope | Complete before/after diagnostic multiset and immutable source-owner proofs; native failure retained, explicit accepted-with-preexisting-findings, apply/Vanessa/export/refresh complete |
 | New/increased/inside-scope/unknown finding | Apply stops, raw diagnostics retained and snapshot rollback works |

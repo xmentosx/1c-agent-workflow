@@ -56,17 +56,21 @@
         param([object]$Fixture)
         $requestPath=Join-Path $Fixture.root '.agent-1c/proofs/request.json'
         $resultPath=Join-Path $Fixture.root '.agent-1c/proofs/result.json'
-        Write-ContinuationJson $requestPath @{name='syntaxcheck_file';arguments=@{file_path=$Fixture.module;lines=''}}
+        $text=[IO.File]::ReadAllText((Join-Path $Fixture.sourceRoot $Fixture.module),[Text.UTF8Encoding]::new($false,$true))
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try{$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant().Substring(0,16)}finally{$sha.Dispose()}
+        $code=@{chars=$text.Length;lines=[regex]::Matches($text,'\n').Count+1;sha256=$hash}
+        Write-ContinuationJson $requestPath @{name='syntaxcheck';arguments=@{code=$text;file_name='Module.bsl'}}
         Write-ContinuationJson $resultPath @{isError=$false;structuredContent=@{
             diagnostics=@();summary=@{total=0;returned=0;truncated=$false};
-            filters=@{line_filter_applied=$false;severity_filter_applied=$false;suppression_applied=$false};
-            provenance=@{tool='syntaxcheck_file';analyzer_version='0.2.81';file_metrics_scope='whole_file'};
-            request_rewrite=@{applied=$false;requested=@{file_path=$Fixture.module};used=@{file_path=$Fixture.module}}
+            filters=@{line_filter_applied=$false;severity_filter_applied=$false;suppression_applied=$false;plugins_applied=$false};
+            provenance=@{tool='syntaxcheck';analyzer_version='0.2.81';file_metrics_scope='whole_file'};
+            request_rewrite=@{applied=$false;requested=@{code=$code;file_name='Module.bsl'};used=@{code=$code;file_name='Module.bsl'};changed_by=@()}
         }}
         $receipt=@{schemaVersion=1;kind='itl-mcp-source-validation';taskPath='quick-fix';projectRoot=$Fixture.root;
             sourceRoot=$Fixture.sourceRoot;sourceFingerprint=$Fixture.current.fingerprint;infoBaseKind='file';infoBasePath=$Fixture.infoBase;
             entries=@(@{relativePath=$Fixture.module;inputSha256=(Get-ItlPlatformEvidenceHash (Join-Path $Fixture.sourceRoot $Fixture.module));
-                checker=@{server='fixture-recorded-schema-checker';capability='syntaxcheck_file';versionOrId='0.2.81'};
+                checker=@{server='fixture-recorded-schema-checker';capability='syntaxcheck';versionOrId='0.2.81'};
                 request=@{path='request.json';sha256=(Get-ItlPlatformEvidenceHash $requestPath)};
                 result=@{path='result.json';sha256=(Get-ItlPlatformEvidenceHash $resultPath)}})}
         Write-ContinuationJson $Fixture.evidence $receipt

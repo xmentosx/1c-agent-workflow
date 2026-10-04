@@ -167,6 +167,10 @@ platform fallback and its original-command continuation. Full loads and extensio
 applicability SHALL NOT be skipped through partial-change evidence.
 The covered load SHALL retain snapshot-backed editable-load/apply boundaries
 and revalidate source and captured evidence bytes after load, before apply.
+The upstream full-text syntax fallback SHALL qualify only when the complete
+strict UTF-8 saved module matches the actual request and both provider input
+descriptors. Removing an encoding BOM SHALL preserve every subsequent character
+and line ending. A matching path alone SHALL NOT establish the remote input.
 
 #### Scenario: Covered partial change
 - **WHEN** a small partial CF delta has matching successful validation for every relevant saved input
@@ -177,6 +181,11 @@ and revalidate source and captured evidence bytes after load, before apply.
 - **WHEN** the saved input, captured receipt or its raw validator artifacts change during the covered editable load
 - **THEN** the owner stops before database apply and restores its confirmed snapshot and cursor
 - **AND** repeating the original command requires current proof or the original platform fallback
+
+#### Scenario: Remote syntax provider exposes only the full-text tool
+- **WHEN** the actual provider lacks the file tool but validates the complete saved module through syntaxcheck
+- **THEN** matching raw request, response, analyzer and input descriptors can qualify that same saved input
+- **AND** snippets, rewritten input, ordinal text mismatches and unbound remote paths retain the platform fallback
 
 ### Requirement: EV8b Legacy structural findings do not create unrelated product work
 For a main configuration, the load owner SHALL preserve complete native results

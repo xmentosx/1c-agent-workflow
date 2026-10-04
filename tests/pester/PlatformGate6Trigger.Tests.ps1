@@ -39,12 +39,16 @@
             if ($file -notmatch '(?i)\.(bsl|xml)$' -or -not [IO.File]::Exists((Join-Path $Fixture.SourceRoot $file))) { continue }
             $index = $entries.Count
             if ($file -match '(?i)\.bsl$') {
-                $capability = 'syntaxcheck_file'
-                $arguments = @{ file_path = $file; lines = '' }
+                $capability = 'syntaxcheck'
+                $text = [IO.File]::ReadAllText((Join-Path $Fixture.SourceRoot $file), [Text.UTF8Encoding]::new($false, $true))
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '').ToLowerInvariant().Substring(0, 16) } finally { $sha.Dispose() }
+                $code = @{ chars = $text.Length; lines = [regex]::Matches($text, '\n').Count + 1; sha256 = $hash }
+                $arguments = @{ code = $text; file_name = 'Module.bsl' }
                 $payload = @{ diagnostics = @(); summary = @{ total = 0; returned = 0; truncated = $false }
-                    filters = @{ line_filter_applied = $false; severity_filter_applied = $false; suppression_applied = $false }
+                    filters = @{ line_filter_applied = $false; severity_filter_applied = $false; suppression_applied = $false; plugins_applied = $false }
                     provenance = @{ tool = $capability; analyzer_version = '0.2.81'; file_metrics_scope = 'whole_file' }
-                    request_rewrite = @{ applied = $false; requested = @{ file_path = $file }; used = @{ file_path = $file } } }
+                    request_rewrite = @{ applied = $false; requested = @{ code = $code; file_name = 'Module.bsl' }; used = @{ code = $code; file_name = 'Module.bsl' }; changed_by = @() } }
             } else {
                 $capability = 'verify_xml'
                 $text = [IO.File]::ReadAllText((Join-Path $Fixture.SourceRoot $file), [Text.UTF8Encoding]::new($false, $true))

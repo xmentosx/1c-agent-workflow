@@ -664,6 +664,34 @@
             return $false
         }
 
+        function Initialize-LifecycleFullSourceFixture {
+            param([string]$Root)
+
+            function Invoke-LifecycleSourceFixtureGit {
+                param([string[]]$Arguments)
+                $capture = Invoke-ItlNativeProcessCapture -FilePath 'git' -WorkingDirectory $Root -Arguments (@('-C', $Root) + $Arguments)
+                if ($capture.exitCode -ne 0) { throw "Lifecycle source fixture Git failed: $($capture.stderr)" }
+            }
+            Invoke-LifecycleSourceFixtureGit @('init', '--quiet')
+            Invoke-LifecycleSourceFixtureGit @('config', 'user.name', 'fixture')
+            Invoke-LifecycleSourceFixtureGit @('config', 'user.email', 'fixture@example.invalid')
+            [IO.File]::WriteAllText((Join-Path $Root '.gitattributes'), "src/cf/** -text`r`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".agent-1c/`r`nlogs/`r`n", [Text.UTF8Encoding]::new($false))
+            $sourceRoot = Join-Path $Root 'src/cf'
+            $moduleRoot = Join-Path $sourceRoot 'CommonModules/Проверяемый/Ext'
+            [IO.Directory]::CreateDirectory($moduleRoot) | Out-Null
+            [IO.File]::WriteAllText((Join-Path $moduleRoot 'Module.bsl'), "Функция Значение() Экспорт`r`n    Возврат 1;`r`nКонецФункции`r`n", [Text.UTF8Encoding]::new($true))
+            $cursorPath = Join-Path $sourceRoot 'ConfigDumpInfo.xml'
+            if (-not (Test-Path -LiteralPath $cursorPath -PathType Leaf)) {
+                [IO.File]::WriteAllText($cursorPath, '<ConfigDumpInfo/>', [Text.UTF8Encoding]::new($true))
+            }
+            Invoke-LifecycleSourceFixtureGit @('add', '--all')
+            Invoke-LifecycleSourceFixtureGit @('commit', '--quiet', '-m', 'full load source')
+            $source = Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+            $source.fingerprint | Should -Match '^v2\|git-tree-sha256\|[a-f0-9]{64}$'
+            return $source
+        }
+
 
         function New-ShortWorkflowProjectRoot {
             $parent = Join-Path ([Environment]::GetFolderPath("UserProfile")) "W"
@@ -2406,22 +2434,31 @@ goto nextArg
         $partial.calls[0] | Should -Contain "-partial"
         $partial.calls[0] | Should -Contain "-updateConfigDumpInfo"
 
+        $fullRoot = Join-Path $TestDrive ('Полная загрузка Designer ' + [guid]::NewGuid().ToString('N'))
+        [IO.Directory]::CreateDirectory($fullRoot) | Out-Null
         $full = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            . $HelperPath -ProjectRoot $fullRoot -Action help *> $null
+            Initialize-LifecycleGate6NativeFixture
+            $source = Initialize-LifecycleFullSourceFixture -Root $fullRoot
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
             $script:Calls = @()
             function Invoke-Designer {
-                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, $NativeEffectContract, $RestorationDuty)
+                if(Invoke-LifecycleGate6NativeFixture -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty){return}
                 $script:Calls += , @($DesignerArgs)
                 $script:LastLogPath = "C:\logs\full.log"
             }
-            $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath "C:\src" -ListFilePath "C:\list.txt" -FileCount 1 -Mode Full 6>$null
-            [pscustomobject]@{ calls = @($script:Calls); load = $load }
+            $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $source.absoluteExportPath -ListFilePath "C:\list.txt" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full 6>$null
+            [pscustomobject]@{ calls = @($script:Calls); load = $load; native = @($script:LifecycleGate6NativeCalls.ToArray()); sourceFingerprint = $source.fingerprint }
         }
         $full.calls.Count | Should -Be 1
         $full.calls[0] | Should -Not -Contain "-listFile"
         $full.calls[0] | Should -Not -Contain "-partial"
         $full.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $full.load.loadModeUsed | Should -Be "full"
+        @($full.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+        $full.load.gate6Evidence.sourceFingerprint | Should -Be $full.sourceFingerprint
+        @($full.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
     }
 
     It "removes a stale ConfigDumpInfo cursor only for a restore-recovery full load" {
@@ -2434,24 +2471,33 @@ goto nextArg
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Initialize-LifecycleGate6NativeFixture
+                $source = Initialize-LifecycleFullSourceFixture -Root $tempRoot
+                function Get-PlatformPath { 'fixture-1cv8.exe' }
                 $script:CursorExistedAtDesignerStart = $true
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, $NativeEffectContract, $RestorationDuty)
+                    if(Invoke-LifecycleGate6NativeFixture -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty){return}
                     $script:CursorExistedAtDesignerStart = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
                     Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "fresh-cursor"
                     $script:LastLogPath = "C:\logs\full.log"
                 }
-                $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -Mode Full -ResetConfigDumpInfo 6>$null
+                $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full -ResetConfigDumpInfo 6>$null
                 [pscustomobject]@{
                     existedAtStart = $script:CursorExistedAtDesignerStart
                     cursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
                     load = $load
+                    native = @($script:LifecycleGate6NativeCalls.ToArray())
+                    sourceFingerprint = $source.fingerprint
                 }
             }
 
             $result.existedAtStart | Should -BeFalse
             $result.cursor | Should -Be "fresh-cursor"
             $result.load.loadModeUsed | Should -Be "full"
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+            $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
+            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -2467,15 +2513,19 @@ goto nextArg
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Initialize-LifecycleGate6NativeFixture
+                $source = Initialize-LifecycleFullSourceFixture -Root $tempRoot
+                function Get-PlatformPath { 'fixture-1cv8.exe' }
                 $script:CursorExistedAtDesignerStart = $true
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, $NativeEffectContract, $RestorationDuty)
+                    if(Invoke-LifecycleGate6NativeFixture -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty){return}
                     $script:CursorExistedAtDesignerStart = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
                     throw "simulated full-load failure"
                 }
                 $message = ""
                 try {
-                    Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -Mode Full -ResetConfigDumpInfo 6>$null | Out-Null
+                    Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full -ResetConfigDumpInfo 6>$null | Out-Null
                 } catch {
                     $message = $_.Exception.Message
                 }
@@ -2483,12 +2533,14 @@ goto nextArg
                     existedAtStart = $script:CursorExistedAtDesignerStart
                     cursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
                     message = $message
+                    native = @($script:LifecycleGate6NativeCalls.ToArray())
                 }
             }
 
             $result.existedAtStart | Should -BeFalse
             $result.cursor | Should -Be "stale-cursor"
             $result.message | Should -Match "simulated full-load failure"
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/RestoreIB')
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -2504,10 +2556,14 @@ goto nextArg
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Initialize-LifecycleGate6NativeFixture
+                $source = Initialize-LifecycleFullSourceFixture -Root $tempRoot
+                function Get-PlatformPath { 'fixture-1cv8.exe' }
                 $script:DesignerCallCount = 0
                 $script:CursorSeenByFallback = ""
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, $NativeEffectContract, $RestorationDuty)
+                    if(Invoke-LifecycleGate6NativeFixture -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty){return}
                     $script:DesignerCallCount++
                     $script:LastNativeProcessStarted = $true
                     if ($script:DesignerCallCount -eq 1) {
@@ -2525,17 +2581,23 @@ goto nextArg
                     -AbsoluteExportPath $exportPath `
                     -ListFilePath "C:\list.txt" `
                     -FileCount 1 `
+                    -SourceFingerprint $source.fingerprint `
                     -Mode Auto 3>$null 6>$null
                 [pscustomobject]@{
                     load = $load
                     fallbackInputCursor = $script:CursorSeenByFallback
                     finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                    native = @($script:LifecycleGate6NativeCalls.ToArray())
+                    sourceFingerprint = $source.fingerprint
                 }
             }
 
             $result.load.loadModeUsed | Should -Be "full-fallback"
             $result.fallbackInputCursor | Should -Be "original-cursor"
             $result.finalCursor | Should -Be "full-cursor"
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+            $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
+            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -2551,8 +2613,13 @@ goto nextArg
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Initialize-LifecycleGate6NativeFixture
+                $source = Initialize-LifecycleFullSourceFixture -Root $tempRoot
+                function Get-PlatformPath { 'fixture-1cv8.exe' }
                 $script:DesignerCallCount = 0
                 function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, $NativeEffectContract, $RestorationDuty)
+                    if(Invoke-LifecycleGate6NativeFixture -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $DesignerArgs -NativeEffectContract $NativeEffectContract -RestorationDuty $RestorationDuty){return}
                     $script:DesignerCallCount++
                     $script:LastNativeProcessStarted = $true
                     Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "failed-cursor-$script:DesignerCallCount"
@@ -2568,6 +2635,7 @@ goto nextArg
                         -AbsoluteExportPath $exportPath `
                         -ListFilePath "C:\list.txt" `
                         -FileCount 1 `
+                        -SourceFingerprint $source.fingerprint `
                         -Mode Auto 3>$null 6>$null | Out-Null
                 } catch {
                     $message = $_.Exception.Message
@@ -2576,12 +2644,14 @@ goto nextArg
                     calls = $script:DesignerCallCount
                     message = $message
                     finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                    native = @($script:LifecycleGate6NativeCalls.ToArray())
                 }
             }
 
             $result.calls | Should -Be 2
             $result.message | Should -Match "both failed"
             $result.finalCursor | Should -Be "original-cursor"
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/RestoreIB')
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

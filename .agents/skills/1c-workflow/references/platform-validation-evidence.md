@@ -17,9 +17,22 @@ and `request`/`result` (`path`, `sha256`). Artifact paths are relative to the
 receipt directory or absolute and must remain inside the same project.
 For a runtime source load, `infoBaseKind` and `infoBasePath` must match the actual target. A static-only receipt without that binding cannot waive that load's ladder.
 
-Every changed BSL input needs the actual complete `syntaxcheck_file` request
-and response for those bytes, including analyzer identity, whole-file scope,
-diagnostic counts and no truncation or filter. Every changed XML input needs
+Every changed BSL input needs the actual complete `syntaxcheck` request with
+`code` exactly equal to the current strict UTF-8 decoded file, removing only
+the encoding BOM. Preserve the raw file SHA, all source characters and EOLs;
+a snippet is not eligible. Save the structured response with actual analyzer
+identity, `whole_file` scope, complete diagnostic counts, no filters and no
+request rewrite. Both `request_rewrite.requested.code` and `used.code` must
+match the sent full text's Unicode character count, newline count plus one,
+and the provider's actual 16-hex `sha256` prefix; any published `file_name`
+must match the actual request. Do not pad that prefix into an invented full
+SHA. A `syntaxcheck_file` path call is eligible only when its actual response
+also proves the identical saved input descriptor. A local path and local SHA
+alone cannot prove which bytes a remote server read; absent that binding, use
+the full-text call or retain the platform fallback. This adds no file-tool or
+mount support claim for a provider that does not expose it.
+
+Every changed XML input needs
 the actual `verify_xml` request with matching XML content/object type and the
 complete valid result without errors. A summary, invented `passed` flag or
 another file's response is insufficient. The helper rechecks receipt, source

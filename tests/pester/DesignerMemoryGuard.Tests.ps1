@@ -347,32 +347,72 @@ while ($true) {
     }
 
     It "preserves the existing full fallback for ordinary Designer failures" {
+        $fixtureRoot = Join-Path $TestDrive ('Обычный отказ Designer ' + [guid]::NewGuid().ToString('N'))
+        [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
         $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Invoke-FallbackFixtureGit {
+                param([string[]]$Arguments)
+                $capture = Invoke-ItlNativeProcessCapture -FilePath 'git' -WorkingDirectory $fixtureRoot -Arguments (@('-C', $fixtureRoot) + $Arguments)
+                if ($capture.exitCode -ne 0) { throw "Fallback fixture Git failed: $($capture.stderr)" }
+            }
+            Invoke-FallbackFixtureGit @('init', '--quiet')
+            Invoke-FallbackFixtureGit @('config', 'user.name', 'fixture')
+            Invoke-FallbackFixtureGit @('config', 'user.email', 'fixture@example.invalid')
+            [IO.File]::WriteAllText((Join-Path $fixtureRoot '.gitattributes'), "src/cf/** -text`r`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $fixtureRoot '.gitignore'), ".agent-1c/`r`nlogs/`r`n", [Text.UTF8Encoding]::new($false))
+            $sourceRoot = Join-Path $fixtureRoot 'src/cf'
+            $moduleRoot = Join-Path $sourceRoot 'CommonModules/Проверяемый/Ext'
+            [IO.Directory]::CreateDirectory($moduleRoot) | Out-Null
+            [IO.File]::WriteAllText((Join-Path $moduleRoot 'Module.bsl'), "Функция Значение() Экспорт`r`n    Возврат 1;`r`nКонецФункции`r`n", [Text.UTF8Encoding]::new($true))
+            [IO.File]::WriteAllText((Join-Path $sourceRoot 'ConfigDumpInfo.xml'), '<ConfigDumpInfo/>', [Text.UTF8Encoding]::new($true))
+            Invoke-FallbackFixtureGit @('add', '--all')
+            Invoke-FallbackFixtureGit @('commit', '--quiet', '-m', 'ordinary fallback source')
+            $source = Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+            $listPath = Join-Path $fixtureRoot 'partial-list.txt'
+            [IO.File]::WriteAllText($listPath, "CommonModules/Проверяемый/Ext/Module.bsl`r`n", [Text.UTF8Encoding]::new($false))
             $script:DesignerCalls = 0
+            $script:NativeActions = [Collections.Generic.List[object]]::new()
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
             function Invoke-Designer {
-                $script:DesignerCalls++
+                param($InfoBasePath, $InfoBaseKind, $User, $Password, $NativeEffectContract, $RestorationDuty, [string[]]$DesignerArgs)
+                $script:NativeActions.Add(@($DesignerArgs))
                 $script:LastNativeProcessStarted = $true
-                $script:LastLogPath = if ($script:DesignerCalls -eq 1) { "C:\logs\partial.log" } else { "C:\logs\full.log" }
-                if ($script:DesignerCalls -eq 1) { throw "ordinary Designer failure" }
+                $script:LastLogPath = Join-Path $fixtureRoot ('native-' + $script:NativeActions.Count + '.log')
+                if ($DesignerArgs[0] -eq '/LoadConfigFromFiles') {
+                    $script:DesignerCalls++
+                    if ($script:DesignerCalls -eq 1) { throw "ordinary Designer failure" }
+                }
+                if ($DesignerArgs[0] -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]](1, 2, 3)) }
+                [IO.File]::WriteAllText($script:LastLogPath, 'Ошибок: 0; предупреждений: 0', [Text.UTF8Encoding]::new($false))
+                $resultIndex = [Array]::IndexOf($DesignerArgs, '/DumpResult')
+                if ($resultIndex -ge 0) { [IO.File]::WriteAllText($DesignerArgs[$resultIndex + 1], '0', [Text.UTF8Encoding]::new($false)) }
             }
 
             $load = Invoke-ConfigLoadWithFallback `
                 -InfoBasePath "C:\base" `
                 -InfoBaseKind file `
                 -State ([pscustomobject]@{}) `
-                -AbsoluteExportPath "C:\src" `
-                -ListFilePath "C:\list.txt" `
+                -AbsoluteExportPath $sourceRoot `
+                -ListFilePath $listPath `
                 -FileCount 1 `
+                -SourceFingerprint $source.fingerprint `
                 -Mode Auto 3>$null 6>$null
-            [pscustomobject]@{ calls = $script:DesignerCalls; load = $load }
+            [pscustomobject]@{ calls = $script:DesignerCalls; load = $load; actions = @($script:NativeActions.ToArray()); sourceFingerprint = $source.fingerprint }
         }
 
         $result.calls | Should -Be 2
         $result.load.loadModeUsed | Should -Be "full-fallback"
         $result.load.configLoadStatus | Should -Be "fallback-succeeded"
+        @($result.actions | ForEach-Object { $_[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+        $result.actions[0] | Should -Contain '-partial'
+        $result.actions[2] | Should -Not -Contain '-partial'
+        $result.actions[3] | Should -Contain '-ThinClient'
+        $result.actions[3] | Should -Contain '-Server'
+        $result.actions[3] | Should -Contain '-ExternalConnection'
+        $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
+        @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
     }
-
     It "keeps the package defaults and Smoke safety inventory discoverable" {
         $projectTemplate = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "templates\project.json") | ConvertFrom-Json
         $envTemplate = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "templates\dev.env.example")

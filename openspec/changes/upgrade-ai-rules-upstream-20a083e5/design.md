@@ -238,7 +238,9 @@ Clean pass требует согласованного process exit, свеже�
 631 строку (398 «возможно ошибочных», 216 отсутствующих обработчиков, 17 ссылок).
 Два изученных metadata-to-handler несоответствия уже присутствовали в initial
 48f011. Все 631 не признаны ни дефектами продукта, ни безопасными исключениями.
-Исходная база и repository binding восстановлены; apply и публикация не выполнены.
+Это первоначальная диагностика: после неё база и repository binding были
+восстановлены, apply и публикация тогда не выполнялись. Последующая реальная
+приёмка и согласованное исправление отражаются отдельно в evidence.
 
 Архитектурный checkpoint: invariant — достоверная проверка текущего артефакта
 без требования исправлять посторонние старые замечания. Владелец остаётся
@@ -251,7 +253,14 @@ source/target/layer identity. Evidence привязан к операции и �
 Cancellation, timeout, snapshot и restoration duty остаются у прежнего owner.
 
 Для малой partial CF загрузки helper учитывает текущую MCP validation coverage
-с сохранёнными inputs/raw results, а не boolean «passed». Full/unknown load и
+с сохранёнными inputs/raw results, а не boolean «passed». Живой Syntax MCP
+предоставляет типовой `syntaxcheck` полного текста вместо файлового метода.
+Helper связывает весь strict UTF-8 текст сохранённого модуля с raw request и
+фактическими requested/used descriptors провайдера; снимает только один BOM и
+сохраняет остальные символы и EOL. Совпадение локального пути без подтверждения
+прочитанных сервером bytes недостаточно. Это тот же stateless evidence owner и
+прежний `VerificationEvidencePath`, без нового override или deployment owner.
+Full/unknown load и
 применимость расширения остаются вне этого исключения. MCP исключение сохраняет
 snapshot и раздельные editable load/apply; source и исходные evidence bytes
 повторно проверяются после load, до первого apply. После подтверждённого точного

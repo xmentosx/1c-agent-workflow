@@ -79,6 +79,50 @@ Qualification SHA-256
 
 ## Исходный стенд
 
+### Реальный full-text MCP и исправление старых test fixtures
+
+Проверка пакета на `85b62bce` завершилась **643 passed / 6 failed**: прежние
+low-level Full/fallback fixtures не предоставляли обязательный source identity.
+Raw summary/JUnit/worker logs сохранены в publication clone
+`build/gate6-r41-source-delivery/targeted-85b62bce-failed`. Эти failures не
+обойдены ослаблением runtime: Memory fixture сохранил original fallback/memory
+assertions, causal 0/1 → 2/0; пять Lifecycle cursor/fallback fixtures сохранили
+original 21 assertions, causal 0/5 → 5/0. Native Designer здесь имитируется,
+реальные Git source fingerprints и checked load-owner boundaries сохранены.
+Qualification SHA соответственно `dbf65d68a2c9bc1e9a5b63492d547d4f857d4d2aef69e0f9b1bdb0ae7513a788`
+и `f5a5ccfdbaf20a8f1fcf7afbd8fb8ec3e0abe879218af033126cf869c6066ff5`.
+
+Живой Syntax `dev-ermakov:22002/mcp` подтвердил `BslSyntaxChecker 3.4.7`,
+analyzer `0.2.81` и отсутствие `syntaxcheck_file`: exposed `syntaxcheck`,
+`plugin_state`, `plugin_reload`. Единственный вызов `syntaxcheck` передал
+полный исправленный модуль, raw SHA `f402af6a…`; transport/tool прошли, два Hint
+сохранены, ошибок нет. Actual full-code SHA `555d6551d7b544b60ece1aff024b38251ff91327c1824138cd2bef58351016cc`,
+requested/used provider prefix `555d6551d7b544b6`, 245 Unicode characters,
+12 lines, whole-file, без rewrite/filter/truncation. Исходник не менялся.
+Raw artifacts: `build/platform-mcp-live-audit-658c48abf9d94e6bb128235a12ddd209`,
+report SHA `a75e6eed70411a0e5729a42cce0b611d3e48bd6c4137a7027cebccc6ed5c2f0b`.
+
+Те же сохранённые request/result/source дали coverage RED 0/1 на path-only
+reader, затем GREEN 1/0 на full-text reader. Connected owner batch:
+**51/1**, включая Trigger 15/0 и LoadContinuation 13/0. Единственный failure
+показал culture comparison U+FEFF; ordinal BSL/XML boundary исправлен,
+affected 2/0; последующие raw-name/обычные diagnostic-tags cases дали 2/0.
+Первый 51/1 receipt сохраняется, новый общий 52/0 не заявлен.
+Final names/tags qualification SHA `4f9b54c102f0fabc61e539c75435272eb78b4cf1ed07453b6751589bb0be438d`;
+перед ним ordinal/live replay SHA `aa46f9b8ccb8de46b5833264c069a17b6a52f8d35225eee4afc59e7efc5b96b0`.
+File-path-only proof без actual remote input binding теперь сохраняет fallback;
+полный подтверждённый text fallback соответствует upstream.
+
+Gate 2 того же unchanged полного модуля: один живой `check_1c_logic`,
+`1C_Code_Checker 3.4.7` на `22003/mcp`, HTTP 200/isError=false, блокирующих
+замечаний нет; необязательное предложение direct return сохранено без правок.
+Оба фактических caller используют возвращаемую строку. Report SHA
+`b3a3c99662cc01ef55febf8ee7c586d2c767c6b283def8fe27913a9cec771c2d`,
+assessment SHA `8ca0ba0316d1e573ce1f3d314cb8d1e28732a14c5205898cd5f470f9b6cd5f65`;
+raw: `build/gate2-codechecker-live-audit-50d5c74ae9534504b9b25c2146e3b0ae`.
+Обе собственные MCP sessions закрыты DELETE 200. Это статическое proof
+конкретного input, не новое native loaded proof и не завершённый Develop gate.
+
 Guarded export основной CF дал 19 286 файлов, совпадающих с checkout по
 relative paths и raw SHA. Runtime inventory содержит 11 расширений; DT
 сохраняет их целиком. Реальный before CheckConfig: exit/DumpResult 101,
