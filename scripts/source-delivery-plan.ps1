@@ -306,7 +306,7 @@ function New-DeliveryQualityPlanForCandidate {
         $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
         $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint
         $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
-        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=$(if($journey -eq "upgrade"){1200}else{2100}); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
+        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
     if ($RequireRelease -or @($ReleaseCapability).Count -gt 0) {

@@ -10,6 +10,29 @@ function Get-QualityContractCatalog {
     return $catalog
 }
 
+function Get-DevelopE2EJourneyHardBudgetSeconds {
+    param(
+        [Parameter(Mandatory = $true)][object]$Catalog,
+        [Parameter(Mandatory = $true)][ValidateSet("upgrade", "fresh")][string]$Journey
+    )
+
+    $route = $Catalog.developJourneys.routes.$Journey
+    if ($route -is [Collections.IDictionary]) {
+        $hasBudget = $route.Contains("hardSeconds")
+        $value = if ($hasBudget) { $route["hardSeconds"] } else { $null }
+    } else {
+        $property = $route.PSObject.Properties["hardSeconds"]
+        $hasBudget = $null -ne $property
+        $value = if ($hasBudget) { $property.Value } else { $null }
+    }
+    # Older candidate catalogs retain their original journey deadlines.
+    if (-not $hasBudget) { return $(if ($Journey -eq "upgrade") { 1200 } else { 2100 }) }
+    if (($value -isnot [int] -and $value -isnot [long]) -or $value -le 0 -or $value -gt [int]::MaxValue) {
+        throw "QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID: developJourneys.routes.$Journey.hardSeconds must be a positive 32-bit integer."
+    }
+    return [int]$value
+}
+
 function Resolve-PesterWorkerCount {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Targeted", "Smoke", "Full", "Develop", "Release")][string]$Mode,
@@ -291,6 +314,7 @@ function Test-QualityContractCatalog {
         }
     }
     foreach ($journeyName in $expectedDevelopJourneys) {
+        [void](Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $Catalog -Journey $journeyName)
         $contractIds = @($Catalog.developJourneys.routes.$journeyName.contracts | ForEach-Object { [string]$_ })
         if ($contractIds.Count -eq 0 -or @($contractIds | Sort-Object -Unique).Count -ne $contractIds.Count) {
             throw "Develop E2E journey '$journeyName' must declare unique non-empty contract ids."

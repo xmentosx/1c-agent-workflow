@@ -211,7 +211,7 @@ function Ensure-DevelopE2ERoute {
 
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
-        $journeyHardSeconds = if ($Journey -eq "upgrade") { 1200 } else { 2100 }
+        $journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $Journey
         $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey)
         if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $developArguments += @("-AgentTarget", $AgentTarget) }
         Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments $developArguments -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"

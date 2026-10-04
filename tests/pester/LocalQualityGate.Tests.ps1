@@ -323,7 +323,7 @@ exit $exitCode
         $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
         $text | Should -Match '\[ValidateSet\("Targeted", "Smoke", "Fast", "Full", "Develop", "Release"\)\]'; $text | Should -Match '\[string\]\$Mode = "Smoke"'
         $text | Should -Match 'Fast is deprecated and now aliases Smoke'; $text | Should -Match 'resolve-targeted-tests\.ps1'; $text | Should -Match 'smokeTests'
-        $text | Should -Match '\$journeyHardSeconds = if \(\$Journey -eq "upgrade"\) \{ 1200 \} else \{ 2100 \}'
+        $text | Should -Match '\$journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog \$qualityCatalog -Journey \$Journey'
         $text | Should -Match 'TimeoutSeconds \$journeyHardSeconds'; $text | Should -Match 'TimeoutSeconds 7200'; $text | Should -Not -Match 'TimeoutSeconds 14400'
         $text | Should -Match 'targetBudgetSeconds'; $text | Should -Match 'slowestStages'; $text | Should -Match 'ProgressPaths \(Join-Path \$outputRoot "pester-shards"\)'
         $text | Should -Match 'LastWriteTimeUtc\.Ticks'; $text | Should -Match '-ProgressPaths \$releaseProgressPaths -LogName "release-e2e"'
@@ -1433,5 +1433,51 @@ Describe 'Controlled fork qualification script inventory' {
     It 'refuses a helper inventory entry when the helper file no longer exists' {
         Remove-Item -LiteralPath (Join-Path $fixture.Root 'scripts/full-check-contract.ps1')
         Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+}
+
+Describe 'Develop journey catalog hard budgets' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts\quality-contracts.ps1')
+    }
+
+    It 'retains the original deadlines when an older catalog omits route budgets' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.upgrade.PSObject.Properties.Remove('hardSeconds')
+        $catalog.developJourneys.routes.fresh.PSObject.Properties.Remove('hardSeconds')
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 2100
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+    }
+
+    It 'uses explicit positive integer route budgets and the complete Develop aggregate' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 3600
+        [int]$catalog.budgets.developHardSeconds | Should -Be 7500
+        ([int]$catalog.budgets.fullHardSeconds +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade) +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 7500
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        $map = @{ developJourneys=@{ routes=@{ fresh=@{ hardSeconds=[long]3600 } } } }
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $map -Journey fresh | Should -Be 3600
+    }
+
+    It 'refuses a present invalid route budget instead of using a legacy default: <label>' -ForEach @(
+        @{ label='null'; budget=$null }
+        @{ label='zero'; budget=0 }
+        @{ label='negative'; budget=-1 }
+        @{ label='fraction'; budget=3600.5 }
+        @{ label='numeric string'; budget='3600' }
+        @{ label='boolean'; budget=$true }
+        @{ label='array'; budget=@(3600,3600) }
+        @{ label='overflow'; budget=[long]2147483648 }
+    ) {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.fresh.hardSeconds = $budget
+        { Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
     }
 }
