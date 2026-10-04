@@ -9,7 +9,7 @@
     "fullTargetSeconds": 600,
     "fullHardSeconds": 2700,
     "developTargetSeconds": 1500,
-    "developHardSeconds": 6600,
+    "developHardSeconds": 7500,
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
   },
@@ -70,9 +70,11 @@
     ],
     "routes": {
       "upgrade": {
+        "hardSeconds": 1200,
         "contracts": ["immutable-download", "bootstrap-update", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "clients-rules"]
       },
       "fresh": {
+        "hardSeconds": 3600,
         "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "mcp-hosts"]
       }
     }

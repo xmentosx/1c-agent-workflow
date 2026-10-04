@@ -21,6 +21,21 @@
         (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
     }
     . (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1')
+    $checkerTokens = $null; $checkerErrors = $null
+    $checkerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts\check.ps1'), [ref]$checkerTokens, [ref]$checkerErrors)
+    if (@($checkerErrors).Count -gt 0) { throw 'The candidate checker did not parse.' }
+    $routeDefinition = $checkerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Ensure-DevelopE2ERoute'
+    }, $true)
+    if (-not $routeDefinition) { throw 'The candidate checker journey owner is missing.' }
+    Invoke-Expression $routeDefinition.Extent.Text
+    $identityDefinition = $checkerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-DevelopE2EIdentitySha256'
+    }, $true)
+    if (-not $identityDefinition) { throw 'The candidate checker identity collaborator is missing.' }
+    Invoke-Expression $identityDefinition.Extent.Text
+    function Invoke-GateStage { param([string]$Name, [string]$Reason, [string]$Detail, [scriptblock]$Body); & $Body }
+    function Invoke-PowerShellChild { param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutSeconds, [int]$NoProgressSeconds, [string]$LogName); throw 'Unexpected native child launch in budget fixture.' }
 
     function New-PlanRepository {
         $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
@@ -111,6 +126,78 @@ Describe 'Delivery v3 immutable selective plan' {
         $newPlan.stages[1].inputFingerprint | Should -Not -Be $oldPlan.stages[1].inputFingerprint
         $reusedOldPlan.candidate.tree = $newTree
         (Restore-DeliveryPlanQualification -Plan $reusedOldPlan -CandidateRoot $repo.root) | Should -BeFalse
+    }
+
+    It 'passes the same catalog budget from the actual checker and immutable planner to each journey' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets.fullHardSeconds = 2700
+        $catalog.developJourneys.routes.upgrade | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 1200
+        $catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $plan.executedBudgetSeconds | Should -Be 7500
+        (Get-DeliveryPlanGateBudgetSeconds -Plan $plan -Mode Develop) | Should -Be 7500
+
+        $script:qualityCatalog = $catalog
+        $script:developQualificationRoot = Join-Path $TestDrive 'checker budgets'
+        New-Item -ItemType Directory -Force -Path $script:developQualificationRoot | Out-Null
+        $script:releaseContext = [pscustomobject]@{}; $script:aiRulesRelease = [pscustomobject]@{}
+        $script:developRulesSource = $repo.root; $script:developScript = Join-Path $repo.root 'journey.ps1'
+        $repoRoot = $repo.root; $outputRoot = $script:developQualificationRoot; $tree = $repo.tree
+        $E2EProjectRoot = $repo.root; $AgentTarget = 'kilocode'
+        Mock Get-DevelopE2EIdentitySha256 { 'a' * 64 }
+        Mock Get-DevelopE2EStandStateSha256 { 'b' * 64 }
+        Mock Restore-DevelopE2EQualification { $false }
+        Mock Invoke-PowerShellChild {
+            $script:observedJourneyBudget = $TimeoutSeconds
+            throw 'fixture child boundary'
+        }
+        foreach ($journey in @('upgrade','fresh')) {
+            { Ensure-DevelopE2ERoute -Journey $journey -Plan $plan } | Should -Throw '*fixture child boundary*'
+            $stage = @($plan.stages | Where-Object id -eq "develop.$journey")[0]
+            $script:observedJourneyBudget | Should -Be $stage.budgetSeconds
+        }
+        Should -Invoke Invoke-PowerShellChild -Exactly -Times 2 -ParameterFilter {
+            $NoProgressSeconds -eq 900 -and $Arguments -contains '-AgentTarget' -and $Arguments -contains 'kilocode'
+        }
+    }
+
+    It 'changes the immutable plan identity and refuses old-tree reuse when the committed fresh budget changes' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets.fullHardSeconds = 2700
+        $catalogPath = Join-Path $repo.root 'tests\quality-contracts.json'
+        [IO.File]::WriteAllText($catalogPath, ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add -- tests/quality-contracts.json
+        & git -C $repo.root commit --quiet -m 'record legacy route catalog'
+        $oldCommit = (& git -C $repo.root rev-parse HEAD).Trim(); $oldTree = (& git -C $repo.root rev-parse 'HEAD^{tree}').Trim()
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $oldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $oldCommit -CandidateTree $oldTree
+        $oldPlan.executedBudgetSeconds | Should -Be 6000
+        $proof = Join-Path $TestDrive 'prior-budget-proof.json'
+        [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
+        foreach ($stage in $oldPlan.stages) { Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $oldCommit -CandidateTree $oldTree -ProofPath $proof | Out-Null }
+        $reused = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $oldCommit -CandidateTree $oldTree
+        @($reused.stages.execution | Select-Object -Unique) | Should -Be @('reuse')
+
+        $catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        [IO.File]::WriteAllText($catalogPath, ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add -- tests/quality-contracts.json
+        & git -C $repo.root commit --quiet -m 'extend the unchanged fresh proof deadline'
+        $newCommit = (& git -C $repo.root rev-parse HEAD).Trim(); $newTree = (& git -C $repo.root rev-parse 'HEAD^{tree}').Trim()
+        $newPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $newCommit -CandidateTree $newTree
+        $newPlan.executedBudgetSeconds | Should -Be 7500
+        $newPlan.planId | Should -Not -Be $oldPlan.planId
+        @($newPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        $newPlan.stages[2].budgetSeconds | Should -Be 3600
+        $newPlan.stages[2].inputFingerprint | Should -Not -Be $oldPlan.stages[2].inputFingerprint
     }
 
     It 'blocks an unknown path without inventing a full fallback' {

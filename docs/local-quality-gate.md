@@ -55,7 +55,7 @@ and publication channels below remain authoritative.
 | `Targeted` | регистрация одной доработки | 5 мин | 20 мин |
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 20 мин |
-| `Develop` | один Full и реальные стандартные journey | 25 мин | 90 мин |
+| `Develop` | один Full и реальные стандартные journey | 25 мин | 125 мин |
 | `Release` | только доказательства стабильной поставки после Develop | 60 мин | 120 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
@@ -187,10 +187,26 @@ Component preflight не хранит булево «нужен Release»: он 
 `verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
 Delivery-бюджеты: planning — 30 секунд; Develop static — 45 минут; Develop
-`upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
+`upgrade` — 20 минут, `fresh` — 60 минут; Release использует отдельный hard budget
 из `scripts/release-e2e/stages.json` для каждой capability. Этот бюджет включает
 как основное доказательство, так и обязательную очистку принадлежащих stage
 ресурсов. Timeout не расширяет маршрут и не удаляет checkpoint.
+
+Checker и planner получают journey hard budget через один stateless getter из
+`developJourneys.routes.<journey>.hardSeconds` в `tests/quality-contracts.json`.
+У старых catalog без этого поля остаются 1200/2100 секунд; заданное невалидное
+значение отклоняется. Общий Develop hard budget — 7500 секунд, сумма static
+2700 + upgrade 1200 + fresh 3600. Остальные deadline, no-progress и проверки
+не изменяются.
+
+Увеличение fresh основано на исходном cold journey кандидата `ce08d78a`,
+остановленном через 2100 секунд во время after-CheckConfig. Между запуском before-CheckConfig и следующей загрузкой прошло около 482 секунд
+(08:51:12–08:59:14 МСК), включая завершение и передачу guard;
+snapshot, load, strict module checks, after-CheckConfig и прежний обязательный
+verification/export/refresh/cleanup хвост входят в тот же budget. 3600 секунд —
+оценка для полного неизменного маршрута, а не измеренная длительность нового
+успешного journey. Baseline не переносится между информационными базами,
+проверки и условия успеха сохраняются.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
