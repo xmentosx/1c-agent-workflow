@@ -10797,6 +10797,129 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It 'preserves fresh project templates through merge and current-helper ignored hydration' -Tag 'FreshMutableTemplateHydration' {
+        $fixtureRoot = Join-Path $TestDrive 'Fresh hydration Проект'
+        $mainRoot = Join-Path $fixtureRoot 'Главная папка'
+        $branchRoot = Join-Path $fixtureRoot 'Ветка develop golden'
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $utf8Bom = [Text.UTF8Encoding]::new($true)
+        $envNames = @('UI_TESTING','ITL_VANESSA_TESTING','USER_SENTINEL','ONEC_MAX_CONCURRENT_SESSIONS',
+            'INFOBASE_KIND','INFOBASE_PATH','INFOBASE_PUBLISH_URL','EXPORT_PATH','EXTENSION_NAME',
+            'ITL_ACTIVE_DEV_BRANCH','ITL_ACTIVE_DEV_BRANCH_KIND','ITL_ACTIVE_CONTEXT_UPDATED_AT',
+            'VANESSA_TEST_PORT','VANESSA_MCP_PORT','VANESSA_MCP_URL','ROCTUP_MCP_PORT','ROCTUP_MCP_URL','ROCTUP_MCP_HEALTH_URL')
+        $savedEnv = @{}
+        foreach ($name in $envNames) { $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot '.agent-1c'),(Join-Path $mainRoot '.kilo/skills/runtime') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $mainRoot '.gitignore'), ".dev.env`n.agent-1c/migrations/`n.kilo/skills/runtime/package.json`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $mainRoot '.agent-1c/project.json'), '{"aiRules":{"tools":["kilocode"]},"exportPath":"src/cf"}', $utf8)
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Destination (Join-Path $mainRoot '.agent-1c/dependency-lock.json')
+            $envPath = Join-Path $mainRoot '.dev.env'
+            [IO.File]::WriteAllText($envPath, "ITL_VANESSA_TESTING=auto`r`nUSER_SENTINEL=Кириллица с пробелом`r`nINFOBASE_KIND=file`r`nONEC_MAX_CONCURRENT_SESSIONS=3`r`n", $utf8Bom)
+            $envBaseline = (Get-FileHash -LiteralPath $envPath).Hash.ToLowerInvariant()
+            $userPath = Join-Path $mainRoot 'USER-RULES.md'
+            [IO.File]::WriteAllText($userPath, "# User Rules`r`n", $utf8)
+            $userBaseline = (Get-FileHash -LiteralPath $userPath).Hash.ToLowerInvariant()
+            $runtimePath = Join-Path $mainRoot '.kilo/skills/runtime/package.json'
+            [IO.File]::WriteAllText($runtimePath, "{}`n", $utf8)
+            $manifest = [ordered]@{version='itl-main-c1fb8e6-r41';tools=@('kilocode');files=[ordered]@{
+                '.dev.env' = @{source='.dev.env.example';template=$true;installedHash=$envBaseline}
+                'USER-RULES.md' = @{source='USER-RULES.md';template=$true;installedHash=$userBaseline}
+                '.kilo/skills/runtime/package.json' = @{source='content/runtime/package.json';installedHash=(Get-FileHash -LiteralPath $runtimePath).Hash.ToLowerInvariant()}
+            }}
+            [IO.File]::WriteAllText((Join-Path $mainRoot '.ai-rules.json'), ($manifest | ConvertTo-Json -Depth 8), $utf8)
+            & git -C $mainRoot init -q -b master; $LASTEXITCODE | Should -Be 0
+            & git -C $mainRoot config user.name 'Fresh template fixture'
+            & git -C $mainRoot config user.email 'fixture@example.invalid'
+            & git -C $mainRoot add --all; $LASTEXITCODE | Should -Be 0
+            & git -C $mainRoot commit -qm baseline; $LASTEXITCODE | Should -Be 0
+            $policy = & {
+                . $HelperPath -ProjectRoot $mainRoot -Action help *> $null
+                Invoke-UiTestingPolicyTransition -NewScope
+            }
+            $policy.beforeSha256 | Should -Be $envBaseline
+            $policy.afterValue | Should -Be 'essential'
+            $policy.converted | Should -BeTrue
+            & git -C $mainRoot worktree add -q -b itldev/develop-golden $branchRoot master; $LASTEXITCODE | Should -Be 0
+            & {
+                . $HelperPath -ProjectRoot $mainRoot -Action help *> $null
+                Copy-DotEnvToWorktree -WorktreePath $branchRoot
+            }
+            $inherited = Get-Content -LiteralPath (Join-Path $branchRoot '.agent-1c/migrations/ui-testing-essential-v1.json') -Raw | ConvertFrom-Json
+            $inherited.eligibility | Should -Be 'inherited-completed-policy'
+            $inherited.afterSha256 | Should -Be $policy.afterSha256
+            $branchUserPath = Join-Path $branchRoot 'USER-RULES.md'
+            $userOverlay = "# User Rules`r`nЛокальное пользовательское правило.`r`n<!-- ITL-WORKFLOW-USER-RULES:BEGIN -->`r`nKeep strict verification.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->`r`n"
+            [IO.File]::WriteAllText($branchUserPath, $userOverlay, $utf8)
+            & git -C $branchRoot add -- USER-RULES.md; $LASTEXITCODE | Should -Be 0
+            & git -C $branchRoot commit -qm 'branch user overlay'; $LASTEXITCODE | Should -Be 0
+            $state = [pscustomobject]@{mainWorktreePath=$mainRoot;devBranch='itldev/develop-golden';infoBaseKind='file';devBranchInfoBasePath=(Join-Path $branchRoot '.agent-1c/infobases/dev-branches/develop-golden')}
+            & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-DevBranchContextToDotEnv -State $state
+            }
+            [IO.File]::WriteAllText((Join-Path $mainRoot 'develop-journey.txt'), "refresh boundary`n", $utf8)
+            & git -C $mainRoot add -- develop-journey.txt; $LASTEXITCODE | Should -Be 0
+            & git -C $mainRoot commit -qm 'advance fresh master'; $LASTEXITCODE | Should -Be 0
+            $target = (& git -C $mainRoot rev-parse HEAD).Trim()
+            & git -C $branchRoot merge --no-ff --no-edit $target; $LASTEXITCODE | Should -Be 0
+            $mergeHead = (& git -C $branchRoot rev-parse HEAD).Trim()
+            $parents = ((& git -C $branchRoot rev-list --parents -n 1 HEAD) -join '').Split(' ')
+            $parents.Count | Should -Be 3
+            $parents[2] | Should -Be $target
+            $branchEnvPath = Join-Path $branchRoot '.dev.env'
+            $branchManifestPath = Join-Path $branchRoot '.ai-rules.json'
+            $manifestBefore = [IO.File]::ReadAllBytes($branchManifestPath)
+            $userBefore = [IO.File]::ReadAllBytes($branchUserPath)
+            Test-Path -LiteralPath (Join-Path $branchRoot '.kilo/skills/runtime/package.json') | Should -BeFalse
+            # The actual refresh resumes after merge through the current helper,
+            # which activates branch context before restoring ignored rules.
+            $continuation = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-DevBranchContextToDotEnv -State $state
+                $before = [IO.File]::ReadAllBytes($branchEnvPath)
+                $failure = ''
+                try { $copied = Sync-AiRules1cManagedIgnoredFilesFromMain -State $state } catch { $failure = $_.Exception.Message; $copied = -1 }
+                [pscustomobject]@{error=$failure;copied=$copied;before=$before;after=[IO.File]::ReadAllBytes($branchEnvPath)}
+            }
+            $continuation.after | Should -Be $continuation.before
+            [IO.File]::ReadAllBytes($branchUserPath) | Should -Be $userBefore
+            [IO.File]::ReadAllBytes($branchManifestPath) | Should -Be $manifestBefore
+            $envText = [IO.File]::ReadAllText($branchEnvPath)
+            $envText | Should -Match '(?m)^USER_SENTINEL=Кириллица с пробелом\r?$'
+            $envText | Should -Match '(?m)^UI_TESTING=essential\r?$'
+            $envText | Should -Match '(?m)^ITL_ACTIVE_DEV_BRANCH=itldev/develop-golden\r?$'
+            $continuation.after[0..2] | Should -Be ([byte[]]@(239,187,191))
+            $continuation.error | Should -BeNullOrEmpty
+            $continuation.copied | Should -Be 1
+            [IO.File]::ReadAllBytes((Join-Path $branchRoot '.kilo/skills/runtime/package.json')) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
+            ((& git -C $branchRoot rev-parse HEAD) -join '').Trim() | Should -Be $mergeHead
+        } finally {
+            foreach ($name in $envNames) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], 'Process') }
+        }
+    }
+
+    It 'does not exempt an edited ignored validator with an arbitrary template flag' -Tag 'FreshMutableTemplateHydration' {
+        $mainRoot = Join-Path $TestDrive 'Template guard Главная папка'
+        $branchRoot = Join-Path $TestDrive 'Template guard Ветка с пробелом'
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $relative = '.kilo/skills/runtime/validator.ps1'
+        foreach ($root in @($mainRoot,$branchRoot)) { New-Item -ItemType Directory -Force -Path (Join-Path $root '.kilo/skills/runtime') | Out-Null }
+        $source = Join-Path $mainRoot $relative
+        $target = Join-Path $branchRoot $relative
+        [IO.File]::WriteAllText($source, 'Write-Output original', $utf8)
+        [IO.File]::WriteAllText($target, 'Write-Output modified', $utf8)
+        $manifest = @{version='same';files=@{$relative=@{source='content/runtime/validator.ps1';template=$true;installedHash=(Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()}}}
+        foreach ($root in @($mainRoot,$branchRoot)) { [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'), ($manifest | ConvertTo-Json -Depth 8), $utf8) }
+        $before = [IO.File]::ReadAllBytes($target)
+        {
+            & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State ([pscustomobject]@{mainWorktreePath=$mainRoot})
+            }
+        } | Should -Throw '*AI_RULES_MANAGED_IGNORED_USER_MODIFIED*'
+        [IO.File]::ReadAllBytes($target) | Should -Be $before
+    }
     It "restores missing ignored rules only from matching bytes and preserves modified branch files" {
         $mainRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-main-" + [guid]::NewGuid().ToString("N"))
         $branchRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-branch-" + [guid]::NewGuid().ToString("N"))

@@ -4399,6 +4399,11 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             continue
         }
 
+        # Mutable project files keep their existing owner; the manifest hash
+        # remains authoritative only for immutable rules/runtime bytes.
+        if ((Test-AiRulesManifestPathOwnedByWorkflow -Path $target) -or
+            (Test-AiRulesPlacedOnceProjectTemplate -Path $target -ManifestEntry $property.Value -Root $branchRoot)) { continue }
+
         $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
         if (Test-Path -LiteralPath $branchPath -PathType Leaf) {
             if (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected) { continue }
