@@ -1548,6 +1548,7 @@ $runnerSha256 = Get-E2ECanonicalTextSha256 -Path $PSCommandPath
 $helperSha256 = Get-E2ECanonicalTextSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
 $clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
+. (Join-Path $PSScriptRoot "quality-contracts.ps1")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
 
@@ -1594,8 +1595,7 @@ function Test-E2EManagedRefreshHead {
 foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
-$releaseStageCatalog = Get-Content -LiteralPath (Join-Path $stageModuleRoot "stages.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-if ([int]$releaseStageCatalog.schemaVersion -ne 1) { throw "Unsupported Release E2E stage catalog schema." }
+$releaseStageCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot (Split-Path -Parent $PSScriptRoot)
 foreach ($stage in @($releaseStageCatalog.stages)) {
     $stageId = [string]$stage.id
     if ($script:releaseStageBudgets.ContainsKey($stageId)) { throw "Release E2E stage budget catalog contains duplicate '$stageId'." }
@@ -1606,19 +1606,13 @@ foreach ($stage in @($releaseStageCatalog.stages)) {
 }
 if (@($script:ReleaseE2EStageDefinitions.Keys | Where-Object { -not $script:releaseStageBudgets.ContainsKey([string]$_) }).Count -gt 0) { throw "Release E2E stage budget catalog is incomplete." }
 $selectedCapabilitySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-function Add-SelectedReleaseE2ECapability {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    if (-not $script:ReleaseE2EStageDefinitions.Contains($Name)) { throw "RELEASE_E2E_CAPABILITY_UNKNOWN: $Name" }
-    foreach ($dependency in @($script:ReleaseE2EStageDefinitions[$Name].dependsOn)) { Add-SelectedReleaseE2ECapability -Name ([string]$dependency) }
-    [void]$selectedCapabilitySet.Add($Name)
-}
 $requestedCapabilities = @($Capabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
-if ($requestedCapabilities.Count -eq 0) {
-    foreach ($stage in @($releaseStageCatalog.stages)) { Add-SelectedReleaseE2ECapability -Name ([string]$stage.id) }
-} else {
-    foreach ($capability in $requestedCapabilities) { Add-SelectedReleaseE2ECapability -Name ([string]$capability) }
+foreach ($capability in $requestedCapabilities) {
+    if (-not $script:ReleaseE2EStageDefinitions.Contains($capability)) { throw "RELEASE_E2E_CAPABILITY_UNKNOWN: $capability" }
 }
-$selectedCapabilities = @($releaseStageCatalog.stages | Where-Object { $selectedCapabilitySet.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+# Direct runner empty scope means ALL; the planner passes explicit Release intent.
+$selectedCapabilities = @(Resolve-QualityReleaseCapabilities -Catalog $releaseStageCatalog -RequireRelease:($requestedCapabilities.Count -eq 0) -ReleaseCapability $requestedCapabilities)
+foreach ($capability in $selectedCapabilities) { [void]$selectedCapabilitySet.Add($capability) }
 function Test-ReleaseE2ECapabilitySelected {
     param([Parameter(Mandatory = $true)][string]$Name)
     return $selectedCapabilitySet.Contains($Name)

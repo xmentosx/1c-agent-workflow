@@ -256,6 +256,44 @@ Describe 'Delivery v3 immutable selective plan' {
         @($fullPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
     }
 
+    It 'pins the enclosing Release reserve once and preserves continuation scope and reusable evidence' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets | Add-Member -NotePropertyName releaseHardSeconds -NotePropertyValue 9240
+        $releaseCatalog = [pscustomobject]@{ enclosingOverheadSeconds=1140; stages=@(
+            [pscustomobject]@{ id='config-cadence'; version=3; budgetSeconds=4800; dependsOn=@(); paths=@('runtime.ps1') },
+            [pscustomobject]@{ id='extension-smoke'; version=2; budgetSeconds=900; dependsOn=@('config-cadence'); paths=@('runtime.ps1') }
+        ) }
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Get-DeliveryPlanEnvironmentIdentity { param([string]$Mode) [ordered]@{ mode=$Mode } }
+        Mock Get-DeliveryReleaseStageCatalog { $releaseCatalog }
+        Mock Test-DeliveryStageEvidence { $null }
+        $none = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $none.PSObject.Properties.Name | Should -Not -Contain 'releaseEnclosingOverheadSeconds'
+        $none.executedBudgetSeconds | Should -Be 2400
+        $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        $first.releaseCapabilities | Should -Be @('config-cadence','extension-smoke')
+        $first.stages.id | Should -Be @('develop.static','release.config-cadence','release.extension-smoke')
+        $first.executedBudgetSeconds | Should -Be 9240
+        Get-DeliveryPlanGateBudgetSeconds -Plan $first -Mode Release | Should -Be 6840
+        $releaseCatalog.enclosingOverheadSeconds = 1200
+        $catalog.budgets.releaseHardSeconds = 9300
+        $corrected = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        $corrected.planId | Should -Not -Be $first.planId
+        $corrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
+        $first.releaseEnclosingOverheadSeconds | Should -Be 1140
+        Mock Test-DeliveryStageEvidence { [pscustomobject]@{ candidate=[pscustomobject]@{ tree=$repo.tree } } }
+        $reused = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        @($reused.stages | Where-Object execution -eq 'execute').Count | Should -Be 0
+        $reused.executedBudgetSeconds | Should -Be 1200
+        Get-DeliveryPlanGateBudgetSeconds -Plan $reused -Mode Release | Should -Be 1200
+        $reused.releaseCapabilities | Should -Be @('config-cadence','extension-smoke')
+        $reused.planId | Should -Be $corrected.planId
+    }
+
     It 'does not invalidate an independent runtime fingerprint when only harness content changes' {
         $repo = New-PlanRepository; $script:Root = $repo.root
         $before = Get-DeliveryInputFingerprint -StageId 'release.runtime' -Version 1 -CandidateRoot $repo.root -ExactPath @('runtime.ps1')

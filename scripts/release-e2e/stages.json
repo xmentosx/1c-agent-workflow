@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "enclosingOverheadSeconds": 1140,
   "stages": [
     {
       "id": "seed-parallel",
@@ -34,7 +35,7 @@
     {
       "id": "config-cadence",
       "version": 3,
-      "budgetSeconds": 1200,
+      "budgetSeconds": 4800,
       "dependsOn": [],
       "paths": [
         "scripts/stand-env-identity.ps1",

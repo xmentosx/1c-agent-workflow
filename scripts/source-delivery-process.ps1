@@ -40,7 +40,13 @@ function Get-SourceGateHardBudgetSeconds {
 
     # The child owns the authoritative gate budget. The wrapper only adds time
     # for the child to finalize its summary and exit without racing that budget.
-    return [int]$property.Value + 300
+    $hardSeconds = [int]$property.Value
+    if ($effectiveMode -eq 'Release' -and (Test-Path -LiteralPath (Join-Path $WorkingRoot 'scripts/release-e2e/stages.json') -PathType Leaf)) {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $WorkingRoot
+        $projection = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $catalog -RequireRelease
+        $hardSeconds = [int]$projection.gateHardSeconds
+    }
+    return $hardSeconds + 300
 }
 
 function Get-SourceGateSupervisionBudgetSeconds {

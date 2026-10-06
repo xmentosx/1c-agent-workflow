@@ -11,7 +11,7 @@
     "developTargetSeconds": 1500,
     "developHardSeconds": 7500,
     "releaseTargetSeconds": 3600,
-    "releaseHardSeconds": 7200
+    "releaseHardSeconds": 14640
   },
   "pesterWorkers": {
     "targetedImplicitDefault": 4

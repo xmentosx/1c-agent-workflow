@@ -10,6 +10,99 @@ function Get-QualityContractCatalog {
     return $catalog
 }
 
+function Get-QualityReleaseStageCatalog {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    $path = Join-Path $RepositoryRoot "scripts\release-e2e\stages.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release stage catalog is missing: $path" }
+    $catalog = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([int]$catalog.schemaVersion -ne 1 -or @($catalog.stages).Count -eq 0) { throw "Release stage catalog must use schemaVersion 1 and contain stages." }
+    $ids = @($catalog.stages | ForEach-Object { [string]$_.id })
+    if (@($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Release stage catalog ids must be unique." }
+    foreach ($stage in @($catalog.stages)) {
+        if (-not [string]$stage.id -or [int]$stage.version -le 0 -or [int]$stage.budgetSeconds -le 0 -or @($stage.paths).Count -eq 0) {
+            throw "Release stage definitions require id, version, budgetSeconds, and paths."
+        }
+        foreach ($dependency in @($stage.dependsOn)) { if ([string]$dependency -notin $ids) { throw "Release stage '$($stage.id)' has unknown dependency '$dependency'." } }
+    }
+    return $catalog
+}
+
+function Resolve-QualityReleaseCapabilities {
+    param([Parameter(Mandatory = $true)][object]$Catalog, [switch]$RequireRelease, [string[]]$ReleaseCapability = @())
+    $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $definitions = @{}
+    $visiting = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($definition in @($Catalog.stages)) { $definitions[[string]$definition.id] = $definition }
+    function Add-RequiredReleaseCapability {
+        param([Parameter(Mandatory = $true)][string]$Name)
+        if (-not $definitions.ContainsKey($Name)) { throw "DELIVERY_RELEASE_CAPABILITY_UNKNOWN: $Name" }
+        if ($selected.Contains($Name)) { return }
+        if (-not $visiting.Add($Name)) { throw "QUALITY_RELEASE_DEPENDENCY_CYCLE: $Name; correct the source stage catalog before repeating the same delivery operation." }
+        foreach ($dependency in @($definitions[$Name].dependsOn)) { Add-RequiredReleaseCapability -Name ([string]$dependency) }
+        [void]$visiting.Remove($Name)
+        [void]$selected.Add($Name)
+    }
+    if ($RequireRelease) {
+        foreach ($definition in @($Catalog.stages)) { Add-RequiredReleaseCapability -Name ([string]$definition.id) }
+    } else {
+        foreach ($capability in @($ReleaseCapability | Where-Object { [string]$_ } | Sort-Object -Unique)) { Add-RequiredReleaseCapability -Name ([string]$capability) }
+    }
+    return @($Catalog.stages | Where-Object { $selected.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+}
+
+function ConvertTo-QualityBudgetSeconds {
+    param([AllowNull()][object]$Value, [string]$Name)
+    if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -le 0 -or $Value -gt [int]::MaxValue) {
+        throw "QUALITY_RELEASE_BUDGET_INVALID: $Name must be a positive 32-bit integer; correct the source catalog and repeat the same delivery operation."
+    }
+    return [int]$Value
+}
+
+function Get-ReleaseE2EBudgetProjection {
+    param(
+        [Parameter(Mandatory = $true)][object]$StageCatalog,
+        [Parameter(Mandatory = $true)][object]$QualityCatalog,
+        [switch]$RequireRelease,
+        [string[]]$ReleaseCapability = @()
+    )
+    $selected = @(Resolve-QualityReleaseCapabilities -Catalog $StageCatalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
+    $stageBudgets = [ordered]@{}
+    [int64]$fullStageSeconds = 0
+    [int64]$selectedStageSeconds = 0
+    foreach ($stage in @($StageCatalog.stages)) {
+        $seconds = ConvertTo-QualityBudgetSeconds -Value $stage.budgetSeconds -Name "stages.$($stage.id).budgetSeconds"
+        $fullStageSeconds += $seconds
+        if ([string]$stage.id -in $selected) {
+            $stageBudgets[[string]$stage.id] = $seconds
+            $selectedStageSeconds += $seconds
+        }
+    }
+    $compatibilitySeconds = ConvertTo-QualityBudgetSeconds -Value $QualityCatalog.budgets.releaseHardSeconds -Name 'budgets.releaseHardSeconds'
+    $overheadProperty = $StageCatalog.PSObject.Properties['enclosingOverheadSeconds']
+    if (-not $overheadProperty) {
+        # Older candidate catalogs keep their original enclosing mode deadline.
+        return [pscustomobject]@{
+            capabilities=$selected; stageBudgets=$stageBudgets; summedStageSeconds=$selectedStageSeconds
+            fullStageSeconds=$fullStageSeconds; enclosingOverheadSeconds=0; usesLegacyModeBudget=$true
+            e2eHardSeconds=$(if ($selected.Count) { $compatibilitySeconds } else { 0 }); gateHardSeconds=$compatibilitySeconds
+        }
+    }
+    $overhead = ConvertTo-QualityBudgetSeconds -Value $overheadProperty.Value -Name 'enclosingOverheadSeconds'
+    $fullStatic = ConvertTo-QualityBudgetSeconds -Value $QualityCatalog.budgets.fullHardSeconds -Name 'budgets.fullHardSeconds'
+    [int64]$gateHard = $fullStatic + $fullStageSeconds + $overhead
+    # Reserve the existing source wrapper's 300 seconds without integer overflow.
+    if ($gateHard -gt ([int64][int]::MaxValue - 300)) { throw 'QUALITY_RELEASE_BUDGET_INVALID: projected Release budget exceeds the bounded process allowance.' }
+    if ($compatibilitySeconds -ne $gateHard) {
+        throw "QUALITY_RELEASE_BUDGET_PROJECTION_MISMATCH: budgets.releaseHardSeconds must equal fullHardSeconds + all Release stage budgets + enclosingOverheadSeconds ($gateHard); regenerate that compatibility field in the source catalog before retrying."
+    }
+    return [pscustomobject]@{
+        capabilities=$selected; stageBudgets=$stageBudgets; summedStageSeconds=$selectedStageSeconds
+        fullStageSeconds=$fullStageSeconds; enclosingOverheadSeconds=$overhead; usesLegacyModeBudget=$false
+        e2eHardSeconds=$(if ($selected.Count) { [int]($selectedStageSeconds + $overhead) } else { 0 })
+        gateHardSeconds=[int]$gateHard
+    }
+}
+
 function Get-DevelopE2EJourneyHardBudgetSeconds {
     param(
         [Parameter(Mandatory = $true)][object]$Catalog,
@@ -255,6 +348,13 @@ function Test-QualityContractCatalog {
         [switch]$SkipSemanticEntrypointValidation
     )
 
+    $releaseCatalogPath = Join-Path $RepositoryRoot 'scripts/release-e2e/stages.json'
+    if (Test-Path -LiteralPath $releaseCatalogPath -PathType Leaf) {
+        $releaseCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot $RepositoryRoot
+        if ($releaseCatalog.PSObject.Properties['enclosingOverheadSeconds']) {
+            [void](Get-ReleaseE2EBudgetProjection -StageCatalog $releaseCatalog -QualityCatalog $Catalog -RequireRelease)
+        }
+    }
     $targetedImplicitDefault = [int]$Catalog.pesterWorkers.targetedImplicitDefault
     if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 4) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 4." }
 

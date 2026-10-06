@@ -22,13 +22,17 @@ function Get-DeliveryCanonicalJsonSha256 {
 
 function Get-DeliveryPlanIdentity {
     param([Parameter(Mandatory = $true)][object]$Plan)
-    return [ordered]@{
+    $identity = [ordered]@{
         protocolVersion=1; supervisorCommit=[string]$Plan.supervisor.commit; supervisorChannel=[string]$Plan.supervisor.channel
         candidateCommit=[string]$Plan.candidate.commit; candidateTree=[string]$Plan.candidate.tree; baseCommit=[string]$Plan.candidate.baseCommit
         requireRelease=[bool]$Plan.requireRelease; releaseCapabilities=@($Plan.releaseCapabilities); paths=@($Plan.paths); contracts=@($Plan.contracts); stages=@($Plan.stages | ForEach-Object {
             [ordered]@{ id=[string]$_.id; version=[int]$_.version; mode=[string]$_.mode; dependsOn=@($_.dependsOn); budgetSeconds=[int]$_.budgetSeconds; alwaysExecute=[bool]($_.PSObject.Properties["alwaysExecute"] -and [bool]$_.alwaysExecute); inputFingerprint=[string]$_.inputFingerprint }
         })
     }
+    if ($Plan.PSObject.Properties['releaseEnclosingOverheadSeconds']) {
+        $identity['releaseEnclosingOverheadSeconds'] = [int]$Plan.releaseEnclosingOverheadSeconds
+    }
+    return $identity
 }
 
 function Get-DeliveryStageEvidencePath {
@@ -149,38 +153,12 @@ function Get-DeliveryInputFingerprint {
 
 function Get-DeliveryReleaseStageCatalog {
     param([Parameter(Mandatory = $true)][string]$CandidateRoot)
-    $path = Join-Path $CandidateRoot "scripts\release-e2e\stages.json"
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release stage catalog is missing: $path" }
-    $catalog = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ([int]$catalog.schemaVersion -ne 1 -or @($catalog.stages).Count -eq 0) { throw "Release stage catalog must use schemaVersion 1 and contain stages." }
-    $ids = @($catalog.stages | ForEach-Object { [string]$_.id })
-    if (@($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Release stage catalog ids must be unique." }
-    foreach ($stage in @($catalog.stages)) {
-        if (-not [string]$stage.id -or [int]$stage.version -le 0 -or [int]$stage.budgetSeconds -le 0 -or @($stage.paths).Count -eq 0) {
-            throw "Release stage definitions require id, version, budgetSeconds, and paths."
-        }
-        foreach ($dependency in @($stage.dependsOn)) { if ([string]$dependency -notin $ids) { throw "Release stage '$($stage.id)' has unknown dependency '$dependency'." } }
-    }
-    return $catalog
+    return Get-QualityReleaseStageCatalog -RepositoryRoot $CandidateRoot
 }
 
 function Resolve-DeliveryRequiredReleaseCapabilities {
     param([Parameter(Mandatory = $true)][object]$Catalog, [switch]$RequireRelease, [string[]]$ReleaseCapability = @())
-    $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $definitions = @{}
-    foreach ($definition in @($Catalog.stages)) { $definitions[[string]$definition.id] = $definition }
-    function Add-RequiredReleaseCapability {
-        param([Parameter(Mandatory = $true)][string]$Name)
-        if (-not $definitions.ContainsKey($Name)) { throw "DELIVERY_RELEASE_CAPABILITY_UNKNOWN: $Name" }
-        foreach ($dependency in @($definitions[$Name].dependsOn)) { Add-RequiredReleaseCapability -Name ([string]$dependency) }
-        [void]$selected.Add($Name)
-    }
-    if ($RequireRelease) {
-        foreach ($definition in @($Catalog.stages)) { Add-RequiredReleaseCapability -Name ([string]$definition.id) }
-    } else {
-        foreach ($capability in @($ReleaseCapability | Where-Object { [string]$_ } | Sort-Object -Unique)) { Add-RequiredReleaseCapability -Name ([string]$capability) }
-    }
-    return @($Catalog.stages | Where-Object { $selected.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+    return @(Resolve-QualityReleaseCapabilities -Catalog $Catalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
 }
 
 function Get-DeliverySupervisorChannel {
@@ -309,10 +287,15 @@ function New-DeliveryQualityPlanForCandidate {
         $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
+    $releaseEnclosingOverhead = $null
     if ($RequireRelease -or @($ReleaseCapability).Count -gt 0) {
     $releaseCatalog = Get-DeliveryReleaseStageCatalog -CandidateRoot $CandidateRoot
     $orderedReleaseCapabilities = @(Resolve-DeliveryRequiredReleaseCapabilities -Catalog $releaseCatalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
     if ($orderedReleaseCapabilities.Count -gt 0) {
+        if ($releaseCatalog.PSObject.Properties['enclosingOverheadSeconds']) {
+            $releaseBudget = Get-ReleaseE2EBudgetProjection -StageCatalog $releaseCatalog -QualityCatalog $catalog -ReleaseCapability $orderedReleaseCapabilities
+            $releaseEnclosingOverhead = [int]$releaseBudget.enclosingOverheadSeconds
+        }
         $releaseEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Release
         $fingerprints = @{}
         foreach ($definition in @($releaseCatalog.stages | Where-Object { [string]$_.id -in $orderedReleaseCapabilities })) {
@@ -328,7 +311,7 @@ function New-DeliveryQualityPlanForCandidate {
     }
     $watch.Stop()
     if ($watch.Elapsed.TotalSeconds -gt 30) { throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]$watch.Elapsed.TotalSeconds)s; hard limit is 30s." }
-    $executedBudget = 0
+    [int64]$executedBudget = 0
     foreach ($stage in @($stages)) { if ([string]$stage.execution -eq "execute") { $executedBudget += [int]$stage.budgetSeconds } }
     $plan = [pscustomobject][ordered]@{
         schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
@@ -336,6 +319,10 @@ function New-DeliveryQualityPlanForCandidate {
         candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
         requireRelease=[bool]($orderedReleaseCapabilities.Count -gt 0); releaseCapabilities=$orderedReleaseCapabilities; paths=@($paths); contracts=@($selection.contracts | ForEach-Object { [string]$_.id }); stages=@($stages)
         executedBudgetSeconds=$executedBudget; planningDurationMs=[int64]$watch.ElapsedMilliseconds
+    }
+    if ($null -ne $releaseEnclosingOverhead) {
+        $plan | Add-Member -NotePropertyName releaseEnclosingOverheadSeconds -NotePropertyValue $releaseEnclosingOverhead
+        $plan.executedBudgetSeconds += $releaseEnclosingOverhead
     }
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
     return $plan
@@ -369,6 +356,9 @@ function Get-DeliveryPlanGateBudgetSeconds {
     param([Parameter(Mandatory = $true)][object]$Plan, [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode)
     $budget = 0
     foreach ($stage in @($Plan.stages | Where-Object { [string]$_.mode -eq $Mode -and [string]$_.execution -eq "execute" })) { $budget += [int]$stage.budgetSeconds }
+    if ($Mode -eq 'Release' -and $Plan.PSObject.Properties['releaseEnclosingOverheadSeconds']) {
+        $budget += [int]$Plan.releaseEnclosingOverheadSeconds
+    }
     # A reused plan still gets a bounded supervisor pass that validates and
     # materializes exact-candidate qualification from immutable evidence.
     return [Math]::Max(900, $budget)

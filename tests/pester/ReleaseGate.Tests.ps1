@@ -109,7 +109,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Get-E2ECanonicalTextSha256 -Path \$PSCommandPath'
         $e2eText | Should -Match 'Get-E2ECanonicalTextSha256 -Path \$path'
         $e2eText | Should -Match 'Get-E2EStageFingerprint'
-        $e2eText | Should -Match 'Add-SelectedReleaseE2ECapability'
+        $e2eText | Should -Match 'Resolve-QualityReleaseCapabilities -Catalog \$releaseStageCatalog -RequireRelease:\(\$requestedCapabilities.Count -eq 0\) -ReleaseCapability \$requestedCapabilities'
         $e2eText | Should -Match 'if \(Test-ReleaseE2ECapabilitySelected -Name "ondemand-mcp"\)'
         $checkText | Should -Match 'ReleaseCapabilities'
         ([regex]::Matches($checkText, '\$selectedReleaseCapabilities\s*=\s*@\(\$ReleaseCapabilities -split')).Count | Should -Be 1
@@ -1701,5 +1701,137 @@ $selected=Get-ItlActiveClient
             (Restore-E2EInterruptedCapabilityStage 'seed-parallel')|Should -BeFalse
             $checkpoint.stages['seed-parallel'].status|Should -BeExactly 'running'
         }
+    }
+}
+
+Describe 'Shared Release budget projection' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $budgetRepoRoot = $context.RepoRoot
+        . (Join-Path $budgetRepoRoot 'scripts/quality-contracts.ps1')
+        . (Join-Path $budgetRepoRoot 'scripts/source-delivery-process.ps1')
+        function Get-BudgetOwnerAst {
+            param([string]$RelativePath)
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $budgetRepoRoot $RelativePath), [ref]$tokens, [ref]$errors)
+            if (@($errors).Count) { throw "Budget owner did not parse: $RelativePath" }
+            return $ast
+        }
+    }
+
+    It 'projects full and selected dependency budgets without broadening capability scope' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $full = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
+        $full.capabilities | Should -Be @($stages.stages.id)
+        $full.fullStageSeconds | Should -Be 10800
+        $full.enclosingOverheadSeconds | Should -Be 1140
+        $full.e2eHardSeconds | Should -Be 11940
+        $full.gateHardSeconds | Should -Be ($quality.budgets.fullHardSeconds + $full.e2eHardSeconds)
+        $full.gateHardSeconds | Should -Be $quality.budgets.releaseHardSeconds
+        $partial = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup','extension-smoke')
+        $partial.capabilities | Should -Be @('config-cadence','extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
+        $partial.summedStageSeconds | Should -Be 7500
+        $partial.e2eHardSeconds | Should -Be 8640
+        $onlyMcp = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'ondemand-mcp'
+        $onlyMcp.capabilities | Should -Be @('ondemand-mcp')
+        $onlyMcp.e2eHardSeconds | Should -Be 2040
+        $onlyMcp.gateHardSeconds | Should -Be $full.gateHardSeconds
+        $none = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality
+        @($none.capabilities).Count | Should -Be 0
+        $none.e2eHardSeconds | Should -Be 0
+    }
+
+    It 'keeps the old pinned supervisor allowance equal to the validated full projection' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $projection = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
+        # Exact legacy wire consumer: it only reads the serialized quality field.
+        $oldCatalog = Get-Content -LiteralPath (Join-Path $budgetRepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $oldPinnedAllowance = [int]$oldCatalog.budgets.releaseHardSeconds + 300
+        $oldPinnedAllowance | Should -Be ($projection.gateHardSeconds + 300)
+        Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot | Should -Be $oldPinnedAllowance
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 8640 | Should -Be $oldPinnedAllowance
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 16000 | Should -Be 16000
+        $quality.budgets.releaseHardSeconds--
+        { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*PROJECTION_MISMATCH*'
+    }
+
+    It 'retains old candidate budgets but rejects a malformed present contract and cycles' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $stages.PSObject.Properties.Remove('enclosingOverheadSeconds')
+        ($stages.stages | Where-Object id -eq 'config-cadence').budgetSeconds = 1200
+        $quality.budgets.releaseHardSeconds = 7200
+        $old = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'extension-smoke'
+        $old.usesLegacyModeBudget | Should -BeTrue
+        $old.stageBudgets['config-cadence'] | Should -Be 1200
+        $old.e2eHardSeconds | Should -Be 7200
+        $old.gateHardSeconds | Should -Be 7200
+        $stages | Add-Member -NotePropertyName enclosingOverheadSeconds -NotePropertyValue $null
+        foreach ($bad in @($null, 0, -1, '1140', 1.5, [long]2147483648)) {
+            $stages.enclosingOverheadSeconds = $bad
+            { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*BUDGET_INVALID*'
+        }
+        $stages.enclosingOverheadSeconds = 1140
+        ($stages.stages | Where-Object id -eq 'config-cadence').dependsOn = @('extension-smoke')
+        { Resolve-QualityReleaseCapabilities -Catalog $stages -ReleaseCapability 'extension-smoke' } | Should -Throw '*DEPENDENCY_CYCLE*'
+    }
+
+    It 'passes the selected projection to the real child call and retains enclosing timeout clipping' {
+        $ast = Get-BudgetOwnerAst -RelativePath 'scripts/check.ps1'
+        $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $repoRoot = $budgetRepoRoot
+        $effectiveMode = 'Release'
+        $selectedReleaseCapabilities = @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
+        $initialization = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('$releaseBudget = Get-ReleaseE2EBudgetProjection') })
+        $initialization.Count | Should -Be 1
+        . ([scriptblock]::Create($initialization[0].Extent.Text))
+        $modeHardBudgetSeconds | Should -Be 14640
+        $releaseE2EHardBudgetSeconds | Should -Be 8640
+        $call = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PowerShellChild' -and $node.Extent.Text.Contains('-LogName "release-e2e"') }, $true))
+        $call.Count | Should -Be 1
+        function Invoke-PowerShellChild {
+            param($ScriptPath, $Arguments, $TimeoutSeconds, $NoProgressSeconds, $ProgressPaths, $LogName)
+            [pscustomobject]@{ timeout=$TimeoutSeconds; noProgress=$NoProgressSeconds; name=$LogName }
+        }
+        $e2eScript = 'fixture'; $releaseE2EArguments = @(); $releaseProgressPaths = @()
+        $observed = & ([scriptblock]::Create($call[0].Extent.Text))
+        $observed.timeout | Should -Be 8640
+        $observed.noProgress | Should -Be 900
+        $wait = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-PowerShellChildProcess' }, $true)
+        $clip = @($wait.Body.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -in @('$remainingOverallSeconds', '$effectiveTimeoutSeconds') })
+        $clip.Count | Should -Be 2
+        $TimeoutSeconds = $observed.timeout
+        $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(8600) }
+        foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
+        $effectiveTimeoutSeconds | Should -Be 6040
+        $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(10) }
+        foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
+        $effectiveTimeoutSeconds | Should -Be 8640
+    }
+
+    It 'forwards the remaining original cadence deadline to the unchanged helper timeout owner' {
+        $ast = Get-BudgetOwnerAst -RelativePath 'scripts/invoke-release-e2e.ps1'
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Complete-E2EHelperProcess' }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $process = [pscustomobject]@{ Handle=1; ExitCode=0; ExitTime=[DateTime]::UtcNow; timedWaits=[Collections.Generic.List[int]]::new() }
+        $process | Add-Member ScriptMethod WaitForExit { param($milliseconds) if ($null -ne $milliseconds) { $this.timedWaits.Add([int]$milliseconds); return $true } }
+        $process | Add-Member ScriptMethod Refresh {}
+        $invocation = [pscustomobject]@{ process=$process; action='check-dev-branch'; stdoutPath='fixture.out'; stderrPath='fixture.err'; exitedAtUtc=$null }
+        $script:activeStageName = 'config-cadence'
+        $catalog = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $cadenceSeconds = [int]($catalog.stages | Where-Object id -eq 'config-cadence').budgetSeconds
+        # A slow first metadata check consumes the observed fresh-check envelope.
+        $remainingModelSeconds = $cadenceSeconds - 1773
+        $script:activeStageDeadlineUtc = [DateTime]::UtcNow.AddSeconds($remainingModelSeconds)
+        try {
+            $result = Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds 7200
+            $result.exitCode | Should -Be 0
+            $process.timedWaits.Count | Should -Be 1
+            $process.timedWaits[0] | Should -BeGreaterThan 1773000
+            $process.timedWaits[0] | Should -BeLessOrEqual ($remainingModelSeconds * 1000)
+        } finally { $script:activeStageDeadlineUtc = $null; $script:activeStageName = '' }
     }
 }

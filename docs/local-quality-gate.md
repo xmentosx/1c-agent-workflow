@@ -56,7 +56,7 @@ and publication channels below remain authoritative.
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 45 мин |
 | `Develop` | один Full и реальные стандартные journey | 25 мин | 125 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 120 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 244 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -624,3 +624,38 @@ Vanessa из `C:\itlvabld`, старые passed-снимки миграции `a
 неизвестная форма артефакта всегда сохраняются. В build work root распознаются
 только непосредственные не-Git каталоги выделенного `C:\itlvabld`; содержимое
 за его пределами sweep не рассматривает.
+
+### Release budget projection
+
+The Release stage catalog owns each capability ceiling and the enclosing
+setup/restore/seal/finally reserve. `quality-contracts.ps1` projects the selected
+dependency closure for the nested E2E process, and Full static plus the complete
+E2E catalog for the enclosing `check.ps1 -Mode Release`. The serialized
+`budgets.releaseHardSeconds` is a validated compatibility projection for already
+published supervisors, not a second budget policy. The source wrapper retains
+its separate 300-second finalization allowance and the existing no-progress
+watchdog. Missing overhead on an older candidate retains its old mode budget;
+a malformed present field does not select that fallback.
+
+The original config-cadence workload still makes two independent metadata
+changes and checks. One retained fresh full check took 1772.528 seconds;
+two such envelopes model 3545.056 seconds before the original test-only failure,
+cursor commits and postConfig snapshot. Cadence therefore has a conservative
+4800-second ceiling, with unchanged version 3 and unchanged proof predicates.
+The retained original publication terminated with `check-dev-branch timed out
+after 1197 seconds`, matching the old 1200-second shared stage deadline after
+its preceding work. That failed run and its native evidence remain failed.
+The enclosing reserve is 1140 seconds: 600 for setup/prestage/retry/seal plus
+three existing finally operations of at most 180 seconds each. The observed
+baseline DT took about 140 seconds and readiness 11 seconds; the 600-second
+part allows a comparable retry restore and remaining context/sealing work.
+These are reserve estimates, not a measured complete successful cadence or
+overhead. Full E2E ceilings sum to 10800 seconds; E2E including reserve is
+11940, and the whole Release gate with Full static 2700 is 14640 seconds.
+Selected capabilities keep their original scope and include the reserve once.
+No fake capability is added. New immutable plans pin the reserve and include
+it even when all selected runtime evidence is reusable; retained older plans
+and failed evidence are not rewritten. The corrected candidate requires a new
+immutable planId. Bind the continuation to it with `-ResumePlan` and, when the
+existing long-plan guard requires it, `-ApproveLongPlan`. The already authorized,
+unchanged workload does not require renewed user approval.

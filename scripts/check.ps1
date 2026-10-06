@@ -82,6 +82,14 @@ $effectivePesterWorkers = Resolve-PesterWorkerCount -Mode $effectiveMode -Reques
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
 $modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
 $modeHardBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}HardSeconds")
+$selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+$releaseE2EHardBudgetSeconds = 0
+if ($effectiveMode -eq "Release") {
+    $releaseCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot $repoRoot
+    $releaseBudget = Get-ReleaseE2EBudgetProjection -StageCatalog $releaseCatalog -QualityCatalog $qualityCatalog -RequireRelease:($selectedReleaseCapabilities.Count -eq 0) -ReleaseCapability $selectedReleaseCapabilities
+    $modeHardBudgetSeconds = [int]$releaseBudget.gateHardSeconds
+    $releaseE2EHardBudgetSeconds = [int]$releaseBudget.e2eHardSeconds
+}
 if ($modeTargetBudgetSeconds -le 0 -or $modeHardBudgetSeconds -lt $modeTargetBudgetSeconds) { throw "Invalid $effectiveMode target/hard budget in the quality contract catalog." }
 $pesterHardBudgetSeconds = [int]$qualityCatalog.budgets.fullHardSeconds
 if ($pesterHardBudgetSeconds -le 0) { throw "Invalid Full Pester hard budget in the quality contract catalog." }
@@ -117,7 +125,6 @@ $releaseContext = $null
 $releaseDevelopProof = $null
 $releaseFullProof = $null
 $continuationProof = $null
-$selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
 
 function Add-StageResult {
     param(
@@ -1121,7 +1128,7 @@ try {
             $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
             if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
             if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds $releaseE2EHardBudgetSeconds -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }

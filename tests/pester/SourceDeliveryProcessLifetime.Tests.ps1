@@ -1,4 +1,7 @@
-﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1")
+    . (Join-Path $RepoRoot "scripts/quality-contracts.ps1")
+}
 
 Describe "Source develop queue and delivery" {
 It "classifies failures without widening the selected route" {
