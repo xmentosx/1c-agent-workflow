@@ -20,7 +20,8 @@
     "static": [
       "tests/pester/*",
       "tests/node/*",
-      "tests/fixtures/*"
+      "tests/fixtures/*",
+      "openspec/changes/*/*.md"
     ],
     "deliveryPostGate": [
       "scripts/source-delivery.ps1",

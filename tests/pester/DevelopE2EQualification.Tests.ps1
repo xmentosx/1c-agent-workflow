@@ -107,6 +107,77 @@ Describe "Develop E2E journey qualification router" {
         @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 
+    It "continues source OpenSpec Markdown with exact Targeted proof but rejects executable and configuration neighbors" {
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $fixtureRoot = Join-Path $TestDrive ("OpenSpec continuation $(Get-NonAsciiFixtureSegment) with spaces")
+        New-RouterFixture -Root $fixtureRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $fixtureRoot 'tests/quality-contracts.json')
+        & git -C $fixtureRoot add -- tests/quality-contracts.json
+        & git -C $fixtureRoot commit -m 'use production continuation catalog' *> $null
+        $base = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+        $docPaths = @(
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/test-plan.md',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/gate6-r41-qualification.md'
+        )
+        foreach ($relative in $docPaths) {
+            $path = Join-Path $fixtureRoot $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path, "# Source acceptance record`n", [Text.UTF8Encoding]::new($false))
+        }
+        & git -C $fixtureRoot add -- @docPaths
+        & git -C $fixtureRoot commit -m 'record source acceptance' *> $null
+        $commit = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+        $tree = (& git -C $fixtureRoot rev-parse 'HEAD^{tree}').Trim()
+        $arguments = @{ RepositoryRoot=$fixtureRoot; QualifiedCommit=$base; CurrentCommit=$commit; CurrentTree=$tree }
+        Get-WorkflowContinuationProof @arguments | Should -BeNullOrEmpty
+        $runPath = Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $fixtureRoot) 'itl/runs/20261007-000000-000-targeted-fixture.json'
+        $run = [ordered]@{
+            schemaVersion=3; id=[guid]::NewGuid().ToString('N'); mode='Targeted'; status='passed'; exitCode=0
+            commit=$commit; tree=$tree; startedAt='2026-10-07T00:00:00Z'; finishedAt='2026-10-07T00:00:01Z'
+            durationMs=1000; stages=@(
+                @{ name='pester'; status='passed' },
+                @{ name='git-diff-check'; status='passed' },
+                @{ name='tracked-state'; status='passed' }
+            )
+        }
+        Write-Utf8Json -Path $runPath -Value $run
+        $proof = Get-WorkflowContinuationProof @arguments
+        $proof | Should -Not -BeNullOrEmpty
+        @($proof.paths | Sort-Object) | Should -Be @($docPaths | Sort-Object)
+        @($proof.scopes) | Should -Be @('static')
+        $proof.targetedRunSha256 | Should -Be (Get-FileHash -LiteralPath $runPath).Hash.ToLowerInvariant()
+        Test-RecordedWorkflowContinuation -Record $proof -Commit $commit -Tree $tree | Should -BeTrue
+        $journeyPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($proof.paths) -Catalog $catalog
+        $journeyPlan.reason | Should -Be 'no-develop-journey-route'
+        @($journeyPlan.journeys) | Should -BeNullOrEmpty
+
+        $run.tree = '0' * 40
+        Write-Utf8Json -Path $runPath -Value $run
+        Get-WorkflowContinuationProof @arguments | Should -BeNullOrEmpty
+        $run.tree = $tree
+        Write-Utf8Json -Path $runPath -Value $run
+        [IO.File]::AppendAllText($runPath, ' ', [Text.UTF8Encoding]::new($false))
+        Test-RecordedWorkflowContinuation -Record $proof -Commit $commit -Tree $tree | Should -BeFalse
+
+        foreach ($relative in @(
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/hook.ps1',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/config.yaml',
+            'openspec/changes/upgrade-ai-rules-upstream-20a083e5/config.json'
+        )) {
+            $previous = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+            [IO.File]::WriteAllText((Join-Path $fixtureRoot $relative), 'unclassified input', [Text.UTF8Encoding]::new($false))
+            & git -C $fixtureRoot add -- $relative
+            & git -C $fixtureRoot commit -m 'add non-Markdown neighbor' *> $null
+            $run.commit = (& git -C $fixtureRoot rev-parse HEAD).Trim()
+            $run.tree = (& git -C $fixtureRoot rev-parse 'HEAD^{tree}').Trim()
+            Write-Utf8Json -Path $runPath -Value $run
+            Get-ExactTargetedRunProof -RepositoryRoot $fixtureRoot -Commit $run.commit -Tree $run.tree | Should -Not -BeNullOrEmpty
+            Get-WorkflowContinuationProof -RepositoryRoot $fixtureRoot -QualifiedCommit $previous -CurrentCommit $run.commit -CurrentTree $run.tree | Should -BeNullOrEmpty -Because $relative
+        }
+        @(Get-RepositoryGitPathList -RepositoryRoot $fixtureRoot -Arguments @('diff', '--name-only', '-z', 'HEAD', '--')).Count | Should -Be 0
+    }
+
     It "blocks unknown ownership, fails closed for orchestration paths, and skips direct tests" {
         $unknownPath = "new-owner/unknown $(Get-NonAsciiFixtureSegment).ps1"
         { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($unknownPath) } | Should -Throw '*QUALITY_OWNER_MISSING*'

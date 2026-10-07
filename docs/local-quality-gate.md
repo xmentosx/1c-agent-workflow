@@ -126,6 +126,13 @@ commit/tree должен иметь точный прошедший `Targeted` �
 Develop proof закрывают reuse. Это продолжение по fingerprint входов, а не
 эвристика «любой файл из tests безопасен».
 
+`static` также включает только Markdown исходных change-артефактов
+`openspec/changes/*/*.md`: обновление test-plan и сохранённых выводов приёмки
+само по себе не меняет установленный runtime и не требует повторять live journeys.
+Этот scope не включает соседние executable, YAML или JSON; точный прошедший
+Targeted, проверка hash доказательств и запрет reuse для неизвестных путей
+сохраняются.
+
 ## Клиент unattended E2E
 
 `source-delivery.ps1`, `check.ps1` и оба `invoke-*-e2e.ps1` принимают
