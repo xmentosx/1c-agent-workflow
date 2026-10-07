@@ -2221,8 +2221,8 @@ function Invoke-ConfigLoadDesignerAttempt {
         [AllowNull()][object]$StaticCoverageContext = $null,
         [AllowNull()][object]$LegacyContext = $null,
         [string]$SourceFingerprint = '',
-        [string]$User,
-        [string]$Password,
+        [string]$User = (Get-EnvValue -Name 'IB_USER'),
+        [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
         [object]$NativeEffectContract,
         [AllowNull()][object]$EnclosingSnapshot = $null
     )

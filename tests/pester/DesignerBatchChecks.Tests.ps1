@@ -4,6 +4,90 @@
 }
 
 Describe 'Designer Gate 6 batch verdict' {
+    It 'keeps configured credentials across guarded loads and rollback (<Case>)' -TestCases @(
+        @{ Case='scaffold-defaults'; LoadMode='Empty'; Credentials='omitted'; Borrowed=$true; Fail=$false },
+        @{ Case='cfe-defaults'; LoadMode='Cfe'; Credentials='omitted'; Borrowed=$true; Fail=$false },
+        @{ Case='direct-defaults'; LoadMode='Direct'; Credentials='omitted'; Borrowed=$false; Fail=$false },
+        @{ Case='explicit-override'; LoadMode='Empty'; Credentials='override'; Borrowed=$true; Fail=$false },
+        @{ Case='explicit-anonymous'; LoadMode='Empty'; Credentials='empty'; Borrowed=$true; Fail=$false },
+        @{ Case='user-only-override'; LoadMode='Empty'; Credentials='user'; Borrowed=$true; Fail=$false },
+        @{ Case='password-only-override'; LoadMode='Empty'; Credentials='password'; Borrowed=$true; Fail=$false },
+        @{ Case='rollback-defaults'; LoadMode='Empty'; Credentials='omitted'; Borrowed=$false; Fail=$true }
+    ) {
+        param($Case,$LoadMode,$Credentials,$Borrowed,$Fail)
+        $root = Join-Path $TestDrive ('Учётные данные 1С ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $expectedUser = 'Администратор стенда'
+        $expectedPassword = 'fixture password'
+        if ($Credentials -in @('override','user')) { $expectedUser = 'Другой пользователь' }
+        if ($Credentials -in @('override','password')) { $expectedPassword = 'override fixture password' }
+        if ($Credentials -eq 'empty') { $expectedUser=''; $expectedPassword='' }
+        $actual = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:calls = [Collections.Generic.List[object]]::new()
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Get-EnvValue {
+                param([string]$Name,[object]$Default=$null)
+                switch ($Name) {
+                    'IB_USER' { return 'Администратор стенда' }
+                    'IB_PASSWORD' { return 'fixture password' }
+                    default { return $Default }
+                }
+            }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $script:calls.Add([pscustomobject]@{operation=$DesignerArgs[0];user=$User;password=$Password})
+                if ($DesignerArgs[0] -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
+                $script:LastLogPath = Join-Path $script:ProjectRoot ("auth-$($script:calls.Count).log")
+                $log = if ($Fail -and $DesignerArgs[0] -eq '/CheckCanApplyConfigurationExtensions') {
+                    'Не найден метод исходной конфигурации.'
+                } else { 'Ошибок: 0; предупреждений: 0' }
+                [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
+                $index = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if ($index -ge 0) { [IO.File]::WriteAllText($DesignerArgs[$index+1],'0',[Text.UTF8Encoding]::new($false)) }
+            }
+            $target = 'C:\База 1С'
+            $parameters = @{InfoBasePath=$target;InfoBaseKind='file';SourceFingerprint='auth-source'}
+            $parameters.DesignerArgs = @('/LoadConfigFromFiles',$root,'/UpdateDBCfg')
+            if ($LoadMode -ne 'Direct') { $parameters.ExtensionName='Расширение'; $parameters.DesignerArgs += @('-Extension','Расширение') }
+            if ($LoadMode -eq 'Cfe') {
+                $cfePath = Join-Path $root 'Расширение.cfe'
+                [IO.File]::WriteAllBytes($cfePath,[byte[]](4,5,6))
+                $parameters.SourceFingerprint = 'sha256:' + (Get-FileHash -LiteralPath $cfePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                $parameters.DesignerArgs = @('/LoadCfg',$cfePath,'-Extension','Расширение','/UpdateDBCfg')
+            }
+            if ($Borrowed) {
+                $snapshotPath = Join-Path $root 'Снимок до загрузки.dt'
+                [IO.File]::WriteAllBytes($snapshotPath,[byte[]](1,2,3))
+                $state = [pscustomobject]@{infoBaseKind='file';devBranchInfoBasePath=$target}
+                $duty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -Policy on-failure
+                $parameters.EnclosingSnapshot = [pscustomobject]@{path=$snapshotPath;
+                    sha256=(Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant();
+                    infoBaseKind='file';infoBasePath=$target;duty=$duty}
+            }
+            if ($Credentials -in @('override','user','empty')) { $parameters.User=$expectedUser }
+            if ($Credentials -in @('override','password','empty')) { $parameters.Password=$expectedPassword }
+            $failure = try { Invoke-ConfigLoadDesignerAttempt @parameters | Out-Null; '' } catch { $_.Exception.Message }
+            [pscustomobject]@{failure=$failure;calls=@($script:calls.ToArray())}
+        }
+        if ($Fail) {
+            $actual.failure | Should -Match 'GATE6_CHECK_FAILED.*applicability'
+            $actual.calls.operation | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckCanApplyConfigurationExtensions','/RestoreIB')
+        } elseif ($LoadMode -eq 'Direct') {
+            $actual.failure | Should -BeNullOrEmpty
+            $actual.calls.operation | Should -Be @('/LoadConfigFromFiles')
+        } else {
+            $actual.failure | Should -BeNullOrEmpty
+            $actual.calls.operation | Should -Be @($(if ($LoadMode -eq 'Cfe') { '/LoadCfg' } else { '/LoadConfigFromFiles' }),
+                '/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
+        }
+        $actual.calls.Count | Should -BeGreaterThan 0
+        foreach ($nativeCall in $actual.calls) {
+            $nativeCall.user | Should -BeExactly $expectedUser
+            $nativeCall.password | Should -BeExactly $expectedPassword
+        }
+    }
+
     It 'continues only bound unchanged outside-scope structural findings (<Case>)' -TestCases @(
         @{ Case='legacy'; allowed=$true },
         @{ Case='increased'; allowed=$false },
