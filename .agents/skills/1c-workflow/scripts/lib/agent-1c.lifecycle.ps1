@@ -1837,6 +1837,7 @@ function Invoke-DesignerGate6CheckLadder {
         [string]$SourceFingerprint = '',
         [object]$EditableLoad = $null,
         [AllowNull()][object]$LegacyBaseline = $null,
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
         [string[]]$RuntimeModes = @('-ThinClient', '-Server', '-ExternalConnection')
@@ -1868,6 +1869,23 @@ function Invoke-DesignerGate6CheckLadder {
         $logPath = $check.logPath
         $verdict = $check.verdict
         $assessment = $null
+        $artifactAssessment = $false
+        if (-not $verdict.passed -and $step.name -ne 'modules' -and $null -ne $ArtifactDiagnosticBaseline -and
+            @($evidence | Where-Object { $_.step -eq 'modules' -and $_.nativePassed }).Count -eq 1) {
+            $assessment = Get-YAxUnitArtifactDiagnosticAssessment -Baseline $ArtifactDiagnosticBaseline -Step $step.name `
+                -Verdict $verdict -SourceFingerprint $SourceFingerprint -ExtensionName $ExtensionName
+            $platformPath = Get-PlatformPath
+            $platformBuild = ''
+            try { $platformBuild = [Diagnostics.FileVersionInfo]::GetVersionInfo($platformPath).ProductVersion } catch { }
+            $assessment | Add-Member -NotePropertyName context -NotePropertyValue ([pscustomobject]@{
+                infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath; platformPath=$platformPath; platformBuild=$platformBuild; runtimeModes=@($modes)
+            })
+            $assessmentPath = New-TimestampedFilePath -Directory $logsPath -Prefix '1c-gate6-artifact-assessment-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $assessmentPath -Value (($assessment | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $assessment = [pscustomobject]@{status=$assessment.status;applyAllowed=[bool]$assessment.applyAllowed;cleanPassed=$false;
+                evidencePath=$assessmentPath;evidenceSha256=(Get-FileHash -LiteralPath $assessmentPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+            $artifactAssessment = $true
+        }
         if (-not $verdict.passed -and $step.name -eq 'configuration' -and -not $ExtensionName -and $null -ne $LegacyBaseline) {
             $before = $LegacyBaseline.check.verdict
             $baselineArtifactsUnchanged = $false
@@ -1897,9 +1915,14 @@ function Invoke-DesignerGate6CheckLadder {
         }
         if (-not $verdict.passed) {
             if ($null -eq $assessment -or -not $assessment.applyAllowed) {
-                throw "GATE6_CHECK_FAILED: step=$($step.name); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | '). Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
+                $assessmentDetail = if ($null -ne $assessment) { "; assessment=$($assessment.evidencePath)" } else { '' }
+                throw "GATE6_CHECK_FAILED: step=$($step.name); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | ')$assessmentDetail. Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
             }
-            Write-Warning "GATE6_LEGACY_FINDINGS: native CheckConfig did not pass; unchanged proven outside-scope findings permit apply. Assessment: $($assessment.evidencePath)"
+            if ($artifactAssessment) {
+                Write-Warning "GATE6_YAXUNIT_VENDOR_DIAGNOSTICS: native $($step.name) did not pass; exact immutable YAxUnit artifact diagnostics permit apply with a non-clean vendor WARN. Assessment: $($assessment.evidencePath)"
+            } else {
+                Write-Warning "GATE6_LEGACY_FINDINGS: native CheckConfig did not pass; unchanged proven outside-scope findings permit apply. Assessment: $($assessment.evidencePath)"
+            }
         }
         $evidence.Add([pscustomobject]@{
             step = $step.name
@@ -1915,7 +1938,7 @@ function Invoke-DesignerGate6CheckLadder {
         })
     }
     $receipt = [pscustomobject]@{
-        schemaVersion = $(if ($null -ne $LegacyBaseline) { 2 } else { 1 })
+        schemaVersion = $(if ($null -ne $LegacyBaseline -or $null -ne $ArtifactDiagnosticBaseline) { 2 } else { 1 })
         sourceFingerprint = $SourceFingerprint
         infoBaseKind = $InfoBaseKind
         infoBasePath = $InfoBasePath
@@ -1923,6 +1946,7 @@ function Invoke-DesignerGate6CheckLadder {
         editableLoad = $EditableLoad
         platformPath = Get-PlatformPath
         runtimeModes = @($modes)
+        artifactDiagnosticBaseline = $ArtifactDiagnosticBaseline
         steps = @($evidence.ToArray())
         legacyBaseline = $(if ($null -ne $LegacyBaseline) { [pscustomobject]@{binding=$LegacyBaseline.context.binding;
             snapshotSha256=$LegacyBaseline.snapshot.sha256;platformPath=$LegacyBaseline.platformPath;
@@ -2220,6 +2244,7 @@ function Invoke-ConfigLoadDesignerAttempt {
         [switch]$RequireGate6,
         [AllowNull()][object]$StaticCoverageContext = $null,
         [AllowNull()][object]$LegacyContext = $null,
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
         [string]$SourceFingerprint = '',
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD'),
@@ -2227,6 +2252,23 @@ function Invoke-ConfigLoadDesignerAttempt {
         [AllowNull()][object]$EnclosingSnapshot = $null
     )
 
+    if ($null -ne $ArtifactDiagnosticBaseline) {
+        $canonicalBaseline = Get-YAxUnitArtifactDiagnosticBaseline `
+            -PinnedEntry (Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
+        $baselineVersion = Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'version' -Default $null
+        if ($null -eq $canonicalBaseline -or
+            [string](Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'id' -Default '') -cne [string]$canonicalBaseline.id -or
+            ($baselineVersion -isnot [int] -and $baselineVersion -isnot [long]) -or $baselineVersion -ne $canonicalBaseline.version -or
+            [string](Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'extensionName' -Default '') -cne $ExtensionName -or
+            $SourceFingerprint -cne ('sha256:' + [string]$canonicalBaseline.pin.sha256) -or
+            $null -ne $StaticCoverageContext -or $null -ne $LegacyContext -or
+            @($DesignerArgs).Count -ne 5 -or $DesignerArgs[0] -cne '/LoadCfg' -or
+            $DesignerArgs[2] -cne '-Extension' -or $DesignerArgs[3] -cne $ExtensionName -or $DesignerArgs[4] -cne '/UpdateDBCfg') {
+            throw 'GATE6_ARTIFACT_BASELINE_CONTEXT_INVALID: only the dependency-owned immutable YAxUnit CFE load may use its canonical diagnostic baseline. Repeat the original operation with its supported artifact and owner-selected context.'
+        }
+        $ArtifactDiagnosticBaseline = $canonicalBaseline
+        $artifactSha256 = [string]$canonicalBaseline.pin.sha256
+    }
     if (-not $ExtensionName -and -not $RequireGate6 -and $null -eq $StaticCoverageContext) {
         Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
             -NativeEffectContract $NativeEffectContract -DesignerArgs $DesignerArgs | Out-Null
@@ -2262,6 +2304,12 @@ function Invoke-ConfigLoadDesignerAttempt {
             logSha256=$baselineLogSha256;resultSha256=(Get-FileHash -LiteralPath $baseline.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()}
     }
     $loadArgs = @($DesignerArgs | Where-Object { $_ -cne '/UpdateDBCfg' })
+    if ($null -ne $ArtifactDiagnosticBaseline) {
+        $actualSha = (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -cne $artifactSha256) {
+            throw "GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed before editable load. Preserve the snapshot and repeat the original operation with the unchanged official artifact."
+        }
+    }
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
         -NativeEffectContract $NativeEffectContract -DesignerArgs $loadArgs | Out-Null
     $loadLogPath = [string]$script:LastLogPath
@@ -2295,7 +2343,12 @@ function Invoke-ConfigLoadDesignerAttempt {
         Write-Host 'Gate 6 native ladder skipped only for the unchanged complete MCP source proof revalidated after editable load.'
     } else {
         $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
-            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -User $User -Password $Password
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline `
+            -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -User $User -Password $Password
+    }
+    if ($null -ne $ArtifactDiagnosticBaseline -and
+        (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifactSha256) {
+        throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Preserve the snapshot and repeat the original operation with the unchanged official artifact.'
     }
     # This is the first database apply. A failed or missing check never reaches it.
     $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
@@ -2353,6 +2406,7 @@ function Invoke-GuardedCfeExtensionApply {
         [Parameter(Mandatory = $true)][string]$InfoBaseKind,
         [Parameter(Mandatory = $true)][string]$CfePath,
         [Parameter(Mandatory = $true)][string]$ExtensionName,
+        [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD')
     )
@@ -2362,6 +2416,7 @@ function Invoke-GuardedCfeExtensionApply {
     $sha = (Get-FileHash -LiteralPath $CfePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
         -User $User -Password $Password -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $sha) `
+        -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline `
         -DesignerArgs @('/LoadCfg', $CfePath, '-Extension', $ExtensionName, '/UpdateDBCfg')
     return [pscustomobject]@{ logPath = [string]$script:LastLogPath; gate6Evidence = $evidence }
 }
@@ -18802,11 +18857,12 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     $yaxunitCfePath = Install-YAxUnit
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E YAxUnit runtime-property proof"
     $extensionName = Get-YAxUnitExtensionName
+    $yaxunitLock = Get-YAxUnitPinnedEntry
+    $artifactDiagnosticBaseline = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $yaxunitLock -ExtensionName $extensionName
     Invoke-GuardedCfeExtensionApply `
         -InfoBasePath ([string]$state.devBranchInfoBasePath) `
         -InfoBaseKind ([string]$state.infoBaseKind) `
-        -CfePath $yaxunitCfePath -ExtensionName $extensionName | Out-Null
-    $yaxunitLock = Get-YAxUnitPinnedEntry
+        -CfePath $yaxunitCfePath -ExtensionName $extensionName -ArtifactDiagnosticBaseline $artifactDiagnosticBaseline | Out-Null
     $proof = Set-VanessaMcpExtensionUnsafeMode `
         -State $state `
         -InfoBaseKind ([string]$state.infoBaseKind) `

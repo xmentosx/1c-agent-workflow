@@ -78,6 +78,36 @@ check time against the retained native log timestamps. A new source/fork tree
 requires its applicable registration and public delivery qualification; old
 Targeted/Full proofs remain historical unless their existing reuse contract matches.
 
+### Accepted immutable YAxUnit exception (2026-10-07, EV8b/D13)
+
+Keep the original strict applicability failure and the official unchanged
+YAxUnit `25.12` CFE, SHA256
+`805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+The internal dependency owner supplies the canonical baseline; generic
+CF/CFE, tests extension and other dependencies keep the preceding strict cases.
+
+| Case | Required evidence |
+|---|---|
+| Exact engine tuple and official artifact | Complete version/tag/asset/URL/upstream/SHA/name binding; another lock pin never inherits this exception |
+| Strict modules plus exact applicability `0/0` and configuration `101/101` | Complete ordinal per-step raw multisets from EV8b: four applicability lines (two of each), two configuration lines (one of each); WARN, `nativePassed=false`, `cleanPassed=false` and raw code/hash retention |
+| Clean native `0/0` without vendor findings | Existing strict clean path and result shape retained |
+| Line permutation or encoding BOM/EOL variant | Same bounded multiset may match; original raw bytes/hashes preserved, message spaces and every source character remain significant |
+| Extra neutral line, altered/missing text, same-count substitution, duplicate overflow or cross-step line | Refuse without relying on filtered diagnostics or warning/error keywords; retain original failure and restore |
+| Wrong native pair, nonzero modules/applicability, missing/invalid result or non-UTF-8 output | Strict refusal and original snapshot recovery; known text does not authorize a native failure outside the exact configuration `101/101` pair |
+| CFE changed before load, during load or during checks before apply | Real SHA checks at all three boundaries stop first apply, restore, then permit the same original operation with stable exact bytes |
+| Engine versus tests-extension caller, other extension or product source load | Only the internal official engine route receives the canonical context; generic missing-intercepted-method regression and ordinary strict callers remain unchanged |
+| Successful apply, interrupted load or uncertain/lost apply acknowledgement | Existing snapshot, protection reconciliation, runtime-property proof, ownership and process-release semantics retained; no synthetic passed receipt |
+| Original Release continuation | Official CFE, both original ondemand backend families and unchanged workload/assertions/runtime proof/cleanup; unit fixtures and instrumented callback are not release qualification |
+
+The accepted native diagnostic evidence is limited to platform `8.3.27.2130`,
+file infobase and thin client. Preserve the closed instrumented-hook receipt and
+its later summary-render exit 1; do not qualify official CFE, ordinary/server or
+other platforms from it. The raw-byte-postcondition failed read-only probe is
+also not acceptance. Missing broader live evidence creates no new support
+barrier; existing context-specific native/apply/runtime owners remain in force.
+Implementation/owner regressions and the original Release are pending under
+13.6; publication and EV8a/EV9 remain separate actual acceptance.
+
 ### Essential UI behavioural acceptance
 
 After a separately authorized important UI change reaches an owned dev/test base,

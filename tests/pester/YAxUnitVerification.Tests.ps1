@@ -248,3 +248,331 @@
         @($result.selfRegistered.issues) -join "`n" | Should -Match 'exports ИсполняемыеСценарии'
     }
 }
+
+Describe "Pinned YAxUnit vendor diagnostic assessment" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        . (Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.runtime-values.ps1')
+        . (Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1')
+        $tokens = $null; $parseErrors = $null
+        $coreAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1'), [ref]$tokens, [ref]$parseErrors)
+        foreach ($name in @('Read-DesignerBatchStrictUtf8Text', 'Get-DesignerBatchCheckVerdict')) {
+            $function = $coreAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $false)
+            . ([scriptblock]::Create($function.Extent.Text))
+        }
+        $pin = (Get-Content -LiteralPath (Join-Path $context.RepoRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.yaxunit
+        $applicabilityLines = @(
+            'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+            'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+            'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+            'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+        )
+        $configurationLines = @(
+            'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"'
+            'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"'
+        )
+        function New-YAxUnitDiagnosticFixture {
+            param([string]$Step = 'applicability', [bool]$Bom = $true, [string]$Newline = "`r`n")
+            $root = Join-Path $TestDrive ('Сырые диагностики ' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $root | Out-Null
+            $lines = $(if ($Step -eq 'configuration') { $configurationLines } else { $applicabilityLines })
+            $code = $(if ($Step -eq 'configuration') { 101 } else { 0 })
+            $logPath = Join-Path $root 'native Out.log'; $resultPath = Join-Path $root 'native DumpResult.result'
+            [IO.File]::WriteAllText($logPath, ($lines -join $Newline) + $Newline, [Text.UTF8Encoding]::new($Bom))
+            [IO.File]::WriteAllText($resultPath, [string]$code, [Text.UTF8Encoding]::new($Bom))
+            [pscustomobject]@{
+                baseline = (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $pin -ExtensionName 'YAXUNIT')
+                step = $Step; sourceFingerprint = ('sha256:' + $pin.sha256); extensionName = 'YAXUNIT'
+                verdict = (Get-DesignerBatchCheckVerdict -ExitCode $code -LogPath $logPath -ResultPath $resultPath)
+            }
+        }
+        function Invoke-YAxUnitDiagnosticFixtureAssessment {
+            param([object]$Fixture)
+            Get-YAxUnitArtifactDiagnosticAssessment -Baseline $Fixture.baseline -Step $Fixture.step -Verdict $Fixture.verdict -SourceFingerprint $Fixture.sourceFingerprint -ExtensionName $Fixture.extensionName
+        }
+    }
+
+    It "binds all seven canonical pin fields while preserving unrelated owner metadata" {
+        $entry = $pin | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+        $entry | Add-Member -NotePropertyName updatedAt -NotePropertyValue 'owner metadata'
+        $baseline = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName 'YAXUNIT'
+        $baseline.id | Should -BeExactly 'yaxunit-25.12-vendor-diagnostics'
+        $baseline.version | Should -Be 1
+        @($baseline.pin.PSObject.Properties).Count | Should -Be 7
+        foreach ($field in $baseline.pin.PSObject.Properties.Name) { $baseline.pin.$field | Should -BeExactly $pin.$field }
+        Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName 'tests' | Should -BeNullOrEmpty
+    }
+
+    It "rejects changed or missing pin field <Field>" -TestCases @(
+        @{ Field = 'version' }, @{ Field = 'releaseTag' }, @{ Field = 'assetName' }, @{ Field = 'url' }
+        @{ Field = 'sha256' }, @{ Field = 'upstreamCommit' }, @{ Field = 'source' }
+    ) {
+        param($Field)
+        $entry = $pin | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+        $entry.$Field = 'changed'
+        Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName 'YAXUNIT' | Should -BeNullOrEmpty
+        $entry.PSObject.Properties.Remove($Field)
+        Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName 'YAXUNIT' | Should -BeNullOrEmpty
+    }
+
+    It "admits only the complete official <Step> raw multiset without claiming clean native checks" -TestCases @(
+        @{ Step = 'applicability'; Hash = '3e0d9bff581de21dbb6cbb14112c037dcffbab9e5ef5f2493185e35ad0b5b6a0'; Count = 4; Code = 0 }
+        @{ Step = 'configuration'; Hash = '8d4cf5ed0431de8fa6637e44a2409936d888ee993e81a3af6b18543fc1cc3b87'; Count = 2; Code = 101 }
+    ) {
+        param($Step, $Hash, $Count, $Code)
+        $fixture = New-YAxUnitDiagnosticFixture -Step $Step
+        $fixture.verdict.passed | Should -BeFalse
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.status | Should -BeExactly 'vendor-warn'
+        $assessment.applyAllowed | Should -BeTrue
+        $assessment.cleanPassed | Should -BeFalse
+        $assessment.nativePassed | Should -BeFalse
+        $assessment.exitCode | Should -Be $Code
+        $assessment.resultCode | Should -Be $Code
+        $assessment.raw.logSha256 | Should -BeExactly $Hash
+        $assessment.raw.resultSha256 | Should -BeExactly (Get-FileHash -LiteralPath $fixture.verdict.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        @($assessment.raw.lines).Count | Should -Be $Count
+        $assessment.rejectionReason | Should -BeNullOrEmpty
+    }
+
+    It "normalizes only one optional BOM and line separators, retaining ordinal text and counts" {
+        $fixture = New-YAxUnitDiagnosticFixture -Bom $false -Newline "`n"
+        $text = $applicabilityLines[3], $applicabilityLines[1], $applicabilityLines[2], $applicabilityLines[0] -join "`n"
+        [IO.File]::WriteAllText($fixture.verdict.logPath, $text, [Text.UTF8Encoding]::new($false))
+        (Invoke-YAxUnitDiagnosticFixtureAssessment $fixture).applyAllowed | Should -BeTrue
+    }
+
+    It "preserves canonical numeric baseline identity across a JSON broker roundtrip" {
+        $fixture = New-YAxUnitDiagnosticFixture
+        $fixture.baseline.version = [long]1
+        (Invoke-YAxUnitDiagnosticFixtureAssessment $fixture).applyAllowed | Should -BeTrue
+        $fixture.baseline = $fixture.baseline | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.status | Should -BeExactly 'vendor-warn'
+        $assessment.applyAllowed | Should -BeTrue
+        $assessment.cleanPassed | Should -BeFalse
+    }
+
+    It "refuses <Mutation> rather than trusting filtered diagnostics or caller allowances" -TestCases @(
+        @{ Mutation = 'neutral extra' }, @{ Mutation = 'unknown diagnostic' }, @{ Mutation = 'changed annotation' }
+        @{ Mutation = 'case changed' }, @{ Mutation = 'missing repetition' }, @{ Mutation = 'extra repetition' }
+        @{ Mutation = 'interior blank' }, @{ Mutation = 'extra terminal newline' }, @{ Mutation = 'second BOM' }
+        @{ Mutation = 'invalid UTF8' }, @{ Mutation = 'invalid result' }, @{ Mutation = 'result whitespace' }
+        @{ Mutation = 'result code drift' }, @{ Mutation = 'exit code drift' }, @{ Mutation = 'false clean verdict' }
+        @{ Mutation = 'source drift' }, @{ Mutation = 'pin drift' }, @{ Mutation = 'id drift' }
+        @{ Mutation = 'version drift' }, @{ Mutation = 'string version' }, @{ Mutation = 'boolean version' }
+        @{ Mutation = 'extension drift' }, @{ Mutation = 'other extension' }
+        @{ Mutation = 'modules step' }, @{ Mutation = 'cross-step raw' }, @{ Mutation = 'single handler space' }
+    ) {
+        param($Mutation)
+        $fixture = New-YAxUnitDiagnosticFixture
+        $raw = [IO.File]::ReadAllText($fixture.verdict.logPath, [Text.Encoding]::UTF8)
+        switch ($Mutation) {
+            'neutral extra' { $raw += "Everything completed`r`n" }
+            'unknown diagnostic' { $raw += "YAXUNIT: Не найден метод ДругойМетод`r`n" }
+            'changed annotation' { $raw = $raw.Replace('ЮТErrorDisplayProcessing', 'ЮТДругойМетод') }
+            'case changed' { $raw = $raw.Replace('YAXUNIT:', 'yaxunit:') }
+            'missing repetition' { $raw = ($applicabilityLines[0..2] -join "`r`n") + "`r`n" }
+            'extra repetition' { $raw += $applicabilityLines[0] + "`r`n" }
+            'interior blank' { $raw = $raw.Replace(".`r`n", ".`r`n`r`n") }
+            'extra terminal newline' { $raw += "`r`n" }
+            'second BOM' { $raw = [string][char]0xFEFF + $raw }
+            'invalid UTF8' { [IO.File]::WriteAllBytes($fixture.verdict.logPath, [byte[]]@(0xC3, 0x28)) }
+            'invalid result' { [IO.File]::WriteAllText($fixture.verdict.resultPath, 'not a code', [Text.UTF8Encoding]::new($true)) }
+            'result whitespace' { [IO.File]::WriteAllText($fixture.verdict.resultPath, ' 0', [Text.UTF8Encoding]::new($true)) }
+            'result code drift' { $fixture.verdict.resultCode = 101 }
+            'exit code drift' { $fixture.verdict.exitCode = 1 }
+            'false clean verdict' { $fixture.verdict.passed = $true }
+            'source drift' { $fixture.sourceFingerprint = 'sha256:changed' }
+            'pin drift' { $fixture.baseline.pin.sha256 = 'changed' }
+            'id drift' { $fixture.baseline.id = 'changed' }
+            'version drift' { $fixture.baseline.version = 2 }
+            'string version' { $fixture.baseline.version = '1' }
+            'boolean version' { $fixture.baseline.version = $true }
+            'extension drift' { $fixture.baseline.extensionName = 'tests' }
+            'other extension' { $fixture.extensionName = 'tests' }
+            'modules step' { $fixture.step = 'modules' }
+            'cross-step raw' { $fixture.step = 'configuration'; $fixture.verdict.exitCode = 101; $fixture.verdict.resultCode = 101; [IO.File]::WriteAllText($fixture.verdict.resultPath, '101') }
+            'single handler space' { $fixture = New-YAxUnitDiagnosticFixture -Step configuration; $raw = ([IO.File]::ReadAllText($fixture.verdict.logPath, [Text.Encoding]::UTF8)).Replace('обработчик:  ', 'обработчик: ') }
+        }
+        if ($Mutation -ne 'invalid UTF8') { [IO.File]::WriteAllText($fixture.verdict.logPath, $raw, [Text.UTF8Encoding]::new($true)) }
+        $fixture.baseline | Add-Member -NotePropertyName allowedLines -NotePropertyValue @($raw)
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.status | Should -BeExactly 'rejected'
+        $assessment.applyAllowed | Should -BeFalse
+        $assessment.cleanPassed | Should -BeFalse
+        $assessment.rejectionReason | Should -Not -BeNullOrEmpty
+        if ($Mutation -eq 'invalid UTF8') {
+            $assessment.raw.logSha256 | Should -BeExactly (Get-FileHash -LiteralPath $fixture.verdict.logPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        if ($Mutation -eq 'invalid result') {
+            $assessment.raw.resultSha256 | Should -BeExactly (Get-FileHash -LiteralPath $fixture.verdict.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            @($assessment.raw.lines).Count | Should -Be 4
+        }
+    }
+
+    It "leaves genuinely clean native results on their existing strict route" {
+        $fixture = New-YAxUnitDiagnosticFixture
+        [IO.File]::WriteAllText($fixture.verdict.logPath, '', [Text.UTF8Encoding]::new($false))
+        $fixture.verdict = Get-DesignerBatchCheckVerdict -ExitCode 0 -LogPath $fixture.verdict.logPath -ResultPath $fixture.verdict.resultPath
+        $fixture.verdict.passed | Should -BeTrue
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.applyAllowed | Should -BeFalse
+        $assessment.cleanPassed | Should -BeFalse
+        $assessment.nativePassed | Should -BeTrue
+    }
+}
+
+Describe "Pinned YAxUnit diagnostic caller binding" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $callerContext = Initialize-WorkflowPesterContext
+        . $callerContext.HelperPath -ProjectRoot $callerContext.RepoRoot -Action help *> $null
+    }
+    BeforeEach {
+        $savedProjectRoot = $script:ProjectRoot
+        $savedModeVariable = Get-Variable -Name DependencyMode -Scope Script -ErrorAction SilentlyContinue
+        $savedModeExists = $null -ne $savedModeVariable
+        $savedDependencyMode = $(if ($savedModeExists) { $savedModeVariable.Value } else { $null })
+        $savedLockVariable = Get-Variable -Name DependencyLockPath -Scope Script -ErrorAction SilentlyContinue
+        $savedLockExists = $null -ne $savedLockVariable
+        $savedDependencyLockPath = $(if ($savedLockExists) { $savedLockVariable.Value } else { $null })
+        $callerRoot = Join-Path $TestDrive ('Проект YAxUnit ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $callerRoot '.agent-1c'), (Join-Path $callerRoot 'tests\yaxunit') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $callerContext.RepoRoot 'templates\dependency-lock.json') -Destination (Join-Path $callerRoot '.agent-1c\dependency-lock.json')
+        [IO.File]::WriteAllText((Join-Path $callerRoot 'tests\yaxunit\Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>ПМ5Тесты</Name></Properties></Configuration></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+        & git -C $callerRoot init --quiet
+        & git -C $callerRoot symbolic-ref HEAD refs/heads/itldev/yaxunit-diagnostic
+        if ($LASTEXITCODE -ne 0) { throw 'Could not create the owned development branch fixture.' }
+        $script:ProjectRoot = $callerRoot
+        $script:DependencyMode = 'fresh'
+        $script:DependencyLockPath = Join-Path $callerRoot '.agent-1c\dependency-lock.json'
+        Get-DependencyLockPath | Should -BeExactly (Join-Path $callerRoot '.agent-1c\dependency-lock.json')
+        $script:callerPin = Get-YAxUnitPinnedEntry
+        $script:callerState = [pscustomobject]@{
+            devBranchName = 'yaxunit-diagnostic'; devBranch = 'itldev/yaxunit-diagnostic'; devBranchKind = 'configuration'
+            worktreePath = $callerRoot; infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $callerRoot 'База 1С')
+            toolingInfoBaseGeneration = 'generation'
+            yaxunitInstallationProof = [pscustomobject]@{
+                schemaVersion = 1; generation = 'generation'; infoBaseKey = 'base-key'
+                engineName = 'YAXUNIT'; testsName = 'ПМ5Тесты'; engineSha256 = $script:callerPin.sha256
+                engineRuntimeHash = 'engine-hash'; testsRuntimeHash = 'tests-hash'; testsFingerprint = 'tests-source'
+            }
+        }
+        $script:callerRuntime = @(
+            [pscustomobject]@{ name = 'YAXUNIT'; present = $true; active = $true; safeMode = $false; unsafeActionProtection = $false; contentHash = 'engine-hash' }
+            [pscustomobject]@{ name = 'ПМ5Тесты'; present = $true; active = $true; safeMode = $false; unsafeActionProtection = $false; contentHash = 'tests-hash' }
+        )
+        $script:engineCalls = [Collections.Generic.List[object]]::new()
+        $script:testCalls = [Collections.Generic.List[object]]::new()
+        $script:failEngineApply = $false
+        $script:callerGate6Evidence = $null
+        Mock Set-RunStage {}
+        Mock Read-DevBranchState { $script:callerState }
+        Mock Ensure-DevBranchToolingGeneration { param($State) $State }
+        Mock Get-YAxUnitTestsPath { 'tests/yaxunit' }
+        Mock Get-YAxUnitTestsExtensionName { 'ПМ5Тесты' }
+        Mock Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = 'tests-source' } }
+        Mock Get-OneCInfoBaseIdentity { [pscustomobject]@{ key = 'base-key' } }
+        Mock Get-ToolingRuntimeExtensions { $script:callerRuntime }
+        Mock Install-VanessaAutomation {}
+        Mock Install-ItlOnDemandMcp {}
+        Mock Install-YAxUnit { Join-Path $script:ProjectRoot 'tools\YAxUnit-25.12.cfe' }
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+        Mock Invoke-GuardedCfeExtensionApply {
+            param($InfoBasePath, $InfoBaseKind, $CfePath, $ExtensionName, $ArtifactDiagnosticBaseline)
+            $script:engineCalls.Add([pscustomobject]@{ infoBasePath = $InfoBasePath; infoBaseKind = $InfoBaseKind; cfePath = $CfePath; extensionName = $ExtensionName; baseline = $ArtifactDiagnosticBaseline })
+            if ($script:failEngineApply) { throw 'native engine apply failed' }
+            $script:callerGate6Evidence = [pscustomobject]@{
+                schemaVersion = 2; artifactDiagnosticBaseline = $ArtifactDiagnosticBaseline
+                steps = @([pscustomobject]@{ name = 'configuration'; nativePassed = $false; assessment = [pscustomobject]@{ status = 'vendor-warn'; applyAllowed = $true; cleanPassed = $false; evidencePath = 'unit-boundary-assessment.json'; evidenceSha256 = 'unit-boundary-sha' } })
+            }
+            [pscustomobject]@{ gate6Evidence = $script:callerGate6Evidence }
+        }
+        Mock Invoke-ConfigLoadDesignerAttempt {
+            param($DesignerArgs, $ExtensionName, $ArtifactDiagnosticBaseline)
+            $script:testCalls.Add([pscustomobject]@{ args = $DesignerArgs; extensionName = $ExtensionName; baseline = $ArtifactDiagnosticBaseline })
+        }
+        Mock Set-VanessaMcpExtensionUnsafeMode { [pscustomobject]@{ safeMode = $false; unsafeActionProtection = $false; artifactSha256 = $script:callerPin.sha256 } }
+        Mock Get-EnvValue { param($Default) $Default }
+        Mock Update-DevBranchState {
+            param($State, $Updates)
+            foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+        }
+    }
+    AfterEach {
+        $script:ProjectRoot = $savedProjectRoot
+        if ($savedModeExists) { $script:DependencyMode = $savedDependencyMode }
+        else { Remove-Variable -Name DependencyMode -Scope Script -ErrorAction SilentlyContinue }
+        if ($savedLockExists) { $script:DependencyLockPath = $savedDependencyLockPath }
+        else { Remove-Variable -Name DependencyLockPath -Scope Script -ErrorAction SilentlyContinue }
+    }
+
+    It "uses a canonical baseline only for the engine and preserves legacy reuse for <Scenario>" -TestCases @(
+        @{ Scenario = 'engine reload'; EngineCalls = 1; TestCalls = 0; Stops = 1 }
+        @{ Scenario = 'tests reload'; EngineCalls = 0; TestCalls = 1; Stops = 1 }
+        @{ Scenario = 'schema1 reuse'; EngineCalls = 0; TestCalls = 0; Stops = 0 }
+    ) {
+        param($Scenario, $EngineCalls, $TestCalls, $Stops)
+        if ($Scenario -eq 'engine reload') { $script:callerState.yaxunitInstallationProof.engineSha256 = 'prior-engine' }
+        if ($Scenario -eq 'tests reload') { $script:callerState.yaxunitInstallationProof.testsFingerprint = 'prior-tests' }
+        Ensure-YAxUnitExtensions -State $script:callerState | Out-Null
+        $script:engineCalls.Count | Should -Be $EngineCalls
+        $script:testCalls.Count | Should -Be $TestCalls
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times $Stops -Exactly
+        if ($EngineCalls -gt 0) {
+            $call = $script:engineCalls[0]
+            $canonical = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $script:callerPin -ExtensionName 'YAXUNIT'
+            $call.baseline.id | Should -BeExactly $canonical.id
+            $call.baseline.version | Should -Be $canonical.version
+            foreach ($field in $canonical.pin.PSObject.Properties.Name) { $call.baseline.pin.$field | Should -BeExactly $canonical.pin.$field }
+            $call.infoBasePath | Should -BeExactly $script:callerState.devBranchInfoBasePath
+            $call.infoBaseKind | Should -BeExactly 'file'
+            $call.extensionName | Should -BeExactly 'YAXUNIT'
+            $call.cfePath | Should -BeExactly (Join-Path $callerRoot 'tools\YAxUnit-25.12.cfe')
+        }
+        if ($TestCalls -gt 0) {
+            $script:testCalls[0].baseline | Should -BeNullOrEmpty
+            $script:testCalls[0].args[0] | Should -BeExactly '/LoadConfigFromFiles'
+            $script:testCalls[0].extensionName | Should -BeExactly 'ПМ5Тесты'
+        }
+        $script:callerState.yaxunitInstallationProof.schemaVersion | Should -Be 1
+        $script:callerState.yaxunitInstallationProof.PSObject.Properties.Name | Should -Not -Contain 'artifactDiagnosticBaseline'
+    }
+
+    It "binds actual Release preparation to the engine pin and retains failure before protection proof when apply fails=<Fails>" -TestCases @(
+        @{ Fails = $false }, @{ Fails = $true }
+    ) {
+        param($Fails)
+        $script:failEngineApply = $Fails
+        $proofPath = Join-Path $callerRoot 'build\test-results\release-e2e\yaxunit-runtime-properties.json'
+        if ($Fails) { { Prepare-ReleaseE2EOnDemandDependencies } | Should -Throw '*native engine apply failed*' }
+        else { Prepare-ReleaseE2EOnDemandDependencies }
+        $script:engineCalls.Count | Should -Be 1
+        $call = $script:engineCalls[0]
+        $canonical = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry (Get-YAxUnitPinnedEntry) -ExtensionName 'YAXUNIT'
+        $call.baseline.id | Should -BeExactly $canonical.id
+        $call.baseline.version | Should -Be $canonical.version
+        foreach ($field in $canonical.pin.PSObject.Properties.Name) { $call.baseline.pin.$field | Should -BeExactly $canonical.pin.$field }
+        $call.infoBasePath | Should -BeExactly $script:callerState.devBranchInfoBasePath
+        $call.infoBaseKind | Should -BeExactly 'file'
+        $call.cfePath | Should -BeExactly (Join-Path $callerRoot 'tools\YAxUnit-25.12.cfe')
+        $call.extensionName | Should -BeExactly 'YAXUNIT'
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times ([int](-not $Fails)) -Exactly -ParameterFilter { $ReconcileYAxUnitProtections }
+        if ($Fails) { Test-Path -LiteralPath $proofPath | Should -BeFalse }
+        else {
+            $proof = Get-Content -LiteralPath $proofPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $proof.status | Should -BeExactly 'passed'
+            $proof.safeMode | Should -BeFalse
+            $proof.unsafeActionProtection | Should -BeFalse
+            $proof.artifactSha256 | Should -BeExactly $canonical.pin.sha256
+            $proof.PSObject.Properties.Name | Should -Not -Contain 'cleanPassed'
+            $proof.PSObject.Properties.Name | Should -Not -Contain 'nativePassed'
+            $script:callerGate6Evidence.schemaVersion | Should -Be 2
+            $script:callerGate6Evidence.steps[0].nativePassed | Should -BeFalse
+            $script:callerGate6Evidence.steps[0].assessment.status | Should -BeExactly 'vendor-warn'
+            $script:callerGate6Evidence.steps[0].assessment.cleanPassed | Should -BeFalse
+        }
+    }
+}

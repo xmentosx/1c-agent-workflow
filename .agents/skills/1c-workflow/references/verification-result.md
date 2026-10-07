@@ -109,7 +109,7 @@ extension-init or Release operation already owns a pending snapshot for this
 exact target, the checked load uses it without changing its completion policy.
 For an extension source load, the ITL owner loads the editable configuration,
 then runs Designer `/CheckModules`, extension applicability and `/CheckConfig`
-before `/UpdateDBCfg`. Each check needs a zero process exit, a fresh numeric
+before `/UpdateDBCfg`. Under the generic policy each check needs a zero process exit, a fresh numeric
 `/DumpResult=0`, and a UTF-8 `/Out` log without remaining warnings or errors.
 For main configuration loads, changed BSL/XML or an unknown/full-load delta
 selects `/CheckModules` and `/CheckConfig` before apply; a known binary-only
@@ -132,7 +132,7 @@ The proof is recorded under
 modes, snapshot identity and check artifact hashes.
 Every completed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
 beside its result and log files, including tooling installs that do not update
-the source-load state. Compilation and extension applicability remain strict.
+the source-load state. Compilation and extension applicability remain strict under the generic policy; the narrowly scoped internal engine exception below is separate from main-CF legacy assessment.
 Managed main-CF structural findings may continue only when the load owner
 proves complete unchanged before/after findings outside the change and its
 impact scope, with matching source, target, snapshot and native check inputs.
@@ -148,6 +148,46 @@ The owner also compares the source fingerprint or CFE SHA after editable load;
 a changed input stops before any check or database apply.
 The same owner checks CFE installs for YAxUnit, Vanessa UI MCP and Data MCP;
 their prior tooling readiness and recovery routes remain the continuation.
+
+### Immutable YAxUnit engine diagnostics
+
+The managed USER-RULES override applies only to helper-owned installation of
+the official immutable `YAXUNIT` engine. The existing YAxUnit dependency owner
+internally selects one canonical version/tag/asset/URL/upstream/SHA baseline
+for `YAxUnit-25.12.cfe`, SHA256
+`805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+Another pin cannot inherit it merely by matching the lock. Agents cannot supply
+allowed messages, a public skip or an environment override. Product CF/CFE,
+the tests extension and other dependencies retain all generic strict checks.
+
+Modules must strictly pass with native exit/DumpResult `0/0`. Applicability may
+continue as WARN only with native `0/0` and its four exact canonical annotation
+lines (two texts, twice each); configuration may continue only with `101/101`
+and its two exact canonical helper-form handler lines (once each).
+The owner reads complete strict UTF-8 Out and matches separate bounded ordinal
+multisets, preserving message spaces. Only encoding BOM, line separators and an
+ordinary terminal newline may normalize for comparison. Filtered diagnostics,
+substring matching, line counts or success fragments are insufficient.
+Extra/unknown/altered/missing lines, repetition overflow, invalid output/result,
+nonzero compilation/applicability or another nonzero code pair retain the
+original strict failure. Ordinary clean `0/0` behavior remains unchanged.
+
+The checked-load owner rechecks exact artifact SHA before editable load, after
+load and immediately before first apply. It retains raw bytes/hashes/codes,
+canonical baseline identity, actual target/platform/modes and explicit WARN;
+the vendor steps retain `nativePassed=false` and the assessment
+`cleanPassed=false`. Snapshot, guard, timeout, split load/apply, rollback,
+`-WarningsAsErrors`, runtime protection reconciliation and exact installed
+extension runtime proof remain mandatory. A mismatch stops apply and uses the
+same original-operation recovery; do not patch an installed artifact or receipt.
+
+Observed live evidence covers only platform `8.3.27.2130`, file infobase and
+thin client. Instrumented callback evidence and failed whole diagnostic drivers
+are not official-CFE or Release acceptance. Ordinary/server/other-platform
+qualification is not inferred, and missing evidence alone introduces no new
+support barrier. The original Release still qualifies the official CFE and
+both original ondemand backend families under their existing native/apply/runtime
+owners; no vendor, pin, public command or coordinator changes follow from WARN.
 
 When Gates 1–3 validators are unavailable, this same already-authorized
 load/check/apply route supplies platform syntax/context and structural evidence

@@ -325,6 +325,134 @@ function Get-YAxUnitPinnedEntry {
     return $entry
 }
 
+function Get-YAxUnitArtifactDiagnosticBaseline {
+    param([object]$PinnedEntry, [string]$ExtensionName)
+
+    if ($ExtensionName -cne 'YAXUNIT') { return $null }
+    $pin = [pscustomobject][ordered]@{
+        version = '25.12'
+        releaseTag = '25.12'
+        assetName = 'YAxUnit-25.12.cfe'
+        url = 'https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe'
+        sha256 = '805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70'
+        upstreamCommit = '15f7ae557d17b59bd80daad503efd8a3114690e5'
+        source = 'upstream release asset'
+    }
+    foreach ($field in $pin.PSObject.Properties.Name) {
+        $value = Get-StateValue -State $PinnedEntry -Name $field -Default $null
+        if ($value -isnot [string] -or $value -cne $pin.$field) { return $null }
+    }
+    return [pscustomobject][ordered]@{
+        id = 'yaxunit-25.12-vendor-diagnostics'
+        version = 1
+        extensionName = 'YAXUNIT'
+        pin = $pin
+    }
+}
+
+function Read-YAxUnitArtifactDiagnosticRaw {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $sha256 = [BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    $original = ([Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    if ($original.Length -gt 0 -and $original[0] -eq [char]0xFEFF) { $original = $original.Substring(1) }
+    if ($original.IndexOf([char]0xFEFF) -ge 0) { throw 'raw output contains an additional BOM' }
+    $text = Read-DesignerBatchStrictUtf8Text -Path $Path
+    $afterSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sha256 -cne $afterSha256 -or $original -cne $text) { throw 'raw output changed while reading' }
+    return [pscustomobject]@{ text = $text; sha256 = $sha256 }
+}
+
+function Get-YAxUnitArtifactDiagnosticMultiset {
+    param([string[]]$Lines)
+    $counts = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
+    foreach ($line in $Lines) {
+        if ($counts.ContainsKey($line)) { $counts[$line]++ } else { $counts.Add($line, 1) }
+    }
+    return @($counts.GetEnumerator() | ForEach-Object { [pscustomobject]@{ text = $_.Key; count = $_.Value } })
+}
+
+function Get-YAxUnitArtifactDiagnosticAssessment {
+    param([object]$Baseline, [string]$Step, [object]$Verdict, [string]$SourceFingerprint, [string]$ExtensionName)
+
+    $assessment = [pscustomobject][ordered]@{
+        status = 'rejected'; applyAllowed = $false; cleanPassed = $false
+        baseline = $null; step = $Step; sourceFingerprint = $SourceFingerprint; extensionName = $ExtensionName
+        nativePassed = (Get-StateValue -State $Verdict -Name 'passed' -Default $null)
+        exitCode = (Get-StateValue -State $Verdict -Name 'exitCode' -Default $null)
+        resultCode = (Get-StateValue -State $Verdict -Name 'resultCode' -Default $null)
+        raw = [pscustomobject]@{
+            logPath = [string](Get-StateValue -State $Verdict -Name 'logPath' -Default '')
+            logSha256 = ''; resultPath = [string](Get-StateValue -State $Verdict -Name 'resultPath' -Default '')
+            resultSha256 = ''; lines = @(); multiset = @()
+        }
+        expected = $null; rejectionReason = ''
+    }
+    try {
+        $canonical = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry (Get-StateValue -State $Baseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
+        if ($null -eq $canonical) { throw 'unsupported artifact pin or extension name' }
+        $assessment.baseline = $canonical
+        $baselineVersion = Get-StateValue -State $Baseline -Name 'version' -Default $null
+        if ([string](Get-StateValue -State $Baseline -Name 'id' -Default '') -cne $canonical.id -or
+            ($baselineVersion -isnot [int] -and $baselineVersion -isnot [long]) -or
+            $baselineVersion -ne $canonical.version -or
+            [string](Get-StateValue -State $Baseline -Name 'extensionName' -Default '') -cne $canonical.extensionName) {
+            throw 'baseline identity was changed'
+        }
+        if ($SourceFingerprint -cne ('sha256:' + $canonical.pin.sha256)) { throw 'artifact source fingerprint does not match the pin' }
+        $expectedExitCode = 0
+        if ($Step -ceq 'applicability') {
+            $expectedLines = @(
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+            )
+        } elseif ($Step -ceq 'configuration') {
+            $expectedExitCode = 101
+            $expectedLines = @(
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"'
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"'
+            )
+        } else { throw 'check step has no vendor diagnostic baseline' }
+        $assessment.expected = [pscustomobject]@{
+            exitCode = $expectedExitCode; resultCode = $expectedExitCode
+            multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
+        if ($assessment.nativePassed -isnot [bool] -or $assessment.nativePassed) { throw 'vendor diagnostics cannot be a clean native verdict' }
+        foreach ($field in @('exitCode', 'resultCode')) {
+            $code = $assessment.$field
+            if (($code -isnot [int] -and $code -isnot [long]) -or $code -ne $expectedExitCode) { throw "unexpected $field" }
+        }
+        $assessment.raw.logSha256 = (Get-FileHash -LiteralPath $assessment.raw.logPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $log = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.logPath
+        $assessment.raw.logSha256 = $log.sha256
+        $rawLog = [regex]::Replace($log.text, '\r\n|\r', "`n")
+        if ($rawLog.EndsWith("`n")) { $rawLog = $rawLog.Substring(0, $rawLog.Length - 1) }
+        $assessment.raw.lines = @($rawLog -split "`n")
+        $assessment.raw.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $assessment.raw.lines)
+        $assessment.raw.resultSha256 = (Get-FileHash -LiteralPath $assessment.raw.resultPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $result = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.resultPath
+        $assessment.raw.resultSha256 = $result.sha256
+        $rawResult = [regex]::Replace($result.text, '\r\n|\r', "`n")
+        if ($rawResult.EndsWith("`n")) { $rawResult = $rawResult.Substring(0, $rawResult.Length - 1) }
+        if ($rawResult -cne [string]$expectedExitCode) { throw 'raw /DumpResult differs from the required code' }
+        if ($assessment.raw.lines.Count -ne $expectedLines.Count -or $assessment.raw.multiset.Count -ne $assessment.expected.multiset.Count) {
+            throw 'raw /Out diagnostic multiplicities differ from the baseline'
+        }
+        foreach ($expected in $assessment.expected.multiset) {
+            $matches = @($assessment.raw.multiset | Where-Object { $_.text -ceq $expected.text -and $_.count -eq $expected.count })
+            if ($matches.Count -ne 1) { throw 'raw /Out contains changed or unknown diagnostics' }
+        }
+        $assessment.status = 'vendor-warn'
+        $assessment.applyAllowed = $true
+    } catch { $assessment.rejectionReason = $_.Exception.Message }
+    return $assessment
+}
+
 function Get-YAxUnitCfePath {
     $entry = Get-YAxUnitPinnedEntry
     return (Join-Path (Get-YAxUnitInstallRoot) ([string]$entry.assetName))
@@ -432,7 +560,8 @@ function Ensure-YAxUnitExtensions {
     $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
     if (-not $engineMatches) {
         Invoke-GuardedCfeExtensionApply -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
-            -CfePath $cfePath -ExtensionName $extensionName | Out-Null
+            -CfePath $cfePath -ExtensionName $extensionName `
+            -ArtifactDiagnosticBaseline (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName $extensionName) | Out-Null
         Install-ItlOnDemandMcp | Out-Null
         [void](Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
             -ExtensionName $extensionName -Artifact ([pscustomobject]@{ sha256 = [string]$entry.sha256 }) `

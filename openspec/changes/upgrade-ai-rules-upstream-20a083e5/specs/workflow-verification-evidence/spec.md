@@ -198,14 +198,74 @@ findings SHALL remain unresolved and stop the dependent apply until adjudicated.
 Confirmed unchanged outside-scope findings MAY permit the original operation
 to continue with an explicit legacy-diagnostics assessment. That assessment
 SHALL NOT relabel native nonzero results or warnings as a clean Gate 6 pass.
-Compilation, extension applicability, exact-target/source identity, snapshot,
-guard, timeout, rollback and fresh executable verification remain strict.
+Compilation, exact-target/source identity, snapshot, guard, timeout, rollback
+and fresh executable verification remain strict. Extension applicability remains
+strict apart from the explicitly artifact-bound YAxUnit vendor Out diagnostics
+below; its native exit/DumpResult `0/0` remain mandatory.
 The owner SHALL use operation-local evidence and the existing recovery flow;
 no global whitelist, baseline coordinator or blanket warning suppression is added.
 After a confirmed exact owned snapshot rollback and cursor restoration, the
 existing load owner SHALL retain the previous loaded-corpus proof for retry;
 it SHALL NOT mark the failed candidate passed or infer restored proof from an
 unconfirmed, borrowed or ambiguous apply result.
+
+The decision accepted on 2026-10-07 adds one subordinate exception to EV8/EV8b:
+the existing YAxUnit dependency owner MAY internally select its canonical
+artifact-diagnostic baseline only for engine `YAXUNIT`, version/releaseTag `25.12`,
+asset `YAxUnit-25.12.cfe`, upstream commit
+`15f7ae557d17b59bd80daad503efd8a3114690e5`, the official release URL
+`https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe`
+and SHA256 `805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+This canonical record SHALL NOT be supplied by a public skip/override, inferred
+from any new lock pin, or applied to product CF/CFE, the tests extension or other
+dependencies. Compilation SHALL still strictly pass with native exit/DumpResult
+`0/0`. Applicability SHALL require native `0/0`; configuration admission SHALL
+require the exact native `101/101` pair and complete per-step raw multiset below.
+
+| Step | Exact raw diagnostic line | Required count |
+|---|---|---|
+| Applicability | `YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".` | 2 |
+| Applicability | `YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".` | 2 |
+| Configuration | `YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"` | 1 |
+| Configuration | `YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"` | 1 |
+
+The owner SHALL compare the entire strict UTF-8 Out ordinally, preserving all
+message characters and spaces. Only the encoding BOM, line separators and an
+ordinary terminal newline MAY be normalized for comparison; original raw bytes
+and SHA SHALL be retained. The two step multisets SHALL NOT be pooled. Unknown,
+additional, altered or missing lines, repetition overflow, unreadable/invalid
+output or result, nonzero compilation/applicability, or any other nonzero
+exit/DumpResult pair SHALL retain the original refusal and snapshot recovery.
+An ordinary clean `0/0` result remains on the existing strict clean path.
+
+The checked-load owner SHALL bind the CFE to the canonical pin and recheck its
+SHA before editable load, after load and immediately before first apply.
+A matching exception SHALL retain explicit WARN, complete raw codes/hashes,
+baseline identity and actual context, with `nativePassed=false` and
+`cleanPassed=false`; it SHALL NOT rewrite the generic native verdict.
+Snapshot, per-infobase guard, timeout, split load/apply, rollback,
+`-WarningsAsErrors`, runtime protection reconciliation and exact runtime proof
+SHALL remain unchanged. No new persistent coordinator, public switch,
+platform/topology support barrier, vendor modification or pin change is added.
+
+Observed live evidence covers only platform `8.3.27.2130`, a file infobase and
+thin-client dispatch. Instrumented callback evidence SHALL NOT qualify the
+official CFE or original Release; a failed whole diagnostic driver, including
+its raw database-byte postcondition, SHALL NOT be relabelled as acceptance.
+Ordinary-client/server/other-platform acceptance remains unverified, without
+creating a new barrier solely from that absence. The original Release SHALL
+still exercise the official CFE and both original ondemand backend families
+with unchanged workload, assertions, runtime proof and cleanup.
+
+#### Scenario: Exact pinned YAxUnit vendor diagnostics
+- **WHEN** the internal dependency owner selects the exact canonical engine pin, strict modules pass, and applicability/configuration match their complete raw multisets and native code pairs
+- **THEN** the original guarded apply can continue with explicit WARN and all snapshot/runtime obligations retained
+- **AND** the original native failed verdict remains visible; no clean Gate 6 or Release acceptance is inferred
+
+#### Scenario: Artifact or diagnostics differ from the accepted YAxUnit baseline
+- **WHEN** pin/name/scope/CFE bytes drift, any required SHA recheck fails, or diagnostics/results differ from the exact per-step baseline
+- **THEN** the same operation refuses apply and preserves its existing snapshot-backed continuation
+- **AND** generic intercepted-method, product CF/CFE, tests-extension and other dependency failures remain strict
 
 #### Scenario: Existing configuration has unchanged structural findings
 - **WHEN** a full deployment reproduces confirmed previous outside-scope findings and introduces no unresolved finding

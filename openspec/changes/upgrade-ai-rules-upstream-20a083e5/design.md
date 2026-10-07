@@ -272,7 +272,7 @@ cursor, чтобы повтор исходной команды не терял 
 неизменившиеся замечания вне scope допускают продолжение с явным legacy
 assessment; новые, усилившиеся, внутри scope и неизвестные не разрешаются
 автоматически. Такой результат не называется clean Gate 6. Компиляция и
-применимость расширений остаются блокирующими. Автоматический blanket WARN для
+применимость расширений остаются блокирующими по общей политике; принятое ниже artifact-bound исключение YAxUnit имеет отдельную границу. Автоматический blanket WARN для
 любого CheckConfig=101 отвергнут; массовый ремонт старой PM5 выходит за scope.
 
 Current corpus acceptance: подтвердить фактические runtime расширения и
@@ -296,6 +296,63 @@ Repository-disconnected status сохраняется отдельно как а
 отсутствие legacy admission. Одноразовый ремонт owned стенда использует реальный
 before export/snapshot и явно разобранные зависимости; фиктивный passed State
 для исходной базы запрещён.
+
+#### Принятое исключение immutable YAxUnit 25.12 (2026-10-07)
+
+Пользователь принял узкое уточнение строгой applicability границы D13:
+существующий YAxUnit dependency owner внутренне выбирает artifact-bound
+diagnostic baseline только для engine `YAXUNIT`, official `YAxUnit-25.12.cfe`,
+version/releaseTag `25.12`, upstream commit
+`15f7ae557d17b59bd80daad503efd8a3114690e5`, URL
+`https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe`
+и SHA256 `805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+Другой pin не наследует исключение, даже если совпадает с текущим lock.
+Generic CF/CFE, tests extension и другие dependencies сохраняют строгую политику;
+MCP partial coverage не заменяет extension ladder.
+
+CheckModules обязан строго пройти с native exit/DumpResult `0/0`.
+Applicability может продолжиться только при native `0/0` и полном точном
+мультимножестве четырёх vendor строк (два текста по два раза); CheckConfig —
+только при `101/101` и двух точных строках отсутствующих form handlers по одному
+разу. Нормативные тексты и кратности заданы в EV8b. Сравнение полного strict UTF-8
+`Out` ordinal, отдельно для каждого шага; разрешены только encoding BOM, EOL
+различия и обычный конечный перевод строки. Фильтр generic diagnostics,
+substring/regex, общее количество строк или success-фраза не заменяют это proof.
+Любая лишняя/изменённая/неизвестная строка, неверная кратность, отсутствующий либо
+нечитаемый result/output, иная пара кодов, compiler failure либо nonzero
+applicability оставляют исходный отказ. Обычный clean `0/0` путь не меняется.
+
+Существующий load/check/apply owner проверяет exact CFE SHA перед editable load,
+после load и непосредственно перед первым apply. WARN сохраняет полный raw,
+native exit/DumpResult и SHA, baseline identity и фактический context; matching
+vendor steps остаются `nativePassed=false`, итог `cleanPassed=false`.
+Snapshot, split load/apply, guard, timeout, rollback, `-WarningsAsErrors`,
+runtime protection reconciliation и exact extension runtime proof сохраняются.
+Нет публичного skip/override, нового состояния, coordinator, platform barrier,
+изменения vendor artifact, pin либо PM5 source.
+
+Causal diagnostics и runtime-hook receipt показывают только platform
+`8.3.27.2130`, file ИБ и thin client. Инструментированный callback подтверждает
+диспетчеризацию в этом context, но не acceptance official CFE: его driver exit 1
+после закрытого receipt сохранён. Отдельный read-only probe с нарушенным raw 1CD
+byte postcondition также не Release proof. Ordinary/server/другие платформы
+не квалифицированы; отсутствие такого proof само по себе не создаёт нового
+support barrier. Фактические contexts продолжают проверяться прежними owners.
+
+Causal raw сохранён в R6 run
+`yax-event-diagnosis-ed4bad65674541e1b52f7fe7e1cbb4b0`:
+`native-apply-088657e3a1124cdab3f69dd85714a656/diagnosis.json` SHA256
+`7338cc59c6a413dbbae3c1ecac94eac0b3d1d9b43873013519c79314c1425811`;
+applicability Out SHA256 `3e0d9bff581de21dbb6cbb14112c037dcffbab9e5ef5f2493185e35ad0b5b6a0`,
+configuration Out SHA256 `8d4cf5ed0431de8fa6637e44a2409936d888ee993e81a3af6b18543fc1cc3b87`.
+Instrumented callback receipt
+`runtime-hook-3f18a71c8e56409b8d91d29e5783158b/diagnosis.json` SHA256
+`5249a596ca5d10c707e2bceb8c916f3cc25f3f3760f70771be1fc37f893aba5a`
+имеет отдельную диагностическую, не Release, границу.
+
+Реализация, owner regressions и продолжение первоначальной Release `ondemand-mcp`
+с official CFE на обоих исходных backend families остаются открытыми (13.6);
+публикация, EV8a/EV9 и 13.5 этим решением не закрыты.
 
 ### D5. Один repair session для двух входов
 

@@ -1,6 +1,113 @@
 ﻿BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $helperPath = Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    function Invoke-PinnedYAxDesignerFixture {
+        param([string]$Root,[string]$Problem='',[string]$Drift='',[string]$Scope='')
+        New-Item -ItemType Directory -Force -Path $Root | Out-Null
+        $cfe = Join-Path $Root 'YAxUnit служебный.cfe'
+        [IO.File]::WriteAllBytes($cfe,[byte[]](4,5,6))
+        & {
+            . $helperPath -ProjectRoot $Root -Action help *> $null
+            $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
+            $script:fixtureCfe = $cfe
+            $script:fixtureCfeSha = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $cfe -Algorithm SHA256).Hash
+            $script:fixturePin = (Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.yaxunit
+            $script:fixtureCalls = [Collections.Generic.List[object]]::new()
+            # Only the unchanged tiny dependency fixture stands in for the pinned
+            # binary. Changed bytes and all evidence/snapshots use real SHA-256.
+            function Get-FileHash {
+                param([string]$LiteralPath,[string]$Algorithm='SHA256')
+                $hash = Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+                if ($LiteralPath -ceq $script:fixtureCfe -and $hash.Hash -ceq $script:fixtureCfeSha) {
+                    return [pscustomobject]@{ Hash=$script:fixturePin.sha256; Path=$hash.Path; Algorithm=$hash.Algorithm }
+                }
+                return $hash
+            }
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $operation = $DesignerArgs[0]
+                $script:fixtureCalls.Add([pscustomobject]@{
+                    operation=$operation; arguments=@($DesignerArgs); contract=$NativeEffectContract; duty=$RestorationDuty
+                    snapshotShaAtRestore=$(if($operation -eq '/RestoreIB'){(Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $DesignerArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant()}else{''})
+                })
+                if ($operation -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
+                if (($Drift -eq 'snapshot' -and $operation -eq '/DumpIB') -or
+                    ($Drift -eq 'load' -and $operation -eq '/LoadCfg') -or
+                    ($Drift -eq 'check' -and $operation -eq '/CheckConfig')) {
+                    [IO.File]::WriteAllBytes($script:fixtureCfe,[byte[]](6,5,4))
+                }
+                $lines = @('Ошибок: 0; предупреждений: 0')
+                $resultCode = 0
+                $exitCode = 0
+                if ($Problem -ne 'clean') {
+                    if ($operation -eq '/CheckModules' -and $Problem -eq 'modules') {
+                        $lines = @('Синтаксическая ошибка в модуле YAXUNIT')
+                        $resultCode = 101
+                    } elseif ($operation -eq '/CheckCanApplyConfigurationExtensions') {
+                        $lines = @(
+                            'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                            'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+                            'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                            'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+                        )
+                        if ($Problem -eq 'app-extra') { $lines += 'Дополнительное сообщение платформы' }
+                        if ($Problem -eq 'app-code') { $resultCode = 101 }
+                    } elseif ($operation -eq '/CheckConfig') {
+                        $lines = @(
+                            'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"'
+                            'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"'
+                        )
+                        $resultCode = 101
+                        $exitCode = 101
+                        if ($Problem -eq 'config-extra') { $lines += 'Дополнительное сообщение платформы' }
+                        if ($Problem -eq 'config-code') { $exitCode = 102 }
+                    }
+                }
+                $script:LastLogPath = Join-Path $Root ("vendor-$($script:fixtureCalls.Count).log")
+                [IO.File]::WriteAllText($script:LastLogPath,($lines -join [Environment]::NewLine)+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+                $resultIndex = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if ($resultIndex -ge 0) {
+                    [IO.File]::WriteAllText($DesignerArgs[$resultIndex+1],[string]$resultCode,[Text.UTF8Encoding]::new($false))
+                }
+                if ($exitCode -ne 0) {
+                    $error = [Exception]::new("Designer exit code $exitCode")
+                    $error.Data['ItlDesignerBatchResult'] = [pscustomobject]@{
+                        operation=$operation; ownedProcessesReleased=$true; infoBaseKind=$InfoBaseKind
+                        infoBasePath=$InfoBasePath; exitCode=$exitCode
+                    }
+                    throw $error
+                }
+            }
+            $baseline = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $script:fixturePin -ExtensionName YAXUNIT
+            $parameters = @{
+                InfoBasePath='C:\База служебная 1С'; InfoBaseKind='file'; User=''; Password=''
+                DesignerArgs=@('/LoadCfg',$cfe,'-Extension','YAXUNIT','/UpdateDBCfg')
+                ExtensionName='YAXUNIT'; SourceFingerprint=('sha256:'+$script:fixturePin.sha256)
+                ArtifactDiagnosticBaseline=$baseline
+            }
+            switch ($Scope) {
+                'baseline' { $baseline.version = 2 }
+                'version-string' { $baseline.version = '1' }
+                'version-bool' { $baseline.version = $true }
+                'extension' { $parameters.ExtensionName='OTHER'; $parameters.DesignerArgs[3]='OTHER' }
+                'cf' { $parameters.ExtensionName=''; $parameters.DesignerArgs=@('/LoadCfg',$cfe,'/UpdateDBCfg') }
+                'from-files' { $parameters.DesignerArgs[0]='/LoadConfigFromFiles' }
+                'static' { $parameters.StaticCoverageContext=[pscustomobject]@{fixture=$true} }
+            }
+            $evidence = $null
+            $failure = ''
+            try { $evidence = Invoke-ConfigLoadDesignerAttempt @parameters }
+            catch { $failure = $_.Exception.Message }
+            $duties = @($script:OneCNativeOperationJournal.restorations | ForEach-Object { $_.payload })
+            $script:OneCNativeOperationJournal = $null
+            [pscustomobject]@{
+                failure=$failure; evidence=$evidence; calls=@($script:fixtureCalls.ToArray()); duties=$duties
+                assessments=@(Get-ChildItem -LiteralPath $Root -Filter '1c-gate6-artifact-assessment-*.json' -Recurse |
+                    ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
+            }
+        }
+    }
 }
 
 Describe 'Designer Gate 6 batch verdict' {
@@ -596,6 +703,106 @@ Describe 'Designer Gate 6 batch verdict' {
         @($result.invalidEncoding.reasons) -join ' ' | Should -Match '/Out cannot be decoded'
     }
 
+    It 'applies only the exact pinned vendor diagnostics while retaining non-clean native evidence' {
+        $root = Join-Path $TestDrive ('Официальный vendor WARN ' + [guid]::NewGuid().ToString('N'))
+        $actual = Invoke-PinnedYAxDesignerFixture -Root $root
+        $actual.failure | Should -BeNullOrEmpty
+        $actual.calls.operation | Should -Be @('/DumpIB','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
+        $actual.calls[-1].arguments | Should -Be @('/UpdateDBCfg','-Dynamic-','-WarningsAsErrors','-Extension','YAXUNIT')
+        $actual.calls[-1].contract.kind | Should -Be 'update-db-cfg'
+        $actual.duties | Should -HaveCount 1
+        $actual.duties[0].status | Should -Be 'committed'
+        $actual.evidence.schemaVersion | Should -Be 2
+        $actual.evidence.steps[0].nativePassed | Should -BeTrue
+        $actual.evidence.steps[1].nativePassed | Should -BeFalse
+        $actual.evidence.steps[2].nativePassed | Should -BeFalse
+        $actual.evidence.steps[1].exitCode | Should -Be 0
+        $actual.evidence.steps[1].dumpResult | Should -Be 0
+        $actual.evidence.steps[2].exitCode | Should -Be 101
+        $actual.evidence.steps[2].dumpResult | Should -Be 101
+        $actual.assessments | Should -HaveCount 2
+        foreach ($step in $actual.evidence.steps[1..2]) {
+            $step.assessment.status | Should -Be 'vendor-warn'
+            $step.assessment.applyAllowed | Should -BeTrue
+            $step.assessment.cleanPassed | Should -BeFalse
+            $step.assessment.evidenceSha256 | Should -Be ((Get-FileHash -LiteralPath $step.assessment.evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())
+        }
+        foreach ($assessment in $actual.assessments) {
+            $assessment.nativePassed | Should -BeFalse
+            $assessment.cleanPassed | Should -BeFalse
+            $assessment.raw.logSha256 | Should -Match '^[a-f0-9]{64}$'
+            $assessment.raw.resultSha256 | Should -Match '^[a-f0-9]{64}$'
+            $assessment.context.infoBasePath | Should -BeExactly 'C:\База служебная 1С'
+            $assessment.context.infoBaseKind | Should -Be 'file'
+            $assessment.sourceFingerprint | Should -BeExactly ('sha256:'+$actual.evidence.artifactDiagnosticBaseline.pin.sha256)
+        }
+        $actual.assessments[0].raw.lines.Count | Should -Be 4
+        $actual.assessments[1].raw.lines.Count | Should -Be 2
+        $receipt = Get-Content -LiteralPath $actual.evidence.evidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.steps[1].nativePassed | Should -BeFalse
+        $receipt.steps[2].assessment.cleanPassed | Should -BeFalse
+    }
+
+    It 'restores the original snapshot without applying when vendor checks fail (<Problem>)' -TestCases @(
+        @{Problem='modules'; Step='modules'; Count=4}
+        @{Problem='app-extra'; Step='applicability'; Count=5}
+        @{Problem='app-code'; Step='applicability'; Count=5}
+        @{Problem='config-extra'; Step='configuration'; Count=6}
+        @{Problem='config-code'; Step='configuration'; Count=6}
+    ) {
+        param($Problem,$Step,$Count)
+        $actual = Invoke-PinnedYAxDesignerFixture -Root (Join-Path $TestDrive ('Отказ vendor ' + [guid]::NewGuid().ToString('N'))) -Problem $Problem
+        $actual.failure | Should -Match ("GATE6_CHECK_FAILED: step="+$Step)
+        $actual.calls | Should -HaveCount $Count
+        $actual.calls.operation | Should -Not -Contain '/UpdateDBCfg'
+        $actual.calls[-1].operation | Should -Be '/RestoreIB'
+        $actual.calls[-1].arguments[1] | Should -BeExactly $actual.calls[0].arguments[1]
+        $actual.calls[-1].snapshotShaAtRestore | Should -BeExactly $actual.calls[-1].duty.payload.snapshotSha256
+        $actual.duties[0].status | Should -Be 'restored'
+        if ($Problem -ne 'modules') { $actual.assessments[-1].status | Should -Be 'rejected' }
+    }
+
+    It 'refuses changed CFE bytes at every vendor admission boundary (<Drift>)' -TestCases @(
+        @{Drift='snapshot'; Count=2}
+        @{Drift='load'; Count=3}
+        @{Drift='check'; Count=6}
+    ) {
+        param($Drift,$Count)
+        $actual = Invoke-PinnedYAxDesignerFixture -Root (Join-Path $TestDrive ('Изменение pinned CFE ' + [guid]::NewGuid().ToString('N'))) -Drift $Drift
+        $actual.failure | Should -Match 'GATE6_SOURCE_CHANGED'
+        $actual.calls | Should -HaveCount $Count
+        $actual.calls.operation | Should -Not -Contain '/UpdateDBCfg'
+        $actual.calls[-1].operation | Should -Be '/RestoreIB'
+        $actual.duties[0].status | Should -Be 'restored'
+    }
+
+    It 'rejects vendor context outside its immutable dependency load before any native operation (<Scope>)' -TestCases @(
+        @{Scope='baseline'}
+        @{Scope='version-string'}
+        @{Scope='version-bool'}
+        @{Scope='extension'}
+        @{Scope='cf'}
+        @{Scope='from-files'}
+        @{Scope='static'}
+    ) {
+        param($Scope)
+        $actual = Invoke-PinnedYAxDesignerFixture -Root (Join-Path $TestDrive ('Неверная область vendor ' + [guid]::NewGuid().ToString('N'))) -Scope $Scope
+        $actual.failure | Should -Match 'GATE6_ARTIFACT_BASELINE_CONTEXT_INVALID'
+        $actual.calls | Should -HaveCount 0
+        $actual.duties | Should -HaveCount 0
+    }
+
+    It 'keeps the ordinary clean native path for the same pinned artifact' {
+        $actual = Invoke-PinnedYAxDesignerFixture -Root (Join-Path $TestDrive ('Чистый pinned CFE ' + [guid]::NewGuid().ToString('N'))) -Problem clean
+        $actual.failure | Should -BeNullOrEmpty
+        $actual.calls.operation | Should -Be @('/DumpIB','/LoadCfg','/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig','/UpdateDBCfg')
+        $actual.assessments | Should -HaveCount 0
+        foreach ($step in $actual.evidence.steps) {
+            $step.nativePassed | Should -BeTrue
+            $step.assessment | Should -BeNullOrEmpty
+        }
+        $actual.duties[0].status | Should -Be 'committed'
+    }
     It 'checks a loaded extension before the first database apply and stops on a missing intercepted method' {
         $root = Join-Path $TestDrive ('Расширение 1С ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null
