@@ -30,6 +30,13 @@ text is excluded from the fingerprint, while JSON schema properties remain.
 Diagnostic sessions are terminated. No response bodies or credentials enter
 the persisted status.
 
+The shared probe keeps a five-second protocol/catalog budget and a separate
+30-second safe-tool budget. A slow healthy tool does not fail its transport
+deadline. Functional timeouts remain unverified, never authorize a restart, and
+retain stage, method, budget and elapsed time without payloads or credentials.
+The Linux owner reports these proofs as degraded; the existing timer retries
+under the same maintenance lock after the functional cause is restored.
+
 A twice-confirmed foreign endpoint authorizes at most one restart per run of
 that exact owned container, only when its internal health proof passed and no
 indexing is active. The public identity and safe call must pass afterward.

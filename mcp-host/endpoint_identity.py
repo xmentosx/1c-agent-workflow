@@ -11,11 +11,29 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 
 SAFE_TOOLS = {'syntaxcheck', 'vector_store_state', 'list_templates', 'fetch_its',
               'index_status', 'health', 'sppr_index_status', 'stats', 'get_indexing_status'}
+HEALTH_TIMEOUT_SECONDS = 30
+
+
+class ProbeError(RuntimeError):
+    def __init__(self, error, method, timeout, elapsed):
+        super().__init__(type(error).__name__)
+        self.reason, self.method = type(error).__name__, method
+        self.timeout, self.elapsed = timeout, elapsed
+
+
+def failure(error, stage, started):
+    result = {'status': 'unverified', 'reason': getattr(error, 'reason', type(error).__name__),
+              'stage': stage, 'elapsedSeconds': round(time.monotonic() - started, 3)}
+    if isinstance(error, ProbeError):
+        result.update(method=error.method, timeoutSeconds=error.timeout,
+                      requestElapsedSeconds=round(error.elapsed, 3))
+    return result
 
 
 class Redirect(urllib.request.HTTPRedirectHandler):
@@ -50,7 +68,15 @@ class Client:
             result['Mcp-Session-Id'] = self.session
         return result
 
-    def request(self, method, params=None, notification=False):
+    def request(self, method, params=None, notification=False, timeout=None):
+        started = time.monotonic()
+        budget = self.timeout if timeout is None else timeout
+        try:
+            return self._request(method, params, notification, budget)
+        except Exception as error:
+            raise ProbeError(error, method, budget, time.monotonic() - started) from None
+
+    def _request(self, method, params, notification, timeout):
         self.sequence += 1
         body = {'jsonrpc': '2.0', 'method': method}
         if not notification:
@@ -59,7 +85,7 @@ class Client:
             body['params'] = params
         request = urllib.request.Request(self.url, json.dumps(body, ensure_ascii=False).encode('utf-8'),
                                          self.headers())
-        with self.opener.open(request, timeout=self.timeout) as response:
+        with self.opener.open(request, timeout=timeout) as response:
             self.url = response.url
             self.session = response.headers.get('Mcp-Session-Id', self.session)
             text = response.read().decode('utf-8')
@@ -123,7 +149,8 @@ def indexing(value):
     return any(indexing(item) for item in value.values() if isinstance(item, dict))
 
 
-def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expected_signature=None):
+def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expected_signature=None,
+                  health_timeout=HEALTH_TIMEOUT_SECONDS):
     client = Client(url, timeout)
     try:
         name = client.initialized.get('serverInfo', {}).get('name', '')
@@ -140,8 +167,14 @@ def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expecte
         if health_tool:
             if health_tool not in SAFE_TOOLS or health_tool not in names:
                 raise RuntimeError('Required safe health tool is missing')
-            busy = indexing(payload(client.request('tools/call', {
-                'name': health_tool, 'arguments': health_arguments or {}})))
+            health_started = time.monotonic()
+            try:
+                busy = indexing(payload(client.request('tools/call', {
+                    'name': health_tool, 'arguments': health_arguments or {}}, timeout=health_timeout)))
+            except ProbeError:
+                raise
+            except Exception as error:
+                raise ProbeError(error, 'tools/call', health_timeout, time.monotonic() - health_started) from None
         return {'signature': digest, 'server_name': name, 'tool_count': len(names),
                 'indexing': busy, 'health_passed': bool(health_tool)}
     finally:
@@ -156,7 +189,9 @@ def command(arguments, timeout=30):
     return result.stdout
 
 
-def check_endpoint(container, url, host_port, health_tool='', health_arguments=None, timeout=5, run=command):
+def check_endpoint(container, url, host_port, health_tool='', health_arguments=None, timeout=5, run=command,
+                   health_timeout=HEALTH_TIMEOUT_SECONDS):
+    started = time.monotonic()
     stage = 'container binding'
     try:
         address = urllib.parse.urlsplit(url)
@@ -175,13 +210,16 @@ def check_endpoint(container, url, host_port, health_tool='', health_arguments=N
         encoded = base64.b64encode(Path(__file__).read_bytes()).decode('ascii')
         code = "import base64;exec(compile(base64.b64decode('" + encoded + "'),'<itl-endpoint-probe>','exec'))"
         arguments = ['--local', '--url', internal_url, '--timeout', str(timeout),
-                     '--health-tool', health_tool, '--health-arguments', json.dumps(health_arguments or {})]
+                     '--health-timeout', str(health_timeout), '--health-tool', health_tool,
+                     '--health-arguments-base64', base64.b64encode(json.dumps(
+                         health_arguments or {}, ensure_ascii=False).encode('utf-8')).decode('ascii')]
         # The script works without files or third-party libraries inside the container.
         stage = 'internal MCP'
         internal = json.loads(run(['docker', 'exec', identity, 'python', '-X', 'utf8', '-c', code] + arguments,
-                                  timeout=timeout * 5 + 5))
+                                  timeout=timeout * 4 + health_timeout + 5))
         if internal.get('status') != 'matched':
-            return {'status': 'unverified', 'reason': 'internal endpoint is not qualified'}
+            return dict(internal, status='unverified', stage='internal ' + internal.get('stage', 'MCP'),
+                        elapsedSeconds=round(time.monotonic() - started, 3))
         expected = internal['proof']
         public = []
         for number in range(2):
@@ -192,11 +230,12 @@ def check_endpoint(container, url, host_port, health_tool='', health_arguments=N
                   'observed_servers': [proof['server_name'] for proof in public]}
         if all(matches):
             stage = 'public safe health'
-            health = read_endpoint(url, timeout, health_tool, health_arguments, expected['signature'])
+            health = read_endpoint(url, timeout, health_tool, health_arguments, expected['signature'],
+                                   health_timeout=health_timeout)
             if health['signature'] != expected['signature']:
                 return dict(result, status='unverified', reason='identity changed before safe call')
             return dict(result, status='matched', indexing=expected['indexing'] or health['indexing'],
-                        health_passed=health['health_passed'])
+                        health_passed=health['health_passed'], elapsedSeconds=round(time.monotonic() - started, 3))
         if any(matches):
             return dict(result, status='unverified', reason='public identity is unstable')
         if expected['indexing']:
@@ -206,7 +245,7 @@ def check_endpoint(container, url, host_port, health_tool='', health_arguments=N
         return dict(result, status='mismatch', reason='foreign public identity confirmed twice')
     except Exception as error:
         # Never persist response bodies, environment, credentials or child command lines.
-        return {'status': 'unverified', 'reason': type(error).__name__, 'stage': stage}
+        return failure(error, stage, started)
 
 
 def main():
@@ -219,18 +258,20 @@ def main():
     parser.add_argument('--health-arguments', default='{}')
     parser.add_argument('--health-arguments-base64')
     parser.add_argument('--timeout', type=int, default=5)
+    parser.add_argument('--health-timeout', type=int, default=HEALTH_TIMEOUT_SECONDS)
     args = parser.parse_args()
+    started = time.monotonic()
     try:
         health_arguments = json.loads(base64.b64decode(args.health_arguments_base64).decode('utf-8')
                                       if args.health_arguments_base64 else args.health_arguments)
         if args.local:
             result = {'status': 'matched', 'proof': read_endpoint(args.url, args.timeout,
-                       args.health_tool, health_arguments)}
+                       args.health_tool, health_arguments, health_timeout=args.health_timeout)}
         else:
             result = check_endpoint(args.container, args.url, args.host_port, args.health_tool,
-                                    health_arguments, args.timeout)
+                                    health_arguments, args.timeout, health_timeout=args.health_timeout)
     except Exception as error:
-        result = {'status': 'unverified', 'reason': type(error).__name__}
+        result = failure(error, 'safe health' if getattr(error, 'method', '') == 'tools/call' else 'identity', started)
     print(json.dumps(result, ensure_ascii=False))
 
 

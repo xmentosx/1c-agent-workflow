@@ -2008,6 +2008,124 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "qualifies native CodeChecker once per watchdog attempt and reuses its safe call" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'watchdog проверка с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $server = @{ id = 'codechecker'; name = 'checker'; scope = 'global'; containerName = 'checker-native'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }
+            $script:HealthBudgetState = @{ servers = @($server) }
+            $script:HealthBudgetRuns = 0; $script:HealthBudgetArguments = @(); $script:HealthBudgetLimit = 0
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                param($FilePath, $Arguments, $TimeoutSec)
+                $script:HealthBudgetRuns++; $script:HealthBudgetArguments = $Arguments; $script:HealthBudgetLimit = $TimeoutSec
+                return @{ exitCode = 0; lines = @('{"status":"matched","container_id":"fixture-id","health_passed":true,"elapsedSeconds":11.3}') }
+            }
+            function Invoke-DockerCommandCapture { return 'fixture-id running' }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Read-HostState { return $script:HealthBudgetState }
+            function Write-HostState { param($Config, $State) $script:HealthBudgetState = $State }
+            function Get-HostServerFunctionalHealth { throw 'A qualified CodeChecker must not issue another fetch_its' }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish {
+                Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+                Update-HostStateForPublish -Config $config
+                Update-HostStateForPublish -Config $config
+            }
+            Invoke-McpHostWatchdogRunCore -Config $config *> $null
+            $script:HealthBudgetRuns | Should -Be 1
+            $script:HealthBudgetLimit | Should -Be 180
+            $script:HealthBudgetArguments | Should -Contain '--health-arguments-base64'
+            $script:HealthBudgetState.servers[0].status | Should -Be 'running'
+            $script:HealthBudgetState.servers[0].functionalStatus | Should -Be 'qualified'
+            $record = @(ConvertTo-RegistryServers -State $script:HealthBudgetState -HostId fixture -PublishedAt fixture)[0]
+            $record.health | Should -Be 'running'
+            $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)
+            $state.status | Should -Be 'succeeded'
+            @($state.endpointProofs).Count | Should -Be 1
+            $state.endpointProofs[0].proof.elapsedSeconds | Should -Be 11.3
+            Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+            $script:HealthBudgetRuns | Should -Be 2
+        }
+    }
+
+    It "invalidates cycle proof after an owned restart or a changed container identity" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-cache.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:DirectEndpointProofCache = @{}
+            $script:CachedProofRuns = 0; $script:CachedContainerId = 'first-id'
+            $server = @{ id = 'codechecker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003 }
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                $script:CachedProofRuns++
+                return @{ exitCode = 0; lines = @((@{ status = 'matched'; container_id = $script:CachedContainerId; health_passed = $true } | ConvertTo-Json -Compress)) }
+            }
+            function Invoke-DockerCommandCapture { return "$script:CachedContainerId running" }
+            try {
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                $script:CachedProofRuns | Should -Be 1
+                Get-HostDirectEndpointProof -Config @{} -Server $server -Refresh | Out-Null
+                $script:CachedProofRuns | Should -Be 2
+                $script:CachedContainerId = 'replacement-id'
+                (Get-HostDirectEndpointProof -Config @{} -Server $server).container_id | Should -Be 'replacement-id'
+                $script:CachedProofRuns | Should -Be 3
+            } finally { Remove-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "publishes a functional timeout with its cause and records watchdog failure" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-timeout.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $script:TimeoutProofState = @{ servers = @(@{ id = 'codechecker'; scope = 'global'; name = 'checker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }) }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified'; stage = 'public safe health'; method = 'tools/call'; reason = 'TimeoutError'; timeoutSeconds = 30 } }
+            function Read-HostState { return $script:TimeoutProofState }
+            function Write-HostState { param($Config, $State) $script:TimeoutProofState = $State }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { Update-HostStateForPublish -Config $config }
+            function Publish-Registry { }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*TimeoutError*'
+            $record = @(ConvertTo-RegistryServers -State $script:TimeoutProofState -HostId fixture -PublishedAt fixture)[0]
+            $record.status | Should -Be 'unknown'
+            $record.health | Should -Be 'degraded'
+            $record.functionalMessage | Should -Match 'stage=public safe health; method=tools/call; reason=TimeoutError; timeoutSeconds=30'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
+    It "does not report watchdog success while a tracked endpoint is <Status>" -Tag DirectHealthBudget -TestCases @(
+        @{ Status = 'unreachable' }, @{ Status = 'missing' }, @{ Status = 'unknown' }
+    ) {
+        param($Status)
+        $configPath = Join-Path $TestDrive ('watchdog-' + $Status + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { }
+            function Update-HostStateForPublish { }
+            function Publish-Registry { }
+            function Read-HostState { return @{ servers = @(@{ name = 'checker'; status = $Status; health = $Status; functionalMessage = 'fixture unavailable' }) } }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*checker*'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
     It "records watchdog success, failure, and disabled runs" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-state-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -4542,9 +4660,9 @@ services:
             $published.proxyUrl | Should -BeNullOrEmpty
             $published.toolsContractStatus | Should -Be 'native'
             function Get-HostDirectEndpointProof { return @{ status = 'unverified' } }
-            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
             function Get-HostDirectEndpointProof { throw 'invalid MCP' }
-            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
             function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
             (Get-HostServerPublishStatus -Server $server) | Should -Be 'running'
         }

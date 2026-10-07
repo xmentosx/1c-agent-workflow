@@ -79,6 +79,18 @@ class RecoveryBoundaries(unittest.TestCase):
             self.assertEqual(self.mutations(), [])
             self.assertNotEqual(result['status'], 'recovered')
 
+    def test_owner_uses_shared_health_budget_and_keeps_timeout_diagnostics(self):
+        self.endpoint()
+        def probe(*args, **kwargs):
+            self.assertEqual(kwargs['timeout'], 5)
+            self.assertEqual(kwargs['health_timeout'], host.HEALTH_TIMEOUT_SECONDS)
+            return {'status': 'unverified', 'reason': 'TimeoutError', 'stage': 'public safe health',
+                    'method': 'tools/call', 'timeoutSeconds': 30, 'elapsedSeconds': 30.1}
+        result = host.recover(self.config, self.run_command, probe)
+        self.assertEqual(result['status'], 'degraded')
+        self.assertEqual(result['endpoints'][0]['method'], 'tools/call')
+        self.assertEqual(self.mutations(), [])
+
     def test_second_mismatch_stops_after_one_restart(self):
         self.endpoint()
         with self.assertRaisesRegex(RuntimeError, 'after one restart'):

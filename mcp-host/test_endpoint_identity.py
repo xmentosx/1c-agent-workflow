@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import tempfile
 import unittest
 
@@ -15,6 +16,7 @@ class MCPFixture:
     def __init__(self, name, tool):
         self.name, self.tool, self.busy, self.error = name, tool, False, False
         self.calls, self.closed = [], 0
+        self.health_delay = 0
         self.schema = {'type': 'object', 'properties': {'description': {'type': 'string'}}}
         fixture = self
 
@@ -53,6 +55,7 @@ class MCPFixture:
                         raise AssertionError('A foreign MCP received a safe call')
                     result = {'structuredContent': {'ok': not fixture.error,
                                                    'index_in_progress': fixture.busy}}
+                    time.sleep(fixture.health_delay)
                 else:
                     raise AssertionError(method)
                 body = ('event: message\ndata: ' + json.dumps({'jsonrpc': '2.0', 'id': request['id'],
@@ -62,7 +65,11 @@ class MCPFixture:
                 self.send_header('Mcp-Session-Id', 'fixture-session')
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except ConnectionError:
+                    # A deadline regression deliberately closes a slow reply.
+                    pass
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -127,6 +134,47 @@ class EndpointIdentity(unittest.TestCase):
     def test_internal_health_failure_never_authorizes_restart(self):
         self.internal.error = True
         self.assertEqual(self.check()['status'], 'unverified')
+
+    def test_slow_healthy_tool_uses_its_own_budget_through_the_real_child_transport(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        self.internal.health_delay = self.public.health_delay = 1.2
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                         'index_status', timeout=1, health_timeout=3, run=self.command_run)
+        self.assertEqual(result['status'], 'matched', result)
+        self.assertTrue(result['health_passed'])
+        self.assertEqual(sum(call['method'] == 'tools/call' for call in self.public.calls), 1)
+
+    def test_internal_health_timeout_retains_method_budget_and_duration_without_payload(self):
+        self.internal.health_delay = 1.2
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                         'index_status', timeout=1, health_timeout=1, run=self.command_run)
+        self.assertEqual(result['status'], 'unverified')
+        self.assertEqual(result['stage'], 'internal safe health')
+        self.assertEqual(result['method'], 'tools/call')
+        self.assertEqual(result['timeoutSeconds'], 1)
+        self.assertGreaterEqual(result['requestElapsedSeconds'], 1)
+        self.assertFalse(self.public.calls)
+        self.assertNotIn('structuredContent', json.dumps(result))
+
+    def test_public_health_timeout_keeps_identity_checks_and_never_becomes_a_restart_signal(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        self.public.health_delay = 1.2
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                         'index_status', timeout=1, health_timeout=1, run=self.command_run)
+        self.assertEqual(result['status'], 'unverified')
+        self.assertEqual(result['stage'], 'public safe health')
+        self.assertEqual(result['method'], 'tools/call')
+        self.assertEqual(result['timeoutSeconds'], 1)
+        self.assertEqual(sum(call['method'] == 'tools/list' for call in self.public.calls), 3)
+
+    def test_real_connection_refusal_is_unverified_with_initialize_diagnostics(self):
+        unused = ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
+        url = f'http://127.0.0.1:{unused.server_port}/mcp'
+        unused.server_close()
+        with self.assertRaises(identity.ProbeError) as caught:
+            identity.read_endpoint(url, timeout=1, health_timeout=3)
+        self.assertEqual(caught.exception.method, 'initialize')
+        self.assertEqual(caught.exception.timeout, 1)
 
     def test_same_server_name_with_wrong_schema_is_still_foreign(self):
         self.public.name, self.public.tool = self.internal.name, self.internal.tool

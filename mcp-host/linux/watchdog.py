@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from endpoint_identity import check_endpoint, SAFE_TOOLS
+from endpoint_identity import check_endpoint, SAFE_TOOLS, HEALTH_TIMEOUT_SECONDS
 
 LABEL = 'itland.mcp.host'
 
@@ -127,7 +127,8 @@ def recover(config, run=command, probe=check_endpoint):
             continue
         def qualify():
             return probe(name, endpoint['url'], endpoint['hostPort'], endpoint['healthTool'],
-                         endpoint.get('healthArguments'), timeout=5, run=run)
+                         endpoint.get('healthArguments'), timeout=5, run=run,
+                         health_timeout=HEALTH_TIMEOUT_SECONDS)
         proof = qualify()
         if proof['status'] == 'mismatch':
             if 'restarted:' + name in actions:
