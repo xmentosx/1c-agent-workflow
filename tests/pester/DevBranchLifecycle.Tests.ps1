@@ -1101,8 +1101,8 @@ exit 0
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\auto-update") -Destination $target -Recurse
 
-            $fakePlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8.cmd"
-            $fakeThinPlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8c.cmd"
+            $fakePlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8.exe"
+            $fakeThinPlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8c.exe"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fakePlatform) | Out-Null
             $writeProof = @'
 $paramsPath = $env:ITL_PROOF_PARAMS
@@ -1116,21 +1116,32 @@ try {
 } catch { exit 1 }
 '@
             $encodedProof = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($writeProof))
+            $fixtureTypeName = 'NativeAutoUpdateFixture' + [guid]::NewGuid().ToString('N')
             $fakeScript = @"
-@echo off
-:nextArg
-if "%~1"=="" exit /b 0
-set "ITL_ARG=%~1"
-if /I "%ITL_ARG:~0,2%"=="/C" (
-  set "ITL_PROOF_PARAMS=%ITL_ARG:~2%"
-  powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedProof
-  exit /b %ERRORLEVEL%
-)
-shift
-goto nextArg
+using System;
+using System.Diagnostics;
+using System.IO;
+public static class $fixtureTypeName {
+    public static int Main(string[] args) {
+        foreach (string arg in args) {
+            if (!arg.StartsWith("/C", StringComparison.OrdinalIgnoreCase)) { continue; }
+            var start = new ProcessStartInfo();
+            start.FileName = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot"), @"System32\WindowsPowerShell\v1.0\powershell.exe");
+            start.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedProof";
+            start.UseShellExecute = false;
+            start.CreateNoWindow = true;
+            start.EnvironmentVariables["ITL_PROOF_PARAMS"] = arg.Substring(2);
+            using (var proof = Process.Start(start)) {
+                proof.WaitForExit();
+                return proof.ExitCode;
+            }
+        }
+        return 0;
+    }
+}
 "@
-            [IO.File]::WriteAllText($fakePlatform, $fakeScript, [Text.Encoding]::ASCII)
-            [IO.File]::WriteAllText($fakeThinPlatform, $fakeScript, [Text.Encoding]::ASCII)
+            Add-Type -TypeDefinition $fakeScript -OutputAssembly $fakePlatform -OutputType ConsoleApplication -ErrorAction Stop
+            Copy-Item -LiteralPath $fakePlatform -Destination $fakeThinPlatform
             return $fakePlatform
         }
 

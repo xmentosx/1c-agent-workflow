@@ -474,3 +474,29 @@ wait/background/visible launch and late-release producer, and all nine Enterpris
 release cases. Unselected cases remain unselected; this result is not relabelled
 as an 84-case pass. Runtime and tests are frozen for one coherent commit and
 normal RegisterChange, which owns the current Targeted qualification.
+
+Normal registration of c78e6d76 retained 479 passed and five failed tests in
+804.842 seconds, with a clean source tree. One BootstrapUpdate failure came from
+the acceptance launcher unnecessarily exporting the real source-build CFE into
+a fixture that owns a different immutable CFE hash. Only that override is removed
+from the next registration process; the fixture lock, cache and hash assertions
+remain unchanged. Four original DevBranchLifecycle scenarios used the local
+Copy-AutoUpdateToolFixture's `1cv8c.cmd` wrapper, which cannot represent a native
+1C process name/birth. The strict production identity check correctly refused
+that launch. The fixture owner must supply a real native `1cv8.exe`/`1cv8c.exe`
+launcher while preserving its existing encoded proof payload, arguments,
+wrapper-to-PowerShell topology, results and all four original scenario assertions.
+No production process-name allowance is added for cmd. The closed failed snapshot
+is retained under `build/designer-pid-reuse/closed-register-c78e6d76`, manifest
+SHA256 `d90ef5dba4afece27fc7125c5929455c222a0a1068072aa3316a3133858dd9aa`.
+This failure does not install the new helper or qualify publication.
+
+The fixture-only repair passed all four original affected scenarios (4/0/0,
+109.050 seconds of Pester time). Its focused driver isolated both source-build
+and ordinary CFE process variables and their compatibility aliases; this is
+local fixture evidence, not the canonical full registration environment. The
+next normal RegisterChange clears only the unrelated source-build override and
+retains the usual ordinary CFE path and all other qualified assets. That run,
+including the complete current branch lifecycle file, remains authoritative.
+Production core SHA256 stays
+`763deeb6cacad30e7e862e353e6d3f99cb5f89b4f64a490cb2f42ab19aa26e4e`.
