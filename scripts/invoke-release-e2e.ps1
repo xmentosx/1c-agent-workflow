@@ -23,11 +23,8 @@ $AiRulesSource = [System.IO.Path]::GetFullPath($AiRulesSource)
 if (-not (Test-Path -LiteralPath $AiRulesSource -PathType Container)) {
     throw "Release ai_rules source is missing: $AiRulesSource"
 }
-$configPath = Join-Path $ProjectRoot ".agent-1c\release-e2e.json"
-if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-    throw "Dedicated E2E stand config is missing: $configPath. Start from templates/release-e2e.example.json."
-}
-$config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$releaseStand = Get-SourceE2EReleaseStand -ProjectRoot $ProjectRoot
+$config = $releaseStand.config
 
 function Get-E2EReleaseConfigValue {
     param([string]$Name)
@@ -48,11 +45,8 @@ function Get-E2ERecordValue {
     return $property.Value
 }
 
-$devBranchName = [string]$config.devBranchName
-$worktreePath = [System.IO.Path]::GetFullPath([string]$config.worktreePath)
-if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
-    throw "release-e2e.json must contain an existing worktreePath and devBranchName."
-}
+$devBranchName = $releaseStand.devBranchName
+$worktreePath = $releaseStand.worktreePath
 
 function Get-E2EDotEnvValue {
     param([string]$Name)

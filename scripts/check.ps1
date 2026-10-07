@@ -1124,7 +1124,12 @@ try {
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-            $releaseProgressPaths = @($outputRoot, (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"))
+            $releaseProgressPaths = @(
+                $outputRoot,
+                (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"),
+                (Get-SourceE2ENativeLogsPath -ProjectRoot $E2EProjectRoot),
+                (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $E2EProjectRoot).worktreePath)
+            )
             $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
             if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
             if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
