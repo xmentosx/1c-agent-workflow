@@ -384,3 +384,93 @@ and reload regression reproduced RED (OrderedDictionary instead of string) and
 passed GREEN through the unchanged canonical path validator. No path check or
 ownership requirement is relaxed; normal registration and live recovery remain
 required for this corrected source.
+
+Registration of 915156fc passed 190/0/0 with a clean tree. The approved R6
+continuation then restored the existing post-configuration DT, archived all 16
+exact residue files outside the restart-evicted root, and left tracked source
+clean. The original failed extension stage remains failed; the successful
+recovery is not extension acceptance or publication proof.
+
+The subsequent normal Develop attempt stopped at the unchanged 1200-second
+upgrade budget. Its current GetConfigGenerationID launcher had exited and
+written its generation ID, but legacy Designer discovery matched an interactive
+Designer created six hours earlier solely by the reused numeric parent PID.
+That process belonged to a different infobase. It survived the closed gate;
+no manual termination or UI action was taken. The failed candidate logs are
+retained in `build/yax-vendor-exception/closed-publish-915156fc-pid-reuse`,
+manifest SHA256 `aaeab85288d86319ae27374ed4ac5b4afb377c224d63f2aa57db9a5bbb448354`.
+The bounded process/infobase observation is separately retained as
+`build/designer-pid-reuse/safe-causal-observation.json`, SHA256
+`0f3d36506c80e8f70dde1c6fdb2be13ea7ac8c87b7e34e8c85f516a9d0aedd40`.
+The existing Designer runtime owner must bind discovery and cleanup to actual
+process identity; neither completion assertions nor operation budgets change.
+Normal registration and the original Develop upgrade path remain required.
+After the coherent fix is registered, the existing public installed-workflow
+update must install that exact helper on Main and its managed test branches
+before the next plan. Release readiness checks helper agreement before Develop
+can perform its own update. This update does not complete the interrupted
+refresh or stop the unrelated Designer; the normal publisher repeats the
+original refresh with the new helper. Since core is an input of every selected
+Release capability, the old configuration-cadence pass cannot be reused for
+this changed input.
+
+The initial native focused reproduction retained 1 pass and 4 failures. Its two
+labelled discovery cases both ran the async worker: dot-sourcing help reset the
+fixture's `mode` variable. The first whole directly owned file then retained
+56/4/0 with unchanged inputs. The two topology fixtures also lost DateTime
+precision in PS5 JSON injection; the corrected fixtures use a distinct case
+parameter and round-trip creation timestamps without changing IDs, paths or
+assertions. The old stall fixture needs actual captured identities. A native
+probe subsequently traced the late scope failure to reading an object collection
+through the scalar getter, which returned an empty result. The new seams read
+typed collections directly and the native producer passes its captured scopes
+explicitly through the callback; the shared scalar getter remains unchanged.
+Independent review additionally
+requires the late record confirmer, qualified async identity consumer and exact
+`/Out` fallback to follow the same ownership contract. These failures remain
+failed evidence; final owner qualification and original live acceptance are
+still required.
+
+The next whole owner run retained 56/9 with unchanged inputs: collection
+retrieval caused three scope failures, the new native fixture leaked its partial
+launch context into five existing cases, and the late record fixture lacked the
+existing start-attempt prerequisite. The fixtures now restore their prior
+process-local context and represent the original launch prerequisites, with
+assertions preserved. No failed result advances registration or publication.
+
+The subsequent three-file native run retained 76/6/0 in 125.306 seconds:
+Designer 64/1, native invocation ownership 8/0, and Enterprise release 4/5.
+The Enterprise fixtures used a non-1C executable name or omitted captured birth
+metadata; representing their original native launch prerequisites retained all
+original IDs, topology, operations and assertions. The next selected run retained
+9/1 in 37.210 seconds: all nine Enterprise cases passed, while the real Windows
+native producer still failed its late release confirmation. Neither run qualifies
+the complete final source.
+
+A separate actual Windows process observation proved that the held Process
+retained its birth time after exit but could no longer supply ProcessName after
+Refresh. The existing native launch record must capture executable name and birth
+at the original launch for wait, visible and background paths. Late confirmation
+uses that original identity and held process object, never a lookup by a possibly
+reused numeric PID. This is process-local metadata, not persisted recovery state
+or new authority. Final directly affected checks and normal registration remain
+required before updating the stand or retrying publication.
+
+The final three-file run before the empty-response correction retained 83/1/0
+in 130.770 seconds of Pester time (132.502 seconds in the native driver), with
+unchanged inputs. Real wait/background/visible launch
+capture and late confirmation passed, as did genuine no-Out descendants within
+the original captured parent lifetime after parent PID reuse. Independent review
+confirmed both lifetime preservation corrections. The remaining failure proved
+that the empty worker-response shortcut skipped the shared captured-birth
+prerequisite. Its consumer must apply that same prerequisite before accepting
+an empty result. The failed 84-case run remains failed evidence; only directly
+affected checks are repeated before normal registration qualifies the whole
+current owner inputs.
+
+After that owner-local consumer correction, the selected native checks passed
+11/0/0 in 45.650 seconds of Pester time: the unknown-identity refusal, actual
+wait/background/visible launch and late-release producer, and all nine Enterprise
+release cases. Unselected cases remain unselected; this result is not relabelled
+as an 84-case pass. Runtime and tests are frozen for one coherent commit and
+normal RegisterChange, which owns the current Targeted qualification.

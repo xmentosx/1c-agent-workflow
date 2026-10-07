@@ -6316,6 +6316,133 @@ function Test-DesignerInfoBaseReleased {
     }
 }
 
+function Get-DesignerProcessIdentity {
+    param([Parameter(Mandatory = $true)][object]$ProcessInfo)
+    $name = [string](Get-StateValue -State $ProcessInfo -Name 'Name' -Default '')
+    if (-not $name) { $name = [string](Get-StateValue -State $ProcessInfo -Name 'ProcessName' -Default '') }
+    if ($name -and -not $name.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $name += '.exe' }
+    $creation = Get-StateValue -State $ProcessInfo -Name 'CreationDate' -Default $null
+    if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'processStartTime' -Default $null }
+    if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'StartTime' -Default $null }
+    $start = [DateTimeOffset]::MinValue
+    if ($creation -is [datetime]) { $start = [DateTimeOffset]$creation.ToUniversalTime() }
+    elseif (-not [DateTimeOffset]::TryParse([string]$creation, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref]$start)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: process creation time is required.' }
+    if ($name -notin @('1cv8.exe', '1cv8c.exe')) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: native 1C process name is required.' }
+    # CIM serializes creation time to microseconds. Keep that same precision.
+    $ticks = $start.UtcDateTime.Ticks - ($start.UtcDateTime.Ticks % 10)
+    return [pscustomobject]@{ name=$name.ToLowerInvariant(); startTimeUtc=[datetime]::new($ticks,[DateTimeKind]::Utc).ToString('o') }
+}
+
+function Set-DesignerNativeLaunchIdentity {
+    param([AllowNull()][object]$Record, [object]$Process, [string]$FilePath)
+    if ($null -eq $Record -or [IO.Path]::GetFileName($FilePath) -notin @('1cv8.exe','1cv8c.exe')) { return }
+    try {
+        # The original launch owns this name and held process birth. ProcessName
+        # may no longer be available after the real launcher exits/Refresh runs.
+        $identity = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+            Name=[IO.Path]::GetFileName($FilePath); StartTime=$Process.StartTime })
+        $identity | Add-Member NoteProperty processId ([int]$Process.Id)
+        $Record | Add-Member NoteProperty processIdentity $identity -Force
+    } catch { }
+}
+
+function Set-DesignerInvocationLauncherIdentity {
+    param([object]$ProbeState, [object]$ProbeContext)
+    $scopes = @(if ($null -ne $ProbeContext -and $ProbeContext.PSObject.Properties['nativeOperationScopes']) { $ProbeContext.nativeOperationScopes })
+    if ($scopes.Count -gt 0) { $ProbeState.ownedProcessScopes = $scopes }
+    $id = [int](Get-StateValue -State $ProbeContext -Name 'processId' -Default 0)
+    $birth = [string](Get-StateValue -State $ProbeContext -Name 'processStartTimeUtc' -Default '')
+    $notBefore = [string](Get-StateValue -State $ProbeContext -Name 'invocationStartedAtUtc' -Default '')
+    if ($notBefore) { $ProbeState.invocationStartedAtUtc = $notBefore }
+    if ($id -gt 0) {
+        $ProbeState.trackedProcessIds.Add($id) | Out-Null
+        if ($birth -and -not $ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+            $ProbeState.trackedProcessIdentities[$id] = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+                Name=([string](Get-StateValue -State $ProbeContext -Name 'processName' -Default '1cv8.exe')); processStartTime=$birth })
+        }
+        $exitTime = [string](Get-StateValue -State $ProbeContext -Name 'processExitTimeUtc' -Default '')
+        if ($exitTime -and $ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+            $ProbeState.trackedProcessIdentities[$id] | Add-Member NoteProperty exitTimeUtc $exitTime -Force
+        }
+    }
+}
+
+function Get-DesignerOwnedProcessInventory {
+    param([object[]]$Inventory, [System.Collections.IDictionary]$Identities, [int[]]$TrackedProcessIds,
+        [string]$LogPath, [datetime]$InvocationStartedAtUtc, [object[]]$Scopes = @())
+    foreach ($id in $TrackedProcessIds) {
+        if (-not $Identities.Contains($id)) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher PID $id has no captured birth identity." }
+    }
+    $selected = @{}
+    $parentObservations = @{}
+    do {
+        $changed = $false
+        foreach ($candidate in $Inventory) {
+            $id = [int]$candidate.ProcessId
+            if ($selected.ContainsKey($id)) { continue }
+            $parentId = [int]$candidate.ParentProcessId
+            $output = if ($Scopes.Count -eq 0 -and $LogPath) { Get-OneCCommandLineSwitchPath -CommandLine ([string]$candidate.CommandLine) -SwitchNames @('Out') } else { '' }
+            $matchesLog = $output -and [IO.Path]::IsPathRooted($output) -and
+                [string]::Equals([IO.Path]::GetFullPath($output), $LogPath, [StringComparison]::OrdinalIgnoreCase)
+            $matchedScopes = @($Scopes | Where-Object { Test-OneCNativeProcessInRunScopes -ProcessInfo $candidate -Scopes @($_) })
+            $matchesScope = $matchedScopes.Count -gt 0
+            if (-not ($Identities.Contains($id) -or $matchesScope -or ($Scopes.Count -eq 0 -and $matchesLog) -or $Identities.Contains($parentId))) { continue }
+            $identity = Get-DesignerProcessIdentity -ProcessInfo $candidate
+            $birth = [datetime]$identity.startTimeUtc
+            if ($Identities.Contains($id)) {
+                $expected = $Identities[$id]
+                if (($identity.name -cne $expected.name -or $identity.startTimeUtc -cne $expected.startTimeUtc) -and -not $matchesScope) { continue }
+            } elseif (-not $matchesScope) {
+                $matchesLog = $Scopes.Count -eq 0 -and $matchesLog
+                $matchesParent = -not $matchesLog -and $Identities.Contains($parentId) -and $birth -ge ([datetime]$Identities[$parentId].startTimeUtc)
+                $liveParent = @($Inventory | Where-Object { [int]$_.ProcessId -eq $parentId })
+                $parentExit = if ($matchesParent) { [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '') } else { '' }
+                if ($matchesParent -and $parentExit) {
+                    # A child born during the original parent's captured lifetime
+                    # remains ours even after that parent's numeric PID is reused.
+                    $matchesParent = $birth -le ([datetime]$parentExit)
+                } elseif ($matchesParent -and $liveParent.Count -gt 0) {
+                    $currentParent = Get-DesignerProcessIdentity -ProcessInfo $liveParent[0]
+                    $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
+                } elseif ($matchesParent) {
+                    if (-not $parentObservations.ContainsKey($parentId)) {
+                        $parentObservations[$parentId] = @(Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -OperationTimeoutSec 2 -ErrorAction Stop)
+                    }
+                    $currentParents = @($parentObservations[$parentId])
+                    if ($currentParents.Count -gt 0) {
+                        if ($currentParents[0].Name -notin @('1cv8.exe','1cv8c.exe')) { $matchesParent = $false }
+                        else {
+                            $currentParent = Get-DesignerProcessIdentity -ProcessInfo $currentParents[0]
+                            $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
+                        }
+                    } else {
+                        $parentExit = [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '')
+                        if (-not $parentExit) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: parent PID $parentId has no live or captured exit identity." }
+                        $matchesParent = $birth -le ([datetime]$parentExit)
+                    }
+                }
+                if ($birth -lt $InvocationStartedAtUtc -or -not ($matchesLog -or $matchesParent)) { continue }
+            }
+            if ($Identities.Contains($id) -and $identity.startTimeUtc -ceq $Identities[$id].startTimeUtc) {
+                $priorExit = [string](Get-StateValue -State $Identities[$id] -Name 'exitTimeUtc' -Default '')
+                if ($priorExit) { $identity | Add-Member NoteProperty exitTimeUtc $priorExit }
+            }
+            $Identities[$id] = $identity
+            $selected[$id] = [pscustomobject]@{
+                OwnedByInvocation=$true; Name=$identity.name; ProcessId=$id; ParentProcessId=$parentId
+                processStartTime=$identity.startTimeUtc
+                matchedScopes=$matchedScopes
+                KernelModeTime=[int64](Get-StateValue -State $candidate -Name 'KernelModeTime' -Default 0)
+                UserModeTime=[int64](Get-StateValue -State $candidate -Name 'UserModeTime' -Default 0)
+                WorkingSetSize=[int64](Get-StateValue -State $candidate -Name 'WorkingSetSize' -Default 0)
+            }
+            $changed = $true
+        }
+    } while ($changed)
+    return @($selected.Values | Sort-Object ProcessId)
+}
+
 function New-DesignerInvocationProbeState {
     param(
         [int]$LauncherProcessId,
@@ -6326,8 +6453,10 @@ function New-DesignerInvocationProbeState {
     )
 
     $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    $identities = @{}
     if ($LauncherProcessId -gt 0) {
         $trackedProcessIds.Add($LauncherProcessId) | Out-Null
+        try { $identities[$LauncherProcessId] = Get-DesignerProcessIdentity -ProcessInfo (Get-Process -Id $LauncherProcessId -ErrorAction Stop) } catch { }
     }
     if ($StallWarningSeconds -lt 0) {
         $StallWarningSeconds = Get-DesignerStallWarningSeconds
@@ -6343,6 +6472,8 @@ function New-DesignerInvocationProbeState {
     }
     return [pscustomobject]@{
         trackedProcessIds = $trackedProcessIds
+        trackedProcessIdentities = $identities
+        invocationStartedAtUtc = $(if ($identities.ContainsKey($LauncherProcessId)) { $identities[$LauncherProcessId].startTimeUtc } else { [DateTime]::UtcNow.ToString('o') })
         ownedProcessScopes = @($OwnedProcessScopes)
         lastDiagnosticSecond = -1
         nextProcessCheckAtUtc = [DateTime]::MinValue
@@ -6392,6 +6523,8 @@ function Start-DesignerProcessEnumeration {
         outputPath = $outputPath
         operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
         trackedProcessIds = @($ProbeState.trackedProcessIds)
+        trackedProcessIdentities = @($ProbeState.trackedProcessIdentities.GetEnumerator() | ForEach-Object { @{ processId=[int]$_.Key; name=$_.Value.name; startTimeUtc=$_.Value.startTimeUtc; exitTimeUtc=(Get-StateValue -State $_.Value -Name 'exitTimeUtc' -Default '') } })
+        invocationStartedAtUtc = $ProbeState.invocationStartedAtUtc
         ownedProcessScopes = @(if ($ProbeState.PSObject.Properties['ownedProcessScopes']) { $ProbeState.ownedProcessScopes })
         helperLibraryPath = $script:Agent1cCoreRoot
         logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
@@ -6403,36 +6536,11 @@ function Start-DesignerProcessEnumeration {
 `$payload = `$null
 try {
     `$scopes = @(`$inputPayload.ownedProcessScopes)
-    if (`$scopes.Count -gt 0) {
-        foreach (`$module in @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { . (Join-Path ([string]`$inputPayload.helperLibraryPath) `$module) }
-    }
+    foreach (`$module in @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { . (Join-Path ([string]`$inputPayload.helperLibraryPath) `$module) }
     `$inventory = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -OperationTimeoutSec ([uint32]`$inputPayload.operationTimeoutSeconds) -ErrorAction Stop)
-    `$tracked = [System.Collections.Generic.HashSet[int]]::new()
-    if (`$scopes.Count -eq 0) { foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null } }
-    `$changed = `$true
-    while (`$changed) {
-        `$changed = `$false
-        foreach (`$candidate in `$inventory) {
-            if (`$scopes.Count -gt 0) {
-                if ((Test-OneCNativeProcessInRunScopes -ProcessInfo `$candidate -Scopes `$scopes) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
-                continue
-            }
-            `$matchesLog = `$inputPayload.logPath -and ([string]`$candidate.CommandLine).IndexOf([string]`$inputPayload.logPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-            `$matchesParent = `$tracked.Contains([int]`$candidate.ParentProcessId)
-            if ((`$matchesLog -or `$matchesParent) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
-        }
-    }
-    `$processes = @(`$inventory | Where-Object { `$tracked.Contains([int]`$_.ProcessId) } | ForEach-Object {
-        [ordered]@{
-            OwnedByInvocation = `$true
-            Name = [string]`$_.Name
-            ProcessId = [int]`$_.ProcessId
-            ParentProcessId = [int]`$_.ParentProcessId
-            KernelModeTime = [int64]`$_.KernelModeTime
-            UserModeTime = [int64]`$_.UserModeTime
-            WorkingSetSize = [int64]`$_.WorkingSetSize
-        }
-    })
+    `$identities = @{}
+    foreach (`$identity in @(`$inputPayload.trackedProcessIdentities)) { `$identities[[int]`$identity.processId] = `$identity }
+    `$processes = @(Get-DesignerOwnedProcessInventory -Inventory `$inventory -Identities `$identities -TrackedProcessIds @(`$inputPayload.trackedProcessIds) -LogPath ([string]`$inputPayload.logPath) -InvocationStartedAtUtc ([datetime]`$inputPayload.invocationStartedAtUtc) -Scopes `$scopes)
     `$infoBaseReleaseChecked = `$false
     `$infoBaseReleased = `$false
     if (`$inputPayload.databasePath -and `$processes.Count -eq 0) {
@@ -6596,33 +6704,39 @@ function Get-DesignerInvocationProcessState {
         $workerFiltered = $designerProcesses.Count -eq 0 -or
             @($designerProcesses | Where-Object { $_.PSObject.Properties.Name -contains "OwnedByInvocation" -and [bool]$_.OwnedByInvocation }).Count -eq $designerProcesses.Count
         if ($workerFiltered) {
-            foreach ($candidate in $designerProcesses) {
-                $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId) | Out-Null
-            }
-        } else {
-            $normalizedLogPath = if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" }
-            $scopes = @(if ($ProbeState.PSObject.Properties['ownedProcessScopes']) { $ProbeState.ownedProcessScopes })
-            if ($scopes.Count -gt 0) { $ProbeState.trackedProcessIds.Clear() }
-            $changed = $true
-            while ($changed) {
-                $changed = $false
-                foreach ($candidate in $designerProcesses) {
-                    if ($scopes.Count -gt 0) {
-                        if ((Test-OneCNativeProcessInRunScopes -ProcessInfo $candidate -Scopes $scopes) -and $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId)) { $changed = $true }
-                        continue
+            # A complete empty worker result still requires captured tracked identities.
+            $null = @(Get-DesignerOwnedProcessInventory -Inventory @() -Identities $ProbeState.trackedProcessIdentities -TrackedProcessIds @($ProbeState.trackedProcessIds) -LogPath $(if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else { '' }) -InvocationStartedAtUtc ([datetime]$ProbeState.invocationStartedAtUtc) -Scopes @($ProbeState.ownedProcessScopes))
+            $validated = @($designerProcesses | ForEach-Object {
+                $identity = Get-DesignerProcessIdentity -ProcessInfo $_
+                $id = [int]$_.ProcessId
+                if ($ProbeState.trackedProcessIdentities.ContainsKey($id)) {
+                    $expected = $ProbeState.trackedProcessIdentities[$id]
+                    if ($identity.name -cne $expected.name -or $identity.startTimeUtc -cne $expected.startTimeUtc) {
+                        # The owned worker may independently prove a new native invocation
+                        # with this recycled PID. Its matched scope must be ours exactly.
+                        $scopeMatched = $false
+                        foreach ($matched in @(if ($_.PSObject.Properties['matchedScopes']) { $_.matchedScopes })) {
+                            $matchedJson = [string]($matched | ConvertTo-Json -Depth 10 -Compress)
+                            foreach ($scope in @($ProbeState.ownedProcessScopes)) {
+                                if ($matchedJson -ceq [string]($scope | ConvertTo-Json -Depth 10 -Compress)) { $scopeMatched = $true; break }
+                            }
+                            if ($scopeMatched) { break }
+                        }
+                        if (-not $scopeMatched) { return }
+                    } else {
+                        $priorExit = [string](Get-StateValue -State $expected -Name 'exitTimeUtc' -Default '')
+                        if ($priorExit) { $identity | Add-Member NoteProperty exitTimeUtc $priorExit }
                     }
-                    $processId = [int]$candidate.ProcessId
-                    $parentProcessId = [int]$candidate.ParentProcessId
-                    $commandLine = [string]$candidate.CommandLine
-                    $matchesLog = $normalizedLogPath -and $commandLine.IndexOf($normalizedLogPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-                    $matchesParent = $ProbeState.trackedProcessIds.Contains($parentProcessId)
-                    if (($matchesLog -or $matchesParent) -and $ProbeState.trackedProcessIds.Add($processId)) { $changed = $true }
                 }
-            }
+                $ProbeState.trackedProcessIdentities[$id] = $identity
+                $ProbeState.trackedProcessIds.Add($id) | Out-Null
+                $_
+            })
+            $activeProcesses = $validated
+        } else {
+            $activeProcesses = @(Get-DesignerOwnedProcessInventory -Inventory $designerProcesses -Identities $ProbeState.trackedProcessIdentities -TrackedProcessIds @($ProbeState.trackedProcessIds) -LogPath $(if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else { '' }) -InvocationStartedAtUtc ([datetime]$ProbeState.invocationStartedAtUtc) -Scopes @($ProbeState.ownedProcessScopes))
+            foreach ($candidate in $activeProcesses) { $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId) | Out-Null }
         }
-
-        $activeProcesses = @($designerProcesses |
-            Where-Object { $ProbeState.trackedProcessIds.Contains([int]$_.ProcessId) })
         $activeProcessIds = @($activeProcesses | ForEach-Object { [int]$_.ProcessId } | Sort-Object)
         [int64]$cpuTime100ns = 0
         [int64]$workingSetBytes = 0
@@ -6815,6 +6929,7 @@ function Test-DesignerInvocationReleased {
         return $false
     }
 
+    Set-DesignerInvocationLauncherIdentity -ProbeState $ProbeState -ProbeContext $ProbeContext
     $ProbeState.infoBaseReleaseDatabasePath = if ($RequireInfoBaseRelease -and $InfoBaseKind -eq "file" -and $ProbeState.processesReleaseConfirmed) {
         Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
     } else {
@@ -6931,34 +7046,35 @@ function Stop-DesignerInvocationOwnedProcesses {
     }
 
     $errors = [System.Collections.Generic.List[string]]::new()
-    $attempted = $false
+    $stopped = [System.Collections.Generic.List[int]]::new()
     $confirmed = $true
     foreach ($processId in @($state.processIds)) {
-        $attempted = $true
+        $ownedProcess = $null
         try {
-            $ownedProcess = Get-Process -Id ([int]$processId) -ErrorAction Stop
-            $termination = Stop-NativeProcessForSafety -Process $ownedProcess
-            if (-not [bool]$termination.confirmed) {
-                $confirmed = $false
-            }
-            if ($termination.error) {
-                $errors.Add("PID ${processId}: $($termination.error)") | Out-Null
-            }
+            $ownedProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+            if ($null -eq $ownedProcess) { continue }
+            if (-not $ProbeState.trackedProcessIdentities.ContainsKey([int]$processId)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: cleanup requires a captured identity.' }
+            # Hold the OS process object before checking birth; never kill a freshly resolved PID.
+            $null = $ownedProcess.Handle
+            $actual = Get-DesignerProcessIdentity -ProcessInfo $ownedProcess
+            $expected = $ProbeState.trackedProcessIdentities[[int]$processId]
+            if ($actual.name -cne $expected.name -or $actual.startTimeUtc -cne $expected.startTimeUtc) { continue }
+            $stopped.Add([int]$processId) | Out-Null
+            $termination = Stop-NativeProcessForSafety -Process $ownedProcess -UseOpenedProcess
+            if (-not [bool]$termination.confirmed) { $confirmed = $false }
+            if ($termination.error) { $errors.Add("PID ${processId}: $($termination.error)") | Out-Null }
         } catch {
             $confirmed = $false
             $errors.Add("PID ${processId}: $($_.Exception.Message)") | Out-Null
+        } finally {
+            if ($ownedProcess -is [Diagnostics.Process]) { $ownedProcess.Dispose() }
         }
     }
-    return [pscustomobject]@{
-        attempted = $attempted
-        confirmed = $confirmed
-        processIds = @($state.processIds)
-        error = ($errors -join " ")
-    }
+    return [pscustomobject]@{ attempted=($stopped.Count -gt 0); confirmed=$confirmed; processIds=@($stopped); error=($errors -join ' ') }
 }
 
 function Stop-NativeProcessForSafety {
-    param([Parameter(Mandatory = $true)][object]$Process)
+    param([Parameter(Mandatory = $true)][object]$Process, [switch]$UseOpenedProcess)
 
     $errors = New-Object System.Collections.Generic.List[string]
     $confirmed = $false
@@ -6971,7 +7087,8 @@ function Stop-NativeProcessForSafety {
     }
 
     try {
-        Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+        if ($UseOpenedProcess) { $Process.Kill() }
+        else { Stop-Process -Id $Process.Id -Force -ErrorAction Stop }
     } catch {
         $errors.Add($_.Exception.Message)
         try {
@@ -7127,9 +7244,10 @@ function Invoke-NativeProcessAndWaitResult {
     } else {
         Join-NativeCommandLineArguments -Arguments $Arguments
     }
-    $createNativeRecord = if ($OneCCreateInfoBaseSyntax) {
-        Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
-    } else { $null }
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+    $nativeOperationScopes = @(if ($null -ne $nativeOperationRecord -and $nativeOperationRecord.PSObject.Properties['ownedProcessScopes']) { $nativeOperationRecord.ownedProcessScopes })
+    $createNativeRecord = if ($OneCCreateInfoBaseSyntax) { $nativeOperationRecord } else { $null }
+    $nativeStartNotBeforeUtc = [DateTime]::UtcNow.ToString('o')
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         $startParameters = @{
             FilePath = $FilePath
@@ -7149,6 +7267,9 @@ function Invoke-NativeProcessAndWaitResult {
         throw "Failed to start process: $FilePath"
     }
 
+    $nativeProcessStartedAtUtc = ''
+    try { $nativeProcessStartedAtUtc = $process.StartTime.ToUniversalTime().ToString('o') } catch { }
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
     $script:LastNativeProcessStarted = $true
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
@@ -7246,6 +7367,11 @@ function Invoke-NativeProcessAndWaitResult {
                         launcherExited = $launcherExited
                         launcherExitCode = $launcherExitCode
                         processId = $process.Id
+                        processStartTimeUtc = $nativeProcessStartedAtUtc
+                        nativeOperationScopes = $nativeOperationScopes
+                        invocationStartedAtUtc = $nativeStartNotBeforeUtc
+                        processName = [IO.Path]::GetFileName($FilePath)
+                        processExitTimeUtc = $(if ($launcherExited) { try { $process.ExitTime.ToUniversalTime().ToString('o') } catch { '' } } else { '' })
                         observedAtUtc = $probeObservedAtUtc
                         elapsedSeconds = [int][Math]::Floor(($probeObservedAtUtc - $monitorStartedAtUtc).TotalSeconds)
                         timeoutSeconds = $TimeoutSeconds
@@ -7403,7 +7529,9 @@ function Invoke-NativeProcessAndWaitResult {
         }
         $releaseSeconds = if ($PostExitProbeSeconds -gt 0) { $PostExitProbeSeconds } else { Get-CompletionPostExitTimeoutSeconds }
         $released = Confirm-OneCCreateInfoBaseProcessRelease -Record $createNativeRecord -ProcessId $process.Id `
-            -LauncherExited $launcherExited -TimeoutSeconds $releaseSeconds
+            -LauncherExited $launcherExited -TimeoutSeconds $releaseSeconds `
+            -ProcessStartTimeUtc $nativeProcessStartedAtUtc -InvocationStartedAtUtc $nativeStartNotBeforeUtc `
+            -ProcessExitTimeUtc $(try { $process.ExitTime.ToUniversalTime().ToString('o') } catch { '' })
         $nativeResult | Add-Member NoteProperty ownedProcessesReleased $released
         if (-not $released) {
             if ($nativeResult.exitCode -eq 0) { $nativeResult.exitCode = -4 }
@@ -7416,13 +7544,16 @@ function Invoke-NativeProcessAndWaitResult {
 
 function Confirm-OneCCreateInfoBaseProcessRelease {
     param([AllowNull()][object]$Record, [int]$ProcessId, [bool]$LauncherExited,
-        [ValidateRange(1, 86400)][int]$TimeoutSeconds)
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds, [string]$ProcessStartTimeUtc,
+        [string]$InvocationStartedAtUtc, [string]$ProcessExitTimeUtc)
     $released = $false
     $probe = $null
     try {
         if (-not $LauncherExited -or $ProcessId -le 0) { return $false }
-        $probe = New-DesignerInvocationProbeState -LauncherProcessId $ProcessId
-        $context = [pscustomobject]@{processId=$ProcessId;launcherExited=$LauncherExited}
+        $probe = New-DesignerInvocationProbeState -LauncherProcessId 0
+        $context = [pscustomobject]@{processId=$ProcessId;launcherExited=$LauncherExited
+            processStartTimeUtc=$ProcessStartTimeUtc; invocationStartedAtUtc=$InvocationStartedAtUtc; processExitTimeUtc=$ProcessExitTimeUtc
+            nativeOperationScopes=@(if ($null -ne $Record -and $Record.PSObject.Properties['ownedProcessScopes']) { $Record.ownedProcessScopes })}
         $timer = [Diagnostics.Stopwatch]::StartNew()
         do {
             if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
@@ -7455,6 +7586,7 @@ function Invoke-VisibleNativeProcessAndWait {
     )
 
     Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         Start-Process `
@@ -7467,6 +7599,8 @@ function Invoke-VisibleNativeProcessAndWait {
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
     }
+
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
 
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
@@ -7492,6 +7626,7 @@ function Start-NativeProcessBackground {
     )
 
     Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
+    $nativeOperationRecord = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $startParameters = @{
         FilePath = $FilePath
@@ -7509,6 +7644,8 @@ function Start-NativeProcessBackground {
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
     }
+
+    Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath
 
     return $process
 }
@@ -8110,8 +8247,7 @@ function Start-EnterpriseBackground {
 
 function Test-OneCNativeInvocationReleased {
     param([object]$ProbeState, [object]$ProbeContext, [string]$LogPath)
-    $launcherId = [int](Get-StateValue -State $ProbeContext -Name 'processId' -Default 0)
-    if ($launcherId -gt 0) { $ProbeState.trackedProcessIds.Add($launcherId) | Out-Null }
+    Set-DesignerInvocationLauncherIdentity -ProbeState $ProbeState -ProbeContext $ProbeContext
     $previousObservation = $ProbeState.lastProcessState
     $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
     $freshObservation = -not [object]::ReferenceEquals($previousObservation, $processState)
@@ -8139,11 +8275,30 @@ function Test-OneCNativeInvocationReleased {
 function Confirm-OneCNativeRunProcessRelease {
     param([Parameter(Mandatory = $true)][object]$Record, [ValidateRange(1, 60)][int]$TimeoutSeconds = 10)
     if (-not $Record.launcherExited -or @($Record.ownedProcessScopes).Count -eq 0) { return $false }
-    $probe = New-DesignerInvocationProbeState -LauncherProcessId $Record.processId -OwnedProcessScopes $Record.ownedProcessScopes
-    $context = [pscustomobject]@{processId=$Record.processId;launcherExited=$true}
+    $probe = New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes $Record.ownedProcessScopes
+    $birth = ''; $exitTime = ''; $name = ''
+    # The journal holds the original launched Process object. A late numeric PID
+    # lookup can instead open an unrelated process that reused the launcher's ID.
+    if ($null -ne $Record.process) {
+        try {
+            $identity = if ($Record.PSObject.Properties['processIdentity']) { $Record.processIdentity }
+                else { Get-DesignerProcessIdentity -ProcessInfo $Record.process }
+            $heldIdentity = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+                Name=$identity.name; StartTime=$Record.process.StartTime })
+            if ([int]$Record.process.Id -eq [int]$Record.processId -and
+                $heldIdentity.startTimeUtc -ceq $identity.startTimeUtc) {
+                $birth = $identity.startTimeUtc; $name = $identity.name
+                $exitTime = $Record.process.ExitTime.ToUniversalTime().ToString('o')
+            }
+        } catch { }
+    }
+    $context = [pscustomobject]@{processId=$Record.processId;launcherExited=$true
+        processStartTimeUtc=$birth;processName=$name;processExitTimeUtc=$exitTime;invocationStartedAtUtc=$birth
+        nativeOperationScopes=@($Record.ownedProcessScopes)}
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $released = $false
     try {
+        if (-not $birth) { return $false }
         do {
             if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
             Start-Sleep -Milliseconds 100
