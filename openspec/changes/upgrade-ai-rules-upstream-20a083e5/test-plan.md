@@ -364,3 +364,11 @@ retained RED-to-GREEN 0/1 to 1/0, with no restore call or original-byte changes
 in GREEN. Literal Unicode Git ignore controls returned 0 for the ignored path
 and 1 for the unignored path. The final 33-case file is qualified by normal
 registration, not by combining historical runs into a new whole-file result.
+
+Normal registration of 8c985642 closed with 295 passed and one failed Pester
+assertion: the existing exact deliveryPostGate inventory omitted the new accepted
+recovery composition file. The final recovery file itself passed all 33 cases
+in 816.31 seconds; 20 of 21 parallel groups passed. The serial ReleaseGate group
+was not reached. The failed run is retained without qualification. The expected
+inventory now includes that exact file and keeps its equality and separation
+assertions; this reflects the accepted owner composition, not a broader wildcard.

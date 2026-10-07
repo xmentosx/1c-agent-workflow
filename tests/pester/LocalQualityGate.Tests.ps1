@@ -500,6 +500,7 @@ exit $exitCode
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",
             "scripts/source-delivery-candidate.ps1",
+            "scripts/source-delivery-release-recovery.ps1",
             "scripts/source-delivery-component.ps1",
             "scripts/source-delivery-cleanup.ps1"
         )
