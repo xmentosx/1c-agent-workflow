@@ -500,3 +500,29 @@ retains the usual ordinary CFE path and all other qualified assets. That run,
 including the complete current branch lifecycle file, remains authoritative.
 Production core SHA256 stays
 `763deeb6cacad30e7e862e353e6d3f99cb5f89b4f64a490cb2f42ab19aa26e4e`.
+
+Canonical registration of 0d464dcd retained 619 passed and 15 failed tests in
+810.468 seconds, with a clean source tree. BootstrapUpdate passed all 77 cases;
+DevBranchLifecycle passed all 297 cases, including the original four repaired
+native-launch scenarios with the ordinary qualified CFE environment retained.
+Four DesignerCompletion synthetic callback contexts and the shared
+DesignerExportSharedBase fixture bypassed the real native producer without
+supplying its captured birth/name metadata; the strict empty-response admission
+therefore refused them. The bounded audit of the 40 selected test files found
+no other affected fixture owner. The correction remains local metadata in these
+two test files, with all original IDs, paths, release/stability/lock conditions,
+artifact checks and assertions retained. Core remains unchanged. All 81 tests
+of those two directly affected files are checked before another registration.
+The closed failed snapshot is retained under
+`build/designer-pid-reuse/closed-register-0d464dcd`, manifest SHA256
+`e0210bbbeb73b4380bcf03a06f59a81d98138eb52d9e7b42775cd1b8814dd24a`.
+
+After those two metadata-only fixture corrections, their complete native run
+passed 81/0/0, with no unselected cases and unchanged inputs (159.310 seconds of
+Pester time; 160.478 seconds in the driver). It retained the ordinary canonical
+CFE environment and cleared only source-build transport overrides. Original
+scenario/assertion preservation is separately audited; production core stays
+at the same SHA256. Qualification SHA256 is
+`e7fdceb3d75eed525b5db8a9e096c9b360c31b52045a68bde810795466a6ac6c`
+in `build/designer-pid-reuse/after-callback-fixture-identities/qualification.json`.
+Normal registration of the coherent current source is still required.

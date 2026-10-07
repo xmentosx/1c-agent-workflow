@@ -1593,6 +1593,7 @@
                     [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedTimeout = $TimeoutSeconds
                 $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
@@ -1601,12 +1602,19 @@
                     launcherExited = $false
                     launcherExitCode = 0
                     processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 $exitedContext = [pscustomobject]@{
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 $script:ProbeBeforeEvidence = [bool](& $CompletionProbe $runningContext)
@@ -1633,7 +1641,11 @@
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7001; exitCode = 0; timedOut = $false
+                    processId = 7001
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $true
@@ -1712,6 +1724,7 @@
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
@@ -1720,6 +1733,10 @@
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7005
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 foreach ($attempt in 1..20) {
@@ -1735,7 +1752,11 @@
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7005; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
+                    processId = 7005
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:ProbePassed
@@ -1800,6 +1821,7 @@
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
                 [System.IO.File]::WriteAllText($logPath, "", (Get-Utf8Encoding))
@@ -1807,6 +1829,10 @@
                     launcherExited = $true
                     launcherExitCode = 0
                     processId = 7007
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o')
                     postExitElapsedSeconds = 0
                 }
                 foreach ($attempt in 1..50) {
@@ -1815,7 +1841,11 @@
                     Start-Sleep -Milliseconds 100
                 }
                 return [pscustomobject]@{
-                    processId = 7007; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
+                    processId = 7007
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:ProbePassed
@@ -2046,8 +2076,9 @@
                     [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $mockLauncherStartedAtUtc = [DateTime]::UtcNow
                 $script:CapturedDumpPostExitProbeSeconds = $PostExitProbeSeconds
-                $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004 }
+                $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004; processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o'); processName = [IO.Path]::GetFileName($FilePath); invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o') }
                 foreach ($index in 1..8) {
                     (& $CompletionProbe $runningContext) | Should -BeFalse
                 }
@@ -2055,7 +2086,7 @@
 
                 $script:DumpArtifactReady = $true
                 $script:DumpArtifactWrittenAtTicks = [DateTime]::UtcNow.Ticks
-                $exitedContext = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7004 }
+                $exitedContext = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7004; processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o'); processName = [IO.Path]::GetFileName($FilePath); invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o'); processExitTimeUtc = [DateTime]::UtcNow.ToString('o') }
                 $script:FirstExitedResult = [bool](& $CompletionProbe $exitedContext)
                 $script:CallsAfterFirstExitProbe = $script:DumpArtifactCalls
                 foreach ($index in 1..8) {
@@ -2073,7 +2104,11 @@
                 }
                 $releaseWait.Stop()
                 return [pscustomobject]@{
-                    processId = 7004; exitCode = 0; timedOut = $false
+                    processId = 7004
+                    processStartTimeUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $mockLauncherStartedAtUtc.ToString('o')
+                    processExitTimeUtc = [DateTime]::UtcNow.ToString('o'); exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
                     peakWorkingSetMb = 0; workingSetLimitMb = 0
                     terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:StableExitedResult
