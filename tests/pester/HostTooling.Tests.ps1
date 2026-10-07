@@ -2126,6 +2126,78 @@ services:
         }
     }
 
+    It "retries pending registry delivery without changing an unchanged payload: dryRun=<IsDryRun>" -Tag RegistryPendingPublication -TestCases @(
+        @{ IsDryRun = $false }, @{ IsDryRun = $true }
+    ) {
+        param($IsDryRun)
+        $stateRoot = Join-Path $TestDrive ('реестр с пробелом-' + $IsDryRun)
+        New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+        $configPath = Join-Path $stateRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $stateRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $registryRoot = Join-Path $stateRoot 'registry'
+            $remote = Join-Path $stateRoot 'remote.git'
+            Invoke-Git -Root $stateRoot -Arguments @('init', '--bare', $remote) *> $null
+            Invoke-Git -Root $stateRoot -Arguments @('init', $registryRoot) *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.name', 'Registry fixture') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.email', 'registry@example.invalid') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('remote', 'add', 'origin', $remote) *> $null
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"unreachable"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'previous published health') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('push', '-u', 'origin', 'HEAD') *> $null
+            $publishedHead = (Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join ''
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"running"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'qualified health awaiting delivery') *> $null
+            $pendingHead = (Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join ''
+            $config = @{ stateRoot = $stateRoot; registryRepo = $remote }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Write-MergedRegistryPayload { throw 'Unchanged payload must not be rewritten' }
+            $realInvokeGit = ${function:Invoke-Git}
+            $delivery = @{ rejectPush = $true; pushCalls = 0 }
+            function Invoke-Git {
+                param($Root, $Arguments)
+                if ($Arguments[0] -eq 'push') {
+                    $delivery.pushCalls++
+                    if ($delivery.rejectPush) { throw 'fixture credentials unavailable' }
+                }
+                & $realInvokeGit -Root $Root -Arguments $Arguments
+            }
+            $DryRun = $IsDryRun
+            if ($IsDryRun) {
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 0
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+            } else {
+                { Publish-Registry -Config $config -SkipUnchangedHost *> $null } | Should -Throw '*fixture credentials unavailable*'
+                $delivery.pushCalls | Should -Be 2
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+                $delivery.rejectPush = $false
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+                $delivery.pushCalls | Should -Be 3
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 3
+            }
+            ((Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+        }
+    }
+
+    It "does not claim unchanged registry delivery when upstream evidence is unavailable" -Tag RegistryPendingPublication {
+        $configPath = Join-Path $TestDrive 'registry-unverified.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Ensure-GitCheckout { }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Invoke-ProcessWithTimeout { return @{ exitCode = 128; lines = @('upstream unavailable') } }
+            function Invoke-Git { throw 'Publication must not be claimed' }
+            { Publish-Registry -Config @{ stateRoot = $TestDrive } -SkipUnchangedHost *> $null } | Should -Throw '*publication is unverified*'
+        }
+    }
+
     It "records watchdog success, failure, and disabled runs" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-state-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

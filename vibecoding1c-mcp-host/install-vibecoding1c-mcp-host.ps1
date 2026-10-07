@@ -5405,23 +5405,36 @@ function Publish-Registry {
     $registryRoot = Get-RegistryRoot -Config $Config
     Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
-    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)) {
-        Write-Host "Registry already matches the qualified host state; publish skipped."
-        return
+    $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
+    if ($hostUnchanged) {
+        $pending = Invoke-ProcessWithTimeout -FilePath "git" -Arguments @("-C", $registryRoot, "rev-list", "--count", "@{upstream}..HEAD") -TimeoutSec 30 -Description "Check pending registry publication"
+        $pendingCount = 0
+        if ($pending.exitCode -ne 0 -or -not [int]::TryParse(($pending.lines -join "").Trim(), [ref]$pendingCount)) {
+            throw "Could not determine pending registry commits in $registryRoot; publication is unverified."
+        }
+        if ($pendingCount -eq 0) {
+            Write-Host "Registry already matches the qualified host state and upstream; publish skipped."
+            return
+        }
+        Write-Host "Registry payload unchanged; retrying delivery of $pendingCount pending commit(s)."
     }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
-        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
-        Write-Host "Registry written: $registryPath"
+        if (-not $hostUnchanged) {
+            Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
+            Write-Host "Registry written: $registryPath"
+        }
         if ($DryRun) {
             return
         }
-        Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
-        $status = ((& git -C $registryRoot status --porcelain) -join "`n")
-        if ($status) {
-            Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
-        } else {
-            Write-Host "Registry unchanged."
+        if (-not $hostUnchanged) {
+            Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
+            $status = ((& git -C $registryRoot status --porcelain) -join "`n")
+            if ($status) {
+                Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
+            } else {
+                Write-Host "Registry unchanged."
+            }
         }
         try {
             Invoke-Git -Root $registryRoot -Arguments @("push")
@@ -5432,6 +5445,7 @@ function Publish-Registry {
             }
             Write-Host "Registry push failed; rebasing once and retrying publish."
             Invoke-Git -Root $registryRoot -Arguments @("pull", "--rebase")
+            $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
         }
     }
 }
