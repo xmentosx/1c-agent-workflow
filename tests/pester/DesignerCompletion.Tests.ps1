@@ -743,6 +743,128 @@
         @($result.stopped) | Should -Be @(8250, 8251)
     }
 
+    It "retains the first empty Designer observation across a pending scan and requires a fresh empty result" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8272
+            $firstEmptyAtUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.processesReleasedSinceUtc = $firstEmptyAtUtc
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = "pending"; querySucceeded = $false; active = $true; processIds = @(); detail = "owned process enumeration is pending"
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                $ProbeState.lastProcessState = $script:NextDesignerObservation
+                return $script:NextDesignerObservation
+            }
+            $context = [pscustomobject]@{
+                launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8272
+            }
+            $pendingResult = Test-DesignerInvocationReleased `
+                -ProbeState $probeState -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "pending-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            $retainedFirstEmpty = $probeState.processesReleasedSinceUtc -eq $firstEmptyAtUtc
+            $pendingConfirmed = $probeState.processesReleaseConfirmed
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $freshResult = Test-DesignerInvocationReleased `
+                -ProbeState $probeState -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "pending-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{
+                pendingResult = $pendingResult; retainedFirstEmpty = $retainedFirstEmpty
+                pendingConfirmed = $pendingConfirmed; freshResult = $freshResult
+                freshConfirmed = $probeState.processesReleaseConfirmed
+                liveness = $probeState.lastObservation.liveness
+            }
+        }
+
+        $result.pendingResult | Should -BeFalse
+        $result.retainedFirstEmpty | Should -BeTrue
+        $result.pendingConfirmed | Should -BeFalse
+        $result.freshResult | Should -BeTrue
+        $result.freshConfirmed | Should -BeTrue
+        $result.liveness | Should -Be "running-waiting-release"
+    }
+
+    It "does not confirm Designer release from a cached empty observation after the quiet interval" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8273
+            $probeState.processesReleasedSinceUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                return $ProbeState.lastProcessState
+            }
+            $released = Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                    timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8273
+                }) `
+                -LogPath (Join-Path $TestDrive "cached-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{ released = $released; confirmed = $probeState.processesReleaseConfirmed }
+        }
+
+        $result.released | Should -BeFalse
+        $result.confirmed | Should -BeFalse
+    }
+
+    It "resets Designer release confirmation after a fresh <observation> observation" -TestCases @(
+        @{ observation = "active"; querySucceeded = $true; active = $true }
+        @{ observation = "failed"; querySucceeded = $false; active = $true }
+    ) {
+        param([string]$observation, [bool]$querySucceeded, [bool]$active)
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8274
+            $probeState.processesReleasedSinceUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            $probeState.processesReleaseConfirmed = $true
+            $probeState.lastProcessState = [pscustomobject]@{
+                observationStatus = "completed"; querySucceeded = $true; active = $false; processIds = @(); detail = ""
+            }
+            $script:NextDesignerObservation = [pscustomobject]@{
+                observationStatus = $observation; querySucceeded = $querySucceeded; active = $active
+                processIds = $(if ($querySucceeded) { @(8274) } else { @() }); detail = $observation
+            }
+            function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                $ProbeState.lastProcessState = $script:NextDesignerObservation
+                return $script:NextDesignerObservation
+            }
+            $released = Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                    timeoutRemainingSeconds = 60; postExitElapsedSeconds = 2; processId = 8274
+                }) `
+                -LogPath (Join-Path $TestDrive "$observation-release.log") `
+                -InfoBaseKind file -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" -RequireInfoBaseRelease:$false 6>$null
+            [pscustomobject]@{
+                released = $released; confirmed = $probeState.processesReleaseConfirmed
+                emptySince = $probeState.processesReleasedSinceUtc
+            }
+        }
+
+        $result.released | Should -BeFalse
+        $result.confirmed | Should -BeFalse
+        $result.emptySince | Should -BeNullOrEmpty
+    }
+
     It "requires full infobase release by default and bypasses it only when explicitly allowed" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1446,6 +1568,7 @@
             $script:DumpArtifactReady = $false
             $script:DumpArtifactCalls = 0
             $script:DumpArtifactWrittenAtTicks = 0
+            $script:CompletedDumpProcessEnumerations = 0
             $script:InfoBaseReleaseChecks = 0
             function Test-DesignerInfoBaseReleased {
                 $script:InfoBaseReleaseChecks++
@@ -1484,6 +1607,7 @@
             }
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
+                $script:CompletedDumpProcessEnumerations++
                 return [pscustomobject]@{ status = "completed"; processes = @() }
             }
             function Invoke-NativeProcessAndWaitResult {
@@ -1515,7 +1639,14 @@
                 $script:CallsAfterImmediateProbes = $script:DumpArtifactCalls
 
                 Start-Sleep -Milliseconds 1100
-                $script:StableExitedResult = [bool](& $CompletionProbe $exitedContext)
+                $script:CachedExitedResult = [bool](& $CompletionProbe $exitedContext)
+                $script:StableExitedResult = $script:CachedExitedResult
+                $releaseWait = [Diagnostics.Stopwatch]::StartNew()
+                while (-not $script:StableExitedResult -and $releaseWait.Elapsed.TotalSeconds -lt 5) {
+                    Start-Sleep -Milliseconds 100
+                    $script:StableExitedResult = [bool](& $CompletionProbe $exitedContext)
+                }
+                $releaseWait.Stop()
                 return [pscustomobject]@{
                     processId = 7004; exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -1534,7 +1665,9 @@
                 firstExitedResult = $script:FirstExitedResult
                 callsAfterFirstExitProbe = $script:CallsAfterFirstExitProbe
                 callsAfterImmediateProbes = $script:CallsAfterImmediateProbes
+                cachedExitedResult = $script:CachedExitedResult
                 stableExitedResult = $script:StableExitedResult
+                completedProcessEnumerations = $script:CompletedDumpProcessEnumerations
                 finalArtifactCalls = $script:DumpArtifactCalls
                 postExitProbeSeconds = $script:CapturedDumpPostExitProbeSeconds
                 infoBaseReleaseChecks = $script:InfoBaseReleaseChecks
@@ -1545,7 +1678,9 @@
         $result.firstExitedResult | Should -BeFalse
         $result.callsAfterFirstExitProbe | Should -Be 1
         $result.callsAfterImmediateProbes | Should -Be 1
+        $result.cachedExitedResult | Should -BeFalse
         $result.stableExitedResult | Should -BeTrue
+        $result.completedProcessEnumerations | Should -BeGreaterOrEqual 2
         $result.finalArtifactCalls | Should -Be 2
         $result.postExitProbeSeconds | Should -Be 30
         $result.infoBaseReleaseChecks | Should -Be 0

@@ -6820,14 +6820,20 @@ function Test-DesignerInvocationReleased {
     } else {
         ""
     }
+    $previousObservation = $ProbeState.lastProcessState
     $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
-    if (-not $processState.querySucceeded -or $processState.active) {
+    $freshObservation = -not [object]::ReferenceEquals($previousObservation, $processState)
+    if ((Get-StateValue -State $processState -Name "observationStatus" -Default "") -eq "pending") {
+        # Retain the first empty observation while a bounded scan is in flight,
+        # but require a fresh completed scan before confirming process release.
+        $ProbeState.processesReleaseConfirmed = $false
+    } elseif (-not $processState.querySucceeded -or $processState.active) {
         $ProbeState.processesReleasedSinceUtc = $null
         $ProbeState.processesReleaseConfirmed = $false
     } elseif (-not $ProbeState.processesReleaseConfirmed) {
         if ($null -eq $ProbeState.processesReleasedSinceUtc) {
             $ProbeState.processesReleasedSinceUtc = [DateTime]::UtcNow
-        } elseif (([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
+        } elseif ($freshObservation -and ([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
             $ProbeState.processesReleaseConfirmed = $true
         }
     }
