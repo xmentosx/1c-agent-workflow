@@ -7,7 +7,9 @@ param(
     [string]$AgentTarget = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ResumeMode = "Auto",
-    [string]$Capabilities = ""
+    [string]$Capabilities = "",
+    # Internal mutating publication subphase; never used by Plan/readiness.
+    [switch]$RecoverInterruptedExtensionOnly
 )
 
 Set-StrictMode -Version Latest
@@ -18,6 +20,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-process.ps1")
 $clientMcpBuildScope = $null
 try {
     $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
@@ -213,9 +216,18 @@ function Start-E2EHelperAtRoot {
     foreach ($argument in @($AdditionalArguments)) {
         $parts += (ConvertTo-NativeArgument ([string]$argument))
     }
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
-        -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath -PassThru
+    $jobHandle = [IntPtr]::Zero
+    $ownedJob = $Action -eq 'release-e2e-extension-smoke' -or ($Action -eq 'release-e2e-restore' -and $script:inExtensionRecovery)
+    if ($ownedJob) {
+        $started = Start-DeliveryProcess -ArgumentList ($parts -join " ") -WorkingDirectory $Root `
+            -StandardOutputPath $stdoutPath -StandardErrorPath $stderrPath
+        $process = $started.process
+        $jobHandle = $started.jobHandle
+    } else {
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
+            -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath -PassThru
+    }
     $startedAtUtc = [DateTime]::UtcNow
     try {
         $processStartTime = $process.StartTime
@@ -223,7 +235,7 @@ function Start-E2EHelperAtRoot {
             $startedAtUtc = $processStartTime.ToUniversalTime()
         }
     } catch {}
-    return [pscustomobject]@{
+    $invocation = [pscustomobject]@{
         process = $process
         action = $Action
         root = $Root
@@ -231,7 +243,12 @@ function Start-E2EHelperAtRoot {
         stderrPath = $stderrPath
         startedAtUtc = $startedAtUtc
         exitedAtUtc = $null
+        jobHandle = $jobHandle
+        nativeQuiescent = $false
+        ownedJob = $ownedJob
     }
+    if ($Action -eq 'release-e2e-restore' -and $script:inExtensionRecovery) { $script:lastRecoveryRestoreInvocation = $invocation }
+    return $invocation
 }
 
 function Complete-E2EHelperProcess {
@@ -246,11 +263,18 @@ function Complete-E2EHelperProcess {
         $TimeoutSeconds = [Math]::Min($TimeoutSeconds, $remaining)
     }
     $process = $Invocation.process
+    $ownsJob = $null -ne $Invocation.PSObject.Properties['ownedJob'] -and [bool]$Invocation.ownedJob
     # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
     # unless the native process handle is materialized before the wait.
     $null = $process.Handle
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $process.Kill() } catch {}
+        if ($ownsJob) {
+            $null = Stop-DeliveryProcessJobAndWait -JobHandle $Invocation.jobHandle -Process $process
+            Close-DeliveryProcessJob -JobHandle $Invocation.jobHandle -Process $process
+            $Invocation.jobHandle = [IntPtr]::Zero
+            $Invocation.nativeQuiescent = $true
+            $Invocation.exitedAtUtc = [DateTime]::UtcNow
+        } else { try { $process.Kill() } catch {} }
         if ($AllowFailure) { return [pscustomobject]@{ exitCode = -1; stdoutPath = $Invocation.stdoutPath; stderrPath = $Invocation.stderrPath } }
         throw "$($Invocation.action) timed out after $TimeoutSeconds seconds."
     }
@@ -265,6 +289,12 @@ function Complete-E2EHelperProcess {
     } catch {}
     $Invocation.exitedAtUtc = $exitedAtUtc
     $exitCode = [int]$process.ExitCode
+    if ($ownsJob) {
+        $null = Stop-DeliveryProcessJobAndWait -JobHandle $Invocation.jobHandle -Process $process
+        Close-DeliveryProcessJob -JobHandle $Invocation.jobHandle -Process $process
+        $Invocation.jobHandle = [IntPtr]::Zero
+        $Invocation.nativeQuiescent = $true
+    }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$($Invocation.action) failed with exit code $exitCode. See $($Invocation.stdoutPath) and $($Invocation.stderrPath)"
     }
@@ -679,6 +709,8 @@ $stageTimers = @{}
 $activeStageName = ""
 $activeStageDeadlineUtc = $null
 $releaseStageBudgets = @{}
+$script:inExtensionRecovery = $false
+$script:lastRecoveryRestoreInvocation = $null
 
 function Write-E2ECheckpoint {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpointPath) | Out-Null
@@ -1524,6 +1556,15 @@ foreach ($name in @(
     }
 }
 $restartLegacyRunRelative = ""
+. (Join-Path $PSScriptRoot 'git-path-list.ps1')
+. (Join-Path $PSScriptRoot 'release-qualification.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/extension-recovery.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/extension-recovery-owner.ps1')
+if ($RecoverInterruptedExtensionOnly) {
+    $recoveryResult = Invoke-E2EInterruptedExtensionRecovery
+    if ($null -ne $recoveryResult) { $recoveryResult | ConvertTo-Json -Depth 12 }
+    return
+}
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
     $restartLegacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
 }
@@ -2597,12 +2638,38 @@ try {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "extension-smoke" -Status "running"
         $executedStages += "extension-smoke"
+        $recoveryContext = Get-E2EExtensionRecoveryContext -Record $checkpoint
+        $extensionOwnership = New-ReleaseExtensionRecoveryOwnership -Checkpoint $checkpoint -Context $recoveryContext `
+            -ExtensionName $extensionSmokeName -WriteSet (Get-E2EExtensionWriteSet -ExtensionName $extensionSmokeName) `
+            -AssertCompatibility { param($ctx, $record, $owned) Assert-E2EExtensionRecoveryCompatibility -Record $record -Ownership $owned }
+        $checkpoint['extensionRecovery'] = $extensionOwnership
+        Write-E2ECheckpoint
+        $extensionInvocation = $null
         try {
             Remove-Item -LiteralPath $extensionSmokeEvidencePath -Force -ErrorAction SilentlyContinue
-            Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
+            $extensionInvocation = Start-E2EHelperAtRoot -Root $worktreePath -BranchName $devBranchName `
+                -Action "release-e2e-extension-smoke" -AdditionalArguments @(
                 "-ExtensionName", $extensionSmokeName,
                 "-ReleaseAiRulesSource", $AiRulesSource
-            ) | Out-Null
+            )
+            $extensionOwnership['invocation'] = [ordered]@{
+                childProcessId = $extensionInvocation.process.Id
+                childStartedAtUtc = $extensionInvocation.startedAtUtc.ToString('o')
+            }
+            Write-E2ECheckpoint
+            try { Complete-E2EHelperProcess -Invocation $extensionInvocation -TimeoutSeconds 7200 | Out-Null }
+            finally {
+                if (-not $extensionInvocation.nativeQuiescent) {
+                    try {
+                        $null = Stop-DeliveryProcessJobAndWait -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                        $extensionInvocation.nativeQuiescent = $true
+                        $extensionInvocation.exitedAtUtc = [DateTime]::UtcNow
+                    } finally {
+                        Close-DeliveryProcessJob -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                        $extensionInvocation.jobHandle = [IntPtr]::Zero
+                    }
+                }
+            }
             if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
                 throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
             }
@@ -2625,9 +2692,29 @@ try {
                 throw "Release E2E extension evidence does not prove transactional content preservation, explicit metadata updates, Empty/CFE roundtrip, idempotence, real TestClient UI, and database restoration."
             }
             Set-E2EStageStatus -Name "extension-smoke" -Status "passed" -EvidencePath $extensionSmokeEvidencePath
+            $extensionOwnership['status'] = 'completed'
+            Write-E2ECheckpoint
         } catch {
-            Set-E2EStageStatus -Name "extension-smoke" -Status "failed" -ErrorText $_.Exception.Message
-            throw
+            $extensionFailure = $_
+            if ($null -ne $extensionInvocation -and -not $extensionInvocation.nativeQuiescent -and $extensionInvocation.jobHandle -ne [IntPtr]::Zero) {
+                try {
+                    $null = Stop-DeliveryProcessJobAndWait -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                    $extensionInvocation.nativeQuiescent = $true
+                    $extensionInvocation.exitedAtUtc = [DateTime]::UtcNow
+                } finally {
+                    Close-DeliveryProcessJob -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                    $extensionInvocation.jobHandle = [IntPtr]::Zero
+                }
+            }
+            Set-E2EStageStatus -Name "extension-smoke" -Status "failed" -ErrorText $extensionFailure.Exception.Message
+            if ($null -ne $extensionInvocation -and $extensionInvocation.nativeQuiescent) {
+                $checkpoint['extensionRecovery'] = Complete-ReleaseExtensionRecoveryOwnership -Ownership $extensionOwnership `
+                    -Context $recoveryContext -Checkpoint $checkpoint `
+                    -AssertCompatibility { param($ctx, $record, $owned) Assert-E2EExtensionRecoveryCompatibility -Record $record -Ownership $owned } `
+                    -GetStopEvidence { Get-E2EExtensionStopEvidence -Context $recoveryContext -Invocation $extensionInvocation }
+                Write-E2ECheckpoint
+            }
+            throw $extensionFailure
         }
     } else {
         $resumedStages += "extension-smoke"

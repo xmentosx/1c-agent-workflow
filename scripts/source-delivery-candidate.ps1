@@ -647,6 +647,7 @@ function Publish-AccumulatedDevelop {
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
         if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
+            Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
             Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
         }
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 1) {
@@ -955,6 +956,8 @@ function Release-DevelopToMaster {
             $qualificationReused = $true
             Write-Verbose "Release train reuses exact-candidate Develop and Release qualification; no runtime gate is repeated."
         } else {
+            Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
+            Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
             Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop")
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
             Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"

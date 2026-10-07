@@ -32,6 +32,7 @@
       "scripts/source-delivery-process.ps1",
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
+      "scripts/source-delivery-release-recovery.ps1",
       "scripts/source-delivery-component.ps1",
       "scripts/source-delivery-cleanup.ps1"
     ],
@@ -180,8 +181,9 @@
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryPublish.Tests.ps1",
-      "paths": ["scripts/source-delivery-candidate.ps1"],
+      "paths": ["scripts/source-delivery-candidate.ps1", "scripts/source-delivery-release-recovery.ps1"],
       "tests": [
+        "tests/pester/SourceDeliveryReleaseRecovery.Tests.ps1",
         "tests/pester/SourceDeliveryPublish.Tests.ps1",
         "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1",
         "tests/pester/SourceDeliveryPublishQualification.Tests.ps1",
@@ -224,7 +226,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
       "paths": ["scripts/source-delivery-process.ps1"],
-      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryProcess.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1"]
     },
     {
       "id": "source-delivery-queue",
@@ -260,7 +262,7 @@
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
       "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
+      "tests": ["tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
       "id": "dependency-lock",

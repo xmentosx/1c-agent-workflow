@@ -191,6 +191,8 @@ using System.Text;
 public static class ItlDeliveryProcessJob
 {
     private const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const Int32 JobObjectBasicAccountingInformation = 1;
+    private const Int32 JobObjectBasicProcessIdList = 3;
     private const Int32 JobObjectExtendedLimitInformation = 9;
     private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const UInt32 CREATE_NO_WINDOW = 0x08000000;
@@ -307,11 +309,46 @@ public static class ItlDeliveryProcessJob
         public IntPtr JobHandle;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public Int64 TotalUserTime;
+        public Int64 TotalKernelTime;
+        public Int64 ThisPeriodTotalUserTime;
+        public Int64 ThisPeriodTotalKernelTime;
+        public UInt32 TotalPageFaultCount;
+        public UInt32 TotalProcesses;
+        public UInt32 ActiveProcesses;
+        public UInt32 TotalTerminatedProcesses;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(IntPtr job, Int32 informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, UInt32 informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(IntPtr job, UInt32 exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(IntPtr job, Int32 informationClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information, UInt32 informationLength, IntPtr returnLength);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryJobProcessIdList(IntPtr job, Int32 informationClass, IntPtr information, UInt32 informationLength, IntPtr returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(UInt32 desiredAccess, bool inheritHandle, UInt32 processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 milliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
@@ -457,6 +494,96 @@ public static class ItlDeliveryProcessJob
         }
     }
 
+    private static void CaptureJobProcessHandles(IntPtr job, List<IntPtr> handles, Stopwatch watch, Int32 timeoutMilliseconds)
+    {
+        Int32 capacity = 16;
+        while (true)
+        {
+            Int32 length = checked(8 + IntPtr.Size * capacity);
+            IntPtr information = Marshal.AllocHGlobal(length);
+            try
+            {
+                bool complete = QueryJobProcessIdList(job, JobObjectBasicProcessIdList, information, (UInt32)length, IntPtr.Zero);
+                Int32 error = complete ? 0 : Marshal.GetLastWin32Error();
+                if (!complete && error != 234)
+                    throw new Win32Exception(error, "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: owned process-id list query failed.");
+                Int32 assigned = Marshal.ReadInt32(information, 0);
+                Int32 listed = Marshal.ReadInt32(information, 4);
+                if (!complete)
+                {
+                    if (watch.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned process-id list was not complete before the deadline.");
+                    capacity = Math.Max(checked(capacity * 2), assigned);
+                    continue;
+                }
+                if (assigned < 0 || listed < 0 || assigned != listed || listed > capacity)
+                    throw new InvalidOperationException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: incomplete owned process-id list.");
+                for (Int32 index = 0; index < listed; index++)
+                {
+                    if (watch.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned process handles were not captured before the deadline.");
+                    UInt32 processId = checked((UInt32)Marshal.ReadIntPtr(information, 8 + IntPtr.Size * index).ToInt64());
+                    IntPtr process = OpenProcess(0x00100000 | 0x00001000, false, processId);
+                    if (process == IntPtr.Zero)
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: could not hold an owned process handle.");
+                    try
+                    {
+                        bool inJob;
+                        if (!IsProcessInJob(process, job, out inJob))
+                            throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: process job membership query failed.");
+                        if (!inJob)
+                            throw new InvalidOperationException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: captured process no longer belongs to the owned job.");
+                        handles.Add(process);
+                        process = IntPtr.Zero;
+                    }
+                    finally { if (process != IntPtr.Zero) CloseHandle(process); }
+                }
+                return;
+            }
+            finally { Marshal.FreeHGlobal(information); }
+        }
+    }
+
+    public static UInt32 StopAndWait(IntPtr job, Int32 timeoutMilliseconds)
+    {
+        if (job == IntPtr.Zero)
+            throw new ArgumentException("DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: no owned job handle.");
+        if (timeoutMilliseconds < 0) throw new ArgumentOutOfRangeException("timeoutMilliseconds");
+        Stopwatch watch = Stopwatch.StartNew();
+        List<IntPtr> processes = new List<IntPtr>();
+        try
+        {
+            CaptureJobProcessHandles(job, processes, watch, timeoutMilliseconds);
+            if (!TerminateJobObject(job, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: TerminateJobObject failed.");
+            foreach (IntPtr process in processes)
+            {
+                Int64 remaining = Math.Max(0, (Int64)timeoutMilliseconds - watch.ElapsedMilliseconds);
+                UInt32 result = WaitForSingleObject(process, (UInt32)remaining);
+                if (result == 258)
+                    throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: an owned process handle is not signaled.");
+                if (result != 0)
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: owned process handle wait failed.");
+            }
+            UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION));
+            while (true)
+            {
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information;
+                if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out information, length, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: QueryInformationJobObject failed.");
+                if (information.ActiveProcesses == 0) return 0;
+                Int64 remaining = (Int64)timeoutMilliseconds - watch.ElapsedMilliseconds;
+                if (remaining <= 0)
+                    throw new TimeoutException("DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: owned job still has " + information.ActiveProcesses + " active process(es).");
+                System.Threading.Thread.Sleep((Int32)Math.Min(25, remaining));
+            }
+        }
+        finally
+        {
+            foreach (IntPtr process in processes) CloseHandle(process);
+        }
+    }
+
     public static void Close(IntPtr job)
     {
         if (job != IntPtr.Zero && !CloseHandle(job))
@@ -477,6 +604,37 @@ public static class ItlDeliveryProcessJob
     } catch {
         try { [ItlDeliveryProcessJob]::Close([IntPtr]$started.JobHandle) } catch {}
         throw
+    }
+}
+
+function Stop-DeliveryProcessJobAndWait {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$JobHandle,
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [ValidateRange(0, 2147483647)][int]$TimeoutMilliseconds = 5000
+    )
+    if ($env:OS -ne 'Windows_NT' -or $JobHandle -eq [IntPtr]::Zero -or -not ('ItlDeliveryProcessJob' -as [type])) {
+        throw 'DELIVERY_PROCESS_JOB_QUIESCENCE_UNAVAILABLE: an initialized owned Windows job is required.'
+    }
+    $processId = [int]$Process.Id
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    # Accounting zero can precede process-handle signaling. Hold and wait the
+    # current job processes, then confirm zero while the job remains open. The
+    # caller retains its existing finally/Close ownership on every outcome.
+    $activeProcesses = [ItlDeliveryProcessJob]::StopAndWait($JobHandle, $TimeoutMilliseconds)
+    $remaining = [Math]::Max(0, $TimeoutMilliseconds - [int]$watch.ElapsedMilliseconds)
+    if (-not $Process.WaitForExit($remaining)) {
+        throw 'DELIVERY_PROCESS_JOB_QUIESCENCE_TIMEOUT: the owned parent process handle is not signaled.'
+    }
+    $watch.Stop()
+    return [pscustomobject]@{
+        jobHandle = $JobHandle.ToInt64().ToString([Globalization.CultureInfo]::InvariantCulture)
+        processId = $processId
+        activeProcesses = [int]$activeProcesses
+        stopped = $true
+        quiescenceConfirmed = $true
+        processHandleWaitsVerified = $true
+        elapsedMilliseconds = [int64]$watch.ElapsedMilliseconds
     }
 }
 

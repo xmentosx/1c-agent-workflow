@@ -334,3 +334,33 @@ SHA256 `a63b5f8048dab5cc7760eb391315633b070a73630c609bccb4fd905baf51b471`.
 Planned Develop-only driver/evidence changes are outside these owner inputs.
 The coherent clean candidate still requires public registration; no historical
 Full is relabelled, and Develop/Release publication/live UI tasks remain open.
+
+Q25 interrupted Release continuation, 2026-10-07: the first native PS5/Pester
+owner batch passed 25/0/0 (576.83 seconds) against real Git/Unicode file fixtures,
+covering exact residue restoration/archive, foreign-byte preservation, target and
+support drift rejection, and same-DT retry without a false passed stage. Later
+cache-path and explicitly approved legacy stop-record cases have separate focused
+evidence and remain subject to final normal Targeted registration. Historical
+inputs/results are retained and are not relabelled as the final module version.
+The existing Windows job owner passed 5/0/0 (4.814 seconds), including a real
+native descendant whose process handle and locked file must be released before
+quiescence is reported. The initial 3/2 accounting-only failure remains retained.
+Actual publication callsite tests passed all six recovery/readiness cases; direct
+readiness stays read-only. The first combined batch was 41/1: its older Release
+fixture lacked native target/state/env binding. These fixture fields now represent
+the same original disposable target and helper route; assertions/workload remain
+unchanged. The subsequent dirty-source focused run reached the cache continuation
+assertion and correctly refused extension reuse because newly added owner files
+were absent from the committed Git input inventory. Its next run uses the coherent
+committed source, as normal registration does; no reuse assertion is weakened.
+
+Required remaining Q25 evidence: normal Targeted on the coherent source; exact
+approved legacy adoption/restore/archive on R6; unchanged ordinary readiness and
+normal Release continuation on that same stand. Source tests alone do not close
+the failed extension stage, ondemand capability, Develop publication or EV8a/EV9.
+
+The seven added cache/legacy cases passed 7/0; the archive-ignore refusal has a
+retained RED-to-GREEN 0/1 to 1/0, with no restore call or original-byte changes
+in GREEN. Literal Unicode Git ignore controls returned 0 for the ignored path
+and 1 for the unignored path. The final 33-case file is qualified by normal
+registration, not by combining historical runs into a new whole-file result.

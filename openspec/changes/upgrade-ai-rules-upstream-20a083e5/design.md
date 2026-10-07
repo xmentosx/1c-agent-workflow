@@ -853,3 +853,43 @@ inventory rollout) не считаются выполненными и имею�
 Если implementation выявит необходимость изменить owner, расширить authority,
 снизить поддержку или отказаться от принятого поведения, это новый checkpoint,
 а не разрешение молча упростить требования. Эта постановка не авторизует apply.
+
+## Accepted Q25: interrupted Release extension recovery
+
+User accepted the bounded checkpoint on 2026-10-07. The original extension-smoke
+timeout left 16 untracked CFE source files and extension branch state on the
+isolated `itl-workflow-e2e-pm5-rel-e2e-r6` stand. Both ordinary readiness and
+Restart reject this residue before the existing postConfig restore can run.
+This is a Release continuation defect; it is not an upstream diagnostic policy.
+
+The existing mutating source Release owner performs recovery after plan/operation
+validation and before ordinary readiness. Plan, Status and read-only readiness
+remain nonmutating. The same Release checkpoint predeclares an absent exact
+extension write set before child mutation; after confirmed child/native stop it
+seals the actual subset and runtime state/env hashes. Retry verifies common Git,
+branch, HEAD, run, target, source/helper/fork compatibility and snapshot/state/env
+hashes. Foreign files/edits, changed targets and unknown live writers still reject.
+There is no new journal, coordinator, public installed action or relaxed dirty guard.
+
+Recovery calls the existing `Restore-E2EInfobaseSnapshot` with the pinned
+postConfig DT/state/env. It preserves the exact source bytes in a hash-checked
+ignored archive outside the Release run root removed by Restart. Only recovered
+ownership is recorded; failed stage status and original evidence remain failed.
+An uncertain restore acknowledgement permits only replay of the same validated
+DT after owned writer stop; it never establishes native or whole-stage success.
+
+The one legacy adoption is explicitly limited to HEAD
+`271f25dc17d78f7dc320ef9695bdfa41e8058377`, branch `itldev/rel-e2e-r6`, and
+`src/cfe/ITLReleaseSmoke20261007151034`: exactly 16 paths/bytes/SHA from the frozen
+manifest with SHA256 `fad75c4d62a2b314aa1a37002f2764f7f0657d5c2bef8e7dc4073ec097f39c7a`.
+Any difference rejects this approval. The currently published supervisor cannot
+execute a new candidate hook, so the initial bridge invokes these Release-owner
+contracts and the unchanged snapshot restore owner directly with this explicit
+manifest. It does not substitute a candidate supervisor or edit branch/checkpoint
+history manually. Normal publication follows recovery on the original stand.
+
+Acceptance keeps the original workload: owned timeout residue → restore/archive
+→ normal clean admission/retry; foreign additions/edits and DT/state/target drift
+reject without losing bytes; interrupted restore remains retryable without a
+false passed result. Final Release, publication and EV8a/EV9 remain open until
+their actual runtime evidence exists. No real-project rollout is authorized here.

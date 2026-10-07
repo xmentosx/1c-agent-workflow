@@ -755,7 +755,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
-            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/snapshots/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/snapshots/`n.agent-1c/infobases/`n.dev.env`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
             New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot "src\cf\CommonModules\ITLRepositoryProbe\Ext"), (Join-Path $mainRoot ".agent-1c"), (Join-Path $mainRoot "tests\features") | Out-Null
             $dependencyLock = [ordered]@{
@@ -809,12 +809,20 @@ Describe "Release E2E orchestration" {
             $state = [ordered]@{
                 devBranchName = "workflow-release-e2e"
                 devBranch = "itldev/workflow-release-e2e"
+                devBranchKind = "configuration"
+                infoBaseKind = "file"
+                devBranchInfoBasePath = (Join-Path $worktreeRoot '.agent-1c/infobases/workflow-release-e2e')
                 worktreePath = $worktreeRoot
                 unsafeActionProtectionResolution = "branch-confirmed"
                 unsafeActionProtectionConfirmed = $true
                 unsafeActionProtectionConfirmedAt = "2026-07-24T00:00:00Z"
                 lastVerificationStatus = "missing"
             }
+            # The recovery owner binds the same disposable native target even
+            # when this fixture's helper represents Designer actions in-process.
+            [void][IO.Directory]::CreateDirectory($state.devBranchInfoBasePath)
+            [IO.File]::WriteAllText((Join-Path $state.devBranchInfoBasePath '1Cv8.1CD'), 'fixture infobase', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $worktreeRoot '.dev.env'), ("INFOBASE_KIND=file`nINFOBASE_PATH=" + $state.devBranchInfoBasePath + "`nSOURCE_INFOBASE_PATH=$sourceSnapshot`n"), [Text.UTF8Encoding]::new($false))
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
@@ -1148,7 +1156,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             )) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Split-Path -Parent (Join-Path $workflowFixtureRoot $relative)) -Recurse -Force
             }
-            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\stand-env-identity.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
+            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\source-delivery-process.ps1", "scripts\stand-env-identity.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Join-Path $workflowFixtureRoot $relative) -Force
             }
             & git -C $workflowFixtureRoot add --all

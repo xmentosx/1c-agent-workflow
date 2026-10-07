@@ -62,7 +62,7 @@
     },
     {
       "id": "extension-smoke",
-      "version": 2,
+      "version": 3,
       "budgetSeconds": 1200,
       "dependsOn": ["config-cadence"],
       "paths": [
@@ -71,7 +71,10 @@
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
-        "scripts/release-e2e/extension-smoke.ps1"
+        "scripts/release-e2e/extension-smoke.ps1",
+        "scripts/release-e2e/extension-recovery.ps1",
+        "scripts/release-e2e/extension-recovery-owner.ps1",
+        "scripts/source-delivery-process.ps1"
       ]
     },
     {

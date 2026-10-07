@@ -688,3 +688,13 @@ roundtrips, checks and restoration. The additional 300 seconds cover the
 remaining dump/restore/validation and reserve; this is an allowance estimate,
 not a measured successful run. Other stage ceilings, no-progress limits and
 proof predicates stay unchanged. The old timeout remains failed evidence.
+
+Interrupted extension-smoke recovery belongs to the mutating Release owner.
+It runs before ordinary readiness only with predeclared exact ownership sealed
+after confirmed child/native stop. The same checkpoint and pinned postConfig
+snapshot remain authoritative; foreign changes still fail the dirty guard.
+Recovery archives exact bytes outside the run root and restores through the
+existing snapshot helper. It records recovery, never a passed stage. Read-only
+Plan/Status/readiness do not restore anything. A lost restore acknowledgement may
+replay only that same validated DT after owned writer stop. Legacy residue without
+prior ownership requires explicit bounded adoption, not prefix-based cleanup.
