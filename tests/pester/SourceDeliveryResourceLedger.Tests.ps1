@@ -767,6 +767,41 @@ public static class $typeName
 }
 
 Describe 'Release snapshot cleanup ownership and retention' {
+    It 'preserves a <State> snapshot referenced by the <Layout> checkpoint beyond plan retention, then cleans it after checkpoint removal' -TestCases @(
+        @{ Layout = 'preferred'; State = 'retained' }, @{ Layout = 'legacy-run'; State = 'retained' },
+        @{ Layout = 'preferred'; State = 'cleanup-pending' }, @{ Layout = 'legacy-run'; State = 'cleanup-pending' }
+    ) {
+        param($Layout, $State)
+        $fixture = New-ReleaseSnapshotFixture -Layout $Layout
+        $checkpointPath = Join-Path (Split-Path (Split-Path $fixture.path)) 'checkpoint.json'
+        $checkpoint = [ordered]@{
+            schemaVersion = 3; status = 'running'
+            identity = [ordered]@{ worktreePath = $fixture.root; branch = 'itldev/workflow-release-e2e' }
+            snapshots = [ordered]@{ baseline = [ordered]@{ path = $fixture.path; sha256 = $fixture.identity.sha256 } }
+        }
+        [IO.File]::WriteAllText($checkpointPath, ($checkpoint | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        $checkpointSha = Get-DeliveryFileSha256 -Path $checkpointPath
+        Set-DeliveryResourceState -ResourceId $fixture.resourceId -State $State | Out-Null
+        foreach ($id in 1..2) {
+            Register-DeliveryResource -PlanId "newer-$id" -Kind candidate-worktree -Owner delivery -Identity ([ordered]@{ path=(Join-Path $TestDrive "newer-$id") }) -State retained | Out-Null
+        }
+        $ledger = Read-DeliveryResourceLedger
+        $old = $ledger.resources | Where-Object resourceId -eq $fixture.resourceId
+        $old.updatedAt = [DateTime]::UtcNow.AddDays(-8).ToString('o')
+        $old.retainUntil = [DateTime]::UtcNow.AddDays(-1).ToString('o')
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root | Out-Null
+        Test-Path -LiteralPath $fixture.path | Should -BeTrue
+        (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
+        (Get-DeliveryFileSha256 -Path $checkpointPath) | Should -Be $checkpointSha
+        ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Not -Be 'removed'
+        # The producer's checkpoint ceases to own the snapshot only when removed.
+        Remove-Item -LiteralPath $checkpointPath -Force
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root | Out-Null
+        Test-Path -LiteralPath $fixture.path | Should -BeFalse
+        ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Be 'removed'
+    }
+
     It 'cleans the actual producer <Layout> <Snapshot> path and preserves the worktree' -TestCases @(
         @{ Layout = 'preferred'; Snapshot = 'baseline' }, @{ Layout = 'preferred'; Snapshot = 'post-config' },
         @{ Layout = 'legacy-run'; Snapshot = 'baseline' }, @{ Layout = 'legacy-run'; Snapshot = 'post-config' }
@@ -871,6 +906,61 @@ Describe 'Release snapshot cleanup ownership and retention' {
         $result.debt.pending | Should -Be 0
         Test-Path -LiteralPath $fixture.path | Should -BeFalse
         @((Read-DeliveryResourceLedger).resources | Where-Object { $_.kind -eq 'release-snapshot' -and $_.state -eq 'removed' }).Count | Should -Be 2
+    }
+}
+
+Describe 'Release checkpoint cleanup diagnostics' {
+    It 'preserves both snapshot duplicates with future TTL when two newer plans evict their owning plans' {
+        $fixture = New-ReleaseSnapshotFixture
+        $checkpointPath = Join-Path (Split-Path (Split-Path $fixture.path)) 'checkpoint.json'
+        [IO.File]::WriteAllText($checkpointPath, (@{status='running';snapshots=@{baseline=@{path=$fixture.path;sha256=$fixture.identity.sha256}}}|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        $duplicateId = Register-DeliveryResource -PlanId other-old-plan -Kind release-snapshot -Owner release-e2e -Identity $fixture.identity -State retained
+        Set-DeliveryResourceState -ResourceId $fixture.resourceId -State retained | Out-Null
+        foreach ($id in 1..2) {
+            Register-DeliveryResource -PlanId "newer-$id" -Kind candidate-worktree -Owner delivery -Identity ([ordered]@{path=(Join-Path $TestDrive "newer-$id")}) -State retained | Out-Null
+        }
+        $ledger = Read-DeliveryResourceLedger
+        foreach ($old in @($ledger.resources | Where-Object kind -eq release-snapshot)) {
+            $old.updatedAt = [DateTime]::UtcNow.AddHours(-2).ToString('o')
+            $old.retainUntil = [DateTime]::UtcNow.AddDays(6).ToString('o')
+        }
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root | Out-Null
+        (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
+        foreach ($id in @($fixture.resourceId,$duplicateId)) {
+            ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $id).state | Should -Be retained
+        }
+    }
+
+    It 'protects the <Status> checkpoint reference even when the recorded snapshot SHA differs' -TestCases @(
+        @{ Status = 'passed' }, @{ Status = 'failed' }
+    ) {
+        param($Status)
+        $fixture = New-ReleaseSnapshotFixture
+        $checkpointPath = Join-Path (Split-Path (Split-Path $fixture.path)) 'checkpoint.json'
+        [IO.File]::WriteAllText($checkpointPath, (@{schemaVersion=2;status=$Status;snapshots=@{baseline=@{path=$fixture.path;sha256=('f'*64)}}}|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        $result = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root
+        $result.status | Should -Be 'completed-with-warnings'
+        ($result.warnings -join ' ') | Should -Match 'referenced by its Release checkpoint'
+        (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
+    }
+
+    It 'preserves the snapshot and warns for <Problem> checkpoint data' -TestCases @(
+        @{ Problem = 'malformed'; Value = '{invalid' },
+        @{ Problem = 'relative-path'; Value = '{"snapshots":{"baseline":{"path":"snapshots/baseline.dt"}}}' },
+        @{ Problem = 'boolean-snapshots'; Value = '{"snapshots":false}' },
+        @{ Problem = 'numeric-snapshots'; Value = '{"snapshots":1}' }
+    ) {
+        param($Problem, $Value)
+        $fixture = New-ReleaseSnapshotFixture
+        $checkpointPath = Join-Path (Split-Path (Split-Path $fixture.path)) 'checkpoint.json'
+        [IO.File]::WriteAllText($checkpointPath, $Value, [Text.UTF8Encoding]::new($false))
+        $result = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root
+        $result.status | Should -Be 'completed-with-warnings'
+        ($result.warnings -join ' ') | Should -Match 'checkpoint cannot be interpreted'
+        (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
+        [IO.File]::ReadAllText($checkpointPath) | Should -Be $Value
+        ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Be 'cleanup-pending'
     }
 }
 

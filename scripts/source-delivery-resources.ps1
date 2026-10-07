@@ -267,6 +267,16 @@ function Update-DeliveryFailedPlanRetention {
     $keepPlans = @($retainedPlans | Select-Object -First 2 | ForEach-Object { [string]$_.planId })
     $changed = $false
     foreach ($resource in @($ledger.resources | Where-Object { [string]$_.state -eq "retained" })) {
+        if ([string]$resource.kind -eq 'release-snapshot') {
+            try {
+                if (Test-DeliverySnapshotReferencedByCheckpoint -Path ([string]$resource.identity.path) -WorktreePath ([string]$resource.identity.worktreePath)) { continue }
+            } catch {
+                # The delete adapter records the diagnostic and preserves the
+                # bytes when the owning checkpoint cannot be interpreted.
+                $resource.state = 'cleanup-pending'; $resource.updatedAt = $now.ToString('o'); $changed = $true
+                continue
+            }
+        }
         $expired = (ConvertFrom-DeliveryUtcTimestamp -Value $resource.retainUntil) -le $now
         if ($expired -or [string]$resource.planId -notin $keepPlans) {
             $resource.state = "cleanup-pending"; $resource.updatedAt = $now.ToString("o"); $changed = $true
@@ -797,6 +807,39 @@ function Test-DeliveryReleaseSnapshotPath {
         (Split-Path -Leaf $path) -match '^(release-e2e-|extension-init-).+\.dt$')
 }
 
+function Test-DeliverySnapshotReferencedByCheckpoint {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    $path = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
+    if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $root)) { return $false }
+    $relative = $path.Substring($root.Length + 1) -replace '\\', '/'
+    # Set-E2ERunPaths places one checkpoint beside the producer's snapshots.
+    # Legacy flat temporary dumps have no such baseline ownership contract.
+    if ($relative -notmatch '^\.agent-1c/(runs/release-e2e|release-e2e-runs)/[A-Za-z0-9_.-]+/snapshots/(baseline|post-config)\.dt$') { return $false }
+    $checkpointPath = Join-Path (Split-Path (Split-Path $path)) 'checkpoint.json'
+    $cursor = $checkpointPath
+    while (-not [string]::Equals($cursor.TrimEnd('\', '/'), $root, [StringComparison]::OrdinalIgnoreCase)) {
+        if ((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "snapshot checkpoint path contains a reparse point: $cursor"
+        }
+        $cursor = Split-Path -Parent $cursor
+    }
+    if (-not (Test-Path -LiteralPath $checkpointPath)) { return $false }
+    if (-not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) { throw "snapshot owning checkpoint is not a file: $checkpointPath" }
+    try {
+        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if (-not $checkpoint.PSObject.Properties['snapshots'] -or $checkpoint.snapshots -isnot [pscustomobject]) { throw 'invalid snapshots contract' }
+        foreach ($entry in @($checkpoint.snapshots.PSObject.Properties)) {
+            if (-not $entry.Value.PSObject.Properties['path'] -or -not [string]$entry.Value.path) { throw 'missing snapshot path' }
+            if (-not [IO.Path]::IsPathRooted([string]$entry.Value.path)) { throw 'snapshot path is not absolute' }
+            if ([string]::Equals($path, [IO.Path]::GetFullPath([string]$entry.Value.path), [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    } catch { throw "snapshot owning checkpoint cannot be interpreted: $checkpointPath. $($_.Exception.Message)" }
+    # Status, schema/candidate version and SHA are not deletion permission:
+    # failed/passed baselines and damaged bytes are still needed by Restart.
+    return $false
+}
+
 function Assert-DeliverySnapshotOwnership {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$WorktreePath)
     if (-not (Test-DeliveryReleaseSnapshotPath -Path $Path -WorktreePath $WorktreePath)) {
@@ -809,6 +852,9 @@ function Assert-DeliverySnapshotOwnership {
             throw "snapshot path contains a reparse point below its owned worktree: $cursor"
         }
         $cursor = Split-Path -Parent $cursor
+    }
+    if (Test-DeliverySnapshotReferencedByCheckpoint -Path $Path -WorktreePath $WorktreePath) {
+        throw "snapshot is referenced by its Release checkpoint: $Path"
     }
     # A reusable run filename can be registered by several plans. The old
     # pending record must not delete bytes still owned by a retained/active one,

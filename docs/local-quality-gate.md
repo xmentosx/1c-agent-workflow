@@ -477,6 +477,12 @@ reparse point ниже worktree не даёт права удалить пере
 старой pending-записью, даже при одинаковом SHA. После штатного удаления по
 совпадающей записи старые записи исчезнувшего файла закрываются в том же
 проходе. Несовпадение SHA само по себе никогда не разрешает удаление.
+Ссылка из соседнего producer `checkpoint.json` также сохраняет baseline и
+post-config независимо от двух последних планов, TTL, статуса и версии
+кандидата: эти байты нужны штатному Auto/Restart. Перед удалением уже pending
+записи ссылка проверяется повторно. Нечитаемый checkpoint сохраняет снимок с
+предупреждением очистки; после удаления checkpoint действуют прежние правила
+очистки orphan-снимков. Legacy flat временные dumps сохраняют прежнюю политику.
 
 `Status.disposition` is a read-only, compact inventory of only the
 source-delivery namespaces and ledger identities. It classifies records as
