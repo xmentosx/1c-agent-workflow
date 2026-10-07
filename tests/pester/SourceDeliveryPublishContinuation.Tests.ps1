@@ -5,6 +5,22 @@ Describe "Source develop queue and delivery" {
             $fixture = $null
             try {
                 $fixture = New-DeliveryFixture
+                # This isolated gate must emit the same passed-stage boundary
+                # that the real Targeted gate writes for RegisterChange.
+                $gateText = Get-Content -LiteralPath $fixture.gate -Raw -Encoding UTF8
+                $targetedSummary = @'
+if ($Mode -eq 'Targeted') {
+    $local = Join-Path (Get-Location) 'build/test-results/local'
+    New-Item -ItemType Directory -Force -Path $local | Out-Null
+    $summary = @{startedAt=[DateTime]::UtcNow.ToString('o');tests=@{passed=1;failed=0;skipped=0};stages=@(
+        @{name='pester';status='passed';durationMs=1},@{name='tracked-state';status='passed';durationMs=1},@{name='git-diff-check';status='passed';durationMs=1}
+    )}
+    [IO.File]::WriteAllText((Join-Path $local 'check-summary.json'), ($summary | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+}
+exit 0
+'@
+                ([regex]::Matches($gateText, '(?m)^exit 0\r?$')).Count | Should -Be 1
+                Set-Content -LiteralPath $fixture.gate -Encoding UTF8 -Value ([regex]::Replace($gateText, '(?m)^exit 0\r?$', $targetedSummary))
                 New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
                 $catalog = [ordered]@{ continuationScopes = [ordered]@{ static = @("tests/pester/*"); gate = @(); develop = @(); release = @() } }
                 [IO.File]::WriteAllText((Join-Path $fixture.root "tests\quality-contracts.json"), (($catalog | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
@@ -26,9 +42,12 @@ Describe "Source develop queue and delivery" {
                 $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
                 Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
                 $runRoot = Join-Path $fixture.root ".git\itl\runs"
-                New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-                $targeted = [ordered]@{ schemaVersion=1; mode="Targeted"; status="passed"; exitCode=0; commit=$candidateCommit; tree=$candidateTree; finishedAt=[DateTime]::UtcNow.ToString("o"); stages=@([ordered]@{name="pester";status="passed"},[ordered]@{name="tracked-state";status="passed"},[ordered]@{name="git-diff-check";status="passed"}) }
-                [IO.File]::WriteAllText((Join-Path $runRoot "fixture-targeted-continuation.json"), (($targeted | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                $targetedPath = Get-ChildItem -LiteralPath $runRoot -File -Filter '*-targeted-*.json' | Sort-Object Name -Descending | Select-Object -First 1
+                $targeted = Get-Content -LiteralPath $targetedPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                $targeted.schemaVersion | Should -Be 3
+                $targeted.commit | Should -Be $candidateCommit
+                $targeted.tree | Should -Be $candidateTree
+                @($targeted.stages).Count | Should -Be 3
                 Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
 
                 $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))

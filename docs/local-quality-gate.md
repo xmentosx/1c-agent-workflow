@@ -451,8 +451,10 @@ atomically under a short cross-process lock. If the projection lock or update
 fails, the authoritative raw proof is still written and a pending marker makes
 the projection explicitly stale until `Cleanup` repairs it. Exact Targeted
 lookup tries the index first, then the unchanged raw store, and still accepts
-only the existing schema-1 proof contract with exact commit/tree/stages and a
-freshly calculated file SHA.
+only the known raw schemas 1, 2 and 3 with exact commit/tree and the mandatory
+passed stages, plus a freshly calculated file SHA. Schemas 2 and 3 add timing
+and failure metadata; unknown schemas remain unverified. Recorded continuation
+uses the same proof predicate and rechecks the bound raw SHA and stages.
 
 Only serialized manual `Cleanup` compacts exact-owned `removed` resource-ledger
 records. It writes immutable content-addressed shards keyed by the first two hex

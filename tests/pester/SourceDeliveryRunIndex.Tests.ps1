@@ -240,16 +240,21 @@ Write-DeliveryRunRecord -Mode Targeted -Status passed -ErrorMessage '' -WorkingR
         (Get-DeliveryRunHistory).indexStatus | Should -Be 'ready'
     }
 
-    It 'keeps schema-1 raw Targeted proof authoritative across indexed and corrupt-index lookup' {
+    It 'keeps legacy and current raw Targeted proof authoritative across indexed and corrupt-index lookup' {
         $runRoot = New-RunIndexStore
         $started = [DateTime]::Parse('2026-09-03T00:00:00Z').ToUniversalTime()
         $schemaOne = Write-TestDeliveryRun -RunRoot $runRoot -StartedAt $started -Sequence 1 -SchemaVersion 1
-        Write-TestDeliveryRun -RunRoot $runRoot -StartedAt $started.AddSeconds(1) -Sequence 2 -SchemaVersion 3 | Out-Null
+        $schemaThree = Write-TestDeliveryRun -RunRoot $runRoot -StartedAt $started.AddSeconds(1) -Sequence 2 -SchemaVersion 3 -Commit ('e' * 40) -Tree ('f' * 40)
         Repair-DeliveryRunHotIndex | Out-Null
 
         $proof = Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('a' * 40) -Tree ('b' * 40)
         $proof.path | Should -BeExactly $schemaOne
         $proof.sha256 | Should -BeExactly (Get-FileHash -LiteralPath $schemaOne -Algorithm SHA256).Hash.ToLowerInvariant()
+        $currentProof = Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('e' * 40) -Tree ('f' * 40)
+        $currentProof.path | Should -BeExactly $schemaThree
+        $recorded = [pscustomobject]@{targetedRunPath=$schemaThree;targetedRunSha256=$currentProof.sha256}
+        Test-RecordedWorkflowContinuation -Record $recorded -Commit ('e' * 40) -Tree ('f' * 40) | Should -BeTrue
+        Test-RecordedWorkflowContinuation -Record $recorded -Commit ('e' * 40) -Tree ('0' * 40) | Should -BeFalse
 
         $external = Join-Path $TestDrive 'outside-targeted-proof.json'
         $externalRecord = Get-Content -LiteralPath $schemaOne -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -263,6 +268,49 @@ Write-DeliveryRunRecord -Mode Targeted -Status passed -ErrorMessage '' -WorkingR
 
         [IO.File]::WriteAllText((Get-DeliveryRunHotIndexPath), '{broken', [Text.UTF8Encoding]::new($false))
         (Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('a' * 40) -Tree ('b' * 40)).path | Should -BeExactly $schemaOne
+        (Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('e' * 40) -Tree ('f' * 40)).path | Should -BeExactly $schemaThree
+    }
+
+    It 'rejects unsupported raw proof versions and incomplete or failed current proof' -TestCases @(
+        @{ Schema = 4; Damage = 'none' }, @{ Schema = 3; Damage = 'failed-status' },
+        @{ Schema = 3; Damage = 'missing-stage' }, @{ Schema = 3; Damage = 'exit-code' }
+    ) {
+        param($Schema, $Damage)
+        $runRoot = New-RunIndexStore
+        $path = Write-TestDeliveryRun -RunRoot $runRoot -StartedAt ([DateTime]::UtcNow) -Sequence 1 -SchemaVersion $Schema
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($Damage -eq 'failed-status') { $raw.status = 'failed' }
+        if ($Damage -eq 'missing-stage') { $raw.stages = @($raw.stages | Where-Object name -ne 'tracked-state') }
+        if ($Damage -eq 'exit-code') { $raw.exitCode = 1 }
+        [IO.File]::WriteAllText($path, ($raw | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('a' * 40) -Tree ('b' * 40) | Should -BeNullOrEmpty
+        $recorded=[pscustomobject]@{targetedRunPath=$path;targetedRunSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+        Test-RecordedWorkflowContinuation -Record $recorded -Commit ('a' * 40) -Tree ('b' * 40) | Should -BeFalse
+    }
+
+    It 'recognizes metadata-only schema 2 Targeted proof' {
+        $runRoot=New-RunIndexStore
+        $path=Write-TestDeliveryRun -RunRoot $runRoot -StartedAt ([DateTime]::UtcNow) -Sequence 1 -SchemaVersion 2
+        (Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('a'*40) -Tree ('b'*40)).path | Should -BeExactly $path
+    }
+
+    It 'reads the actual current Targeted writer through indexed raw and recorded proof without altering its bytes' {
+        New-RunIndexStore | Out-Null
+        $started=[DateTime]::UtcNow
+        $summaryRoot=Join-Path $TestDrive 'build/test-results/local'
+        New-Item -ItemType Directory -Force -Path $summaryRoot | Out-Null
+        $summary=@{startedAt=$started.ToString('o');tests=@{passed=1;failed=0;skipped=0};stages=@(
+            @{name='pester';status='passed';durationMs=1},@{name='tracked-state';status='passed';durationMs=1},@{name='git-diff-check';status='passed';durationMs=1}
+        )}
+        [IO.File]::WriteAllText((Join-Path $summaryRoot 'check-summary.json'),($summary|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+        $path=Write-DeliveryRunRecord -Mode Targeted -Status passed -ErrorMessage '' -WorkingRoot $TestDrive -StartedAt $started -FinishedAt ([DateTime]::UtcNow) -ExitCode 0
+        (Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json).schemaVersion | Should -Be 3
+        $proof=Get-ExactTargetedRunProof -RepositoryRoot $TestDrive -Commit ('a'*40) -Tree ('b'*40)
+        $proof.path | Should -BeExactly $path
+        $recorded=[pscustomobject]@{targetedRunPath=$path;targetedRunSha256=$proof.sha256}
+        Test-RecordedWorkflowContinuation -Record $recorded -Commit ('a'*40) -Tree ('b'*40) | Should -BeTrue
+        [IO.File]::AppendAllText($path,' ',[Text.UTF8Encoding]::new($false))
+        Test-RecordedWorkflowContinuation -Record $recorded -Commit ('a'*40) -Tree ('b'*40) | Should -BeFalse
     }
 
     It 'runs the rebuild and read contract in Windows PowerShell 5.1 at one path containing spaces and Cyrillic' -Skip:(-not (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
