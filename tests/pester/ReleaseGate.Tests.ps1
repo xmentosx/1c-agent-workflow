@@ -1729,6 +1729,41 @@ $selected=Get-ItlActiveClient
         }
     }
 
+    It 'reloads an owned recovery write set through the actual checkpoint writer and canonical path validator' {
+        & {
+            foreach ($name in @('ConvertTo-E2EHashtable', 'Write-E2ECheckpoint')) {
+                . ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' $name)))
+            }
+            . (Join-Path $RepoRoot 'scripts/release-e2e/extension-recovery.ps1')
+            $root = Join-Path $TestDrive 'checkpoint восстановление с пробелами'
+            $checkpointPath = Join-Path $root '.agent-1c/runs/release-e2e/checkpoint.json'
+            $paths = @('src/cfe/ITLReleaseSmoke/Languages/Русский.xml', 'src/cfe/ITLReleaseSmoke/Configuration.xml')
+            $checkpoint = [ordered]@{
+                schemaVersion = 3; runId = 'write-set-roundtrip'; expectedHead = ('a' * 40)
+                extensionRecovery = [ordered]@{
+                    writeSet = $paths
+                    files = @([ordered]@{ path = $paths[0]; bytes = 31; sha256 = ('b' * 64) })
+                    stopEvidence = [ordered]@{ launcherExited = $true; nativeQuiescent = $true }
+                }
+            }
+            Write-E2ECheckpoint
+            $reloaded = ConvertTo-E2EHashtable (Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+            foreach ($path in @($reloaded.extensionRecovery.writeSet)) { $path | Should -BeOfType ([string]) }
+            @($reloaded.extensionRecovery.writeSet) | Should -Be $paths
+            $reloaded.extensionRecovery.files.path | Should -BeExactly $paths[0]
+            $reloaded.extensionRecovery.files.bytes | Should -Be 31
+            $reloaded.extensionRecovery.stopEvidence.launcherExited | Should -BeTrue
+            $context = [ordered]@{
+                projectRoot = $root; worktreePath = $root; commonGitPath = (Join-Path $root '.git')
+                branch = 'itldev/fixture'; expectedHead = $reloaded.expectedHead
+                checkpointPath = $checkpointPath; runId = $reloaded.runId
+                infoBaseKind = 'file'; infoBasePath = (Join-Path $root '.agent-1c/infobases/fixture')
+            }
+            $set = Get-ReleaseExtensionRecoveryWriteSet -Context $context -ExtensionName 'ITLReleaseSmoke' -WriteSet @($reloaded.extensionRecovery.writeSet)
+            @($set.paths) | Should -Be @($paths | Sort-Object)
+            $set.root | Should -BeExactly (Join-Path $root 'src/cfe/ITLReleaseSmoke')
+        }
+    }
     It 'preserves scalar client identity through the actual immutable capability cache writer' {
         & {
             foreach($name in @('ConvertTo-E2EHashtable','Get-E2EGeneratedCommitRecords','Save-E2ECapabilityCache')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' $name)))}

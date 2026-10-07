@@ -372,3 +372,15 @@ in 816.31 seconds; 20 of 21 parallel groups passed. The serial ReleaseGate group
 was not reached. The failed run is retained without qualification. The expected
 inventory now includes that exact file and keeps its equality and separation
 assertions; this reflects the accepted owner composition, not a broader wildcard.
+
+Registration of 86f805da passed 332/0/0 with a clean tree: 19 unchanged groups
+were reused and three executed. The approved R6 invocation then sealed the exact
+16 files, but rejected the reloaded write set before any DT restore or archive
+move. A native PS5 read-only probe proved that the existing checkpoint converter
+turned every string array element into a Length dictionary; state/env and the
+original file hashes remained unchanged. The authoritative converter now retains
+string/value-type leaves before object recursion. A new actual checkpoint writer
+and reload regression reproduced RED (OrderedDictionary instead of string) and
+passed GREEN through the unchanged canonical path validator. No path check or
+ownership requirement is relaxed; normal registration and live recovery remain
+required for this corrected source.

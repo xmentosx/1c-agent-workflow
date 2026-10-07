@@ -638,6 +638,9 @@ function Assert-E2EUnsafeActionProtectionConfirmed {
 function ConvertTo-E2EHashtable {
     param([object]$Value)
     if ($null -eq $Value) { return $null }
+    # Windows PowerShell pipeline wrappers for JSON scalar array elements can
+    # satisfy PSCustomObject. Preserve their values before record recursion.
+    if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
     if ($Value -is [System.Collections.IDictionary]) {
         $result = [ordered]@{}
         foreach ($key in $Value.Keys) { $result[[string]$key] = ConvertTo-E2EHashtable $Value[$key] }
