@@ -5,6 +5,89 @@
 }
 
 Describe "Release gate scripts" {
+    It 'preserves native Release bootstrap Unicode stdout and formatted error bytes' {
+        $observation = & {
+            param([string]$SourceRoot, [string]$ReleaseEntryPath, [string]$FixtureRoot)
+            $ErrorActionPreference = 'Stop'
+            New-Item -ItemType Directory -Force -Path $FixtureRoot | Out-Null
+            $tokens = $null; $errors = $null
+            $entryAst = [Management.Automation.Language.Parser]::ParseFile($ReleaseEntryPath, [ref]$tokens, [ref]$errors)
+            if (@($errors).Count -ne 0) { throw 'Release entrypoint parse failed' }
+            $boundary = @($entryAst.EndBlock.Statements | Where-Object {
+                $_ -is [Management.Automation.Language.PipelineAst] -and
+                $_.PipelineElements[0] -is [Management.Automation.Language.CommandAst] -and
+                $_.PipelineElements[0].InvocationOperator -eq [Management.Automation.Language.TokenKind]::Dot
+            }) | Select-Object -First 1
+            if ($null -eq $boundary) { throw 'Release entrypoint bootstrap boundary was not found' }
+            # Execute the production bootstrap only. No imported module or Release body runs.
+            $bootstrap = $entryAst.Extent.Text.Substring($entryAst.ParamBlock.Extent.EndOffset,
+                $boundary.Extent.StartOffset - $entryAst.ParamBlock.Extent.EndOffset)
+            $childPath = Join-Path $FixtureRoot 'Ошибка с пробелом.ps1'
+            $childText = @'
+            # Reproduce the observed OEM866 initial host, independently of the caller console.
+            [Console]::InputEncoding = [Text.Encoding]::GetEncoding(866)
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(866)
+            $OutputEncoding = [Text.Encoding]::GetEncoding(866)
+'@ + [Environment]::NewLine + $bootstrap + [Environment]::NewLine + @'
+            Write-Output ('ITL_RELEASE_STDOUT|' + $PSVersionTable.PSVersion.Major + '|' + $PSCommandPath + '|Проверка вывода')
+            [Console]::Error.WriteLine('ITL_RELEASE_STDERR|Проверка ошибки')
+            throw 'ITL_RELEASE_THROW|Ошибка границы'
+'@
+            [IO.File]::WriteAllText($childPath, $childText, [Text.UTF8Encoding]::new($true))
+            $checkAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+            if (@($errors).Count -ne 0) { throw 'Shared child helper parse failed' }
+            foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+                $definition = $checkAst.Find({ param($node)
+                    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+                }, $false)
+                if ($null -eq $definition) { throw "Missing shared child helper: $name" }
+                Invoke-Expression $definition.Extent.Text
+            }
+            # Match check.ps1's caller-side UTF-8 contract without relying on test-host defaults.
+            $originalInputEncoding = [Console]::InputEncoding
+            $originalOutputEncoding = [Console]::OutputEncoding
+            $originalPipelineEncoding = $OutputEncoding
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            $repoRoot = $FixtureRoot
+            $outputRoot = Join-Path $FixtureRoot 'out'
+            New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+            $modeHardBudgetSeconds = 30
+            $overallStopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $child = $null
+            try {
+                [Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+                $child = Start-PowerShellChildProcess -ScriptPath $childPath -LogName 'release-bootstrap'
+                $failure = ''
+                try { Wait-PowerShellChildProcess -Child $child -TimeoutSeconds 30 -NoProgressSeconds 10 }
+                catch { $failure = $_.Exception.Message }
+                $child.process.Refresh()
+                $observation = [ordered]@{
+                    exitCode = [int]$child.process.ExitCode; failure = $failure
+                    childPath = $childPath; stdoutPath = $child.stdoutPath; stderrPath = $child.stderrPath
+                    childScriptSha256 = (Get-FileHash -LiteralPath $childPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    entrypointSha256 = (Get-FileHash -LiteralPath $ReleaseEntryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    callerRuntime = $PSVersionTable.PSVersion.ToString()
+                }
+                [IO.File]::WriteAllText((Join-Path $outputRoot 'observation.json'), ($observation | ConvertTo-Json -Depth 4), $utf8)
+                $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+                $observation.stdout = $strictUtf8.GetString([IO.File]::ReadAllBytes($child.stdoutPath))
+                $observation.stderr = $strictUtf8.GetString([IO.File]::ReadAllBytes($child.stderrPath))
+                return [pscustomobject]$observation
+            } finally {
+                if ($null -ne $child) { Stop-GateChildProcessTree -Process $child.process }
+                [Console]::InputEncoding = $originalInputEncoding
+                [Console]::OutputEncoding = $originalOutputEncoding
+                $OutputEncoding = $originalPipelineEncoding
+            }
+        } $RepoRoot (Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1') (Join-Path $TestDrive 'Release путь с пробелом')
+        $observation.exitCode | Should -Be 1
+        $observation.failure | Should -Match 'failed with exit code 1'
+        $observation.stdout.TrimEnd("`r", "`n") | Should -BeExactly ('ITL_RELEASE_STDOUT|5|' + $observation.childPath + '|Проверка вывода')
+        $observation.stderr | Should -Match ([regex]::Escape('ITL_RELEASE_STDERR|Проверка ошибки'))
+        $observation.stderr | Should -Match ([regex]::Escape('ITL_RELEASE_THROW|Ошибка границы'))
+        $observation.stdout | Should -Not -Match ([string][char]0xFFFD)
+        $observation.stderr | Should -Not -Match ([string][char]0xFFFD)
+    }
     It "replays one generated commit once when two capability records share its SHA" {
         & {
             $source = Join-Path $TestDrive "replay источник"
@@ -1725,15 +1808,15 @@ Describe 'Shared Release budget projection' {
         $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
         $full = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
         $full.capabilities | Should -Be @($stages.stages.id)
-        $full.fullStageSeconds | Should -Be 10800
+        $full.fullStageSeconds | Should -Be 11100
         $full.enclosingOverheadSeconds | Should -Be 1140
-        $full.e2eHardSeconds | Should -Be 11940
+        $full.e2eHardSeconds | Should -Be 12240
         $full.gateHardSeconds | Should -Be ($quality.budgets.fullHardSeconds + $full.e2eHardSeconds)
         $full.gateHardSeconds | Should -Be $quality.budgets.releaseHardSeconds
         $partial = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup','extension-smoke')
         $partial.capabilities | Should -Be @('config-cadence','extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
-        $partial.summedStageSeconds | Should -Be 7500
-        $partial.e2eHardSeconds | Should -Be 8640
+        $partial.summedStageSeconds | Should -Be 7800
+        $partial.e2eHardSeconds | Should -Be 8940
         $onlyMcp = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'ondemand-mcp'
         $onlyMcp.capabilities | Should -Be @('ondemand-mcp')
         $onlyMcp.e2eHardSeconds | Should -Be 2040
@@ -1752,7 +1835,7 @@ Describe 'Shared Release budget projection' {
         $oldPinnedAllowance = [int]$oldCatalog.budgets.releaseHardSeconds + 300
         $oldPinnedAllowance | Should -Be ($projection.gateHardSeconds + 300)
         Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot | Should -Be $oldPinnedAllowance
-        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 8640 | Should -Be $oldPinnedAllowance
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 8940 | Should -Be $oldPinnedAllowance
         Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 16000 | Should -Be 16000
         $quality.budgets.releaseHardSeconds--
         { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*PROJECTION_MISMATCH*'
@@ -1788,8 +1871,8 @@ Describe 'Shared Release budget projection' {
         $initialization = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('$releaseBudget = Get-ReleaseE2EBudgetProjection') })
         $initialization.Count | Should -Be 1
         . ([scriptblock]::Create($initialization[0].Extent.Text))
-        $modeHardBudgetSeconds | Should -Be 14640
-        $releaseE2EHardBudgetSeconds | Should -Be 8640
+        $modeHardBudgetSeconds | Should -Be 14940
+        $releaseE2EHardBudgetSeconds | Should -Be 8940
         $call = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PowerShellChild' -and $node.Extent.Text.Contains('-LogName "release-e2e"') }, $true))
         $call.Count | Should -Be 1
         function Invoke-PowerShellChild {
@@ -1798,7 +1881,7 @@ Describe 'Shared Release budget projection' {
         }
         $e2eScript = 'fixture'; $releaseE2EArguments = @(); $releaseProgressPaths = @()
         $observed = & ([scriptblock]::Create($call[0].Extent.Text))
-        $observed.timeout | Should -Be 8640
+        $observed.timeout | Should -Be 8940
         $observed.noProgress | Should -Be 900
         $wait = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-PowerShellChildProcess' }, $true)
         $clip = @($wait.Body.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -in @('$remainingOverallSeconds', '$effectiveTimeoutSeconds') })
@@ -1806,10 +1889,10 @@ Describe 'Shared Release budget projection' {
         $TimeoutSeconds = $observed.timeout
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(8600) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
-        $effectiveTimeoutSeconds | Should -Be 6040
+        $effectiveTimeoutSeconds | Should -Be 6340
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(10) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
-        $effectiveTimeoutSeconds | Should -Be 8640
+        $effectiveTimeoutSeconds | Should -Be 8940
     }
 
     It 'forwards the remaining original cadence deadline to the unchanged helper timeout owner' {

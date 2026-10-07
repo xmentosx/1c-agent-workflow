@@ -63,7 +63,7 @@
     {
       "id": "extension-smoke",
       "version": 2,
-      "budgetSeconds": 900,
+      "budgetSeconds": 1200,
       "dependsOn": ["config-cadence"],
       "paths": [
         "scripts/stand-env-identity.ps1",

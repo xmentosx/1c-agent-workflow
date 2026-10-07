@@ -279,10 +279,27 @@ Describe 'Delivery v3 immutable selective plan' {
         $first.stages.id | Should -Be @('develop.static','release.config-cadence','release.extension-smoke')
         $first.executedBudgetSeconds | Should -Be 9240
         Get-DeliveryPlanGateBudgetSeconds -Plan $first -Mode Release | Should -Be 6840
+        # Original 2026-10-07 Release ran out of the 900s extension budget after
+        # UI passed and CFE apply, during canonical dump and before final restore.
+        # Budget correction must preserve the same capability work and evidence.
+        $productionStages = Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot
+        ($releaseCatalog.stages | Where-Object id -eq 'extension-smoke').budgetSeconds =
+            [int]($productionStages.stages | Where-Object id -eq 'extension-smoke').budgetSeconds
+        $catalog.budgets.releaseHardSeconds = 9540
+        $budgetCorrected = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        ($budgetCorrected.stages | Where-Object id -eq 'release.extension-smoke').budgetSeconds | Should -Be 1200
+        ($budgetCorrected.stages | Where-Object id -eq 'release.config-cadence').budgetSeconds | Should -Be 4800
+        $budgetCorrected.executedBudgetSeconds | Should -Be 9540
+        Get-DeliveryPlanGateBudgetSeconds -Plan $budgetCorrected -Mode Release | Should -Be 7140
+        $budgetCorrected.planId | Should -Not -Be $first.planId
+        $budgetCorrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
+        $budgetCorrected.releaseCapabilities | Should -Be $first.releaseCapabilities
+        $budgetCorrected.releaseEnclosingOverheadSeconds | Should -Be 1140
         $releaseCatalog.enclosingOverheadSeconds = 1200
-        $catalog.budgets.releaseHardSeconds = 9300
+        $catalog.budgets.releaseHardSeconds = 9600
         $corrected = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
         $corrected.planId | Should -Not -Be $first.planId
+        $corrected.planId | Should -Not -Be $budgetCorrected.planId
         $corrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
         $first.releaseEnclosingOverheadSeconds | Should -Be 1140
         Mock Test-DeliveryStageEvidence { [pscustomobject]@{ candidate=[pscustomobject]@{ tree=$repo.tree } } }

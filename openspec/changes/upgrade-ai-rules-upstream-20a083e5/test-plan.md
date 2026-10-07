@@ -105,8 +105,15 @@ its later summary-render exit 1; do not qualify official CFE, ordinary/server or
 other platforms from it. The raw-byte-postcondition failed read-only probe is
 also not acceptance. Missing broader live evidence creates no new support
 barrier; existing context-specific native/apply/runtime owners remain in force.
-Implementation/owner regressions and the original Release are pending under
-13.6; publication and EV8a/EV9 remain separate actual acceptance.
+Implementation/owner regressions passed on registered source `abc8221b`
+(1273/0/0 Targeted); the original two-backend Release remains pending under
+13.6. Develop/fresh subsequently passed (Full 2622/0/0), while Release passed
+config-cadence then exhausted the former extension-smoke budget after its UI
+pass, during Cfe canonical dump. The unchanged original roundtrip and final
+restore must pass within the corrected 1200-second catalog budget; UTF-8 error
+transport also requires the native regression. Failed receipts remain failed.
+See `evidence/gate6-r41-qualification.md` for actual hashes and boundaries.
+Publication and EV8a/EV9 remain separate actual acceptance.
 
 ### Essential UI behavioural acceptance
 

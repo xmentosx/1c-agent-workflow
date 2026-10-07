@@ -155,3 +155,66 @@ sync ID `8dbd6ef0cc0e4282aedd2caa0a02b478`, matching fingerprint
 `v2|git-tree-sha256|56bb357dd8139232e329011f4873a73938bbd4877a064b91614e51314ee37614`.
 Стенд clean; failed predecessor/native receipts и восстановительные snapshots
 сохранены. Это готовность исходного стенда, а не завершённый Develop gate.
+
+## Завершённый Develop и диагностика Release, 2026-10-07
+
+Штатный Develop прошёл на source `abc8221b4934445ca3908f7b2d3170cd2e08909f`,
+tree `d8022fc3dd742eec7110646be013023fb65c630c`, fork r41
+`84ed7c7a8dcc783159537f41f38196640ffa968c`. Full: **2622/0/0**, 116 групп,
+6 выполнены и 110 переиспользованы; upgrade/fork proof также переиспользованы.
+Это фактическое завершение Develop, без заявления о публикации.
+Закрытые qualification/raw records сохранены в
+`build/yax-vendor-exception/closed-develop-abc8221b-ps7/immutable-passed-develop-map.json`,
+SHA `1c97795cad3b932d6bcbf9bfda29f5884016ba11a243f108d623437a8383e71a`.
+
+Оригинальная fresh journey прошла bootstrap, missing-suite refusal, check,
+export, recovery, refresh, recheck и close. Native CheckModules: **0/0**;
+before/after CheckConfig: **101/101**, assessment: **629 legacy / 0 new /
+0 unresolved**, `applyAllowed=true`, `cleanPassed=false`. Два фактических
+Vanessa-прогона дали каждый **2/0/0/0**. Третий check после refresh
+переиспользовал полную принятую freshness и не запускал Vanessa.
+Устаревший export фактически разрешён по policy `warn` с
+`decision=warn-unverified`, `freshPassed=false`; это не refusal. После recovery
+export имеет `decision=fresh-passed`, `freshPassed=true`. Отсутствующий ранее
+`UI_TESTING` получил `essential`. Семь карт оригинальных native/runtime
+артефактов находятся в `build/yax-vendor-exception/fresh-native-abc8221b`;
+данные env и VAParams в proof не публикуются. Это не отдельная EV8a/EV9
+приёмка и не доказательство standalone QA.
+
+Следующий штатный Release с `ResumeMode=Restart` прошёл **config-cadence**
+за 3431049 ms: два metadata load, test-only failure без Designer/Enterprise,
+исправление и второй успешный запуск. JUnit последовательность **4/0/0/0 →
+4/1/0/0 → 4/0/0/0**; оба native assessment сохранили 629/0/0 и clean=false.
+Owner evidence SHA `2f2bceabbed678ec6c534c0f58189313492ed86cf9012b0eae8382594a08bffb`,
+архивная карта `release-native-abc8221b/closed-config-cadence/immutable-files-map.json`
+под `build/yax-vendor-exception`, SHA
+`2093044ff4287fd57d5bc9851cee76372f8fc55f4469f88bf7808ba83f6f390e`.
+
+Release завершился ошибкой: `extension-smoke` прошёл UI, но исчерпал 899 s
+во время canonical dump Cfe Init, после промежуточного Empty restore и перед
+final restore. Cleanup остановил owned clients/backends; это не доказательство
+DT restore прерванного Init. Failed map
+`build/yax-vendor-exception/closed-release-extension-timeout-abc8221b/immutable-failed-release-map.json`,
+SHA `a9e5d0cef66fdb89240771db531e2235054dc0196d89a37b88879f708f26a833`.
+Ondemand/YAxUnit, публикация и EV8a/EV9 не пройдены.
+
+Диагностика нашла около 117 s новых snapshots и 208 s Gate 6 checks;
+guard waits равны нулю. Init корректно передаёт собственный snapshot Gate 6;
+обоснования сокращать roundtrip, проверки или restoration нет. Бюджет этой
+стадии изменён 900→1200; derived totals меняются на +300, остальные пределы,
+no-progress и predicates сохранены. 75 s на оставшуюся работу и 225 s reserve —
+оценки, требующие оригинального успешного прогона. Measured record
+`build/yax-vendor-exception/extension-smoke-budget-correction/measured-change.json`,
+SHA `a30c78db77f2db185dbf2fe1c0ca0e8e1926b75561bdacf196475038687d1dc9`.
+
+Отдельный ранее сохранённый Release stderr оказался OEM866, а не strict UTF-8:
+SHA `fd9ddc5eae5aca4ae6dcce58da9294050c8bc0f92fe82e93a7e4d32027fcb976`.
+Release entrypoint теперь устанавливает UTF-8 до первого dot-source;
+регрессия исполняет production bootstrap через существующий native child
+helper с OEM866 initial state, кириллицей и пробелом в одном пути. Corrected
+private probe WinPS 5.1 сохранил точные stdout/stderr и ожидаемый exit 1;
+это не Pester/Release qualification. Manifest
+`build/yax-vendor-exception/transport-fix-preparation/preparation-manifest.json`,
+SHA `0fa0ff032920947621876cde6f81171dbdfcc26bf1939910e5f7ddb4be33df6f`.
+Исправленный source требует обычной регистрации и нового immutable plan;
+старые qualification, failed receipts и runtime identities не переписываются.

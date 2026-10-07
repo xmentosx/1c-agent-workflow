@@ -56,7 +56,7 @@ and publication channels below remain authoritative.
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 45 мин |
 | `Develop` | один Full и реальные стандартные journey | 25 мин | 125 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 244 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 249 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -662,8 +662,8 @@ three existing finally operations of at most 180 seconds each. The observed
 baseline DT took about 140 seconds and readiness 11 seconds; the 600-second
 part allows a comparable retry restore and remaining context/sealing work.
 These are reserve estimates, not a measured complete successful cadence or
-overhead. Full E2E ceilings sum to 10800 seconds; E2E including reserve is
-11940, and the whole Release gate with Full static 2700 is 14640 seconds.
+overhead. Full E2E ceilings sum to 11100 seconds; E2E including reserve is
+12240, and the whole Release gate with Full static 2700 is 14940 seconds.
 Selected capabilities keep their original scope and include the reserve once.
 No fake capability is added. New immutable plans pin the reserve and include
 it even when all selected runtime evidence is reusable; retained older plans
@@ -671,3 +671,13 @@ and failed evidence are not rewritten. The corrected candidate requires a new
 immutable planId. Bind the continuation to it with `-ResumePlan` and, when the
 existing long-plan guard requires it, `-ApproveLongPlan`. The already authorized,
 unchanged workload does not require renewed user approval.
+
+The original extension-smoke run on 2026-10-07 passed its UI scenario but
+exhausted the former 900-second ceiling during Cfe initialization's canonical
+dump, before the required final restore. Gate 6 added about 117 seconds of
+snapshots and 208 seconds of checks in that run; recorded guard waits were zero.
+The catalog now allows 1200 seconds for the unchanged Empty/authored/Cfe
+roundtrips, checks and restoration. The additional 300 seconds cover the
+remaining dump/restore/validation and reserve; this is an allowance estimate,
+not a measured successful run. Other stage ceilings, no-progress limits and
+proof predicates stay unchanged. The old timeout remains failed evidence.
