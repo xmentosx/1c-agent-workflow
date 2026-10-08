@@ -270,9 +270,8 @@ function New-DeliveryQualityPlanForCandidate {
     if (@($journeyPlan.unknownPaths).Count -gt 0) { throw "QUALITY_OWNER_MISSING: $(@($journeyPlan.unknownPaths) -join ', ')" }
     $stages = [Collections.Generic.List[object]]::new()
     $developEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
-    # check.ps1 restores Develop static and journey proofs for the exact tree.
-    # Include that tree in immutable stage keys so a plan never budgets old-tree
-    # evidence as reuse while the child must execute a new journey.
+    # Static qualification stays current. Journey reuse has its own complete
+    # shared input contract; legacy evidence retains the exact-tree fallback.
     $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests)) -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree })
     $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
@@ -284,7 +283,16 @@ function New-DeliveryQualityPlanForCandidate {
         $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
         $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint
         $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
-        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
+        $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
+        $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
+        $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
+        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' })
+        if ($inputs) {
+            $fingerprint = [string]$inputs.fingerprint
+            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs
+            $reusable = $null -ne $ancestor
+        }
+        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified ancestor with complete matching journey inputs"}elseif($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
     $releaseEnclosingOverhead = $null

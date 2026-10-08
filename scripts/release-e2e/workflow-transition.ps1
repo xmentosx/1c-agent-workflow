@@ -38,3 +38,35 @@ function Test-E2ECompletedWorkflowTransition {
         Remove-Module -ModuleInfo $owner -ErrorAction SilentlyContinue
     }
 }
+
+function Test-E2EAdmissionManagedRefreshHead {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$CurrentHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead,
+        [Parameter(Mandatory = $true)][string]$MasterHead,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ExportPath,
+        [string]$WorkflowRoot = ''
+    )
+    $currentRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-list', '--parents', '-n', '1', $CurrentHead)).stdout.Trim()
+    $currentParts = @($currentRecord -split '\s+' | Where-Object { $_ })
+    if ($currentParts.Count -eq 3 -and $currentParts[1] -eq $ExpectedHead -and $currentParts[2] -eq $MasterHead) { return $true }
+    if ($currentParts.Count -ne 2) { return $false }
+    try {
+        if ($WorkflowRoot -and (Test-E2ECompletedWorkflowTransition -RepositoryRoot $RepositoryRoot -CurrentHead $CurrentHead -ExpectedHead $ExpectedHead -WorkflowRoot $WorkflowRoot)) { return $true }
+    } catch { Write-Verbose ('Release workflow transition remains unproved: ' + $_.Exception.Message) }
+    $mergeHead = [string]$currentParts[1]
+    $mergeRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-list', '--parents', '-n', '1', $mergeHead)).stdout.Trim()
+    $mergeParts = @($mergeRecord -split '\s+' | Where-Object { $_ })
+    if ($mergeParts.Count -ne 3 -or $mergeParts[1] -ne $ExpectedHead -or $mergeParts[2] -ne $MasterHead) { return $false }
+    $subject = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('show', '-s', '--format=%s', $CurrentHead)).stdout.Trim()
+    $cursorPath = (($ExportPath -replace '\\', '/').Trim('/')) + '/ConfigDumpInfo.xml'
+    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $CurrentHead, '--') | ForEach-Object { ([string]$_ -replace '\\', '/') })
+    if ($changedPaths.Count -eq 0) { return $false }
+    if ($subject -ceq 'chore: persist branch configuration synchronization cursor') { return $changedPaths.Count -eq 1 -and $changedPaths[0] -ceq $cursorPath }
+    if ($subject -ceq 'chore: persist branch refresh state') {
+        $allowedPaths = @($cursorPath, '.kilo/kilo.json')
+        return $changedPaths -ccontains '.kilo/kilo.json' -and @($changedPaths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0
+    }
+    return $false
+}

@@ -287,6 +287,7 @@
         It 'admits Release resume through the completed workflow owner without changing source or transaction evidence' {
             $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive 'Release после обновления') -Updates 2
             . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+            . (Join-Path $RepoRoot 'scripts/release-e2e/admission.ps1')
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $tokens=$null; $errors=$null
             $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1'),[ref]$tokens,[ref]$errors)
@@ -297,6 +298,36 @@
             (& git -C $fixture.root rev-parse HEAD).Trim() | Should -BeExactly $fixture.head
             @(& git -C $fixture.root status --porcelain) | Should -BeNullOrEmpty
             @(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots') -Recurse -File | ForEach-Object {($_.FullName + ':' + (Get-FileHash $_.FullName).Hash)}) | Should -Be $before
+        }
+
+        It 'admits a completed workflow update in the shared early decision and rejects its extra refresh without mutation' -Tag 'ReleaseAdmissionContract' {
+            $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive 'Update потом refresh')
+            . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+            . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+            . (Join-Path $RepoRoot 'scripts/release-e2e/admission.ps1')
+            $context=@{projectRoot=$fixture.root;worktreePath=$fixture.root;branch='itldev/fork';resumeMode='Auto';workflowRoot=$RepoRoot;
+                currentHead=$fixture.head;masterHead=$fixture.anchor;worktreeClean=$true;exportPath='src/cf';workflowCommit='';workflowTree='';runnerSha256='';helperSha256='';aiRulesCommit='';projectConfigSha256='';clientSelection='current'}
+            $checkpoint=@{schemaVersion=3;identity=@{projectRoot=$fixture.root;worktreePath=$fixture.root;branch='itldev/fork';clientSelection='previous'};expectedHead=$fixture.anchor;stages=@{}}
+            $before=@(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots') -Recurse -File | ForEach-Object {($_.FullName+':'+(Get-FileHash $_.FullName).Hash)})
+            $approved=Get-E2EReleaseCheckpointAdmission $context $checkpoint
+            $approved.allowed | Should -BeTrue
+            $approved.continuationProof | Should -BeNullOrEmpty
+            & git -C $fixture.root checkout -q -b refresh-main $fixture.anchor
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'main.txt'),'main fixture',[Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- main.txt
+            & git -C $fixture.root commit -qm 'main advance'
+            $context.masterHead=(& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root checkout -q itldev/fork
+            & git -C $fixture.root merge --no-ff -qm 'ordinary refresh after workflow update' refresh-main
+            $LASTEXITCODE | Should -Be 0
+            $context.currentHead=(& git -C $fixture.root rev-parse HEAD).Trim()
+            $mergeHead=$context.currentHead
+            $rejected=Get-E2EReleaseCheckpointAdmission $context $checkpoint
+            $rejected.allowed | Should -BeFalse
+            $rejected.code | Should -BeExactly 'RELEASE_E2E_RESUME_STATE_MISMATCH'
+            (& git -C $fixture.root rev-parse HEAD).Trim() | Should -BeExactly $mergeHead
+            @(& git -C $fixture.root status --porcelain) | Should -BeNullOrEmpty
+            @(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots') -Recurse -File | ForEach-Object {($_.FullName+':'+(Get-FileHash $_.FullName).Hash)}) | Should -Be $before
         }
 
         It 'rejects Release workflow resume with <Fault>' -TestCases @(

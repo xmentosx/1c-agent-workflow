@@ -5,6 +5,7 @@ param(
     [string]$RepositoryRoot = "",
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$AgentTarget = "",
     [string]$OutputPath = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ResumeMode = "Auto",
@@ -19,6 +20,9 @@ if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
+. (Join-Path $PSScriptRoot 'stand-env-identity.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/workflow-transition.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/admission.ps1')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.package-content.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
@@ -340,7 +344,8 @@ function Test-ReleaseCheckpointPreflight {
         [string]$DevBranchName,
         [string]$CandidateCommit,
         [string]$CandidateTree,
-        [string]$AiRulesCommit
+        [string]$AiRulesCommit,
+        [string]$AiRulesTree = ""
     )
 
     $safeRunName = ($DevBranchName -replace '[^A-Za-z0-9_.-]', '_')
@@ -367,10 +372,28 @@ function Test-ReleaseCheckpointPreflight {
     $checkpointSchema = 0
     $schemaProperty = $checkpoint.PSObject.Properties["schemaVersion"]
     $schemaSupported = $null -ne $schemaProperty -and [int]::TryParse([string]$schemaProperty.Value, [ref]$checkpointSchema) -and $checkpointSchema -in @(1, 2, 3)
-    $scopeMatches = $schemaSupported -and $null -ne $identity -and
-        [string]$identity.projectRoot -eq $StandProjectRoot -and
-        [string]$identity.worktreePath -eq $StandWorktree -and
-        [string]$identity.branch -eq "itldev/$DevBranchName"
+    $projectPath = Join-Path $StandWorktree '.agent-1c/project.json'
+    $project = Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $standConfig = Get-Content -LiteralPath (Join-Path $StandProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $serverConfiguration = [ordered]@{}
+    foreach ($name in @('serverProjectRoot', 'serverWorktreePath', 'serverDevBranchName')) { $serverConfiguration[$name] = [string](Get-E2EAdmissionValue $standConfig $name '') }
+    $admissionContext = [ordered]@{
+        workflowRoot = $RepositoryRoot; workflowCommit = $CandidateCommit; workflowTree = $CandidateTree
+        projectRoot = $StandProjectRoot; worktreePath = $StandWorktree; branch = "itldev/$DevBranchName"
+        currentHead = $record.currentHead; masterHead = Get-GitValue -Root $StandProjectRoot -Arguments @('rev-parse', 'HEAD')
+        worktreeClean = @(Get-RepositoryGitPathList -RepositoryRoot $StandWorktree -Arguments @('status', '--porcelain', '--untracked-files=all', '-z')).Count -eq 0
+        exportPath = [string](Get-E2EAdmissionValue $project 'exportPath' ''); resumeMode = $ResumeMode
+        runnerSha256 = Get-E2EAdmissionCanonicalTextSha256 -Path (Join-Path $RepositoryRoot 'scripts/invoke-release-e2e.ps1')
+        helperSha256 = Get-E2EAdmissionCanonicalTextSha256 -Path (Join-Path $RepositoryRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+        projectConfigSha256 = Get-FileSha256 -Path $projectPath
+        aiRulesCommit = $AiRulesCommit; aiRulesTree = $AiRulesTree
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $StandProjectRoot -AgentTarget $AgentTarget
+        stageModuleRoot = Join-Path $RepositoryRoot 'scripts/release-e2e'
+        stageDefinitions = $null
+        serverConfiguration = $serverConfiguration
+    }
+    $admission = Get-E2EReleaseCheckpointAdmission -Context $admissionContext -Checkpoint $checkpoint
+    $scopeMatches = $admission.scopeMatches
     if (-not $scopeMatches) {
         Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_SCOPE_MISMATCH" -Category "STAND_STALE" `
             -Message "Release checkpoint has unsupported schema or belongs to another project, worktree, or branch: schema=$checkpointSchema path=$checkpointPath" `
@@ -382,25 +405,28 @@ function Test-ReleaseCheckpointPreflight {
             -Recovery "Run Release once with ResumeMode Restart."
     }
 
-    $runnerPath = Join-Path $RepositoryRoot "scripts\invoke-release-e2e.ps1"
-    $helperPath = Join-Path $RepositoryRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
-    $projectConfigPath = Join-Path $StandWorktree ".agent-1c\project.json"
-    $runnerSha256 = Get-ManagedTextOrBinarySha256 -Path $runnerPath
-    $helperSha256 = Get-ManagedTextOrBinarySha256 -Path $helperPath
-    $projectConfigSha256 = Get-FileSha256 -Path $projectConfigPath
-    $exactIdentity = $scopeMatches -and
-        [string]$identity.workflowCommit -eq $CandidateCommit -and
-        [string]$identity.workflowTree -eq $CandidateTree -and
-        [string]$identity.runnerSha256 -eq $runnerSha256 -and
-        [string]$identity.aiRulesCommit -eq $AiRulesCommit -and
-        [string]$identity.helperSha256 -eq $helperSha256 -and
-        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
+    $exactIdentity = $admission.exactIdentity
     $record.exactIdentity = $exactIdentity
+    # Serialize the safe decision only, never the transient context or raw env.
+    $record['transition'] = [ordered]@{ allowed = $admission.allowed; code = $admission.code; reason = $admission.reason; crossReleaseReuse = $admission.crossReleaseReuse; sourceContinuationProven = [bool]$admission.continuationProof }
 
-    if ($ResumeMode -eq "Auto" -and $exactIdentity -and $record.currentHead -cne $record.expectedHead) {
-        Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_HEAD_MISMATCH" -Category "STAND_STALE" `
-            -Message "Release checkpoint expected HEAD '$($record.expectedHead)', but the same-identity worktree is at '$($record.currentHead)'." `
-            -Recovery "Inspect the unexpected stand change, then use the script-owned Release Restart when rollback is intended."
+    if ($ResumeMode -eq 'Auto' -and $scopeMatches -and $checkpointSchema -ge 3 -and -not $admission.allowed) {
+        $code = if ($exactIdentity) { 'RELEASE_CHECKPOINT_HEAD_MISMATCH' } else { 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN' }
+        Add-ReadinessIssue -Code $code -Category 'STAND_STALE' `
+            -Message "Release checkpoint expected HEAD '$($record.expectedHead)', current='$($record.currentHead)': $($admission.reason)." `
+            -Recovery 'Inspect the unsupported transition before Develop. Keep the checkpoint and use the existing script-owned Restart when rollback is intended; an extra refresh after workflow-update is not an admitted chain.'
+    }
+
+    if ($admission.allowed) {
+        try {
+            Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
+            if ($ResumeMode -eq 'Auto') {
+                $admissionContext['stageDefinitions'] = Get-E2EAdmissionStageDefinitions -WorkflowRoot $RepositoryRoot
+                $record['stageDecisions'] = @(Get-E2EAdmissionCheckpointStageDecisions -Context $admissionContext -Checkpoint $checkpoint -Admission $admission)
+            }
+        } catch {
+            Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SUPPORT_INVALID' -Category 'STAND_STALE' -Message $_.Exception.Message -Recovery 'Preserve the checkpoint and its original receipts; repair the exact owned snapshot/state/evidence before continuation.'
+        }
     }
 
     $checkpointFixturePath = ""
@@ -699,7 +725,8 @@ if ($Mode -in @("Develop", "Release")) {
                 }
             }
             $actualAiRulesCommit = if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Container)) { Get-GitValue -Root $AiRulesSource -Arguments @("rev-parse", "HEAD") } else { "" }
-            $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit
+            $actualAiRulesTree = if ($actualAiRulesCommit) { Get-GitValue -Root $AiRulesSource -Arguments @('rev-parse', 'HEAD^{tree}') } else { '' }
+            $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit -AiRulesTree $actualAiRulesTree
             $markerPath = Join-Path $standWorktree 'tests\features\workflow-release-e2e.feature'
             $masterMarkerPath = Join-Path $E2EProjectRoot 'tests\features\workflow-release-e2e.feature'
             if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf) -and

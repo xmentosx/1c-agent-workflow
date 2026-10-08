@@ -35,6 +35,7 @@
     if (-not $identityDefinition) { throw 'The candidate checker identity collaborator is missing.' }
     Invoke-Expression $identityDefinition.Extent.Text
     function Invoke-GateStage { param([string]$Name, [string]$Reason, [string]$Detail, [scriptblock]$Body); & $Body }
+    function Add-ReusedStage { param([string]$Name, [string]$Reason, [string]$Detail) }
     function Invoke-PowerShellChild { param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutSeconds, [int]$NoProgressSeconds, [string]$LogName); throw 'Unexpected native child launch in budget fixture.' }
 
     function New-PlanRepository {
@@ -75,6 +76,8 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:E2EProjectRoot = ''
         $script:AiRulesSource = ''
         $script:DeliveryRequestedAiRulesSource = ''
+        $script:developAncestorRoutes = @{}
+        $script:developJourneyInputs = @{}
     }
 
     It 'builds a stage DAG from changed owner inputs and reuses matching immutable evidence' {
@@ -126,6 +129,62 @@ Describe 'Delivery v3 immutable selective plan' {
         $newPlan.stages[1].inputFingerprint | Should -Not -Be $oldPlan.stages[1].inputFingerprint
         $reusedOldPlan.candidate.tree = $newTree
         (Restore-DeliveryPlanQualification -Plan $reusedOldPlan -CandidateRoot $repo.root) | Should -BeFalse
+    }
+
+    It 'uses the shared complete journey binding while keeping static qualification current' {
+        $repo=New-PlanRepository; $script:Root=$repo.root; $catalog=New-PlanCatalog
+        $script:GateScript=Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{contracts=@($catalog.contracts[0]);tests=@('tests/pester/Runtime.Tests.ps1');unknownPaths=@()} }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{journeys=@('upgrade','fresh');unknownPaths=@()} }
+        $binding=[pscustomobject]@{fingerprint=('d'*64);inventory=[pscustomobject]@{external=[pscustomobject]@{standStateSha256=('c'*64)}}}
+        Mock Get-DevelopE2EInputIdentity { $binding }
+        Mock Get-DevelopE2EAncestorQualification { [pscustomobject]@{reportPath='verified original';inputIdentity=$binding} }
+        $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $plan.stages[0].execution | Should -BeExactly 'execute'
+        @($plan.stages | Where-Object id -in @('develop.upgrade','develop.fresh') | ForEach-Object execution) | Should -Be @('reuse','reuse')
+        $plan.stages[1].inputFingerprint | Should -BeExactly $binding.fingerprint
+        Should -Invoke Get-DevelopE2EAncestorQualification -Times 2 -Exactly -ParameterFilter { $InputIdentity.fingerprint -eq $binding.fingerprint -and $Tree -eq $repo.tree }
+        Mock Get-DevelopE2EAncestorQualification { $null }
+        $missing=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        @($missing.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+    }
+
+    It 'retains the original route execution identity when a legacy supervisor saves current stage evidence' {
+        $repo=New-PlanRepository; $script:Root=$repo.root
+        $original=Join-Path $TestDrive 'original ancestor route.json'
+        [IO.File]::WriteAllText($original, ('{"status":"passed","repository":{"tree":"' + $repo.tree + '"},"result":{"status":"passed"}}'), [Text.UTF8Encoding]::new($false))
+        $sha=Get-DeliveryFileSha256 -Path $original
+        $currentTree='a'*40
+        $saved=Save-DeliveryStageEvidence -Stage ([pscustomobject]@{id='develop.fresh';version=1;inputFingerprint=('e'*64)}) -CandidateCommit ('b'*40) -CandidateTree $currentTree -ProofPath $original
+        $saved.candidate.tree | Should -BeExactly $currentTree
+        $saved.proof.sha256 | Should -BeExactly $sha
+        (Get-Content -LiteralPath $saved.proof.path -Raw|ConvertFrom-Json).repository.tree | Should -BeExactly $repo.tree
+        (Get-DeliveryFileSha256 -Path $original) | Should -BeExactly $sha
+    }
+
+    It 'continues through the candidate checker without rewriting the historical route or launching a child' {
+        $repo=New-PlanRepository; $repoRoot=$repo.root; $tree=$repo.tree; $qualityCatalog=New-PlanCatalog
+        $script:developQualificationRoot=Join-Path $TestDrive 'checker ancestor route'
+        New-Item -ItemType Directory -Force -Path $script:developQualificationRoot | Out-Null
+        $script:releaseContext=[pscustomobject]@{}; $script:aiRulesRelease=[pscustomobject]@{}
+        $script:developRulesSource=$repo.root; $E2EProjectRoot=$repo.root; $AgentTarget='kilocode'
+        $original=Join-Path $TestDrive 'historical route bytes.json'
+        [IO.File]::WriteAllText($original, '{"repository":{"tree":"old"},"result":{"status":"passed"}}', [Text.UTF8Encoding]::new($true))
+        $sha=Get-DeliveryFileSha256 -Path $original
+        $binding=[pscustomobject]@{fingerprint=('d'*64)}
+        $ancestor=[pscustomobject]@{reportPath=$original;sha256=$sha;inputIdentity=$binding}
+        Mock Get-DevelopE2EIdentitySha256 { 'a'*64 }; Mock Get-DevelopE2EStandStateSha256 { 'c'*64 }
+        Mock Restore-DevelopE2EQualification { $false }; Mock Get-DevelopE2EInputIdentity { $binding }
+        Mock Get-DevelopE2EAncestorQualification { $ancestor }
+        Mock Add-ReusedStage { }
+        Mock Invoke-PowerShellChild { throw 'A verified ancestor must not launch another journey.' }
+        $route=Ensure-DevelopE2ERoute -Journey fresh -Plan ([pscustomobject]@{journeys=@('fresh')})
+        (Get-DeliveryFileSha256 -Path $route) | Should -BeExactly $sha
+        (Get-Content -LiteralPath $route -Raw|ConvertFrom-Json).repository.tree | Should -BeExactly 'old'
+        $script:developAncestorRoutes.fresh.inputIdentity.fingerprint | Should -BeExactly $binding.fingerprint
+        Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
     }
 
     It 'passes the same catalog budget from the actual checker and immutable planner to each journey' {

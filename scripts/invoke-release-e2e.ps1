@@ -944,24 +944,17 @@ function Test-E2EStagePassed {
     $record = $checkpoint["stages"][$Name]
     if ([string]$record.status -ne "passed") { return $false }
     $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
-    if ([string]$record.fingerprint -ne $expectedFingerprint) {
-        $stageOrder = @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")
-        $stageIndex = [Array]::IndexOf($stageOrder, $Name)
-        $boundaryIndex = [Array]::IndexOf($stageOrder, $continuationBoundaryStage)
-        $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { "" }
-        $completedReleaseContinuation = $crossReleaseReuse -and $releaseContinuationProof -and -not $continuationBoundaryStage
-        $beforeFailedStage = $boundaryIndex -ge 0 -and $stageIndex -ge 0 -and $stageIndex -lt $boundaryIndex
-        $canRebind = $crossReleaseReuse -and $releaseContinuationProof -and ($completedReleaseContinuation -or $beforeFailedStage) -and
-            [string]$record.fingerprint -eq $legacyFingerprint
-        if ($canRebind) {
-            $record["fingerprint"] = $expectedFingerprint
-            $record["reuseReason"] = if ($completedReleaseContinuation) { "exact Targeted continuation after completed release" } else { "exact Targeted continuation before failed stage '$continuationBoundaryStage'" }
-            Write-E2ECheckpoint
-        } else {
-            $script:invalidatedStages += $Name
-            $script:invalidationDetails += [ordered]@{ stage = $Name; reason = "stage fingerprint changed"; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
-            return $false
-        }
+    $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { '' }
+    $decision = Get-E2EAdmissionStageDecision -Name $Name -Record $record -CurrentFingerprint $expectedFingerprint -LegacyFingerprint $legacyFingerprint -CrossReleaseReuse $crossReleaseReuse -ContinuationProof $releaseContinuationProof -ContinuationBoundaryStage $continuationBoundaryStage
+    if ($decision.action -eq 'rerun') {
+        $script:invalidatedStages += $Name
+        $script:invalidationDetails += [ordered]@{ stage = $Name; reason = $decision.reason; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
+        return $false
+    }
+    if ($decision.action -eq 'rebind') {
+        $record['fingerprint'] = $expectedFingerprint
+        $record['reuseReason'] = $decision.reason
+        Write-E2ECheckpoint
     }
     if ([string]$record.evidencePath) {
         try {
@@ -1594,51 +1587,46 @@ $clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
 . (Join-Path $stageModuleRoot "workflow-transition.ps1")
+. (Join-Path $stageModuleRoot "admission.ps1")
 
 function Test-E2EManagedRefreshHead {
-    param(
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
-        [Parameter(Mandatory = $true)][string]$CurrentHead,
-        [Parameter(Mandatory = $true)][string]$ExpectedHead,
-        [Parameter(Mandatory = $true)][string]$MasterHead,
-        [Parameter(Mandatory = $true)][string]$ExportPath,
-        [string]$WorkflowRoot = ''
-    )
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)][string]$CurrentHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead, [Parameter(Mandatory = $true)][string]$MasterHead,
+        [Parameter(Mandatory = $true)][string]$ExportPath, [string]$WorkflowRoot = '')
+    return Test-E2EAdmissionManagedRefreshHead -RepositoryRoot $RepositoryRoot -CurrentHead $CurrentHead -ExpectedHead $ExpectedHead -MasterHead $MasterHead -ExportPath $ExportPath -WorkflowRoot $WorkflowRoot
+}
 
-    $currentRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $CurrentHead)).stdout.Trim()
-    $currentParts = @($currentRecord -split '\s+' | Where-Object { $_ })
-    if ($currentParts.Count -eq 3 -and $currentParts[1] -eq $ExpectedHead -and $currentParts[2] -eq $MasterHead) {
-        return $true
+function Get-E2EStageAdmissionContext {
+    if (-not (Get-Variable -Name E2ETrackedInputFiles -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:E2ETrackedInputFiles = @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @('ls-files', '-z', '--') | ForEach-Object {
+            $path = Join-Path $workflowRoot ([string]$_).Replace('/', '\')
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
+        })
     }
-    if ($currentParts.Count -ne 2) { return $false }
-    if ($WorkflowRoot -and (Test-E2ECompletedWorkflowTransition -RepositoryRoot $RepositoryRoot `
-            -CurrentHead $CurrentHead -ExpectedHead $ExpectedHead -WorkflowRoot $WorkflowRoot)) {
-        return $true
+    return [ordered]@{
+        workflowRoot = $workflowRoot; workflowCommit = $workflowCommit; stageModuleRoot = $stageModuleRoot
+        stageDefinitions = $script:ReleaseE2EStageDefinitions
+        trackedInputFilesProvided = $true; trackedInputFiles = @($script:E2ETrackedInputFiles)
+        aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
+        clientSelection = $clientSelectionIdentity
+        serverConfiguration = [ordered]@{
+            serverProjectRoot = Get-E2EReleaseConfigValue -Name 'serverProjectRoot'
+            serverWorktreePath = Get-E2EReleaseConfigValue -Name 'serverWorktreePath'
+            serverDevBranchName = Get-E2EReleaseConfigValue -Name 'serverDevBranchName'
+        }
     }
+}
 
-    $mergeHead = [string]$currentParts[1]
-    $mergeRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $mergeHead)).stdout.Trim()
-    $mergeParts = @($mergeRecord -split '\s+' | Where-Object { $_ })
-    if ($mergeParts.Count -ne 3 -or $mergeParts[1] -ne $ExpectedHead -or $mergeParts[2] -ne $MasterHead) {
-        return $false
-    }
-
-    $subject = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("show", "-s", "--format=%s", $CurrentHead)).stdout.Trim()
-    $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
-    $cursorPath = "$normalizedExportPath/ConfigDumpInfo.xml"
-    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @(
-        "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", $CurrentHead, "--"
-    ) | ForEach-Object { ([string]$_ -replace "\\", "/") })
-    if ($changedPaths.Count -eq 0) { return $false }
-
-    if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
-        return $changedPaths.Count -eq 1 -and $changedPaths[0] -ceq $cursorPath
-    }
-    if ($subject -ceq "chore: persist branch refresh state") {
-        $allowedPaths = @($cursorPath, ".kilo/kilo.json")
-        return $changedPaths -ccontains ".kilo/kilo.json" -and @($changedPaths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0
-    }
-    return $false
+function Get-E2EReleaseAdmissionContext {
+    $context = Get-E2EStageAdmissionContext
+    $project = Get-Content -LiteralPath (Join-Path $worktreePath '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $context.projectRoot = $ProjectRoot; $context.worktreePath = $worktreePath; $context.branch = $branch
+    $context.currentHead = (Invoke-RepositoryGit -RepositoryRoot $worktreePath -Arguments @('rev-parse', 'HEAD')).stdout.Trim()
+    $context.masterHead = (Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('rev-parse', 'HEAD')).stdout.Trim()
+    $context.worktreeClean = @(Get-RepositoryGitPathList -RepositoryRoot $worktreePath -Arguments @('status', '--porcelain', '--untracked-files=all', '-z')).Count -eq 0
+    $context.exportPath = [string](Get-E2EAdmissionValue $project 'exportPath' ''); $context.resumeMode = $ResumeMode
+    $context.workflowTree = $workflowTree; $context.runnerSha256 = $runnerSha256; $context.helperSha256 = $helperSha256
+    return $context
 }
 foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
@@ -1674,62 +1662,13 @@ $serverResetConfigured = [bool]$serverResetDisposition.configured
 
 function Get-E2EStageInputFiles {
     param([string]$Name)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    if (-not $definition) { throw "Unknown Release E2E stage definition: $Name" }
-    if (-not (Get-Variable -Name E2ETrackedInputFiles -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:E2ETrackedInputFiles = @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("ls-files", "-z", "--") | ForEach-Object {
-            $path = Join-Path $workflowRoot ([string]$_).Replace('/', '\')
-            if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
-        })
-    }
-    $allFiles = @($script:E2ETrackedInputFiles)
-    $resolved = New-Object System.Collections.Generic.List[string]
-    foreach ($patternText in @($definition.paths)) {
-        $normalizedPattern = ([string]$patternText).Replace('\', '/')
-        if ($normalizedPattern.IndexOfAny([char[]]'*?') -ge 0) {
-            $pattern = New-Object System.Management.Automation.WildcardPattern($normalizedPattern, [System.Management.Automation.WildcardOptions]::IgnoreCase)
-            $matches = @($allFiles | Where-Object {
-                $relative = $_.FullName.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
-                $pattern.IsMatch($relative)
-            })
-            if ($matches.Count -eq 0) { throw "Release E2E stage '$Name' input pattern matched no files: $patternText" }
-            foreach ($match in $matches) { $resolved.Add($match.FullName) | Out-Null }
-        } else {
-            $path = Join-Path $workflowRoot $normalizedPattern.Replace('/', '\')
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release E2E stage '$Name' input is missing: $patternText" }
-            $resolved.Add([System.IO.Path]::GetFullPath($path)) | Out-Null
-        }
-    }
-    $resolved.Add((Join-Path $workflowRoot "scripts/stand-env-identity.ps1")) | Out-Null
-    $resolved.Add((Join-Path $stageModuleRoot ([string]$definition.moduleFile))) | Out-Null
-    return @($resolved | Sort-Object -Unique)
+    return Get-E2EAdmissionStageInputFiles -Context (Get-E2EStageAdmissionContext) -Name $Name
 }
 
 function Get-E2EStageFingerprint {
     param([string]$Name, [string]$RunnerSha256 = $runnerSha256)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    $inputs = @()
-    foreach ($path in @(Get-E2EStageInputFiles -Name $Name)) {
-        $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2ECanonicalTextSha256 -Path $path }
-    }
-    $dependencies = @()
-    foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency -RunnerSha256 $RunnerSha256 } }
-    $stageConfiguration = if ($Name -eq "server-reset") {
-        [ordered]@{
-            serverProjectRoot = Get-E2EReleaseConfigValue -Name "serverProjectRoot"
-            serverWorktreePath = Get-E2EReleaseConfigValue -Name "serverWorktreePath"
-            serverDevBranchName = Get-E2EReleaseConfigValue -Name "serverDevBranchName"
-        }
-    } else { $null }
-    $payload = [ordered]@{
-        schemaVersion = 2; name = $Name; version = [int]$definition.version
-        aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
-        inputs = $inputs; dependencies = $dependencies; stageConfiguration = $stageConfiguration
-        clientSelection = $clientSelectionIdentity
-    }
-    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+    # Retain the legacy signature; schema 2 does not include whole-runner SHA.
+    return Get-E2EAdmissionStageFingerprint -Context (Get-E2EStageAdmissionContext) -Name $Name
 }
 
 function Copy-E2ECapabilityFile {
@@ -1938,22 +1877,7 @@ function Save-E2ECapabilityCache {
 
 function Test-E2EStageInputsUnchanged {
     param([string]$Name, [string]$QualifiedCommit)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    if (-not $definition) { return $false }
-    $patterns = @($definition.paths) + @(
-        "scripts/release-e2e/$([string]$definition.moduleFile)",
-        "scripts/release-e2e/common.ps1",
-        "scripts/stand-env-identity.ps1"
-    )
-    foreach ($dependency in @($definition.dependsOn)) {
-        if (-not (Test-E2EStageInputsUnchanged -Name ([string]$dependency) -QualifiedCommit $QualifiedCommit)) { return $false }
-    }
-    foreach ($changedPath in @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("diff", "--name-only", "-z", $QualifiedCommit, $workflowCommit, "--"))) {
-        foreach ($pattern in $patterns) {
-            if (Test-WorkflowContinuationPattern -Path ([string]$changedPath) -Pattern ([string]$pattern)) { return $false }
-        }
-    }
-    return $true
+    return Test-E2EAdmissionStageInputsUnchanged -Context (Get-E2EStageAdmissionContext) -Name $Name -QualifiedCommit $QualifiedCommit
 }
 
 function Find-E2ECompletedCapabilityCache {
@@ -2159,30 +2083,18 @@ if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
 
 if ($checkpoint) {
     $identity = $checkpoint["identity"]
-    $checkpointSchema = [int]$checkpoint["schemaVersion"]
-    $scopeMatches = $checkpointSchema -in @(1, 2, 3) -and
-        [string]$identity.projectRoot -eq $ProjectRoot -and
-        [string]$identity.worktreePath -eq $worktreePath -and
-        [string]$identity.branch -eq $branch
-    if (-not $scopeMatches) {
-        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch. schema=$checkpointSchema project='$([string]$identity.projectRoot)' expectedProject='$ProjectRoot' worktree='$([string]$identity.worktreePath)' expectedWorktree='$worktreePath' branch='$([string]$identity.branch)' expectedBranch='$branch'."
-    }
-    if ($checkpointSchema -lt 3 -and $ResumeMode -eq "Auto") {
-        throw "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED: checkpoint schema v$checkpointSchema requires one scripted -ResumeMode Restart migration."
-    }
-    $releaseIdentityMatches =
-        [string]$identity.workflowCommit -eq $workflowCommit -and
-        [string]$identity.workflowTree -eq $workflowTree -and
-        [string]$identity.runnerSha256 -eq $runnerSha256 -and
-        [string]$identity.aiRulesCommit -eq $aiRulesCommit -and
-        [string]$identity.helperSha256 -eq $helperSha256 -and
-        [string]$identity["clientSelection"] -ceq $clientSelectionIdentity -and
-        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
-    if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) {
-        $crossReleaseReuse = $true
+    $admissionContext = Get-E2EReleaseAdmissionContext
+    $admission = Get-E2EReleaseCheckpointAdmission -Context $admissionContext -Checkpoint $checkpoint
+    if (-not $admission.allowed) { throw "$($admission.code): $($admission.reason). current HEAD '$($admissionContext.currentHead)', checkpoint HEAD '$($checkpoint['expectedHead'])'." }
+    Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
+    # Evaluate before mutation, then let existing owners restore/rebind/write.
+    [void](Get-E2EAdmissionCheckpointStageDecisions -Context $admissionContext -Checkpoint $checkpoint -Admission $admission)
+    $releaseIdentityMatches = $admission.exactIdentity
+    $crossReleaseReuse = $admission.crossReleaseReuse
+    $releaseContinuationProof = $admission.continuationProof
+    if ($crossReleaseReuse) {
         $previousWorkflowCommit = [string]$identity.workflowCommit
         $previousRunnerSha256 = [string]$identity.runnerSha256
-        $releaseContinuationProof = if ([string]$identity["clientSelection"] -ceq $clientSelectionIdentity) { Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree } else { $null }
         if ($releaseContinuationProof) {
             foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 [void](Restore-E2EInterruptedCapabilityStage -Name $stageName)
@@ -2195,51 +2107,14 @@ if ($checkpoint) {
             }
         }
     }
-    $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
-    if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) {
-        $managedRefreshMerge = $false
-        $worktreeCleanForRefresh = @(& git -C $worktreePath status --porcelain --untracked-files=all).Count -eq 0
-        $parents = @()
-        $standMasterHead = ""
-        if ($crossReleaseReuse -and $worktreeCleanForRefresh) {
-            $parents = @((& git -C $worktreePath rev-list --parents -n 1 $currentHead).Trim() -split '\s+')
-            $standMasterHead = (& git -C $ProjectRoot rev-parse HEAD).Trim()
-            $refreshProjectConfig = Get-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            $managedRefreshMerge = Test-E2EManagedRefreshHead `
-                -RepositoryRoot $worktreePath `
-                -CurrentHead $currentHead `
-                -ExpectedHead ([string]$checkpoint["expectedHead"]) `
-                -MasterHead $standMasterHead `
-                -ExportPath ([string]$refreshProjectConfig.exportPath) `
-                -WorkflowRoot $workflowRoot
-        }
-        if (-not $managedRefreshMerge) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'. crossRelease=$crossReleaseReuse continuation=$([bool]$releaseContinuationProof) clean=$worktreeCleanForRefresh parents='$($parents -join ',')' master='$standMasterHead'." }
-    }
 
     if (-not $checkpoint["snapshots"].Contains("baseline")) {
         if ($checkpoint["stages"].Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: baseline snapshot was not checkpointed before stage execution." }
         Remove-Item -LiteralPath $baselineSnapshotPath -Force -ErrorAction SilentlyContinue
         $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
         Write-E2ECheckpoint
-    } else {
-        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["baseline"].path) -Sha256 ([string]$checkpoint["snapshots"]["baseline"].sha256) -Label "baseline infobase snapshot"
     }
-    $baselineStateRecord = $checkpoint["stateFiles"]["baseline"]
-    Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.stateCopyPath) -Sha256 ([string]$baselineStateRecord.stateSha256) -Label "baseline branch state"
-    if ([string]$baselineStateRecord.envCopyPath) {
-        Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.envCopyPath) -Sha256 ([string]$baselineStateRecord.envSha256) -Label "baseline .dev.env"
-    }
-    if ($checkpoint["stages"].Contains("config-cadence") -and [string]$checkpoint["stages"]["config-cadence"].status -eq "passed") {
-        if (-not $checkpoint["snapshots"].Contains("postConfig") -or -not $checkpoint["stateFiles"].Contains("postConfig")) {
-            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: passed config-cadence has no post-config snapshot/state."
-        }
-        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["postConfig"].path) -Sha256 ([string]$checkpoint["snapshots"]["postConfig"].sha256) -Label "post-config infobase snapshot"
-        $postConfigStateRecord = $checkpoint["stateFiles"]["postConfig"]
-        Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.stateCopyPath) -Sha256 ([string]$postConfigStateRecord.stateSha256) -Label "post-config branch state"
-        if ([string]$postConfigStateRecord.envCopyPath) {
-            Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.envCopyPath) -Sha256 ([string]$postConfigStateRecord.envSha256) -Label "post-config .dev.env"
-        }
-    }
+    Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
 
     if ($ResumeMode -eq "Restart") {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]

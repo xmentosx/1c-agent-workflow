@@ -893,3 +893,44 @@ Acceptance keeps the original workload: owned timeout residue → restore/archiv
 reject without losing bytes; interrupted restore remains retryable without a
 false passed result. Final Release, publication and EV8a/EV9 remain open until
 their actual runtime evidence exists. No real-project rollout is authorized here.
+
+## Accepted delivery continuation changes, 2026-10-08
+
+The user accepted two bounded changes after reviewing repeated publication
+attempts. The budget-only transition `50140d73` to `3a25257b` changed the candidate
+tree and therefore invalidated both planner and checker exact-tree journey keys,
+although the journey workload did not change. The repeated upgrade and fresh
+executions took 240.336 and 3064.510 seconds, respectively. This is 3304.846
+seconds of potentially avoidable live work for an equivalent, fully proven
+input-preserving transition; current-tree static qualification remains required.
+
+The existing Develop qualification owner defines one complete journey input
+identity consumed by planner and checker. It includes the actual executor,
+cleanup, package/runtime inputs, journey-specific contract projection, resolved
+artifacts, client/fork identity, environment and stand binding. Release-only
+budgets do not change the Develop contract projection. An ancestor continuation
+also requires the existing source lineage, complete NUL-delimited delta, exact
+passed Targeted proof and verified evidence SHA. Missing or unknown inputs require
+execution. Legacy evidence without reconstructible external bindings keeps the
+exact-tree fallback. A newer known failed journey cannot become passed by selecting
+an older success. Original execution reports retain their original commit, tree,
+result and bytes; current combined qualification records continuation provenance
+and remains bound to the current candidate and static proof.
+
+The existing Release readiness owner and runner share read-only checkpoint
+admission and stage-input eligibility. They classify reusable, rerun and rejected
+work before expensive Develop execution; the runner rechecks actual inputs before
+its existing mutations. Snapshot restore, checkpoint writes, rebind, cache import,
+resource ownership and publication remain with their existing owners. Lack of
+source-continuation proof disables reuse and does not itself forbid an otherwise
+valid full rerun. Completed workflow-update chains supported by `fc42d751` and
+existing merge/cursor transitions stay supported. An unproven composed transition
+is rejected early with the existing supported continuation, not silently accepted.
+
+There is no new coordinator, persistent state, installed migration, licensing
+change, client support reduction or weakened verification. The published
+supervisor retains authority; an older plan may conservatively schedule execute
+while the candidate checker validates a supported continuation. Qualification is
+never transferred or relabelled manually. Acceptance keeps the original failed
+Release path and original backend workloads, including actual reexecution of
+failed `ondemand-mcp`. These changes do not close publication or EV8a/EV9 tasks.

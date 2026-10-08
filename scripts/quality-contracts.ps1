@@ -1,5 +1,21 @@
 Set-StrictMode -Version Latest
 
+function Get-DevelopE2EJourneyContractProjection {
+    param([Parameter(Mandatory = $true)][object]$Catalog, [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey)
+    $route = $Catalog.developJourneys.routes.$Journey
+    $ids = @($route.contracts | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    $owners = @($Catalog.contracts | Where-Object { [string]$_.id -in $ids } | Sort-Object id)
+    if ($owners.Count -ne $ids.Count) { throw 'DEVELOP_INPUT_OWNER_MISSING: journey contract has an unknown owner.' }
+    # Project the authoritative route and its owners, not unrelated Release budgets.
+    return [ordered]@{
+        schemaVersion = 1; journey = $Journey
+        hardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $Catalog -Journey $Journey
+        names = @($Catalog.developJourneys.names)
+        fullPaths = @($Catalog.developJourneys.fullPaths)
+        contracts = $owners
+    }
+}
+
 function Get-QualityContractCatalog {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 

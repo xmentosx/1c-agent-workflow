@@ -603,3 +603,67 @@ all 20 LifecycleOperationLock cases and the one current-weight/historical-model
 case. The other 63 LocalQualityGate cases were not selected; this is focused
 proof, not registration. Receipt: `build/lifecycle-record-publication/focused-strict-fixture-20261008/qualification.json`,
 SHA256 `eb4b78a8550f626f1d07a162accd1f8d6b0cd16b07e79fc9d7d7a6df9b12fa5a`.
+
+### Accepted delivery continuation acceptance, 2026-10-08
+
+The following acceptance remains required for the two bounded changes accepted
+on 2026-10-08; this list does not assert passed results:
+
+- Reproduce an immutable qualified-ancestor Git transition with only Release
+  budget changes, corresponding to `50140d73` to `3a25257b`. The plan identity
+  changes, current static proof remains required, and complete unchanged journey
+  bindings permit continuation without changing the original execution report.
+- Change an executor/assertion/cleanup/package input, journey budget or route,
+  resolved artifact, client/fork identity, stand or relevant environment value;
+  the affected journey must execute. Missing inputs, unknown paths, corrupt SHA,
+  absent Targeted proof or unsupported lineage cannot authorize continuation.
+- Retain legacy exact-tree behavior when historical external bindings cannot be
+  recovered. A newer failed journey is not replaced with an older success.
+- Exercise the published supervisor's conservative execute plan with the new
+  candidate checker. The current combined qualification and static proof bind
+  the candidate; historical route commit/tree/result/SHA remain unchanged.
+- Prove identical early-readiness and runtime decisions for supported merge,
+  cursor and completed workflow-update transitions; reject unproven transitions
+  before Develop without changing Git, checkpoint, snapshots or evidence.
+- Prove stage-specific reuse/rerun decisions, fresh rechecking before mutation,
+  and strict identity/evidence/DT/state/env drift refusal. Source-continuation
+  absence alone does not create a new barrier to a valid full rerun.
+- Resume the original Release checkpoint on its owned stand: preserve eligible
+  passed config/extension evidence, actually rerun failed ondemand on both
+  original backend families, and complete ordinary Develop publication. Source
+  fixtures do not substitute this live acceptance or EV8a/EV9.
+
+Current-run evidence: candidate `fc42d7513491f05fe390659abef5c07d956505aa`
+passed upgrade and Full `2697/0/0` with a clean candidate tree. The completed Full
+proof is retained under
+`build/lifecycle-record-publication/closed-full-fc42d751-20261008/manifest.json`,
+SHA256 `be2a6e6ae28d6ccec04c04ca393592d7056d72e9daa9c177858e514598680b09`.
+Fresh failed at its original `new-dev-branch` native Designer launch on
+`8.3.27.2130`: the native log reports that no license was found. The public
+operation terminated, its queue was retained, and no whole Develop or
+publication success is claimed. License availability is an external prerequisite;
+foreign sessions and licensing configuration remain unchanged.
+The original failed run's ten files are retained under
+`build/lifecycle-record-publication/closed-develop-license-failure-fc42d751-20261008/manifest.json`,
+SHA256 `f9e1ffcd9d2fdee2c23b4b29633e50132f470ff7b1fac82c8b704c2ebc3f59c6`.
+
+Focused source acceptance for A/B passed on Windows PowerShell 5.1 / Pester
+5.8.0. The final affected A batch passed 3/0/0 (writer/reader round-trip,
+persisted UI policy alias drift, ordinal source inventory). The real shared
+input getter was also run read-only in Core 7 and native PowerShell 5 against
+the named stand and resolved artifacts: both complete bindings matched exactly,
+with 402 upgrade inputs and 398 fresh inputs. Native reads took 6.267 and 6.306
+seconds; Core reads took 3.124 and 2.843 seconds. These are on-demand proof reads,
+not a new runtime operation or an always-on client requirement. Receipts:
+`build/develop-ancestor-reuse/20261008-A/ordinal-6`,
+`binding-core-ordinal.json` and `binding-winps-ordinal.json` in the same A folder.
+Earlier focused failures and their causes remain retained; the final affected
+batch does not claim that unselected tests were rerun.
+
+B's final affected batch passed 5/0/0 with no source changes and native AST
+parse errors were zero for its seven owner files. All eight existing stage
+fingerprints matched the original fc42 recipe. Receipts are retained under
+`build/release-admission`; `final-freeze.json` SHA256 is
+`9d64446e96c2d3369eed46162a2f0d10a30d652827e473ad443bcd49616a7c82`.
+These source proofs do not substitute public RegisterChange or the outstanding
+original live Release continuation, publication, EV8a and EV9.

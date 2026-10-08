@@ -180,10 +180,20 @@ identity: `statusReader` — коммит прочитанного кода,
 
 Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит DAG со статусами
 `execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
-Develop stage допускает `reuse` только для того же дерева кандидата: его
-статическая и маршрутная qualification восстанавливается по exact-tree ключу.
-При новом дереве план включает время `upgrade`/`fresh`, даже если файлы их
-владельцев не менялись. Release capability сохраняет независимый fingerprint.
+Статическая Develop qualification остаётся привязанной к текущему дереву.
+Для живых `upgrade`/`fresh` planner и checker используют один полный fingerprint
+входов конкретного journey. Квалифицированный предок допускает продолжение лишь
+при доказанной source lineage, полном NUL delta, точном passed Targeted,
+совпадении runtime/package/contract, среды, стенда, клиента, fork и разрешённых
+artifacts, а также проверенном SHA исходного evidence. Release-only budget не
+входит в Develop contract projection; изменение входов самого journey требует
+execution. Старые записи без восстановимых внешних bindings и неизвестные входы
+сохраняют exact-tree fallback. Более новый известный failed journey не заменяется
+старым успехом. Исходный report сохраняет прежние commit/tree/result и bytes;
+текущая combined qualification связывает continuation provenance с текущим
+кандидатом и static proof. Старый опубликованный supervisor может консервативно
+планировать execute; candidate checker всё равно проверяет эти условия. Release
+capability сохраняет независимый fingerprint.
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
 `-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который
@@ -284,8 +294,14 @@ gate восстанавливает их и не повторяет preliminary 
 любой стадии не двигает remote и не очищает очередь.
 До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
 план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
-checkpoint snapshots; непосредственно перед Release штатный gate проверяет их
-повторно. Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
+checkpoint snapshots. Readiness и runner используют один read-only контракт
+scope/identity/client/HEAD/workflow transition и stage-input eligibility: отчёт
+различает reuse, rerun и rejected. Runner повторно проверяет актуальные входы
+перед своими прежними mutations; restore, checkpoint write, rebind и evidence
+import остаются у него. Отсутствие source-continuation proof запрещает reuse,
+но само по себе не блокирует допустимый полный rerun. Неподтверждённый transition
+отклоняется до Develop с существующим continuation, без записи нового состояния.
+Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
 runner-ом из master, если master ещё не входит в её историю. Повреждённый
 checkpoint, чужая или грязная ветка блокируют gate до запуска 1С.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из

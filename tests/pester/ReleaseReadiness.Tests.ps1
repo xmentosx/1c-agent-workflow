@@ -4,6 +4,7 @@ $RunnerPath = Join-Path $RepoRoot "scripts\test-release-readiness.ps1"
 Describe "Deterministic Release readiness" {
     BeforeAll {
         $script:ReadinessRunnerPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "scripts\test-release-readiness.ps1"
+        . (Join-Path (Split-Path -Parent $script:ReadinessRunnerPath) 'stand-env-identity.ps1')
         function Write-Utf8Json {
             param([string]$Path, [object]$Value)
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -273,6 +274,7 @@ Describe "Deterministic Release readiness" {
                     aiRulesCommit = ""
                     helperSha256 = (& $canonicalSha (Join-Path $fixture.root ".agents\skills\1c-workflow\scripts\agent-1c.ps1"))
                     projectConfigSha256 = (Get-FileHash -LiteralPath (Join-Path $worktreeRoot ".agent-1c\project.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+                    clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $e2eRoot
                 }
                 configEvidence = [ordered]@{ featurePath = $outsideFixturePath }
                 snapshots = [ordered]@{ baseline = [ordered]@{ path = (Join-Path $checkpointRoot 'snapshots\baseline.dt'); sha256 = ('a' * 64) } }
@@ -308,6 +310,7 @@ Describe "Deterministic Release readiness" {
             Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             @($context.issues.code) | Should -Not -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
+            @($context.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN'
 
             $checkpoint.schemaVersion = 2
             Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value $checkpoint
@@ -589,5 +592,121 @@ Describe "Deterministic Release readiness" {
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
+    }
+}
+
+Describe 'Shared Release early admission' -Tag 'ReleaseAdmissionContract' {
+    BeforeAll {
+        $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+        . (Join-Path $RepoRoot 'scripts/release-e2e/admission.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1')
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/test-release-readiness.ps1'), [ref]$tokens, [ref]$errors)
+        if ($errors) { throw 'Readiness owner must parse' }
+        foreach ($name in @('Add-ReadinessIssue', 'Get-JsonFile', 'Get-GitValue', 'Get-FileSha256', 'Test-PathInsideRoot', 'Get-ManagedTextOrBinarySha256', 'Test-ReleaseCheckpointPreflight')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        function New-EarlyAdmissionFixture {
+            param([string]$Root)
+            $main = Join-Path $Root 'Основной проект'; $worktree = Join-Path $Root 'Ветка Release'
+            New-Item -ItemType Directory -Force (Join-Path $main '.agent-1c') | Out-Null
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            [IO.File]::WriteAllText((Join-Path $main '.gitignore'), ".agent-1c/runs/`n.dev.env`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $main '.agent-1c/project.json'), '{"exportPath":"src/cf","aiRules":{"tools":["codex"]}}', $utf8)
+            & git -C $main init -q -b master
+            & git -C $main config user.name 'Early Release admission'
+            & git -C $main config user.email 'admission@example.invalid'
+            & git -C $main add --all
+            & git -C $main commit -qm baseline
+            & git -C $main worktree add --quiet -b itldev/admission $worktree master
+            if ($LASTEXITCODE -ne 0) { throw 'Owned Unicode worktree must exist' }
+            [IO.File]::WriteAllText((Join-Path $main '.agent-1c/release-e2e.json'), (@{worktreePath=$worktree;devBranchName='admission'} | ConvertTo-Json), $utf8)
+            $run = Join-Path $worktree '.agent-1c/runs/release-e2e/admission'
+            New-Item -ItemType Directory -Force $run | Out-Null
+            $dt = Join-Path $run 'baseline.dt'; $state = Join-Path $run 'baseline-state.json'; $envCopy = Join-Path $run 'baseline-env.txt'
+            [IO.File]::WriteAllText($dt, 'unit fixture DT bytes', $utf8)
+            [IO.File]::WriteAllText($state, '{"lastVerificationStatus":"unverified"}', $utf8)
+            [IO.File]::WriteAllText($envCopy, 'PASSWORD=transient-sentinel-never-report', $utf8)
+            $identity = [ordered]@{
+                projectRoot=$main;worktreePath=$worktree;branch='itldev/admission'
+                workflowCommit=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD')).stdout.Trim()
+                workflowTree=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+                runnerSha256=Get-E2EAdmissionCanonicalTextSha256 (Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1')
+                helperSha256=Get-E2EAdmissionCanonicalTextSha256 (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+                projectConfigSha256=Get-E2EAdmissionFileSha256 (Join-Path $worktree '.agent-1c/project.json')
+                aiRulesCommit='';clientSelection=Get-SourceE2EClientIdentity $main 'codex'
+            }
+            $checkpoint = [ordered]@{schemaVersion=3;identity=$identity;expectedHead=(Invoke-RepositoryGit $worktree @('rev-parse','HEAD')).stdout.Trim();stages=[ordered]@{};
+                snapshots=@{baseline=@{path=$dt;sha256=Get-E2EAdmissionFileSha256 $dt}};
+                stateFiles=@{baseline=@{stateCopyPath=$state;stateSha256=Get-E2EAdmissionFileSha256 $state;envCopyPath=$envCopy;envSha256=Get-E2EAdmissionFileSha256 $envCopy}}}
+            return @{main=$main;worktree=$worktree;run=$run;checkpoint=$checkpoint;checkpointPath=(Join-Path $run 'checkpoint.json');state=$state;envCopy=$envCopy}
+        }
+        function Invoke-EarlyAdmissionFixture {
+            param($Fixture)
+            [IO.File]::WriteAllText($Fixture.checkpointPath, ($Fixture.checkpoint | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
+            $script:issues = New-Object 'Collections.Generic.List[object]'
+            $RepositoryRoot=$RepoRoot; $ResumeMode='Auto'; $AgentTarget='codex'
+            $before = Get-E2EAdmissionFileSha256 $Fixture.checkpointPath
+            $candidateCommit=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD')).stdout.Trim()
+            $candidateTree=(Invoke-RepositoryGit $RepoRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+            $result = Test-ReleaseCheckpointPreflight -StandProjectRoot $Fixture.main -StandWorktree $Fixture.worktree -DevBranchName 'admission' -CandidateCommit $candidateCommit -CandidateTree $candidateTree -AiRulesCommit ''
+            # The candidate is current source even when the saved identity is old.
+            (Get-E2EAdmissionFileSha256 $Fixture.checkpointPath) | Should -BeExactly $before
+            return @{record=$result;issues=$script:issues.ToArray()}
+        }
+    }
+
+    It 'rejects an unsupported cross-source HEAD before any runner action and leaves checkpoint bytes intact' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Ранний отказ с пробелом')
+        $fixture.checkpoint.identity.runnerSha256='0'*64
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'foreign.txt'),'foreign',[Text.UTF8Encoding]::new($false))
+        & git -C $fixture.worktree add -- foreign.txt
+        & git -C $fixture.worktree commit -qm 'chore: update ITL workflow in development branch'
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        $observed.record.transition.allowed | Should -BeFalse
+        @($observed.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN'
+        $observed.record.transition.reason | Should -Match 'no supported completed'
+        ($observed.record | ConvertTo-Json -Depth 16) | Should -Not -Match 'transient-sentinel|PASSWORD='
+    }
+
+    It 'uses the current helper identity to catch a second stand change after a successful early read' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Повторная проверка границы')
+        $first=Invoke-EarlyAdmissionFixture $fixture
+        $first.record.transition.allowed | Should -BeTrue
+        $first.record.exactIdentity | Should -BeTrue
+        [IO.File]::WriteAllText((Join-Path $fixture.worktree 'foreign.txt'),'later foreign',[Text.UTF8Encoding]::new($false))
+        & git -C $fixture.worktree add -- foreign.txt
+        & git -C $fixture.worktree commit -qm later
+        $second=Invoke-EarlyAdmissionFixture $fixture
+        $second.record.transition.allowed | Should -BeFalse
+        @($second.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_HEAD_MISMATCH'
+    }
+
+    It 'reports rerun when HEAD is valid but source continuation proof is absent' {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive 'Нет proof без нового запрета')
+        $fixture.checkpoint.identity.workflowCommit='0'*40
+        $fixture.checkpoint.stages['ondemand-mcp']=@{status='failed';fingerprint='old'}
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        $observed.record.transition.allowed | Should -BeTrue
+        $observed.record.transition.sourceContinuationProven | Should -BeFalse
+        $observed.record.stageDecisions.Count | Should -Be 1
+        $observed.record.stageDecisions[0].action | Should -BeExactly 'rerun'
+        @($observed.issues) | Should -BeNullOrEmpty
+    }
+
+    It 'checks exact saved <Kind> bytes before reuse without editing or printing them' -ForEach @(@{Kind='state'},@{Kind='envCopy'}) {
+        $fixture=New-EarlyAdmissionFixture (Join-Path $TestDrive ('Дрейф '+$Kind))
+        [IO.File]::AppendAllText($fixture[$Kind], ' changed')
+        $badHash=Get-E2EAdmissionFileSha256 $fixture[$Kind]
+        $observed=Invoke-EarlyAdmissionFixture $fixture
+        @($observed.issues.code) | Should -Contain 'RELEASE_CHECKPOINT_SUPPORT_INVALID'
+        ($observed.issues.message -join ' ') | Should -Match 'recorded SHA256'
+        (Get-E2EAdmissionFileSha256 $fixture[$Kind]) | Should -BeExactly $badHash
+        ($observed | ConvertTo-Json -Depth 16) | Should -Not -Match 'transient-sentinel|PASSWORD='
     }
 }
