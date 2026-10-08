@@ -582,3 +582,24 @@ the continuation candidate's worker 117 result; qualification SHA256 respectivel
 `cdc00933f00050fcb7e7e0036ab481193f0607758437ec2d76212e2d1ef5984e`,
 `f87003c5abc22fbf83b77f410673cb14ad032f8cc1bb5dbd2b84ffd55684e3df`,
 `82fc3db54e7b0c28e109ee3b480529af9f1e6ab5ce8d5d16aada67aeefa36c40`.
+
+RegisterChange at `49d4d293` failed with 637/6/0 after 16 completed shards.
+Five new refusal cases stopped in fixture setup: the official strict shard host
+has no pre-existing `LifecycleOperationStatePath` variable. The filtered native
+boundary driver did not enable that strict host context, so its earlier 6/0/0
+does not prove the complete official shard. The fixture now snapshots both
+existence and value before assignment and restores the original scope afterward.
+The sixth failure is the historical 181-second current ordering pin; it now
+expects the measured 550-second weight while the independent historical
+176.030-second comparison and its 3/4-worker, 1200-second assertions stay intact.
+The concurrent 500-publication case and all existing 14 lifecycle cases passed
+under the official strict host; production and refusal assertions are unchanged.
+Closed failure evidence is retained in
+`build/lifecycle-record-publication/register-49d4d293-fixture-red-20261008`.
+The corrected complete official shard and normal registration remain required.
+
+Corrected native strict proof passed 21/0/0 in 128430 ms with unchanged inputs:
+all 20 LifecycleOperationLock cases and the one current-weight/historical-model
+case. The other 63 LocalQualityGate cases were not selected; this is focused
+proof, not registration. Receipt: `build/lifecycle-record-publication/focused-strict-fixture-20261008/qualification.json`,
+SHA256 `eb4b78a8550f626f1d07a162accd1f8d6b0cd16b07e79fc9d7d7a6df9b12fa5a`.

@@ -75,7 +75,9 @@
         . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
         $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle отказ с пробелом '+[guid]::NewGuid().ToString('N'))
         $statePath=Join-Path $tempRoot 'lifecycle-operation.json'
-        $previousPath=$script:LifecycleOperationStatePath
+        $previousVariable=Get-Variable -Name LifecycleOperationStatePath -Scope Script -ErrorAction SilentlyContinue
+        $hadPreviousVariable=$null -ne $previousVariable
+        $previousPath=if($hadPreviousVariable){$previousVariable.Value}else{$null}
         $expected=@{operationId=[guid]::NewGuid().ToString('N');pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o')}
         try {
             [IO.Directory]::CreateDirectory($tempRoot)|Out-Null
@@ -92,7 +94,8 @@
             {Publish-Agent1cFreshProcessRunStatus -Process ([pscustomobject]@{Id=$PID+1}) -Relay $relay -StartedAtUtc ([DateTime]::UtcNow) -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(30))} | Should -Throw '*fresh wait operation generation changed*'
             Test-Path -LiteralPath $relay.statusPath | Should -BeFalse
         } finally {
-            $script:LifecycleOperationStatePath=$previousPath
+            if($hadPreviousVariable){$script:LifecycleOperationStatePath=$previousPath}
+            else{Remove-Variable -Name LifecycleOperationStatePath -Scope Script -ErrorAction SilentlyContinue}
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

@@ -601,7 +601,9 @@ exit $exitCode
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
         }
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
-        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 181
+        # The complete native 2026-10-08 run measured 549.137 seconds (37/0/0).
+        # This current ordering weight does not replace the historical E measurements below.
+        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 550
         [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
         [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 200
         $estimate = {
