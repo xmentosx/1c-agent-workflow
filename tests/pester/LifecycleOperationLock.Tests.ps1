@@ -25,6 +25,78 @@
 
     AfterAll { $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS = $originalLockTimeout }
 
+    It 'keeps the same lifecycle generation readable while its continuation publishes phases' {
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle состояние с пробелом '+[guid]::NewGuid().ToString('N'))
+        $statePath=Join-Path $tempRoot 'lifecycle-operation.json'
+        $initial=@{schemaVersion=1;operationId=[guid]::NewGuid().ToString('N');pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o');status='running';phase='initial';detail=('Ожидание продолжения. '*400)}
+        $writer=[PowerShell]::Create()
+        try {
+            Write-Agent1cLifecycleOperationRecord -Path $statePath -Record $initial
+            $null=$writer.AddScript({param($CorePath,$StatePath,$InitialRecord)
+                $ErrorActionPreference='Stop'
+                . $CorePath
+                $failures=@(); $completed=0
+                for($index=0;$index -lt 500;$index++){
+                    $InitialRecord.phase='phase-'+$index
+                    try {Write-Agent1cLifecycleOperationRecord -Path $StatePath -Record $InitialRecord; $completed++}
+                    catch {$failures+=@($_.Exception.Message)}
+                }
+                return @{completed=$completed;failures=$failures}
+            }).AddArgument((Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')).AddArgument($statePath).AddArgument($initial.Clone())
+            $clock=[Diagnostics.Stopwatch]::StartNew()
+            $async=$writer.BeginInvoke()
+            $reads=0; $unreadable=0; $differentGeneration=0
+            do {
+                $observed=Read-Agent1cLifecycleOperationRecord -Path $statePath -ExistingPublication
+                $reads++
+                if($null -eq $observed){$unreadable++}
+                elseif([string]$observed.operationId -cne $initial.operationId -or [int]$observed.pid -ne $initial.pid -or [string]$observed.startedAt -cne $initial.startedAt){$differentGeneration++}
+            } while(-not $async.IsCompleted -and $clock.Elapsed.TotalSeconds -lt 30)
+            $async.IsCompleted | Should -BeTrue
+            $published=@($writer.EndInvoke($async))
+            @($writer.Streams.Error).Count | Should -Be 0
+            $reads | Should -BeGreaterThan 0
+            $unreadable | Should -Be 0 -Because 'an in-flight phase publication is the same signed lifecycle generation'
+            $differentGeneration | Should -Be 0
+            @($published[0].failures).Count | Should -Be 0
+            $published[0].completed | Should -Be 500
+            (Read-Agent1cLifecycleOperationRecord -Path $statePath).phase | Should -Be 'phase-499'
+        } finally {
+            $writer.Dispose()
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses an existing publication with <Defect> instead of admitting another generation' -ForEach @(
+        @{Defect='missing'}, @{Defect='malformed'}, @{Defect='operation id'}, @{Defect='owner pid'}, @{Defect='start time'}
+    ) {
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+        $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle отказ с пробелом '+[guid]::NewGuid().ToString('N'))
+        $statePath=Join-Path $tempRoot 'lifecycle-operation.json'
+        $previousPath=$script:LifecycleOperationStatePath
+        $expected=@{operationId=[guid]::NewGuid().ToString('N');pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o')}
+        try {
+            [IO.Directory]::CreateDirectory($tempRoot)|Out-Null
+            $script:LifecycleOperationStatePath=$statePath
+            $record=$expected.Clone()
+            switch($Defect){
+                'operation id' {$record.operationId=[guid]::NewGuid().ToString('N')}
+                'owner pid' {$record.pid=$PID+999999}
+                'start time' {$record.startedAt='2000-01-01T00:00:00Z'}
+            }
+            if($Defect -eq 'malformed'){Write-Utf8TextAtomic -Path $statePath -Value '{invalid json'}
+            elseif($Defect -ne 'missing'){Write-Agent1cLifecycleOperationRecord -Path $statePath -Record $record}
+            $relay=@{statusPath=(Join-Path $tempRoot 'status.json');operationId=$expected.operationId;ownerPid=$expected.pid;operationStartedAt=$expected.startedAt}
+            {Publish-Agent1cFreshProcessRunStatus -Process ([pscustomobject]@{Id=$PID+1}) -Relay $relay -StartedAtUtc ([DateTime]::UtcNow) -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(30))} | Should -Throw '*fresh wait operation generation changed*'
+            Test-Path -LiteralPath $relay.statusPath | Should -BeFalse
+        } finally {
+            $script:LifecycleOperationStatePath=$previousPath
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "publishes meaningful phases for the long lifecycle slices" {
         foreach ($phase in @(
             "config-load.fingerprint",

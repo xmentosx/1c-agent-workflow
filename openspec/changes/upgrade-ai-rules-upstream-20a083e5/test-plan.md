@@ -526,3 +526,59 @@ at the same SHA256. Qualification SHA256 is
 `e7fdceb3d75eed525b5db8a9e096c9b360c31b52045a68bde810795466a6ac6c`
 in `build/designer-pid-reuse/after-callback-fixture-identities/qualification.json`.
 Normal registration of the coherent current source is still required.
+
+### Lifecycle record publication race, 2026-10-08
+
+Registration of `daa2cdc0` passed 1035/0/0. Its first correctly scoped Develop
+attempt retained 117 completed parallel groups (2598/0/0), but the enclosing
+2700-second static stage timed out. The final recovery group itself completed
+33/0/0 in 822866 ms; this does not make the enclosing gate pass. The normal
+continuation reused qualified groups and reached the mandatory serial files.
+ReleaseGate passed 37/0/0 in 549137 ms. CompactItlRunner retained 48/1/0: its
+original 126-second silent-continuation case stopped after 8.54 seconds with
+`fresh wait operation generation changed`. Both failed publication attempts,
+their candidate directories and native logs remain evidence, not qualification.
+
+The existing lifecycle producer used truncate-in-place `WriteAllText` while
+the signed fresh parent read the same record. A native same-generation probe
+observed 20 unreadable reads out of 143, no actual generation change, and 403
+failed writes out of 500 attempts. The permanent concurrent regression also
+failed with 20 unreadable records on the original producer. The precise failed
+read of the historical compact case was not retained; the concurrent defect and
+reachable parent/child calls are independently established.
+
+Producer-only atomic publication restored the original compact case (132.79s),
+but the new concurrent check still failed. Native observations established
+Windows replacement-time sharing violations (`0x80070020`) and a temporary
+missing pathname (`0x80070002`), even with delete-compatible read handles.
+Rollback would restore the proven truncate race; a shared coordinator is
+unnecessary. The existing record owner now publishes with the existing atomic
+UTF-8 writer and reads an opened complete generation. Reads retry only sharing/
+lock violations within 40 attempts at 50 ms. Only the already signed fresh
+relay opts into the same bounded retry for a temporarily missing existing
+publication. Ordinary absent-state reads remain immediate. No cached record,
+new journal/schema, lock, public mode or recovery owner is introduced. Parsed
+foreign generations, malformed JSON, access denial and persistent absence
+remain strict refusal; the original 120/126/180-second test budgets are unchanged.
+
+The intermediate focused runs remain 4/1/0, including passed original long wait,
+private foreign/stale-channel refusals and exact-parent continuation. Their
+concurrent failures are not relabelled. Final native boundary proof passed
+6/0/0 in 8990 ms (Pester 8.22s), with unchanged current inputs: all 500 phase
+publications/read snapshots succeed; missing/malformed state and wrong operation
+ID, owner PID or start time are rejected through the real fresh-relay guard.
+Receipt: `build/lifecycle-record-publication/focused-boundary-20261008/qualification.json`,
+SHA256 `eb426ba8618aa7f49d26913c181bbf70af8e779ce20041f17d82d2eda2c3bd54`.
+Normal RegisterChange still owns complete current-owner qualification, including
+the unchanged original long-wait case; publication and EV8a/EV9 remain open.
+
+The existing scheduling weights now include actual completed measurements,
+rounded upward: ReleaseExtensionRecovery 823s, WorkflowUpdateRollback 207s and
+ReleaseGate 550s. Their previous 1/1/181-second weights placed the longest new
+parallel recovery file near the end of the cold static run. Only ordering and
+estimates change: no hard limit, worker count, workload or assertion is reduced.
+Measurements are retained in the failed candidates' worker 81/112 results and
+the continuation candidate's worker 117 result; qualification SHA256 respectively
+`cdc00933f00050fcb7e7e0036ab481193f0607758437ec2d76212e2d1ef5984e`,
+`f87003c5abc22fbf83b77f410673cb14ad032f8cc1bb5dbd2b84ffd55684e3df`,
+`82fc3db54e7b0c28e109ee3b480529af9f1e6ab5ce8d5d16aada67aeefa36c40`.

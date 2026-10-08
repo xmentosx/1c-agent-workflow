@@ -25,7 +25,8 @@
     "OnDemandMcp.Tests.ps1": 8.8,
     "OpenCodeWorkspace.Tests.ps1": 6.1,
     "ParserDocsBudgets.Tests.ps1": 13.0,
-    "ReleaseGate.Tests.ps1": 181.0,
+    "ReleaseExtensionRecovery.Tests.ps1": 823.0,
+    "ReleaseGate.Tests.ps1": 550.0,
     "ReleaseReadiness.Tests.ps1": 105.0,
     "SourceDeliveryComponentPublication.Tests.ps1": 201.0,
     "SourceDeliveryPlan.Tests.ps1": 30.0,
@@ -39,6 +40,7 @@
     "SourceDeliveryPublishRecovery.Tests.ps1": 333.0,
     "SourceDeliveryPublishReleaseTrain.Tests.ps1": 346.0,
     "SourceDeliveryQueue.Tests.ps1": 352.0,
-    "VanessaAuthoring.Tests.ps1": 8.7
+    "VanessaAuthoring.Tests.ps1": 8.7,
+    "WorkflowUpdateRollback.Tests.ps1": 207.0
   }
 }

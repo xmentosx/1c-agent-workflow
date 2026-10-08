@@ -641,7 +641,7 @@ function Publish-Agent1cFreshProcessRunStatus {
     if (-not $Relay.statusPath) { return }
     $record = $null
     if ($Relay.operationId) {
-        $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+        $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -ExistingPublication
         if ($null -eq $record -or [string]$record.operationId -cne $Relay.operationId -or
             [int]$record.pid -ne $Relay.ownerPid -or [string]$record.startedAt -cne $Relay.operationStartedAt) {
             throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh wait operation generation changed' operationId='$($Relay.operationId)'"

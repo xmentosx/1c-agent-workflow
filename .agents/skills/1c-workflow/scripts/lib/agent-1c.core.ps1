@@ -727,15 +727,31 @@ function Ensure-Agent1cLifecycleLocksIgnored {
 }
 
 function Read-Agent1cLifecycleOperationRecord {
-    param([string]$Path)
+    param([string]$Path, [switch]$ExistingPublication)
 
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $null
-    }
-    try {
-        return (ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $Path) | ConvertFrom-Json))
-    } catch {
-        return $null
+    for ($attempt = 1; $attempt -le 40; $attempt++) {
+        $stream = $null
+        $reader = $null
+        try {
+            # Read one complete file generation, including an already opened old
+            # generation during replacement. Windows ReplaceFile can briefly
+            # hold the replacement exclusively; retry only that transport race.
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $reader = [IO.StreamReader]::new($stream, (Get-Utf8Encoding), $true)
+            return (ConvertTo-Agent1cHashtable -Object ($reader.ReadToEnd() | ConvertFrom-Json))
+        } catch [IO.IOException] {
+            $cause = $_.Exception
+            while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+            $code = $cause.HResult -band 0xffff
+            $publicationRace = $code -in @(32, 33) -or ($ExistingPublication -and $code -eq 2)
+            if (-not $publicationRace -or $attempt -eq 40) { return $null }
+        } catch {
+            return $null
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() }
+            elseif ($null -ne $stream) { $stream.Dispose() }
+        }
+        Start-Sleep -Milliseconds 50
     }
 }
 
@@ -745,7 +761,7 @@ function Write-Agent1cLifecycleOperationRecord {
         [System.Collections.IDictionary]$Record
     )
 
-    Write-Utf8Text -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 }
 
 function Archive-StaleAgent1cLifecycleOperation {
