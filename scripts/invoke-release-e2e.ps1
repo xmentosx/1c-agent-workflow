@@ -1593,6 +1593,7 @@ $clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
+. (Join-Path $stageModuleRoot "workflow-transition.ps1")
 
 function Test-E2EManagedRefreshHead {
     param(
@@ -1600,7 +1601,8 @@ function Test-E2EManagedRefreshHead {
         [Parameter(Mandatory = $true)][string]$CurrentHead,
         [Parameter(Mandatory = $true)][string]$ExpectedHead,
         [Parameter(Mandatory = $true)][string]$MasterHead,
-        [Parameter(Mandatory = $true)][string]$ExportPath
+        [Parameter(Mandatory = $true)][string]$ExportPath,
+        [string]$WorkflowRoot = ''
     )
 
     $currentRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $CurrentHead)).stdout.Trim()
@@ -1609,6 +1611,10 @@ function Test-E2EManagedRefreshHead {
         return $true
     }
     if ($currentParts.Count -ne 2) { return $false }
+    if ($WorkflowRoot -and (Test-E2ECompletedWorkflowTransition -RepositoryRoot $RepositoryRoot `
+            -CurrentHead $CurrentHead -ExpectedHead $ExpectedHead -WorkflowRoot $WorkflowRoot)) {
+        return $true
+    }
 
     $mergeHead = [string]$currentParts[1]
     $mergeRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $mergeHead)).stdout.Trim()
@@ -2204,7 +2210,8 @@ if ($checkpoint) {
                 -CurrentHead $currentHead `
                 -ExpectedHead ([string]$checkpoint["expectedHead"]) `
                 -MasterHead $standMasterHead `
-                -ExportPath ([string]$refreshProjectConfig.exportPath)
+                -ExportPath ([string]$refreshProjectConfig.exportPath) `
+                -WorkflowRoot $workflowRoot
         }
         if (-not $managedRefreshMerge) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'. crossRelease=$crossReleaseReuse continuation=$([bool]$releaseContinuationProof) clean=$worktreeCleanForRefresh parents='$($parents -join ',')' master='$standMasterHead'." }
     }

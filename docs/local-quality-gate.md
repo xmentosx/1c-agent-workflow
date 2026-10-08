@@ -701,6 +701,15 @@ Version 5, input paths, workload, assertions, exit-wait ceiling and no-progress
 limits remain unchanged. This changes the immutable delivery plan and its
 budget projection, while preserving the fingerprints of reusable stages.
 
+Before an Auto cross-release resume, a clean stand branch may have advanced
+through completed workflow-only updates without merging master. Release reuses
+the lifecycle owner's retained transaction chain proof (Git parents/trees,
+before/current dependency locks, snapshot hashes and pinned write-set ownership).
+It does not admit a commit by its subject or a path whitelist. Unproved changes,
+configuration/test edits, damaged receipts and dirty owned files remain blocked;
+the existing managed merge/cursor admission remains available. This read-only
+admission neither rewrites checkpoints nor qualifies a stage. Normal Release
+refresh and stage fingerprint validation still run under their existing owners.
 Interrupted extension-smoke recovery belongs to the mutating Release owner.
 It runs before ordinary readiness only with predeclared exact ownership sealed
 after confirmed child/native stop. The same checkpoint and pinned postConfig

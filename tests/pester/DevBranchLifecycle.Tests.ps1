@@ -284,6 +284,50 @@
             }
         }
 
+        It 'admits Release resume through the completed workflow owner without changing source or transaction evidence' {
+            $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive 'Release после обновления') -Updates 2
+            . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+            . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1'),[ref]$tokens,[ref]$errors)
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Test-E2EManagedRefreshHead'},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+            $before=@(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots') -Recurse -File | ForEach-Object {($_.FullName + ':' + (Get-FileHash $_.FullName).Hash)})
+            Test-E2EManagedRefreshHead -RepositoryRoot $fixture.root -CurrentHead $fixture.head -ExpectedHead $fixture.anchor -MasterHead $fixture.anchor -ExportPath 'src/cf' -WorkflowRoot $RepoRoot | Should -BeTrue
+            (& git -C $fixture.root rev-parse HEAD).Trim() | Should -BeExactly $fixture.head
+            @(& git -C $fixture.root status --porcelain) | Should -BeNullOrEmpty
+            @(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots') -Recurse -File | ForEach-Object {($_.FullName + ':' + (Get-FileHash $_.FullName).Hash)}) | Should -Be $before
+        }
+
+        It 'rejects Release workflow resume with <Fault>' -TestCases @(
+            @{Fault='foreign commit'}, @{Fault='CF change'}, @{Fault='CFE change'},
+            @{Fault='missing receipt'}, @{Fault='tampered backup'}, @{Fault='dirty lock'}
+        ) {
+            param($Fault)
+            $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive ('Release отказ ' + $Fault))
+            . (Join-Path $RepoRoot 'scripts/release-e2e/workflow-transition.ps1')
+            switch ($Fault) {
+                'missing receipt' { Remove-Item -LiteralPath (Join-Path $fixture.completed[0] 'branch-commit.json') }
+                'tampered backup' {
+                    $receipt=Get-Content (Join-Path $fixture.completed[0] 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $record=$receipt.records | Where-Object relativePath -EQ '.agent-1c/dependency-lock.json'
+                    [IO.File]::AppendAllText((Join-Path $fixture.completed[0] $record.backupName),'tampered')
+                }
+                'dirty lock' { [IO.File]::AppendAllText((Join-Path $fixture.root '.agent-1c/dependency-lock.json'),' ') }
+                default {
+                    $path=switch($Fault){'CF change'{'src/cf/Модуль.bsl'} 'CFE change'{'src/cfe/Ext/Module.bsl'} default {'business.txt'}}
+                    $full=Join-Path $fixture.root $path
+                    New-Item -ItemType Directory -Force (Split-Path -Parent $full) | Out-Null
+                    [IO.File]::WriteAllText($full,'foreign change',[Text.UTF8Encoding]::new($false))
+                    & git -C $fixture.root add -- $path
+                    & git -C $fixture.root commit -qm 'chore: update ITL workflow in development branch'
+                    $LASTEXITCODE | Should -Be 0
+                }
+            }
+            $head=(& git -C $fixture.root rev-parse HEAD).Trim()
+            Test-E2ECompletedWorkflowTransition -RepositoryRoot $fixture.root -CurrentHead $head -ExpectedHead $fixture.anchor -WorkflowRoot $RepoRoot | Should -BeFalse
+        }
+
         It 'accepts a consecutive retained update chain without changing the immutable anchor, business index or target settings' {
             $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive 'Продолжение fork с пробелом') -Updates 2
             $business = Join-Path $fixture.root 'src/cf/Модуль.bsl'
