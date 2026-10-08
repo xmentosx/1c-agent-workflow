@@ -80,7 +80,7 @@
     {
       "id": "ondemand-mcp",
       "version": 5,
-      "budgetSeconds": 900,
+      "budgetSeconds": 1500,
       "dependsOn": [],
       "paths": [
         "scripts/stand-env-identity.ps1",

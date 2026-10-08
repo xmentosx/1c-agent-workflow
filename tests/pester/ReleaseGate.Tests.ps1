@@ -1851,18 +1851,18 @@ Describe 'Shared Release budget projection' {
         $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
         $full = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
         $full.capabilities | Should -Be @($stages.stages.id)
-        $full.fullStageSeconds | Should -Be 11100
+        $full.fullStageSeconds | Should -Be 11700
         $full.enclosingOverheadSeconds | Should -Be 1140
-        $full.e2eHardSeconds | Should -Be 12240
+        $full.e2eHardSeconds | Should -Be 12840
         $full.gateHardSeconds | Should -Be ($quality.budgets.fullHardSeconds + $full.e2eHardSeconds)
         $full.gateHardSeconds | Should -Be $quality.budgets.releaseHardSeconds
         $partial = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup','extension-smoke')
         $partial.capabilities | Should -Be @('config-cadence','extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
-        $partial.summedStageSeconds | Should -Be 7800
-        $partial.e2eHardSeconds | Should -Be 8940
+        $partial.summedStageSeconds | Should -Be 8400
+        $partial.e2eHardSeconds | Should -Be 9540
         $onlyMcp = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'ondemand-mcp'
         $onlyMcp.capabilities | Should -Be @('ondemand-mcp')
-        $onlyMcp.e2eHardSeconds | Should -Be 2040
+        $onlyMcp.e2eHardSeconds | Should -Be 2640
         $onlyMcp.gateHardSeconds | Should -Be $full.gateHardSeconds
         $none = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality
         @($none.capabilities).Count | Should -Be 0
@@ -1914,8 +1914,8 @@ Describe 'Shared Release budget projection' {
         $initialization = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('$releaseBudget = Get-ReleaseE2EBudgetProjection') })
         $initialization.Count | Should -Be 1
         . ([scriptblock]::Create($initialization[0].Extent.Text))
-        $modeHardBudgetSeconds | Should -Be 14940
-        $releaseE2EHardBudgetSeconds | Should -Be 8940
+        $modeHardBudgetSeconds | Should -Be 15540
+        $releaseE2EHardBudgetSeconds | Should -Be 9540
         $call = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PowerShellChild' -and $node.Extent.Text.Contains('-LogName "release-e2e"') }, $true))
         $call.Count | Should -Be 1
         function Invoke-PowerShellChild {
@@ -1924,7 +1924,7 @@ Describe 'Shared Release budget projection' {
         }
         $e2eScript = 'fixture'; $releaseE2EArguments = @(); $releaseProgressPaths = @()
         $observed = & ([scriptblock]::Create($call[0].Extent.Text))
-        $observed.timeout | Should -Be 8940
+        $observed.timeout | Should -Be 9540
         $observed.noProgress | Should -Be 900
         $wait = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-PowerShellChildProcess' }, $true)
         $clip = @($wait.Body.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -in @('$remainingOverallSeconds', '$effectiveTimeoutSeconds') })
@@ -1932,10 +1932,10 @@ Describe 'Shared Release budget projection' {
         $TimeoutSeconds = $observed.timeout
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(8600) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
-        $effectiveTimeoutSeconds | Should -Be 6340
+        $effectiveTimeoutSeconds | Should -Be 6940
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(10) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
-        $effectiveTimeoutSeconds | Should -Be 8940
+        $effectiveTimeoutSeconds | Should -Be 9540
     }
 
     It 'forwards the remaining original cadence deadline to the unchanged helper timeout owner' {

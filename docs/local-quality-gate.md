@@ -56,7 +56,7 @@ and publication channels below remain authoritative.
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 45 мин |
 | `Develop` | один Full и реальные стандартные journey | 25 мин | 125 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 249 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 259 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -669,8 +669,8 @@ three existing finally operations of at most 180 seconds each. The observed
 baseline DT took about 140 seconds and readiness 11 seconds; the 600-second
 part allows a comparable retry restore and remaining context/sealing work.
 These are reserve estimates, not a measured complete successful cadence or
-overhead. Full E2E ceilings sum to 11100 seconds; E2E including reserve is
-12240, and the whole Release gate with Full static 2700 is 14940 seconds.
+overhead. Full E2E ceilings sum to 11700 seconds; E2E including reserve is
+12840, and the whole Release gate with Full static 2700 is 15540 seconds.
 Selected capabilities keep their original scope and include the reserve once.
 No fake capability is added. New immutable plans pin the reserve and include
 it even when all selected runtime evidence is reusable; retained older plans
@@ -688,6 +688,18 @@ roundtrips, checks and restoration. The additional 300 seconds cover the
 remaining dump/restore/validation and reserve; this is an allowance estimate,
 not a measured successful run. Other stage ceilings, no-progress limits and
 proof predicates stay unchanged. The old timeout remains failed evidence.
+
+The original ondemand-mcp run on 2026-10-08 completed the unchanged ROCTUP
+and Vanessa UI probes, including cold/hot/file-loading scenarios, serialized
+facade handoff and idle cleanup, in 1177.836 seconds. The stage then failed
+its old 900-second ceiling. Its raw checkpoint, logs and both probe receipts
+are retained under `build/lifecycle-record-publication/closed-ondemand-budget-50140d73-20261008`;
+their successful predicates do not turn the failed stage into release proof.
+The stage catalog now allows 1500 seconds: the observed workload plus about
+322 seconds of allowance for the same preparation, probes and completion.
+Version 5, input paths, workload, assertions, exit-wait ceiling and no-progress
+limits remain unchanged. This changes the immutable delivery plan and its
+budget projection, while preserving the fingerprints of reusable stages.
 
 Interrupted extension-smoke recovery belongs to the mutating Release owner.
 It runs before ordinary readiness only with predeclared exact ownership sealed

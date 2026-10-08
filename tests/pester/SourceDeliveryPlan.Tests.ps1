@@ -302,6 +302,22 @@ Describe 'Delivery v3 immutable selective plan' {
         $corrected.planId | Should -Not -Be $budgetCorrected.planId
         $corrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
         $first.releaseEnclosingOverheadSeconds | Should -Be 1140
+        # Both original backend probes passed in 1177.836s on 2026-10-08,
+        # then the stage correctly rejected the obsolete 900s ceiling.
+        # Correct its owner budget without changing capability fingerprints.
+        $releaseCatalog.stages += [pscustomobject]@{ id='ondemand-mcp'; version=5; budgetSeconds=900; dependsOn=@(); paths=@('runtime.ps1') }
+        $catalog.budgets.releaseHardSeconds = 10500
+        $mcpBefore = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        ($releaseCatalog.stages | Where-Object id -eq 'ondemand-mcp').budgetSeconds =
+            [int]($productionStages.stages | Where-Object id -eq 'ondemand-mcp').budgetSeconds
+        $catalog.budgets.releaseHardSeconds = 11100
+        $mcpAfter = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        ($mcpAfter.stages | Where-Object id -eq 'release.ondemand-mcp').budgetSeconds | Should -Be 1500
+        $mcpAfter.planId | Should -Not -Be $mcpBefore.planId
+        $mcpAfter.stages.inputFingerprint | Should -Be $mcpBefore.stages.inputFingerprint
+        $mcpAfter.releaseCapabilities | Should -Be $mcpBefore.releaseCapabilities
+        ($mcpAfter.executedBudgetSeconds - $mcpBefore.executedBudgetSeconds) | Should -Be 600
+        ((Get-DeliveryPlanGateBudgetSeconds -Plan $mcpAfter -Mode Release) - (Get-DeliveryPlanGateBudgetSeconds -Plan $mcpBefore -Mode Release)) | Should -Be 600
         Mock Test-DeliveryStageEvidence { [pscustomobject]@{ candidate=[pscustomobject]@{ tree=$repo.tree } } }
         $reused = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
         @($reused.stages | Where-Object execution -eq 'execute').Count | Should -Be 0
