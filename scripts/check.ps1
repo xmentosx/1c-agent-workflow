@@ -1084,8 +1084,12 @@ try {
             foreach ($journey in @($allJourneys | Where-Object { $_ -notin $plannedJourneys })) {
                 $property = $baseline.journeys.PSObject.Properties[$journey]
                 $record = if ($property) { $property.Value } else { $null }
+                if (-not $record -or ([int]$baseline.schemaVersion -eq 4 -and -not $record.PSObject.Properties['execution'])) {
+                    $baselineValid = $false
+                    break
+                }
                 $path = if ($record -and [IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } elseif ($record) { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') } else { "" }
-                $baselineRouteIdentitySha256 = if ([string]$record.execution -eq "continued") { [string]$record.identitySha256 } else { [string]$baseline.identitySha256 }
+                $baselineRouteIdentitySha256 = if ($record.PSObject.Properties['execution'] -and [string]$record.execution -eq "continued") { [string]$record.identitySha256 } else { [string]$baseline.identitySha256 }
                 if (-not $record -or $baselineRouteIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or
                     -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 $baselineRouteIdentitySha256 -StandStateSha256 $developStandStateSha256) -or
                     (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) {

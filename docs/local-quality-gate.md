@@ -232,6 +232,14 @@ Delivery-бюджеты: planning — 30 секунд; Develop static — 45 м�
 как основное доказательство, так и обязательную очистку принадлежащих stage
 ресурсов. Timeout не расширяет маршрут и не удаляет checkpoint.
 
+Planner разрешает authoritative каталог stage evidence один раз в пределах
+расчёта, затем отдельно читает каждую запись и проверяет SHA её proof. Это не
+кэш результатов и не перенос доказательств между репозиториями. На исходном
+кандидате перехода шесть повторных `git rev-parse --git-common-dir` занимали
+6,1 секунды суммарно; устранение пяти лишних вызовов сохраняет лимит 30 секунд,
+fingerprints и правила reuse. Смена корня и повреждённый proof проверяются
+регрессией владельца planner.
+
 Checker и planner получают journey hard budget через один stateless getter из
 `developJourneys.routes.<journey>.hardSeconds` в `tests/quality-contracts.json`.
 У старых catalog без этого поля остаются 1200/2100 секунд; заданное невалидное

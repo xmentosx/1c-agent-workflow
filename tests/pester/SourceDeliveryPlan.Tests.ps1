@@ -98,6 +98,48 @@ Describe 'Delivery v3 immutable selective plan' {
         $saved = Save-DeliveryQualityPlan -Plan $first; $first.createdAt = [DateTime]::UtcNow.AddMinutes(1).ToString('o'); (Save-DeliveryQualityPlan -Plan $first) | Should -Be $saved
     }
 
+    It 'resolves evidence ownership once per plan while rereading proofs and isolating repository roots' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $script:evidenceOwnershipCalls = 0
+        Mock Get-DeliveryCommonGitDirectory {
+            $script:evidenceOwnershipCalls++
+            (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
+        }
+
+        $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($first.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        $proof = Join-Path $TestDrive 'resolved-evidence-proof.json'
+        [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
+        $records = @(foreach ($stage in $first.stages) {
+            Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $repo.commit -CandidateTree $repo.tree -ProofPath $proof
+        })
+        $script:evidenceOwnershipCalls = 0
+        $second = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($second.stages.execution | Select-Object -Unique) | Should -Be @('reuse')
+        $second.planId | Should -Be $first.planId
+
+        [IO.File]::WriteAllText($records[0].proof.path, 'corrupt proof', [Text.UTF8Encoding]::new($false))
+        $script:evidenceOwnershipCalls = 0
+        $afterCorruption = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        $afterCorruption.stages[0].execution | Should -Be 'execute'
+        @($afterCorruption.stages[1..2].execution | Select-Object -Unique) | Should -Be @('reuse')
+
+        $other = New-PlanRepository; $script:Root = $other.root
+        $script:GateScript = Join-Path $other.root 'check.ps1'
+        $script:evidenceOwnershipCalls = 0
+        $otherPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $other.root -BaseCommit $other.base -CandidateCommit $other.commit -CandidateTree $other.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($otherPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+    }
+
     It 'budgets Develop journeys again when matching owner evidence belongs to an older tree' {
         $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
         $script:GateScript = Join-Path $repo.root 'check.ps1'

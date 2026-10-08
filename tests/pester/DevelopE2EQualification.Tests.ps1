@@ -493,6 +493,49 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
+    It "accepts a static-only empty schema4 baseline without widening selective journeys" {
+        $tokens = $null; $parseErrors = $null
+        $checker = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors).Count | Should -Be 0
+        $carry = $checker.Find({param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($baselineValid)', [StringComparison]::Ordinal)
+        }, $true)
+        $partial = $checker.Find({param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if (-not $baselineValid -and $plannedJourneys.Count', [StringComparison]::Ordinal)
+        }, $true)
+        $carry | Should -Not -BeNullOrEmpty; $partial | Should -Not -BeNullOrEmpty
+        $allJourneys = @('upgrade','fresh')
+        $baseline = '{"schemaVersion":4,"status":"passed","journeys":{},"identitySha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' | ConvertFrom-Json
+        $baselineValid = $true; $plannedJourneys = @(); $routeRecords = [ordered]@{}
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        $routeRecords.Count | Should -Be 0
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Not -Throw
+
+        $baselineValid = $true; $plannedJourneys = @('upgrade'); $routeRecords = [ordered]@{}
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        $routeRecords.Count | Should -Be 0
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+
+        $baseline.journeys | Add-Member -NotePropertyName fresh -NotePropertyValue ([pscustomobject]@{path='missing.json'})
+        $baselineValid = $true
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+
+        # Schema 3 permits the old non-continued record without execution. A
+        # missing report must still reject continuation rather than fail on
+        # that optional property or invent evidence for the unplanned journey.
+        $baseline.schemaVersion = 3
+        $baseline.journeys.fresh | Add-Member -NotePropertyName evidenceTree -NotePropertyValue ('a' * 40)
+        $developStandStateSha256 = 'c' * 64
+        $baselineValid = $true
+        . ([scriptblock]::Create($carry.Extent.Text))
+        $baselineValid | Should -BeFalse
+        { . ([scriptblock]::Create($partial.Extent.Text)) } | Should -Throw '*DEVELOP_E2E_CONTINUATION_REQUIRED*'
+    }
+
     It "recomputes mutable stand identity after a journey before checkpointing it" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\check.ps1') -Raw -Encoding UTF8
         $helperStart = $check.IndexOf('function Ensure-DevelopE2ERoute', [StringComparison]::Ordinal)

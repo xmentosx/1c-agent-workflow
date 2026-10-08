@@ -409,7 +409,7 @@ Describe "Release gate scripts" {
         $check | Should -Not -Match '\$plannedJourneys = \$allJourneys'
         $check | Should -Match 'DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan'
         $check | Should -Match '\$routeIdentitySha256 = if \(\$continued\) \{ \[string\]\$record\.identitySha256 \}'
-        $check | Should -Match '\$baselineRouteIdentitySha256 = if \(\[string\]\$record\.execution -eq "continued"\) \{ \[string\]\$record\.identitySha256 \}'
+        $check | Should -Match '\$baselineRouteIdentitySha256 = if \(\$record\.PSObject\.Properties\[''execution''\] -and \[string\]\$record\.execution -eq "continued"\) \{ \[string\]\$record\.identitySha256 \}'
         $check | Should -Match 'IdentitySha256 \$baselineRouteIdentitySha256 -StandStateSha256 \$developStandStateSha256'
         $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
         $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
