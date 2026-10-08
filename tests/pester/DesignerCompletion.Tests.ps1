@@ -18,9 +18,12 @@
                 [pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=10;CreationDate=$birth;CommandLine='DESIGNER'},
                 [pscustomobject]@{Name='1cv8.exe';ProcessId=33164;ParentProcessId=34072;CreationDate=$birth.AddHours(-6);CommandLine='DESIGNER /IBName foreign'},
                 [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER'},
-                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine="DESIGNER /Out `"$logPath`""},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine="DESIGNER /Out `"$logPath`" `t"},
                 [pscustomobject]@{Name='1cv8.exe';ProcessId=35000;ParentProcessId=20;CreationDate=$birth.AddHours(-3);CommandLine="DESIGNER /Out `"$logPath`""},
-                [pscustomobject]@{Name='1cv8.exe';ProcessId=35001;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER /Out unrelated'}
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=35001;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER /Out unrelated'},
+                # Real clients can end their quoted /Out argument with whitespace.
+                # Their unrelated output must not break enumeration of this invocation.
+                [pscustomobject]@{Name='1cv8c.exe';ProcessId=35002;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine="1cv8c.exe ENTERPRISE /Out `"$logPath.foreign`" "}
             )
             if ($enumerationMode -eq 'fallback') {
                 function Receive-DesignerProcessEnumeration { param($ProbeState,$LogPath); return [pscustomobject]@{status='completed';processes=$script:IdentityInventory} }
@@ -51,6 +54,7 @@
         @($result.tracked) | Should -Not -Contain 33164
         @($result.tracked) | Should -Not -Contain 35000
         @($result.tracked) | Should -Not -Contain 35001
+        @($result.tracked) | Should -Not -Contain 35002
     }
 
     It 'never stops a reused tracked PID and stops the same opened valid process object' {
@@ -267,7 +271,7 @@
             $basePath = Join-Path $TestDrive 'Точная база с пробелом'
             $logPath = Join-Path $TestDrive 'Новый лог с пробелом.log'
             $scope = [pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path=$basePath;mode='DESIGNER';logPath=$logPath;notBeforeUtc=$birth.ToString('o')}
-            $script:ScopedInventory = @([pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=10;CreationDate=$birth.AddSeconds(20).ToString('o');CommandLine="1cv8.exe DESIGNER /F `"$basePath`" /Out `"$logPath`""})
+            $script:ScopedInventory = @([pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=10;CreationDate=$birth.AddSeconds(20).ToString('o');CommandLine="1cv8.exe DESIGNER /F `"$basePath`" /Out `"$logPath`" `t"})
             if ($enumerationMode -eq 'fallback') {
                 function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:ScopedInventory}}
             } else {
