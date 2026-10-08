@@ -121,10 +121,18 @@ ancestor-кандидатом и новым
 commit все изменённые пути должны целиком принадлежать этим scope, а новый
 commit/tree должен иметь точный прошедший `Targeted` с неизменённым tracked state.
 Тогда Full/Develop evidence накладывается на этот Targeted и выполнение
-продолжается с первого затронутого этапа. Неизвестный или production-путь,
+продолжается с первого затронутого этапа. Неизвестный или не объявленный в continuation scope runtime-путь,
 отсутствующий/повреждённый Targeted record и изменение Develop-harness для
 Develop proof закрывают reuse. Это продолжение по fingerprint входов, а не
 эвристика «любой файл из tests безопасен».
+В `release` явно включён один уже проверяемый managed-input:
+`.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1`.
+Для него сохраняются полная source lineage и точный passed Targeted. Изменение
+модуля выбирает `fresh` через владельца `mcp-hosts`, поэтому целый Develop proof
+не продолжается поверх старого live результата; полный journey fingerprint также
+изменяется. Release сохраняет лишь этапы с совпадающими workload inputs, а
+затронутый ondemand выполняет заново. Соседние runtime-пути не включаются этим
+исключением и не получают continuation по имени каталога.
 
 `static` также включает только Markdown исходных change-артефактов
 `openspec/changes/*/*.md`: обновление test-plan и сохранённых выводов приёмки
@@ -298,8 +306,11 @@ checkpoint snapshots. Readiness и runner используют один read-onl
 scope/identity/client/HEAD/workflow transition и stage-input eligibility: отчёт
 различает reuse, rerun и rejected. Runner повторно проверяет актуальные входы
 перед своими прежними mutations; restore, checkpoint write, rebind и evidence
-import остаются у него. Отсутствие source-continuation proof запрещает reuse,
-но само по себе не блокирует допустимый полный rerun. Неподтверждённый transition
+import остаются у него. При изменении source commit/tree отсутствие
+source-continuation proof запрещает reuse,
+но само по себе не блокирует допустимый полный rerun.
+При том же source общий SHA helper/runner не заменяет workload fingerprint:
+reuse всё равно требует точных входов этапа и прежних проверок identity и SHA. Неподтверждённый transition
 отклоняется до Develop с существующим continuation, без записи нового состояния.
 Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
 runner-ом из master, если master ещё не входит в её историю. Повреждённый

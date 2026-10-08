@@ -147,7 +147,7 @@ Describe "Release gate scripts" {
     }
 
     It "parses the local gate and E2E runner" {
-        foreach ($relativePath in @("scripts\check.ps1", "scripts\invoke-develop-e2e.ps1", "scripts\invoke-release-e2e.ps1")) {
+        foreach ($relativePath in @("scripts\check.ps1", "scripts\invoke-develop-e2e.ps1", "scripts\invoke-release-e2e.ps1", "scripts\release-e2e\admission.ps1")) {
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -159,6 +159,7 @@ Describe "Release gate scripts" {
         }
         $checkText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $e2eText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
+        $admissionText = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\release-e2e\admission.ps1') -Raw -Encoding UTF8
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
@@ -200,7 +201,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Get-WorkflowContinuationProof'
         $e2eText | Should -Match 'previousRunnerSha256'
         $e2eText | Should -Match 'continuationBoundaryStage'
-        $e2eText | Should -Match 'exact Targeted continuation after completed release'
+        $e2eText | Should -Match 'Get-E2EAdmissionStageDecision -Name \$Name'
+        $admissionText | Should -Match 'exact Targeted continuation after completed release'
         $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
         $e2eText | Should -Match 'invalidationDetails'
         $e2eText | Should -Match 'if \(\(\$executedStages -contains "config-cadence"\) -or \$crossReleaseReuse -or -not \$verificationRefreshPassed\)'
@@ -211,7 +213,8 @@ Describe "Release gate scripts" {
         $resultCleanupBlock | Should -Not -Match 'VanessaFeaturePath'
         $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
         $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{\s*\$resultPassed = \$false'
-        $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
+        $e2eText | Should -Match 'Get-E2EReleaseCheckpointAdmission -Context \$admissionContext -Checkpoint \$checkpoint'
+        $admissionText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
@@ -247,7 +250,9 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'serverProjectRoot'
         $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "seed-parallel" -Status "passed".*?Test-E2EStagePassed -Name "server-reset"'
         $e2eText | Should -Match 'Set-E2EStageStatus -Name "server-reset" -Status "failed" -ErrorText \$_\.Exception\.Message'
-        $e2eText | Should -Match '(?s)\$stageConfiguration = if \(\$Name -eq "server-reset"\).*?serverProjectRoot = Get-E2EReleaseConfigValue.*?stageConfiguration = \$stageConfiguration'
+        $e2eText | Should -Match 'serverProjectRoot = Get-E2EReleaseConfigValue'
+        $e2eText | Should -Match 'Get-E2EAdmissionStageFingerprint -Context \(Get-E2EStageAdmissionContext\) -Name \$Name'
+        $admissionText | Should -Match '(?s)\$stageConfiguration = if \(\$Name -eq ''server-reset''\) \{ \$Context.serverConfiguration \}.*?stageConfiguration = \$stageConfiguration'
         $e2eText | Should -Match '(?s)Test-ReleaseE2ECapabilitySelected -Name "server-reset"\) -and \$serverResetConfigured\).*?Assert-E2EServerResetStandConfigured.*?Test-ReleaseE2ECapabilitySelected -Name "seed-parallel"'
         $e2eText | Should -Match '(?s)\$seedParallelEvidence = Invoke-E2ESeedParallelProof.*?WriteAllText\(\s*\$seedParallelEvidencePath.*?if \(\[string\]\$seedParallelEvidence\.status'
         $e2eText | Should -Match '(?s)serverResetDisposition\.status -eq "unverified".*?status = "unverified".*?passed = \$false'
@@ -1156,7 +1161,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             )) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Split-Path -Parent (Join-Path $workflowFixtureRoot $relative)) -Recurse -Force
             }
-            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\source-delivery-process.ps1", "scripts\stand-env-identity.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
+            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\source-delivery-process.ps1", "scripts\stand-env-identity.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json", "tests\quality-contracts.json")) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Join-Path $workflowFixtureRoot $relative) -Force
             }
             & git -C $workflowFixtureRoot add --all
@@ -1196,6 +1201,22 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $managedRefreshCursorParents = @((& git -C $worktreeRoot rev-list --parents -n 1 HEAD).Trim() -split '\s+')
             $managedRefreshCursorParents | Should -Be @((& git -C $worktreeRoot rev-parse HEAD).Trim(), $managedRefreshMergeHead)
             $checkpointBeforeManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            . (Join-Path $RepoRoot 'scripts\release-qualification.ps1')
+            $managedContinuation = Get-WorkflowContinuationProof -RepositoryRoot $workflowFixtureRoot -QualifiedCommit ([string]$checkpointBeforeManagedAdvance.identity.workflowCommit) -CurrentCommit $workflowCandidateCommit -CurrentTree $workflowCandidateTree
+            $managedContinuation | Should -Not -BeNullOrEmpty
+            $managedContinuation.paths | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1'
+            $actualContinuationCatalog = Get-Content -LiteralPath (Join-Path $workflowFixtureRoot 'tests\quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($actualContinuationCatalog.continuationScopes.PSObject.Properties | ForEach-Object { @($_.Value) } | Where-Object {
+                Test-WorkflowContinuationPattern -Path '.agents/skills/1c-workflow/scripts/lib/agent-1c.foreign-sibling.ps1' -Pattern ([string]$_)
+            }).Count | Should -Be 0
+            $targetedFixturePath = Join-Path $targetedRunRoot 'fixture-targeted-continuation.json'
+            $targetedFixtureBytes = [IO.File]::ReadAllBytes($targetedFixturePath)
+            $targetedFixtureSha256 = (Get-FileHash -LiteralPath $targetedFixturePath -Algorithm SHA256).Hash
+            Remove-Item -LiteralPath $targetedFixturePath
+            try {
+                Get-WorkflowContinuationProof -RepositoryRoot $workflowFixtureRoot -QualifiedCommit ([string]$checkpointBeforeManagedAdvance.identity.workflowCommit) -CurrentCommit $workflowCandidateCommit -CurrentTree $workflowCandidateTree | Should -BeNullOrEmpty
+            } finally { [IO.File]::WriteAllBytes($targetedFixturePath, $targetedFixtureBytes) }
+            (Get-FileHash -LiteralPath $targetedFixturePath -Algorithm SHA256).Hash | Should -Be $targetedFixtureSha256
             $managedAdvanceSummaryPath = Join-Path $tempRoot "managed-advance-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $managedAdvanceSummaryPath -ResumeMode Auto
@@ -2037,7 +2058,7 @@ Describe 'Shared Release admission decisions' -Tag 'ReleaseAdmissionContract' {
         & {
             . ([scriptblock]::Create((Get-AdmissionRunnerDefinition 'Test-E2EStagePassed')))
             $checkpoint=@{stages=@{'ondemand-mcp'=@{status='passed';fingerprint='same';evidencePath=''}}}
-            $crossReleaseReuse=$true;$releaseContinuationProof=$null;$previousRunnerSha256='previous';$continuationBoundaryStage=''
+            $crossReleaseReuse=$true;$releaseContinuationProof=$null;$releaseSourceContinuationRequired=$true;$previousRunnerSha256='previous';$continuationBoundaryStage=''
             $script:invalidatedStages=@();$script:invalidationDetails=@();$script:checkpointWrites=0
             function Get-E2EStageFingerprint {param($Name,$RunnerSha256)'same'}
             function Write-E2ECheckpoint {$script:checkpointWrites++}
@@ -2046,6 +2067,33 @@ Describe 'Shared Release admission decisions' -Tag 'ReleaseAdmissionContract' {
             ($checkpoint|ConvertTo-Json -Depth 8) | Should -BeExactly $before
             $script:checkpointWrites | Should -Be 0
             $script:invalidationDetails[0].reason | Should -Match 'no exact Targeted proof'
+        }
+    }
+
+    It 'distinguishes exact source identity from changed source without weakening stage input checks' {
+        & {
+            $sourceCommit='a'*40;$sourceTree='b'*40;$head='c'*40
+            $context=@{workflowRoot=$RepoRoot;projectRoot='main';worktreePath='branch';branch='itldev/test';workflowCommit=$sourceCommit;workflowTree=$sourceTree;runnerSha256='runner';aiRulesCommit='fork';helperSha256='current-helper';clientSelection='client';projectConfigSha256='config';resumeMode='Auto';currentHead=$head;masterHead=$head;worktreeClean=$true;exportPath='src/cf'}
+            $checkpoint=@{schemaVersion=3;expectedHead=$head;identity=@{projectRoot='main';worktreePath='branch';branch='itldev/test';workflowCommit=$sourceCommit;workflowTree=$sourceTree;runnerSha256='runner';aiRulesCommit='fork';helperSha256='old-helper';clientSelection='client';projectConfigSha256='config'}}
+            $script:sourceProofCalls=0
+            function Get-WorkflowContinuationProof {$script:sourceProofCalls++;$null}
+            $sameSource=Get-E2EReleaseCheckpointAdmission -Context $context -Checkpoint $checkpoint
+            $sameSource.allowed | Should -BeTrue
+            $sameSource.crossReleaseReuse | Should -BeTrue
+            $sameSource.sourceContinuationRequired | Should -BeFalse
+            $script:sourceProofCalls | Should -Be 0
+            $stage=@{status='passed';fingerprint='same'}
+            (Get-E2EAdmissionStageDecision -Name 'config-cadence' -Record $stage -CurrentFingerprint 'same' -CrossReleaseReuse $true -SourceContinuationRequired $sameSource.sourceContinuationRequired).action | Should -BeExactly 'reuse'
+            (Get-E2EAdmissionStageDecision -Name 'config-cadence' -Record $stage -CurrentFingerprint 'changed' -CrossReleaseReuse $true -SourceContinuationRequired $sameSource.sourceContinuationRequired).action | Should -BeExactly 'rerun'
+            foreach($field in @('workflowCommit','workflowTree')) {
+                $original=$checkpoint.identity[$field];$checkpoint.identity[$field]='d'*40
+                $changedSource=Get-E2EReleaseCheckpointAdmission -Context $context -Checkpoint $checkpoint
+                $changedSource.allowed | Should -BeTrue
+                $changedSource.sourceContinuationRequired | Should -BeTrue
+                (Get-E2EAdmissionStageDecision -Name 'config-cadence' -Record $stage -CurrentFingerprint 'same' -CrossReleaseReuse $true -SourceContinuationRequired $changedSource.sourceContinuationRequired).action | Should -BeExactly 'rerun'
+                $checkpoint.identity[$field]=$original
+            }
+            $script:sourceProofCalls | Should -Be 2
         }
     }
 

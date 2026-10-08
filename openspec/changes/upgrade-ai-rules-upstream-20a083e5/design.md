@@ -922,7 +922,7 @@ admission and stage-input eligibility. They classify reusable, rerun and rejecte
 work before expensive Develop execution; the runner rechecks actual inputs before
 its existing mutations. Snapshot restore, checkpoint writes, rebind, cache import,
 resource ownership and publication remain with their existing owners. Lack of
-source-continuation proof disables reuse and does not itself forbid an otherwise
+source-continuation proof for a source commit/tree advance disables reuse and does not itself forbid an otherwise
 valid full rerun. Completed workflow-update chains supported by `fc42d751` and
 existing merge/cursor transitions stay supported. An unproven composed transition
 is rejected early with the existing supported continuation, not silently accepted.
@@ -934,3 +934,14 @@ while the candidate checker validates a supported continuation. Qualification is
 never transferred or relabelled manually. Acceptance keeps the original failed
 Release path and original backend workloads, including actual reexecution of
 failed `ondemand-mcp`. These changes do not close publication or EV8a/EV9 tasks.
+
+
+The original managed-module continuation is declared by its one exact on-demand
+module path in the existing release scope. Its owned stage inputs invalidate
+ondemand and its mcp-hosts route still selects fresh; unrelated runtime paths
+remain outside this exception. The original full scenario also distinguishes a
+source advance from coarse helper/runner identity drift at the same source. Only
+a source commit/tree advance requires new source-continuation proof. Same-source
+reuse retains exact workload fingerprints and all client/fork/configuration,
+snapshot/state/environment and evidence checks; it grants no helper override or
+new installed support. Both decisions remain in the shared stateless owner.

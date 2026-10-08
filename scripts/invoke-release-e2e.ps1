@@ -706,6 +706,7 @@ $crossReleaseReuse = $false
 $previousWorkflowCommit = ""
 $previousRunnerSha256 = ""
 $releaseContinuationProof = $null
+$releaseSourceContinuationRequired = $true
 $continuationBoundaryStage = ""
 $promotedCapabilityPath = ""
 $stageTimers = @{}
@@ -945,7 +946,7 @@ function Test-E2EStagePassed {
     if ([string]$record.status -ne "passed") { return $false }
     $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
     $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { '' }
-    $decision = Get-E2EAdmissionStageDecision -Name $Name -Record $record -CurrentFingerprint $expectedFingerprint -LegacyFingerprint $legacyFingerprint -CrossReleaseReuse $crossReleaseReuse -ContinuationProof $releaseContinuationProof -ContinuationBoundaryStage $continuationBoundaryStage
+    $decision = Get-E2EAdmissionStageDecision -Name $Name -Record $record -CurrentFingerprint $expectedFingerprint -LegacyFingerprint $legacyFingerprint -CrossReleaseReuse $crossReleaseReuse -ContinuationProof $releaseContinuationProof -ContinuationBoundaryStage $continuationBoundaryStage -SourceContinuationRequired $releaseSourceContinuationRequired
     if ($decision.action -eq 'rerun') {
         $script:invalidatedStages += $Name
         $script:invalidationDetails += [ordered]@{ stage = $Name; reason = $decision.reason; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
@@ -2092,6 +2093,7 @@ if ($checkpoint) {
     $releaseIdentityMatches = $admission.exactIdentity
     $crossReleaseReuse = $admission.crossReleaseReuse
     $releaseContinuationProof = $admission.continuationProof
+    $releaseSourceContinuationRequired = $admission.sourceContinuationRequired
     if ($crossReleaseReuse) {
         $previousWorkflowCommit = [string]$identity.workflowCommit
         $previousRunnerSha256 = [string]$identity.runnerSha256

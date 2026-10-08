@@ -58,6 +58,7 @@
     "release": [
       "scripts/invoke-release-e2e.ps1",
       "scripts/test-release-readiness.ps1",
+      ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
       "scripts/release-e2e/*",
       "tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/*"
     ]

@@ -115,10 +115,10 @@ function Test-E2EAdmissionStageInputsUnchanged {
 }
 
 function Get-E2EAdmissionStageDecision {
-    param([string]$Name, [object]$Record, [string]$CurrentFingerprint, [string]$LegacyFingerprint = '', [bool]$CrossReleaseReuse = $false, [object]$ContinuationProof = $null, [string]$ContinuationBoundaryStage = '')
+    param([string]$Name, [object]$Record, [string]$CurrentFingerprint, [string]$LegacyFingerprint = '', [bool]$CrossReleaseReuse = $false, [object]$ContinuationProof = $null, [string]$ContinuationBoundaryStage = '', [bool]$SourceContinuationRequired = $true)
     $decision = [ordered]@{ stage = $Name; action = 'rerun'; reason = 'stage has no passed proof'; previousFingerprint = [string](Get-E2EAdmissionValue $Record 'fingerprint' ''); currentFingerprint = $CurrentFingerprint }
     if ([string](Get-E2EAdmissionValue $Record 'status' '') -ne 'passed') { return [pscustomobject]$decision }
-    if ($CrossReleaseReuse -and -not $ContinuationProof) { $decision.reason = 'source continuation has no exact Targeted proof'; return [pscustomobject]$decision }
+    if ($CrossReleaseReuse -and $SourceContinuationRequired -and -not $ContinuationProof) { $decision.reason = 'source continuation has no exact Targeted proof'; return [pscustomobject]$decision }
     if ($decision.previousFingerprint -eq $CurrentFingerprint) { $decision.action = 'reuse'; $decision.reason = 'exact stage fingerprint'; return [pscustomobject]$decision }
     $order = @('seed-parallel', 'server-reset', 'config-cadence', 'config-roundtrip', 'extension-smoke', 'ondemand-mcp', 'verification-refresh', 'result-cleanup')
     $stageIndex = [Array]::IndexOf($order, $Name)
@@ -178,7 +178,7 @@ function Get-E2EAdmissionCheckpointStageDecisions {
         $record = Get-E2EAdmissionValue $stages $name
         if (-not $record) { continue }
         $fingerprint = if ([string](Get-E2EAdmissionValue $record 'status' '') -eq 'passed') { Get-E2EAdmissionStageFingerprint -Context $Context -Name $name } else { '' }
-        $decision = Get-E2EAdmissionStageDecision -Name $name -Record $record -CurrentFingerprint $fingerprint -LegacyFingerprint $fingerprint -CrossReleaseReuse $Admission.crossReleaseReuse -ContinuationProof $Admission.continuationProof -ContinuationBoundaryStage $boundary
+        $decision = Get-E2EAdmissionStageDecision -Name $name -Record $record -CurrentFingerprint $fingerprint -LegacyFingerprint $fingerprint -CrossReleaseReuse $Admission.crossReleaseReuse -ContinuationProof $Admission.continuationProof -ContinuationBoundaryStage $boundary -SourceContinuationRequired ([bool](Get-E2EAdmissionValue $Admission 'sourceContinuationRequired' $true))
         if ($decision.action -in @('reuse', 'rebind')) {
             $evidencePath = [string](Get-E2EAdmissionValue $record 'evidencePath' '')
             if ($evidencePath) { Assert-E2EAdmissionFile -Path $evidencePath -Sha256 ([string](Get-E2EAdmissionValue $record 'evidenceSha256' '')) -Label "$name evidence" }
@@ -189,7 +189,7 @@ function Get-E2EAdmissionCheckpointStageDecisions {
 
 function Get-E2EReleaseCheckpointAdmission {
     param([Parameter(Mandatory = $true)][object]$Context, [object]$Checkpoint)
-    $result = [ordered]@{ allowed = $true; code = ''; reason = ''; scopeMatches = $true; exactIdentity = $false; crossReleaseReuse = $false; continuationProof = $null; stages = @() }
+    $result = [ordered]@{ allowed = $true; code = ''; reason = ''; scopeMatches = $true; exactIdentity = $false; crossReleaseReuse = $false; sourceContinuationRequired = $false; continuationProof = $null; stages = @() }
     if (-not $Checkpoint) { return [pscustomobject]$result }
     $identity = Get-E2EAdmissionValue $Checkpoint 'identity'
     $schema = 0
@@ -206,7 +206,8 @@ function Get-E2EReleaseCheckpointAdmission {
         if (-not $matches) { $result.exactIdentity = $false }
     }
     $result.crossReleaseReuse = $Context.resumeMode -eq 'Auto' -and -not $result.exactIdentity
-    if ($result.crossReleaseReuse -and [string](Get-E2EAdmissionValue $identity 'clientSelection' '') -ceq [string]$Context.clientSelection) {
+    $result.sourceContinuationRequired = [string](Get-E2EAdmissionValue $identity 'workflowCommit' '') -ne [string]$Context.workflowCommit -or [string](Get-E2EAdmissionValue $identity 'workflowTree' '') -ne [string]$Context.workflowTree
+    if ($result.crossReleaseReuse -and $result.sourceContinuationRequired -and [string](Get-E2EAdmissionValue $identity 'clientSelection' '') -ceq [string]$Context.clientSelection) {
         $result.continuationProof = Get-WorkflowContinuationProof -RepositoryRoot $Context.workflowRoot -QualifiedCommit ([string](Get-E2EAdmissionValue $identity 'workflowCommit' '')) -CurrentCommit $Context.workflowCommit -CurrentTree $Context.workflowTree
     }
     $expectedHead = [string](Get-E2EAdmissionValue $Checkpoint 'expectedHead' '')

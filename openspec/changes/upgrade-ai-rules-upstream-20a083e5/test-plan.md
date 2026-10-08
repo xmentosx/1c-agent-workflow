@@ -667,3 +667,38 @@ fingerprints matched the original fc42 recipe. Receipts are retained under
 `9d64446e96c2d3369eed46162a2f0d10a30d652827e473ad443bcd49616a7c82`.
 These source proofs do not substitute public RegisterChange or the outstanding
 original live Release continuation, publication, EV8a and EV9.
+
+Public RegisterChange at `68e8c5b0` terminated failed: Targeted 563/2/0 in
+1553.628 seconds. All ten parallel shards passed; the original full ReleaseGate
+orchestration and one lexical owner-location assertion failed in the serial
+shard. No queue head or remote was advanced. The 65 original completed artifacts
+are retained under
+`build/lifecycle-record-publication/register-68e8c5b0-admission-red-20261008/manifest.json`,
+SHA256 `259c42d91b1e546c7ab8699bff68dc5a0fe9f384165fac150b4e0ea1b14c6b49`.
+
+The full scenario already supplied exact Targeted proof, but its single changed
+managed on-demand module matched no continuation scope. The new shared guard
+therefore reran passed stages as required when source continuation was absent.
+The declarative correction recognizes only this existing workload-owned module;
+its `mcp-hosts` route still selects `fresh`, and changed ondemand inputs still
+require reexecution. The original one-file advance, Git/stand topology and
+reuse/rerun assertions remain the acceptance path. The lexical assertion follows
+the shared admission owner and continues to require the original reason and
+runner call. Focused acceptance and another ordinary registration remain required.
+
+The affected retry retained 0/2 and then 3/1; these are failed batches, not a
+synthetic whole green result. The latter passed the original entire orchestration
+in 275.66 seconds and both source-versus-coarse-identity causal controls. Its sole
+remaining failure was a lexical inline-payload expectation, moved to the real
+shared payload owner with the runner wiring still required. The final lexical-
+only native run passed 1/0 with unchanged inputs; the production runtime did not
+change after the full scenario passed. Source advancement still requires exact
+Targeted proof; same-source coarse identity drift retains exact stage workloads
+and all prior identity/SHA/snapshot/state/environment checks.
+
+The closed repair map is
+`build/release-admission/register-68e8c5b0-repair-freeze.json`, SHA256
+`6762d317af9286336a40e1b1220c8a42656f5b0a1ad804c29b3ea35f90e96b19`.
+It binds seven owner source hashes and nine original proof artifacts. The ordinary
+public registration, actual licensed live continuation, publication and final
+EV8a/EV9 remain required.

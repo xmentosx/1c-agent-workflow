@@ -408,7 +408,7 @@ function Test-ReleaseCheckpointPreflight {
     $exactIdentity = $admission.exactIdentity
     $record.exactIdentity = $exactIdentity
     # Serialize the safe decision only, never the transient context or raw env.
-    $record['transition'] = [ordered]@{ allowed = $admission.allowed; code = $admission.code; reason = $admission.reason; crossReleaseReuse = $admission.crossReleaseReuse; sourceContinuationProven = [bool]$admission.continuationProof }
+    $record['transition'] = [ordered]@{ allowed = $admission.allowed; code = $admission.code; reason = $admission.reason; crossReleaseReuse = $admission.crossReleaseReuse; sourceContinuationRequired = $admission.sourceContinuationRequired; sourceContinuationProven = [bool]$admission.continuationProof }
 
     if ($ResumeMode -eq 'Auto' -and $scopeMatches -and $checkpointSchema -ge 3 -and -not $admission.allowed) {
         $code = if ($exactIdentity) { 'RELEASE_CHECKPOINT_HEAD_MISMATCH' } else { 'RELEASE_CHECKPOINT_TRANSITION_UNPROVEN' }
