@@ -133,6 +133,30 @@
     }
 
 
+    It 'retains a child born at captured invocation start with <fraction> residual ticks through <boundaryKind>' -TestCases @(
+        @{fraction=0;boundaryKind='parsed'},@{fraction=1;boundaryKind='parsed'},@{fraction=9;boundaryKind='parsed'},
+        @{fraction=0;boundaryKind='utc'},@{fraction=1;boundaryKind='utc'},@{fraction=9;boundaryKind='utc'}
+    ) {
+        param($fraction,$boundaryKind)
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $logPath=Join-Path $TestDrive 'Точный вывод с пробелом.log'
+            $birth=[datetime]::new(638955360000000000+$fraction,[DateTimeKind]::Utc)
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 0
+            Set-DesignerInvocationLauncherIdentity -ProbeState $state -ProbeContext ([pscustomobject]@{
+                processId=34072;processName='oscript.exe';processStartTimeUtc=$birth.ToString('o');
+                processExitTimeUtc=$birth.AddSeconds(1).ToString('o');invocationStartedAtUtc=$birth.ToString('o')})
+            $inventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth;CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddTicks(-10);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=999;CreationDate=$birth.AddMinutes(-1);CommandLine=('DESIGNER /Out "'+$logPath+'"')},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34076;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1).AddTicks(10);CommandLine='DESIGNER'})
+            $boundary=if($boundaryKind -eq 'parsed'){[datetime]$state.invocationStartedAtUtc}else{$birth}
+            @(Get-DesignerOwnedProcessInventory -Inventory $inventory -Identities $state.trackedProcessIdentities -TrackedProcessIds @(34072) -LogPath $logPath -InvocationStartedAtUtc $boundary).ProcessId
+        }
+        @($result) | Should -Be @(34073)
+    }
+
     It 'tracks only 1C children inside an actual OneScript launcher lifetime and rejects its PID recycled by <parentName>' -TestCases @(@{parentName='oscript.exe'},@{parentName='powershell.exe'}) {
         param($parentName)
         $result = & {

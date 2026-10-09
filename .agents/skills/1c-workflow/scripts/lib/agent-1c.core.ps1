@@ -6332,6 +6332,17 @@ function Test-DesignerInfoBaseReleased {
     }
 }
 
+function ConvertTo-DesignerIdentityTimeUtc {
+    param([AllowNull()][object]$CreationTime)
+    $start = [DateTimeOffset]::MinValue
+    if ($CreationTime -is [datetime]) { $start = [DateTimeOffset]$CreationTime.ToUniversalTime() }
+    elseif (-not [DateTimeOffset]::TryParse([string]$CreationTime, [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref]$start)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: process creation time is required.' }
+    # Identity and its invocation lower bound use the same UTC CIM precision.
+    $ticks = $start.UtcDateTime.Ticks - ($start.UtcDateTime.Ticks % 10)
+    return [datetime]::new($ticks,[DateTimeKind]::Utc)
+}
+
 function Get-NativeLauncherProcessIdentity {
     param([Parameter(Mandatory = $true)][object]$ProcessInfo)
     $name = [string](Get-StateValue -State $ProcessInfo -Name 'Name' -Default '')
@@ -6340,14 +6351,9 @@ function Get-NativeLauncherProcessIdentity {
     $creation = Get-StateValue -State $ProcessInfo -Name 'CreationDate' -Default $null
     if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'processStartTime' -Default $null }
     if ($null -eq $creation) { $creation = Get-StateValue -State $ProcessInfo -Name 'StartTime' -Default $null }
-    $start = [DateTimeOffset]::MinValue
-    if ($creation -is [datetime]) { $start = [DateTimeOffset]$creation.ToUniversalTime() }
-    elseif (-not [DateTimeOffset]::TryParse([string]$creation, [Globalization.CultureInfo]::InvariantCulture,
-        [Globalization.DateTimeStyles]::None, [ref]$start)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: process creation time is required.' }
+    $start = ConvertTo-DesignerIdentityTimeUtc -CreationTime $creation
     if (-not $name -or [IO.Path]::GetFileName($name) -cne $name) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher executable name is required.' }
-    # CIM serializes creation time to microseconds. Keep that same precision.
-    $ticks = $start.UtcDateTime.Ticks - ($start.UtcDateTime.Ticks % 10)
-    return [pscustomobject]@{ name=$name.ToLowerInvariant(); startTimeUtc=[datetime]::new($ticks,[DateTimeKind]::Utc).ToString('o') }
+    return [pscustomobject]@{ name=$name.ToLowerInvariant(); startTimeUtc=$start.ToString('o') }
 }
 
 function Get-DesignerProcessIdentity {
@@ -6396,6 +6402,7 @@ function Set-DesignerInvocationLauncherIdentity {
 function Get-DesignerOwnedProcessInventory {
     param([object[]]$Inventory, [System.Collections.IDictionary]$Identities, [int[]]$TrackedProcessIds,
         [string]$LogPath, [datetime]$InvocationStartedAtUtc, [object[]]$Scopes = @())
+    $InvocationStartedAtUtc = ConvertTo-DesignerIdentityTimeUtc -CreationTime $InvocationStartedAtUtc
     foreach ($id in $TrackedProcessIds) {
         if (-not $Identities.Contains($id)) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher PID $id has no captured birth identity." }
     }
@@ -6414,19 +6421,19 @@ function Get-DesignerOwnedProcessInventory {
             $matchesScope = $matchedScopes.Count -gt 0
             if (-not ($Identities.Contains($id) -or $matchesScope -or ($Scopes.Count -eq 0 -and $matchesLog) -or $Identities.Contains($parentId))) { continue }
             $identity = Get-DesignerProcessIdentity -ProcessInfo $candidate
-            $birth = [datetime]$identity.startTimeUtc
+            $birth = ConvertTo-DesignerIdentityTimeUtc -CreationTime $identity.startTimeUtc
             if ($Identities.Contains($id)) {
                 $expected = $Identities[$id]
                 if (($identity.name -cne $expected.name -or $identity.startTimeUtc -cne $expected.startTimeUtc) -and -not $matchesScope) { continue }
             } elseif (-not $matchesScope) {
                 $matchesLog = $Scopes.Count -eq 0 -and $matchesLog
-                $matchesParent = -not $matchesLog -and $Identities.Contains($parentId) -and $birth -ge ([datetime]$Identities[$parentId].startTimeUtc)
+                $matchesParent = -not $matchesLog -and $Identities.Contains($parentId) -and $birth -ge ([DateTimeOffset]$Identities[$parentId].startTimeUtc).UtcDateTime
                 $liveParent = @($Inventory | Where-Object { [int]$_.ProcessId -eq $parentId })
                 $parentExit = if ($matchesParent) { [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '') } else { '' }
                 if ($matchesParent -and $parentExit) {
                     # A child born during the original parent's captured lifetime
                     # remains ours even after that parent's numeric PID is reused.
-                    $matchesParent = $birth -le ([datetime]$parentExit)
+                    $matchesParent = $birth -le ([DateTimeOffset]$parentExit).UtcDateTime
                 } elseif ($matchesParent -and $liveParent.Count -gt 0) {
                     $currentParent = Get-NativeLauncherProcessIdentity -ProcessInfo $liveParent[0]
                     $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
@@ -6441,7 +6448,7 @@ function Get-DesignerOwnedProcessInventory {
                     } else {
                         $parentExit = [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '')
                         if (-not $parentExit) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: parent PID $parentId has no live or captured exit identity." }
-                        $matchesParent = $birth -le ([datetime]$parentExit)
+                        $matchesParent = $birth -le ([DateTimeOffset]$parentExit).UtcDateTime
                     }
                 }
                 if ($birth -lt $InvocationStartedAtUtc -or -not ($matchesLog -or $matchesParent)) { continue }
