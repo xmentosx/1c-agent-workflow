@@ -1,10 +1,15 @@
 # Q23 acceptance addendum: essential UI policy
 
+Final acceptance reconciliation is recorded in
+[final-develop-acceptance-20261009.md](evidence/final-develop-acceptance-20261009.md).
+The scenario requirements below remain unchanged; dated pending statements are
+historical checkpoints, not a replacement for the final receipt-bound assessment.
+
 This file adds the accepted 2026-10-02 Q23 requirements to the existing change.
-It is a future acceptance plan, not executed evidence. Historical task checkboxes,
+This section defines acceptance requirements, not executed evidence. Historical task checkboxes,
 raw failures and exact qualification in `evidence/` keep their original scope.
 The clean 9ec fork does not implement/qualify the c1 policy by that history alone.
-Tasks 12.1–12.2 remain open until the complete new upstream integration is built
+Tasks 12.1–12.2 require the complete new upstream integration to be built
 and accepted on its exact controlled fork/source identities. The ready source-only
 Stage A support plan, old pins and publication authority remain unchanged.
 
