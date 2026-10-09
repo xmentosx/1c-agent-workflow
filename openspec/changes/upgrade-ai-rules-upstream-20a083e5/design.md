@@ -952,3 +952,15 @@ a source commit/tree advance requires new source-continuation proof. Same-source
 reuse retains exact workload fingerprints and all client/fork/configuration,
 snapshot/state/environment and evidence checks; it grants no helper override or
 new installed support. Both decisions remain in the shared stateless owner.
+
+Release candidate promotion also has to restore the applied database, not only
+reuse its configuration evidence. The native R8 failure showed baseline
+`2aa9360b...` restored beside source/postConfig `8442b3b1...`: the existing MCP
+application guard correctly refused it. Before executing ondemand after a
+cross-source promotion with passed config-cadence, the existing runner restores
+the SHA-verified postConfig snapshot and paired state through its existing
+restore owner. A same-source retry retains its recovered live database; a failed
+config stage grants no restore/reuse. Corrupt snapshot/state remains a refusal.
+This replaces the repeated 35-minute native reload workaround with the already
+owned snapshot restore, without adding recovery state or changing application
+admission. The original native ondemand workload still has to execute and pass.

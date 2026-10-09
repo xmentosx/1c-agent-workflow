@@ -703,3 +703,13 @@ The closed repair map is
 It binds seven owner source hashes and nine original proof artifacts. The ordinary
 public registration, actual licensed live continuation, publication and final
 EV8a/EV9 remain required.
+
+R8 cross-source application continuation retains the original baseline/postConfig
+fingerprints in `ReleaseGate.Tests.ps1`, tag `OnDemandSnapshotContinuation`.
+The test executes the production ondemand preparation prelude and actual
+snapshot/state/SHA restore functions: cross-source passed config must restore its
+pair before MCP, same-source recovered state must remain intact, unqualified
+config must still fail application admission, and corrupt snapshot must fail
+before preparation. RED retained 2 passed/2 failed with the original mismatch;
+owner repair passed 4/0. This is focused proof, not native Release qualification;
+the public publication must execute both backend families on the repaired path.

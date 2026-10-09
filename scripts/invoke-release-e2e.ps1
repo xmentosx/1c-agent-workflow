@@ -2621,6 +2621,13 @@ try {
         }
         $e2eDependencyLockBytes = [IO.File]::ReadAllBytes($e2eDependencyLockPath)
         try {
+            # Candidate promotion restores the rollback baseline before importing
+            # passed capabilities. MCP needs the paired applied configuration,
+            # including when config/extension were not selected for this run.
+            if ($crossReleaseReuse -and $checkpoint["stages"].Contains("config-cadence") -and
+                [string]$checkpoint["stages"]["config-cadence"]["status"] -eq "passed") {
+                Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+            }
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $utf8 = [System.Text.Encoding]::UTF8
             $vanessaSmokeEvidenceRoot = Join-Path $worktreePath "build\test-results\release-e2e"
