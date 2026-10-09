@@ -143,6 +143,20 @@ Targeted, проверка hash доказательств и запрет reuse
 
 ## Клиент unattended E2E
 
+Client MCP retains two distinct proofs when runtime helpers change without a
+component source change. The original `candidate.provenance.json` remains
+immutable and binds the CFE to its hash-pinned corresponding-source ZIP. Run
+`scripts/build-client-mcp-patched.ps1 -RetainedCandidateDirectory <old-folder>
+-OutputDirectory <new-folder>` from the clean candidate to obtain a separate
+`candidate.native-qualification.json`: the producer checks the historical
+ancestor, every archived source byte (including ConfigDumpInfo), and both asset
+hashes; loads the retained CFE in its private service base; runs all three native
+checks with current helpers; and restores/releases the base. The finalizer
+requires the exact current helper inventory/hashes and successful native proof
+bound to the unchanged original receipt and assets. This does not replace live
+Release qualification of the exact CFE or permit rewriting historical receipts,
+ignoring dump-index changes, or changing published assets.
+
 `source-delivery.ps1`, `check.ps1` и оба `invoke-*-e2e.ps1` принимают
 необязательный `-AgentTarget`. Без него E2E явно выбирает единственного клиента
 из `.agent-1c/project.json.aiRules.tools` конкретного вызываемого корня, включая

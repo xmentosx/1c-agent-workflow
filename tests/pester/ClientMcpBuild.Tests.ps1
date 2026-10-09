@@ -3,6 +3,7 @@ BeforeAll {
     $context = Initialize-WorkflowPesterContext
     $repo = $context.RepoRoot
     . (Join-Path $repo 'scripts/client-mcp-build.ps1')
+    . (Join-Path $repo 'scripts/git-path-list.ps1')
     $assetRoot = Join-Path $repo 'third-party/client-mcp/v0.6.5-itl-r1'
     $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $original = Join-Path $repo 'tests/fixtures/client-mcp-language/Configuration.xml'
@@ -16,6 +17,129 @@ BeforeAll {
         [IO.File]::Copy($original, (Join-Path $root 'Configuration.xml'))
         [IO.File]::WriteAllBytes((Join-Path $root 'opaque.bin'), [byte[]]@(239,187,191,13,10,0,255))
         return $root
+    }
+    function New-RetainedClientFixture {
+        $root = Join-Path $TestDrive ('retained client ' + [char]0x044f + ' ' + [guid]::NewGuid().ToString('N'))
+        $manifestDirectory = Join-Path $root 'third-party/client-mcp/v0.6.5-itl-r1'
+        [void][IO.Directory]::CreateDirectory($manifestDirectory)
+        [IO.File]::Copy((Join-Path $assetRoot 'manifest.json'), (Join-Path $manifestDirectory 'manifest.json'))
+        [void](Invoke-RepositoryGit $root @('init', '--quiet'))
+        [void](Invoke-RepositoryGit $root @('config', 'user.name', 'Client fixture'))
+        [void](Invoke-RepositoryGit $root @('config', 'user.email', 'fixture@example.invalid'))
+        [void](Invoke-RepositoryGit $root @('add', '.'))
+        [void](Invoke-RepositoryGit $root @('commit', '--quiet', '-m', 'source producer'))
+        $commit = (Invoke-RepositoryGit $root @('rev-parse', 'HEAD')).stdout.Trim()
+        $stage = Join-Path $root 'stage'
+        $source = Join-Path $stage 'src'
+        [void][IO.Directory]::CreateDirectory($source)
+        [IO.File]::WriteAllText((Join-Path $source 'Module.bsl'), 'Procedure ExactSource() EndProcedure', [Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText((Join-Path $source 'ConfigDumpInfo.xml'), '<versions retained="exact"/>', [Text.Encoding]::UTF8)
+        $identity = Get-ClientMcpBuildSourceIdentity $source
+        [IO.File]::WriteAllText((Join-Path $stage 'SOURCE-IDENTITY.json'), ($identity | ConvertTo-Json -Depth 5), [Text.Encoding]::UTF8)
+        $output = Join-Path $root 'output'
+        [void][IO.Directory]::CreateDirectory($output)
+        $cfe = Join-Path $output $manifest.artifact.fileName
+        $zip = Join-Path $output $manifest.correspondingSource.fileName
+        [IO.File]::WriteAllBytes($cfe, [byte[]]@(1,2,3))
+        New-ClientMcpSourceArchive $stage $zip
+        $proof = [ordered]@{component='clientMcp';status='built';sourceCommit=$commit;restored=$true;released=$true;
+            manifestSha256=(Get-FileHash (Join-Path $manifestDirectory 'manifest.json')).Hash.ToLowerInvariant();upstream=$manifest.upstream;buildInputs=[ordered]@{'scripts/build-client-mcp-patched.ps1'=('a'*64)};
+            platformVersion=$manifest.build.platformVersion;platformSha256=$manifest.build.platformSha256;
+            compatibilityVersion=$manifest.compatibilityVersion;downstreamRevision=$manifest.downstreamRevision;
+            artifactSha256=(Get-FileHash $cfe).Hash.ToLowerInvariant();sourceArchiveSha256=(Get-FileHash $zip).Hash.ToLowerInvariant();sourceIdentity=$identity;
+            gate6=[ordered]@{sourceFingerprint=$identity.fingerprint;steps=@('modules','applicability','configuration'|ForEach-Object{[ordered]@{step=$_;exitCode=0;dumpResult=0}})}}
+        $proofPath = Join-Path $output 'candidate.provenance.json'
+        [IO.File]::WriteAllText($proofPath, ($proof | ConvertTo-Json -Depth 9), [Text.Encoding]::UTF8)
+        return [pscustomobject]@{root=$root;output=$output;stage=$stage;proof=$proof;proofPath=$proofPath;cfe=$cfe;zip=$zip}
+    }
+}
+
+Describe 'Retained client native qualification' {
+    It 'publishes a historical pair only with exact current helper proof and rejects later helper drift' {
+        & {
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts/source-delivery-component.ps1'),[ref]$tokens,[ref]$errors)
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-DeliveryExactClientMcpCandidates'},$true)
+            Invoke-Expression $definition.Extent.Text
+            $fixture=New-RetainedClientFixture
+            $script:Root=$fixture.root
+            foreach($relative in @(Get-ClientMcpBuildInputPaths $repo)) {
+                $destination=Join-Path $fixture.root $relative
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+                [IO.File]::Copy((Join-Path $repo $relative),$destination,$true)
+            }
+            $inputs=[ordered]@{}
+            foreach($relative in @(Get-ClientMcpBuildInputPaths $fixture.root)) { $inputs[$relative]=(Get-FileHash (Join-Path $fixture.root $relative)).Hash.ToLowerInvariant() }
+            $proof=$fixture.proof
+            [IO.File]::WriteAllText($fixture.proofPath,($proof|ConvertTo-Json -Depth 9),[Text.Encoding]::UTF8)
+            $lock=[pscustomobject]@{version=$manifest.compatibilityVersion;downstreamRevision=$manifest.downstreamRevision;upstreamCommit=$manifest.upstream.commit;
+                assetName=$manifest.artifact.fileName;releaseTag=$manifest.artifact.releaseTag;sha256=$proof.artifactSha256;manifestSha256=$proof.manifestSha256;
+                correspondingSource=[pscustomobject]@{assetName=$manifest.correspondingSource.fileName;sha256=$proof.sourceArchiveSha256}}
+            $loaded=[pscustomobject]@{fingerprint=('sha256:'+('b'*64));files=@([pscustomobject]@{path='ConfigDumpInfo.xml';sha256=('c'*64)})}
+            $qualification=[ordered]@{schemaVersion=1;kind='client-mcp-retained-native-qualification';component='clientMcp';status='qualified';sourceCommit=$proof.sourceCommit;
+                restored=$true;released=$true;buildProvenanceSha256=(Get-FileHash $fixture.proofPath).Hash.ToLowerInvariant();artifactSha256=$proof.artifactSha256;
+                sourceArchiveSha256=$proof.sourceArchiveSha256;manifestSha256=$proof.manifestSha256;platformVersion=$proof.platformVersion;platformSha256=$proof.platformSha256;
+                sourceIdentity=$proof.sourceIdentity;loadedSourceIdentity=$loaded;buildInputs=$inputs;
+                gate6=[ordered]@{sourceFingerprint=$loaded.fingerprint;steps=@('modules','applicability','configuration'|ForEach-Object{[ordered]@{step=$_;exitCode=0;dumpResult=0}})}}
+            $saved=[Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH','Process')
+            try {
+                [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH',$fixture.cfe,'Process')
+                { Get-DeliveryExactClientMcpCandidates $fixture.root $lock } | Should -Throw '*helper inventory differs*'
+                [IO.File]::WriteAllText((Join-Path $fixture.output 'candidate.native-qualification.json'),($qualification|ConvertTo-Json -Depth 9),[Text.Encoding]::UTF8)
+                @(Get-DeliveryExactClientMcpCandidates $fixture.root $lock).Count | Should -Be 2
+                $runtime=Join-Path $fixture.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+                [IO.File]::AppendAllText($runtime,'# changed native owner',[Text.Encoding]::UTF8)
+                { Get-DeliveryExactClientMcpCandidates $fixture.root $lock } | Should -Throw '*build input differs*'
+            } finally { [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH',$saved,'Process') }
+        }
+    }
+    It 'preserves historical provenance and every corresponding-source byte' {
+        $fixture = New-RetainedClientFixture
+        $before = (Get-FileHash $fixture.proofPath).Hash
+        $evidence = Get-ClientMcpRetainedBuildEvidence $fixture.root $fixture.output $manifest
+        $evidence.artifactSha256 | Should -Be $fixture.proof.artifactSha256
+        (Get-FileHash $fixture.proofPath).Hash | Should -Be $before
+        [IO.File]::AppendAllText($fixture.cfe, 'changed')
+        { Get-ClientMcpRetainedBuildEvidence $fixture.root $fixture.output $manifest } | Should -Throw '*ASSET_MISMATCH*'
+    }
+    It 'rejects a producer commit outside candidate ancestry' {
+        $fixture = New-RetainedClientFixture
+        $fixture.proof.sourceCommit = 'f' * 40
+        [IO.File]::WriteAllText($fixture.proofPath, ($fixture.proof | ConvertTo-Json -Depth 9), [Text.Encoding]::UTF8)
+        { Get-ClientMcpRetainedBuildEvidence $fixture.root $fixture.output $manifest } | Should -Throw '*NOT_ANCESTOR*'
+    }
+    It 'rejects changed module or dump-index bytes even when an archive hash is updated' -TestCases @(@{File='Module.bsl'},@{File='ConfigDumpInfo.xml'}) {
+        param($File)
+        $fixture = New-RetainedClientFixture
+        [IO.File]::AppendAllText((Join-Path $fixture.stage ('src/' + $File)), 'changed')
+        Remove-Item -LiteralPath $fixture.zip
+        New-ClientMcpSourceArchive $fixture.stage $fixture.zip
+        $fixture.proof.sourceArchiveSha256 = (Get-FileHash $fixture.zip).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($fixture.proofPath, ($fixture.proof | ConvertTo-Json -Depth 9), [Text.Encoding]::UTF8)
+        { Get-ClientMcpRetainedBuildEvidence $fixture.root $fixture.output $manifest } | Should -Throw '*SOURCE_BYTES_MISMATCH*'
+    }
+    It 'requires a separate successful native ladder for the actually loaded retained artifact' {
+        $fixture = New-RetainedClientFixture
+        $proof = $fixture.proof
+        $loaded = [pscustomobject]@{fingerprint=('sha256:' + ('b'*64));files=@([pscustomobject]@{path='ConfigDumpInfo.xml';sha256=('c'*64)})}
+        $qualification = [ordered]@{schemaVersion=1;kind='client-mcp-retained-native-qualification';component='clientMcp';status='qualified';sourceCommit=$proof.sourceCommit;
+            restored=$true;released=$true;buildProvenanceSha256=(Get-FileHash $fixture.proofPath).Hash.ToLowerInvariant();artifactSha256=$proof.artifactSha256;
+            sourceArchiveSha256=$proof.sourceArchiveSha256;manifestSha256=$proof.manifestSha256;platformVersion=$proof.platformVersion;platformSha256=$proof.platformSha256;
+            sourceIdentity=$proof.sourceIdentity;loadedSourceIdentity=$loaded;gate6=[ordered]@{sourceFingerprint=$loaded.fingerprint;steps=@('modules','applicability','configuration'|ForEach-Object{[ordered]@{step=$_;exitCode=0;dumpResult=0}})}}
+        { Assert-ClientMcpNativeQualification ([pscustomobject]$qualification) ([pscustomobject]$proof) $fixture.proofPath } | Should -Not -Throw
+        foreach ($field in @('restored','released')) {
+            $qualification[$field]=$false
+            { Assert-ClientMcpNativeQualification ([pscustomobject]$qualification) ([pscustomobject]$proof) $fixture.proofPath } | Should -Throw '*incompatible or incomplete*'
+            $qualification[$field]=$true
+        }
+        $qualification.gate6.steps[1].exitCode=1
+        { Assert-ClientMcpNativeQualification ([pscustomobject]$qualification) ([pscustomobject]$proof) $fixture.proofPath } | Should -Throw '*incompatible or incomplete*'
+        $qualification.gate6.steps[1].exitCode=0
+        $qualification.artifactSha256='d'*64
+        { Assert-ClientMcpNativeQualification ([pscustomobject]$qualification) ([pscustomobject]$proof) $fixture.proofPath } | Should -Throw '*incompatible or incomplete*'
+        $qualification.artifactSha256=$proof.artifactSha256
+        [IO.File]::AppendAllText($fixture.proofPath, ' ')
+        { Assert-ClientMcpNativeQualification ([pscustomobject]$qualification) ([pscustomobject]$proof) $fixture.proofPath } | Should -Throw '*incompatible or incomplete*'
     }
 }
 Describe 'Controlled client_mcp metadata build' {
