@@ -1,5 +1,17 @@
 Set-StrictMode -Version Latest
 
+function Get-QualityContractReuseInputPaths {
+    param([Parameter(Mandatory = $true)][object]$Contract)
+    $property = $Contract.PSObject.Properties['reuseInputPaths']
+    if (-not $property) { return @() }
+    $paths = @($property.Value | ForEach-Object { ([string]$_).Replace('\', '/') })
+    if ($paths.Count -eq 0 -or @($paths | Sort-Object -Unique).Count -ne $paths.Count -or
+        @($paths | Where-Object { -not $_ -or [IO.Path]::IsPathRooted($_) -or $_ -match '(^|/)\.\.(/|$)' }).Count -gt 0) {
+        throw "Quality contract '$($Contract.id)' reuseInputPaths must contain unique non-empty repository-relative patterns."
+    }
+    return $paths
+}
+
 function Get-DevelopE2EJourneyContractProjection {
     param([Parameter(Mandatory = $true)][object]$Catalog, [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey)
     $route = $Catalog.developJourneys.routes.$Journey
@@ -406,6 +418,7 @@ function Test-QualityContractCatalog {
     $ids = @($Catalog.contracts | ForEach-Object { [string]$_.id })
     if ($ids.Count -eq 0 -or @($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Quality contracts must have unique non-empty ids." }
     foreach ($contract in @($Catalog.contracts)) {
+        [void](Get-QualityContractReuseInputPaths -Contract $contract)
         if (-not [string]$contract.owner -or -not [string]$contract.primaryTest -or [int]$contract.budgetSeconds -le 0 -or @($contract.paths).Count -eq 0 -or @($contract.tests).Count -eq 0) {
             throw "Quality contract '$($contract.id)' must define owner, primaryTest, budgetSeconds, paths, and tests."
         }

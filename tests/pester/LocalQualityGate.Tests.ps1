@@ -201,6 +201,71 @@ Describe 'Pester shard selected-test identity' {
         $second.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
         Assert-ShardIdentityResults $second (Join-Path $root 'out-first')
     }
+    It 'invalidates native-build shard reuse when its actual loaded helper or guard changes' {
+        $root = New-ShardIdentityFixture 'Нативные зависимости'
+        $nativeTest='tests/pester/VanessaBuildRuntime.Tests.ps1'
+        Move-Item -LiteralPath (Join-Path $root 'tests/pester/Alpha.Tests.ps1') -Destination (Join-Path $root $nativeTest)
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json')
+        . (Join-Path $RepoRoot 'scripts/client-mcp-build.ps1')
+        $nativeInputs=@(Get-ClientMcpBuildInputPaths -RepositoryRoot $RepoRoot)
+        foreach($inputPath in $nativeInputs){
+            $path=Join-Path $root $inputPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path, "# native fixture input`n", [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{tests=@($nativeTest)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -qm native-inputs
+        $LASTEXITCODE | Should -Be 0
+        $first=Invoke-ShardIdentityFixture $root 'out-native-first'
+        $first.executedWorkerCount | Should -Be 1
+        $same=Invoke-ShardIdentityFixture $root 'out-native-same'
+        $same.reusedWorkerCount | Should -Be 1
+        $priorDigest=[string]$same.workers[0].inputDigest
+        $changes=@('.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1',
+            '.agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1',
+            '.agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py')
+        for($index=0;$index -lt $changes.Count;$index++){
+            $changed=$changes[$index]
+            [IO.File]::AppendAllText((Join-Path $root $changed), "# changed owner input`n",[Text.UTF8Encoding]::new($false))
+            & git -C $root add -- $changed
+            & git -C $root commit -qm changed-native-input
+            $LASTEXITCODE | Should -Be 0
+            $fresh=Invoke-ShardIdentityFixture $root "out-native-fresh-$index"
+            $fresh.executedWorkerCount | Should -Be 1 -Because "$changed must invalidate the native-build evidence"
+            $fresh.reusedWorkerCount | Should -Be 0
+            $fresh.workers[0].inputDigest | Should -Not -Be $priorDigest
+            $same=Invoke-ShardIdentityFixture $root "out-native-reuse-$index"
+            $same.reusedWorkerCount | Should -Be 1
+            $priorDigest=[string]$same.workers[0].inputDigest
+        }
+        # An absent declared dependency must never qualify a cached result.
+        & git -C $root rm -q -- $changes[2]
+        & git -C $root commit -qm missing-native-input
+        $LASTEXITCODE | Should -Be 0
+        $missing=Invoke-ShardIdentityFixture $root 'out-native-missing-first'
+        $missing.executedWorkerCount | Should -Be 1
+        $missing.workers[0].inputDigest | Should -BeNullOrEmpty
+        $again=Invoke-ShardIdentityFixture $root 'out-native-missing-second'
+        $again.executedWorkerCount | Should -Be 1
+        $again.reusedWorkerCount | Should -Be 0
+        $catalog=Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patterns=@($catalog.contracts | Where-Object {$nativeTest -in @($_.tests)} | ForEach-Object { @($_.paths); $extra=$_.PSObject.Properties['reuseInputPaths']; if($extra){@($extra.Value)} })
+        @($nativeInputs | Where-Object {$path=$_;@($patterns | Where-Object {$path -like $_}).Count -eq 0}) | Should -BeNullOrEmpty
+    }
+
+    It 'rejects malformed reuse input paths: <kind>' -TestCases @(
+        @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
+        @{kind='outside';paths=@('../secret.ps1')},
+        @{kind='absolute';paths=@('C:\outside.ps1')},
+        @{kind='duplicate';paths=@('lib/core.ps1','lib/core.ps1')}
+    ) {
+        param($kind,$paths)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $contract=[pscustomobject]@{id='native-fixture';reuseInputPaths=$paths}
+        {Get-QualityContractReuseInputPaths -Contract $contract} | Should -Throw '*reuseInputPaths*'
+    }
 }
 Describe "Local quality gate contract" {
     It "lets Windows PowerShell gate children rebuild their native module path when launched from PowerShell Core" {

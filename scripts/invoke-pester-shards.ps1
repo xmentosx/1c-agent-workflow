@@ -314,7 +314,12 @@ function Get-ShardInputDigest {
     if ($nonReusableProperty -and @($relativeTests | Where-Object { $_ -in @($nonReusableProperty.Value) }).Count -gt 0) { return '' }
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
-    $patterns = @($contracts | ForEach-Object { @($_.paths) } | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
+    # Loaded dependencies qualify reuse without widening Targeted selection.
+    $reusePatterns = @($contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ } | Sort-Object -Unique)
+    foreach ($pattern in $reusePatterns) {
+        if (@($trackedPaths | Where-Object { ([string]$_).Replace('\','/') -like $pattern }).Count -eq 0) { return '' }
+    }
+    $patterns = @(@($contracts | ForEach-Object { @($_.paths) }) + $reusePatterns | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
     $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
     $lines = New-Object System.Collections.Generic.List[string]
     # The selected tests are distinct from their shared owner input set.

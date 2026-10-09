@@ -202,7 +202,8 @@
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/ClientMcpBuild.Tests.ps1",
       "paths": ["scripts/build-client-mcp-patched.ps1", "scripts/client-mcp-build.ps1", "third-party/client-mcp/*", "tests/fixtures/client-mcp-language/*"],
-      "tests": ["tests/pester/ClientMcpBuild.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1"]
+      "reuseInputPaths": ["scripts/vanessa-build-runtime.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/lib/*.ps1", ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1", ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py"],
+      "tests": ["tests/pester/ClientMcpBuild.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
     },
     {
       "id": "source-delivery-cleanup",
