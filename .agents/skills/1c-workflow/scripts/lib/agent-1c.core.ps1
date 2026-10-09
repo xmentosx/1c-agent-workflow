@@ -6332,7 +6332,7 @@ function Test-DesignerInfoBaseReleased {
     }
 }
 
-function Get-DesignerProcessIdentity {
+function Get-NativeLauncherProcessIdentity {
     param([Parameter(Mandatory = $true)][object]$ProcessInfo)
     $name = [string](Get-StateValue -State $ProcessInfo -Name 'Name' -Default '')
     if (-not $name) { $name = [string](Get-StateValue -State $ProcessInfo -Name 'ProcessName' -Default '') }
@@ -6344,10 +6344,17 @@ function Get-DesignerProcessIdentity {
     if ($creation -is [datetime]) { $start = [DateTimeOffset]$creation.ToUniversalTime() }
     elseif (-not [DateTimeOffset]::TryParse([string]$creation, [Globalization.CultureInfo]::InvariantCulture,
         [Globalization.DateTimeStyles]::None, [ref]$start)) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: process creation time is required.' }
-    if ($name -notin @('1cv8.exe', '1cv8c.exe')) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: native 1C process name is required.' }
+    if (-not $name -or [IO.Path]::GetFileName($name) -cne $name) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: launcher executable name is required.' }
     # CIM serializes creation time to microseconds. Keep that same precision.
     $ticks = $start.UtcDateTime.Ticks - ($start.UtcDateTime.Ticks % 10)
     return [pscustomobject]@{ name=$name.ToLowerInvariant(); startTimeUtc=[datetime]::new($ticks,[DateTimeKind]::Utc).ToString('o') }
+}
+
+function Get-DesignerProcessIdentity {
+    param([Parameter(Mandatory = $true)][object]$ProcessInfo)
+    $identity = Get-NativeLauncherProcessIdentity -ProcessInfo $ProcessInfo
+    if ($identity.name -notin @('1cv8.exe', '1cv8c.exe')) { throw 'DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: native 1C process name is required.' }
+    return $identity
 }
 
 function Set-DesignerNativeLaunchIdentity {
@@ -6374,7 +6381,9 @@ function Set-DesignerInvocationLauncherIdentity {
     if ($id -gt 0) {
         $ProbeState.trackedProcessIds.Add($id) | Out-Null
         if ($birth -and -not $ProbeState.trackedProcessIdentities.ContainsKey($id)) {
-            $ProbeState.trackedProcessIdentities[$id] = Get-DesignerProcessIdentity -ProcessInfo ([pscustomobject]@{
+            # The held launcher can be OneScript; discovered descendants remain
+            # strictly 1C. Both identities retain exact name and captured birth.
+            $ProbeState.trackedProcessIdentities[$id] = Get-NativeLauncherProcessIdentity -ProcessInfo ([pscustomobject]@{
                 Name=([string](Get-StateValue -State $ProbeContext -Name 'processName' -Default '1cv8.exe')); processStartTime=$birth })
         }
         $exitTime = [string](Get-StateValue -State $ProbeContext -Name 'processExitTimeUtc' -Default '')
@@ -6419,7 +6428,7 @@ function Get-DesignerOwnedProcessInventory {
                     # remains ours even after that parent's numeric PID is reused.
                     $matchesParent = $birth -le ([datetime]$parentExit)
                 } elseif ($matchesParent -and $liveParent.Count -gt 0) {
-                    $currentParent = Get-DesignerProcessIdentity -ProcessInfo $liveParent[0]
+                    $currentParent = Get-NativeLauncherProcessIdentity -ProcessInfo $liveParent[0]
                     $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
                 } elseif ($matchesParent) {
                     if (-not $parentObservations.ContainsKey($parentId)) {
@@ -6427,11 +6436,8 @@ function Get-DesignerOwnedProcessInventory {
                     }
                     $currentParents = @($parentObservations[$parentId])
                     if ($currentParents.Count -gt 0) {
-                        if ($currentParents[0].Name -notin @('1cv8.exe','1cv8c.exe')) { $matchesParent = $false }
-                        else {
-                            $currentParent = Get-DesignerProcessIdentity -ProcessInfo $currentParents[0]
-                            $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
-                        }
+                        $currentParent = Get-NativeLauncherProcessIdentity -ProcessInfo $currentParents[0]
+                        $matchesParent = $currentParent.startTimeUtc -ceq $Identities[$parentId].startTimeUtc -and $currentParent.name -ceq $Identities[$parentId].name
                     } else {
                         $parentExit = [string](Get-StateValue -State $Identities[$parentId] -Name 'exitTimeUtc' -Default '')
                         if (-not $parentExit) { throw "DESIGNER_PROCESS_IDENTITY_UNAVAILABLE: parent PID $parentId has no live or captured exit identity." }

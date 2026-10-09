@@ -133,6 +133,35 @@
     }
 
 
+    It 'tracks only 1C children inside an actual OneScript launcher lifetime and rejects its PID recycled by <parentName>' -TestCases @(@{parentName='oscript.exe'},@{parentName='powershell.exe'}) {
+        param($parentName)
+        $result = & {
+            param($ParentName)
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $birth = [DateTime]::UtcNow.AddMinutes(-2)
+            $exit = $birth.AddSeconds(2)
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0
+            Set-DesignerInvocationLauncherIdentity -ProbeState $state -ProbeContext ([pscustomobject]@{
+                processId=34072;processName='oscript.exe';processStartTimeUtc=$birth.ToString('o');
+                processExitTimeUtc=$exit.ToString('o');invocationStartedAtUtc=$birth.ToString('o')})
+            $inventory = @(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=34072;CreationDate=$birth.AddHours(-1);CommandLine='DESIGNER'},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=34072;CreationDate=$birth.AddSeconds(30);CommandLine='DESIGNER'})
+            $owned = @(Get-DesignerOwnedProcessInventory -Inventory $inventory -Identities $state.trackedProcessIdentities -TrackedProcessIds @($state.trackedProcessIds) -LogPath '' -InvocationStartedAtUtc $birth)
+            $state.trackedProcessIdentities[34072].PSObject.Properties.Remove('exitTimeUtc')
+            function Get-CimInstance {param($ClassName,$Filter,$OperationTimeoutSec,$ErrorAction); [pscustomobject]@{Name=$ParentName;ProcessId=34072;CreationDate=$birth.AddSeconds(10)}}
+            $foreign = @(Get-DesignerOwnedProcessInventory -Inventory @($inventory[2]) -Identities $state.trackedProcessIdentities -TrackedProcessIds @(34072) -LogPath '' -InvocationStartedAtUtc $birth)
+            $strict = ''
+            try { Get-DesignerProcessIdentity ([pscustomobject]@{Name='oscript.exe';CreationDate=$birth}) | Out-Null } catch { $strict=$_.Exception.Message }
+            [pscustomobject]@{owned=@($owned.ProcessId);foreignCount=$foreign.Count;strict=$strict;parent=$state.trackedProcessIdentities[34072]}
+        } $parentName
+        $result.owned | Should -Be @(34073)
+        $result.foreignCount | Should -Be 0
+        $result.strict | Should -Match 'native 1C process name is required'
+        $result.parent.name | Should -Be 'oscript.exe'
+    }
+
     It 'rejects next-scan child PID reuse and a fresh foreign child of a non-1C reused parent' {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

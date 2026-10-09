@@ -26,7 +26,9 @@
             function Publish-Agent1cLifecycleOperationProcessEvidence {}
             function Start-Process {
                 if ($Failure -eq 'launch') { throw 'native start outcome unknown' }
-                $process = [pscustomobject]@{ Id = 6100; HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
+                $script:BuildMockLaunchBirth = [DateTime]::UtcNow
+                $process = [pscustomobject]@{ Id = 6100; ProcessName = 'oscript'; StartTime = $script:BuildMockLaunchBirth;
+                    ExitTime = [DateTime]::UtcNow; HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
                 $process | Add-Member ScriptMethod Refresh {}
                 $process | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds) $true }
                 return $process
@@ -35,7 +37,8 @@
                 param($ProbeState, $LogPath)
                 $inventory = @([pscustomobject]@{ Name = '1cv8c.exe'; ProcessId = 6200; ParentProcessId = 1; CommandLine = 'ENTERPRISE /Out foreign.log' })
                 if ($Failure -eq 'child') {
-                    $inventory += [pscustomobject]@{ Name = '1cv8.exe'; ProcessId = 6101; ParentProcessId = 6100; CommandLine = 'DESIGNER' }
+                    $inventory += [pscustomobject]@{ Name = '1cv8.exe'; ProcessId = 6101; ParentProcessId = 6100;
+                        CreationDate = $script:BuildMockLaunchBirth; CommandLine = 'DESIGNER' }
                 }
                 [pscustomobject]@{ status = 'completed'; processes = $inventory; infoBaseReleaseChecked = $false; infoBaseReleased = $false }
             }
