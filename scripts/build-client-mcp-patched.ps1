@@ -2,6 +2,7 @@
 param(
     [string]$OutputDirectory = '',
     [string]$UpstreamArtifactPath = '',
+    [string]$RetainedCandidateDirectory = '',
     [string]$PlatformBin = 'C:\Program Files\1cv8\8.3.27.2130\bin'
 )
 $ErrorActionPreference = 'Stop'
@@ -39,7 +40,7 @@ $xmlRoot = Join-Path $workRoot 'source'
 $baselinePath = Join-Path $workRoot 'upstream-client_mcp.cfe'
 $cfePath = Join-Path $OutputDirectory $manifest.artifact.fileName
 $archivePath = Join-Path $OutputDirectory $manifest.correspondingSource.fileName
-$provenancePath = Join-Path $OutputDirectory 'candidate.provenance.json'
+$provenancePath = Join-Path $OutputDirectory $(if ($RetainedCandidateDirectory) { 'candidate.native-qualification.json' } else { 'candidate.provenance.json' })
 $snapshot = $null
 $failure = $null
 $receipt = [ordered]@{
@@ -57,6 +58,28 @@ try {
     [Environment]::SetEnvironmentVariable('PLATFORM_PATH', $PlatformBin, 'Process')
     $template = Get-VanessaServiceInfoBaseTemplate
     if ($template.sha256 -cne [string]$manifest.build.serviceTemplateSha256) { throw 'CLIENT_MCP_BUILD_SERVICE_TEMPLATE_MISMATCH' }
+    if ($RetainedCandidateDirectory) {
+        $retained = Get-ClientMcpRetainedBuildEvidence -RepositoryRoot $repositoryRoot -Directory $RetainedCandidateDirectory -Manifest $manifest
+        $lock = (Get-Content -LiteralPath (Join-Path $repositoryRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaMcp.clientMcp
+        if ($retained.artifactSha256 -cne $lock.sha256 -or $retained.sourceArchiveSha256 -cne $lock.correspondingSource.sha256) { throw 'CLIENT_MCP_RETAINED_BUILD_LOCK_MISMATCH' }
+        foreach ($name in @($manifest.artifact.fileName, $manifest.correspondingSource.fileName, 'candidate.provenance.json')) {
+            [IO.File]::Copy((Join-Path $RetainedCandidateDirectory $name), (Join-Path $OutputDirectory $name), $false)
+        }
+        $receipt.kind = 'client-mcp-retained-native-qualification'
+        $receipt.buildProvenanceSha256 = (Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'candidate.provenance.json')).Hash.ToLowerInvariant()
+        $receipt.sourceIdentity = $retained.sourceIdentity
+        $receipt.artifactSha256 = $retained.artifactSha256
+        $receipt.sourceArchiveSha256 = $retained.sourceArchiveSha256
+        [void](Invoke-VanessaBuildOwnedNative -FilePath $platformExe -Arguments @('CREATEINFOBASE', (New-FileInfoBaseConnectionString -Path $basePath), '/DisableStartupDialogs', '/Out', (Join-Path $workRoot 'create-base.log')) -Bases @([pscustomobject]@{kind='file';path=$basePath}) -Purpose 'client-mcp-native-qualification-create' -CreateInfoBase -TimeoutSeconds 300)
+        Invoke-Designer -InfoBaseKind file -InfoBasePath $basePath -User '' -Password '' -DesignerArgs @('/RestoreIB', $template.path) | Out-Null
+        $snapshot = New-DesignerGate6Snapshot -InfoBaseKind file -InfoBasePath $basePath -User $template.user -Password ''
+        Invoke-Designer -InfoBaseKind file -InfoBasePath $basePath -User $template.user -Password '' -DesignerArgs @('/LoadCfg', $cfePath, '-Extension', 'client_mcp') | Out-Null
+        [void][IO.Directory]::CreateDirectory($xmlRoot)
+        Invoke-Designer -InfoBaseKind file -InfoBasePath $basePath -User $template.user -Password '' -DesignerArgs @('/DumpConfigToFiles', $xmlRoot, '-Extension', 'client_mcp', '-Format', 'Hierarchical') | Out-Null
+        $receipt.loadedSourceIdentity = Get-ClientMcpBuildSourceIdentity -SourceRoot $xmlRoot
+        $receipt.gate6 = Invoke-DesignerGate6CheckLadder -InfoBaseKind file -InfoBasePath $basePath -User $template.user -Password '' -ExtensionName client_mcp -SourceFingerprint $receipt.loadedSourceIdentity.fingerprint
+        $receipt.status = 'qualified'
+    } else {
     $baselineSource = if ($UpstreamArtifactPath) { [IO.Path]::GetFullPath($UpstreamArtifactPath) } else { [string]$manifest.upstream.url }
     [void](Invoke-ItlImmutableFileAcquire -Source $baselineSource -DestinationPath $baselinePath -ExpectedSha256 $manifest.upstream.sha256 -Label 'client_mcp upstream baseline')
     [void](Invoke-VanessaBuildOwnedNative -FilePath $platformExe -Arguments @('CREATEINFOBASE', (New-FileInfoBaseConnectionString -Path $basePath), '/DisableStartupDialogs', '/Out', (Join-Path $workRoot 'create-base.log')) -Bases @([pscustomobject]@{kind='file';path=$basePath}) -Purpose 'client-mcp-build-create' -CreateInfoBase -TimeoutSeconds 300)
@@ -89,6 +112,7 @@ try {
     New-ClientMcpSourceArchive -SourceDirectory $stage -DestinationPath $archivePath
     $receipt.sourceArchiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $receipt.status = 'built'
+    }
 } catch { $failure = $_; $receipt.status = 'failed'; $receipt.error = $_.Exception.Message } finally {
     try {
         if ($null -ne $snapshot) {

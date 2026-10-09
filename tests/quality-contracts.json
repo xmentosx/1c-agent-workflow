@@ -54,6 +54,8 @@
       "scripts/develop-e2e-cleanup.ps1"
     ],
     "release": [
+      "scripts/build-client-mcp-patched.ps1",
+      "scripts/client-mcp-build.ps1",
       "scripts/invoke-release-e2e.ps1",
       "scripts/test-release-readiness.ps1",
       "scripts/release-e2e/*",

@@ -719,11 +719,20 @@ function Get-DeliveryExactClientMcpCandidates {
             @($proof.gate6.steps | Where-Object { $_.exitCode -ne 0 -or $_.dumpResult -ne 0 }).Count -gt 0) {
             throw 'clientMcp source build has incompatible or incomplete native provenance.'
         }
+        $inputProof = $proof
+        $qualificationPath = Join-Path $folder 'candidate.native-qualification.json'
+        if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
+            $inputProof = Get-Content -LiteralPath $qualificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-ClientMcpNativeQualification -Qualification $inputProof -BuildProof $proof -BuildProofPath $provenancePath
+            # Recheck immutable source correspondence; historical build gates never
+            # substitute for the fresh checks of the actually retained CFE.
+            [void](Get-ClientMcpRetainedBuildEvidence -RepositoryRoot $CandidateRoot -Directory $folder -Manifest $manifest)
+        }
         $requiredInputs = @(Get-ClientMcpBuildInputPaths -RepositoryRoot $CandidateRoot)
-        if ((@($proof.buildInputs.PSObject.Properties.Name | Sort-Object) -join [char]0) -cne ($requiredInputs -join [char]0)) { throw 'clientMcp native build helper inventory differs from the exact candidate.' }
+        if ((@($inputProof.buildInputs.PSObject.Properties | ForEach-Object Name | Sort-Object) -join [char]0) -cne ($requiredInputs -join [char]0)) { throw 'clientMcp native build helper inventory differs from the exact candidate.' }
         foreach ($relativeInput in $requiredInputs) {
             $inputPath = Join-Path $CandidateRoot $relativeInput
-            $expectedInput = [string]$proof.buildInputs.$relativeInput
+            $expectedInput = [string]$inputProof.buildInputs.$relativeInput
             if ($expectedInput -cnotmatch '^[a-f0-9]{64}$' -or
                 (Get-FileHash -LiteralPath $inputPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedInput) {
                 throw "clientMcp build input differs from the exact candidate: $relativeInput"
