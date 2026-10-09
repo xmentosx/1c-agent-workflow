@@ -52,11 +52,11 @@ and publication channels below remain authoritative.
 
 | Режим | Когда | Цель | Hard limit |
 |---|---|---:|---:|
-| `Targeted` | регистрация одной доработки | 5 мин | 35 мин |
+| `Targeted` | регистрация одной доработки | 5 мин | 60 мин |
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
-| `Full` | все изолированные Pester и fork compatibility | 10 мин | 45 мин |
-| `Develop` | один Full и реальные стандартные journey | 25 мин | 125 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 259 мин |
+| `Full` | все изолированные Pester и fork compatibility | 10 мин | 70 мин |
+| `Develop` | один Full и реальные стандартные journey | 25 мин | 150 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 284 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -66,16 +66,13 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 изменяются. Оба summary сохраняют requested/explicit/effective worker count;
 `effective` означает разрешённый предел sharded runner, а не число фактически
 запущенных процессов. `Smoke` остаётся однопроцессным.
-Targeted hard budget 35 минут учитывает наблюдение 2026-10-03: параллельная
-часть lifecycle cohort заняла 917 секунд, затем обязательный serial Compact
-был прерван общим пределом 20 минут. Композитная оценка исходных 57 файлов —
-около 1522 секунд. Изменение самого quality-каталога выбирает ещё шесть файлов,
-включая serial ReleaseGate: для всех 63 файлов оценка составляет около
-1740 секунд. Это модель по сохранённым измерениям, не результат полного нового
-Compact; запас покрывает подготовку и рост проверок rollback. Последовательность
-Compact (реальный Ctrl+C), проверки и runtime watchdog не меняются. Цель 5 минут
-сохраняется; cache используется только при совпадении входов. Новый вес Compact
-появится лишь после измерения полного файла; от оценки timing weight не меняется.
+Hard limits учитывают наблюдения 2026-10-09: Targeted исчерпал 2100 секунд
+после 50 прошедших файлов перед примерно восьмиминутным serial Compact;
+Full исчерпал 2700 секунд, а продолжение завершило все 2745 проверок без
+ошибок за ещё 642 секунды. Это составные наблюдения двух запусков, а не
+измерение одного холодного прохода. Пределы 3600/4200 секунд дают запас к этим
+наблюдениям; они не обещают длительность и не меняют целевые бюджеты,
+timing weights, последовательность Compact или no-progress watchdog.
 
 Tracked timings задают порядок запуска и округляются вверх от сохранённых
 наблюдений; это не обещание длительности и не отдельный timeout.
@@ -113,6 +110,13 @@ PowerShell/Pester. Внешняя identity входит только для test
 кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
 выбранного шарда; поэтому semantic routing не может переиспользовать proof от
 другой версии полного entrypoint. Провальные результаты не кэшируются.
+Предел параллельных worker принадлежит scheduler и не входит в fingerprint:
+изолированный дочерний тест не получает его. Targeted с четырьмя worker и
+Full с тремя используют один proof при совпадении остальных входов. Старые
+ключи для пределов 1–4 проверяются по заново рассчитанным полным owner inputs
+и прежним SHA manifest/result/JUnit, затем сохраняются под общим ключом.
+Неизвестный owner или отсутствующая обязательная reuse dependency по-прежнему
+запрещают reuse. Это совместимость исходного кэша, без переноса live E2E proof.
 
 `reuseInputPaths` контракта добавляет загружаемые зависимости только в digest
 его test-файлов и не расширяет выбор `Targeted` по `paths`. Контракт нативной
@@ -245,7 +249,7 @@ Component preflight не хранит булево «нужен Release»: он 
 и его зависимость `config-cadence`. Явный `-RequireRelease` выбирает весь каталог.
 `verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
-Delivery-бюджеты: planning — 30 секунд; Develop static — 45 минут; Develop
+Delivery-бюджеты: planning — 30 секунд; Develop static — 70 минут; Develop
 `upgrade` — 20 минут, `fresh` — 60 минут; Release использует отдельный hard budget
 из `scripts/release-e2e/stages.json` для каждой capability. Этот бюджет включает
 как основное доказательство, так и обязательную очистку принадлежащих stage
@@ -262,8 +266,8 @@ fingerprints и правила reuse. Смена корня и повреждё�
 Checker и planner получают journey hard budget через один stateless getter из
 `developJourneys.routes.<journey>.hardSeconds` в `tests/quality-contracts.json`.
 У старых catalog без этого поля остаются 1200/2100 секунд; заданное невалидное
-значение отклоняется. Общий Develop hard budget — 7500 секунд, сумма static
-2700 + upgrade 1200 + fresh 3600. Остальные deadline, no-progress и проверки
+значение отклоняется. Общий Develop hard budget — 9000 секунд, сумма static
+4200 + upgrade 1200 + fresh 3600. Остальные deadline, no-progress и проверки
 не изменяются.
 
 Увеличение fresh основано на исходном cold journey кандидата `ce08d78a`,
@@ -286,9 +290,8 @@ verification/export/refresh/cleanup хвост входят в тот же budge
 до получения plan: маршрут дороже часа всё равно остановится без явного
 `-ApproveLongPlan`.
 
-Полный Pester inventory имеет hard budget 45 минут: на текущем стенде 30 минут
-истекли при ещё выполнявшемся `ReleaseGate.Tests.ps1` и двух оставшихся
-последовательных файлах. Каталог `pester-shards` входит в progress fingerprint, поэтому
+Полный Pester inventory использует hard budget из таблицы выше. Каталог
+`pester-shards` входит в progress fingerprint, поэтому
 лимит не скрывает зависание: отсутствие новых worker/result-артефактов по-прежнему
 останавливает стадию отдельным no-progress watchdog.
 
@@ -724,7 +727,7 @@ baseline DT took about 140 seconds and readiness 11 seconds; the 600-second
 part allows a comparable retry restore and remaining context/sealing work.
 These are reserve estimates, not a measured complete successful cadence or
 overhead. Full E2E ceilings sum to 11700 seconds; E2E including reserve is
-12840, and the whole Release gate with Full static 2700 is 15540 seconds.
+12840, and the whole Release gate with Full static 4200 is 17040 seconds.
 Selected capabilities keep their original scope and include the reserve once.
 No fake capability is added. New immutable plans pin the reserve and include
 it even when all selected runtime evidence is reusable; retained older plans

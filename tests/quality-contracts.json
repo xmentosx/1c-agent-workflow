@@ -5,13 +5,13 @@
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
     "targetedTargetSeconds": 300,
-    "targetedHardSeconds": 2100,
+    "targetedHardSeconds": 3600,
     "fullTargetSeconds": 600,
-    "fullHardSeconds": 2700,
+    "fullHardSeconds": 4200,
     "developTargetSeconds": 1500,
-    "developHardSeconds": 7500,
+    "developHardSeconds": 9000,
     "releaseTargetSeconds": 3600,
-    "releaseHardSeconds": 15540
+    "releaseHardSeconds": 17040
   },
   "pesterWorkers": {
     "targetedImplicitDefault": 4

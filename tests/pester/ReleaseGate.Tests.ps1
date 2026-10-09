@@ -1906,7 +1906,8 @@ Describe 'Shared Release budget projection' {
         $oldPinnedAllowance | Should -Be ($projection.gateHardSeconds + 300)
         Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot | Should -Be $oldPinnedAllowance
         Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 8940 | Should -Be $oldPinnedAllowance
-        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 16000 | Should -Be 16000
+        $largerPlanBudget = $oldPinnedAllowance + 1000
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds $largerPlanBudget | Should -Be $largerPlanBudget
         $quality.budgets.releaseHardSeconds--
         { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*PROJECTION_MISMATCH*'
     }
@@ -1941,7 +1942,7 @@ Describe 'Shared Release budget projection' {
         $initialization = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('$releaseBudget = Get-ReleaseE2EBudgetProjection') })
         $initialization.Count | Should -Be 1
         . ([scriptblock]::Create($initialization[0].Extent.Text))
-        $modeHardBudgetSeconds | Should -Be 15540
+        $modeHardBudgetSeconds | Should -Be 17040
         $releaseE2EHardBudgetSeconds | Should -Be 9540
         $call = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PowerShellChild' -and $node.Extent.Text.Contains('-LogName "release-e2e"') }, $true))
         $call.Count | Should -Be 1
@@ -1959,7 +1960,7 @@ Describe 'Shared Release budget projection' {
         $TimeoutSeconds = $observed.timeout
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(8600) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
-        $effectiveTimeoutSeconds | Should -Be 6940
+        $effectiveTimeoutSeconds | Should -Be 8440
         $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(10) }
         foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
         $effectiveTimeoutSeconds | Should -Be 9540

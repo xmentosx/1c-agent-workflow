@@ -3,6 +3,82 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
 }
+Describe 'Scheduler-independent Pester proof' {
+    It 'reuses Targeted proof in Full with another worker limit, retaining input and SHA guards: <Producer>' -ForEach @(
+        @{ Producer = 'current' }
+        @{ Producer = 'legacy-workers-4' }
+    ) {
+        $root = Join-Path $TestDrive "Кэш с пробелом $Producer"
+        $testRoot = Join-Path $root 'tests/pester'
+        New-Item -ItemType Directory -Force -Path $testRoot, (Join-Path $root 'fixture') | Out-Null
+        & git -C $root init *> $null
+        & git -C $root config user.name 'ITL Test'
+        & git -C $root config user.email 'itl-test@example.invalid'
+        Set-Content -LiteralPath (Join-Path $root '.gitignore') -Encoding UTF8 -Value "out*/`nselection.json`ncounter*.txt"
+        $contracts = foreach ($name in @('A','B')) {
+            Set-Content -LiteralPath (Join-Path $root "fixture/$name.ps1") -Encoding UTF8 -Value 'owner-v1'
+            Set-Content -LiteralPath (Join-Path $testRoot "$name.Tests.ps1") -Encoding UTF8 -Value "Describe '$name' { It 'executes' { Add-Content -LiteralPath (Join-Path `$PSScriptRoot '../../counter$name.txt') -Value 'executed'; `$true | Should -BeTrue } }"
+            [ordered]@{ id=$name; owner='fixture'; primaryTest="tests/pester/$name.Tests.ps1"; gate='targeted'; budgetSeconds=30; paths=@("fixture/$name.ps1"); tests=@("tests/pester/$name.Tests.ps1") }
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), (@{schemaVersion=1;contracts=@($contracts)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $selectionPath = Join-Path $root 'selection.json'
+        [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/A.Tests.ps1","tests/pester/B.Tests.ps1"]}', [Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -m fixture *> $null
+        $runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $producerPath = $runner
+        if ($Producer -eq 'legacy-workers-4') {
+            # Produce the previous runtime key through the real runner. Keep all
+            # owner inputs, child execution and cache manifest checks unchanged.
+            $legacy = [IO.File]::ReadAllText($runner)
+            $legacy = $legacy.Replace('$lines.Add($runtimeIdentity)', '$lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")')
+            $legacy = $legacy.Replace('$PSScriptRoot', ("'" + (Split-Path -Parent $runner).Replace("'", "''") + "'"))
+            $producerPath = Join-Path $TestDrive 'legacy-shard-runner.ps1'
+            [IO.File]::WriteAllText($producerPath, $legacy, [Text.UTF8Encoding]::new($false))
+        }
+        $summaries = @()
+        foreach ($attempt in 1..4) {
+            if ($attempt -eq 3) { Set-Content -LiteralPath (Join-Path $root 'fixture/A.ps1') -Encoding UTF8 -Value 'owner-v2' }
+            if ($attempt -eq 4) {
+                foreach ($cachedResult in @(Get-ChildItem -LiteralPath (Join-Path $root '.git/itl/pester-shards/v1') -Recurse -File -Filter result.json)) {
+                    $proof = Get-Content -LiteralPath $cachedResult.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ([IO.Path]::GetFileName($proof.paths[0]) -eq 'B.Tests.ps1') {
+                        Add-Content -LiteralPath $cachedResult.FullName -Encoding UTF8 -Value 'corrupt'
+                    }
+                }
+            }
+            $output = Join-Path $root "out$attempt"
+            $arguments = @('-RepositoryRoot', $root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', $(if ($attempt -eq 1) { '4' } else { '3' }))
+            if ($attempt -eq 1) { $arguments += @('-SelectionPath', $selectionPath) }
+            $path = if ($attempt -eq 1) { $producerPath } else { $runner }
+            $run = Invoke-TestPowerShellFile -FilePath $path -Arguments $arguments
+            if ($attempt -eq 4) {
+                $run.exitCode | Should -Not -Be 0 -Because 'corrupted proof must never produce a successful reused qualification'
+                ($run.stderr -join [Environment]::NewLine) | Should -Match 'Incomplete Pester shard cache is not empty'
+                continue
+            }
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            $summaries += ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+        }
+        @($summaries | ForEach-Object { $_.executedWorkerCount }) | Should -Be @(2,0,1)
+        @($summaries | ForEach-Object { $_.reusedWorkerCount }) | Should -Be @(0,2,1)
+        @($summaries | ForEach-Object { $_.pesterWorkers.effective }) | Should -Be @(4,3,3)
+        foreach ($name in @('A','B')) {
+            @(Get-Content -LiteralPath (Join-Path $root "counter$name.txt")).Count | Should -Be 2
+        }
+    }
+    It 'allows the observed passing cold cohorts and retains bounded aggregate budgets' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        # 2026-10-09: Targeted exhausted 2100s before an ~8-minute serial tail;
+        # Full exhausted 2700s before a 642-second successful continuation.
+        $catalog.budgets.targetedHardSeconds | Should -BeGreaterThan (2100 + 480 + 300)
+        $catalog.budgets.fullHardSeconds | Should -BeGreaterThan (2700 + 642 + 300)
+        $catalog.budgets.targetedHardSeconds | Should -BeLessThan $catalog.budgets.fullHardSeconds
+        $catalog.budgets.developHardSeconds | Should -Be ($catalog.budgets.fullHardSeconds + 1200 + 3600)
+        Get-ReleaseE2EBudgetProjection -QualityCatalog $catalog -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot) | Should -Not -BeNullOrEmpty
+    }
+}
 Describe 'Release native progress observation' {
     It 'observes owned native progress while retaining idle and hard limits: <Scenario>' -TestCases @(
         @{ Scenario = 'release-worktree'; ExpectedFailure = ''; NativeRoot = 'release' }
@@ -1245,7 +1321,7 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$priorResult\.paths = @\(\[string\]\$item\.path\)'
         $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
         $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url -DestinationPath \$sharedArchive -ExpectedSha256 \$expected'
-        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy external path normalized to exact content identity'
+        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy scheduler or external identity normalized to exact owner inputs'
         $runner | Should -Match 'legacyInputDigests'; $runner | Should -Match 'legacyArchiveCandidates'
         $runner | Should -Match 'rev-list --max-count=8 HEAD'; $runner | Should -Match 'recentRootByHead'
         $runner | Should -Match 'hash-object --path \$RelativePath -- \$AbsolutePath'
@@ -1618,10 +1694,10 @@ Describe 'Develop journey catalog hard budgets' {
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
         Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 3600
-        [int]$catalog.budgets.developHardSeconds | Should -Be 7500
+        [int]$catalog.budgets.developHardSeconds | Should -Be 9000
         ([int]$catalog.budgets.fullHardSeconds +
             (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade) +
-            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 7500
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 9000
         Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
         $map = @{ developJourneys=@{ routes=@{ fresh=@{ hardSeconds=[long]3600 } } } }
         Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $map -Journey fresh | Should -Be 3600
