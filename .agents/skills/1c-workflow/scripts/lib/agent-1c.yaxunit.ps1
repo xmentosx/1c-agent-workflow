@@ -434,6 +434,13 @@ function Get-YAxUnitArtifactDiagnosticAssessment {
         if ($rawLog.EndsWith("`n")) { $rawLog = $rawLog.Substring(0, $rawLog.Length - 1) }
         $assessment.raw.lines = @($rawLog -split "`n")
         $assessment.raw.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $assessment.raw.lines)
+        # The pinned CFE also emits this complete applicability profile with
+        # its native extension version label. Keep raw bytes and reject mixed
+        # labels; this is not diagnostic text normalization or a version regex.
+        if ($Step -ceq 'applicability' -and $assessment.raw.lines[0].StartsWith('YAXUNIT (25.12): ', [StringComparison]::Ordinal)) {
+            $expectedLines = @($expectedLines | ForEach-Object { 'YAXUNIT (25.12)' + $_.Substring('YAXUNIT'.Length) })
+            $assessment.expected.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
         $assessment.raw.resultSha256 = (Get-FileHash -LiteralPath $assessment.raw.resultPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
         $result = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.resultPath
         $assessment.raw.resultSha256 = $result.sha256

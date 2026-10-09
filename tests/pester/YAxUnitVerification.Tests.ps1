@@ -336,6 +336,46 @@ Describe "Pinned YAxUnit vendor diagnostic assessment" {
         $assessment.rejectionReason | Should -BeNullOrEmpty
     }
 
+    It "admits the exact version-labelled applicability output captured from the official CFE" {
+        $fixture = New-YAxUnitDiagnosticFixture
+        $lines = @(
+            'YAXUNIT (25.12): Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+            'YAXUNIT (25.12): Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+            'YAXUNIT (25.12): Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+            'YAXUNIT (25.12): Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+        )
+        [IO.File]::WriteAllText($fixture.verdict.logPath, ($lines -join "`r`n") + "`r`n", [Text.UTF8Encoding]::new($true))
+        (Get-FileHash -LiteralPath $fixture.verdict.logPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly '17f1a74bd5c1e62691e2194e9e65b44f28e7525196c81949fd7dceba7eb847ef'
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.status | Should -BeExactly 'vendor-warn'
+        $assessment.applyAllowed | Should -BeTrue
+        $assessment.nativePassed | Should -BeFalse
+        $assessment.cleanPassed | Should -BeFalse
+        @($assessment.raw.lines).Count | Should -Be 4
+        $assessment.raw.lines[0] | Should -BeExactly $lines[0]
+        $assessment.expected.multiset[0].text | Should -BeExactly $lines[0]
+    }
+
+    It "rejects a version-labelled applicability profile with <Mutation>" -TestCases @(
+        @{ Mutation = 'different version' }, @{ Mutation = 'mixed labels' }, @{ Mutation = 'changed annotation' }
+        @{ Mutation = 'missing repetition' }, @{ Mutation = 'extra diagnostic' }
+    ) {
+        param($Mutation)
+        $fixture = New-YAxUnitDiagnosticFixture
+        $lines = @($applicabilityLines | ForEach-Object { $_.Replace('YAXUNIT:', 'YAXUNIT (25.12):') })
+        switch ($Mutation) {
+            'different version' { $lines = @($lines | ForEach-Object { $_.Replace('(25.12)', '(25.11)') }) }
+            'mixed labels' { $lines[2] = $applicabilityLines[2] }
+            'changed annotation' { $lines[1] = $lines[1].Replace('ЮТErrorDisplayProcessing', 'ЮТДругойМетод') }
+            'missing repetition' { $lines = @($lines[0..2]) }
+            'extra diagnostic' { $lines += 'YAXUNIT (25.12): Не найден метод ДругойМетод' }
+        }
+        [IO.File]::WriteAllText($fixture.verdict.logPath, ($lines -join "`r`n") + "`r`n", [Text.UTF8Encoding]::new($true))
+        $assessment = Invoke-YAxUnitDiagnosticFixtureAssessment $fixture
+        $assessment.status | Should -BeExactly 'rejected'
+        $assessment.applyAllowed | Should -BeFalse
+    }
+
     It "normalizes only one optional BOM and line separators, retaining ordinal text and counts" {
         $fixture = New-YAxUnitDiagnosticFixture -Bom $false -Newline "`n"
         $text = $applicabilityLines[3], $applicabilityLines[1], $applicabilityLines[2], $applicabilityLines[0] -join "`n"

@@ -322,6 +322,13 @@ substring/regex, общее количество строк или success-фр�
 нечитаемый result/output, иная пара кодов, compiler failure либо nonzero
 applicability оставляют исходный отказ. Обычный clean `0/0` путь не меняется.
 
+Живой Release 2026-10-09 выявил второй точный native applicability profile
+того же official CFE: префикс всех четырёх строк `YAXUNIT (25.12):` вместо
+`YAXUNIT:`. Owner допускает оба полных профиля отдельно, сохраняя raw bytes и
+SHA; смешанные префиксы, другая версия и изменение текста/кратности запрещены.
+CheckConfig и strict modules этим уточнением не меняются. Причинный отказ,
+rollback и RED/GREEN сохранены в `evidence/yaxunit-native-version-label.md`.
+
 Существующий load/check/apply owner проверяет exact CFE SHA перед editable load,
 после load и непосредственно перед первым apply. WARN сохраняет полный raw,
 native exit/DumpResult и SHA, baseline identity и фактический context; matching
