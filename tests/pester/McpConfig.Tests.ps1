@@ -280,10 +280,33 @@
         $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
         $dependencyLock.dependencies.itlOndemandMcp.assetName | Should -Be "itl-ondemand-mcp-windows-amd64.exe"
         $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
-        $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
-        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
+        $clientComponentRoot = Join-Path $RepoRoot "third-party\client-mcp\v0.6.5-itl-r1"
+        $clientManifestPath = Join-Path $clientComponentRoot "manifest.json"
+        $clientManifest = Get-Content -LiteralPath $clientManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $clientPin = $dependencyLock.dependencies.vanessaMcp.clientMcp
+        $clientManifest.component | Should -Be "clientMcp"
+        $clientManifest.upstream.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
+        $clientPin.version | Should -Be $clientManifest.compatibilityVersion
+        $clientPin.assetName | Should -Be $clientManifest.artifact.fileName
+        $clientPin.releaseTag | Should -Be $clientManifest.artifact.releaseTag
+        $clientPin.downstreamRevision | Should -Be $clientManifest.downstreamRevision
+        $clientPin.upstreamCommit | Should -Be $clientManifest.upstream.commit
+        $clientPin.manifestSha256 | Should -Be (Get-FileHash -LiteralPath $clientManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $clientPin.source | Should -Be "workflow-pinned"
+        $clientPin.sha256 | Should -Match '^[a-f0-9]{64}$'
+        $clientPin.sha256 | Should -Not -Be $clientManifest.upstream.sha256
+        $releaseUrl = "https://github.com/xmentosx/1c-agent-workflow/releases/download/$($clientManifest.artifact.releaseTag)/"
+        $clientPin.url | Should -Be ($releaseUrl + $clientManifest.artifact.fileName)
+        $clientPin.correspondingSource.assetName | Should -Be $clientManifest.correspondingSource.fileName
+        $clientPin.correspondingSource.releaseTag | Should -Be $clientManifest.artifact.releaseTag
+        $clientPin.correspondingSource.url | Should -Be ($releaseUrl + $clientManifest.correspondingSource.fileName)
+        $clientPin.correspondingSource.source | Should -Be "workflow-pinned"
+        $clientPin.correspondingSource.sha256 | Should -Match '^[a-f0-9]{64}$'
+        foreach ($notice in @("LICENSE.upstream", "LICENSE.GPL3", "ITL-NOTICE.txt")) {
+            (Get-FileHash -LiteralPath (Join-Path $clientComponentRoot $notice) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $clientManifest.notices.$notice
+        }
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r4.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
@@ -302,6 +325,9 @@
         $skillText | Should -Match "on-demand"
         $skillText | Should -Match "resolve_tool"
         $skillText | Should -Match "call_tool"
+        $skillText | Should -Match "TOOL_DATA"
+        $skillText | Should -Match "read access alone is not permission to load a configuration"
+        $skillText | Should -Match "explicit-request restriction above still applies"
     }
 
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
@@ -368,7 +394,9 @@
         $HelperText | Should -Not -Match "-p 8006:8006"
         $HelperText | Should -Not -Match "ITL_MCP_(?!RECONCILE_INTEGRITY_FAILED)"
         $HelperText | Should -Not -Match "/itl-mcp"
-        $HelperText | Should -Not -Match "itl-mcp"
+        # This exact receipt kind is the documented source-validation protocol,
+        # not a legacy MCP command. Keep the legacy-name guard for all other text.
+        $HelperText.Replace("'itl-mcp-source-validation'", "''") | Should -Not -Match "itl-mcp"
         $HelperText | Should -Not -Match "(?<![A-Za-z0-9])mcpSetupDuringInit"
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $false
@@ -1385,7 +1413,7 @@ enabled = true
                 function Get-Vibecoding1cMcpCodexHomeConfigPath {
                     return $script:TestCodexHomeConfigPath
                 }
-                Write-Vibecoding1cMcpClientConfig *> $null
+                Write-Vibecoding1cMcpClientConfig -Client kilocode *> $null
             }
 
             $updatedCodex = Get-Content -Encoding UTF8 -Raw $codexHomeConfig
@@ -1469,13 +1497,111 @@ enabled = true
         }
     }
 
+    It "installs the exact local client MCP build after persisted stand settings overwrite the old runtime path" {
+        $root = Join-Path $TestDrive 'Стенд CFE с пробелом'
+        $names = @('DEPENDENCY_MODE', 'ITL_ARTIFACT_CACHE_ROOT', 'VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            $cache = Join-Path $root 'Общий кэш с пробелом'
+            $candidateRoot = Join-Path $root 'Нативный кандидат с пробелом'
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), $candidateRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/project.json') -Destination (Join-Path $root '.agent-1c/project.json')
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $pin = $lock.dependencies.vanessaMcp.clientMcp
+            $candidate = Join-Path $candidateRoot ([string]$pin.assetName)
+            [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('fixture native CFE exact locked bytes'))
+            $pin.sha256 = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+            $pin.url = 'https://unpublished.invalid/client-mcp/' + [string]$pin.assetName
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), ($lock | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+            $oldPath = Join-Path $cache 'vanessa-mcp-clientMcp/v0.6.5/d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f/client_mcp.cfe'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $oldPath) | Out-Null
+            [IO.File]::WriteAllBytes($oldPath, [Text.Encoding]::UTF8.GetBytes('old published client CFE'))
+            $oldSha = (Get-FileHash -LiteralPath $oldPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText((Join-Path $root '.dev.env'), "DEPENDENCY_MODE=locked`r`nITL_ARTIFACT_CACHE_ROOT=$cache`r`nVANESSA_MCP_CLIENT_CFE_PATH=$oldPath`r`n", [Text.UTF8Encoding]::new($true))
+            $lockHash = (Get-FileHash -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json') -Algorithm SHA256).Hash
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'locked', 'Process')
+                [Environment]::SetEnvironmentVariable('ITL_ARTIFACT_CACHE_ROOT', $cache, 'Process')
+                [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', $candidate, 'Process')
+                [Environment]::SetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', $candidate, 'Process')
+                $script:fixtureUrlRequests = 0
+                function Invoke-WebRequest {
+                    $script:fixtureUrlRequests++
+                    throw 'Fixture immutable production URL is not published yet'
+                }
+                # The actual earlier post-copy caller rereads persisted stand settings.
+                Save-VanessaAutomationSettingsToDotEnv -EpfPath (Join-Path $root 'fixture.epf') -Version 'fixture' *> $null
+                (Get-EnvValue -Name 'VANESSA_MCP_CLIENT_CFE_PATH') | Should -BeExactly $oldPath
+                $definition = @(Get-VanessaMcpArtifactDefinitions | Where-Object lockKey -eq 'clientMcp')[0]
+                $target = Get-VanessaMcpManagedArtifactPath -Definition $definition
+                Test-Path -LiteralPath $target | Should -BeFalse
+                $artifact = Install-VanessaMcpArtifact -Definition $definition -ForceDownload
+                $artifact.path | Should -BeExactly $target
+                $artifact.sha256 | Should -BeExactly $pin.sha256
+                $script:fixtureUrlRequests | Should -Be 0
+                (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $pin.sha256
+                (Get-FileHash -LiteralPath $oldPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $oldSha
+                (Get-FileHash -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json') -Algorithm SHA256).Hash | Should -BeExactly $lockHash
+                # A later cache edit still fails the ordinary locked-cache boundary.
+                [IO.File]::WriteAllBytes($target, [Text.Encoding]::UTF8.GetBytes('changed cached CFE'))
+                { Install-VanessaMcpArtifact -Definition $definition } | Should -Throw '*cached artifact SHA256 mismatch*'
+                $script:fixtureUrlRequests | Should -Be 0
+            }
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+    }
+    It "does not consume a local client MCP build for old pins or mismatched requests and rejects changed candidate bytes" {
+        $root = Join-Path $TestDrive 'Кандидат CFE отрицательные границы'
+        [void][IO.Directory]::CreateDirectory($root)
+        $saved = [Environment]::GetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', 'Process')
+        try {
+            $candidate = Join-Path $root 'client_mcp.v0.6.5-itl-r1.cfe'
+            [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('exact candidate bytes'))
+            $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', $candidate, 'Process')
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $script:fixtureActiveClientPin = [pscustomobject]@{
+                    version='v0.6.5'; assetName='client_mcp.v0.6.5-itl-r1.cfe'; sha256=$hash
+                    source='workflow-pinned'; downstreamRevision='itl-r1'; manifestSha256=('a' * 64)
+                }
+                function Get-VanessaMcpArtifactLockEntry { return $script:fixtureActiveClientPin }
+                $definition = [pscustomobject]@{ lockKey='clientMcp' }
+                $target = Join-Path $root 'not-admitted.cfe'
+                foreach ($request in @(
+                    [pscustomobject]@{name='client_mcp.cfe';version='v0.6.5';expectedSha256=$hash},
+                    [pscustomobject]@{name='client_mcp.v0.6.5-itl-r1.cfe';version='old-version';expectedSha256=$hash},
+                    [pscustomobject]@{name='client_mcp.v0.6.5-itl-r1.cfe';version='v0.6.5';expectedSha256=('b' * 64)}
+                )) {
+                    (Save-VanessaMcpClientSourceBuildArtifact -Definition $definition -AssetInfo $request -TargetPath $target) | Should -BeFalse
+                    Test-Path -LiteralPath $target | Should -BeFalse
+                }
+                $exact = [pscustomobject]@{name='client_mcp.v0.6.5-itl-r1.cfe';version='v0.6.5';expectedSha256=$hash}
+                $script:fixtureActiveClientPin.source = 'upstream release asset'
+                (Save-VanessaMcpClientSourceBuildArtifact -Definition $definition -AssetInfo $exact -TargetPath $target) | Should -BeFalse
+                Test-Path -LiteralPath $target | Should -BeFalse
+                $script:fixtureActiveClientPin.source = 'workflow-pinned'
+                [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('changed candidate bytes'))
+                { Save-VanessaMcpClientSourceBuildArtifact -Definition $definition -AssetInfo $exact -TargetPath $target } | Should -Throw '*SHA256 mismatch*'
+                Test-Path -LiteralPath $target | Should -BeFalse
+                @(Get-ChildItem -LiteralPath $root -File -Filter '*.partial').Count | Should -Be 0
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', $saved, 'Process')
+        }
+    }
     It "caches Vanessa UI MCP CFE artifacts, shares them with a worktree, and verifies locked hashes" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-cache-test-" + [guid]::NewGuid().ToString("N"))
         $masterRoot = Join-Path $tempRoot "master"
         $branchRoot = Join-Path $tempRoot "branch"
         $oldArtifactCacheRoot = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", "Process")
+        $oldClientCfePath = [Environment]::GetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", "Process")
 
         try {
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", $null, "Process")
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", (Join-Path $tempRoot "Общий кэш с пробелом"), "Process")
             New-Item -ItemType Directory -Force -Path (Join-Path $masterRoot ".agent-1c"), (Join-Path $branchRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
@@ -1546,6 +1672,7 @@ DEPENDENCY_MODE=fresh
             } | Should -Throw "*SHA256 mismatch*"
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $oldArtifactCacheRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", $oldClientCfePath, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -1628,7 +1755,11 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
             $result.dotEnv | Should -Not -Match ([regex]::Escape($invalidExtensionPath))
         } finally {
             foreach ($name in $environmentNames) {
-                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                if ($null -eq $previousEnvironment[$name]) {
+                    Remove-Item -Path ("Env:" + $name) -ErrorAction SilentlyContinue
+                } else {
+                    [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                }
             }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2284,6 +2415,81 @@ enabled = true
             @($managed.owners.'kilocode/ondemand-facade').Count | Should -Be 2
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "inspects configured MCP status without changing an unattached or ambiguous invocation client (<Case>)" -TestCases @(
+        @{ Case = 'single-unattached'; Clients = @('kilocode'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-unattached'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-ambiguous'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = ''; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_AMBIGUOUS' },
+        @{ Case = 'attached-self-only'; Clients = @('kilocode', 'cursor'); InvocationClient = 'kilocode'; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = 'kilocode'; ExpectedStatus = 'available' }
+    ) {
+        param($Case, $Clients, $InvocationClient, $IdentifiedClient, $ExpectedActive, $ExpectedInvocation, $ExpectedStatus)
+        $root = Join-Path $TestDrive ('Статус MCP с пробелом ' + $Case)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo'), (Join-Path $root '.cursor') | Out-Null
+        $configPath = Join-Path $root '.agent-1c/project.json'
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (@{ aiRules = @{ tools = $Clients } } | ConvertTo-Json -Depth 5)
+        Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (@{ tools = $Clients; files = @{} } | ConvertTo-Json -Depth 5)
+        Set-Content -LiteralPath (Join-Path $root '.kilo/kilo.json') -Encoding UTF8 -Value '{"mcp":{"1C-docs-mcp":{"type":"remote","url":"http://fixture/docs"}}}'
+        Set-Content -LiteralPath (Join-Path $root '.cursor/mcp.json') -Encoding UTF8 -Value '{"mcpServers":{"Templates":{"type":"remote","url":"http://fixture/templates"}}}'
+        $paths = @($configPath, $manifestPath, (Join-Path $root '.kilo/kilo.json'), (Join-Path $root '.cursor/mcp.json'))
+        $before = @($paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = $InvocationClient
+            function Get-InitAgentExecutionEnvironment { if ($IdentifiedClient) { return @{ CODEX_THREAD_ID = 'verified-test-executor' } }; return @{} }
+            function Get-InitAgentExecutionProcessChain { return @() }
+            $endpoints = @(
+                [pscustomobject]@{ id = 'docs'; scope = 'global'; name = 'itl-1c-docs'; url = 'http://fixture/docs'; provider = 'remote'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = '1C-docs-mcp' } },
+                [pscustomobject]@{ id = 'templates'; scope = 'global'; name = 'itl-1c-templates'; url = 'http://fixture/templates'; provider = 'remote'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = 'Templates' } }
+            )
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { [pscustomobject]@{ allEndpoints = $endpoints } }
+            function Get-Vibecoding1cMcpCurrentStateServers { @() }
+            function Select-Vibecoding1cMcpManifestServers { $endpoints }
+            function Test-Vibecoding1cMcpServerEnabled { return $true }
+            function Get-Vibecoding1cMcpSelectedProvider { return 'remote' }
+            function Test-Vibecoding1cMcpServerNeedsRemoteConfig { return $false }
+            function Get-Vibecoding1cMcpSelectedHostId { return '' }
+            function Get-Vibecoding1cMcpEndpointFreshness { return 'stale' }
+            $summary = Get-Vibecoding1cMcpStatusSummary
+            @($summary.active | Sort-Object) | Should -Be @($ExpectedActive | Sort-Object)
+            $summary.invocationClient | Should -BeExactly $ExpectedInvocation
+            $summary.clientSelectionStatus | Should -BeExactly $ExpectedStatus
+            if ($ExpectedInvocation) { @($summary.inspectionClients) | Should -Be @($ExpectedInvocation) }
+            else {
+                @($summary.inspectionClients) | Should -Be $Clients
+                if ($ExpectedStatus -eq 'ITL_CLIENT_NOT_ATTACHED') { { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_NOT_ATTACHED*' }
+                else { { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_AMBIGUOUS*' }
+                $summaryText = Write-Vibecoding1cMcpSummaryLines -Summary $summary 6>&1 | Out-String
+                $summaryText | Should -Match 'read-only; invocation client unavailable'
+                $summaryText | Should -Match 'membership unchanged'
+            }
+            $AgentTarget | Should -BeExactly $InvocationClient
+            @(Get-AgentTargets) | Should -Be $Clients
+        }
+        @($paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) | Should -Be $before
+    }
+
+    It "does not inspect MCP config when installed membership disagrees with configured membership" {
+        $root = Join-Path $TestDrive 'Несогласованный MCP с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+        Set-Content -LiteralPath (Join-Path $root '.ai-rules.json') -Encoding UTF8 -Value '{"tools":["codex"],"files":{}}'
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = 'kilocode'
+            $script:inspectionCalls = 0
+            function Get-ItlClientMcpEndpointKeys { $script:inspectionCalls++; throw 'Invalid manifest must not reach config inspection' }
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { [pscustomobject]@{ allEndpoints = @() } }
+            function Get-Vibecoding1cMcpCurrentStateServers { @() }
+            function Select-Vibecoding1cMcpManifestServers { @() }
+            $summary = Get-Vibecoding1cMcpStatusSummary
+            $summary.clientSelectionError | Should -Match 'Configured and installed ai_rules_1c clients disagree'
+            $summary.clientSelectionStatus | Should -BeExactly 'unavailable'
+            @($summary.inspectionClients).Count | Should -Be 0
+            $script:inspectionCalls | Should -Be 0
+            { Get-ItlActiveClient -Client kilocode } | Should -Throw '*Configured and installed ai_rules_1c clients disagree*'
         }
     }
 

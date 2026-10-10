@@ -115,6 +115,7 @@ function Get-DevelopPublicationEnvironmentIdentity {
     $identity = [ordered]@{
         schemaVersion = 1
         projectRoot = $projectRoot.ToLowerInvariant()
+        clientSelection = Get-SourceE2EClientIdentity -ProjectRoot $projectRoot -AgentTarget ([string](Get-Variable -Name AgentTarget -ValueOnly -ErrorAction SilentlyContinue))
         projectConfig = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".agent-1c\project.json")
         standConfig = Get-DeliveryFileIdentity -Path $standConfigPath
         devEnv = $(if (Test-Path -LiteralPath (Join-Path $projectRoot ".dev.env") -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path (Join-Path $projectRoot ".dev.env") } else { "missing" })
@@ -125,7 +126,9 @@ function Get-DevelopPublicationEnvironmentIdentity {
 
 function Get-DeliveryComponentFinalizerIdentity {
     $path = if ($script:ComponentFinalizerScript) { $script:ComponentFinalizerScript } else { Join-Path $script:Root "scripts\source-delivery-component.ps1" }
-    return Get-DeliveryFileIdentity -Path $path
+    $identity = Get-DeliveryFileIdentity -Path $path
+    if ($script:ComponentFinalizerScript) { return $identity }
+    return Get-DeliveryCanonicalJsonSha256 -Value ([ordered]@{ component=$identity; statelessBuildContract=(Get-DeliveryFileIdentity -Path (Join-Path $script:Root 'scripts/client-mcp-build.ps1')) })
 }
 
 function Get-DeliveryCompatibilityPromoterIdentity {
@@ -644,6 +647,7 @@ function Publish-AccumulatedDevelop {
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
         if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
+            Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
             Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
         }
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 1) {
@@ -952,6 +956,8 @@ function Release-DevelopToMaster {
             $qualificationReused = $true
             Write-Verbose "Release train reuses exact-candidate Develop and Release qualification; no runtime gate is repeated."
         } else {
+            Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
+            Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
             Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop")
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
             Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"

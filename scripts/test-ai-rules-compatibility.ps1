@@ -8,7 +8,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi", "zcode", "mimocode")
 
 if ([string]::IsNullOrWhiteSpace($AiRulesRef)) {
     $lockPath = Join-Path (Split-Path -Parent $PSScriptRoot) "templates\dependency-lock.json"
@@ -22,7 +22,9 @@ function Get-ManifestEntries {
     param([object]$Manifest)
     if ($null -eq $Manifest.files) { return @() }
     return @($Manifest.files.PSObject.Properties | ForEach-Object {
-        [pscustomobject]@{ target = [string]$_.Name; source = [string]$_.Value.source; owners = @($_.Value.owners); scope = [string]$_.Value.scope }
+        $scope = if ($_.Value.PSObject.Properties['scope']) { [string]$_.Value.scope } else { '' }
+        $owners = if ($_.Value.PSObject.Properties['owners']) { @($_.Value.owners) } else { @() }
+        [pscustomobject]@{ target = [string]$_.Name; source = [string]$_.Value.source; owners = $owners; scope = $scope }
     })
 }
 
@@ -40,9 +42,36 @@ function Assert-OpenSpecBundle {
         # maps command skills into .agents/skills). The installer manifest is
         # the authoritative source-to-target mapping.
         $matches = @($entries | Where-Object { $_.source.Replace('\', '/') -eq $source })
-        if ($matches.Count -eq 0 -or @($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) { $missing += $relative }
+        if ($matches.Count -eq 0 -or @($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) { $missing += $relative; continue }
+        foreach ($match in $matches) {
+            if ($Tool -eq 'codex' -and $match.target -notlike '.agents/skills/*/*') {
+                throw "Codex OpenSpec bundle must use the canonical .agents/skills directory: $($match.target)"
+            }
+            $installed = Join-Path $ProjectRoot $match.target
+            if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) {
+                throw "OpenSpec bundle for $Tool contains stale or altered phase bytes: $($match.target)"
+            }
+        }
     }
     if ($missing.Count -gt 0) { throw "OpenSpec bundle for $Tool is incomplete: $($missing -join ', ')" }
+    $bundleVersionProperty = $Manifest.integrations.openspec.PSObject.Properties['artifactsBundleVersion']
+    if ($Tool -eq 'codex' -and $null -ne $bundleVersionProperty -and [string]$bundleVersionProperty.Value -eq '1.13.1') {
+        $legacy = @($entries | Where-Object {
+            $_.source.Replace('\','/') -like 'content/openspec-bundle/codex/*' -and
+            $_.target.Replace('\','/') -match '^\.(?:codex/skills/(?:openspec-|opsx-)|agents/skills/opsx-)'
+        } | ForEach-Object { $_.target })
+        foreach ($phase in @('explore','propose','apply-change','archive-change','update-change','sync-specs')) {
+            $relative = ".codex/skills/openspec-$phase/SKILL.md"
+            if (Test-Path -LiteralPath (Join-Path $ProjectRoot $relative) -PathType Leaf) { $legacy += $relative }
+        }
+        foreach ($phase in @('explore','propose','apply','archive','update','sync')) {
+            foreach ($directory in @('.codex/skills','.agents/skills')) {
+                $relative = "$directory/opsx-$phase/SKILL.md"
+                if (Test-Path -LiteralPath (Join-Path $ProjectRoot $relative) -PathType Leaf) { $legacy += $relative }
+            }
+        }
+        if ($legacy.Count -gt 0) { throw "Codex OpenSpec 1.13.1 retains retired aliases: $(@($legacy | Sort-Object -Unique) -join ', ')" }
+    }
 }
 
 function Assert-WorkflowExtensionTools {
@@ -112,13 +141,28 @@ function Get-ProjectFileDigest {
 }
 
 $workRoot = if ($WorkingDirectory) { [IO.Path]::GetFullPath($WorkingDirectory) } else { Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-rules-compat-" + [guid]::NewGuid().ToString("N")) }
+$createdWorkRoot = $false
 try {
-    New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
-    $rulesRoot = if (Test-Path -LiteralPath $AiRulesSource -PathType Container) { (Resolve-Path -LiteralPath $AiRulesSource).Path } else {
-        $clone = Join-Path $workRoot "ai_rules_1c"
-        & git clone --depth 1 --branch $AiRulesRef --single-branch $AiRulesSource $clone
+    if (Test-Path -LiteralPath $workRoot) { throw "Compatibility work directory already exists: $workRoot" }
+    New-Item -ItemType Directory -Path $workRoot | Out-Null
+    $createdWorkRoot = $true
+    $rulesRoot = Join-Path $workRoot "ai_rules_1c"
+    if (Test-Path -LiteralPath $AiRulesSource -PathType Container) {
+        # A local development checkout may contain ignored node_modules or gate output.
+        # Install from an exact Git clone, as publication would, not from those live files.
+        & git clone --quiet --no-hardlinks $AiRulesSource $rulesRoot
+        if ($LASTEXITCODE -ne 0) { throw "Failed to clone local ai_rules_1c source: $AiRulesSource" }
+        & git -C $rulesRoot checkout --quiet --detach $AiRulesRef
+        if ($LASTEXITCODE -ne 0) { throw "Failed to select ai_rules_1c ref '$AiRulesRef' in the clean clone." }
+    } else {
+        & git clone --depth 1 --branch $AiRulesRef --single-branch $AiRulesSource $rulesRoot
         if ($LASTEXITCODE -ne 0) { throw "Failed to clone ai_rules_1c from $AiRulesSource" }
-        $clone
+    }
+    $requestedCommit = ([string](& git -C $rulesRoot rev-parse "$AiRulesRef^{commit}" 2>$null)).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $requestedCommit) { throw "ai_rules_1c reference cannot be resolved in the selected checkout: $AiRulesRef" }
+    $actualCommit = ([string](& git -C $rulesRoot rev-parse HEAD 2>$null)).Trim()
+    if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $requestedCommit) {
+        throw "ai_rules_1c compatibility requires exact checkout HEAD '$requestedCommit', got '$actualCommit'. Select the requested ref in an isolated checkout before retrying."
     }
     $installScript = Join-Path $rulesRoot "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript -PathType Leaf)) { throw "ai_rules_1c install.ps1 was not found: $installScript" }
@@ -148,6 +192,12 @@ try {
         $manifest = Get-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$manifest.protocol -ne "1.1") { throw "ai_rules_1c manifest protocol must be 1.1 for $client" }
         if (@($manifest.tools).Count -ne 1 -or [string]$manifest.tools[0] -ne $client) { throw "Exact-one-client manifest failed for $client" }
+        $installedMemory = Get-Content -LiteralPath (Join-Path $projectRoot 'memory.md') -Raw -Encoding UTF8
+        if ($installedMemory -notmatch 'managed ITL project' -or
+            $installedMemory -notmatch 'project-scoped `1c-templates-mcp` memory' -or
+            $installedMemory -notmatch 'Outside managed ITL projects') {
+            throw "Installed memory route does not preserve the managed ITL project boundary for $client"
+        }
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $client
         Assert-WorkflowExtensionTools -HelperPath $workflowHelper -ProjectRoot $projectRoot -Manifest $manifest -Client $client
         foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
@@ -156,7 +206,7 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $projectRoot "LLM-RULES.md") -Algorithm SHA256).Hash -ne $llmHash) { throw "LLM-RULES.md changed during init for $client" }
         if ($client -eq "kilocode") {
             $kilo = Get-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ((@($kilo.instructions) -join ',') -ne 'docs/custom.md,USER-RULES.md' -or [string]$kilo.permission.bash -ne 'ask') { throw "Kilo shared config merge failed" }
+            if ((@($kilo.instructions) -join ',') -ne 'docs/custom.md' -or [string]$kilo.permission.bash -ne 'ask') { throw "Kilo shared config preservation failed" }
         }
         $beforeUpdate = Get-ProjectFileDigest -Root $projectRoot
         & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript update -ProjectRoot $projectRoot -Source $rulesRoot -McpMode delegated -NonInteractive -AssumeYes
@@ -167,8 +217,15 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c doctor failed for $client with exit code $LASTEXITCODE" }
     }
     Assert-CodexPromptSnapshotUnchanged -Before $promptBefore -After (Get-CodexPromptSnapshot -RulesRoot $rulesRoot)
-    Write-Host "ai_rules_1c compatibility passed for all ten supported clients. Protocol 1.1; McpMode delegated."
+    Write-Host "ai_rules_1c compatibility passed for all twelve supported clients. Protocol 1.1; McpMode delegated."
 } finally {
-    if (-not $KeepArtifacts -and (Test-Path -LiteralPath $workRoot)) { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    elseif ($KeepArtifacts) { Write-Host "Compatibility artifacts retained: $workRoot" }
+    if ($createdWorkRoot -and (Test-Path -LiteralPath $workRoot -PathType Container)) {
+        $actual = [IO.Path]::GetFullPath((Get-Item -LiteralPath $workRoot -Force).FullName)
+        if (-not [string]::Equals($actual, $workRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            ((Get-Item -LiteralPath $workRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing recursive cleanup of changed compatibility work directory: $workRoot"
+        }
+        if (-not $KeepArtifacts) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
+        else { Write-Host "Compatibility artifacts retained: $workRoot" }
+    }
 }

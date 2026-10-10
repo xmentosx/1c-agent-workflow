@@ -42,6 +42,14 @@ branch name:
   -NewDevBranchName <unused-release-branch-name>
 ```
 
+For unattended recovery, add `-AgentTarget <attached-client>` when the executing
+host client differs from the stand's configured client. For example,
+`-AgentTarget kilocode` selects an already attached Kilo surface. The installed
+helper still validates configured and installed membership; this option does
+not attach clients or change project configuration. Omitting it preserves
+ordinary executing-client detection. Retain the same explicit selection when
+repeating an interrupted recovery.
+
 The wrapper delegates database and branch creation to the installed
 `fork-dev-branch` helper. It verifies the new branch, fixture marker, clean
 worktree and unsafe-action protection, then atomically switches only the ignored
@@ -50,6 +58,15 @@ of the old config remain for diagnosis. If the fork is interrupted, repeat the
 same command and branch name; the config remains on the old branch until the
 fork finishes and validates. A worktree that already ran Release is not a safe
 fixture merely because its Git tree is clean.
+
+For unattended Develop/Release E2E, the source runners explicitly select the sole
+configured client of each actual target root (including a separate server stand).
+With multiple configured clients, repeat the same `source-delivery.ps1`,
+`check.ps1`, or `invoke-*-e2e.ps1` command with `-AgentTarget kilocode` (or the
+intended configured client). Explicit input is forwarded to the installed helper;
+its membership and attachment guard remains authoritative. Fresh bootstrap and
+its subsequent journey consistently use `kilocode`. A changed selection invalidates
+client-bound plan/qualification/cache reuse; no project/client config is rewritten.
 
 ## Each fork/workflow release
 

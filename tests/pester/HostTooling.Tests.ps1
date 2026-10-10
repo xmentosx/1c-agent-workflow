@@ -21,6 +21,18 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "checks dedicated Linux watchdog and refresh ownership boundaries" -Tag LinuxHost {
+        $configPath = Join-Path $TestDrive 'linux-host.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $python = Resolve-PythonExecutable -Config @{}
+            $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/linux-native-host'
+            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B','-m','unittest','discover','-s',$testPath,'-p','test_*.py') -TimeoutSec 30 -Description 'Linux host ownership and refresh regressions'
+            $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
+        }
+    }
+
     It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(
         @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
         @{ Existing = $false; Deny = $true }, @{ Existing = $true; Deny = $true }
@@ -4635,6 +4647,313 @@ services:
             { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would change embedding model*'
             $old.channel = 'stable'
             { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*legacy layout*'
+        }
+    }
+}
+
+Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
+    BeforeAll {
+        $sessionSourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+        # Load the real functions without dispatching host setup/status or touching runtime state.
+        foreach ($relative in @('vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1', 'vibecoding1c-mcp-host/beta-cutover.ps1')) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $sessionSourceRoot $relative), [ref]$null, [ref]$null)
+            $definitions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+            . ([scriptblock]::Create(($definitions.Extent.Text -join "`n")))
+        }
+    }
+    BeforeEach {
+        $script:DryRun = $false
+        $script:HostMcpFixture = @{
+            sessions = @{ foreign = $true }; created = 0; deleted = @(); peak = 1; requests = @()
+            sessionless = $false; notifyFailure = $false; deleteFailure = $false; listFailure = $false
+            toolFailures = 0; toolCalls = 0; toolResult = @{ structuredContent = @{ result = 'completed' } }
+        }
+        Mock Start-Sleep { }
+        Mock Invoke-WebRequest {
+            param($Uri, $Method, $Headers, $Body)
+            $fixture = $script:HostMcpFixture
+            if ($Method -eq 'Delete') {
+                $id = [string]$Headers['mcp-session-id']
+                if ($id -eq 'foreign' -or -not $fixture.sessions.ContainsKey($id)) { throw 'Attempted to delete an unowned or already closed session.' }
+                $fixture.deleted += $id
+                if ($fixture.deleteFailure) { throw 'fixture cleanup failure' }
+                $fixture.sessions.Remove($id)
+                return
+            }
+            $text = if ($Body -is [byte[]]) { [Text.Encoding]::UTF8.GetString($Body) } else { [string]$Body }
+            $request = $text | ConvertFrom-Json
+            $fixture.requests += [string]$request.method
+            $responseHeaders = @{}
+            $result = @{}
+            if ($request.method -eq 'initialize') {
+                if ($fixture.sessions.Count -ge 64) { throw 'fixture session cap 64' }
+                $fixture.created++
+                if (-not $fixture.sessionless) {
+                    $id = "owned-$($fixture.created)"
+                    $fixture.sessions[$id] = $true
+                    $responseHeaders['mcp-session-id'] = $id
+                    $fixture.peak = [Math]::Max($fixture.peak, $fixture.sessions.Count)
+                }
+            } else {
+                if (-not $fixture.sessionless -and -not $fixture.sessions.ContainsKey([string]$Headers['mcp-session-id'])) { throw 'Request used a closed session.' }
+                switch ($request.method) {
+                    'notifications/initialized' { if ($fixture.notifyFailure) { throw 'fixture initialized failure' } }
+                    'tools/list' {
+                        if ($request.params.PSObject.Properties['cursor']) {
+                            if ($fixture.listFailure) { throw 'fixture second-page failure' }
+                            $result = @{ tools = @(@{ name = 'second' }) }
+                        } else { $result = @{ tools = @(@{ name = 'first' }); nextCursor = 'page-2' } }
+                    }
+                    'tools/call' {
+                        $fixture.toolCalls++
+                        if ($fixture.toolFailures -gt 0) { $fixture.toolFailures--; throw 'fixture tool failure' }
+                        $result = $fixture.toolResult
+                    }
+                    default { throw "Unexpected fixture method: $($request.method)" }
+                }
+            }
+            $bytes = [Text.Encoding]::UTF8.GetBytes((@{ jsonrpc = '2.0'; id = 1; result = $result } | ConvertTo-Json -Depth 20 -Compress))
+            [pscustomobject]@{
+                Headers = $responseHeaders
+                BaseResponse = [pscustomobject]@{ ResponseUri = [uri]'http://fixture.test/effective/mcp' }
+                RawContentStream = [IO.MemoryStream]::new($bytes)
+            }
+        }
+    }
+    AfterEach { Remove-Variable -Scope Script -Name HostMcpFixture -ErrorAction SilentlyContinue }
+
+    It "does not exhaust the observed 64-session cap across repeated paginated and functional probes" {
+        foreach ($iteration in 1..40) {
+            $tools = @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp')
+            ($tools.name -join ',') | Should -BeExactly 'first,second'
+            $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+            $health.status | Should -Be 'qualified' -Because $health.message
+        }
+        $script:HostMcpFixture.created | Should -Be 80
+        $script:HostMcpFixture.deleted.Count | Should -Be 80
+        $script:HostMcpFixture.peak | Should -Be 2
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+        Should -Invoke Invoke-WebRequest -Times 80 -Exactly -ParameterFilter { $Method -eq 'Delete' -and $Uri -eq 'http://fixture.test/effective/mcp' }
+    }
+
+    It "releases a session when initialized notification fails and preserves that failure if cleanup fails" -TestCases @(@{ CleanupFails = $false }, @{ CleanupFails = $true }) {
+        param($CleanupFails)
+        $script:HostMcpFixture.notifyFailure = $true
+        $script:HostMcpFixture.deleteFailure = $CleanupFails
+        { Open-HostMcpConnection -Url 'http://fixture.test/mcp' -WarningAction SilentlyContinue } | Should -Throw '*fixture initialized failure*'
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.requests | Should -Not -Contain 'tools/list'
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+    }
+
+    It "releases after a later tools page fails and does not replace the primary error" -TestCases @(@{ CleanupFails = $false }, @{ CleanupFails = $true }) {
+        param($CleanupFails)
+        $script:HostMcpFixture.listFailure = $true
+        $script:HostMcpFixture.deleteFailure = $CleanupFails
+        { Get-HostMcpToolsList -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture second-page failure*'
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        @($script:HostMcpFixture.requests | Where-Object { $_ -eq 'tools/list' }).Count | Should -Be 2
+    }
+
+    It "keeps a successful result when the server rejects cleanup, including WarningPreference Stop" {
+        $script:HostMcpFixture.deleteFailure = $true
+        $previousWarningPreference = $WarningPreference
+        try {
+            $WarningPreference = 'Stop'
+            @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp').Count | Should -Be 2
+        } finally { $WarningPreference = $previousWarningPreference }
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+    }
+
+    It "does not infer session ownership from foreign headers, tolerates stateless servers, and closes only once" {
+        Close-HostMcpConnection -Connection $null
+        Close-HostMcpConnection -Connection @{ url = 'http://fixture.test/mcp'; headers = @{ 'mcp-session-id' = 'foreign' } }
+        $script:HostMcpFixture.sessionless = $true
+        @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp').Count | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 0
+        $script:HostMcpFixture.sessionless = $false
+        $connection = Open-HostMcpConnection -Url 'http://fixture.test/mcp'
+        $connection.headers['mcp-session-id'] = 'foreign'
+        Close-HostMcpConnection -Connection $connection
+        Close-HostMcpConnection -Connection $connection
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.deleted[0] | Should -BeExactly 'owned-2'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "releases failed functional and beta tool probes without changing their error contracts" {
+        $script:HostMcpFixture.toolFailures = 1
+        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+        $health.status | Should -Be 'degraded'
+        $health.message | Should -Match 'fixture tool failure'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolFailures = 1
+        { Assert-BetaDocsFunctionalCall -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolResult = @{ structuredContent = @{ result = 'String documentation' } }
+        Assert-BetaDocsFunctionalCall -Url 'http://fixture.test/mcp'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolFailures = 1
+        { Get-BetaConfigurationIndexActivity -ServerId code -Url 'http://fixture.test/mcp' } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.toolResult = @{ structuredContent = @{ data = @{ indexing = @{ running = $false }; collections = @{ modules = 1 } } } }
+        (Get-BetaConfigurationIndexActivity -ServerId code -Url 'http://fixture.test/mcp').running | Should -BeFalse
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "closes initial and replacement indexing sessions on successful completion and terminal failure" -TestCases @(@{ Fails = $false }, @{ Fails = $true }) {
+        param($Fails)
+        $connection = Open-HostMcpConnection -Url 'http://fixture.test/mcp'
+        $script:HostMcpFixture.toolFailures = 1
+        if ($Fails) { $script:HostMcpFixture.toolResult = @{ structuredContent = @{ status = 'failed' } } }
+        try {
+            if ($Fails) { { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool stats -ServerId code -ConfigId fixture -TimeoutMinutes 1 -PollSeconds 0 } | Should -Throw '*Incremental indexing failed*' }
+            else { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool stats -ServerId code -ConfigId fixture -TimeoutMinutes 1 -PollSeconds 0 }
+        } finally { Close-HostMcpConnection -Connection $connection }
+        $script:HostMcpFixture.created | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 2
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "releases indexing operation sessions even when its first tool request fails" {
+        $script:HostMcpFixture.toolFailures = 1
+        { Invoke-CodeIncrementalIndex -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 } } | Should -Throw '*fixture tool failure*'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Invoke-CodeIncrementalIndex -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 }
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Mock Restart-GraphForIncrementalIndex { }
+        Invoke-GraphIncrementalIndex -Config @{} -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 }
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+    }
+
+    It "releases readiness-only connections in candidate and rollback checks" {
+        $context = @{ serverId = 'syntax'; configId = 'fixture'; runtime = @{ url = 'http://fixture.test/mcp'; hostPort = 8000; containerName = 'candidate' }; old = @{ directUrl = 'http://fixture.test/mcp'; containerName = 'stable' } }
+        Wait-BetaCandidateReady -Context $context
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        Mock Get-HostContainerPublishState { 'missing' }
+        Mock Invoke-DockerCommandChecked { }
+        Restore-StableAfterBetaFailure -Config @{} -Context $context
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.created | Should -Be 2
+        $script:HostMcpFixture.deleted.Count | Should -Be 2
+    }
+}
+
+Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
+    BeforeAll {
+        $sourcePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
+        $functions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -in @('Get-ObjectValue', 'Open-HostMcpConnection', 'Close-HostMcpConnection') })
+        . ([scriptblock]::Create(($functions.Extent.Text -join "`n")))
+        $realWebRequestCmdlet = Get-Command Invoke-WebRequest -CommandType Cmdlet
+    }
+
+    It "uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>" -TestCases @(
+        @{ Scenario = 'direct'; FailNotify = $false }, @{ Scenario = 'direct'; FailNotify = $true },
+        @{ Scenario = 'redirect'; FailNotify = $false }, @{ Scenario = 'redirect'; FailNotify = $true },
+        @{ Scenario = 'fallback'; FailNotify = $false }, @{ Scenario = 'fallback'; FailNotify = $true }
+    ) {
+        param($Scenario, $FailNotify)
+        # A private TCP listener exercises Invoke-WebRequest on both Windows PowerShell
+        # and pwsh without URL ACLs, external servers, Docker, or production MCP sessions.
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+        $state = [hashtable]::Synchronized(@{ stop = $false; error = ''; requests = [Collections.ArrayList]::new(); active = 1; deleted = 0 })
+        $worker = [powershell]::Create()
+        [void]$worker.AddScript({
+            param($Listener, $State, $FailNotify, $Port)
+            try {
+                while (-not $State.stop) {
+                    if (-not $Listener.Pending()) { Start-Sleep -Milliseconds 5; continue }
+                    $client = $Listener.AcceptTcpClient()
+                    $stream = $client.GetStream()
+                    $stream.ReadTimeout = 5000
+                    $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 4096, $true)
+                    try {
+                        $requestLine = $reader.ReadLine().Split(' ')
+                        $headers = @{}
+                        while ($line = $reader.ReadLine()) {
+                            $split = $line.IndexOf(':')
+                            $headers[$line.Substring(0, $split)] = $line.Substring($split + 1).Trim()
+                        }
+                        if ($headers['Expect'] -eq '100-continue') {
+                            $continue = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 100 Continue`r`n`r`n")
+                            $stream.Write($continue, 0, $continue.Length)
+                            $stream.Flush()
+                        }
+                        $length = [int]$headers['Content-Length']
+                        $buffer = New-Object char[] $length
+                        $offset = 0
+                        while ($offset -lt $length) {
+                            $read = $reader.Read($buffer, $offset, $length - $offset)
+                            if ($read -le 0) { throw 'Incomplete loopback request body.' }
+                            $offset += $read
+                        }
+                        $body = if ($length) { (-join $buffer) | ConvertFrom-Json } else { $null }
+                        [void]$State.requests.Add(@{ method = $requestLine[0]; path = $requestLine[1]; session = [string]$headers['mcp-session-id'] })
+                        $status = '200 OK'; $extra = ''; $json = '{}'
+                        if ($requestLine[1] -eq '/start') {
+                            $status = '307 Temporary Redirect'
+                            $extra = "Location: http://127.0.0.1:$Port/mcp`r`n"
+                        } elseif ($requestLine[0] -eq 'DELETE') {
+                            if ($headers['mcp-session-id'] -ne 'owned-loopback') { throw 'Loopback cleanup attempted a foreign session.' }
+                            $State.active--; $State.deleted++; $State.stop = $true
+                        } elseif ($body.method -eq 'initialize') {
+                            $State.active++
+                            $extra = "mcp-session-id: owned-loopback`r`n"
+                            $json = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"loopback","version":"1"}}}'
+                        } elseif ($body.method -eq 'notifications/initialized') {
+                            if ($FailNotify) { $status = '500 FixtureFailure'; $json = '{"error":"fixture initialized failure"}' }
+                            else { $status = '202 Accepted'; $json = '' }
+                        } else { throw 'Unexpected loopback request.' }
+                        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+                        $head = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`n${extra}Content-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
+                        $stream.Write($head, 0, $head.Length)
+                        $stream.Write($bytes, 0, $bytes.Length)
+                        $stream.Flush()
+                    } finally { $reader.Dispose(); $client.Dispose() }
+                }
+            } catch { $State.error = $_.Exception.Message }
+            finally { $Listener.Stop() }
+        }).AddArgument($listener).AddArgument($state).AddArgument($FailNotify).AddArgument($port)
+        $async = $worker.BeginInvoke()
+        $connection = $null
+        try {
+            if ($Scenario -eq 'fallback') {
+                # Retain a real HTTP initialize exchange, then remove optional response
+                # URI metadata to prove the already-known initial URL is preserved.
+                Mock Invoke-WebRequest {
+                    param($Uri, $Method, $Headers, $Body, $TimeoutSec, $ContentType)
+                    $response = & $realWebRequestCmdlet -UseBasicParsing -Uri $Uri -Method $Method -Headers $Headers -Body $Body -TimeoutSec 10 -ContentType $ContentType
+                    [pscustomobject]@{ Headers = $response.Headers; BaseResponse = [pscustomobject]@{} }
+                } -ParameterFilter { $Method -eq 'Post' -and $Body -match '"method":"initialize"' }
+            }
+            $path = if ($Scenario -eq 'redirect') { 'start' } else { 'mcp' }
+            $failure = $null
+            try { $connection = Open-HostMcpConnection -Url "http://127.0.0.1:$port/$path" -TimeoutSec 10 }
+            catch { $failure = $_ }
+            if ($FailNotify) {
+                $failure | Should -Not -BeNullOrEmpty
+                [int]$failure.Exception.Response.StatusCode | Should -Be 500
+            } else {
+                $failure | Should -BeNullOrEmpty
+                $connection.url | Should -BeExactly "http://127.0.0.1:$port/mcp"
+                Close-HostMcpConnection -Connection $connection
+            }
+            $async.AsyncWaitHandle.WaitOne(5000) | Should -BeTrue
+            $worker.EndInvoke($async)
+            $state.error | Should -BeNullOrEmpty
+            $state.deleted | Should -Be 1
+            $state.active | Should -Be 1
+            @($state.requests | Where-Object { $_.method -eq 'DELETE' -and $_.path -eq '/mcp' -and $_.session -eq 'owned-loopback' }).Count | Should -Be 1
+        } finally {
+            Close-HostMcpConnection -Connection $connection
+            $state.stop = $true
+            $listener.Stop()
+            if (-not $async.IsCompleted) { $worker.Stop() }
+            $worker.Dispose()
         }
     }
 }

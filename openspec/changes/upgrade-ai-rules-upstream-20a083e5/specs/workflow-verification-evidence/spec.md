@@ -123,13 +123,15 @@ application, or main configuration load/apply with relevant metadata/modules not
 covered by MCP validation. It SHALL bind the artifact to the editable configuration and
 run the upstream platform ladder before UpdateDBCfg. CheckModules SHALL include
 applicable runtime modes; extension applicability SHALL be checked for extensions;
-CheckConfig SHALL follow. The same owner SHALL provide authorized dev/test
+CheckConfig SHALL follow when selected. The same owner SHALL provide authorized dev/test
 platform fallback for unavailable Gates 1–3 validators where applicable.
 Snapshot, per-infobase guard, native process ownership, timeout and scoped recovery
 SHALL remain authoritative; no separate raw launcher or second EDT deployment
 owner is introduced. Failure SHALL stop apply and provide the original operation's
 recovery/continuation. Pass SHALL require process exit, a fresh numeric DumpResult
-and Out diagnostics to agree; warnings fail. Success phrases SHALL neutralize
+and Out diagnostics to agree for a clean pass; module compilation and extension
+applicability warnings fail. Main-configuration structural findings SHALL follow
+the legacy compatibility requirement below. Success phrases SHALL neutralize
 only their own fragments, never other findings on the same line.
 Evidence SHALL record artifact/loaded-state identity, target/extension, platform,
 modes and all three result signals. Reuse SHALL require matching relevant inputs.
@@ -153,3 +155,181 @@ File-only workflow update has no Gate 6 trigger.
 #### Scenario: No suitable platform target or EDT owns deployment
 - **WHEN** no authorized matching dev/test base is available or the project uses the qualified EDT validation/update path
 - **THEN** the former remains explicitly unverified under delivery policy and the latter uses its equivalent evidence without a second deployment owner
+
+### Requirement: EV8a Small validated CF changes retain the conditional Gate 6 trigger
+The existing load owner SHALL distinguish a small partial main-configuration
+change covered by current MCP validation from a full/unknown/uncovered load.
+Verified coverage SHALL bind saved BSL/XML inputs and raw validator results to
+the exact artifact and target; a setting, declared success or stale receipt is
+not coverage. A covered small partial change SHALL NOT automatically select the
+full platform ladder. Missing or invalid coverage SHALL retain the applicable
+platform fallback and its original-command continuation. Full loads and extension
+applicability SHALL NOT be skipped through partial-change evidence.
+The covered load SHALL retain snapshot-backed editable-load/apply boundaries
+and revalidate source and captured evidence bytes after load, before apply.
+The upstream full-text syntax fallback SHALL qualify only when the complete
+strict UTF-8 saved module matches the actual request and both provider input
+descriptors. Removing an encoding BOM SHALL preserve every subsequent character
+and line ending. A matching path alone SHALL NOT establish the remote input.
+
+#### Scenario: Covered partial change
+- **WHEN** a small partial CF delta has matching successful validation for every relevant saved input
+- **THEN** loading it does not automatically run the full configuration check
+- **AND** editing an input or invalidating its proof removes that exemption
+
+#### Scenario: Validation evidence changes during editable load
+- **WHEN** the saved input, captured receipt or its raw validator artifacts change during the covered editable load
+- **THEN** the owner stops before database apply and restores its confirmed snapshot and cursor
+- **AND** repeating the original command requires current proof or the original platform fallback
+
+#### Scenario: Remote syntax provider exposes only the full-text tool
+- **WHEN** the actual provider lacks the file tool but validates the complete saved module through syntaxcheck
+- **THEN** matching raw request, response, analyzer and input descriptors can qualify that same saved input
+- **AND** snippets, rewritten input, ordinal text mismatches and unbound remote paths retain the platform fallback
+
+### Requirement: EV8b Legacy structural findings do not create unrelated product work
+For a main configuration, the load owner SHALL preserve complete native results
+and distinguish introduced or worsened structural findings from proven existing
+findings outside the change scope. A previous result SHALL be usable only when
+its source corpus, target/layer, platform, runtime modes and relevant extension
+state are established; an empty unrelated base or the first failed log is not
+an approved baseline. Unknown diagnostics, incomplete evidence and inside-scope
+findings SHALL remain unresolved and stop the dependent apply until adjudicated.
+Confirmed unchanged outside-scope findings MAY permit the original operation
+to continue with an explicit legacy-diagnostics assessment. That assessment
+SHALL NOT relabel native nonzero results or warnings as a clean Gate 6 pass.
+Compilation, exact-target/source identity, snapshot, guard, timeout, rollback
+and fresh executable verification remain strict. Extension applicability remains
+strict apart from the explicitly artifact-bound YAxUnit vendor Out diagnostics
+below; its native exit/DumpResult `0/0` remain mandatory.
+The owner SHALL use operation-local evidence and the existing recovery flow;
+no global whitelist, baseline coordinator or blanket warning suppression is added.
+After a confirmed exact owned snapshot rollback and cursor restoration, the
+existing load owner SHALL retain the previous loaded-corpus proof for retry;
+it SHALL NOT mark the failed candidate passed or infer restored proof from an
+unconfirmed, borrowed or ambiguous apply result.
+
+The decision accepted on 2026-10-07 adds one subordinate exception to EV8/EV8b:
+the existing YAxUnit dependency owner MAY internally select its canonical
+artifact-diagnostic baseline only for engine `YAXUNIT`, version/releaseTag `25.12`,
+asset `YAxUnit-25.12.cfe`, upstream commit
+`15f7ae557d17b59bd80daad503efd8a3114690e5`, the official release URL
+`https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe`
+and SHA256 `805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70`.
+This canonical record SHALL NOT be supplied by a public skip/override, inferred
+from any new lock pin, or applied to product CF/CFE, the tests extension or other
+dependencies. Compilation SHALL still strictly pass with native exit/DumpResult
+`0/0`. Applicability SHALL require native `0/0`; configuration admission SHALL
+require the exact native `101/101` pair and complete per-step raw multiset below.
+
+| Step | Exact raw diagnostic line | Required count |
+|---|---|---|
+| Applicability | `YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".` | 2 |
+| Applicability | `YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".` | 2 |
+| Configuration | `YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"` | 1 |
+| Configuration | `YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"` | 1 |
+
+The owner SHALL compare the entire strict UTF-8 Out ordinally, preserving all
+message characters and spaces. Only the encoding BOM, line separators and an
+ordinary terminal newline MAY be normalized for comparison; original raw bytes
+and SHA SHALL be retained. The two step multisets SHALL NOT be pooled. Unknown,
+additional, altered or missing lines, repetition overflow, unreadable/invalid
+output or result, nonzero compilation/applicability, or any other nonzero
+exit/DumpResult pair SHALL retain the original refusal and snapshot recovery.
+An ordinary clean `0/0` result remains on the existing strict clean path.
+
+The checked-load owner SHALL bind the CFE to the canonical pin and recheck its
+SHA before editable load, after load and immediately before first apply.
+A matching exception SHALL retain explicit WARN, complete raw codes/hashes,
+baseline identity and actual context, with `nativePassed=false` and
+`cleanPassed=false`; it SHALL NOT rewrite the generic native verdict.
+Snapshot, per-infobase guard, timeout, split load/apply, rollback,
+`-WarningsAsErrors`, runtime protection reconciliation and exact runtime proof
+SHALL remain unchanged. No new persistent coordinator, public switch,
+platform/topology support barrier, vendor modification or pin change is added.
+
+Observed live evidence covers only platform `8.3.27.2130`, a file infobase and
+thin-client dispatch. Instrumented callback evidence SHALL NOT qualify the
+official CFE or original Release; a failed whole diagnostic driver, including
+its raw database-byte postcondition, SHALL NOT be relabelled as acceptance.
+Ordinary-client/server/other-platform acceptance remains unverified, without
+creating a new barrier solely from that absence. The original Release SHALL
+still exercise the official CFE and both original ondemand backend families
+with unchanged workload, assertions, runtime proof and cleanup.
+
+#### Scenario: Exact pinned YAxUnit vendor diagnostics
+- **WHEN** the internal dependency owner selects the exact canonical engine pin, strict modules pass, and applicability/configuration match their complete raw multisets and native code pairs
+- **THEN** the original guarded apply can continue with explicit WARN and all snapshot/runtime obligations retained
+- **AND** the original native failed verdict remains visible; no clean Gate 6 or Release acceptance is inferred
+
+#### Scenario: Artifact or diagnostics differ from the accepted YAxUnit baseline
+- **WHEN** pin/name/scope/CFE bytes drift, any required SHA recheck fails, or diagnostics/results differ from the exact per-step baseline
+- **THEN** the same operation refuses apply and preserves its existing snapshot-backed continuation
+- **AND** generic intercepted-method, product CF/CFE, tests-extension and other dependency failures remain strict
+
+#### Scenario: Existing configuration has unchanged structural findings
+- **WHEN** a full deployment reproduces confirmed previous outside-scope findings and introduces no unresolved finding
+- **THEN** the original load/check/apply and verification can complete with the findings retained as warnings
+- **AND** the native failed result remains visible and is not reported as a clean check
+
+#### Scenario: New failure hidden among existing findings
+- **WHEN** a candidate introduces or worsens a finding, lacks complete comparison evidence, or fails compilation/applicability
+- **THEN** the original operation stops before apply and retains snapshot-backed recovery
+
+#### Scenario: Original load continues after a confirmed rollback
+- **WHEN** a rejected candidate is restored to the exact owned prior target and cursor and its defect is corrected
+- **THEN** the same load command can reconstruct the previous-corpus context and complete its original apply
+- **AND** the rejected candidate and its native failure remain visible as failed evidence
+
+#### Scenario: A confirmed previous compiler defect is repaired
+- **WHEN** complete before evidence contains a recognized compiler defect inside the repair scope and strict current CheckModules proves it was resolved
+- **THEN** the assessment retains it as a resolved previous compiler finding separate from legacy structural findings
+- **AND** an unknown or incomplete before diagnostic, any current compiler defect, or missing current compilation proof still stops apply
+
+### Requirement: EV8c The original PM5 acceptance reproducer is retained
+Acceptance SHALL establish the actual test corpus and installed extension
+inventory, repair the confirmed procedure-with-return compilation defect in the
+owned stand, and repeat the original fresh journey on that stand. It SHALL NOT
+replace the corpus, remove check switches, hide diagnostic lines, or bypass
+Vanessa, export, refresh and rollback to avoid the observed failure. Existing
+failed receipts and source-restoration evidence SHALL be retained.
+
+#### Scenario: Original fresh acceptance follows the owned corpus repair
+- **WHEN** the confirmed stand compilation defect is corrected with complete source/target evidence
+- **THEN** the same original fresh journey, Vanessa, export and refresh are repeated with original workload and assertions
+- **AND** the failed runs and snapshot recovery proof remain available
+
+### Requirement: EV9 Essential UI needs actual managed-route evidence
+New projects SHALL default UI_TESTING to essential under accepted Q23. Missing or
+empty resolves to essential; invalid retains the upstream manual fallback and
+MUST NOT be reclassified as a stored legacy manual for migration. After an
+authorized change reaches the dev/test infobase, essential SHALL automatically
+check important new or changed user-visible behaviour with actual expected/actual
+UI evidence bound to that artifact and target. auto checks all applicable
+scenarios; manual requires an explicit request; off and a broader no-UI instruction
+remain respected under EV4/EV5. Enabling policy alone MUST NOT authorize deploy,
+infobase loading or the opt-in test-fix loop.
+In managed scope the new fork SHALL use the existing ITL Vanessa UI route with
+its authorization, provider and native-launch ownership contracts. Missing an
+allowed route SHALL leave the dependent evidence unverified with the exact
+prerequisite; an explicit permitted UI request makes that prerequisite blocking
+for that step. Static evidence or a generic saved-suite pass MUST NOT be promoted
+to confirmation of the requested interactive behaviour. ITL_VANESSA_TESTING SHALL
+remain independent: essential neither enables saved suites nor changes that
+setting. Standalone QA support is separate and remains unimplemented/unverified
+until its own qualification. Historical 9ec proof does not qualify this new policy.
+Policy activation SHALL require actual installed-rules support under IM7. A
+source-only receipt/setting test SHALL NOT count as managed UI execution, live
+legacy recovery, or qualification of the new c1 fork identity.
+
+#### Scenario: Essential verifies the important changed behaviour
+- **WHEN** an authorized UI change is present in the current dev/test base and the managed ITL Vanessa UI route is available
+- **THEN** the agent obtains actual expected/actual evidence for that behaviour in the exact target, without silently enabling saved Vanessa or starting a repeated repair loop
+
+#### Scenario: Essential lacks an allowed UI route
+- **WHEN** essential applies but no authorized applicable UI route is available
+- **THEN** the dependent scenario remains unverified with its missing prerequisite, independent work can continue, and static or saved-suite evidence cannot manufacture UI pass
+
+#### Scenario: User retains a disabled or on-request UI policy
+- **WHEN** off, a broader no-UI instruction, or later intentional manual is effective
+- **THEN** essential default cannot bypass that policy, trigger deployment or rewrite the independent saved Vanessa setting

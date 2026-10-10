@@ -21,6 +21,22 @@
         (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
     }
     . (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1')
+    $checkerTokens = $null; $checkerErrors = $null
+    $checkerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts\check.ps1'), [ref]$checkerTokens, [ref]$checkerErrors)
+    if (@($checkerErrors).Count -gt 0) { throw 'The candidate checker did not parse.' }
+    $routeDefinition = $checkerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Ensure-DevelopE2ERoute'
+    }, $true)
+    if (-not $routeDefinition) { throw 'The candidate checker journey owner is missing.' }
+    Invoke-Expression $routeDefinition.Extent.Text
+    $identityDefinition = $checkerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-DevelopE2EIdentitySha256'
+    }, $true)
+    if (-not $identityDefinition) { throw 'The candidate checker identity collaborator is missing.' }
+    Invoke-Expression $identityDefinition.Extent.Text
+    function Invoke-GateStage { param([string]$Name, [string]$Reason, [string]$Detail, [scriptblock]$Body); & $Body }
+    function Add-ReusedStage { param([string]$Name, [string]$Reason, [string]$Detail) }
+    function Invoke-PowerShellChild { param([string]$ScriptPath, [string[]]$Arguments, [int]$TimeoutSeconds, [int]$NoProgressSeconds, [string]$LogName); throw 'Unexpected native child launch in budget fixture.' }
 
     function New-PlanRepository {
         $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
@@ -60,6 +76,8 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:E2EProjectRoot = ''
         $script:AiRulesSource = ''
         $script:DeliveryRequestedAiRulesSource = ''
+        $script:developAncestorRoutes = @{}
+        $script:developJourneyInputs = @{}
     }
 
     It 'builds a stage DAG from changed owner inputs and reuses matching immutable evidence' {
@@ -78,6 +96,48 @@ Describe 'Delivery v3 immutable selective plan' {
         $second = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         @($second.stages.execution | Select-Object -Unique) | Should -Be @('reuse'); $second.planId | Should -Be $first.planId
         $saved = Save-DeliveryQualityPlan -Plan $first; $first.createdAt = [DateTime]::UtcNow.AddMinutes(1).ToString('o'); (Save-DeliveryQualityPlan -Plan $first) | Should -Be $saved
+    }
+
+    It 'resolves evidence ownership once per plan while rereading proofs and isolating repository roots' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $script:evidenceOwnershipCalls = 0
+        Mock Get-DeliveryCommonGitDirectory {
+            $script:evidenceOwnershipCalls++
+            (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
+        }
+
+        $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($first.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        $proof = Join-Path $TestDrive 'resolved-evidence-proof.json'
+        [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
+        $records = @(foreach ($stage in $first.stages) {
+            Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $repo.commit -CandidateTree $repo.tree -ProofPath $proof
+        })
+        $script:evidenceOwnershipCalls = 0
+        $second = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($second.stages.execution | Select-Object -Unique) | Should -Be @('reuse')
+        $second.planId | Should -Be $first.planId
+
+        [IO.File]::WriteAllText($records[0].proof.path, 'corrupt proof', [Text.UTF8Encoding]::new($false))
+        $script:evidenceOwnershipCalls = 0
+        $afterCorruption = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        $afterCorruption.stages[0].execution | Should -Be 'execute'
+        @($afterCorruption.stages[1..2].execution | Select-Object -Unique) | Should -Be @('reuse')
+
+        $other = New-PlanRepository; $script:Root = $other.root
+        $script:GateScript = Join-Path $other.root 'check.ps1'
+        $script:evidenceOwnershipCalls = 0
+        $otherPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $other.root -BaseCommit $other.base -CandidateCommit $other.commit -CandidateTree $other.tree
+        $script:evidenceOwnershipCalls | Should -Be 1
+        @($otherPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
     }
 
     It 'budgets Develop journeys again when matching owner evidence belongs to an older tree' {
@@ -111,6 +171,134 @@ Describe 'Delivery v3 immutable selective plan' {
         $newPlan.stages[1].inputFingerprint | Should -Not -Be $oldPlan.stages[1].inputFingerprint
         $reusedOldPlan.candidate.tree = $newTree
         (Restore-DeliveryPlanQualification -Plan $reusedOldPlan -CandidateRoot $repo.root) | Should -BeFalse
+    }
+
+    It 'uses the shared complete journey binding while keeping static qualification current' {
+        $repo=New-PlanRepository; $script:Root=$repo.root; $catalog=New-PlanCatalog
+        $script:GateScript=Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{contracts=@($catalog.contracts[0]);tests=@('tests/pester/Runtime.Tests.ps1');unknownPaths=@()} }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{journeys=@('upgrade','fresh');unknownPaths=@()} }
+        $binding=[pscustomobject]@{fingerprint=('d'*64);inventory=[pscustomobject]@{external=[pscustomobject]@{standStateSha256=('c'*64)}}}
+        Mock Get-DevelopE2EInputIdentity { $binding }
+        Mock Get-DevelopE2EAncestorQualification { [pscustomobject]@{reportPath='verified original';inputIdentity=$binding} }
+        $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $plan.stages[0].execution | Should -BeExactly 'execute'
+        @($plan.stages | Where-Object id -in @('develop.upgrade','develop.fresh') | ForEach-Object execution) | Should -Be @('reuse','reuse')
+        $plan.stages[1].inputFingerprint | Should -BeExactly $binding.fingerprint
+        Should -Invoke Get-DevelopE2EAncestorQualification -Times 2 -Exactly -ParameterFilter { $InputIdentity.fingerprint -eq $binding.fingerprint -and $Tree -eq $repo.tree }
+        Mock Get-DevelopE2EAncestorQualification { $null }
+        $missing=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        @($missing.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+    }
+
+    It 'retains the original route execution identity when a legacy supervisor saves current stage evidence' {
+        $repo=New-PlanRepository; $script:Root=$repo.root
+        $original=Join-Path $TestDrive 'original ancestor route.json'
+        [IO.File]::WriteAllText($original, ('{"status":"passed","repository":{"tree":"' + $repo.tree + '"},"result":{"status":"passed"}}'), [Text.UTF8Encoding]::new($false))
+        $sha=Get-DeliveryFileSha256 -Path $original
+        $currentTree='a'*40
+        $saved=Save-DeliveryStageEvidence -Stage ([pscustomobject]@{id='develop.fresh';version=1;inputFingerprint=('e'*64)}) -CandidateCommit ('b'*40) -CandidateTree $currentTree -ProofPath $original
+        $saved.candidate.tree | Should -BeExactly $currentTree
+        $saved.proof.sha256 | Should -BeExactly $sha
+        (Get-Content -LiteralPath $saved.proof.path -Raw|ConvertFrom-Json).repository.tree | Should -BeExactly $repo.tree
+        (Get-DeliveryFileSha256 -Path $original) | Should -BeExactly $sha
+    }
+
+    It 'continues through the candidate checker without rewriting the historical route or launching a child' {
+        $repo=New-PlanRepository; $repoRoot=$repo.root; $tree=$repo.tree; $qualityCatalog=New-PlanCatalog
+        $script:developQualificationRoot=Join-Path $TestDrive 'checker ancestor route'
+        New-Item -ItemType Directory -Force -Path $script:developQualificationRoot | Out-Null
+        $script:releaseContext=[pscustomobject]@{}; $script:aiRulesRelease=[pscustomobject]@{}
+        $script:developRulesSource=$repo.root; $E2EProjectRoot=$repo.root; $AgentTarget='kilocode'
+        $original=Join-Path $TestDrive 'historical route bytes.json'
+        [IO.File]::WriteAllText($original, '{"repository":{"tree":"old"},"result":{"status":"passed"}}', [Text.UTF8Encoding]::new($true))
+        $sha=Get-DeliveryFileSha256 -Path $original
+        $binding=[pscustomobject]@{fingerprint=('d'*64)}
+        $ancestor=[pscustomobject]@{reportPath=$original;sha256=$sha;inputIdentity=$binding}
+        Mock Get-DevelopE2EIdentitySha256 { 'a'*64 }; Mock Get-DevelopE2EStandStateSha256 { 'c'*64 }
+        Mock Restore-DevelopE2EQualification { $false }; Mock Get-DevelopE2EInputIdentity { $binding }
+        Mock Get-DevelopE2EAncestorQualification { $ancestor }
+        Mock Add-ReusedStage { }
+        Mock Invoke-PowerShellChild { throw 'A verified ancestor must not launch another journey.' }
+        $route=Ensure-DevelopE2ERoute -Journey fresh -Plan ([pscustomobject]@{journeys=@('fresh')})
+        (Get-DeliveryFileSha256 -Path $route) | Should -BeExactly $sha
+        (Get-Content -LiteralPath $route -Raw|ConvertFrom-Json).repository.tree | Should -BeExactly 'old'
+        $script:developAncestorRoutes.fresh.inputIdentity.fingerprint | Should -BeExactly $binding.fingerprint
+        Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
+    }
+
+    It 'passes the same catalog budget from the actual checker and immutable planner to each journey' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets.fullHardSeconds = 2700
+        $catalog.developJourneys.routes.upgrade | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 1200
+        $catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $plan.executedBudgetSeconds | Should -Be 7500
+        (Get-DeliveryPlanGateBudgetSeconds -Plan $plan -Mode Develop) | Should -Be 7500
+
+        $script:qualityCatalog = $catalog
+        $script:developQualificationRoot = Join-Path $TestDrive 'checker budgets'
+        New-Item -ItemType Directory -Force -Path $script:developQualificationRoot | Out-Null
+        $script:releaseContext = [pscustomobject]@{}; $script:aiRulesRelease = [pscustomobject]@{}
+        $script:developRulesSource = $repo.root; $script:developScript = Join-Path $repo.root 'journey.ps1'
+        $repoRoot = $repo.root; $outputRoot = $script:developQualificationRoot; $tree = $repo.tree
+        $E2EProjectRoot = $repo.root; $AgentTarget = 'kilocode'
+        Mock Get-DevelopE2EIdentitySha256 { 'a' * 64 }
+        Mock Get-DevelopE2EStandStateSha256 { 'b' * 64 }
+        Mock Restore-DevelopE2EQualification { $false }
+        Mock Invoke-PowerShellChild {
+            $script:observedJourneyBudget = $TimeoutSeconds
+            throw 'fixture child boundary'
+        }
+        foreach ($journey in @('upgrade','fresh')) {
+            { Ensure-DevelopE2ERoute -Journey $journey -Plan $plan } | Should -Throw '*fixture child boundary*'
+            $stage = @($plan.stages | Where-Object id -eq "develop.$journey")[0]
+            $script:observedJourneyBudget | Should -Be $stage.budgetSeconds
+        }
+        Should -Invoke Invoke-PowerShellChild -Exactly -Times 2 -ParameterFilter {
+            $NoProgressSeconds -eq 900 -and $Arguments -contains '-AgentTarget' -and $Arguments -contains 'kilocode'
+        }
+    }
+
+    It 'changes the immutable plan identity and refuses old-tree reuse when the committed fresh budget changes' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets.fullHardSeconds = 2700
+        $catalogPath = Join-Path $repo.root 'tests\quality-contracts.json'
+        [IO.File]::WriteAllText($catalogPath, ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add -- tests/quality-contracts.json
+        & git -C $repo.root commit --quiet -m 'record legacy route catalog'
+        $oldCommit = (& git -C $repo.root rev-parse HEAD).Trim(); $oldTree = (& git -C $repo.root rev-parse 'HEAD^{tree}').Trim()
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        $oldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $oldCommit -CandidateTree $oldTree
+        $oldPlan.executedBudgetSeconds | Should -Be 6000
+        $proof = Join-Path $TestDrive 'prior-budget-proof.json'
+        [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
+        foreach ($stage in $oldPlan.stages) { Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $oldCommit -CandidateTree $oldTree -ProofPath $proof | Out-Null }
+        $reused = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $oldCommit -CandidateTree $oldTree
+        @($reused.stages.execution | Select-Object -Unique) | Should -Be @('reuse')
+
+        $catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        [IO.File]::WriteAllText($catalogPath, ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add -- tests/quality-contracts.json
+        & git -C $repo.root commit --quiet -m 'extend the unchanged fresh proof deadline'
+        $newCommit = (& git -C $repo.root rev-parse HEAD).Trim(); $newTree = (& git -C $repo.root rev-parse 'HEAD^{tree}').Trim()
+        $newPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $newCommit -CandidateTree $newTree
+        $newPlan.executedBudgetSeconds | Should -Be 7500
+        $newPlan.planId | Should -Not -Be $oldPlan.planId
+        @($newPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        $newPlan.stages[2].budgetSeconds | Should -Be 3600
+        $newPlan.stages[2].inputFingerprint | Should -Not -Be $oldPlan.stages[2].inputFingerprint
     }
 
     It 'blocks an unknown path without inventing a full fallback' {
@@ -169,6 +357,77 @@ Describe 'Delivery v3 immutable selective plan' {
         @($fullPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
     }
 
+    It 'pins the enclosing Release reserve once and preserves continuation scope and reusable evidence' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $catalog.budgets | Add-Member -NotePropertyName releaseHardSeconds -NotePropertyValue 9240
+        $releaseCatalog = [pscustomobject]@{ enclosingOverheadSeconds=1140; stages=@(
+            [pscustomobject]@{ id='config-cadence'; version=3; budgetSeconds=4800; dependsOn=@(); paths=@('runtime.ps1') },
+            [pscustomobject]@{ id='extension-smoke'; version=2; budgetSeconds=900; dependsOn=@('config-cadence'); paths=@('runtime.ps1') }
+        ) }
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Get-DeliveryPlanEnvironmentIdentity { param([string]$Mode) [ordered]@{ mode=$Mode } }
+        Mock Get-DeliveryReleaseStageCatalog { $releaseCatalog }
+        Mock Test-DeliveryStageEvidence { $null }
+        $none = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $none.PSObject.Properties.Name | Should -Not -Contain 'releaseEnclosingOverheadSeconds'
+        $none.executedBudgetSeconds | Should -Be 2400
+        $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        $first.releaseCapabilities | Should -Be @('config-cadence','extension-smoke')
+        $first.stages.id | Should -Be @('develop.static','release.config-cadence','release.extension-smoke')
+        $first.executedBudgetSeconds | Should -Be 9240
+        Get-DeliveryPlanGateBudgetSeconds -Plan $first -Mode Release | Should -Be 6840
+        # Original 2026-10-07 Release ran out of the 900s extension budget after
+        # UI passed and CFE apply, during canonical dump and before final restore.
+        # Budget correction must preserve the same capability work and evidence.
+        $productionStages = Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot
+        ($releaseCatalog.stages | Where-Object id -eq 'extension-smoke').budgetSeconds =
+            [int]($productionStages.stages | Where-Object id -eq 'extension-smoke').budgetSeconds
+        $catalog.budgets.releaseHardSeconds = 9540
+        $budgetCorrected = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        ($budgetCorrected.stages | Where-Object id -eq 'release.extension-smoke').budgetSeconds | Should -Be 1200
+        ($budgetCorrected.stages | Where-Object id -eq 'release.config-cadence').budgetSeconds | Should -Be 4800
+        $budgetCorrected.executedBudgetSeconds | Should -Be 9540
+        Get-DeliveryPlanGateBudgetSeconds -Plan $budgetCorrected -Mode Release | Should -Be 7140
+        $budgetCorrected.planId | Should -Not -Be $first.planId
+        $budgetCorrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
+        $budgetCorrected.releaseCapabilities | Should -Be $first.releaseCapabilities
+        $budgetCorrected.releaseEnclosingOverheadSeconds | Should -Be 1140
+        $releaseCatalog.enclosingOverheadSeconds = 1200
+        $catalog.budgets.releaseHardSeconds = 9600
+        $corrected = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        $corrected.planId | Should -Not -Be $first.planId
+        $corrected.planId | Should -Not -Be $budgetCorrected.planId
+        $corrected.stages.inputFingerprint | Should -Be $first.stages.inputFingerprint
+        $first.releaseEnclosingOverheadSeconds | Should -Be 1140
+        # Both original backend probes passed in 1177.836s on 2026-10-08,
+        # then the stage correctly rejected the obsolete 900s ceiling.
+        # Correct its owner budget without changing capability fingerprints.
+        $releaseCatalog.stages += [pscustomobject]@{ id='ondemand-mcp'; version=5; budgetSeconds=900; dependsOn=@(); paths=@('runtime.ps1') }
+        $catalog.budgets.releaseHardSeconds = 10500
+        $mcpBefore = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        ($releaseCatalog.stages | Where-Object id -eq 'ondemand-mcp').budgetSeconds =
+            [int]($productionStages.stages | Where-Object id -eq 'ondemand-mcp').budgetSeconds
+        $catalog.budgets.releaseHardSeconds = 11100
+        $mcpAfter = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        ($mcpAfter.stages | Where-Object id -eq 'release.ondemand-mcp').budgetSeconds | Should -Be 1500
+        $mcpAfter.planId | Should -Not -Be $mcpBefore.planId
+        $mcpAfter.stages.inputFingerprint | Should -Be $mcpBefore.stages.inputFingerprint
+        $mcpAfter.releaseCapabilities | Should -Be $mcpBefore.releaseCapabilities
+        ($mcpAfter.executedBudgetSeconds - $mcpBefore.executedBudgetSeconds) | Should -Be 600
+        ((Get-DeliveryPlanGateBudgetSeconds -Plan $mcpAfter -Mode Release) - (Get-DeliveryPlanGateBudgetSeconds -Plan $mcpBefore -Mode Release)) | Should -Be 600
+        Mock Test-DeliveryStageEvidence { [pscustomobject]@{ candidate=[pscustomobject]@{ tree=$repo.tree } } }
+        $reused = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        @($reused.stages | Where-Object execution -eq 'execute').Count | Should -Be 0
+        $reused.executedBudgetSeconds | Should -Be 1200
+        Get-DeliveryPlanGateBudgetSeconds -Plan $reused -Mode Release | Should -Be 1200
+        $reused.releaseCapabilities | Should -Be @('config-cadence','extension-smoke')
+        $reused.planId | Should -Be $corrected.planId
+    }
+
     It 'does not invalidate an independent runtime fingerprint when only harness content changes' {
         $repo = New-PlanRepository; $script:Root = $repo.root
         $before = Get-DeliveryInputFingerprint -StageId 'release.runtime' -Version 1 -CandidateRoot $repo.root -ExactPath @('runtime.ps1')
@@ -194,7 +453,7 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=src/cf`nEXTENSION_NAME=FirstExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
         $script:E2EProjectRoot = $stand
         $before = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
-        $before.environmentIdentitySchemaVersion | Should -Be 2
+        $before.environmentIdentitySchemaVersion | Should -Be 3
 
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=`nEXTENSION_NAME=`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nFUTURE_HELPER_OUTPUT=changed`n", [Text.UTF8Encoding]::new($false))
         $volatileRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
@@ -289,6 +548,22 @@ Describe 'Delivery v3 immutable selective plan' {
         (Get-DeliveryCanonicalJsonSha256 -Value $after) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }
 
+    It 'invalidates clientMcp qualification when the configured CFE bytes change' {
+        $file = Join-Path $TestDrive 'client build.cfe'
+        $copy = Join-Path $TestDrive 'same client elsewhere.cfe'
+        [IO.File]::WriteAllBytes($file, [byte[]]@(1,2,3))
+        [IO.File]::Copy($file, $copy)
+        $saved = [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process')
+        try {
+            $env:VANESSA_MCP_CLIENT_CFE_PATH = $file
+            $before = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+            $env:VANESSA_MCP_CLIENT_CFE_PATH = $copy
+            (Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Release)) | Should -Be (Get-DeliveryCanonicalJsonSha256 $before)
+            [IO.File]::WriteAllBytes($copy, [byte[]]@(1,2,4))
+            (Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Release)) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 $before)
+        } finally { [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', $saved, 'Process') }
+    }
+
     It 'resolves the locked controlled fork before accumulated plan runtime fingerprints' {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
         $candidateSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8
@@ -377,5 +652,87 @@ Describe 'Delivery v3 immutable selective plan' {
         $seedParallel = @($catalog.stages | Where-Object { [string]$_.id -eq 'seed-parallel' })[0]
         [int]$seedParallel.version | Should -Be 6
         [int]$seedParallel.budgetSeconds | Should -Be 1800
+    }
+}
+
+Describe 'E2E client delivery inputs' {
+    It 'binds the plan and publication identity to explicit client selection' {
+        & {
+            $stand=Join-Path $TestDrive 'client plan путь'
+            New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c')|Out-Null
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode","codex"]}}',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c/release-e2e.json'),'{}',[Text.UTF8Encoding]::new($false))
+            $script:E2EProjectRoot=$stand
+            $AgentTarget='kilocode';$before=Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop)
+            $AgentTarget='codex';(Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop))|Should -Not -Be $before
+            $AgentTarget='kilocode';(Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Develop))|Should -Be $before
+            $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-candidate.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-DevelopPublicationEnvironmentIdentity'},$false)).Extent.Text))
+            function Invoke-RepositoryGit {param($RepositoryRoot,$Arguments,[switch]$AllowFailure)[pscustomobject]@{exitCode=0;stdout=$(if($Arguments[0] -eq 'rev-parse'){'a'*40}else{''})}}
+            $publication=Get-DevelopPublicationEnvironmentIdentity
+            $AgentTarget='codex';(Get-DevelopPublicationEnvironmentIdentity)|Should -Not -Be $publication
+        }
+    }
+
+    It 'forwards the optional selection across source gate and check runner boundaries' {
+        & {
+            $tokens=$null;$errors=$null
+            foreach($file in @('source-delivery.ps1','source-delivery-supervisor.ps1','check.ps1','invoke-develop-e2e.ps1','invoke-release-e2e.ps1')){
+                $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('scripts/'+$file)),[ref]$tokens,[ref]$errors)
+                @($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'AgentTarget'}).Count|Should -Be 1
+            }
+            $source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-process.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($source.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-SourceGate'},$false)).Extent.Text))
+            $script:Root=$RepoRoot;$script:GateScript=Join-Path $TestDrive 'fixture gate.ps1'
+            [IO.File]::WriteAllText($script:GateScript,'# process boundary is mocked',[Text.UTF8Encoding]::new($false))
+            $CoverageContract=@();$AiRulesSource='';$E2EProjectRoot='';$ReleaseResumeMode='Auto';$AgentTarget='kilocode'
+            function Start-DeliveryProcess {param($ArgumentList,$WorkingDirectory,$StandardOutputPath,$StandardErrorPath)$script:capturedClientArguments=$ArgumentList;throw 'fixture launch boundary'}
+            function Close-DeliveryProcessJob {param($JobHandle,$Process,$PriorErrorMessage)}
+            function Stop-DeliveryProcessTree {param($Process)}
+            function Write-DeliveryRunRecord {param($Mode,$Status,$ErrorMessage,$WorkingRoot,$StartedAt,$FinishedAt,$ExitCode,$ReleaseCapability)'fixture-record'}
+            function Update-DeliveryOperation {param($Values)}
+            foreach($mode in @('Develop','Release')){
+                {Invoke-SourceGate -Mode $mode -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
+                ([regex]::Matches($script:capturedClientArguments,'-AgentTarget kilocode')).Count|Should -Be 1
+            }
+            $AgentTarget=''
+            {Invoke-SourceGate -Mode Develop -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
+            $script:capturedClientArguments|Should -Not -Match 'AgentTarget'
+            $check=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+            $E2EProjectRoot=$TestDrive;$repoRoot=$RepoRoot;$script:developRulesSource=$RepoRoot;$rawPath='raw.json';$Journey='upgrade'
+            $releaseRulesSource=$RepoRoot;$releaseHelperPath='helper.ps1';$e2eReportPath='release.json';$AgentTarget='kilocode'
+            foreach($variable in @('developArguments','releaseE2EArguments')){
+                $assignment=$check.Find({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -ceq $variable -and $n.Operator -eq 'Equals'},$true)
+                $append=$check.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -like ('if (-not [[]string[]]::IsNullOrWhiteSpace($AgentTarget))*$'+$variable+' +=*')},$true)
+                $assignment|Should -Not -BeNullOrEmpty;$append|Should -Not -BeNullOrEmpty
+                . ([scriptblock]::Create($assignment.Extent.Text+"`n"+$append.Extent.Text))
+                $forwarded=Get-Variable -Name $variable -ValueOnly
+                @($forwarded|Where-Object{$_ -ceq '-AgentTarget'}).Count|Should -Be 1
+                $forwarded[[Array]::IndexOf($forwarded,'-AgentTarget')+1]|Should -BeExactly 'kilocode'
+            }
+        }
+    }
+}
+Describe 'Pinned supervisor client option compatibility' {
+    It 'preserves explicit intent on old authority and delegates it once after support is present' {
+        & {
+            $tokens=$null;$errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery.ps1'),[ref]$tokens,[ref]$errors)
+            . ([scriptblock]::Create(($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Assert-DeliveryBootstrapAgentTargetSupport'},$false)).Extent.Text))
+            $legacy=[Management.Automation.Language.Parser]::ParseInput('param([string]$Action) $Action',[ref]$tokens,[ref]$errors)
+            $bound=@{Action='Plan';AgentTarget='kilocode'}
+            {Assert-DeliveryBootstrapAgentTargetSupport $legacy ('a'*40) $bound}|Should -Throw '*DELIVERY_E2E_CLIENT_OPTION_UNSUPPORTED*Publish*same explicit command*'
+            $bound.AgentTarget|Should -BeExactly 'kilocode'
+            {Assert-DeliveryBootstrapAgentTargetSupport $legacy ('a'*40) @{Action='Plan'}}|Should -Not -Throw
+            $current=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-supervisor.ps1'),[ref]$tokens,[ref]$errors)
+            {Assert-DeliveryBootstrapAgentTargetSupport $current ('b'*40) $bound}|Should -Not -Throw
+            $bound.Count|Should -Be 2;$bound.AgentTarget|Should -BeExactly 'kilocode'
+            # Execute the entrypoint's actual bound-parameter projection; no publication.
+            $projection=$ast.Find({param($n)$n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Extent.Text -ceq 'foreach ($entry in $PSBoundParameters.GetEnumerator()) { $arguments[$entry.Key] = $entry.Value }'},$true)
+            $projection|Should -Not -BeNullOrEmpty
+            $projectBoundParameters=[scriptblock]::Create('param($Action,$AgentTarget) $arguments=@{};'+$projection.Extent.Text+';return $arguments')
+            $delegated=& $projectBoundParameters @bound
+            $delegated.Count|Should -Be 2;$delegated.AgentTarget|Should -BeExactly 'kilocode'
+        }
     }
 }

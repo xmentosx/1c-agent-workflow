@@ -113,7 +113,7 @@
         $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
-        $buildScriptText | Should -Match 'ValidateSet\("itl-r1", "itl-r4"'
+        $buildScriptText | Should -Match 'ValidateSet\("itl-r1", "itl-r2", "itl-r3", "itl-r4"'
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
         $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'
@@ -169,6 +169,75 @@ Describe "Controlled Vanessa Automation patched artifact 1.2.043.42-itl-r1" {
     }
 }
 
+Describe "VAExtension HTML forms without orphan handlers" {
+    BeforeAll {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r2'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $fixtureRoot = Join-Path $repoRoot 'tests/fixtures/vanessa-html-forms'
+        $provenance = Get-Content -LiteralPath (Join-Path $fixtureRoot 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+
+    It 'retains the existing fixes under a new immutable paired component revision' {
+        $previous = Get-Content -LiteralPath (Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r1/manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.upstream.commit | Should -Be $previous.upstream.commit
+        $manifest.upstream.sourceArchive.sha256 | Should -Be $previous.upstream.sourceArchive.sha256
+        $manifest.downstreamRevision | Should -Be 'itl-r2'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r2.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r2.cfe'
+        $manifest.pairedExtension.protocol | Should -Be $previous.pairedExtension.protocol
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch') -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 12
+        foreach ($path in $previous.patch.expectedChangedPaths) { $manifest.patch.expectedChangedPaths | Should -Contain $path }
+        foreach ($fix in $previous.patch.retainedDownstreamFixes) { $manifest.patch.retainedDownstreamFixes | Should -Contain $fix }
+        $provenance.upstreamCommit | Should -Be $manifest.upstream.commit
+        foreach ($input in $provenance.inputs) {
+            (Get-FileHash -LiteralPath (Join-Path $fixtureRoot $input.path) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $input.sha256
+        }
+    }
+
+    It 'repairs the actual upstream missing handler while retaining every working control and module: <form>' -TestCases @(
+        @{ form = 'VAExtension_НажатьГиперссылкуHTMLДокумента' },
+        @{ form = 'VAExtension_НажатьКнопкуHTMLДокумента' }
+    ) {
+        param($form)
+        $root = Join-Path $TestDrive ('Формы с пробелом '+$form)
+        [void][IO.Directory]::CreateDirectory($root)
+        $relative = 'lib/VAExtension/DataProcessors/'+$form+'/Forms/Форма/Ext/Form.xml'
+        $moduleRelative = 'lib/VAExtension/DataProcessors/'+$form+'/Forms/Форма/Ext/Form/Module.bsl'
+        foreach ($path in @($relative,$moduleRelative)) {
+            $destination = Join-Path $root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+            Copy-Item -LiteralPath (Join-Path $fixtureRoot $path) -Destination $destination
+        }
+        $formPath = Join-Path $root $relative
+        $modulePath = Join-Path $root $moduleRelative
+        $moduleHash = (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash
+        $module = [IO.File]::ReadAllText($modulePath,[Text.Encoding]::UTF8)
+        [xml]$before = [IO.File]::ReadAllText($formPath,[Text.Encoding]::UTF8)
+        $orphanButton = $before.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКодСервер"]')
+        $orphanCommand = $before.SelectSingleNode('//*[local-name()="Command" and @name="ВыполнитьКодСервер"]')
+        $orphanButton | Should -Not -BeNullOrEmpty
+        $orphanCommand | Should -Not -BeNullOrEmpty
+        $module | Should -Not -Match '(?im)^\s*(Процедура|Функция)\s+ВыполнитьКодСервер\s*\('
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--check','--whitespace=error-all',('--include='+$relative),(Join-Path $assetRoot 'file-operations.patch')))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--whitespace=error-all',('--include='+$relative),(Join-Path $assetRoot 'file-operations.patch')))
+        [xml]$after = [IO.File]::ReadAllText($formPath,[Text.Encoding]::UTF8)
+        $after.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКодСервер"]') | Should -BeNullOrEmpty
+        $after.SelectSingleNode('//*[local-name()="Command" and @name="ВыполнитьКодСервер"]') | Should -BeNullOrEmpty
+        [void]$orphanButton.ParentNode.RemoveChild($orphanButton)
+        [void]$orphanCommand.ParentNode.RemoveChild($orphanCommand)
+        $after.OuterXml | Should -BeExactly $before.OuterXml
+        $after.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКод"]/*[local-name()="DefaultButton"]').InnerText | Should -Be 'true'
+        foreach ($action in $after.SelectNodes('//*[local-name()="Commands"]/*[local-name()="Command"]/*[local-name()="Action"]')) {
+            $module | Should -Match ('(?im)^\s*(Процедура|Функция)\s+'+[regex]::Escape($action.InnerText)+'\s*\(')
+        }
+        (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash | Should -BeExactly $moduleHash
+    }
+}
+
 Describe "Controlled Vanessa Automation patched artifact itl-r14" {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -221,5 +290,203 @@ Describe "Controlled Vanessa Automation patched artifact itl-r14" {
         $licenseText = Get-Content -LiteralPath (Join-Path $assetRoot "LICENSE.upstream") -Raw -Encoding UTF8
         $noticeText | Should -Match "itl-r14"
         $licenseText | Should -Match "BSD 3-Clause"
+    }
+}
+
+Describe 'VAExtension configuration-independent report and system forms' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r3'
+        $fixtureRoot = Join-Path $repoRoot 'tests/fixtures/vanessa-extension-portability'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $provenance = Get-Content -LiteralPath (Join-Path $fixtureRoot 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $originals = @{}; $patched = @{}
+        $root = Join-Path $TestDrive 'Расширение с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        foreach ($input in $provenance.inputs) {
+            $source = Join-Path $fixtureRoot $input.path
+            $target = Join-Path $root $input.path
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+            [IO.File]::Copy($source,$target)
+            $originals[$input.path] = [IO.File]::ReadAllText($source,[Text.Encoding]::UTF8)
+        }
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        # This fixture models the canonical upstream blobs; do not inherit the
+        # machine's autocrlf conversion while checking untouched source bytes.
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('config','core.autocrlf','false'))
+        $includes = @($provenance.inputs | ForEach-Object { '--include='+$_.path })
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--check','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        foreach ($input in $provenance.inputs) { $patched[$input.path] = [IO.File]::ReadAllText((Join-Path $root $input.path),[Text.Encoding]::UTF8) }
+    }
+
+    It 'retains every r2 patch section and fixes under an immutable paired revision' {
+        $previousRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r2'
+        $previous = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $previousPatch = [IO.File]::ReadAllText((Join-Path $previousRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $patch = [IO.File]::ReadAllText((Join-Path $assetRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $patch.StartsWith($previousPatch,[StringComparison]::Ordinal) | Should -BeTrue
+        $manifest.upstream.commit | Should -Be $previous.upstream.commit
+        $manifest.upstream.sourceArchive.sha256 | Should -Be $previous.upstream.sourceArchive.sha256
+        $manifest.downstreamRevision | Should -Be 'itl-r3'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r3.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r3.cfe'
+        $manifest.pairedExtension.protocol | Should -Be $previous.pairedExtension.protocol
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch') -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 16
+        foreach ($path in $previous.patch.expectedChangedPaths) { $manifest.patch.expectedChangedPaths | Should -Contain $path }
+        foreach ($fix in $previous.patch.retainedDownstreamFixes) { $manifest.patch.retainedDownstreamFixes | Should -Contain $fix }
+        $provenance.upstreamCommit | Should -Be $manifest.upstream.commit
+        foreach ($input in $provenance.inputs) {
+            (Get-FileHash -LiteralPath (Join-Path $fixtureRoot $input.path) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $input.sha256
+            $manifest.patch.expectedChangedPaths | Should -Contain $input.path
+        }
+    }
+
+    It 'retains all report branches and the four-to-three parameter fallback' {
+        $path = 'lib/VAExtension/DataProcessors/VAExtension_МакетПоВариантуОтчета/Forms/Форма/Ext/Form/Module.bsl'
+        $originals[$path] | Should -Match 'Отчеты\.УниверсальныйОтчет\.'
+        $patched[$path] | Should -Not -Match 'Отчеты\.УниверсальныйОтчет\.'
+        $restored = $patched[$path].Replace("`tМенеджерОтчета = Отчеты[ИмяОтчета];`n`tОтчет = МенеджерОтчета.Создать();", "`tОтчет = Отчеты[ИмяОтчета].Создать();")
+        $restored = $restored.Replace('МенеджерОтчета.ФиксированныеПараметры(', 'Отчеты.УниверсальныйОтчет.ФиксированныеПараметры(').Replace('МенеджерОтчета.СхемаКомпоновкиДанных(', 'Отчеты.УниверсальныйОтчет.СхемаКомпоновкиДанных(')
+        $restored | Should -BeExactly $originals[$path]
+    }
+
+    It 'preserves system wrapper blocking, close and SelectedForm callback: <name>' -TestCases @(
+        @{name='AllFunctionsForm';form='VAExtension_ОткрытьВсеФункции'},
+        @{name='DesktopCustomization';form='VAExtension_ОткрытьНастройкаНачальнойСтраницы'}
+    ) {
+        param($name,$form)
+        $path = 'lib/VAExtension/DataProcessors/'+$form+'/Forms/Форма/Ext/Form/Module.bsl'
+        $resolverCall = 'VAExtensionОбщегоНазначенияКлиент.ПолучитьСистемнуюФорму("'+$name+'")'
+        $restored = $patched[$path].Replace($resolverCall, 'ПолучитьФорму("sysForm:'+$name+'")')
+        $restored | Should -BeExactly $originals[$path]
+    }
+
+    It 'resolves only the two platform addresses and rejects metadata or unknown system names before dispatch' {
+        $path = 'lib/VAExtension/CommonModules/VAExtensionОбщегоНазначенияКлиент/Ext/Module.bsl'
+        $marker = '// Выполняет произвольный код на стороне клиента'
+        $start = $patched[$path].IndexOf($marker,[StringComparison]::Ordinal)
+        $start | Should -BeGreaterThan 0
+        $patched[$path].Substring($start) | Should -BeExactly $originals[$path]
+        $function = $patched[$path].Substring(0,$start)
+        $probe = @'
+Перем Вызовы;
+Функция ПолучитьФорму(Адрес)
+    Вызовы.Добавить(Адрес);
+    Возврат Адрес;
+КонецФункции
+'@ + "`n" + $function + @'
+
+Вызовы = Новый Массив;
+Если ПолучитьСистемнуюФорму("AllFunctionsForm") <> "sysForm:AllFunctionsForm" Тогда ВызватьИсключение "ALL_FUNCTIONS_ADDRESS_CHANGED"; КонецЕсли;
+Если ПолучитьСистемнуюФорму("DesktopCustomization") <> "sysForm:DesktopCustomization" Тогда ВызватьИсключение "DESKTOP_ADDRESS_CHANGED"; КонецЕсли;
+Для Каждого Имя Из СтрРазделить("OtherSystemForm,Report.UniversalReport.Form", ",") Цикл
+    Отклонено = Ложь;
+    Попытка
+        ПолучитьСистемнуюФорму(Имя);
+    Исключение
+        Отклонено = СтрНайти(ОписаниеОшибки(), "Неизвестная системная форма VAExtension:") > 0;
+    КонецПопытки;
+    Если НЕ Отклонено Тогда ВызватьИсключение "UNKNOWN_NAMESPACE_ACCEPTED"; КонецЕсли;
+КонецЦикла;
+Если Вызовы.Количество() <> 2 Тогда ВызватьИсключение "UNKNOWN_NAME_DISPATCHED"; КонецЕсли;
+Сообщить("CLOSED_SYSTEM_NAMESPACE_PASSED");
+'@
+        $probePath = Join-Path $TestDrive 'Пространство системных форм.os'
+        [IO.File]::WriteAllText($probePath,$probe,[Text.UTF8Encoding]::new($true))
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = (Get-Command oscript -ErrorAction Stop).Source
+        $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8',$probePath)
+        $startInfo.UseShellExecute = $false; $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true; $startInfo.RedirectStandardError = $true
+        $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($startInfo)
+        try {
+            $outputTask = $process.StandardOutput.ReadToEndAsync(); $errorTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); $process.WaitForExit(); throw 'System namespace probe timed out.' }
+            $output = $outputTask.GetAwaiter().GetResult() + $errorTask.GetAwaiter().GetResult()
+            $process.ExitCode | Should -Be 0 -Because $output
+            $output | Should -Match 'CLOSED_SYSTEM_NAMESPACE_PASSED'
+        } finally { $process.Dispose() }
+    }
+}
+
+Describe 'Reproducible Vanessa cumulative patch and resume format' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        $previousRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r3'
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r4'
+        $fixtureRoot = Join-Path $repoRoot 'tests/fixtures/vanessa-extension-portability'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patch = [IO.File]::ReadAllText((Join-Path $assetRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/build-vanessa-automation-patched.ps1'),[ref]$null,[ref]$null)
+        $function = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq 'Get-VanessaResumeDiffArguments' })
+        if ($function.Count -ne 1) { throw 'The existing builder must own its patch comparison recipe.' }
+        . ([scriptblock]::Create($function[0].Extent.Text))
+    }
+
+    It 'retains every previous source hunk with only canonical indexes and ordering changed' {
+        $previous = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $previousPatch = [IO.File]::ReadAllText((Join-Path $previousRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $before = @{}; $after = @{}
+        foreach ($section in @($previousPatch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) { $before[($section -split "`n")[0]] = $section -replace '(?m)^index [^\n]*\n','' }
+        foreach ($section in @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) { $after[($section -split "`n")[0]] = $section -replace '(?m)^index [^\n]*\n','' }
+        @($before.Keys) | Should -HaveCount 16
+        @($after.Keys) | Should -HaveCount 16
+        foreach ($key in $before.Keys) { $after[$key] | Should -BeExactly $before[$key] }
+        $manifest.upstream.commit | Should -Be $previous.upstream.commit
+        $manifest.downstreamRevision | Should -Be 'itl-r4'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r4.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r4.cfe'
+        $manifest.pairedExtension.protocol | Should -Be $previous.pairedExtension.protocol
+        ($manifest.patch.expectedChangedPaths -join "`n") | Should -BeExactly ($previous.patch.expectedChangedPaths -join "`n")
+        ($manifest.patch.retainedDownstreamFixes -join "`n") | Should -BeExactly ($previous.patch.retainedDownstreamFixes -join "`n")
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch') -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+    }
+
+    It 'preserves the original comparison arguments for older immutable recipes' {
+        $legacy = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        (@(Get-VanessaResumeDiffArguments -Manifest $legacy) -join ' ') | Should -BeExactly '--binary'
+    }
+
+    It 'refuses an unknown source recipe instead of silently comparing another format' {
+        { Get-VanessaResumeDiffArguments -Manifest ([pscustomobject]@{patch=[pscustomobject]@{gitDiffFormat='unknown'}}) } | Should -Throw '*VANESSA_BUILD_PATCH_DIFF_FORMAT_UNSUPPORTED*'
+    }
+
+    It 'reproduces shortened Git indexes and accepts the same source through full-index resume proof' {
+        $root = Join-Path $TestDrive 'Возобновление сборки с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        $provenance = Get-Content -LiteralPath (Join-Path $fixtureRoot 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($input in $provenance.inputs) {
+            $target = Join-Path $root $input.path
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+            [IO.File]::Copy((Join-Path $fixtureRoot $input.path),$target)
+        }
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('config','core.autocrlf','false'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('add','--all'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('-c','user.name=ITL fixture','-c','user.email=fixture@itl.local','commit','--quiet','-m','Exact upstream inputs'))
+        $includes = @($provenance.inputs | ForEach-Object { '--include='+$_.path })
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--check','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        $selectedSections = @($patch -split '(?m)(?=^diff --git )' | Where-Object {
+            $header = ($_ -split "`n")[0]
+            @($provenance.inputs | Where-Object { $header -ceq ('diff --git a/'+$_.path+' b/'+$_.path) }).Count -eq 1
+        }) -join ''
+        $legacyDiff = Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('diff','--binary','--abbrev=7','HEAD')
+        $legacyDiff.stdout | Should -Not -BeExactly $selectedSections
+        $diffPath = Join-Path $TestDrive 'canonical-full-index.patch'
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('diff')+@(Get-VanessaResumeDiffArguments -Manifest $manifest)+@('HEAD',('--output='+$diffPath))))
+        $actual = [IO.File]::ReadAllText($diffPath,[Text.Encoding]::UTF8)
+        $actual | Should -BeExactly $selectedSections
+        foreach ($index in [regex]::Matches($actual,'(?m)^index ([0-9a-f]+)\.\.([0-9a-f]+) ')) {
+            $index.Groups[1].Length | Should -Be 40
+            $index.Groups[2].Length | Should -Be 40
+        }
     }
 }

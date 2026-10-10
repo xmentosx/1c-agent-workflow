@@ -78,12 +78,12 @@
                 $releaseChecked = [bool]$ProbeState.infoBaseReleaseDatabasePath
                 if ($releaseChecked) { $script:ReleaseProbeRequests++ }
                 $inventory = @([pscustomobject]@{
-                    Name = '1cv8c.exe'; ProcessId = 89765; ParentProcessId = 100
+                    Name = '1cv8c.exe'; ProcessId = 89765; ParentProcessId = 100; CreationDate = $script:FixtureNativeBirthUtc
                     CommandLine = "ENTERPRISE /F `"$Base`" /Out unrelated-roctup.log"
                 })
                 if ($script:CaseFailure -eq 'owned-process-active') {
                     $inventory += [pscustomobject]@{
-                        Name = '1cv8.exe'; ProcessId = 87005; ParentProcessId = 100
+                        Name = '1cv8.exe'; ProcessId = 87005; ParentProcessId = 100; CreationDate = $script:FixtureNativeBirthUtc
                         CommandLine = "DESIGNER /Out `"$LogPath`""
                     }
                 }
@@ -99,7 +99,13 @@
                     [scriptblock]$OnTimeout, [scriptblock]$CompletionProbe,
                     [int]$CompletionGraceSeconds, [int]$PostExitProbeSeconds, [int]$MaxWorkingSetMb
                 )
-                Invoke-OneCSessionProcessStart -StartProcess { [pscustomobject]@{ Id = 87005 } } | Out-Null
+                $script:FixtureNativeBirthUtc = [DateTime]::UtcNow
+                $fakeProcess = [pscustomobject]@{
+                    Id = 87005; StartTime = $script:FixtureNativeBirthUtc; ProcessName = '1cv8'
+                    HasExited = $false; ExitCode = 0; ExitTime = $null
+                }
+                $fakeProcess | Add-Member ScriptMethod Refresh { }
+                Invoke-OneCSessionProcessStart -StartProcess { $fakeProcess } | Out-Null
                 $script:NativeArguments = @($Arguments)
                 $logPath = $Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
                 $outputIndex = [Array]::IndexOf($Arguments, '/DumpCfg')
@@ -111,7 +117,12 @@
                 $log = if ($script:CaseFailure -eq 'log-error') { 'Error saving configuration' } else { 'Configuration saved successfully' }
                 [IO.File]::WriteAllText($logPath, $log, [Text.UTF8Encoding]::new($false))
                 $exitCode = if ($script:CaseFailure -eq 'nonzero-exit') { 1 } else { 0 }
+                $fakeProcess.HasExited = $true
+                $fakeProcess.ExitCode = $exitCode
+                $fakeProcess.ExitTime = [DateTime]::UtcNow
                 $probeContext = [pscustomobject]@{
+                    processStartTimeUtc = $script:FixtureNativeBirthUtc.ToString('o'); processName = [IO.Path]::GetFileName($FilePath)
+                    invocationStartedAtUtc = $script:FixtureNativeBirthUtc.ToString('o'); processExitTimeUtc = $fakeProcess.ExitTime.ToString('o')
                     launcherExited = $true; launcherExitCode = $exitCode; processId = 87005; postExitElapsedSeconds = 0
                 }
                 foreach ($attempt in 1..40) {

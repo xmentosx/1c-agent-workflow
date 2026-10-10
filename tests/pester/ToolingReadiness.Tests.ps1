@@ -209,6 +209,8 @@ Describe "YAxUnit selective installation" {
         Mock Get-ToolingRuntimeExtensions { @($script:engine,$script:testsRuntime) }
         Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
         Mock Invoke-Designer {}
+        Mock Invoke-GuardedCfeExtensionApply {}
+        Mock Invoke-ConfigLoadDesignerAttempt {}
         Mock Install-ItlOnDemandMcp {}
         Mock Set-VanessaMcpExtensionUnsafeMode {}
         Mock Update-DevBranchState {
@@ -221,6 +223,8 @@ Describe "YAxUnit selective installation" {
     It "does not stop runtime or invoke Designer when both extensions are unchanged and active" {
         Ensure-YAxUnitExtensions $script:toolingState | Out-Null
         Should -Invoke Invoke-Designer -Times 0 -Exactly
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 0 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
         Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 0 -Exactly
         Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
     }
@@ -228,7 +232,8 @@ Describe "YAxUnit selective installation" {
     It "loads only the test extension when its sources changed" {
         Mock Get-ConfigSourceFingerprint { [pscustomobject]@{fingerprint="edited"} }
         Ensure-YAxUnitExtensions $script:toolingState | Out-Null
-        Should -Invoke Invoke-Designer -Times 1 -Exactly -ParameterFilter { $DesignerArgs[0] -eq '/LoadConfigFromFiles' }
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly -ParameterFilter { $DesignerArgs[0] -eq '/LoadConfigFromFiles' }
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 0 -Exactly
         Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
         $script:toolingState.yaxunitInstallationProof.testsFingerprint | Should -Be edited
     }
@@ -236,19 +241,21 @@ Describe "YAxUnit selective installation" {
     It "loads only the engine when the pinned CFE changes" {
         Mock Get-YAxUnitPinnedEntry { [pscustomobject]@{sha256="new-pin"} }
         Ensure-YAxUnitExtensions $script:toolingState | Out-Null
-        Should -Invoke Invoke-Designer -Times 1 -Exactly -ParameterFilter { $DesignerArgs[0] -eq '/LoadCfg' }
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 1 -Exactly -ParameterFilter { $ExtensionName -eq 'YAXUNIT' }
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
         Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 1 -Exactly
     }
 
     It "reloads both after database replacement at the same path" {
         $script:toolingState.toolingInfoBaseGeneration="replacement"
         Ensure-YAxUnitExtensions $script:toolingState | Out-Null
-        Should -Invoke Invoke-Designer -Times 2 -Exactly
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly
     }
 
     It "does not preserve successful proof after interrupted loading" {
         $script:toolingState.toolingInfoBaseGeneration="replacement"
-        Mock Invoke-Designer { throw "load interrupted" }
+        Mock Invoke-GuardedCfeExtensionApply { throw "load interrupted" }
         { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*load interrupted*'
         $script:toolingState.yaxunitInstallationProof | Should -BeNullOrEmpty
     }
@@ -257,12 +264,14 @@ Describe "YAxUnit selective installation" {
         Mock Get-YAxUnitTestsExtensionName { "tests" }
         { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*ITL_YAXUNIT_TEST_EXTENSION_NAME_MISMATCH*'
         Should -Invoke Invoke-Designer -Times 0 -Exactly
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 0 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
     }
 
     It "does not retry indefinitely or record proof when an extension remains inactive" {
         $script:testsRuntime.active=$false
         { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*ITL_TOOLING_EXTENSION_NOT_READY*'
-        Should -Invoke Invoke-Designer -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly
         $script:toolingState.yaxunitInstallationProof | Should -BeNullOrEmpty
     }
 }
@@ -409,6 +418,163 @@ Describe "Exhausted repair session after tooling recovery" {
         $new.maximumAttempts | Should -Be 5
     }
 
+    It "resumes the active session without resetting its outer attempt budget" {
+        $script:previous.status = 'active'
+        $script:previous.attempts = 2
+        $script:previous.maximumAttempts = 3
+        $script:previous | Add-Member -NotePropertyName projectRoot -NotePropertyValue $script:ProjectRoot
+        $script:previous | Add-Member -NotePropertyName branch -NotePropertyValue 'itldev/branch'
+        [IO.File]::WriteAllText($script:sessionPath, ($script:previous | ConvertTo-Json))
+        $before = [IO.File]::ReadAllBytes($script:sessionPath)
+        Start-ItlVerificationRepairSession
+        Start-ItlVerificationRepairSession
+        $after = [IO.File]::ReadAllBytes($script:sessionPath)
+        $after | Should -Be $before
+        $record = Get-Content $script:sessionPath -Raw | ConvertFrom-Json
+        $record.sessionId | Should -Be 'old-session'
+        $record.attempts | Should -Be 2
+        $record.maximumAttempts | Should -Be 3
+    }
+
+    It "bounds a named scenario loop and requires a final unfiltered repair run" {
+        $originalProjectRoot = $script:ProjectRoot
+        $script:ProjectRoot = $TestDrive
+        $script:attemptInput = 'source-1'
+        Mock Get-VerificationFingerprint { $script:attemptInput }
+        $features = Join-Path $TestDrive 'tests/features'
+        New-Item -ItemType Directory -Force -Path $features | Out-Null
+        foreach ($name in @('Named.feature', 'Other.feature')) {
+            [IO.File]::WriteAllText((Join-Path $features $name), 'Функционал: Example', [Text.UTF8Encoding]::new($false))
+        }
+        $VerificationRepairKind = 'scenario-loop'
+        $VanessaFeaturePath = 'tests/features/Named.feature'
+        $VanessaFilterTags = ''
+        $VerificationTrigger = 'repair'
+        try {
+            Start-ItlVerificationRepairSession
+            $record = Get-Content $script:sessionPath -Raw | ConvertFrom-Json
+            $RepairSessionId = [string]$record.sessionId
+            $record.kind | Should -Be 'scenario-loop'
+            $record.maximumAttempts | Should -Be 3
+            $record.scenarioFeature | Should -Be (Resolve-ProjectPath $VanessaFeaturePath)
+            Assert-ItlVerificationRepairScope -Trigger repair
+
+            Mock Get-ItlVerificationMode { [pscustomobject]@{ key='ITL_VANESSA_TESTING'; raw='off'; effective='off'; valid=$true } }
+            (Get-ItlVerificationExecutionDecision -Component vanessa -Trigger repair -ExplicitComponents @('vanessa')).run | Should -BeTrue
+            Use-ItlVerificationRepairAttempt
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 1
+            { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_NO_CHANGE*'
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 1
+
+            $namedFeature = Join-Path $features 'Named.feature'
+            [IO.File]::WriteAllText($namedFeature, 'Функционал: Corrected precondition', [Text.UTF8Encoding]::new($false))
+            Use-ItlVerificationRepairAttempt
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 2
+            Remove-Item -LiteralPath $namedFeature
+            { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_SCENARIO_FEATURE_MISSING*'
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 2
+            [IO.File]::WriteAllText($namedFeature, 'Функционал: Corrected precondition', [Text.UTF8Encoding]::new($false))
+
+            $VerificationRepairMaxAttempts = 2
+            Start-ItlVerificationRepairSession
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).maximumAttempts | Should -Be 3
+            $VerificationRepairMaxAttempts = 0
+
+            $VanessaFeaturePath = 'tests/features/Other.feature'
+            { Assert-ItlVerificationRepairScope -Trigger repair } | Should -Throw '*ITL_VERIFICATION_REPAIR_SCOPE_CHANGED*'
+            { Start-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_SCOPE_CHANGED*'
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 2
+
+            $VanessaFeaturePath = ''
+            Assert-ItlVerificationRepairScope -Trigger repair
+            $script:attemptInput = 'source-2'
+            Use-ItlVerificationRepairAttempt
+            Complete-ItlVerificationRepairSession
+            $finished = Get-Content $script:sessionPath -Raw | ConvertFrom-Json
+            $finished.attempts | Should -Be 3
+            $finished.status | Should -Be 'passed'
+        } finally {
+            $script:ProjectRoot = $originalProjectRoot
+            $VerificationRepairKind = ''
+            $VerificationRepairMaxAttempts = 0
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $VerificationTrigger = ''
+            $RepairSessionId = ''
+        }
+    }
+
+    It 'continues the same bounded scenario after correcting a provider policy' {
+        $savedRoot = $script:ProjectRoot
+        $script:ProjectRoot = $TestDrive
+        $script:browserPolicy = 'broken'
+        Mock Get-VerificationFingerprint { 'same-source-and-loaded-base' }
+        Mock Get-EnvValue {
+            param($Name, $Default)
+            if ($Name -eq 'TOOL_BROWSER') { return $script:browserPolicy }
+            return $Default
+        }
+        $feature = Join-Path $TestDrive '.agent-1c/verification/scenario-loop/Проверка политики.feature'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $feature) | Out-Null
+        [IO.File]::WriteAllText($feature, 'Функционал: Existing expected result', [Text.UTF8Encoding]::new($false))
+        $VerificationRepairKind = 'scenario-loop'
+        $VanessaFeaturePath = $feature
+        $VanessaFilterTags = ''
+        $VerificationTrigger = 'repair'
+        try {
+            Start-ItlVerificationRepairSession
+            $session = Get-Content $script:sessionPath -Raw | ConvertFrom-Json
+            $RepairSessionId = [string]$session.sessionId
+            Use-ItlVerificationRepairAttempt
+            { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_NO_CHANGE*'
+            $script:browserPolicy = 'auto'
+            Use-ItlVerificationRepairAttempt
+            $continued = Get-Content $script:sessionPath -Raw | ConvertFrom-Json
+            $continued.sessionId | Should -Be $session.sessionId
+            $continued.maximumAttempts | Should -Be 3
+            $continued.attempts | Should -Be 2
+            $script:browserPolicy = '  AUTO  '
+            { Use-ItlVerificationRepairAttempt } | Should -Throw '*ITL_VERIFICATION_REPAIR_NO_CHANGE*'
+            (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 2
+        } finally {
+            $script:ProjectRoot = $savedRoot
+            $VerificationRepairKind = ''
+            $VerificationTrigger = ''
+            $VanessaFeaturePath = ''
+            $RepairSessionId = ''
+        }
+    }
+
+    It "accepts an ignored transient feature without turning it into a retained suite" {
+        $originalProjectRoot = $script:ProjectRoot
+        $script:ProjectRoot = $TestDrive
+        Mock Get-VerificationFingerprint { 'transient-scenario-source' }
+        $transient = Join-Path $TestDrive '.agent-1c/verification/scenario-loop/Новый сценарий.feature'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $transient) | Out-Null
+        [IO.File]::WriteAllText($transient, "#language: ru`nФункционал: Однократная проверка`n", [Text.UTF8Encoding]::new($false))
+        $VerificationRepairKind = 'scenario-loop'
+        $VanessaFeaturePath = $transient
+        $VanessaFilterTags = ''
+        $VerificationTrigger = 'repair'
+        try {
+            @(Get-VanessaFeatureFiles -FeaturePath $transient) | Should -Be @($transient)
+            Start-ItlVerificationRepairSession
+            $record = Get-Content $script:sessionPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $record.scenarioFeature | Should -Be $transient
+            $RepairSessionId = [string]$record.sessionId
+            Assert-ItlVerificationRepairScope -Trigger repair
+            Use-ItlVerificationRepairAttempt
+            (Get-Content $script:sessionPath -Raw -Encoding UTF8 | ConvertFrom-Json).attempts | Should -Be 1
+        } finally {
+            $script:ProjectRoot = $originalProjectRoot
+            $VerificationRepairKind = ''
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $VerificationTrigger = ''
+            $RepairSessionId = ''
+        }
+    }
+
     It "cannot refresh the budget with the same receipt" {
         $script:recoveryState.toolingRecoveryId='old-recovery'
         { Start-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_EXHAUSTED*'
@@ -424,5 +590,49 @@ Describe "Exhausted repair session after tooling recovery" {
         $script:recoveryState.toolingRecoveredMutationAt='2026-09-07T20:00:00Z'
         { Start-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_EXHAUSTED*'
         (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 5
+    }
+}
+
+Describe "Named scenario repair round" {
+    It "uses one owned load and attempt for diagnostic and unfiltered proof" {
+        $VerificationTrigger = 'repair'
+        $RepairSessionId = 'scenario-session'
+        $VanessaFeaturePath = 'tests/features/Named.feature'
+        $VanessaFilterTags = ''
+        $script:scenarioPhases = [Collections.Generic.List[bool]]::new()
+        $state = [pscustomobject]@{ lastVerificationEvidenceKind = 'full' }
+        Mock Assert-ItlVerificationRepairScope {}
+        Mock Read-DevBranchState { $state }
+        Mock Get-DevBranchKind { 'configuration' }
+        Mock Get-ExportPath { 'src/cf' }
+        Mock Resolve-Agent1cFullPath { param($Path) $Path }
+        Mock New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+        Mock Restore-ConfigDumpInfoLoadSnapshot {}
+        Mock Remove-ConfigDumpInfoLoadSnapshot {}
+        Mock Invoke-DevBranchVanessaRuntimeRelease {}
+        Mock Assert-VanessaVerificationPreflight {}
+        Mock Test-ItlFullVerificationProofEligible { $script:scenarioPhases.Count -gt 0 }
+        Mock Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind='scenario-loop'; sessionId='scenario-session' } }
+        Mock Test-ItlDiagnosticVerificationScope { $true }
+        Mock Get-ItlVerificationExecutionDecision { [pscustomobject]@{ run=$true } }
+        Mock Use-ItlVerificationRepairAttempt {}
+        Mock Ensure-DevBranchEventLogBaseline { $state }
+        Mock Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
+        Mock Update-DevBranchBase {}
+        Mock Invoke-ItlVerificationCycle {
+            param($Trigger, $ExplicitComponents, $ScenarioDiagnosticOnly, $EventLogCursorPath, $EventLogBoundaryAt, $EventLogCursorScope)
+            $script:scenarioPhases.Add([bool]$ScenarioDiagnosticOnly)
+        }
+        Mock Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+        Mock Get-VerificationState { [pscustomobject]@{ status='passed'; isFreshPassed=$true } }
+        Mock Complete-ItlVerificationRepairSession {}
+        Mock Complete-ItlVerificationRepairFailure {}
+
+        Invoke-DevBranchCheck
+
+        @($script:scenarioPhases.ToArray()) | Should -Be @($true, $false)
+        Should -Invoke Use-ItlVerificationRepairAttempt -Times 1 -Exactly
+        Should -Invoke Update-DevBranchBase -Times 1 -Exactly
+        Should -Invoke Complete-ItlVerificationRepairSession -Times 1 -Exactly
     }
 }

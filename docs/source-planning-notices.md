@@ -4,7 +4,7 @@ The grill skill family is adapted by the controlled `ai_rules_1c` fork from
 [mattpocock/skills](https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954).
 Copyright (c) 2026 Matt Pocock.
 
-The generic OpenSpec skills are generated from `@fission-ai/openspec@1.4.1`.
+The generic OpenSpec skills are generated from `@fission-ai/openspec@1.13.1`.
 Copyright (c) 2024 OpenSpec Contributors.
 
 Both dependencies are distributed under the MIT License below. Their source

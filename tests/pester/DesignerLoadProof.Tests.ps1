@@ -163,6 +163,7 @@ Describe "1C Designer load proof invalidation" {
                     enterpriseNormalizationStatus = "passed"
                 }
                 $script:DesignerCalls = @()
+                $script:SnapshotCalls = @()
                 $script:ObservedFingerprints = @()
                 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-b"; fileCount = 1; absoluteExportPath = "C:\src" } }
                 function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
@@ -174,7 +175,12 @@ Describe "1C Designer load proof invalidation" {
                 function Restore-ConfigDumpInfoLoadSnapshot {}
                 function Remove-ConfigDumpInfoLoadSnapshot {}
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, [object]$NativeEffectContract)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, [object]$NativeEffectContract, $User, $Password, $RestorationDuty)
+                    if ($DesignerArgs[0] -in @('/DumpIB','/RestoreIB')) {
+                        $script:SnapshotCalls += , @($DesignerArgs)
+                        if ($DesignerArgs[0] -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
+                        return
+                    }
                     $script:DesignerCalls += , @($DesignerArgs)
                     $NativeEffectContract.sourceFingerprint | Should -Be 'fingerprint-b'
                     $NativeEffectContract.sourceCommit | Should -Be 'head'
@@ -195,16 +201,22 @@ Describe "1C Designer load proof invalidation" {
                     message = $message
                     state = Read-DevBranchStateFile -Path $statePath
                     calls = @($script:DesignerCalls)
+                    snapshotCalls = @($script:SnapshotCalls)
                     observedFingerprints = @($script:ObservedFingerprints)
                 }
             }
 
             $result.message | Should -Match "both failed"
             $result.calls.Count | Should -Be 2
+            $result.snapshotCalls.Count | Should -Be 4
+            $result.snapshotCalls[0] | Should -Contain '/DumpIB'
+            $result.snapshotCalls[1] | Should -Contain '/RestoreIB'
+            $result.snapshotCalls[2] | Should -Contain '/DumpIB'
+            $result.snapshotCalls[3] | Should -Contain '/RestoreIB'
             $result.calls[0] | Should -Contain "-listFile"
-            $result.calls[0] | Should -Contain "/UpdateDBCfg"
+            $result.calls[0] | Should -Not -Contain "/UpdateDBCfg"
             $result.calls[1] | Should -Not -Contain "-listFile"
-            $result.calls[1] | Should -Contain "/UpdateDBCfg"
+            $result.calls[1] | Should -Not -Contain "/UpdateDBCfg"
             @($result.observedFingerprints | Where-Object { $_ }).Count | Should -Be 0
             $result.state.lastConfigDesignerFingerprint | Should -Be ""
             $result.state.configLoadStatus | Should -Be "fallback-failed"

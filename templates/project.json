@@ -34,8 +34,11 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    "ref": "itl-main-410951e7-r36",
+    "ref": "itl-main-c1fb8e6-r41",
     "tools": []
+  },
+  "openSpec": {
+    "storeId": ""
   },
   "vibecoding1cMcp": {
     "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",

@@ -29,7 +29,7 @@ verify helper action                       Совместимый alias для /
 Например, в Kilo Code upstream-native OpenSpec-процесс запускается отдельными slash-командами:
 
 ```text
-/opsx-propose                     Обычный первый шаг: подготовить proposal, design/tasks/test-plan/spec deltas; код не менять.
+/opsx-propose                     Обычный первый шаг: подготовить proposal, design/tasks/spec deltas и проверяемые сценарии; отдельный test-plan только при необходимости, код не менять.
 /opsx-apply                       Реализовать согласованный OpenSpec change по tasks.md.
 /opsx-archive                     После приемки заархивировать OpenSpec change.
 /opsx-explore                     Опционально (optional): исследовать задачу или код до proposal, если контекста недостаточно.
@@ -39,8 +39,8 @@ verify helper action                       Совместимый alias для /
 
 ```text
 Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код
-Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks, test-plan и spec deltas; код не меняй
-Реализуй согласованный OpenSpec change <change-id> по tasks.md и test-plan.md
+Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks и spec deltas; отдельный test-plan только если нужен; код не меняй
+Реализуй согласованный OpenSpec change <change-id> по tasks.md и утверждённым проверкам
 Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs
 ```
 
@@ -86,11 +86,11 @@ After a real file load, `/itl-check`, `update-base helper action`, `verify helpe
 
 ## Общее правило готовности
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; quick-fix, direct full-cycle и OpenSpec исключений не дают. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
+Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке доработка под настроенными `exportPath`/`extensionsPath` проходит оценку применимых обязательств и fresh passed `/itl-check`; доказательством может быть актуальная сохраняемая проверка или достаточный one-off результат, связанный с точным входом и базой. Запущенный runner с zero tests, invalid JUnit или failure не заменяется one-off записью. На `master` правка исходников остаётся branch-safety blocker.
 
-Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся и в новый план не добавляется. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` экспорт продолжается с предупреждением без подтверждения; закрытие ветки требует отдельного подтверждения.
+Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Режим `off` запрещает автоматический запуск, но не создание теста и не повторное использование уже свежего достаточного proof. При отсутствии такого proof пропуск остаётся partial: `verificationPolicy=block` блокирует result/close, `warn` допускает экспорт с предупреждением; закрытие ветки требует отдельного подтверждения.
 
-Для больших OpenSpec changes действует hybrid cadence: каждый срез с наблюдаемым поведением получает минимум один focused Vanessa scenario и дешёвые targeted/static checks, но промежуточный `/itl-check` нужен только на milestone, где runtime-результат решает, можно ли продолжать реализацию. Подготовительные tasks фиксируются как pending verification. После последней verification-relevant правки обязателен fresh unfiltered `/itl-check` по всему разрешённому набору сценариев.
+Для больших OpenSpec changes действует hybrid cadence: каждый срез с наблюдаемым поведением получает достаточное текущее доказательство и применимые targeted/static checks; сохраняемая регрессия добавляется отдельно, когда полезна для будущих запусков. Промежуточный `/itl-check` нужен на milestone, где runtime-результат решает дальнейшую реализацию. Подготовительные tasks фиксируются как pending verification. После последней verification-relevant правки выполняется обычный unfiltered `/itl-check`, который оценивает весь применимый набор обязательств и переиспользует свежее proof.
 
 ## Как выбрать режим
 

@@ -1,0 +1,27 @@
+{
+  "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
+  "license": "BSD-3-Clause",
+  "licensePath": "third-party/vanessa-automation/1.2.043.42-itl-r2/LICENSE.upstream",
+  "inputs": [
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_НажатьГиперссылкуHTMLДокумента/Forms/Форма/Ext/Form.xml",
+      "blob": "60e052f9b0d80a42f3ea6992b07d0ede8ec28839",
+      "sha256": "fe81d4b8eb11403ff820eb8bd951e899866e27b37bf24e0e503e9dd62efa0f11"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_НажатьГиперссылкуHTMLДокумента/Forms/Форма/Ext/Form/Module.bsl",
+      "blob": "30a3ffd7b474f970647b828963a30e40bfb6ade6",
+      "sha256": "bc92d0b4cba43c14d241b3ce4b84868fc3d6e2d4aa3392b77815c6c9a5686377"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_НажатьКнопкуHTMLДокумента/Forms/Форма/Ext/Form.xml",
+      "blob": "30acc7d81c5a3d82cb04e3940582a2bbff70989d",
+      "sha256": "7c1fd9491aad7bb6fdf1b871a40826efe89f06665720ade4e59bc50e62fed175"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_НажатьКнопкуHTMLДокумента/Forms/Форма/Ext/Form/Module.bsl",
+      "blob": "9fca50d8b3956fe1152a3d3b668703606175591b",
+      "sha256": "931bba79bf816e597f5967cd2030bc5e62bfa347432263479463694ae61a0bd0"
+    }
+  ]
+}

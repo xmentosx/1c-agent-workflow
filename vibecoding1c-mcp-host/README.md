@@ -4,6 +4,9 @@ This folder is for the dedicated LAN machine that runs shared vibecoding1c MCP s
 It does not require Codex, Kilo, the workflow agent, or a target 1C project.
 
 For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
+For `dev-karimov-new` Linux VM upgrades, the durable owner is [the private distribution host package](http://gitlabserv01.itland.local/root/MCP-vibecoding1c/-/tree/main/hosts/dev-karimov-new). Read its `README.md` and `contract.json`, then use the installed `/opt/itl-mcp/host-upgrade/upgrade.py` entrypoint. It uses the existing watchdog maintenance lock and qualifies each new Code image against the crash/resume repair before replacement. Temporary chat handoffs are not required; version-specific full-file overrides must not be carried forward without qualification.
+For native Code/Graph on a dedicated Linux VM with systemd recovery, see
+[the Linux host backend](linux-native-host/README.md).
 For the SPPR Docker reader, Windows collector and project client connection, see [SPPR operations](sppr-mcp/README.md).
 The canonical upstream MCP behavior and environment contract is documented at [OneRPA MCP servers for 1C](https://docs.onerpa.ru/mcp-servery-1c).
 

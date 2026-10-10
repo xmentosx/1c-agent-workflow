@@ -40,6 +40,88 @@ that own their result:
 started deliberately and excluded from normal acceptance. Reserve `always=true`
 for a genuinely cheap invariant, not as a substitute for owner classification.
 
+Schema 2 separates the behavior to prove from the decision to retain a test.
+An obligation identifies its expected result, affected inputs, admissible proof,
+retention decision, and cadence. A retained suite or YAxUnit group binds to one
+obligation by `suiteId` or `groupId`; a one-off obligation has no retained test.
+Schema 1 remains readable and maps existing acceptance/default-fast entries to
+`affected` and existing explicit entries to `explicit`, without deleting tests.
+
+```json
+{
+  "schemaVersion": 2,
+  "suites": [
+    { "id": "orders", "purpose": "acceptance", "featurePaths": ["tests/features/Orders.feature"], "ownerPaths": ["src/cf/Orders/**"] }
+  ],
+  "obligations": [
+    { "id": "orders-result", "expectedResult": "Order total is correct", "inputPaths": ["src/cf/Orders/**"], "admissibleProof": ["vanessa-junit"], "retention": "retained", "retentionReason": "Recurring business rule", "cadence": "affected", "suiteId": "orders" }
+  ]
+}
+```
+
+One-off obligations remain classified without a suite. Their proof is a separate
+readiness condition: missing or stale evidence blocks a fresh passed result,
+but it does not prevent retained Vanessa/YAxUnit tests from running. Run the
+ordinary unfiltered check first so the current source is loaded and retained
+tests and event log are assessed. It may finish with partial readiness while
+the one-off receipt is pending. For a named observed run, start the compact
+helper with `-Action begin-one-off-proof
+-DevBranchName <name> -VerificationObligationId <id>`. Record the returned
+`runToken`, actually execute the declared check, retain a result artifact, and
+write a UTF-8 JSON evidence file inside the project:
+
+```json
+{
+  "obligationId": "orders-observed",
+  "runToken": "<token from begin>",
+  "expectedResult": "Order total is correct",
+  "status": "passed",
+  "proofType": "runtime-observation",
+  "actualResult": "Observed total: 42",
+  "providerId": "named UI client or data provider",
+  "runnerVersion": "exact version",
+  "steps": [{ "action": "Recalculate this order", "actual": "Total displayed as 42" }],
+  "artifactPaths": [".agent-1c/runs/<run>/observed-result.json"],
+  "limitations": "",
+  "invocationProvenance": { "trigger": "named user request" }
+}
+```
+
+Complete with `-Action complete-one-off-proof -DevBranchName <name>
+-VerificationEvidencePath <path>`. The helper checks the run token, declared
+expectation, exact checked inputs, loaded test infobase, allowed proof method,
+observed steps, and artifact hashes before writing a passed receipt. A later
+change to any of those dependent inputs makes the proof stale; an unrelated
+commit does not. Starting again reuses fresh proof unless `-Force` explicitly
+requests a new observed run. The existing check proof and this receipt are
+assessed together by status, export, and close; they do not require rerunning
+unchanged UI tests. If the source or loaded base changes, repeat the ordinary
+check and the affected one-off run.
+Current one-off proof can establish complete readiness without a retained suite:
+the same read-only assessor requires exact source/load readiness, current
+event-log evidence and every applicable obligation. Retained `affected` and
+`handoff` suites keep their purpose and need observed unfiltered JUnit receipts
+bound to declared inputs, expected result, runner/checker identity and artifact
+SHA. A partial named run does not replace missing obligations.
+Retained proof binds the exact branch/base and runner generations, while full
+loaded source identity remains its original provenance. Separate current
+source/load readiness and the suite's declared inputs decide applicability:
+an unrelated source change followed by a valid load preserves unaffected
+coverage. Unknown target/generation/auxiliary connection is never reused.
+Each selected suite also needs observed native scenario identities in its
+hashed JUnit. A matching whole-run count cannot fill a missing suite; missing,
+duplicate or ambiguous cases remain partial. Preserve the reports and use the
+existing runner/report owner to resolve the missing identity, then repeat the
+original check. The assessor neither launches a runner nor changes a test.
+With execution
+off, the ordinary check assesses those receipts and starts no forbidden runner;
+status, export and close use that same result. Old proof with unknown receipt
+identity stays unverified until the existing permitted check supplies it.
+Cleanup preserves artifacts referenced by current component and retained-suite
+receipts as well as one-off proof.
+Do not change a functional test's purpose to `explicit` to make a pending
+missing handoff proof disappear.
+
 The file boundary is an execution boundary, not a place to accumulate every
 scenario for a subsystem. One acceptance suite may contain at most eight flat
 scenarios across all of its matched files. Its files must describe one coherent

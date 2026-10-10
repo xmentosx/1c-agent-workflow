@@ -231,7 +231,7 @@ function Get-OneCCommandLineSwitchPath {
     $switchPattern = @($SwitchNames | ForEach-Object { [regex]::Escape($_) }) -join '|'
     $matches = [regex]::Matches(
         $CommandLine,
-        '(?i)(?:^|\s)/(?:' + $switchPattern + ')(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>.*?))(?=\s+"?[/-][A-Za-z]|$)'
+        '(?i)(?:^|\s)/(?:' + $switchPattern + ')(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>.*?))(?=\s+"?[/-][A-Za-z]|\s*$)'
     )
     if ($matches.Count -ne 1) { return "" }
     $match = $matches[0]

@@ -13,6 +13,8 @@
                 [switch]$FailTools,
                 [switch]$FailDump,
                 [switch]$FailValidate,
+                [switch]$FailApplicability,
+                [switch]$MutateCfeDuringLoad,
                 [switch]$FailRollback,
                 [switch]$FailCompletionAck,
                 [switch]$ExistingExtension,
@@ -31,7 +33,7 @@
                 Set-Content -LiteralPath (Join-Path $kiloToolRoot "cfe-validate.ps1") -Encoding ASCII -Value "# fixture"
             }
             $cfePath = Join-Path $tempRoot "input.cfe"
-            Set-Content -LiteralPath $cfePath -Encoding Byte -Value ([byte[]](1, 2, 3))
+            [IO.File]::WriteAllBytes($cfePath, [byte[]](1, 2, 3))
             if ($PrepopulateTarget) {
                 New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cfe\ShipModel") | Out-Null
                 Set-Content -LiteralPath (Join-Path $tempRoot "src\cfe\ShipModel\existing.txt") -Encoding ASCII -Value "existing"
@@ -82,6 +84,12 @@
                     function Add-VerificationStaleIfNeeded {}
                     function Sync-DevBranchContextToDotEnv {}
                     function Get-CurrentCommit { return "head" }
+                    function Get-PlatformPath { return 'fixture-1cv8.exe' }
+                    function Get-ItlActiveClient { return 'kilocode' }
+                    function Get-AiRules1cInstalledSkillRoot {
+                        param([string]$SkillName, [string]$Client)
+                        return (Join-Path $tempRoot ".kilo\skills\$SkillName")
+                    }
                     function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "source"; treeObjectId = "fixture-tree" } }
                     function Update-DevBranchState {
                         param([object]$State, [hashtable]$Updates)
@@ -89,12 +97,22 @@
                         foreach ($key in $Updates.Keys) { $script:extensionInitUpdatesCaptured[$key] = $Updates[$key] }
                     }
                     function Invoke-Designer {
-                        param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                        param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password,
+                            [object]$NativeEffectContract, [string[]]$DesignerArgs)
                         $script:extensionInitDesignerCalls += ,@($DesignerArgs)
+                        $script:LastLogPath = Join-Path $tempRoot ("designer-{0}.log" -f $script:extensionInitDesignerCalls.Count)
+                        $logText = if ($FailApplicability -and $DesignerArgs -contains '/CheckCanApplyConfigurationExtensions') {
+                            'Ошибок не обнаружено. Не найден метод исходной конфигурации.'
+                        } else { 'Ошибок: 0; предупреждений: 0' }
+                        [IO.File]::WriteAllText($script:LastLogPath, $logText, [Text.UTF8Encoding]::new($false))
+                        $resultIndex = [Array]::IndexOf($DesignerArgs, '/DumpResult')
+                        if ($resultIndex -ge 0) {
+                            [IO.File]::WriteAllText($DesignerArgs[$resultIndex + 1], '0', [Text.UTF8Encoding]::new($false))
+                        }
                         switch ($DesignerArgs[0]) {
                             "/DumpIB" {
                                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DesignerArgs[1]) | Out-Null
-                                Set-Content -LiteralPath $DesignerArgs[1] -Encoding Byte -Value ([byte[]](4, 5, 6))
+                                [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]](4, 5, 6))
                             }
                             "/DumpConfigToFiles" {
                                 if ($FailDump) { throw "mock dump failure" }
@@ -105,12 +123,16 @@
 '@
                                 Set-Content -LiteralPath (Join-Path $DesignerArgs[1] "ConfigDumpInfo.xml") -Encoding UTF8 -Value '<ConfigDumpInfo />'
                             }
+                            "/LoadCfg" {
+                                if ($MutateCfeDuringLoad) {
+                                    [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]](7, 8, 9))
+                                }
+                            }
                             "/RestoreIB" {
                                 $script:extensionInitRollbackCalled = $true
                                 if ($FailRollback) { throw "mock rollback failure" }
                             }
                         }
-                        $script:LastLogPath = Join-Path $tempRoot "designer.log"
                     }
 
                     $errorText = ""
@@ -124,6 +146,8 @@
                         calls = @($script:extensionInitDesignerCalls)
                         toolCalls = @($script:extensionLifecycleToolCalls)
                         rollbackCalled = $script:extensionInitRollbackCalled
+                        nativeJournalPresent = ($null -ne $script:OneCNativeOperationJournal)
+                        snapshotHashes = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot '.agent-1c\snapshots') -File -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ path=$_.FullName; sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant() } })
                         error = $errorText
                         targetExists = Test-Path -LiteralPath (Join-Path $tempRoot "src\cfe\ShipModel")
                         snapshotFiles = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\snapshots") -File -ErrorAction SilentlyContinue)
@@ -163,7 +187,10 @@
         $result.updates.extensionInitializationStatus | Should -Be "ready"
         $result.snapshotFiles | Should -BeNullOrEmpty
         ($result.toolCalls -join "`n") | Should -Match ([regex]::Escape(".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"))
-        ($result.calls | ForEach-Object { $_ -join " " }) -join "`n" | Should -Match "/LoadConfigFromFiles.*-Extension ShipModel.*-Format Hierarchical.*\/UpdateDBCfg"
+        @($result.calls | Where-Object { $_[0] -eq '/LoadConfigFromFiles' -and $_ -contains '/UpdateDBCfg' }) | Should -HaveCount 0
+        @($result.calls | Where-Object { $_[0] -eq '/CheckCanApplyConfigurationExtensions' }) | Should -HaveCount 1
+        @($result.calls | Where-Object { $_[0] -eq '/UpdateDBCfg' -and $_ -contains '-WarningsAsErrors' }) | Should -HaveCount 1
+        $result.updates.lastGate6Evidence.sourceFingerprint | Should -Be 'source'
     }
 
     It 'preserves successful sources and the snapshot without replaying rollback after a lost completion acknowledgement' {
@@ -174,6 +201,11 @@
         $result.targetExists | Should -BeTrue
         $result.updates.extensionInitializationStatus | Should -Be ready
         $result.snapshotFiles.Count | Should -Be 1
+        $result.nativeJournalPresent | Should -BeFalse
+        @($result.calls | Where-Object { $_[0] -eq '/DumpIB' }) | Should -HaveCount 1
+        $result.updates.lastGate6Evidence.editableLoad.snapshot.ownedByCheckedLoad | Should -BeFalse
+        $result.updates.lastGate6Evidence.editableLoad.snapshot.path | Should -Be $result.snapshotHashes[0].path
+        $result.updates.lastGate6Evidence.editableLoad.snapshot.sha256 | Should -Be $result.snapshotHashes[0].sha256
         @($result.calls | Where-Object { $_[0] -eq '/RestoreIB' }) | Should -HaveCount 0
     }
 
@@ -182,7 +214,11 @@
         $result.error | Should -BeNullOrEmpty
         $result.updates.extensionInitMode | Should -Be "Cfe"
         $callsText = ($result.calls | ForEach-Object { $_ -join " " }) -join "`n"
-        $callsText | Should -Match "/LoadCfg.*input\.cfe.*-Extension ShipModel.*\/UpdateDBCfg"
+        $callsText | Should -Match "/LoadCfg.*input\.cfe.*-Extension ShipModel"
+        @($result.calls | Where-Object { $_[0] -eq '/LoadCfg' -and $_ -contains '/UpdateDBCfg' }) | Should -HaveCount 0
+        @($result.calls | Where-Object { $_[0] -eq '/CheckCanApplyConfigurationExtensions' }) | Should -HaveCount 1
+        @($result.calls | Where-Object { $_[0] -eq '/UpdateDBCfg' }) | Should -HaveCount 1
+        $result.updates.lastGate6Evidence.sourceFingerprint | Should -Match '^sha256:'
         $callsText | Should -Not -Match "LoadConfigFromFiles"
         $callsText | Should -Not -Match "v8unpack"
     }
@@ -197,6 +233,27 @@
         $result.updates.extensionInitializationStatus | Should -Be "failed"
         $result.targetExists | Should -BeFalse
         $result.snapshotFiles | Should -BeNullOrEmpty
+    }
+
+    It 'restores its infobase snapshot when applicability fails and never reaches database apply' {
+        $failed = Invoke-MockedExtensionInitialization -Mode Cfe -FailApplicability
+        $failed.error | Should -Match 'GATE6_CHECK_FAILED.*applicability.*Не найден метод'
+        $failed.error | Should -Match 'snapshot was restored'
+        $failed.rollbackCalled | Should -BeTrue
+        @($failed.calls | Where-Object { $_[0] -eq '/UpdateDBCfg' }) | Should -HaveCount 0
+        $failed.updates.Keys | Should -Not -Contain 'extensionName'
+
+        $repaired = Invoke-MockedExtensionInitialization -Mode Cfe
+        $repaired.error | Should -BeNullOrEmpty
+        @($repaired.calls | Where-Object { $_[0] -eq '/UpdateDBCfg' }) | Should -HaveCount 1
+    }
+
+    It 'rejects a CFE replaced during editable load before checks or database apply' {
+        $result = Invoke-MockedExtensionInitialization -Mode Cfe -MutateCfeDuringLoad
+        $result.error | Should -Match 'snapshot was restored: GATE6_SOURCE_CHANGED'
+        $result.rollbackCalled | Should -BeTrue
+        @($result.calls | Where-Object { $_[0] -eq '/CheckModules' -or $_[0] -eq '/UpdateDBCfg' }) | Should -HaveCount 0
+        $result.updates.Keys | Should -Not -Contain 'extensionName'
     }
 
     It "stops safely on existing extension or a nonempty exact dump target" {

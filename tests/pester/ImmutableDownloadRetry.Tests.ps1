@@ -305,7 +305,40 @@ Describe "Immutable asset download retry policy" {
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
 
-        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 5
+        $vanessaTokens = $null
+        $vanessaErrors = $null
+        $vanessaAst = [Management.Automation.Language.Parser]::ParseInput($vanessa, [ref]$vanessaTokens, [ref]$vanessaErrors)
+        @($vanessaErrors).Count | Should -Be 0
+        $acquires = @($vanessaAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Invoke-ItlImmutableFileAcquire'
+        }, $true))
+        $acquireOwners = @($acquires | ForEach-Object {
+            $owner = $_.Parent
+            while ($owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }
+            $owner.Name
+        })
+        $legacyAcquireOwners = @(
+            'Save-VanessaAutomationArchive', 'Install-VanessaAutomation',
+            'Save-VanessaMcpPairedSourceBuildArtifact', 'Save-VanessaMcpArtifact', 'Install-VanessaMcpArtifact'
+        )
+        $acquires.Count | Should -Be 6
+        @($acquireOwners | Where-Object { $_ -cne 'Save-VanessaMcpClientSourceBuildArtifact' } | Sort-Object) |
+            Should -Be @($legacyAcquireOwners | Sort-Object)
+        @($acquireOwners | Where-Object { $_ -ceq 'Save-VanessaMcpClientSourceBuildArtifact' }).Count | Should -Be 1
+
+        # The approved scoped client CFE provider is an additional immutable route,
+        # not a replacement of the five archive/cache/URL routes above.
+        $sourceBuildOwners = @($vanessaAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Save-VanessaMcpClientSourceBuildArtifact'
+        }, $true))
+        $sourceBuildOwners.Count | Should -Be 1
+        $sourceBuildText = $sourceBuildOwners[0].Body.Extent.Text
+        $sourceBuildText | Should -Match "GetEnvironmentVariable\('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', 'Process'\)"
+        $sourceBuildText | Should -Match ([regex]::Escape("`$Definition.lockKey -cne 'clientMcp'"))
+        $sourceBuildText | Should -Match ([regex]::Escape("-Path 'source' -Default '') -cne 'workflow-pinned'"))
+        $sourceBuildText | Should -Match ([regex]::Escape("`$lock -Path 'sha256' -Default ''"))
+        $sourceBuildText | Should -Match ([regex]::Escape("Invoke-ItlImmutableFileAcquire -Source `$sourcePath -DestinationPath `$TargetPath -ExpectedSha256 `$expected -Label 'Vanessa UI MCP artifact clientMcp'"))
+        $sourceBuildText | Should -Not -Match 'Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Copy-Item|Move-Item|WriteAllBytes|WriteAllText|System\.Net\.WebClient'
         @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
         $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
         $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'

@@ -14,8 +14,10 @@
             '.agents/skills/grill-me', '.agents/skills/grill-with-docs',
             '.agents/skills/grilling', '.agents/skills/domain-modeling',
             '.agents/skills/openspec-explore', '.agents/skills/openspec-propose',
-            '.agents/skills/openspec-apply-change', '.agents/skills/openspec-archive-change',
-            'openspec', 'docs/source-planning.md', 'docs/source-planning-notices.md'
+            '.agents/skills/openspec-apply-change', '.agents/skills/openspec-update-change',
+            '.agents/skills/openspec-sync-specs', '.agents/skills/openspec-archive-change',
+            'openspec', 'docs/source-planning.md', 'docs/source-planning-notices.md',
+            'scripts/source-openspec.ps1'
         )
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
@@ -304,8 +306,8 @@ exit 0
         $userRulesTemplateText | Should -Match ([regex]::Escape("executionPath=quick-fix|full-cycle"))
         $userRulesTemplateText | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
         $userRulesTemplateText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
-        $userRulesTemplateText | Should -Match "OpenSpec phases read rules"
-        $userRulesTemplateText | Should -Match 'Never install missing `openspec` or run `openspec update`'
+        $userRulesTemplateText | Should -Match 'OpenSpec explore/propose/apply/archive/update/sync read rules'
+        $userRulesTemplateText | Should -Match 'Resolve a pinned OpenSpec CLI through the ITL helper; never run an unqualified global `openspec` or an arbitrary `openspec update`'
         $userRulesTemplateText | Should -Match "activate required skills"
         $userRulesTemplateText | Should -Match "sufficient non-duplicative current evidence"
         $userRulesTemplateText | Should -Match "never repeat native discovery after sufficient code/graph MCP results"
@@ -630,8 +632,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $kiloTemplateText | Should -Match "update-workflow"
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $advancedText | Should -Match "update-workflow"
-        $advancedText | Should -Match "active client's generated command surface"
-        $advancedText | Should -Match "Generated client surfaces stay local and ignored"
+        $advancedText | Should -Match "configured client set"
+        $advancedText | Should -Match "per-root report records completed, deferred and blocked outcomes"
 
         $docPaths = @(
             "AGENT-INSTALL.md",
@@ -844,7 +846,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousMcpRegistryRepo = $env:VIBECODING1C_MCP_REGISTRY_REPO
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r1\vanessa-automation-single.1.2.043.42-itl-r1.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r4\vanessa-automation-single.1.2.043.42-itl-r4.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -870,7 +872,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             [System.IO.File]::WriteAllBytes($clientMcpFixture, [byte[]](1, 2, 3, 4, 5))
             [System.IO.File]::WriteAllBytes($yaxunitFixture, [byte[]](11, 12, 13, 14, 15))
             $sourceRoot = Join-Path $tempRoot "workflow-source"
-            & git clone --quiet --shared $RepoRoot $sourceRoot
+            # Keep the complete package fixture at its real Windows TEMP path, including
+            # long 1C metadata paths, independently of the user's global Git settings.
+            & git -c core.longpaths=true clone --quiet --shared --config core.longpaths=true $RepoRoot $sourceRoot
             $LASTEXITCODE | Should -Be 0
             & git -C $sourceRoot checkout --quiet --detach ((& git -C $RepoRoot rev-parse HEAD).Trim())
             $LASTEXITCODE | Should -Be 0
@@ -884,6 +888,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             foreach ($module in @('agent-1c.lifecycle.ps1', 'agent-1c.vibecoding1c-mcp.ps1')) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\$module") -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\scripts\lib\$module") -Force
             }
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Destination (Join-Path $sourceRoot "templates\gitignore.append") -Force
             Copy-Item `
                 -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
                 -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
@@ -898,7 +903,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $sourceLock.dependencies.yaxunit.url = $yaxunitFixture
             $sourceLock.dependencies.yaxunit.sha256 = (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
-            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json $catalogRelativePath .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1 .agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1
+            & git -C $sourceRoot add templates/dependency-lock.json templates/gitignore.append .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json $catalogRelativePath .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1 .agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1
             & git -C $sourceRoot commit --quiet -m "test: use current local dependency candidates"
             $LASTEXITCODE | Should -Be 0
             $sourceCommit = ((& git -C $sourceRoot rev-parse HEAD).Trim())
@@ -1011,8 +1016,8 @@ local after
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
             $stdout | Should -Match "Workflow обновлён"
             $stdout | Should -Match "Новый коммит создан: да"
-            $stdout | Should -Match ([regex]::Escape('через /itl-refresh или /itl-refresh-lite'))
-            $stdout | Should -Match "Активных веток разработки нет"
+            $stdout | Should -Not -Match ([regex]::Escape('через /itl-refresh или /itl-refresh-lite'))
+            $stdout | Should -Match "Зарегистрированных рабочих веток для обновления нет"
             $stdout | Should -Match "ROCTUP MCP update skipped because ROCTUP_MCP_ENABLED=false"
             $stdout | Should -Match "Removed obsolete workflow-managed file: VANESSA-TESTS-GUIDE.ru.md"
             $operationState = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
@@ -1104,6 +1109,13 @@ local after
             ((& git -C $projectRoot log -1 --pretty=%s).Trim()) | Should -Be ("chore: update ITL workflow to master@" + $sourceCommit.Substring(0, 7))
             ((& git -C $projectRoot branch --show-current).Trim()) | Should -Be "master"
             @(& git -C $projectRoot status --short) | Should -Be @("?? scratch.local")
+            @(Get-ChildItem -LiteralPath (Join-Path $projectRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count | Should -Be 0
+
+            $firstUpdateHead = (& git -C $projectRoot rev-parse HEAD).Trim()
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+            (& git -C $projectRoot rev-parse HEAD).Trim() | Should -Be $firstUpdateHead
+            @(Get-ChildItem -LiteralPath (Join-Path $projectRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count | Should -Be 0
         } finally {
             $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
             $env:ITL_WORKFLOW_REPO = $previousRepo
@@ -1293,18 +1305,46 @@ local after
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $source = [pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" }
                 $result = Commit-WorkflowUpdate -Source $source
-                Write-WorkflowUpdateFollowUp -Source $source -CommitResult $result *> $null
+                Write-WorkflowUpdateFollowUp -Source $source -CommitResult $result -BranchReport ([pscustomobject]@{roots=@()}) *> $null
                 [pscustomobject]@{ result = $result; userReport = $script:RunUserReport }
             }
 
             $execution.result.created | Should -BeFalse
             $execution.userReport | Should -Match "Новый коммит создан: нет, workflow уже актуален"
             $execution.userReport | Should -Match "Push из проекта не выполнялся"
-            $execution.userReport | Should -Match "/itl-refresh"
+            $execution.userReport | Should -Match 'Зарегистрированных рабочих веток для обновления нет'
             ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be $before
             @(& git -C $tempRoot status --short) | Should -Be @("?? .kilo/")
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It 'untracks legacy execution runtime during the master workflow commit without deleting evidence' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('itl-runtime-index-' + [guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path $root | Out-Null
+            & git -C $root init -b master *> $null
+            & git -C $root config user.email 'runtime@example.invalid'
+            & git -C $root config user.name 'Runtime Fixture'
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'AGENT-INSTALL.md'), 'current', [Text.UTF8Encoding]::new($false))
+            $checkpoint = Join-Path $root '.agent-1c/execution-checkpoints/legacy.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpoint) | Out-Null
+            [IO.File]::WriteAllText($checkpoint, '{"resume":true}', [Text.UTF8Encoding]::new($false))
+            & git -C $root add -- .gitignore AGENT-INSTALL.md
+            & git -C $root add -f -- '.agent-1c/execution-checkpoints/legacy.json'
+            & git -C $root commit --quiet -m base
+            $updated = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                Commit-WorkflowUpdate -Source ([pscustomobject]@{ref='candidate';commit=('2' * 40);source='path'})
+            }
+            $updated.created | Should -BeTrue
+            [IO.File]::ReadAllText($checkpoint) | Should -Be '{"resume":true}'
+            @(& git -C $root ls-files -- '.agent-1c/execution-checkpoints/legacy.json') | Should -BeNullOrEmpty
+            @(& git -C $root status --short --untracked-files=no) | Should -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
         }
     }
 
@@ -1369,7 +1409,11 @@ local after
             } | Should -Throw "*Git identity*unavailable*"
         } finally {
             foreach ($name in $environmentNames) {
-                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                if ($null -eq $previousEnvironment[$name]) {
+                    Remove-Item -Path ("Env:" + $name) -ErrorAction SilentlyContinue
+                } else {
+                    [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                }
             }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1831,6 +1875,11 @@ exit 0
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Assert-WorkflowSourceAiRulesInstallable {}
+                function Get-AgentTargets { @('kilocode') }
+                function Get-AiRulesBaselineTarget { param([string]$TemplateRoot); [pscustomobject]@{isConfigured=$true;repo='repo';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
+                function Sync-AiRules1cCheckout { [pscustomobject]@{root='C:\fork';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
+                function Get-AiRulesCandidateInstallInventory { param([object]$Checkout,[string[]]$Tools); @() }
+                function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json') }
                 function Copy-WorkflowManagedDirectory {
                     param($SourceRoot, $RelativePath)
                     if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }
@@ -1865,19 +1914,32 @@ exit 0
                 function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
                 function Install-ItlUiTools { $script:postCalls++ }
-                function Sync-ItlClientSurface { $script:postCalls++ }
+                function Sync-ItlClientSurfaces { $script:postCalls++ }
                 function Get-ItlActiveClient { "kilocode" }
                 function Sync-ItlClientUserEnvironment { param([string]$Client); $script:postCalls++ }
+                function Invoke-CavemanPolicyTransition { $script:postCalls++ }
+                function Invoke-UiTestingPolicyTransition { }
                 function Get-AiRules1cManifestFileEntries { @() }
+                function Get-GitPathList { @() }
+                function Get-WorkflowUpdateTrackedChangePaths { @() }
+                function Get-CurrentCommit { 'project-commit' }
+                function Assert-WorkflowUpdateMasterCommitCheckpoint { [pscustomobject]@{ committed = $false } }
                 function Commit-WorkflowUpdate { [pscustomobject]@{ created = $false; commit = "project-commit"; message = "" } }
-                function Invoke-WorkflowExecutionGuardCutover { $script:postCalls++ }
-                function Write-WorkflowUpdateFollowUp { param([object]$Source,[object]$CommitResult); $script:postCalls++ }
+                function Enable-WorkflowExecutionGuardForCurrentRoot { $script:postCalls++ }
+                function Invoke-WorkflowDevelopmentBranchRollout { param([object]$Source); $script:postCalls++; [pscustomobject]@{roots=@()} }
+                function Write-WorkflowUpdateFollowUp { param([object]$Source,[object]$CommitResult,[object]$BranchReport); $script:postCalls++ }
                 function Read-DependencyLockManifest { @{ dependencies = @{ workflowPackage = @{ source = "path"; commit = "commit" } } } }
+                $pendingPhaseFixture = Get-WorkflowUpdatePendingSnapshot
+                if ($null -eq $pendingPhaseFixture) { throw "pre-copy stopped before its snapshot: $preError" }
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $pendingPhaseFixture.snapshot -Source ([pscustomobject]@{root='C:\source';commit='commit'}) -Phase post-copy-running
+                $postCopyReceipt = (Get-WorkflowUpdatePendingSnapshot).receipt
+                $OperationContinuation = $true
                 $LifecyclePhase = "post-copy"
                 Update-WorkflowPackage *> $null
 
                 [pscustomobject]@{
                     preError = $preError
+                    postCopyReceipt = $postCopyReceipt
                     copyPaths = @($script:copyPaths)
                     preCopyCalls = $preCopyCalls
                     finalCopyCalls = $script:copyCalls
@@ -1894,7 +1956,16 @@ exit 0
                     installOrder = $script:installOrder
                 }
             }
-            $result.preError | Should -Be "reexec-stop"
+            $result.preError | Should -Match 'WORKFLOW_UPDATE_POST_COPY_INCOMPLETE.*reexec-stop'
+            @(Get-ChildItem -LiteralPath (Join-Path $tempRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*') | Should -HaveCount 0
+            $retainedRoots = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*')
+            $retainedRoots | Should -HaveCount 1
+            $terminalReceipt = Get-Content (Join-Path $retainedRoots[0].FullName 'transaction.json') -Raw | ConvertFrom-Json
+            $terminalReceipt.phase | Should -Be 'post-copy-complete'
+            $terminalReceipt.beforePathState | Should -Not -BeNullOrEmpty
+            $result.postCopyReceipt.phase | Should -Be 'post-copy-running'
+            $result.postCopyReceipt.sourceRoot | Should -Be 'C:\source'
+            $result.postCopyReceipt.pathState | Should -Not -BeNullOrEmpty
             foreach ($sourceOnlyPath in $SourcePlanningPaths) {
                 foreach ($managedPath in $result.copyPaths) {
                     $normalized = ([string]$managedPath).Replace('\', '/').TrimEnd('/')
@@ -1928,7 +1999,7 @@ exit 0
             $workflowPaths = @(Get-WorkflowUpdateManagedPathSpecs)
             $forkPaths = @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore @('.agents/skills/grill-me/SKILL.md'))
             foreach ($sourceOnlyPath in $SourcePlanningPaths) {
-                $candidate = if ($sourceOnlyPath.EndsWith('.md')) { $sourceOnlyPath } else { "$sourceOnlyPath/SKILL.md" }
+                $candidate = if ($sourceOnlyPath.EndsWith('.md') -or $sourceOnlyPath.EndsWith('.ps1')) { $sourceOnlyPath } else { "$sourceOnlyPath/SKILL.md" }
                 [pscustomobject]@{ path = $candidate; allowed = (Test-WorkflowUpdatePathAllowed -Path $candidate -ManagedPathSpecs $workflowPaths) }
             }
             [pscustomobject]@{ path = 'fork-owned'; allowed = (Test-WorkflowUpdatePathAllowed -Path '.agents/skills/grill-me/SKILL.md' -ManagedPathSpecs $forkPaths) }
@@ -2985,7 +3056,8 @@ Start-Sleep -Seconds 20
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value "{}"
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "VIBECODING1C_MCP_SETUP_DURING_INIT=false"
-            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value $ResumeFakeHelperText
+            # Windows PowerShell 5.1 decodes a UTF-8 script without BOM as ANSI.
+            [IO.File]::WriteAllText($fakeHelperPath, $ResumeFakeHelperText, [Text.UTF8Encoding]::new($true))
             Set-Content -LiteralPath $lockPath -Encoding ASCII -Value "interrupted-run"
             $now = Get-Date
             $oldStatus = [ordered]@{
@@ -3226,6 +3298,9 @@ Start-Sleep -Seconds 20
                     function Install-AiRules1c { $calls.Add("install-ai-rules") | Out-Null }
                     function Update-AgentGuidanceBridge { }
                     function Update-UserRules { }
+                    function Invoke-CavemanPolicyTransition { param([switch]$NewScope); $calls.Add("caveman-policy:$NewScope") | Out-Null }
+                    function Test-AiRulesUiTestingPolicySupport { $true }
+                    function Invoke-UiTestingPolicyTransition { param([switch]$NewScope); $calls.Add("ui-policy:$NewScope") | Out-Null }
                     function Sync-KiloItlCommandSurface { }
                     function Commit-IfChanged { param([string]$Message); return $false }
                     function Get-EnvValue {
@@ -3265,6 +3340,9 @@ Start-Sleep -Seconds 20
             $results["server"] | Should -Contain "source-dump"
             $results["server"] | Should -Contain "server-seed"
             $results["server"] | Should -Not -Contain "seed-dump"
+            foreach ($callsForCase in $results.Values) {
+                $callsForCase | Should -Contain 'ui-policy:True'
+            }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -3383,5 +3461,116 @@ Start-Sleep -Seconds 20
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+}
+
+Describe 'Managed package Python runtime cache boundary' -Tag 'PackageContent' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $repoRoot = $context.RepoRoot
+        $helperPath = $context.HelperPath
+        $installerPath = $context.InstallerPath
+        function New-PackageCacheFixture {
+            param([string]$Root)
+            $relative = '.agents/skills/itl-remote-runner'
+            $source = Join-Path $Root 'Исходный пакет'
+            $target = Join-Path $Root 'Установленный проект'
+            foreach ($base in @($source,$target)) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $base ($relative + '/scripts/__pycache__')) | Out-Null
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/module.py')), [byte[]]@(35,32,208,175,13,10))
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/__pycache__/module.cpython-313.pyc')), [byte[]]@(0,13,255,10,33))
+                [IO.File]::WriteAllBytes((Join-Path $base ($relative + '/scripts/legacy.pyc')), [byte[]]@(0,255,45))
+                [IO.File]::WriteAllText((Join-Path $base ($relative + '/scripts/not__pycache__.txt')), 'keep', [Text.UTF8Encoding]::new($false))
+                New-Item -ItemType Directory -Force -Path (Join-Path $base ($relative + '/scripts/Пустая папка')) | Out-Null
+                $dotfile=Join-Path $base ($relative + '/scripts/.settings')
+                [IO.File]::WriteAllBytes($dotfile,[byte[]]@(0,255,13,10))
+                (Get-Item -LiteralPath $dotfile -Force).Attributes=[IO.FileAttributes]::Hidden
+            }
+            [pscustomobject]@{source=$source;target=$target;relative=$relative}
+        }
+    }
+
+    It 'bootstrap copies source bytes while excluding ignored Python runtime cache' {
+        $fixture = New-PackageCacheFixture -Root (Join-Path $TestDrive 'Bootstrap копия с пробелом')
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile($installerPath,[ref]$tokens,[ref]$errors)
+        foreach($name in @('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Get-FullPathNormalized','Assert-ManagedTargetPath','Copy-ManagedDirectory')) {
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $module=Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1'
+        if(Test-Path -LiteralPath $module){. $module}
+        Copy-ManagedDirectory -SourceRoot $fixture.source -TargetRoot $fixture.target -RelativePath $fixture.relative
+        $scripts=Join-Path $fixture.target ($fixture.relative+'/scripts')
+        (Test-Path -LiteralPath (Join-Path $scripts '__pycache__')) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $scripts 'legacy.pyc')) | Should -BeFalse
+        (Get-FileHash -LiteralPath (Join-Path $scripts 'module.py')).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/module.py'))).Hash
+        [IO.File]::ReadAllText((Join-Path $scripts 'not__pycache__.txt')) | Should -BeExactly 'keep'
+        (Test-Path -LiteralPath (Join-Path $scripts 'Пустая папка') -PathType Container) | Should -BeTrue
+        (Get-FileHash -LiteralPath (Join-Path $scripts '.settings')).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/.settings'))).Hash
+        ((Get-Item -LiteralPath (Join-Path $scripts '.settings') -Force).Attributes -band [IO.FileAttributes]::Hidden) | Should -Not -Be 0
+        (Test-Path -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/__pycache__/module.cpython-313.pyc'))) | Should -BeTrue
+    }
+
+    It 'master commits removal of historical tracked cache and ignores regenerated cache without hiding Python source' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Master пакет с пробелом')
+        & git -C $fixture.target init -q -b master; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target config user.name 'Package content test'; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target config user.email 'package@example.invalid'; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target add --all; $LASTEXITCODE | Should -Be 0
+        & git -C $fixture.target commit -qm baseline; $LASTEXITCODE | Should -Be 0
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        # Use the delivered template as well as the fallback exercised by the
+        # branch regression; neither policy silently untracks old cache files.
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.target 'templates') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'templates/gitignore.append') -Destination (Join-Path $fixture.target 'templates/gitignore.append')
+        Ensure-GitIgnore
+        $cache=$fixture.relative+'/scripts/__pycache__/module.cpython-313.pyc'
+        @(Get-GitPathList -Arguments @('ls-files','-z','--',$cache)) | Should -Contain $cache
+        Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $fixture.relative
+        $source=[pscustomobject]@{root=$repoRoot;commit=('c'*40);ref='master';repo='fixture';source='path'}
+        $result=Commit-WorkflowUpdate -Source $source
+        $result.created | Should -BeTrue
+        @(Get-GitPathList -Arguments @('ls-tree','-r','--name-only','-z','HEAD','--',$cache)) | Should -HaveCount 0
+        @(Get-GitPathList -Arguments @('status','--porcelain=v1','-z')) | Should -HaveCount 0
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $fixture.target $cache)) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $fixture.target $cache),[byte[]]@(128,0,255))
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',$cache)) | Should -HaveCount 0
+        [IO.File]::WriteAllText((Join-Path $fixture.target ($fixture.relative+'/scripts/module.py')), '# user source change',[Text.UTF8Encoding]::new($false))
+        @(Get-GitPathList -Arguments @('diff','--name-only','-z','--',($fixture.relative+'/scripts/module.py'))) | Should -Contain ($fixture.relative+'/scripts/module.py')
+    }
+
+    It 'ignores Python runtime output with a legacy delivered gitignore template' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Старый шаблон Git с пробелом')
+        & git -C $fixture.target init -q; $LASTEXITCODE | Should -Be 0
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.target 'templates') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $fixture.target 'templates/gitignore.append'), ".dev.env`n", [Text.UTF8Encoding]::new($false))
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        Ensure-GitIgnore
+        $scripts=$fixture.relative+'/scripts'
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',($scripts+'/__pycache__'),($scripts+'/legacy.pyc'))) | Should -HaveCount 0
+        @(Get-GitPathList -Arguments @('ls-files','--others','--exclude-standard','-z','--',($scripts+'/module.py'))) | Should -Contain ($scripts+'/module.py')
+        (Test-Path -LiteralPath (Join-Path $fixture.target ($scripts+'/legacy.pyc'))) | Should -BeTrue
+    }
+
+    It 'runtime package filtering leaves raw snapshots and raw replacement byte-exact' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Rollback копия с пробелом')
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        $before=Get-WorkflowUpdatePathState -RelativePath $fixture.relative
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @($fixture.relative)
+        try {
+            Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $fixture.relative
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/__pycache__'))) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/legacy.pyc'))) | Should -BeFalse
+            (Get-FileHash -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/module.py'))).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/module.py'))).Hash
+            (Test-Path -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/Пустая папка')) -PathType Container) | Should -BeTrue
+            (Get-FileHash -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/.settings'))).Hash | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixture.source ($fixture.relative+'/scripts/.settings'))).Hash
+            ((Get-Item -LiteralPath (Join-Path $fixture.target ($fixture.relative+'/scripts/.settings')) -Force).Attributes -band [IO.FileAttributes]::Hidden) | Should -Not -Be 0
+            Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            (Get-WorkflowUpdatePathState -RelativePath $fixture.relative) | Should -BeExactly $before
+            Invoke-WorkflowManagedPathReplace -SourcePath (Join-Path $fixture.source $fixture.relative) -TargetPath (Join-Path $fixture.target $fixture.relative) -Directory
+            (Get-WorkflowUpdatePathState -RelativePath $fixture.relative) | Should -BeExactly $before
+        } finally { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
     }
 }

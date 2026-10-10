@@ -563,6 +563,8 @@ function Invoke-NewBranchSeedCore {
                 $dumpResult = Dump-ConfigToFilesFromInfoBase -InfoBasePath $seedInfoBasePath -InfoBaseKind "file"
             }
             Set-RunStage -Stage "seed.fingerprint" -Detail "Calculating the rebuilt branch seed fingerprint"
+            # The native dump and its authoritative commit need the same Git filter.
+            Ensure-OneCSourceGitAttributes | Out-Null
             $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
             if ($ConfigurationFingerprint -and $configSource.fingerprint -cne $ConfigurationFingerprint) {
                 throw "BRANCH_SEED_CONFIGURATION_MISMATCH: source fingerprint $ConfigurationFingerprint differs from the copied seed fingerprint $($configSource.fingerprint)."

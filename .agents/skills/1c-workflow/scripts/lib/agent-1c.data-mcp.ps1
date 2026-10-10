@@ -158,10 +158,11 @@ function Install-DataMcpExtension {
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "Data MCP extension installation"
     Write-Host "Installing Data MCP extension '$(Get-DataMcpExtensionName)' from: $CfePath"
-    return (Invoke-Designer `
+    $result = Invoke-GuardedCfeExtensionApply `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
-        -DesignerArgs @("/LoadCfg", $CfePath, "-Extension", (Get-DataMcpExtensionName), "/UpdateDBCfg"))
+        -CfePath $CfePath -ExtensionName (Get-DataMcpExtensionName)
+    return $result.logPath
 }
 
 function Get-DataMcpToolsLoaderRootFile {

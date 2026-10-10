@@ -1,0 +1,10 @@
+[Unit]
+Description=ITL dedicated Linux MCP host recovery
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/itl-mcp/host/watchdog.py --config /opt/itl-mcp/host.config.json
+TimeoutStartSec=600
+UMask=0077

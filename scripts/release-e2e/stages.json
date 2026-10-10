@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "enclosingOverheadSeconds": 1140,
   "stages": [
     {
       "id": "seed-parallel",
@@ -7,6 +8,7 @@
       "budgetSeconds": 1800,
       "dependsOn": [],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -22,6 +24,7 @@
       "budgetSeconds": 900,
       "dependsOn": [],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -32,9 +35,10 @@
     {
       "id": "config-cadence",
       "version": 3,
-      "budgetSeconds": 1200,
+      "budgetSeconds": 4800,
       "dependsOn": [],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -49,6 +53,7 @@
       "budgetSeconds": 600,
       "dependsOn": ["config-cadence"],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -57,29 +62,48 @@
     },
     {
       "id": "extension-smoke",
-      "version": 2,
-      "budgetSeconds": 900,
+      "version": 3,
+      "budgetSeconds": 1200,
       "dependsOn": ["config-cadence"],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
-        "scripts/release-e2e/extension-smoke.ps1"
+        "scripts/release-e2e/extension-smoke.ps1",
+        "scripts/release-e2e/extension-recovery.ps1",
+        "scripts/release-e2e/extension-recovery-owner.ps1",
+        "scripts/source-delivery-process.ps1"
       ]
     },
     {
       "id": "ondemand-mcp",
-      "version": 4,
-      "budgetSeconds": 900,
+      "version": 5,
+      "budgetSeconds": 1500,
       "dependsOn": [],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         "scripts/Build-ItlOnDemandMcp.ps1",
         "tools/itl-ondemand-mcp/**/*.go",
         "tools/itl-ondemand-mcp/go.mod",
         ".agents/skills/1c-workflow/assets/ondemand-mcp/**/*",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/*.ps1",
+        "scripts/vanessa-build-runtime.ps1",
+        "scripts/git-path-list.ps1",
+        ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1",
+        ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py",
+        "scripts/build-client-mcp-patched.ps1",
+        "scripts/client-mcp-build.ps1",
+        "third-party/client-mcp/**/*",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1",
         "templates/dependency-lock.json",
         "scripts/release-e2e/ondemand-mcp.ps1"
@@ -92,6 +116,7 @@
       "alwaysExecute": true,
       "dependsOn": ["config-cadence"],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -107,6 +132,7 @@
       "alwaysExecute": true,
       "dependsOn": ["config-cadence"],
       "paths": [
+        "scripts/stand-env-identity.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",

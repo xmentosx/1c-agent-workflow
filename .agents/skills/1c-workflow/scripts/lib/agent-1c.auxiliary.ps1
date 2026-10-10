@@ -547,7 +547,7 @@ function Update-AuxiliaryContour {
         Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
         $loadUser = if ($newManagedInfoBase) { "" } else { $connection.user }
         $loadPassword = if ($newManagedInfoBase) { "" } else { $connection.password }
-        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -Mode "Full" -User $loadUser -Password $loadPassword
+        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -SourceFingerprint $source.configuration.fingerprint -ContentKind configuration -RequireGate6 -Mode "Full" -User $loadUser -Password $loadPassword
         if ($newManagedInfoBase) {
             Save-AuxiliaryContourState -Contour $contour -Updates @{
                 lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
@@ -557,7 +557,7 @@ function Update-AuxiliaryContour {
         foreach ($extension in @($contour.extensions)) {
             $absoluteExtensionPath = Assert-ExportPathInsideProject -ExportPath $extension.path
             $extensionSource = Get-ConfigSourceFingerprint -ExportPath $extension.path
-            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
+            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -SourceFingerprint $extensionSource.fingerprint -ContentKind extension -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
         }
         Save-AuxiliaryContourState -Contour $contour -Updates @{
             lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed

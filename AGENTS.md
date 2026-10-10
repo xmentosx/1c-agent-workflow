@@ -57,6 +57,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 ## Routing
 
+- Hosted MCP upgrades: `vibecoding1c-mcp-host/README.md`; read the durable host contract before replacing images, including Code owner-repair qualification.
 - Installed-project lifecycle: `.agents/skills/1c-workflow/SKILL.md` and its matching reference only.
 - Package bootstrap contract: `AGENT-INSTALL.md` and `install-agent-1c-workflow.ps1`.
 - Controlled fork intake and migration: `docs/ai-rules-fork-upgrades.md`.

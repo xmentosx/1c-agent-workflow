@@ -7,13 +7,29 @@ Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Va
 - ROCTUP MCP Toolkit is the preferred branch-local data channel for `itldev/*` infobases and does not require web publication.
 - vibecoding1c MCP is managed by ITL helper actions and natural-language requests.
 - Vanessa UI MCP is separate branch-local runtime tooling for user-mode inspection, recording, and debugging. It is not the Vanessa Automation verification runner.
-- External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
+- External MCP entries are user-provided or future integrations. Preserve entries without proven ITL ownership. The managed receipt binds ownership to a client, physical config and server key; the existing legacy marker rules do not grant ownership in another config layer.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
 - A configured auxiliary contour may add `itl-roctup-aux-<id>` and `itl-vanessa-ui-aux-<id>`. These are separate compact facades with separate runtime ownership; the primary `itl-roctup-data` and `itl-vanessa-ui` entries are unchanged. See `auxiliary-contours.md`.
 
 Qualify each family against the current client surface independently. Unavailable or unexposed remote `vibecoding1c` tools do not make the pre-registered branch-local `itl-roctup-data` or `itl-vanessa-ui` facades unavailable. When a concrete task routes to either facade, inspect both direct tools and every client-supported deferred/lazy catalog before declaring it unavailable or falling back; in Codex search `ALL_TOOLS` for the hyphenated logical name and normalized underscore name. A deferred facade counts as exposed. Do not call either facade without the concrete data or runtime question required by its skill.
 
 Do not paste MCP license keys into chat or tracked files. Helper-managed private keys and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`; helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`); ignored project/worktree state lives under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+
+## OpenCode project configuration
+
+OpenCode can combine `opencode.json`, `opencode.jsonc`,
+`.opencode/opencode.json` and `.opencode/opencode.jsonc`. The clientcfg owner
+reads their effective entries and physical provenance; it edits only proved
+managed contributions in their existing files. Legacy names-only ownership
+means root `opencode.json`. A same-name foreign override remains user-owned;
+resolve the reported collision and repeat the original reconciliation. The
+existing final-set and rollback owners protect all four paths, including absence.
+
+The observed stock Desktop backend 1.18.11 adds `$schema` to schema-less configs
+when loading them and can change BOM/newlines. ITL does not perform this host
+rewrite. Keep the client's changes; if they race an ITL update, follow the
+reported preserved-state reconciliation and rebuild its plan. Configuration
+observation alone proves neither MCP attachment nor a successful tool call.
 
 ## Availability, recovery and return to work
 
@@ -89,7 +105,7 @@ Rules:
 3. The facade may keep its private backend alive between calls, but idle backend lifetime is not database ownership. Each call releases its guard after completion and bounded owned cleanup. A mutating supervisor may drain only an exact identified workflow-owned backend after acquiring the same base guard; foreign processes are preserved. Stdio EOF performs ownership-scoped backend cleanup.
 4. Use ROCTUP only for a concrete data exploration operation; do not call its private Streamable HTTP URL directly.
 5. Pass known inner names directly to `call_tool` with only intended arguments; use `resolve_tool` only for an unknown name or schema. Start with filtered `get_metadata`, then bounded `execute_query`. Do not invoke `execute_code` or `restart_1c_session` without explicit user request. `close_1c_session` may release the current managed dev-branch session during lifecycle recovery without separate confirmation; source and other-branch infobases remain protected.
-6. `ITL_INFOBASE_APPLICATION_NOT_READY` means the source snapshot is not proven in the dev infobase. Run `update-dev-branch-base` once, then repeat the original MCP call once; never make the MCP broker perform the lifecycle mutation itself.
+6. `ITL_INFOBASE_APPLICATION_NOT_READY` means the source snapshot is not proven in the dev infobase. Report the dependent read as unverified and give the supported `update-dev-branch-base` continuation. Run that helper only when updating this exact branch infobase is already authorized by the task; read access alone is not permission to load a configuration. After the authorized update, repeat the original MCP call once; never make the MCP broker perform the lifecycle mutation itself.
 7. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from the version/SHA-scoped immutable artifact directory.
 8. `fresh` selects the newest ROCTUP version present in the workflow compatibility manifest, never an unverified upstream latest. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH` and stops the backend.
 9. General `status`/`doctor` reports a facade/lock mismatch as a warning so unrelated lifecycle diagnostics remain available. Facade installation and dependent MCP calls still fail closed until normal branch refresh reconciles the branch-local workflow and lock.

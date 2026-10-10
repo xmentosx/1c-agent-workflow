@@ -10,8 +10,9 @@
         $LifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
     }
 
-    It "keeps LoadCfg unchanged and reconciles each Vanessa extension in its own infobase" {
-        $VanessaText | Should -Match ([regex]::Escape('-DesignerArgs @("/LoadCfg", $CfePath, "-Extension", $ExtensionName, "/UpdateDBCfg")'))
+    It "checks each CFE before database apply and reconciles each Vanessa extension in its own infobase" {
+        $VanessaText | Should -Match ([regex]::Escape('-CfePath $CfePath -ExtensionName $ExtensionName'))
+        $LifecycleText | Should -Match ([regex]::Escape("@('/LoadCfg', `$CfePath, '-Extension', `$ExtensionName, '/UpdateDBCfg')"))
         $VanessaText | Should -Match 'function Set-VanessaMcpExtensionUnsafeMode'
         $VanessaText | Should -Match 'config extensions properties set --extension \$ExtensionName --safe-mode no'
         $VanessaText | Should -Match '(?s)-ExtensionName "client_mcp".*?-InfoBasePath \$serviceInfoBase\.path'

@@ -1,4 +1,5 @@
 # Immutable component verification and publication finalization.
+. (Join-Path $PSScriptRoot 'client-mcp-build.ps1')
 
 function ConvertTo-DeliveryNativeArgument {
     param([AllowNull()][string]$Value)
@@ -74,6 +75,8 @@ function Get-DeliveryOwnedAssetContracts {
         'dependencies.vanessaAutomation' = 'extension-smoke'
         'dependencies.vanessaMcp.vaExtension' = 'extension-smoke'
         'dependencies.itlOndemandMcp' = 'ondemand-mcp'
+        'dependencies.vanessaMcp.clientMcp' = 'ondemand-mcp'
+        'dependencies.vanessaMcp.clientMcp.correspondingSource' = 'ondemand-mcp'
     }
     $contracts = New-Object System.Collections.Generic.List[object]
     foreach ($node in @(Get-DeliveryOwnedAssetNodes -Value $Lock.dependencies -Path 'dependencies')) {
@@ -100,9 +103,22 @@ function Get-DeliveryOwnedAssetContracts {
             releaseTag = $releaseTag; sha256 = $sha256; releaseCapability = [string]$known[[string]$node.path]
         }) | Out-Null
     }
-    foreach ($path in @($known.Keys)) {
+    # Recognition must be published while the previous external client pin is
+    # still valid. Only the existing owned assets are unconditionally required.
+    foreach ($path in @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension', 'dependencies.itlOndemandMcp')) {
         if (@($contracts | Where-Object { $_.path -ceq $path }).Count -ne 1) {
             throw "Candidate dependency lock must define exactly one owned asset '$path'."
+        }
+    }
+    $clientCount = @($contracts | Where-Object path -CEQ 'dependencies.vanessaMcp.clientMcp').Count
+    $sourceCount = @($contracts | Where-Object path -CEQ 'dependencies.vanessaMcp.clientMcp.correspondingSource').Count
+    if ($clientCount -ne $sourceCount) { throw 'Owned clientMcp requires its immutable corresponding-source ZIP in the same lock.' }
+    if ($clientCount -eq 1) {
+        $client = $Lock.dependencies.vanessaMcp.clientMcp
+        if ([string]$client.version -cne 'v0.6.5' -or [string]$client.downstreamRevision -cnotmatch '^itl-r[1-9][0-9]*$' -or
+            [string]$client.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or [string]$client.upstreamCommit -cnotmatch '^[a-f0-9]{40}$' -or
+            [string]$client.releaseTag -cne [string]$client.correspondingSource.releaseTag) {
+            throw 'Owned clientMcp has an invalid compatibility, provenance or paired source identity.'
         }
     }
     return @($contracts.ToArray() | Sort-Object path)
@@ -230,6 +246,7 @@ function Assert-DeliveryComponentTagLockAgreement {
         $identityFields = @('releaseTag', 'url', 'assetName', 'sha256')
         if ($path -eq 'dependencies.vanessaAutomation') { $identityFields += @('compatibilityVersion', 'downstreamRevision') }
         if ($path -eq 'dependencies.vanessaMcp.vaExtension') { $identityFields += 'protocol' }
+        if ($path -eq 'dependencies.vanessaMcp.clientMcp') { $identityFields += @('version', 'downstreamRevision', 'manifestSha256', 'upstreamCommit') }
         if ($path -eq 'dependencies.itlOndemandMcp') { $identityFields += 'version' }
         foreach ($field in $identityFields) {
             if (-not $candidateAsset -or -not $tagAsset -or
@@ -674,6 +691,121 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
     return [pscustomobject]$evidence
 }
 
+function Get-DeliveryExactClientMcpCandidates {
+    param([string]$CandidateRoot, [object]$Lock)
+    $configured = [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process')
+    $relative = 'build/third-party/client-mcp/' + [string]$Lock.version + '-' + [string]$Lock.downstreamRevision + '/candidate'
+    $folders = @()
+    if ($configured) { $folders += Split-Path -Parent ([IO.Path]::GetFullPath($configured)) }
+    foreach ($root in @($CandidateRoot, $script:Root) | Select-Object -Unique) { $folders += Join-Path $root $relative }
+    foreach ($folder in @($folders | Select-Object -Unique)) {
+        $provenancePath = Join-Path $folder 'candidate.provenance.json'
+        if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) { continue }
+        $proof = Get-Content -LiteralPath $provenancePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifestPath = Join-Path $CandidateRoot 'third-party/client-mcp/v0.6.5-itl-r1/manifest.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Lock.manifestSha256 -or
+            [string]$Lock.assetName -cne [string]$manifest.artifact.fileName -or [string]$Lock.releaseTag -cne [string]$manifest.artifact.releaseTag -or
+            [string]$Lock.correspondingSource.assetName -cne [string]$manifest.correspondingSource.fileName -or
+            [string]$proof.platformVersion -cne [string]$manifest.build.platformVersion -or [string]$proof.platformSha256 -cne [string]$manifest.build.platformSha256) {
+            throw 'clientMcp candidate lock or native toolchain differs from its controlled manifest.'
+        }
+        if ([string]$proof.component -cne 'clientMcp' -or [string]$proof.status -cne 'built' -or [string]$proof.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or -not $proof.restored -or -not $proof.released -or
+            [string]$proof.compatibilityVersion -cne [string]$Lock.version -or [string]$proof.downstreamRevision -cne [string]$Lock.downstreamRevision -or
+            [string]$proof.manifestSha256 -cne [string]$Lock.manifestSha256 -or [string]$proof.upstream.commit -cne [string]$Lock.upstreamCommit -or
+            [string]$proof.artifactSha256 -cne [string]$Lock.sha256 -or [string]$proof.sourceArchiveSha256 -cne [string]$Lock.correspondingSource.sha256 -or
+            [string]$proof.gate6.sourceFingerprint -cne [string]$proof.sourceIdentity.fingerprint -or
+            (@($proof.gate6.steps | ForEach-Object step) -join ',') -cne 'modules,applicability,configuration' -or
+            @($proof.gate6.steps | Where-Object { $_.exitCode -ne 0 -or $_.dumpResult -ne 0 }).Count -gt 0) {
+            throw 'clientMcp source build has incompatible or incomplete native provenance.'
+        }
+        $inputProof = $proof
+        $qualificationPath = Join-Path $folder 'candidate.native-qualification.json'
+        if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
+            $inputProof = Get-Content -LiteralPath $qualificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-ClientMcpNativeQualification -Qualification $inputProof -BuildProof $proof -BuildProofPath $provenancePath
+            # Recheck immutable source correspondence; historical build gates never
+            # substitute for the fresh checks of the actually retained CFE.
+            [void](Get-ClientMcpRetainedBuildEvidence -RepositoryRoot $CandidateRoot -Directory $folder -Manifest $manifest)
+        }
+        $requiredInputs = @(Get-ClientMcpBuildInputPaths -RepositoryRoot $CandidateRoot)
+        if ((@($inputProof.buildInputs.PSObject.Properties | ForEach-Object Name | Sort-Object) -join [char]0) -cne ($requiredInputs -join [char]0)) { throw 'clientMcp native build helper inventory differs from the exact candidate.' }
+        foreach ($relativeInput in $requiredInputs) {
+            $inputPath = Join-Path $CandidateRoot $relativeInput
+            $expectedInput = [string]$inputProof.buildInputs.$relativeInput
+            if ($expectedInput -cnotmatch '^[a-f0-9]{64}$' -or
+                (Get-FileHash -LiteralPath $inputPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedInput) {
+                throw "clientMcp build input differs from the exact candidate: $relativeInput"
+            }
+        }
+        $assets = @(
+            [pscustomobject]@{ path=(Join-Path $folder $Lock.assetName); lock=$Lock },
+            [pscustomobject]@{ path=(Join-Path $folder $Lock.correspondingSource.assetName); lock=$Lock.correspondingSource }
+        )
+        if ($configured -and [IO.Path]::GetFullPath($assets[0].path) -ine [IO.Path]::GetFullPath($configured)) { throw 'clientMcp configured candidate name differs from its lock.' }
+        foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset.path -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $asset.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$asset.lock.sha256) {
+                throw "clientMcp source build SHA256 mismatch: $($asset.path)"
+            }
+        }
+        return $assets
+    }
+    throw 'No exact clientMcp native-qualified CFE and corresponding-source ZIP are available. Build the controlled candidate and retain both immutable outputs with its provenance.'
+}
+
+function Invoke-ClientMcpComponentPublicationFinalize {
+    param([string]$CandidateRoot, [string]$CandidateCommit)
+    $candidateLock = Get-Content -LiteralPath (Join-Path $CandidateRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot
+    $contracts = @(Get-DeliveryOwnedAssetContracts -Lock $candidateLock -RepositorySlug $repository.slug |
+        Where-Object { $_.path -in @('dependencies.vanessaMcp.clientMcp', 'dependencies.vanessaMcp.clientMcp.correspondingSource') })
+    if ($contracts.Count -eq 0) { return }
+    $lock = $candidateLock.dependencies.vanessaMcp.clientMcp
+    $missing = @($contracts | Where-Object { (Get-DeliveryRemoteAssetState -Url $_.url -ExpectedSha256 $_.sha256).status -eq 'missing' })
+    $mutated = $false
+    if ($missing.Count -gt 0) {
+        if (-not $RequireRelease) { throw 'The locked clientMcp asset is not published. Exact candidate ondemand-mcp Release qualification is mandatory.' }
+        $candidates = @(Get-DeliveryExactClientMcpCandidates -CandidateRoot $CandidateRoot -Lock $lock)
+        $remoteTagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag $lock.releaseTag
+        if ($remoteTagCommit) {
+            Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $remoteTagCommit -CandidateLock $candidateLock -AssetPaths @($contracts | ForEach-Object path)
+        } else {
+            $localTag = 'refs/tags/' + [string]$lock.releaseTag
+            $localType = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('cat-file', '-t', $localTag) -AllowFailure).stdout.Trim()
+            if ($localType) {
+                $localCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-parse', "$localTag^{}") -AllowFailure).stdout.Trim()
+                if ($localType -cne 'tag' -or $localCommit -cne $CandidateCommit) { throw 'clientMcp component tag conflicts with the exact candidate.' }
+            } else {
+                [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('tag', '-a', [string]$lock.releaseTag, $CandidateCommit, '-m', ('ITL client_mcp ' + $lock.version + ' ' + $lock.downstreamRevision)))
+            }
+            $push = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('push', $script:Remote, $localTag) -AllowFailure
+            if ($push.exitCode -ne 0 -and (Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag $lock.releaseTag) -cne $CandidateCommit) {
+                throw 'Unable to publish the immutable clientMcp component tag safely.'
+            }
+            $mutated = $true
+        }
+        $release = Invoke-DeliveryGitHubCli -Arguments @('release', 'view', [string]$lock.releaseTag, '--repo', $repository.slug, '--json', 'assets') -AllowFailure
+        if ($release.exitCode -ne 0) {
+            if ($release.text -notmatch '(?i)(release not found|HTTP 404|not found)') { throw "Unable to inspect clientMcp release: $($release.text)" }
+            [void](Invoke-DeliveryGitHubCli -Arguments @('release', 'create', [string]$lock.releaseTag, '--repo', $repository.slug, '--verify-tag', '--title', [string]$lock.releaseTag, '--notes', 'Controlled client_mcp metadata repair. Complete corresponding Designer XML source and licenses accompany the CFE.'))
+            $mutated = $true
+        }
+        foreach ($asset in $missing) {
+            $local = @($candidates | Where-Object { [string]$_.lock.assetName -ceq $asset.assetName })[0]
+            [void](Invoke-DeliveryGitHubCli -Arguments @('release', 'upload', [string]$lock.releaseTag, $local.path, '--repo', $repository.slug))
+            $mutated = $true
+        }
+    }
+    foreach ($asset in $contracts) {
+        $remote = Get-DeliveryRemoteAssetState -Url $asset.url -ExpectedSha256 $asset.sha256 -AvailabilityAttempts 12
+        if ($remote.status -cne 'matched' -or $remote.sha256 -cne $asset.sha256) { throw "clientMcp immutable asset is unavailable after finalization: $($asset.path)" }
+    }
+    $evidence = [pscustomobject]@{ schemaVersion=1; status='passed'; component='clientMcp'; candidateCommit=$CandidateCommit; assets=$contracts; mutated=$mutated; installable=$true }
+    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName 'client-mcp.json' -Evidence $evidence
+    return $evidence
+}
+
 function Get-OwnedComponentPublicationPlan {
     param([string]$CandidateRoot, [string]$CandidateCommit)
     if ($script:ComponentFinalizerScript) {
@@ -695,6 +827,19 @@ function Get-OwnedComponentPublicationPlan {
     $vanessa = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.vanessaAutomation'].url -ExpectedSha256 $assetsByPath['dependencies.vanessaAutomation'].sha256
     $vanessaPaired = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.vanessaMcp.vaExtension'].url -ExpectedSha256 $assetsByPath['dependencies.vanessaMcp.vaExtension'].sha256
     $onDemand = Get-DeliveryRemoteAssetState -Url $assetsByPath['dependencies.itlOndemandMcp'].url -ExpectedSha256 $assetsByPath['dependencies.itlOndemandMcp'].sha256
+    $clientAssets = @($ownedAssets | Where-Object { $_.path -in @('dependencies.vanessaMcp.clientMcp', 'dependencies.vanessaMcp.clientMcp.correspondingSource') })
+    $clientStatus = 'external'
+    if ($clientAssets.Count -gt 0) {
+        $clientStatus = 'matched'
+        foreach ($asset in $clientAssets) {
+            $remote = Get-DeliveryRemoteAssetState -Url $asset.url -ExpectedSha256 $asset.sha256
+            if ($remote.status -eq 'missing') { $clientStatus = 'missing' }
+        }
+        if ($clientStatus -eq 'missing') {
+            $tagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.vanessaMcp.clientMcp.releaseTag)
+            Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $tagCommit -CandidateLock $candidateLock -AssetPaths @($clientAssets | ForEach-Object path)
+        }
+    }
     if ($vanessa.status -eq 'missing' -or $vanessaPaired.status -eq 'missing') {
         $tagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.vanessaAutomation.releaseTag)
         Assert-DeliveryComponentTagLockAgreement -CandidateRoot $CandidateRoot -TagCommit $tagCommit -CandidateLock $candidateLock -AssetPaths @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension')
@@ -711,6 +856,7 @@ function Get-OwnedComponentPublicationPlan {
         requiredReleaseCapabilities = @(
             if ($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing") { "extension-smoke" }
             if ($onDemand.status -eq "missing") { "ondemand-mcp" }
+            if ($clientStatus -eq 'missing' -and $onDemand.status -ne 'missing') { 'ondemand-mcp' }
         )
         components = @(
             [pscustomobject]@{
@@ -725,6 +871,9 @@ function Get-OwnedComponentPublicationPlan {
                 assets = @([pscustomobject]@{ name = [string]$lock.vanessaAutomation.assetName; status = $vanessa.status }, [pscustomobject]@{ name = [string]$lock.vanessaMcp.vaExtension.assetName; status = $vanessaPaired.status })
             },
             [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; requiredReleaseCapabilities = $(if ($onDemand.status -eq "missing") { @("ondemand-mcp") } else { @() }) }
+            if ($clientAssets.Count -gt 0) {
+                [pscustomobject]@{ name='clientMcp'; status=$clientStatus; requiredReleaseCapabilities=$(if ($clientStatus -eq 'missing') { @('ondemand-mcp') } else { @() }) }
+            }
         )
     }
 }
@@ -754,6 +903,7 @@ function Assert-ComponentPublicationFinalizerPreflight {
 
     $components = @($Plan.components)
     $expectedNames = @("aiRules1c", "itlOndemandMcp", "vanessaAutomation")
+    if (@($Plan.ownedAssets | Where-Object path -CEQ 'dependencies.vanessaMcp.clientMcp').Count -eq 1) { $expectedNames += 'clientMcp' }
     $actualNames = @($components | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
     if (($actualNames -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) {
         throw "Component publication plan must contain exactly: $($expectedNames -join ', ')."
@@ -788,6 +938,7 @@ function Invoke-ComponentPublicationFinalizer {
             Invoke-AiRulesComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
             Invoke-VanessaComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
             Invoke-OnDemandMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+            Invoke-ClientMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
         )
         return [pscustomobject]@{ status = "passed"; candidateCommit = $CandidateCommit; components = $components }
     }

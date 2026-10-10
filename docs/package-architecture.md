@@ -34,7 +34,7 @@ existing plan, never a manual queue or checkpoint rewrite.
 
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
-The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
+The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL provisions the exact project-pinned OpenSpec CLI in its local cache separately from the optional global installation. It does not generate client bundles or run `openspec update`; compatible bundle rendering remains with the fork installer. See `ai-rules-fork-upgrades.md` for the release boundary.
 
 ## Architecture scope and compatibility policy
 
@@ -110,6 +110,18 @@ narrow the proven failure to a smaller owner, stop adding recovery layers.
 Record the remaining blocker and compare rollback/removal, an owner-local
 design, and a revised shared design. New evidence or real acceptance progress
 continues the current cycle; a timeout alone is not an architecture failure.
+
+The user approved controlled `client_mcp` metadata maintenance during the
+upstream migration on 2026-10-01. The existing component delivery owner owns
+its immutable CFE and complete corresponding-source ZIP. Its builder exports
+the exact published v0.6.5 baseline, adds one name-bound adopted Language and
+its ChildObjects declaration, and uses the existing per-infobase guard, Gate 6
+and restoration duty in a private service base. Installation remains owned by
+the existing Vanessa service/TestManager path; PM5 keeps VAExtension. No new
+runtime state machine, adapter, admission mode, platform requirement or client
+context is introduced. Publish optional supervisor support before requiring
+owned client assets in a production lock. Live service to TestClient acceptance
+and exact hashes remain required; build checks alone do not qualify delivery.
 
 ### Supported Windows and privilege boundary
 
