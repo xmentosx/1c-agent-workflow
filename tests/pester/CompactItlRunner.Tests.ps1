@@ -70,14 +70,14 @@ exit 0
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
             Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
-            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+            [IO.File]::WriteAllText((Join-Path $scriptRoot "agent-1c.ps1"), @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Результат`n- Browser: включён`n- Рекомендация: выполните /reload" }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Write-Output 'Проверка UTF-8 журнала'
 Write-Output ('x' * 12000)
 exit 0
-'@
+'@, [Text.UTF8Encoding]::new($true))
             $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $text = ($output -join "`n")
             $text.Length | Should -BeLessOrEqual 4000
@@ -85,12 +85,12 @@ exit 0
             $summary.action | Should -Be "check-dev-branch"
             $summary.status | Should -Be "succeeded"
             $summary.confirmationRequired | Should -BeFalse
-            $summary.responseStyle.mode | Should -Be "on"
+            $summary.responseStyle.mode | Should -Be "auto"
             $summary.responseStyle.level | Should -Be "full"
             $summary.responseStyle.active | Should -BeTrue
             $summary.responseStyle.profile | Should -Be "caveman-full"
             $summary.responseStyle.taskClass | Should -Be "execution"
-            ($processResult.stderr -join "`n") | Should -Match 'ITL response-style: mode=on; level=full; active=true; profile=caveman-full; task=execution'
+            ($processResult.stderr -join "`n") | Should -Match 'ITL response-style: mode=auto; level=full; active=true; profile=caveman-full; task=execution'
             (Get-Item -LiteralPath $summary.logPath).Length | Should -BeGreaterThan 10000
             (Get-Content -LiteralPath $summary.logPath -Raw -Encoding UTF8) | Should -Match 'Проверка UTF-8 журнала'
             $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -105,14 +105,14 @@ exit 0
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
             Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
-            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+            [IO.File]::WriteAllText((Join-Path $scriptRoot "agent-1c.ps1"), @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $reportPath = Join-Path $ProjectRoot 'source integrity отчёт.json'
 [IO.File]::WriteAllText($reportPath,'{"schemaVersion":1}',(New-Object Text.UTF8Encoding $false))
 $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='source-integrity.failed'; stageDetail='invalid merged source'; errorMessage='ONEC_SOURCE_INTEGRITY_FAILED'; errorCategory='source-integrity'; requiredAction='agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'; exitCode=1; lastLogPath=''; sourceIntegrityReportPath=$reportPath }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 exit 1
-'@
+'@, [Text.UTF8Encoding]::new($true))
             Push-Location $tempRoot
             try {
                 $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
@@ -137,7 +137,7 @@ exit 1
             $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
             Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
-            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $lines = @('## Захват объектов в хранилище', '- Результат: операция завершилась с ошибкой', '### Захваченные объекты')
 $lines += @(1..90 | ForEach-Object { "- ОбщийМодуль.ЗахваченныйОбъектСДлиннымКириллическимИменем$_ (partial)" })
@@ -146,7 +146,7 @@ $report = $lines -join [Environment]::NewLine
 $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='repository-lock.conflict'; stageDetail='partial lock'; errorMessage='LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT'; errorCategory='runner'; requiredAction='Согласуйте освобождение с ДругойПользователь'; exitCode=1; lastLogPath=''; userReport=$report }
 [IO.File]::WriteAllText($RunStatusPath,($payload | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 exit 1
-'@
+'@, [Text.UTF8Encoding]::new($true))
             Push-Location $tempRoot
             try {
                 $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--', '-Action', 'lock-config-repository-objects')
@@ -408,7 +408,7 @@ exit 0
         }
     }
 
-    It "resolves the ITL Caveman mode and level matrix from project env with safe defaults" {
+    It "defaults Caveman to auto/full and ignores the retired persistent level" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-response-style-" + [guid]::NewGuid().ToString("N"))
         $previousMode = [Environment]::GetEnvironmentVariable("CAVEMAN", "Process")
         $previousLevel = [Environment]::GetEnvironmentVariable("CAVEMAN_LEVEL", "Process")
@@ -425,16 +425,16 @@ $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stag
 exit 0
 '@
             $cases = @(
-                [pscustomobject]@{ mode=$null; level=$null; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
-                [pscustomobject]@{ mode='invalid'; level='invalid'; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
-                [pscustomobject]@{ mode='on'; level='lite'; expectedMode='on'; expectedLevel='lite'; active=$true; profile='caveman-lite' },
-                [pscustomobject]@{ mode='on'; level='ultra'; expectedMode='on'; expectedLevel='ultra'; active=$true; profile='caveman-ultra' },
-                [pscustomobject]@{ mode='auto'; level='lite'; expectedMode='auto'; expectedLevel='lite'; active=$true; profile='caveman-lite' },
+                [pscustomobject]@{ mode=$null; level=$null; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='invalid'; level='invalid'; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='on'; level='lite'; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='on'; level='ultra'; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='auto'; level='lite'; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
                 [pscustomobject]@{ mode='auto'; level='full'; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
-                [pscustomobject]@{ mode='auto'; level='ultra'; expectedMode='auto'; expectedLevel='ultra'; active=$true; profile='caveman-ultra' },
-                [pscustomobject]@{ mode='off'; level='lite'; expectedMode='off'; expectedLevel='lite'; active=$false; profile='normal' },
+                [pscustomobject]@{ mode='auto'; level='ultra'; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='off'; level='lite'; expectedMode='off'; expectedLevel='full'; active=$false; profile='normal' },
                 [pscustomobject]@{ mode='off'; level='full'; expectedMode='off'; expectedLevel='full'; active=$false; profile='normal' },
-                [pscustomobject]@{ mode='off'; level='ultra'; expectedMode='off'; expectedLevel='ultra'; active=$false; profile='normal' }
+                [pscustomobject]@{ mode='off'; level='ultra'; expectedMode='off'; expectedLevel='full'; active=$false; profile='normal' }
             )
             foreach ($case in $cases) {
                 $envPath = Join-Path $tempRoot ".dev.env"
@@ -481,6 +481,26 @@ exit 0
             $summary.action | Should -Be "begin-verification-repair"
             $summary.userReport | Should -Be "Repair session: abc123. Repair attempts: 0/3."
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'forwards a named one-off proof run and its evidence path through the compact boundary' {
+        $tempRoot = Join-Path $TestDrive ('One off compact Кириллица ' + [guid]::NewGuid().ToString('N'))
+        $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+        New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+        Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+        Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,[string]$VerificationObligationId,[string]$VerificationEvidencePath)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="$Action|$VerificationObligationId|$VerificationEvidencePath" }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+        Push-Location $tempRoot
+        try {
+            $begin = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'run-itl-command.ps1') -- -Action begin-one-off-proof -VerificationObligationId orders-result | ConvertFrom-Json
+            $begin.userReport | Should -Be 'begin-one-off-proof|orders-result|'
+            $complete = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'run-itl-command.ps1') -- -Action complete-one-off-proof -VerificationEvidencePath 'evidence/Результат.json' | ConvertFrom-Json
+            $complete.userReport | Should -Be 'complete-one-off-proof||evidence/Результат.json'
+        } finally { Pop-Location }
     }
 
     It "dispatches real classification and preserves its <Case> result without verification proof" -TestCases @(
@@ -558,7 +578,7 @@ param([string]`$ProjectRoot,[string]`$RunStatusPath,[string]`$RunLogPath,[string
 [IO.File]::WriteAllText(`$RunStatusPath,((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
 exit 0
 "@
-            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value $fixture
+            [IO.File]::WriteAllText((Join-Path $scriptRoot "agent-1c.ps1"), $fixture, [Text.UTF8Encoding]::new($true))
 
             $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "export-dev-branch-result"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
@@ -1333,13 +1353,13 @@ exit 0
             $worktree = Join-Path $tempRoot "worktrees\demo"
             New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
             Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
-            Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
+            [IO.File]::WriteAllText((Join-Path $scriptRoot "run-agent-1c-window.ps1"), @"
 `$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-extension-dev-branch'; stage='extension-init.pending'; stageDetail='waiting'; errorMessage=''; exitCode=0; lastLogPath=''; requiredAction='Уточните режим расширения в чате; не показывайте PowerShell.'; devBranch='itldev/demo'; worktreePath='$($worktree.Replace("'", "''"))'; extensionInitializationStatus='pending'; userReport="## Ветка разработки`n- Тип: расширение`n- Инициализация расширения: ожидает настройки`n`n## Инструкции и рекомендации`n- Уточните режим расширения в чате." }
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\console.log','pending branch log',(New-Object Text.UTF8Encoding `$false))
 Write-Output 'Run directory: $runRoot'
 exit 0
-"@
+"@, [Text.UTF8Encoding]::new($true))
             $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("-Windowed", "--", "-Action", "new-extension-dev-branch", "-DevBranchName", "demo"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $status = Get-Content -LiteralPath (Join-Path $runRoot "status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -1372,5 +1392,283 @@ exit 1
             @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatus"
             @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatePath"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'fresh helper compact native wait' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
+        $freshSourceHelper = if ($env:ITL_TEST_FRESH_BASELINE_ROOT) { Join-Path $env:ITL_TEST_FRESH_BASELINE_ROOT '.agents/skills/1c-workflow/scripts/agent-1c.ps1' } else { $context.HelperPath }
+        function Invoke-FreshCompactFixture {
+            param([string]$Mode = 'success', [int]$SilentSeconds = 4, [switch]$DefaultStale, [int]$OperationSeconds = 45, [switch]$LegacyNested)
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('itl fresh ожидание с пробелом ' + [guid]::NewGuid().ToString('N'))
+            $oldEnvironment = @{}
+            foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+            try {
+                $scripts = Join-Path $root '.agents/skills/1c-workflow/scripts'
+                New-Item -ItemType Directory -Path (Join-Path $scripts 'lib') -Force | Out-Null
+                Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1') -Destination (Join-Path $scripts 'run-itl-command.ps1')
+                Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/itl-runner-timeout.ps1') -Destination (Join-Path $scripts 'lib/itl-runner-timeout.ps1')
+                [IO.File]::WriteAllText((Join-Path $root '.gitignore'),'.agent-1c/' + "`n",[Text.Encoding]::ASCII)
+                & git -C $root init *> $null
+                & git -C $root config user.email 'fixture@example.com'
+                & git -C $root config user.name 'Fixture'
+                & git -C $root add .gitignore
+                & git -C $root commit -m fixture *> $null
+                & git -C $root branch -M master
+                $parent = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,[string]$FixtureSource,[string]$Mode,[int]$SilentSeconds,[string]$RoundTrip,[switch]$ShortHeartbeat,[string]$LegacyFunctionPath)
+$fixture = @{root=$ProjectRoot;status=$RunStatusPath;log=$RunLogPath;action=$Action;source=$FixtureSource;mode=$Mode;seconds=$SilentSeconds;roundTrip=$RoundTrip;short=$ShortHeartbeat;legacy=$LegacyFunctionPath}
+. $FixtureSource -ProjectRoot $ProjectRoot -Action help -AgentTarget kilocode *> $null
+$Action=$fixture.action; $RunStatusPath=$fixture.status; $RunLogPath=$fixture.log
+$script:RunStartedAt=Get-Date
+if ($fixture.short) {
+    $script:FixtureMonitorFactory=${function:New-NativeWaitRunStatusMonitor}
+    function New-NativeWaitRunStatusMonitor { param([string[]]$LogPaths=@()) & $script:FixtureMonitorFactory -LogPaths $LogPaths -HeartbeatSeconds 1 }
+}
+$script:Agent1cReexecArguments=@('-Action',$Action,'-ProjectRoot',$fixture.root,'-RunStatusPath',$RunStatusPath,'-RunLogPath',$RunLogPath,'-FixtureSource',$fixture.source,'-Mode',$fixture.mode,'-SilentSeconds',[string]$fixture.seconds,'-RoundTrip',$fixture.roundTrip,'-OriginalStatusPath',$RunStatusPath)
+if($fixture.legacy){$script:Agent1cReexecArguments+=@('-LegacyFunctionPath',$fixture.legacy)}
+Enter-Agent1cLifecycleOperation -RequestedAction $Action
+$originalErrorWriter=[Console]::Error
+$fixtureErrorStream=[IO.FileStream]::new((Join-Path $fixture.root 'native-stderr.txt'),[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+$fixtureErrorWriter=[IO.StreamWriter]::new($fixtureErrorStream,[Text.UTF8Encoding]::new($false)); $fixtureErrorWriter.AutoFlush=$true
+[Console]::SetError($fixtureErrorWriter)
+try {
+    $result=Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1') -ReturnExitStatus
+    exit $result.exitCode
+} catch {
+    $message=$_.Exception.Message
+    Complete-Agent1cLifecycleOperation -Status failed -ExitCode 1 -ErrorMessage $message
+    Set-RunFailureContext -Category runner
+    Write-RunStatus -Status failed -ExitCode 1 -ErrorMessage $message
+    [Console]::Error.WriteLine($message)
+    exit 1
+} finally { [Console]::SetError($originalErrorWriter); $fixtureErrorWriter.Dispose(); Exit-Agent1cLifecycleOperation }
+'@
+                $child = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,[string]$FixtureSource,[string]$Mode,[int]$SilentSeconds,[string]$RoundTrip,[string]$OriginalStatusPath,[string]$OperationId,[int]$OperationOwnerPid,[switch]$OperationContinuation,[string]$LegacyFunctionPath)
+$fixture=@{root=$ProjectRoot;status=$RunStatusPath;log=$RunLogPath;action=$Action;source=$FixtureSource;mode=$Mode;seconds=$SilentSeconds;roundTrip=$RoundTrip;external=$OriginalStatusPath;operation=$OperationId;owner=$OperationOwnerPid;continuation=$OperationContinuation;legacy=$LegacyFunctionPath}
+. $FixtureSource -ProjectRoot $ProjectRoot -Action help -AgentTarget kilocode *> $null
+$Action=$fixture.action; $RunStatusPath=$fixture.status; $RunLogPath=$fixture.log
+Enter-Agent1cLifecycleOperation -RequestedAction $Action -RequestedOperationId $fixture.operation -RequestedOwnerPid $fixture.owner -Continuation:$fixture.continuation
+[IO.File]::WriteAllText((Join-Path $fixture.root 'child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
+Set-RunStage -Stage 'workflow-update.branches' -Detail 'Обновление ветки без stdout'
+if($fixture.mode -eq 'nested') {
+    [IO.File]::WriteAllText((Join-Path $fixture.root 'immediate-child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
+    . $fixture.legacy
+    $script:Agent1cReexecArguments=@('-Action',$Action,'-ProjectRoot',$fixture.root,'-RunStatusPath',$RunStatusPath,'-RunLogPath',$RunLogPath,'-FixtureSource',$fixture.source,'-Mode','success','-SilentSeconds',[string]$fixture.seconds,'-RoundTrip',$fixture.roundTrip,'-OriginalStatusPath',$fixture.external)
+    $nestedResult=Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1') -ReturnExitStatus
+    exit $nestedResult.exitCode
+}
+Write-Output ('UTF8 stdout: ' + $fixture.roundTrip)
+[Console]::Error.WriteLine('UTF8 stderr: Кириллица с пробелом')
+if ($fixture.mode -in @('foreign','stale')) {
+    $status=Read-Utf8Text -Path $RunStatusPath | ConvertFrom-Json
+    $status.status='succeeded'; $status.stage='FORGED_TERMINAL'
+    if ($fixture.mode -eq 'foreign') { $status.pid=$PID+999999 }
+    else { $status.startedAt='2000-01-01T00:00:00Z'; $status.updatedAt='2000-01-01T00:00:00Z' }
+    Write-Utf8TextAtomic -Path $RunStatusPath -Value ($status|ConvertTo-Json -Depth 10)
+}
+if ($fixture.mode -eq 'orphan') {
+    $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Start-Sleep -Seconds 90'))
+    $owned=Start-Process powershell.exe -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -PassThru -WindowStyle Hidden
+    [IO.File]::WriteAllText((Join-Path $fixture.root 'descendant-pid.txt'),[string]$owned.Id,[Text.Encoding]::ASCII)
+}
+Start-Sleep -Seconds $fixture.seconds
+Copy-Item -LiteralPath $fixture.external -Destination (Join-Path $fixture.root 'observed-external.json')
+if ($fixture.mode -eq 'streaming') {
+    $log=Read-Utf8Text -Path $RunLogPath
+    $errorReadStream=[IO.FileStream]::new((Join-Path $fixture.root 'native-stderr.txt'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    $errorReader=[IO.StreamReader]::new($errorReadStream,[Text.UTF8Encoding]::new($false))
+    try{$errorLog=$errorReader.ReadToEnd()}finally{$errorReader.Dispose()}
+    if ($log -notmatch [regex]::Escape('UTF8 stdout: '+$fixture.roundTrip) -or $errorLog -notmatch 'UTF8 stderr: Кириллица с пробелом') { throw 'FRESH_OUTPUT_NOT_STREAMED_BEFORE_EXIT' }
+}
+$script:RunStage='fixture.actual-terminal'; $script:RunStageDetail='Точный финал дочернего процесса'
+if ($fixture.mode -eq 'failure') {
+    Complete-Agent1cLifecycleOperation -Status failed -ExitCode 7 -ErrorMessage 'Проверяемый отказ ветки'
+    Write-RunStatus -Status failed -ExitCode 7 -ErrorMessage 'Проверяемый отказ ветки'
+    exit 7
+}
+Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
+if ($fixture.mode -eq 'invalid-final') {
+    $invalid=Read-Utf8Text -Path $RunStatusPath | ConvertFrom-Json
+    $invalid.status='succeeded'; $invalid.pid=$PID+999999; $invalid.exitCode=0
+    Write-Utf8TextAtomic -Path $RunStatusPath -Value ($invalid|ConvertTo-Json -Depth 10)
+    exit 0
+}
+Write-RunStatus -Status succeeded -ExitCode 0
+if ($fixture.mode -eq 'cleanup-failure') {
+    Start-Sleep -Seconds 3
+    Complete-Agent1cLifecycleOperation -Status failed -ExitCode 7 -ErrorMessage 'Отказ очистки после первоначального успеха'
+    Write-RunStatus -Status failed -ExitCode 7 -ErrorMessage 'Отказ очистки после первоначального успеха'
+    exit 7
+}
+if ($fixture.mode -eq 'cleanup') { Start-Sleep -Seconds 4 }
+exit 0
+'@
+                [IO.File]::WriteAllText((Join-Path $scripts 'agent-1c.ps1'),$parent,[Text.UTF8Encoding]::new($true))
+                [IO.File]::WriteAllText((Join-Path $root 'child.ps1'),$child,[Text.UTF8Encoding]::new($true))
+                [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS',$(if($DefaultStale){$null}else{'1'}),'Process')
+                [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS',$(if($DefaultStale){$null}else{'2'}),'Process')
+                [Environment]::SetEnvironmentVariable('ITL_RUNNER_OPERATION_TIMEOUT_SECONDS',[string]$OperationSeconds,'Process')
+                $roundTrip=(Join-Path $root 'параметр с пробелом')+'\'
+                $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$freshSourceHelper,'-Mode',$Mode,'-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip)
+                if($LegacyNested) {
+                    $legacyText=@(& git -C $context.RepoRoot show 'c6c829b61c8d31a9f52d7a64ed762c5b5b93b2d7:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') -join "`n"
+                    if($LASTEXITCODE -ne 0){throw 'Canonical c6 legacy function source unavailable'}
+                    $legacyTokens=$null;$legacyErrors=$null
+                    $legacyAst=[Management.Automation.Language.Parser]::ParseInput($legacyText,[ref]$legacyTokens,[ref]$legacyErrors)
+                    $legacyFunction=$legacyAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Agent1cFreshProcess'},$true)
+                    if(@($legacyErrors).Count -or $null -eq $legacyFunction){throw 'Canonical c6 legacy function parse failed'}
+                    $legacyPath=Join-Path $root 'legacy c6 fresh function.ps1'
+                    [IO.File]::WriteAllText($legacyPath,$legacyFunction.Extent.Text,[Text.UTF8Encoding]::new($true))
+                    # The real stopped stand argv has no trailing separator.
+                    # Keep the independent original trailing-separator cases.
+                    $roundTrip=$roundTrip.TrimEnd('\')
+                    $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$freshSourceHelper,'-Mode','nested','-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip,'-LegacyFunctionPath',$legacyPath)
+                }
+                if(-not $DefaultStale){$invokeArgs+='-ShortHeartbeat'}
+                Push-Location $root
+                try {
+                    $timer=[Diagnostics.Stopwatch]::StartNew()
+                    $native=Invoke-ItlNativeProcessCapture -FilePath 'powershell.exe' -Arguments (@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $scripts 'run-itl-command.ps1'))+$invokeArgs) -WorkingDirectory $root -TimeoutSeconds ($OperationSeconds+15)
+                    $result=@{exitCode=$native.exitCode;stdout=$native.stdout;stderr=$native.stderr;combinedText=($native.stdout+"`n"+$native.stderr)}
+                    $timer.Stop()
+                } finally { Pop-Location }
+                $summary=($result.stdout -join "`n") | ConvertFrom-Json
+                $status=Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $lifecycle=Get-Content -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-operation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($env:ITL_TEST_FRESH_RECEIPTS_ROOT) {
+                    $receiptRoot=Join-Path $env:ITL_TEST_FRESH_RECEIPTS_ROOT (Split-Path -Leaf $root)
+                    New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
+                    Copy-Item -LiteralPath $summary.logPath -Destination (Join-Path $receiptRoot 'console.log')
+                    Copy-Item -LiteralPath $summary.statusPath -Destination (Join-Path $receiptRoot 'status.json')
+                    Copy-Item -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-operation.json') -Destination (Join-Path $receiptRoot 'lifecycle.json')
+                    if(Test-Path -LiteralPath (Join-Path $root 'native-stderr.txt')){Copy-Item -LiteralPath (Join-Path $root 'native-stderr.txt') -Destination (Join-Path $receiptRoot 'native-stderr.txt')}
+                }
+                return @{root=$root;result=$result;summary=$summary;status=$status;lifecycle=$lifecycle;elapsed=$timer.Elapsed.TotalSeconds;roundTrip=$roundTrip}
+            } catch { if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}; throw }
+            finally { foreach($name in $oldEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$oldEnvironment[$name],'Process')} }
+        }
+        function Remove-FreshCompactFixture { param($Fixture) Remove-Item -LiteralPath $Fixture.root -Recurse -Force }
+    }
+
+    It 'keeps the original compact parent fresh while its silent continuation exceeds the configured stale threshold' {
+        $fixture=Invoke-FreshCompactFixture
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
+            $fixture.status.status | Should -Be 'succeeded'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+            $fixture.status.pid | Should -Be $fixture.lifecycle.pid
+            $fixture.status.pid | Should -Not -Be ([int](Get-Content -LiteralPath (Join-Path $fixture.root 'child-pid.txt')))
+            $fixture.lifecycle.status | Should -Be 'succeeded'
+            (Get-Content -LiteralPath $fixture.summary.logPath -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('UTF8 stdout: '+$fixture.roundTrip))
+            (Get-Content -LiteralPath (Join-Path $fixture.root 'native-stderr.txt') -Raw -Encoding UTF8) | Should -Match 'UTF8 stderr: Кириллица с пробелом'
+            $fixture.result.combinedText | Should -Not -Match 'RUNNER_STATUS_STALE'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'preserves a native nonzero continuation result and exact terminal failure fields' {
+        $fixture=Invoke-FreshCompactFixture -Mode failure
+        try {
+            $fixture.result.exitCode | Should -Be 7
+            $fixture.status.status | Should -Be 'failed'
+            $fixture.status.exitCode | Should -Be 7
+            $fixture.status.errorMessage | Should -Be 'Проверяемый отказ ветки'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+            $fixture.lifecycle.exitCode | Should -Be 7
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'forwards terminal before child cleanup without replacing it with running' {
+        $fixture=Invoke-FreshCompactFixture -Mode cleanup
+        try {
+            $fixture.result.exitCode | Should -Be 0
+            $fixture.status.status | Should -Be 'succeeded'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+            $fixture.result.combinedText | Should -Not -Match 'RUNNER_STATUS_STALE'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'preserves a later cleanup failure after the child first publishes success' {
+        $fixture=Invoke-FreshCompactFixture -Mode cleanup-failure -DefaultStale
+        try {
+            $fixture.result.exitCode | Should -Be 7
+            $fixture.status.status | Should -Be 'failed'
+            $fixture.status.exitCode | Should -Be 7
+            $fixture.status.errorMessage | Should -Be 'Отказ очистки после первоначального успеха'
+            $fixture.lifecycle.status | Should -Be 'failed'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'does not report success when the signed continuation has no valid terminal observation' {
+        $fixture=Invoke-FreshCompactFixture -Mode invalid-final
+        try {
+            $fixture.result.exitCode | Should -Be 1
+            $fixture.status.status | Should -Be 'failed'
+            $fixture.status.errorMessage | Should -Match 'did not write valid terminal run status'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'preserves a nested c6 legacy continuation terminal from its actual grandchild writer' {
+        $fixture=Invoke-FreshCompactFixture -LegacyNested
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
+            $fixture.status.status | Should -Be 'succeeded'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+            $grandchildPid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'child-pid.txt'))
+            $immediatePid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'immediate-child-pid.txt'))
+            $fixture.lifecycle.continuationPid | Should -Be $grandchildPid
+            $grandchildPid | Should -Not -Be $immediatePid
+            $fixture.status.pid | Should -Be $fixture.lifecycle.pid
+            $fixture.status.pid | Should -Not -Be $grandchildPid
+            (Get-Content -LiteralPath $fixture.summary.logPath -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('UTF8 stdout: '+$fixture.roundTrip))
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'streams UTF8 stdout and stderr before the fresh child exits' {
+        $fixture=Invoke-FreshCompactFixture -Mode streaming
+        try { $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText }
+        finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'rejects a <Mode> observation from the private child channel' -ForEach @(@{Mode='foreign'},@{Mode='stale'}) {
+        $fixture=Invoke-FreshCompactFixture -Mode $Mode
+        try {
+            $fixture.result.exitCode | Should -Be 0
+            $observed=Get-Content -LiteralPath (Join-Path $fixture.root 'observed-external.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $observed.status | Should -Be 'running'
+            $observed.pid | Should -Be $fixture.lifecycle.pid
+            $observed.stage | Should -Not -Be 'FORGED_TERMINAL'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'bounds a silent continuation and stops its owned descendant at the original operation deadline' {
+        $fixture=Invoke-FreshCompactFixture -Mode orphan -SilentSeconds 90 -OperationSeconds 20
+        try {
+            $fixture.result.exitCode | Should -Not -Be 0
+            $fixture.elapsed | Should -BeLessThan 40
+            $fixture.status.status | Should -Be 'failed'
+            $childPid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'child-pid.txt'))
+            $descendantPid=[int](Get-Content -LiteralPath (Join-Path $fixture.root 'descendant-pid.txt'))
+            @(Get-Process -Id $childPid -ErrorAction SilentlyContinue).Count | Should -Be 0
+            @(Get-Process -Id $descendantPid -ErrorAction SilentlyContinue).Count | Should -Be 0
+            $fixture.status.errorMessage | Should -Match 'TIMEOUT'
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'keeps an actual silent continuation beyond the unchanged 120 second watchdog' {
+        $fixture=Invoke-FreshCompactFixture -SilentSeconds 126 -DefaultStale -OperationSeconds 180
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
+            $fixture.elapsed | Should -BeGreaterThan 120
+            $fixture.status.status | Should -Be 'succeeded'
+            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
+            $fixture.status.pid | Should -Be $fixture.lifecycle.pid
+        } finally { Remove-FreshCompactFixture $fixture }
     }
 }

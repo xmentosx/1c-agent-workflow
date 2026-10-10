@@ -52,11 +52,11 @@ and publication channels below remain authoritative.
 
 | Режим | Когда | Цель | Hard limit |
 |---|---|---:|---:|
-| `Targeted` | регистрация одной доработки | 5 мин | 20 мин |
+| `Targeted` | регистрация одной доработки | 5 мин | 60 мин |
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
-| `Full` | все изолированные Pester и fork compatibility | 10 мин | 20 мин |
-| `Develop` | один Full и реальные стандартные journey | 25 мин | 90 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 120 мин |
+| `Full` | все изолированные Pester и fork compatibility | 10 мин | 70 мин |
+| `Develop` | один Full и реальные стандартные journey | 25 мин | 150 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 284 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -66,6 +66,14 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 изменяются. Оба summary сохраняют requested/explicit/effective worker count;
 `effective` означает разрешённый предел sharded runner, а не число фактически
 запущенных процессов. `Smoke` остаётся однопроцессным.
+Hard limits учитывают наблюдения 2026-10-09: Targeted исчерпал 2100 секунд
+после 50 прошедших файлов перед примерно восьмиминутным serial Compact;
+Full исчерпал 2700 секунд, а продолжение завершило все 2745 проверок без
+ошибок за ещё 642 секунды. Это составные наблюдения двух запусков, а не
+измерение одного холодного прохода. Пределы 3600/4200 секунд дают запас к этим
+наблюдениям; они не обещают длительность и не меняют целевые бюджеты,
+timing weights, последовательность Compact или no-progress watchdog.
+
 Tracked timings задают порядок запуска и округляются вверх от сохранённых
 наблюдений; это не обещание длительности и не отдельный timeout.
 `Targeted` получает изменённые пути через NUL-delimited Git output и
@@ -86,6 +94,10 @@ contract. Full и Develop по-прежнему используют полны�
 длительности в `build/test-results/local/check-summary.json`. Там же сохраняются
 целевой/hard бюджет и пять самых медленных стадий. Выход за цель виден как
 `over-target`, а провал или выход за hard limit блокирует публикацию.
+Release учитывает native-журналы основной ветки и `worktreePath` из того же
+`release-e2e.json`, который читает запускатель: для каждого корня используется
+его `project.logsPath` (по умолчанию `logs/1c`). Прогресс в посторонних ветках
+не учитывается; no-progress 900 секунд и общий hard limit сохраняются.
 
 `Targeted` и `Full` хранят каждый успешный Pester test-файл отдельно в
 `.git/itl/pester-shards/v1`. Если файл падает, новые файлы больше не запускаются;
@@ -98,6 +110,18 @@ PowerShell/Pester. Внешняя identity входит только для test
 кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
 выбранного шарда; поэтому semantic routing не может переиспользовать proof от
 другой версии полного entrypoint. Провальные результаты не кэшируются.
+Предел параллельных worker принадлежит scheduler и не входит в fingerprint:
+изолированный дочерний тест не получает его. Targeted с четырьмя worker и
+Full с тремя используют один proof при совпадении остальных входов. Старые
+ключи для пределов 1–4 проверяются по заново рассчитанным полным owner inputs
+и прежним SHA manifest/result/JUnit, затем сохраняются под общим ключом.
+Неизвестный owner или отсутствующая обязательная reuse dependency по-прежнему
+запрещают reuse. Это совместимость исходного кэша, без переноса live E2E proof.
+
+`reuseInputPaths` контракта добавляет загружаемые зависимости только в digest
+его test-файлов и не расширяет выбор `Targeted` по `paths`. Контракт нативной
+сборки учитывает весь набор модулей хелпера и зависимостей guard. Отсутствующий
+вход отключает reuse; некорректные шаблоны отклоняет владелец каталога.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
 ранние возможности. `tests/quality-contracts.json` объявляет пять continuation
@@ -106,12 +130,41 @@ ancestor-кандидатом и новым
 commit все изменённые пути должны целиком принадлежать этим scope, а новый
 commit/tree должен иметь точный прошедший `Targeted` с неизменённым tracked state.
 Тогда Full/Develop evidence накладывается на этот Targeted и выполнение
-продолжается с первого затронутого этапа. Неизвестный или production-путь,
+продолжается с первого затронутого этапа. Неизвестный или не объявленный в continuation scope runtime-путь,
 отсутствующий/повреждённый Targeted record и изменение Develop-harness для
 Develop proof закрывают reuse. Это продолжение по fingerprint входов, а не
 эвристика «любой файл из tests безопасен».
+В `release` явно включён один уже проверяемый managed-input:
+`.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1`.
+Для него сохраняются полная source lineage и точный passed Targeted. Изменение
+модуля выбирает `fresh` через владельца `mcp-hosts`, поэтому целый Develop proof
+не продолжается поверх старого live результата; полный journey fingerprint также
+изменяется. Release сохраняет лишь этапы с совпадающими workload inputs, а
+затронутый ondemand выполняет заново. Соседние runtime-пути не включаются этим
+исключением и не получают continuation по имени каталога.
+
+`static` также включает только Markdown исходных change-артефактов
+`openspec/changes/*/*.md`: обновление test-plan и сохранённых выводов приёмки
+само по себе не меняет установленный runtime и не требует повторять live journeys.
+Этот scope не включает соседние executable, YAML или JSON; точный прошедший
+Targeted, проверка hash доказательств и запрет reuse для неизвестных путей
+сохраняются.
 
 ## Клиент unattended E2E
+
+Client MCP retains two distinct proofs when runtime helpers change without a
+component source change. The original `candidate.provenance.json` remains
+immutable and binds the CFE to its hash-pinned corresponding-source ZIP. Run
+`scripts/build-client-mcp-patched.ps1 -RetainedCandidateDirectory <old-folder>
+-OutputDirectory <new-folder>` from the clean candidate to obtain a separate
+`candidate.native-qualification.json`: the producer checks the historical
+ancestor, every archived source byte (including ConfigDumpInfo), and both asset
+hashes; loads the retained CFE in its private service base; runs all three native
+checks with current helpers; and restores/releases the base. The finalizer
+requires the exact current helper inventory/hashes and successful native proof
+bound to the unchanged original receipt and assets. This does not replace live
+Release qualification of the exact CFE or permit rewriting historical receipts,
+ignoring dump-index changes, or changing published assets.
 
 `source-delivery.ps1`, `check.ps1` и оба `invoke-*-e2e.ps1` принимают
 необязательный `-AgentTarget`. Без него E2E явно выбирает единственного клиента
@@ -158,10 +211,20 @@ identity: `statusReader` — коммит прочитанного кода,
 
 Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит DAG со статусами
 `execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
-Develop stage допускает `reuse` только для того же дерева кандидата: его
-статическая и маршрутная qualification восстанавливается по exact-tree ключу.
-При новом дереве план включает время `upgrade`/`fresh`, даже если файлы их
-владельцев не менялись. Release capability сохраняет независимый fingerprint.
+Статическая Develop qualification остаётся привязанной к текущему дереву.
+Для живых `upgrade`/`fresh` planner и checker используют один полный fingerprint
+входов конкретного journey. Квалифицированный предок допускает продолжение лишь
+при доказанной source lineage, полном NUL delta, точном passed Targeted,
+совпадении runtime/package/contract, среды, стенда, клиента, fork и разрешённых
+artifacts, а также проверенном SHA исходного evidence. Release-only budget не
+входит в Develop contract projection; изменение входов самого journey требует
+execution. Старые записи без восстановимых внешних bindings и неизвестные входы
+сохраняют exact-tree fallback. Более новый известный failed journey не заменяется
+старым успехом. Исходный report сохраняет прежние commit/tree/result и bytes;
+текущая combined qualification связывает continuation provenance с текущим
+кандидатом и static proof. Старый опубликованный supervisor может консервативно
+планировать execute; candidate checker всё равно проверяет эти условия. Release
+capability сохраняет независимый fingerprint.
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
 `-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который
@@ -186,11 +249,35 @@ Component preflight не хранит булево «нужен Release»: он 
 и его зависимость `config-cadence`. Явный `-RequireRelease` выбирает весь каталог.
 `verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
-Delivery-бюджеты: planning — 30 секунд; Develop static — 45 минут; Develop
-`upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
+Delivery-бюджеты: planning — 30 секунд; Develop static — 70 минут; Develop
+`upgrade` — 20 минут, `fresh` — 60 минут; Release использует отдельный hard budget
 из `scripts/release-e2e/stages.json` для каждой capability. Этот бюджет включает
 как основное доказательство, так и обязательную очистку принадлежащих stage
 ресурсов. Timeout не расширяет маршрут и не удаляет checkpoint.
+
+Planner разрешает authoritative каталог stage evidence один раз в пределах
+расчёта, затем отдельно читает каждую запись и проверяет SHA её proof. Это не
+кэш результатов и не перенос доказательств между репозиториями. На исходном
+кандидате перехода шесть повторных `git rev-parse --git-common-dir` занимали
+6,1 секунды суммарно; устранение пяти лишних вызовов сохраняет лимит 30 секунд,
+fingerprints и правила reuse. Смена корня и повреждённый proof проверяются
+регрессией владельца planner.
+
+Checker и planner получают journey hard budget через один stateless getter из
+`developJourneys.routes.<journey>.hardSeconds` в `tests/quality-contracts.json`.
+У старых catalog без этого поля остаются 1200/2100 секунд; заданное невалидное
+значение отклоняется. Общий Develop hard budget — 9000 секунд, сумма static
+4200 + upgrade 1200 + fresh 3600. Остальные deadline, no-progress и проверки
+не изменяются.
+
+Увеличение fresh основано на исходном cold journey кандидата `ce08d78a`,
+остановленном через 2100 секунд во время after-CheckConfig. Между запуском before-CheckConfig и следующей загрузкой прошло около 482 секунд
+(08:51:12–08:59:14 МСК), включая завершение и передачу guard;
+snapshot, load, strict module checks, after-CheckConfig и прежний обязательный
+verification/export/refresh/cleanup хвост входят в тот же budget. 3600 секунд —
+оценка для полного неизменного маршрута, а не измеренная длительность нового
+успешного journey. Baseline не переносится между информационными базами,
+проверки и условия успеха сохраняются.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
@@ -203,9 +290,8 @@ Delivery-бюджеты: planning — 30 секунд; Develop static — 45 м�
 до получения plan: маршрут дороже часа всё равно остановится без явного
 `-ApproveLongPlan`.
 
-Полный Pester inventory имеет hard budget 45 минут: на текущем стенде 30 минут
-истекли при ещё выполнявшемся `ReleaseGate.Tests.ps1` и двух оставшихся
-последовательных файлах. Каталог `pester-shards` входит в progress fingerprint, поэтому
+Полный Pester inventory использует hard budget из таблицы выше. Каталог
+`pester-shards` входит в progress fingerprint, поэтому
 лимит не скрывает зависание: отсутствие новых worker/result-артефактов по-прежнему
 останавливает стадию отдельным no-progress watchdog.
 
@@ -246,8 +332,17 @@ gate восстанавливает их и не повторяет preliminary 
 любой стадии не двигает remote и не очищает очередь.
 До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
 план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
-checkpoint snapshots; непосредственно перед Release штатный gate проверяет их
-повторно. Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
+checkpoint snapshots. Readiness и runner используют один read-only контракт
+scope/identity/client/HEAD/workflow transition и stage-input eligibility: отчёт
+различает reuse, rerun и rejected. Runner повторно проверяет актуальные входы
+перед своими прежними mutations; restore, checkpoint write, rebind и evidence
+import остаются у него. При изменении source commit/tree отсутствие
+source-continuation proof запрещает reuse,
+но само по себе не блокирует допустимый полный rerun.
+При том же source общий SHA helper/runner не заменяет workload fingerprint:
+reuse всё равно требует точных входов этапа и прежних проверок identity и SHA. Неподтверждённый transition
+отклоняется до Develop с существующим continuation, без записи нового состояния.
+Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
 runner-ом из master, если master ещё не входит в её историю. Повреждённый
 checkpoint, чужая или грязная ветка блокируют gate до запуска 1С.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из
@@ -293,8 +388,21 @@ Release capabilities. Для Vanessa это `extension-smoke` с `config-cadence
 кандидата для ZIP и отдельного `VAExtension` по URL, имени и SHA. Отсутствующий
 CFE извлекается из проверенного опубликованного ZIP, затем оба прямых URL
 проверяются повторно. Конфликтующие refs или байты закрыто блокируют
-публикацию. Внешние npm, PyPI, ROCTUP и `client_mcp` остаются только
-lock-проверяемыми upstream-зависимостями; `PublishDevelop` их не публикует.
+публикацию. Внешние npm, PyPI и ROCTUP остаются только lock-проверяемыми
+upstream-зависимостями; `PublishDevelop` их не публикует. Для `client_mcp`
+прежний внешний pin остаётся допустимым. Owned pin требует одновременно CFE
+и corresponding-source ZIP; missing asset выбирает существующую capability
+`ondemand-mcp`, а exact native build provenance, полный Gate 6 и live Vanessa
+доказываются для тех же байтов. Сначала отдельно публикуется поддержка finalizer
+в authority channel; только следующий candidate вводит owned URLs в lock.
+Если накопленная migration queue уже требует Gate 6, который отвергает прежний
+внешний CFE, support-only candidate готовится от опубликованного baseline в
+отдельном clone/common Git с собственной очередью. Его обычный PublishDevelop
+не включает миграцию и не изменяет исходную очередь. После публикации поддержки
+исходная очередь интегрируется с новым baseline через штатного владельца.
+Локальный `VANESSA_MCP_CLIENT_CFE_PATH` подаёт exact SHA candidate до публикации
+и не подтверждает устанавливаемость URL. Подробности сборки:
+[controlled client_mcp](../third-party/client-mcp/v0.6.5-itl-r1/REBUILD.md).
 
 Develop состоит из двух независимо квалифицируемых journey через публичные
 поверхности workflow:
@@ -407,8 +515,10 @@ atomically under a short cross-process lock. If the projection lock or update
 fails, the authoritative raw proof is still written and a pending marker makes
 the projection explicitly stale until `Cleanup` repairs it. Exact Targeted
 lookup tries the index first, then the unchanged raw store, and still accepts
-only the existing schema-1 proof contract with exact commit/tree/stages and a
-freshly calculated file SHA.
+only the known raw schemas 1, 2 and 3 with exact commit/tree and the mandatory
+passed stages, plus a freshly calculated file SHA. Schemas 2 and 3 add timing
+and failure metadata; unknown schemas remain unverified. Recorded continuation
+uses the same proof predicate and rechecks the bound raw SHA and stages.
 
 Only serialized manual `Cleanup` compacts exact-owned `removed` resource-ledger
 records. It writes immutable content-addressed shards keyed by the first two hex
@@ -433,6 +543,12 @@ reparse point ниже worktree не даёт права удалить пере
 старой pending-записью, даже при одинаковом SHA. После штатного удаления по
 совпадающей записи старые записи исчезнувшего файла закрываются в том же
 проходе. Несовпадение SHA само по себе никогда не разрешает удаление.
+Ссылка из соседнего producer `checkpoint.json` также сохраняет baseline и
+post-config независимо от двух последних планов, TTL, статуса и версии
+кандидата: эти байты нужны штатному Auto/Restart. Перед удалением уже pending
+записи ссылка проверяется повторно. Нечитаемый checkpoint сохраняет снимок с
+предупреждением очистки; после удаления checkpoint действуют прежние правила
+очистки orphan-снимков. Legacy flat временные dumps сохраняют прежнюю политику.
 
 `Status.disposition` is a read-only, compact inventory of only the
 source-delivery namespaces and ledger identities. It classifies records as
@@ -584,3 +700,79 @@ Vanessa из `C:\itlvabld`, старые passed-снимки миграции `a
 неизвестная форма артефакта всегда сохраняются. В build work root распознаются
 только непосредственные не-Git каталоги выделенного `C:\itlvabld`; содержимое
 за его пределами sweep не рассматривает.
+
+### Release budget projection
+
+The Release stage catalog owns each capability ceiling and the enclosing
+setup/restore/seal/finally reserve. `quality-contracts.ps1` projects the selected
+dependency closure for the nested E2E process, and Full static plus the complete
+E2E catalog for the enclosing `check.ps1 -Mode Release`. The serialized
+`budgets.releaseHardSeconds` is a validated compatibility projection for already
+published supervisors, not a second budget policy. The source wrapper retains
+its separate 300-second finalization allowance and the existing no-progress
+watchdog. Missing overhead on an older candidate retains its old mode budget;
+a malformed present field does not select that fallback.
+
+The original config-cadence workload still makes two independent metadata
+changes and checks. One retained fresh full check took 1772.528 seconds;
+two such envelopes model 3545.056 seconds before the original test-only failure,
+cursor commits and postConfig snapshot. Cadence therefore has a conservative
+4800-second ceiling, with unchanged version 3 and unchanged proof predicates.
+The retained original publication terminated with `check-dev-branch timed out
+after 1197 seconds`, matching the old 1200-second shared stage deadline after
+its preceding work. That failed run and its native evidence remain failed.
+The enclosing reserve is 1140 seconds: 600 for setup/prestage/retry/seal plus
+three existing finally operations of at most 180 seconds each. The observed
+baseline DT took about 140 seconds and readiness 11 seconds; the 600-second
+part allows a comparable retry restore and remaining context/sealing work.
+These are reserve estimates, not a measured complete successful cadence or
+overhead. Full E2E ceilings sum to 11700 seconds; E2E including reserve is
+12840, and the whole Release gate with Full static 4200 is 17040 seconds.
+Selected capabilities keep their original scope and include the reserve once.
+No fake capability is added. New immutable plans pin the reserve and include
+it even when all selected runtime evidence is reusable; retained older plans
+and failed evidence are not rewritten. The corrected candidate requires a new
+immutable planId. Bind the continuation to it with `-ResumePlan` and, when the
+existing long-plan guard requires it, `-ApproveLongPlan`. The already authorized,
+unchanged workload does not require renewed user approval.
+
+The original extension-smoke run on 2026-10-07 passed its UI scenario but
+exhausted the former 900-second ceiling during Cfe initialization's canonical
+dump, before the required final restore. Gate 6 added about 117 seconds of
+snapshots and 208 seconds of checks in that run; recorded guard waits were zero.
+The catalog now allows 1200 seconds for the unchanged Empty/authored/Cfe
+roundtrips, checks and restoration. The additional 300 seconds cover the
+remaining dump/restore/validation and reserve; this is an allowance estimate,
+not a measured successful run. Other stage ceilings, no-progress limits and
+proof predicates stay unchanged. The old timeout remains failed evidence.
+
+The original ondemand-mcp run on 2026-10-08 completed the unchanged ROCTUP
+and Vanessa UI probes, including cold/hot/file-loading scenarios, serialized
+facade handoff and idle cleanup, in 1177.836 seconds. The stage then failed
+its old 900-second ceiling. Its raw checkpoint, logs and both probe receipts
+are retained under `build/lifecycle-record-publication/closed-ondemand-budget-50140d73-20261008`;
+their successful predicates do not turn the failed stage into release proof.
+The stage catalog now allows 1500 seconds: the observed workload plus about
+322 seconds of allowance for the same preparation, probes and completion.
+Version 5, input paths, workload, assertions, exit-wait ceiling and no-progress
+limits remain unchanged. This changes the immutable delivery plan and its
+budget projection, while preserving the fingerprints of reusable stages.
+
+Before an Auto cross-release resume, a clean stand branch may have advanced
+through completed workflow-only updates without merging master. Release reuses
+the lifecycle owner's retained transaction chain proof (Git parents/trees,
+before/current dependency locks, snapshot hashes and pinned write-set ownership).
+It does not admit a commit by its subject or a path whitelist. Unproved changes,
+configuration/test edits, damaged receipts and dirty owned files remain blocked;
+the existing managed merge/cursor admission remains available. This read-only
+admission neither rewrites checkpoints nor qualifies a stage. Normal Release
+refresh and stage fingerprint validation still run under their existing owners.
+Interrupted extension-smoke recovery belongs to the mutating Release owner.
+It runs before ordinary readiness only with predeclared exact ownership sealed
+after confirmed child/native stop. The same checkpoint and pinned postConfig
+snapshot remain authoritative; foreign changes still fail the dirty guard.
+Recovery archives exact bytes outside the run root and restores through the
+existing snapshot helper. It records recovery, never a passed stage. Read-only
+Plan/Status/readiness do not restore anything. A lost restore acknowledgement may
+replay only that same validated DT after owned writer stop. Legacy residue without
+prior ownership requires explicit bounded adoption, not prefix-based cleanup.

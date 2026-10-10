@@ -6,6 +6,152 @@
         $HelperPath = $context.HelperPath
     }
 
+    It "keeps the authoritative seed fingerprint byte-exact through <Scenario> with autocrlf true" -ForEach @(
+        @{ Scenario = 'first initialization'; Legacy = $false; FailDumpOnce = $false }
+        @{ Scenario = 'legacy master sync'; Legacy = $true; FailDumpOnce = $false }
+        @{ Scenario = 'failed master sync and same-command retry'; Legacy = $true; FailDumpOnce = $true }
+    ) {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("ИТЛ seed CRLF с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot 'src\cf'
+            $sourceRoot = Join-Path $tempRoot '.agent-1c\source база'
+            New-Item -ItemType Directory -Force -Path $exportRoot, $sourceRoot | Out-Null
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            $configurationBytes = $utf8.GetBytes("<Configuration>`r`n  <Comment>Исходная конфигурация</Comment>`r`n</Configuration>`r`n")
+            $moduleBytes = $utf8.GetBytes("Процедура Проверка() Экспорт`r`nКонецПроцедуры`r`n")
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3))
+            [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Configuration.xml'), $configurationBytes)
+            [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl'), $moduleBytes)
+            [IO.File]::WriteAllText((Join-Path $exportRoot 'ConfigDumpInfo.xml'), '<ConfigDumpInfo/>', $utf8)
+            [IO.File]::WriteAllText((Join-Path $tempRoot '.gitignore'), ".agent-1c/`n.dev.env`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $tempRoot '.gitattributes'), "*.md text eol=lf`n", $utf8)
+            & git -C $tempRoot init --quiet -b master
+            $LASTEXITCODE | Should -Be 0
+            & git -C $tempRoot config user.name 'ITL seed fingerprint fixture'
+            & git -C $tempRoot config user.email 'seed-tests@example.invalid'
+            & git -C $tempRoot config core.autocrlf true
+            if ($Legacy) {
+                & git -C $tempRoot add --all
+                & git -C $tempRoot commit --quiet -m 'legacy normalized configuration'
+                $LASTEXITCODE | Should -Be 0
+            }
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -AgentTarget kilocode -Action help *> $null
+                $InitMode = 'configured'
+                $Action = if ($Legacy) { 'sync-master' } else { 'init-project' }
+                $RunStatusPath = ''
+                $script:FixtureDumpAttempts = 0
+                function Write-Section {}
+                function Set-RunStage {}
+                # This source/index fixture never launches 1C or exports long platform paths.
+                function Assert-Agent1cInitialProjectRootPathBudget { return [pscustomobject]@{ valid=$true } }
+                function Prepare-ConfiguredInitProjectSettings {}
+                function Complete-InitProjectSettingsPreparation {}
+                function Apply-BootstrapWorkflowPackageProvenance {}
+                function Sync-WorkflowManagedDependencyLockEntries {}
+                function Enter-ItlInitializationNativePhase {}
+                function Initialize-SourceInfoBaseUnsafeActionProtection {}
+                function Get-EnvValue { param($Name, $Default); if ($Name -eq 'VIBECODING1C_MCP_SETUP_DURING_INIT') { return $false }; return $Default }
+                function Check-Tools {}
+                function Remove-ItlOnDemandStaleInstances {}
+                function Install-RoctupMcp {}
+                function Install-VanessaMcpArtifacts {}
+                function Install-ItlOnDemandMcp {}
+                function Get-DevBranchInfoBaseRoot { return (Join-Path $tempRoot '.agent-1c\infobases') }
+                function Ensure-GitRepository {}
+                function Ensure-GitIgnore {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Update-BaseFromRepository { return $false }
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return 'external' }
+                function Get-InfoBaseKind { return 'file' }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-MainWorktreePath { return $tempRoot }
+                function Get-ExportPath { return 'src/cf' }
+                function Get-ExtensionsPath { return 'src/cfe' }
+                function Get-SourceConfigurationGenerationId { return ('a' * 40) }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ schemaVersion=2; reader='fixture-empty'; signatures=@(); errorCount=0; failureEvidence='' }
+                }
+                function Invoke-Designer { throw 'Native Designer must not run in the source-byte regression' }
+                function Dump-ConfigToFilesFromInfoBase {
+                    $script:FixtureDumpAttempts++
+                    if ($FailDumpOnce -and $script:FixtureDumpAttempts -eq 1) { throw 'fixture-native-dump-failed' }
+                    [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Configuration.xml'), $configurationBytes)
+                    [IO.File]::WriteAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl'), $moduleBytes)
+                    return [pscustomobject]@{ exportPath='src/cf'; absoluteExportPath=$exportRoot }
+                }
+                function Install-AiRules1c { throw 'fixture-stop-after-authoritative-commit' }
+                function Sync-KiloItlCommandSurface {}
+                function Write-AndSetRunUserReport {}
+                $firstFailure = ''
+                $failedSeedStatus = ''
+                $statusBeforeRetry = @()
+                $attributesBefore = [IO.File]::ReadAllText((Join-Path $tempRoot '.gitattributes'))
+                $attributesAfterFailure = ''
+                if ($Legacy) {
+                    if ($FailDumpOnce) {
+                        try { Sync-Master -NoDelegate -SeedPolicy Rebuild 6>$null } catch { $firstFailure = $_.Exception.Message }
+                        $failedSeedStatus = [string](Read-BranchSeedManifest).status
+                        $statusBeforeRetry = @(Get-GitPathList -Arguments @('status', '--porcelain', '-z'))
+                        $attributesAfterFailure = [IO.File]::ReadAllText((Join-Path $tempRoot '.gitattributes'))
+                    }
+                    Sync-Master -NoDelegate -SeedPolicy Rebuild 6>$null
+                } else {
+                    $stoppedAtOwnedBoundary = ''
+                    try { Initialize-Project 6>$null } catch { $stoppedAtOwnedBoundary = $_.Exception.Message }
+                    if ($stoppedAtOwnedBoundary -cne 'fixture-stop-after-authoritative-commit') { throw "Unexpected init failure: $stoppedAtOwnedBoundary" }
+                }
+                $seed = Read-BranchSeedManifest
+                $current = Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+                $configurationBlob = (Get-GitOutput @('rev-parse', 'HEAD:src/cf/Configuration.xml')).Trim()
+                $moduleBlob = (Get-GitOutput @('rev-parse', 'HEAD:src/cf/Модуль с пробелом.bsl')).Trim()
+                $blobs = Get-GitBlobBytesBatch -Root $tempRoot -ObjectIds @($configurationBlob, $moduleBlob)
+                [pscustomobject]@{
+                    seed=$seed; current=$current
+                    committedConfiguration=[Convert]::ToBase64String($blobs[$configurationBlob])
+                    committedModule=[Convert]::ToBase64String($blobs[$moduleBlob])
+                    worktreeConfiguration=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $exportRoot 'Configuration.xml')))
+                    worktreeModule=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $exportRoot 'Модуль с пробелом.bsl')))
+                    status=@(Get-GitPathList -Arguments @('status', '--porcelain', '-z', '--', 'src/cf', '.gitattributes'))
+                    fullStatus=@(Get-GitPathList -Arguments @('status', '--porcelain', '-z'))
+                    firstFailure=$firstFailure; failedSeedStatus=$failedSeedStatus; statusBeforeRetry=$statusBeforeRetry
+                    attributesBefore=$attributesBefore; attributesAfterFailure=$attributesAfterFailure
+                }
+            }
+
+            $result.seed.status | Should -Be 'ready'
+            $result.seed.configurationFingerprint | Should -BeExactly $result.current.fingerprint
+            $result.seed.configurationFileCount | Should -Be $result.current.fileCount
+            $result.committedConfiguration | Should -BeExactly ([Convert]::ToBase64String($configurationBytes))
+            $result.committedModule | Should -BeExactly ([Convert]::ToBase64String($moduleBytes))
+            $result.worktreeConfiguration | Should -BeExactly $result.committedConfiguration
+            $result.worktreeModule | Should -BeExactly $result.committedModule
+            $result.status.Count | Should -Be 0
+            if ($Legacy) { $result.fullStatus.Count | Should -Be 0 }
+            else {
+                # Init is deliberately stopped before its later workflow commit owns .gitignore.
+                $result.fullStatus | Should -Be @('?? .gitignore')
+            }
+            if ($FailDumpOnce) {
+                $result.firstFailure | Should -BeExactly 'fixture-native-dump-failed'
+                $result.failedSeedStatus | Should -Be 'failed'
+                $result.statusBeforeRetry.Count | Should -Be 0
+                $result.attributesAfterFailure | Should -BeExactly $result.attributesBefore
+            }
+        } finally {
+            $resolvedFixtureRoot = [IO.Path]::GetFullPath($tempRoot)
+            $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+            if (-not $resolvedFixtureRoot.StartsWith($resolvedTempRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                [IO.Path]::GetFileName($resolvedFixtureRoot) -notmatch '^ИТЛ seed CRLF с пробелом [a-f0-9]{32}$') {
+                throw "Seed byte fixture cleanup target is outside its owned temporary root: $resolvedFixtureRoot"
+            }
+            if (Test-Path -LiteralPath $resolvedFixtureRoot) { Remove-Item -LiteralPath $resolvedFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "keeps one latest file seed with DoNotCopy marker and transfers signatures without raw 1Cv8Log" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-latest-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -18,6 +164,7 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -93,6 +240,7 @@
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $script:unbindCalls = @()
                 $script:unbindObservedBeforeDump = $false
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -160,6 +308,7 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -267,6 +416,7 @@
             [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -304,6 +454,7 @@
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $script:dumpModes = [System.Collections.Generic.List[string]]::new()
+                $script:ProjectRoot = $tempRoot
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
@@ -384,6 +535,7 @@
             Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
                 function Assert-CleanGit {}
                 function Checkout-Master {}
                 function Clear-DevBranchContext {}

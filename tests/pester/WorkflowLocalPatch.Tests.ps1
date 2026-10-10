@@ -3,6 +3,7 @@
         $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1')
@@ -14,6 +15,70 @@
         function Set-FixtureText($Path, $Text) {
             New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
             [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false))
+        }
+        function New-LocalPatchCopyCandidateFixture {
+            param(
+                [Parameter(Mandatory=$true)][string]$FixtureRoot,
+                [Parameter(Mandatory=$true)][string]$IncomingRoot,
+                [Parameter(Mandatory=$true)][string]$PackageSourceRoot
+            )
+            $fixtureFull = [IO.Path]::GetFullPath($FixtureRoot).TrimEnd('\','/')
+            $fixturePrefix = $fixtureFull + [IO.Path]::DirectorySeparatorChar
+            $incomingFull = [IO.Path]::GetFullPath($IncomingRoot)
+            if (-not $incomingFull.StartsWith($fixturePrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'IncomingRoot must remain inside the owned TestDrive.' }
+            $fork = Join-Path $fixtureFull ('Local fork Кириллица ' + [guid]::NewGuid().ToString('N'))
+            $forkRepo = 'https://github.com/xmentosx/itl_ai_rules_1c.git'
+            $forkTag = 'itl-fixture-copy-r1'
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            foreach ($relative in @('adapters','content/rules','openspec')) {
+                [IO.Directory]::CreateDirectory((Join-Path $fork $relative)) | Out-Null
+            }
+            [IO.File]::WriteAllText((Join-Path $fork 'adapters/codex.yaml'),"skills:`n  copyTo: .agents/skills/`n",$utf8)
+            [IO.File]::WriteAllText((Join-Path $fork 'content/rules/copy-fixture.md'),'Pinned local candidate inventory fixture',$utf8)
+            [IO.File]::WriteAllText((Join-Path $fork 'openspec/config.yaml'),'schema: spec-driven',$utf8)
+            $installer = @'
+        param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[switch]$NonInteractive,[switch]$AssumeYes)
+        $ErrorActionPreference = 'Stop'
+        if ($Command -ne 'init' -or $Tools -ne 'codex' -or -not $NonInteractive -or -not $AssumeYes) { throw 'Unexpected bounded fixture installer invocation.' }
+        $ruleRelative = '.codex/rules/copy-fixture.md'
+        $sourceRelative = 'content/rules/copy-fixture.md'
+        $rulePath = Join-Path $ProjectRoot $ruleRelative
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $rulePath)) | Out-Null
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $Source $sourceRelative))
+        [IO.File]::WriteAllBytes($rulePath,$bytes)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $hash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+        $manifest = '{"protocol":"1.1","version":"itl-fixture-copy-r1","tools":["codex"],"files":{".codex/rules/copy-fixture.md":{"source":"content/rules/copy-fixture.md","installedHash":"' + $hash + '","userModified":false}}}'
+        [IO.File]::WriteAllText((Join-Path $ProjectRoot '.ai-rules.json'),$manifest,[Text.UTF8Encoding]::new($false))
+'@
+            [IO.File]::WriteAllText((Join-Path $fork 'install.ps1'),$installer,[Text.UTF8Encoding]::new($true))
+            Invoke-GitAt -Root $fork -Arguments @('init','-q','-b','master')
+            Invoke-GitAt -Root $fork -Arguments @('config','user.email','fixture@example.invalid')
+            Invoke-GitAt -Root $fork -Arguments @('config','user.name','Local Copy Candidate Fixture')
+            Invoke-GitAt -Root $fork -Arguments @('add','--all')
+            Invoke-GitAt -Root $fork -Arguments @('commit','-qm','local candidate fixture')
+            $commit = (Get-GitOutputAt -Root $fork -Arguments @('rev-parse','HEAD')).Trim()
+            Invoke-GitAt -Root $fork -Arguments @('tag',$forkTag)
+            Invoke-GitAt -Root $fork -Arguments @('remote','add','origin',$forkRepo)
+            $templates = Join-Path $incomingFull 'templates'
+            [IO.Directory]::CreateDirectory($templates) | Out-Null
+            $projectTemplate = @{ aiRules=@{repo=$forkRepo;ref=$forkTag;tools=@('codex')} }
+            $lockTemplate = @{schemaVersion=1;mode='fresh';dependencies=@{aiRules1c=@{
+                repo=$forkRepo;ref=$forkTag;commit=$commit;upstreamRepo='https://github.com/comol/ai_rules_1c.git';
+                upstreamRef='refs/heads/main';upstreamCommit=$commit;downstreamRevision=1;compatibilityStatus='passed'
+            }}}
+            [IO.File]::WriteAllText((Join-Path $templates 'project.json'),($projectTemplate|ConvertTo-Json -Depth 6),$utf8)
+            [IO.File]::WriteAllText((Join-Path $templates 'dependency-lock.json'),($lockTemplate|ConvertTo-Json -Depth 8),$utf8)
+            $commandRelative = '.agents/skills/1c-workflow/kilo-command-templates'
+            foreach ($surface in @('common','master')) {
+                $sourceDir = Join-Path $PackageSourceRoot "$commandRelative/$surface"
+                $targetDir = Join-Path $incomingFull "$commandRelative/$surface"
+                [IO.Directory]::CreateDirectory($targetDir) | Out-Null
+                foreach ($file in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter 'itl*.md.template' -ErrorAction Stop)) {
+                    Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $targetDir $file.Name) -ErrorAction Stop
+                }
+            }
+            return [pscustomobject]@{forkRoot=$fork;repo=$forkRepo;ref=$forkTag;commit=$commit;incomingRoot=$incomingFull}
         }
         function New-SealedFixturePatch {
             $r = New-WorkflowPatchReceipt -Paths @($script:patchPath) -ReportPath $script:report
@@ -483,10 +548,35 @@
 
     Context 'Package copy boundary' {
         BeforeEach {
+            # This unit fixture uses the normal update route, including the real
+            # pinned candidate preflight and snapshot inventory. Its miniature
+            # local fork supplies data only; it is not release qualification.
+            $script:copyFixtureEnvironment = [ordered]@{}
+            foreach ($name in @('TEMP', 'TMP', 'AGENT_TOOLS', 'ITL_AI_RULES_SOURCE_PATH')) {
+                $script:copyFixtureEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            }
+            $script:copyFixtureTemp = Join-Path $TestDrive ('Кэш кандидата ' + [guid]::NewGuid().ToString('N'))
+            [IO.Directory]::CreateDirectory($script:copyFixtureTemp) | Out-Null
+            [Environment]::SetEnvironmentVariable('TEMP', $script:copyFixtureTemp, 'Process')
+            [Environment]::SetEnvironmentVariable('TMP', $script:copyFixtureTemp, 'Process')
+            [Environment]::SetEnvironmentVariable('AGENT_TOOLS', 'codex', 'Process')
             Invoke-Git @('checkout', '-qb', 'master')
+            $configPath = Join-Path $script:ProjectRoot '.agent-1c/project.json'
+            . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Action help `
+                -ProjectRoot $script:ProjectRoot -ConfigPath $configPath -AgentTarget codex -DevBranchName test `
+                -RunStatusPath (Join-Path $script:copyFixtureTemp 'help-status.json') `
+                -RunLogPath (Join-Path $script:copyFixtureTemp 'help.log') | Out-Null
+            $SkipAiRules | Should -BeFalse
+            $WorkflowUpdateRecovery | Should -BeExactly ''
+            # The real entrypoint imports this owner; keep the original archive
+            # fixture scoped to TestDrive after that import.
+            Mock Get-WorkflowFixArchiveRoot { $script:archiveRoot }
             New-SealedFixturePatch | Out-Null
             $script:incoming = Join-Path $TestDrive ('incoming ' + [guid]::NewGuid().ToString('N'))
             Set-FixtureText (Join-Path $script:incoming $script:patchPath) 'official replacement'
+            $candidate = New-LocalPatchCopyCandidateFixture -FixtureRoot $TestDrive `
+                -IncomingRoot $script:incoming -PackageSourceRoot $RepoRoot
+            [Environment]::SetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH', $candidate.forkRoot, 'Process')
             Mock Set-RunStage {}
             Mock Resolve-WorkflowPackageSource { [pscustomobject]@{root=$script:incoming;repo='fixture-workflow';ref='develop';commit=('a'*40)} }
             Mock Assert-WorkflowSourceOutsideProject {}
@@ -496,6 +586,11 @@
             Mock Remove-LegacyWorkflowManagedFiles {}
             Mock Update-WorkflowPackageLockEntry {}
             Mock Invoke-Agent1cFreshProcess { throw 'REEXEC_BOUNDARY' }
+        }
+        AfterEach {
+            foreach ($name in @($script:copyFixtureEnvironment.Keys)) {
+                [Environment]::SetEnvironmentVariable($name, $script:copyFixtureEnvironment[$name], 'Process')
+            }
         }
         It 'restores the workaround when managed copying fails after a partial write' {
             Mock Copy-WorkflowManagedDirectory {

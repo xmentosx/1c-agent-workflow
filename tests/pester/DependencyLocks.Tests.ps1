@@ -142,7 +142,8 @@
         $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
         $lockTemplatePath = Join-Path $RepoRoot "templates\dependency-lock.json"
-        $lockTemplate = Get-Content -Encoding UTF8 -Raw $lockTemplatePath | ConvertFrom-Json
+        $lockTemplateText = Get-Content -Encoding UTF8 -Raw $lockTemplatePath
+        $lockTemplate = $lockTemplateText | ConvertFrom-Json
 
         $projectTemplate | Should -Match '"dependencyMode"\s*:\s*"fresh"'
         $projectTemplate | Should -Match '"verificationPolicy"\s*:\s*"warn"'
@@ -151,22 +152,22 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-410951e7-r36"
+        $project.aiRules.ref | Should -Be "itl-main-c1fb8e6-r41"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r36"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-c1fb8e6-r41"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "451c5a52e5b614c67406445d4af4b636da043aec"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "84ed7c7a8dcc783159537f41f38196640ffa968c"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
-        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 36
+        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb"
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 41
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
         } else {
-            $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+            $lockTemplateText | Should -Match '"compatibilityCheckedAt"\s*:\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"'
         }
         $lockTemplate.dependencies.agentBrowser.version | Should -Be "0.33.1"
         $lockTemplate.dependencies.agentBrowser.profile | Should -Be "core"
@@ -192,14 +193,14 @@
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
         $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.15"
-        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
-        $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
+        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6"
+        $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r4.cfe"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
-        $lockTemplate.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
+        $lockTemplate.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c"
         $lockTemplate.dependencies.vanessaAutomation.compatibilityVersion | Should -Be "1.2.043.42"
-        $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r1"
-        $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "749614bc295e05e813b92c689a22538c1d13caf8369827227f4edf782c5da6bc"
-        $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "849c5067af4a6694c85b27cd358f35be73c93ff83fc3586541c22ae885288c16"
+        $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r4"
+        $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "84aabfbf77511abd432c235625afb543aa3c182654e08a24bda3c4312c7d5f4c"
+        $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "b1e5d7111115b6cea4fdf64774f31de2f485579f024e6af81c2b361ecabd4e1b"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Contain "sha256"
@@ -284,18 +285,43 @@
         }
     }
 
-    It "updates canonical pins without replacing compatibility runtime metadata" {
+    It "updates canonical pins without replacing compatibility runtime metadata for <clientPolicy>" -TestCases @(
+        @{ clientPolicy = 'published legacy baseline'; expectedClientSource = 'compatibility-manifest' }
+        @{ clientPolicy = 'current owned pin'; expectedClientSource = 'workflow-pinned' }
+    ) {
+        param($clientPolicy, $expectedClientSource)
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-runtime-metadata-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh"}'
-            $manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $templatePath = Join-Path $RepoRoot "templates\dependency-lock.json"
+            if ($clientPolicy -eq 'published legacy baseline') {
+                # Exact client entry published at f5466e6ff98e95bae989a80d65809d1bff2bc31e.
+                # Get-WorkflowTemplatePath resolves this fixture-local canonical input.
+                $canonical.dependencies.vanessaMcp.clientMcp = [pscustomobject]@{
+                    version = 'v0.6.5'
+                    assetName = 'client_mcp.cfe'
+                    url = 'https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe'
+                    sha256 = 'd1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f'
+                    source = 'template baseline'
+                    updatedAt = '2026-05-26T19:34:34Z'
+                }
+                New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'templates') | Out-Null
+                $templatePath = Join-Path $tempRoot 'templates\dependency-lock.json'
+                [IO.File]::WriteAllText($templatePath, ($canonical | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            } else {
+                $canonical.dependencies.vanessaMcp.clientMcp.source | Should -BeExactly 'workflow-pinned'
+                $canonical.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Not -Contain 'updatedAt'
+            }
+            $canonicalBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($templatePath))
+            $manifest = $canonical | ConvertTo-Json -Depth 20 | ConvertFrom-Json
             $manifest.dependencies.roctupMcpToolkit.version = "v0"
             $manifest.dependencies.roctupMcpToolkit.source = "compatibility-manifest"
             $manifest.dependencies.roctupMcpToolkit.updatedAt = "runtime-roctup"
             $manifest.dependencies.vanessaMcp.clientMcp.version = "v0"
             $manifest.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
-            $manifest.dependencies.vanessaMcp.clientMcp.updatedAt = "runtime-vanessa"
+            $manifest.dependencies.vanessaMcp.clientMcp | Add-Member -NotePropertyName updatedAt -NotePropertyValue "runtime-vanessa" -Force
             $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
             Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
@@ -304,11 +330,15 @@
                 Sync-WorkflowManagedDependencyLockEntries | Out-Null
                 Read-DependencyLockManifest
             }
-            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $first.dependencies.roctupMcpToolkit.version | Should -Be $canonical.dependencies.roctupMcpToolkit.version
             $first.dependencies.roctupMcpToolkit.source | Should -Be "compatibility-manifest"
             $first.dependencies.vanessaMcp.clientMcp.version | Should -Be $canonical.dependencies.vanessaMcp.clientMcp.version
-            $first.dependencies.vanessaMcp.clientMcp.source | Should -Be "compatibility-manifest"
+            $first.dependencies.vanessaMcp.clientMcp.source | Should -Be $expectedClientSource
+            $first.dependencies.vanessaMcp.clientMcp.updatedAt | Should -Not -BeNullOrEmpty
+            foreach ($property in @($canonical.dependencies.vanessaMcp.clientMcp.PSObject.Properties | Where-Object { $_.Name -notin @('source', 'updatedAt') })) {
+                ($first.dependencies.vanessaMcp.clientMcp.($property.Name) | ConvertTo-Json -Depth 20 -Compress) |
+                    Should -BeExactly ($property.Value | ConvertTo-Json -Depth 20 -Compress)
+            }
 
             $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
             & {
@@ -316,6 +346,7 @@
                 Sync-WorkflowManagedDependencyLockEntries | Out-Null
             }
             (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($templatePath)) | Should -BeExactly $canonicalBytes
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -340,10 +371,38 @@
             }
 
             $result.error | Should -Match "DEPENDENCY_LOCK_UPGRADE_REQUIRED"
-            foreach ($name in $result.names) {
+            foreach ($name in @($result.names | Where-Object { $_ -ne 'openSpecCli' })) {
                 $result.error | Should -Match ([regex]::Escape("dependencies.$name"))
             }
             (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "adds only the new OpenSpec pin to a complete locked project without changing its mode or other pins" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-openspec-upgrade-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot '.agent-1c\project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
+            $lockPath = Join-Path $tempRoot '.agent-1c\dependency-lock.json'
+            $template = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $expectedOpenSpec = $template.dependencies.openSpecCli
+            $template.mode = 'locked'
+            $template.dependencies.PSObject.Properties.Remove('openSpecCli')
+            $template.dependencies.yaxunit.version = 'project-specific-pin'
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value ($template | ConvertTo-Json -Depth 30)
+            $first = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-WorkflowManagedDependencyLockEntries }
+            $first.changed | Should -BeTrue
+            @($first.entries) | Should -Be @('openSpecCli')
+            $after = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $after.mode | Should -Be 'locked'
+            $after.dependencies.yaxunit.version | Should -Be 'project-specific-pin'
+            $after.dependencies.openSpecCli.packageLockSha256 | Should -Be $expectedOpenSpec.packageLockSha256
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            $repeat = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-WorkflowManagedDependencyLockEntries }
+            $repeat.changed | Should -BeFalse
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

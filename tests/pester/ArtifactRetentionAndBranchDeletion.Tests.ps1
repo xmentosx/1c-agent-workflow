@@ -4,6 +4,7 @@
     $RepoRoot = $context.RepoRoot
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+    . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1')
@@ -11,6 +12,46 @@
 }
 
 Describe 'ITL artifact retention' {
+    It 'protects the observed run artifacts named by a passed one-off receipt' {
+        $root = Join-Path $TestDrive 'One off проект'
+        $run = Join-Path $root '.agent-1c/runs/run-001'
+        $proofRoot = Join-Path $root '.agent-1c/verification-selection/one-off'
+        New-Item -ItemType Directory -Force -Path $run, $proofRoot | Out-Null
+        [IO.File]::WriteAllText((Join-Path $run 'observed.txt'), 'observed', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $run 'result.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $receipt = [ordered]@{ status = 'passed'; evidencePath = '.agent-1c/runs/run-001/result.json'; artifacts = @(@{ path = '.agent-1c/runs/run-001/observed.txt' }) }
+        [IO.File]::WriteAllText((Join-Path $proofRoot 'observed.json'), ($receipt | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        Mock Get-DevBranchStateFiles { @() }
+        $protected = Get-ItlArtifactProtectedPaths -ProjectRoot $root
+        (Test-ItlArtifactProtected -Path $run -ProtectedPaths $protected) | Should -BeTrue
+        $receipt.artifacts[0].path = '../outside.txt'
+        [IO.File]::WriteAllText((Join-Path $proofRoot 'observed.json'), ($receipt | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        { Get-ItlArtifactProtectedPaths -ProjectRoot $root } | Should -Throw '*ITL_ARTIFACT_ONE_OFF_RECEIPT_UNREADABLE*'
+    }
+
+    It 'protects active run paths when script run context is present' {
+        $root = Join-Path $TestDrive 'Активный запуск с пробелами'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $names = @('ResolvedRunStatusPath', 'ResolvedRunLogPath', 'RunResultPath', 'RunResultManifestPath')
+        $saved = @{}
+        foreach ($name in $names) {
+            $variable = Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue
+            $saved[$name] = [pscustomobject]@{ exists = ($null -ne $variable); value = $(if ($null -ne $variable) { $variable.Value } else { $null }) }
+        }
+        try {
+            $activePaths = @($names | ForEach-Object { Join-Path $root ($_ + '.json') })
+            for ($i = 0; $i -lt $names.Count; $i++) { Set-Variable -Name $names[$i] -Scope Script -Value $activePaths[$i] }
+            Mock Get-DevBranchStateFiles { @() }
+            $protected = Get-ItlArtifactProtectedPaths -ProjectRoot $root
+            foreach ($path in $activePaths) { (Test-ItlArtifactProtected -Path $path -ProtectedPaths $protected) | Should -BeTrue }
+        } finally {
+            foreach ($name in $names) {
+                if (-not $saved[$name].exists) { Remove-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue }
+                else { Set-Variable -Name $name -Scope Script -Value $saved[$name].value }
+            }
+        }
+    }
+
     It 'uses the configured defaults and rejects an invalid count' {
         Mock Get-EnvValue { param($Name, $Default) return $Default }
         $policy = Get-ItlArtifactRetentionPolicy
@@ -153,6 +194,58 @@ Describe 'ITL branch deletion identity' {
         { New-ItlBranchDeletionJournal -Name test } | Should -Throw '*DELETE_BRANCH_SOURCE_INFOBASE_REFUSED*'
     }
 
+    It 'keeps Git path diagnostics usable with optional lifecycle phase (<Case>)' -TestCases @(
+        @{ Case = 'undefined'; Phase = $null; Expected = '<none>' },
+        @{ Case = 'caller-defined'; Phase = 'observed-caller-phase'; Expected = 'observed-caller-phase' }
+    ) {
+        param($Case, $Phase, $Expected)
+        Mock Invoke-ItlNativeProcessCapture { [pscustomobject]@{ exitCode = 128; stdout = ''; stderr = 'original native failure' } }
+        & {
+            if ($null -ne $Phase) { $LifecyclePhase = $Phase }
+            try { Get-GitPathListAt -Root $TestDrive -Arguments @('worktree', 'list', '--porcelain', '-z'); throw 'Expected original native failure' }
+            catch {
+                $_.Exception.Message | Should -Match ('LifecyclePhase: ' + [regex]::Escape($Expected))
+                $_.Exception.Message | Should -Match 'ExitCode: 128'
+                $_.Exception.Message | Should -Match 'original native failure'
+            }
+        }
+        Should -Invoke Invoke-ItlNativeProcessCapture -Times 1
+    }
+
+    It 'refuses to delete a dirty worktree when managed branch state is missing' {
+        $main = Join-Path $TestDrive 'Главный проект без состояния с пробелами'
+        $worktree = Join-Path $TestDrive 'Ветка без состояния с пробелами'
+        New-Item -ItemType Directory -Path $main -Force | Out-Null
+        & git init -b master -- $main | Out-Null
+        $LASTEXITCODE | Should -Be 0
+        & git -C $main config user.name 'ITL Test'
+        & git -C $main config user.email 'itl@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $main 'README.md'), 'master')
+        & git -C $main add README.md
+        & git -C $main commit -m initial | Out-Null
+        $LASTEXITCODE | Should -Be 0
+        & git -C $main worktree add -b itldev/test $worktree | Out-Null
+        $LASTEXITCODE | Should -Be 0
+        $dirty = Join-Path $worktree 'грязный файл.txt'
+        [IO.File]::WriteAllText($dirty, 'uncommitted')
+        $headBefore = (& git -C $main rev-parse HEAD).Trim()
+        $dirtyBefore = (Get-FileHash -LiteralPath $dirty -Algorithm SHA256).Hash
+        $masterBefore = (Get-FileHash -LiteralPath (Join-Path $main 'README.md') -Algorithm SHA256).Hash
+        $script:ProjectRoot = $main
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation { throw 'Missing managed state must not reach runtime cleanup' }
+        Mock Release-ItlManagedPortAllocationsForState { throw 'Missing managed state must not reach port cleanup' }
+        { Remove-ItlDevBranch -Name test -Confirmed } | Should -Throw "*Development branch state not found for 'test'.*"
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 0
+        Should -Invoke Release-ItlManagedPortAllocationsForState -Times 0
+        (Test-Path -LiteralPath $worktree) | Should -BeTrue
+        (Get-FileHash -LiteralPath $dirty -Algorithm SHA256).Hash | Should -Be $dirtyBefore
+        (Get-FileHash -LiteralPath (Join-Path $main 'README.md') -Algorithm SHA256).Hash | Should -Be $masterBefore
+        (& git -C $main rev-parse HEAD).Trim() | Should -Be $headBefore
+        (Find-GitWorktreeByBranch -Branch 'itldev/test').path | Should -Be ([IO.Path]::GetFullPath($worktree).Replace('\', '/'))
+        (& git -C $main branch --list 'itldev/test') | Should -Not -BeNullOrEmpty
+        (Test-Path -LiteralPath (Join-Path $main '.agent-1c/branch-deletions/test.json')) | Should -BeFalse
+    }
+
     It 'removes an exact dirty Git worktree and local branch without touching master' {
         $main = Join-Path $TestDrive 'Главный проект с пробелами'
         $worktree = Join-Path $TestDrive 'Ветка с пробелами'
@@ -181,11 +274,15 @@ Describe 'ITL branch deletion identity' {
         Mock Get-ItlResultArtifactCandidates { return @() }
         Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
         Mock Release-ItlManagedPortAllocationsForState {}
+        $masterHeadBefore = (& git -C $main rev-parse HEAD).Trim()
+        $masterBytesBefore = (Get-FileHash -LiteralPath (Join-Path $main 'README.md') -Algorithm SHA256).Hash
         Remove-ItlDevBranch -Name test -Confirmed
         Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 1
         Should -Invoke Release-ItlManagedPortAllocationsForState -Times 1
         (Test-Path -LiteralPath $worktree) | Should -BeFalse
         (Test-Path -LiteralPath (Join-Path $main 'README.md')) | Should -BeTrue
+        (Get-FileHash -LiteralPath (Join-Path $main 'README.md') -Algorithm SHA256).Hash | Should -Be $masterBytesBefore
+        (& git -C $main rev-parse HEAD).Trim() | Should -Be $masterHeadBefore
         (& git -C $main branch --list 'itldev/test') | Should -BeNullOrEmpty
         (Test-Path -LiteralPath (Join-Path $main '.agent-1c/branch-deletions/test.json')) | Should -BeFalse
     }

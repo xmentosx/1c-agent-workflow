@@ -3,6 +3,346 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
 }
+Describe 'Scheduler-independent Pester proof' {
+    It 'reuses Targeted proof in Full with another worker limit, retaining input and SHA guards: <Producer>' -ForEach @(
+        @{ Producer = 'current' }
+        @{ Producer = 'legacy-workers-4' }
+    ) {
+        $root = Join-Path $TestDrive "Кэш с пробелом $Producer"
+        $testRoot = Join-Path $root 'tests/pester'
+        New-Item -ItemType Directory -Force -Path $testRoot, (Join-Path $root 'fixture') | Out-Null
+        & git -C $root init *> $null
+        & git -C $root config user.name 'ITL Test'
+        & git -C $root config user.email 'itl-test@example.invalid'
+        Set-Content -LiteralPath (Join-Path $root '.gitignore') -Encoding UTF8 -Value "out*/`nselection.json`ncounter*.txt"
+        $contracts = foreach ($name in @('A','B')) {
+            Set-Content -LiteralPath (Join-Path $root "fixture/$name.ps1") -Encoding UTF8 -Value 'owner-v1'
+            Set-Content -LiteralPath (Join-Path $testRoot "$name.Tests.ps1") -Encoding UTF8 -Value "Describe '$name' { It 'executes' { Add-Content -LiteralPath (Join-Path `$PSScriptRoot '../../counter$name.txt') -Value 'executed'; `$true | Should -BeTrue } }"
+            [ordered]@{ id=$name; owner='fixture'; primaryTest="tests/pester/$name.Tests.ps1"; gate='targeted'; budgetSeconds=30; paths=@("fixture/$name.ps1"); tests=@("tests/pester/$name.Tests.ps1") }
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), (@{schemaVersion=1;contracts=@($contracts)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $selectionPath = Join-Path $root 'selection.json'
+        [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/A.Tests.ps1","tests/pester/B.Tests.ps1"]}', [Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -m fixture *> $null
+        $runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $producerPath = $runner
+        if ($Producer -eq 'legacy-workers-4') {
+            # Produce the previous runtime key through the real runner. Keep all
+            # owner inputs, child execution and cache manifest checks unchanged.
+            $legacy = [IO.File]::ReadAllText($runner)
+            $legacy = $legacy.Replace('$lines.Add($runtimeIdentity)', '$lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")')
+            $legacy = $legacy.Replace('$PSScriptRoot', ("'" + (Split-Path -Parent $runner).Replace("'", "''") + "'"))
+            $producerPath = Join-Path $TestDrive 'legacy-shard-runner.ps1'
+            [IO.File]::WriteAllText($producerPath, $legacy, [Text.UTF8Encoding]::new($false))
+        }
+        $summaries = @()
+        foreach ($attempt in 1..4) {
+            if ($attempt -eq 3) { Set-Content -LiteralPath (Join-Path $root 'fixture/A.ps1') -Encoding UTF8 -Value 'owner-v2' }
+            if ($attempt -eq 4) {
+                foreach ($cachedResult in @(Get-ChildItem -LiteralPath (Join-Path $root '.git/itl/pester-shards/v1') -Recurse -File -Filter result.json)) {
+                    $proof = Get-Content -LiteralPath $cachedResult.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ([IO.Path]::GetFileName($proof.paths[0]) -eq 'B.Tests.ps1') {
+                        Add-Content -LiteralPath $cachedResult.FullName -Encoding UTF8 -Value 'corrupt'
+                    }
+                }
+            }
+            $output = Join-Path $root "out$attempt"
+            $arguments = @('-RepositoryRoot', $root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', $(if ($attempt -eq 1) { '4' } else { '3' }))
+            if ($attempt -eq 1) { $arguments += @('-SelectionPath', $selectionPath) }
+            $path = if ($attempt -eq 1) { $producerPath } else { $runner }
+            $run = Invoke-TestPowerShellFile -FilePath $path -Arguments $arguments
+            if ($attempt -eq 4) {
+                $run.exitCode | Should -Not -Be 0 -Because 'corrupted proof must never produce a successful reused qualification'
+                ($run.stderr -join [Environment]::NewLine) | Should -Match 'Incomplete Pester shard cache is not empty'
+                continue
+            }
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            $summaries += ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+        }
+        @($summaries | ForEach-Object { $_.executedWorkerCount }) | Should -Be @(2,0,1)
+        @($summaries | ForEach-Object { $_.reusedWorkerCount }) | Should -Be @(0,2,1)
+        @($summaries | ForEach-Object { $_.pesterWorkers.effective }) | Should -Be @(4,3,3)
+        foreach ($name in @('A','B')) {
+            @(Get-Content -LiteralPath (Join-Path $root "counter$name.txt")).Count | Should -Be 2
+        }
+    }
+    It 'allows the observed passing cold cohorts and retains bounded aggregate budgets' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        # 2026-10-09: Targeted exhausted 2100s before an ~8-minute serial tail;
+        # Full exhausted 2700s before a 642-second successful continuation.
+        $catalog.budgets.targetedHardSeconds | Should -BeGreaterThan (2100 + 480 + 300)
+        $catalog.budgets.fullHardSeconds | Should -BeGreaterThan (2700 + 642 + 300)
+        $catalog.budgets.targetedHardSeconds | Should -BeLessThan $catalog.budgets.fullHardSeconds
+        $catalog.budgets.developHardSeconds | Should -Be ($catalog.budgets.fullHardSeconds + 1200 + 3600)
+        Get-ReleaseE2EBudgetProjection -QualityCatalog $catalog -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot) | Should -Not -BeNullOrEmpty
+    }
+}
+Describe 'Release native progress observation' {
+    It 'observes owned native progress while retaining idle and hard limits: <Scenario>' -TestCases @(
+        @{ Scenario = 'release-worktree'; ExpectedFailure = ''; NativeRoot = 'release' }
+        @{ Scenario = 'configured-relative-worktree'; ExpectedFailure = ''; NativeRoot = 'release'; LogLayout = 'relative' }
+        @{ Scenario = 'configured-absolute-main'; ExpectedFailure = ''; NativeRoot = 'main'; LogLayout = 'absolute' }
+        @{ Scenario = 'foreign-worktree'; ExpectedFailure = 'no progress for 10 seconds'; NativeRoot = 'foreign' }
+        @{ Scenario = 'hard-timeout'; ExpectedFailure = 'remaining mode budget 12 seconds'; NativeRoot = 'release' }
+    ) {
+        param($Scenario, $ExpectedFailure, $NativeRoot, [string]$LogLayout = 'default')
+        $fixtureRoot = Join-Path $TestDrive "Стенд с пробелом $Scenario"
+        $projectRoot = Join-Path $fixtureRoot 'Основная ветка'
+        $releaseRoot = Join-Path $fixtureRoot 'Рабочая ветка'
+        $foreignRoot = Join-Path $fixtureRoot 'Посторонняя ветка'
+        $outputRoot = Join-Path $fixtureRoot 'out'
+        New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot '.agent-1c'), $releaseRoot, $foreignRoot, $outputRoot | Out-Null
+        [IO.File]::WriteAllText((Join-Path $projectRoot '.agent-1c/release-e2e.json'), (@{
+            worktreePath = $releaseRoot; devBranchName = 'release-fixture'
+        } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text
+        }
+        $progressAssignment = @($ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$releaseProgressPaths'
+        }, $true))
+        $progressAssignment.Count | Should -Be 1
+        $nativeRootPath = if ($NativeRoot -eq 'release') { $releaseRoot } elseif ($NativeRoot -eq 'main') { $projectRoot } else { $foreignRoot }
+        $nativeLogDirectory = Join-Path $nativeRootPath 'logs/1c'
+        if ($LogLayout -ne 'default') {
+            $nativeLogDirectory = Join-Path $nativeRootPath 'Настроенные журналы 1С'
+            $configuredPath = if ($LogLayout -eq 'relative') { 'Настроенные журналы 1С' } else { $nativeLogDirectory }
+            New-Item -ItemType Directory -Force -Path (Join-Path $nativeRootPath '.agent-1c') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $nativeRootPath '.agent-1c/project.json'), (@{
+                logsPath = $configuredPath
+            } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        }
+        $nativeLogPath = Join-Path $nativeLogDirectory 'Проверка модулей.log'
+        $writerPath = Join-Path $fixtureRoot 'native-progress.ps1'
+        [IO.File]::WriteAllText($writerPath, @'
+param([string]$LogPath)
+$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+for ($i = 0; $i -lt 10; $i++) {
+    [IO.File]::AppendAllText($LogPath, "Проверка модулей: $i`n", [Text.UTF8Encoding]::new($false))
+    Start-Sleep -Milliseconds 2500
+}
+exit 0
+'@, [Text.UTF8Encoding]::new($true))
+        $probePath = Join-Path $fixtureRoot 'observe-progress.ps1'
+        $probe = @'
+param([string]$SourceRoot, [string]$FixtureRoot, [string]$NativeLogPath, [string]$Scenario)
+$ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+. (Join-Path $SourceRoot 'scripts/stand-env-identity.ps1')
+'@ + [Environment]::NewLine + ($definitions -join [Environment]::NewLine) + [Environment]::NewLine + @'
+$repoRoot = $FixtureRoot
+$outputRoot = Join-Path $FixtureRoot 'out'
+$E2EProjectRoot = Join-Path $FixtureRoot 'Основная ветка'
+$modeHardBudgetSeconds = 60
+$childTimeoutSeconds = if ($Scenario -eq 'hard-timeout') { 12 } else { 60 }
+$overallStopwatch = [Diagnostics.Stopwatch]::StartNew()
+'@ + [Environment]::NewLine + $progressAssignment[0].Extent.Text + [Environment]::NewLine + @'
+$child = Start-PowerShellChildProcess -ScriptPath (Join-Path $FixtureRoot 'native-progress.ps1') -Arguments @('-LogPath', $NativeLogPath) -LogName 'release-e2e'
+$failure = ''
+try { Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $childTimeoutSeconds -NoProgressSeconds 10 -ProgressPaths $releaseProgressPaths }
+catch { $failure = $_.Exception.Message }
+finally { Stop-GateChildProcessTree -Process $child.process }
+$child.process.Refresh()
+[IO.File]::WriteAllText((Join-Path $outputRoot 'observation.json'), (@{
+    failure = $failure; exitCode = [int]$child.process.ExitCode; elapsedSeconds = $overallStopwatch.Elapsed.TotalSeconds
+} | ConvertTo-Json), $utf8)
+'@
+        [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @(
+            '-SourceRoot', $RepoRoot, '-FixtureRoot', $fixtureRoot, '-NativeLogPath', $nativeLogPath, '-Scenario', $Scenario
+        )
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $observation = Get-Content -LiteralPath (Join-Path $outputRoot 'observation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($ExpectedFailure) {
+            $observation.failure | Should -Match ([regex]::Escape($ExpectedFailure))
+            $observation.elapsedSeconds | Should -BeLessThan 25
+        } else {
+            $observation.failure | Should -BeNullOrEmpty
+            $observation.exitCode | Should -Be 0
+            $observation.elapsedSeconds | Should -BeGreaterThan 24
+        }
+        $nativeText = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($nativeLogPath))
+        $nativeText | Should -Match 'Проверка модулей: 0'
+    }
+}
+
+Describe 'Pester shard selected-test identity' {
+    BeforeAll {
+        function New-ShardIdentityFixture([string]$Name) {
+            $root = Join-Path $TestDrive "Кэш с пробелом $Name"
+            $testRoot = Join-Path $root 'tests/pester'
+            New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $testRoot 'Alpha.Tests.ps1'), "Describe 'AlphaFixture' { It 'alpha' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+            [IO.File]::WriteAllText((Join-Path $testRoot 'Beta.Tests.ps1'), "Describe 'BetaFixture' { It 'beta one' { `$true | Should -BeTrue }; It 'beta two' { `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+            $tests = @('tests/pester/Alpha.Tests.ps1', 'tests/pester/Beta.Tests.ps1')
+            $catalog = [ordered]@{ schemaVersion = 1; contracts = @([ordered]@{
+                id = 'shared'; owner = 'fixture'; primaryTest = $tests[0]; gate = 'full'; budgetSeconds = 30
+                paths = $tests; tests = $tests
+            }) }
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{ tests = $tests } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "out*/`n", [Text.UTF8Encoding]::new($false))
+            & git -C $root init -q
+            & git -C $root config user.name 'ITL Test'
+            & git -C $root config user.email 'itl-test@example.invalid'
+            & git -C $root add --all
+            & git -C $root commit -qm fixture
+            $LASTEXITCODE | Should -Be 0
+            return $root
+        }
+        function Invoke-ShardIdentityFixture([string]$Root, [string]$OutputName) {
+            $output = Join-Path $Root $OutputName
+            $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+                '-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'),
+                '-WorkerCount', '1', '-SelectionPath', (Join-Path $Root 'selection.json'))
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            return (($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json)
+        }
+        function Assert-ShardIdentityResults($Summary, [string]$OutputRoot) {
+            $alpha = @($Summary.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' })
+            $beta = @($Summary.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' })
+            $alpha.Count | Should -Be 1; $beta.Count | Should -Be 1
+            $alpha[0].passed | Should -Be 1; $beta[0].passed | Should -Be 2
+            [xml]$xml = Get-Content -LiteralPath (Join-Path $OutputRoot 'pester.xml') -Raw
+            @($xml.SelectNodes('//testcase')).Count | Should -Be 3
+            @($xml.SelectNodes('//testcase') | Where-Object { $_.name -like '*alpha*' }).Count | Should -Be 1
+            @($xml.SelectNodes('//testcase') | Where-Object { $_.name -like '*beta*' }).Count | Should -Be 2
+        }
+    }
+
+    It 'separates tests with identical owner inputs and reuses each exact result in another worktree' {
+        $root = New-ShardIdentityFixture 'Разные тесты'
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $first.executedWorkerCount | Should -Be 2
+        @($first.workers.inputDigest | Sort-Object -Unique).Count | Should -Be 2
+        Assert-ShardIdentityResults $first (Join-Path $root 'out-first')
+        $other = Join-Path $TestDrive 'Вторая рабочая копия'
+        & git -C $root worktree add -q -b other $other
+        $LASTEXITCODE | Should -Be 0
+        $second = Invoke-ShardIdentityFixture $other 'out-second'
+        $second.executedWorkerCount | Should -Be 0; $second.reusedWorkerCount | Should -Be 2
+        Assert-ShardIdentityResults $second (Join-Path $other 'out-second')
+        @($second.workers.inputDigest | Sort-Object) | Should -Be @($first.workers.inputDigest | Sort-Object)
+    }
+
+    It 'preserves a valid-hash foreign <Kind> cache entry and executes then reuses the requested test' -ForEach @(
+        @{ Kind = 'different file' }, @{ Kind = 'same basename under another relative directory' }
+    ) {
+        $root = New-ShardIdentityFixture $Kind
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $alpha = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' }
+        $beta = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' }
+        $slot = Join-Path $root ('.git/itl/pester-shards/v1/' + $alpha.inputDigest)
+        $foreign = Get-Content -LiteralPath (Join-Path $root "out-first/pester-shards/worker-$($beta.worker).result.json") -Raw | ConvertFrom-Json
+        $foreign.inputDigest = $alpha.inputDigest
+        if ($Kind -like 'same basename*') { $foreign.paths = @((Join-Path $root 'tests/pester/Другой каталог/Alpha.Tests.ps1')) }
+        [IO.File]::WriteAllText((Join-Path $slot 'result.json'), ($foreign | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath (Join-Path $root "out-first/pester-shards/worker-$($beta.worker).xml") -Destination (Join-Path $slot 'pester.xml') -Force
+        $manifest = Get-Content -LiteralPath (Join-Path $slot 'manifest.json') -Raw | ConvertFrom-Json
+        $manifest.resultSha256 = (Get-FileHash -LiteralPath (Join-Path $slot 'result.json')).Hash.ToLowerInvariant()
+        $manifest.junitSha256 = (Get-FileHash -LiteralPath (Join-Path $slot 'pester.xml')).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $slot 'manifest.json'), ($manifest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $before = @('manifest.json', 'result.json', 'pester.xml') | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $slot $_)).Hash }
+        $second = Invoke-ShardIdentityFixture $root 'out-second'
+        $second.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
+        Assert-ShardIdentityResults $second (Join-Path $root 'out-second')
+        @(@('manifest.json', 'result.json', 'pester.xml') | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $slot $_)).Hash }) | Should -Be $before
+        $third = Invoke-ShardIdentityFixture $root 'out-third'
+        $third.executedWorkerCount | Should -Be 0; $third.reusedWorkerCount | Should -Be 2
+        Assert-ShardIdentityResults $third (Join-Path $root 'out-third')
+    }
+
+    It 'does not seed the shared cache from a prior local result belonging to another test' {
+        $root = New-ShardIdentityFixture 'Локальный чужой результат'
+        $first = Invoke-ShardIdentityFixture $root 'out-first'
+        $alpha = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Alpha.Tests.ps1' }
+        $beta = $first.workers | Where-Object { (Split-Path ([string]$_.paths[0]) -Leaf) -eq 'Beta.Tests.ps1' }
+        $slot = [IO.Path]::GetFullPath((Join-Path $root ('.git/itl/pester-shards/v1/' + $alpha.inputDigest)))
+        $preserved = [IO.Path]::GetFullPath((Join-Path $root 'out-preserved-cache'))
+        foreach ($path in @($slot, $preserved)) { $path.StartsWith([IO.Path]::GetFullPath($root) + '\', [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue }
+        Move-Item -LiteralPath $slot -Destination $preserved
+        $workers = Join-Path $root 'out-first/pester-shards'
+        Copy-Item -LiteralPath (Join-Path $workers "worker-$($beta.worker).result.json") -Destination (Join-Path $workers "worker-$($alpha.worker).result.json") -Force
+        Copy-Item -LiteralPath (Join-Path $workers "worker-$($beta.worker).xml") -Destination (Join-Path $workers "worker-$($alpha.worker).xml") -Force
+        $second = Invoke-ShardIdentityFixture $root 'out-first'
+        $second.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
+        Assert-ShardIdentityResults $second (Join-Path $root 'out-first')
+    }
+    It 'invalidates native-build shard reuse when its actual loaded helper or guard changes' {
+        $root = New-ShardIdentityFixture 'Нативные зависимости'
+        $nativeTest='tests/pester/VanessaBuildRuntime.Tests.ps1'
+        Move-Item -LiteralPath (Join-Path $root 'tests/pester/Alpha.Tests.ps1') -Destination (Join-Path $root $nativeTest)
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json')
+        . (Join-Path $RepoRoot 'scripts/client-mcp-build.ps1')
+        $nativeInputs=@(Get-ClientMcpBuildInputPaths -RepositoryRoot $RepoRoot)
+        foreach($inputPath in $nativeInputs){
+            $path=Join-Path $root $inputPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            [IO.File]::WriteAllText($path, "# native fixture input`n", [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'), (@{tests=@($nativeTest)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -qm native-inputs
+        $LASTEXITCODE | Should -Be 0
+        $first=Invoke-ShardIdentityFixture $root 'out-native-first'
+        $first.executedWorkerCount | Should -Be 1
+        $same=Invoke-ShardIdentityFixture $root 'out-native-same'
+        $same.reusedWorkerCount | Should -Be 1
+        $priorDigest=[string]$same.workers[0].inputDigest
+        $changes=@('.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1',
+            '.agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1',
+            '.agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py')
+        for($index=0;$index -lt $changes.Count;$index++){
+            $changed=$changes[$index]
+            [IO.File]::AppendAllText((Join-Path $root $changed), "# changed owner input`n",[Text.UTF8Encoding]::new($false))
+            & git -C $root add -- $changed
+            & git -C $root commit -qm changed-native-input
+            $LASTEXITCODE | Should -Be 0
+            $fresh=Invoke-ShardIdentityFixture $root "out-native-fresh-$index"
+            $fresh.executedWorkerCount | Should -Be 1 -Because "$changed must invalidate the native-build evidence"
+            $fresh.reusedWorkerCount | Should -Be 0
+            $fresh.workers[0].inputDigest | Should -Not -Be $priorDigest
+            $same=Invoke-ShardIdentityFixture $root "out-native-reuse-$index"
+            $same.reusedWorkerCount | Should -Be 1
+            $priorDigest=[string]$same.workers[0].inputDigest
+        }
+        # An absent declared dependency must never qualify a cached result.
+        & git -C $root rm -q -- $changes[2]
+        & git -C $root commit -qm missing-native-input
+        $LASTEXITCODE | Should -Be 0
+        $missing=Invoke-ShardIdentityFixture $root 'out-native-missing-first'
+        $missing.executedWorkerCount | Should -Be 1
+        $missing.workers[0].inputDigest | Should -BeNullOrEmpty
+        $again=Invoke-ShardIdentityFixture $root 'out-native-missing-second'
+        $again.executedWorkerCount | Should -Be 1
+        $again.reusedWorkerCount | Should -Be 0
+        $catalog=Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patterns=@($catalog.contracts | Where-Object {$nativeTest -in @($_.tests)} | ForEach-Object { @($_.paths); $extra=$_.PSObject.Properties['reuseInputPaths']; if($extra){@($extra.Value)} })
+        @($nativeInputs | Where-Object {$path=$_;@($patterns | Where-Object {$path -like $_}).Count -eq 0}) | Should -BeNullOrEmpty
+    }
+
+    It 'rejects malformed reuse input paths: <kind>' -TestCases @(
+        @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
+        @{kind='outside';paths=@('../secret.ps1')},
+        @{kind='absolute';paths=@('C:\outside.ps1')},
+        @{kind='duplicate';paths=@('lib/core.ps1','lib/core.ps1')}
+    ) {
+        param($kind,$paths)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $contract=[pscustomobject]@{id='native-fixture';reuseInputPaths=$paths}
+        {Get-QualityContractReuseInputPaths -Contract $contract} | Should -Throw '*reuseInputPaths*'
+    }
+}
 Describe "Local quality gate contract" {
     It "lets Windows PowerShell gate children rebuild their native module path when launched from PowerShell Core" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
@@ -220,8 +560,8 @@ exit $exitCode
         $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
         $text | Should -Match '\[ValidateSet\("Targeted", "Smoke", "Fast", "Full", "Develop", "Release"\)\]'; $text | Should -Match '\[string\]\$Mode = "Smoke"'
         $text | Should -Match 'Fast is deprecated and now aliases Smoke'; $text | Should -Match 'resolve-targeted-tests\.ps1'; $text | Should -Match 'smokeTests'
-        $text | Should -Match '\$journeyHardSeconds = if \(\$Journey -eq "upgrade"\) \{ 1200 \} else \{ 2100 \}'
-        $text | Should -Match 'TimeoutSeconds \$journeyHardSeconds'; $text | Should -Match 'TimeoutSeconds 7200'; $text | Should -Not -Match 'TimeoutSeconds 14400'
+        $text | Should -Match '\$journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog \$qualityCatalog -Journey \$Journey'
+        $text | Should -Match 'TimeoutSeconds \$journeyHardSeconds'; $text | Should -Match 'TimeoutSeconds \$releaseE2EHardBudgetSeconds'; $text | Should -Not -Match 'TimeoutSeconds 14400'
         $text | Should -Match 'targetBudgetSeconds'; $text | Should -Match 'slowestStages'; $text | Should -Match 'ProgressPaths \(Join-Path \$outputRoot "pester-shards"\)'
         $text | Should -Match 'LastWriteTimeUtc\.Ticks'; $text | Should -Match '-ProgressPaths \$releaseProgressPaths -LogName "release-e2e"'
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1"); $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
@@ -301,6 +641,7 @@ exit $exitCode
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",
             "scripts/source-delivery-candidate.ps1",
+            "scripts/source-delivery-release-recovery.ps1",
             "scripts/source-delivery-component.ps1",
             "scripts/source-delivery-cleanup.ps1"
         )
@@ -364,7 +705,8 @@ exit $exitCode
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
-            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
+            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
             "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1",
@@ -379,8 +721,10 @@ exit $exitCode
             "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
             "DevelopStaticQualificationCache.Tests.ps1" = 16.008; "LocalQualityGate.Tests.ps1" = 232.946
             "ParserDocsBudgets.Tests.ps1" = 12.688; "ReleaseGate.Tests.ps1" = 176.030; "ReleaseReadiness.Tests.ps1" = 104.107
-            # Actual 2026-10-02 support native JUnit suite time; the entrypoint also owns client-option Plan compatibility.
-            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryPlan.Tests.ps1" = 28.801; "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
+            # The client-selection delta makes immutable Plan proof part of the entrypoint owner.
+            # Native PS5 qualification on 2026-10-02 measured its complete 20-case suite at 29.530 seconds.
+            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryPlan.Tests.ps1" = 29.530
+            "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
             "SourceDeliveryPublish.Tests.ps1" = 243.396; "SourceDeliveryPublishContinuation.Tests.ps1" = 252.135
             "SourceDeliveryPublishQualification.Tests.ps1" = 459.824; "SourceDeliveryPublishRecovery.Tests.ps1" = 332.610
             "SourceDeliveryPublishReleaseTrain.Tests.ps1" = 345.565; "SourceDeliveryQueue.Tests.ps1" = 351.430
@@ -391,13 +735,16 @@ exit $exitCode
             "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
             "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=233
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
-            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=29; "SourceDeliveryProcessLifetime.Tests.ps1"=7
+            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
+            "SourceDeliveryProcessLifetime.Tests.ps1"=7
             "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
             "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
         }
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
-        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 181
+        # The complete native 2026-10-08 run measured 549.137 seconds (37/0/0).
+        # This current ordering weight does not replace the historical E measurements below.
+        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 550
         [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
         [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 200
         $estimate = {
@@ -418,8 +765,76 @@ exit $exitCode
         $overhead = 15.0
         $three = & $estimate $parallel $serial 3 $overhead
         $four = & $estimate $parallel $serial 4 $overhead
-        $three | Should -BeGreaterThan ([double]$catalog.budgets.targetedHardSeconds)
+        # This E measurement motivated four workers under the then-current 20-minute budget.
+        # A later capacity correction must not rewrite that historical comparison.
+        $historicalHardSeconds = 1200.0
+        $three | Should -BeGreaterThan $historicalHardSeconds
+        ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
         ([double]$catalog.budgets.targetedHardSeconds - $four) | Should -BeGreaterThan 200
+    }
+    It "fits the observed lifecycle cohort and mandatory serial tail without changing runtime watchdogs" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $historicalPaths = @(
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/c1-final-local-qualification.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/test-plan.md",
+            "templates/dependency-lock.json",
+            "tests/pester/CompactItlRunner.Tests.ps1",
+            "tests/pester/LifecycleOperationLock.Tests.ps1")
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
+        $gate6Tests = @(
+            "tests/pester/PlatformGate6Trigger.Tests.ps1",
+            "tests/pester/PlatformLegacyContext.Tests.ps1",
+            "tests/pester/PlatformLegacyDiagnostics.Tests.ps1",
+            "tests/pester/PlatformLegacyImpact.Tests.ps1",
+            "tests/pester/PlatformLoadContinuation.Tests.ps1",
+            "tests/pester/PlatformSourceCoverage.Tests.ps1")
+        # Retain the original observed 57-file cohort; the six newly owned
+        # Gate 6 files extend current inventory rather than replacing it.
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 63
+        foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
+        foreach ($test in @("DevBranchLifecycle", "CompactItlRunner", "DependencyLocks")) {
+            @($selection.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
+        # Source 0bc3ff21: prelude and the actual 55-file parallel cohort before the hard stop.
+        $preludeSeconds = 84.859
+        $parallelSpanSeconds = 917.257
+        # Historical complete 38-case Compact plus the nine new passed durations from after-2,
+        # and two corrected cases from after-nested-streaming. This is a capacity model,
+        # not a claim that the complete 49-case file has passed or a new tracked timing weight.
+        $oldCompactSeconds = 239.771
+        $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
+        $dependencySeconds = 14.161
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $estimatedCriticalPath | Should -BeGreaterThan 1200
+        ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
+        # Updating this catalog also selects its six directly owned quality files.
+        # Keep that self-selected workload, including the mandatory serial ReleaseGate.
+        $currentSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($historicalPaths + @(
+            "docs/local-quality-gate.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/tasks.md",
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+            "tests/quality-contracts.json"))
+        @($currentSelection.tests).Count | Should -Be 69
+        @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
+            "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
+            "tests/pester/DevelopE2EQualification.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1",
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/ReleaseGate.Tests.ps1",
+            "tests/pester/ReleaseReadiness.Tests.ps1")
+        # Current scheduler weights/four lanes with the retained per-file observations:
+        # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
+        $currentParallelSpanSeconds = 936.459
+        $serialReleaseSeconds = 198.938
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
+        ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
+        [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
     }
     It "routes only exact named entrypoint AST changes and falls back for shared or unknown impact" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
@@ -665,6 +1080,7 @@ exit $exitCode
         $runnerPath = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        $pathDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardRelativeTestPath' }, $true)
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardInputDigest' }, $true)
         $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         @($actualCatalog.pesterNonReusableTests) | Should -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
@@ -673,6 +1089,7 @@ exit $exitCode
             # Contracts and hashing dependencies deliberately absent: the
             # runtime exclusion must apply before any cache key is produced.
             $catalog = [pscustomobject]@{ pesterNonReusableTests = @('tests/pester/VanessaNestedSelection.Tests.ps1') }
+            . ([scriptblock]::Create($pathDefinition.Extent.Text))
             . ([scriptblock]::Create($definition.Extent.Text))
             $path = Join-Path $RepoRoot 'tests/pester/VanessaNestedSelection.Tests.ps1'
             @((Get-ShardInputDigest -Paths @($path)), (Get-ShardInputDigest -Paths @($path) -IncludeLegacyGlobalExternalInputs))
@@ -904,7 +1321,7 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$priorResult\.paths = @\(\[string\]\$item\.path\)'
         $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
         $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url -DestinationPath \$sharedArchive -ExpectedSha256 \$expected'
-        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy external path normalized to exact content identity'
+        $runner | Should -Match 'pesterExternalIdentityCache'; $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy scheduler or external identity normalized to exact owner inputs'
         $runner | Should -Match 'legacyInputDigests'; $runner | Should -Match 'legacyArchiveCandidates'
         $runner | Should -Match 'rev-list --max-count=8 HEAD'; $runner | Should -Match 'recentRootByHead'
         $runner | Should -Match 'hash-object --path \$RelativePath -- \$AbsolutePath'
@@ -1162,7 +1579,8 @@ Describe "Pester worker execution guard isolation" {
         $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-performance", "itl-remote-runner", "itl-remote-agent", "product-docs")
         $sourcePlanningSkillIds = @(
             'grill-me', 'grill-with-docs', 'grilling', 'domain-modeling',
-            'openspec-explore', 'openspec-propose', 'openspec-apply-change', 'openspec-archive-change'
+            'openspec-explore', 'openspec-propose', 'openspec-apply-change',
+            'openspec-update-change', 'openspec-sync-specs', 'openspec-archive-change'
         )
         # BootstrapUpdate covers actual installed output and update copy boundaries.
         $expected = @($installedSkillIds + $sourcePlanningSkillIds | Sort-Object)
@@ -1173,5 +1591,133 @@ Describe "Pester worker execution guard isolation" {
         $docs | Should -Match "GitHub Actions"
         $docs | Should -Match "continuation\s+scope"
         $docs | Should -Match 'точный прошедший `Targeted`'
+    }
+}
+
+Describe 'Controlled fork qualification script inventory' {
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $checkAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        if (@($errors).Count) { throw 'Cannot parse the actual workflow gate consumer.' }
+        foreach ($name in @('Get-RelativeRepositoryPath', 'Get-CanonicalTextSha256', 'Test-HasExactInventory', 'Test-ForkQualification')) {
+            $definition = $checkAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+            if ($null -eq $definition) { throw "Actual gate function is missing: $name" }
+            Invoke-Expression $definition.Extent.Text
+        }
+        function New-ForkScriptInventoryFixture {
+            param([string]$Root, [switch]$Legacy)
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            foreach ($directory in @('tests', 'scripts', 'build')) { [void][IO.Directory]::CreateDirectory((Join-Path $Root $directory)) }
+            $scripts = @('scripts/check.ps1', 'scripts/publish-fork-release.ps1')
+            if (-not $Legacy) { $scripts += 'scripts/full-check-contract.ps1' }
+            foreach ($relative in @('tests/Проверка.Tests.ps1', 'build/pester.xml') + $scripts) {
+                [IO.File]::WriteAllText((Join-Path $Root $relative), "# Точный исходник: $relative`r`n", $utf8)
+            }
+            $identity = [ordered]@{ commit = ('a' * 40); tree = ('b' * 40); upstreamRef = 'refs/heads/main'; upstreamCommit = ('c' * 40) }
+            $qualification = [ordered]@{
+                schemaVersion = 2; kind = 'itl-ai-rules-full-qualification'; status = 'passed'; reusable = $true
+                repository = [ordered]@{ commit = $identity.commit; tree = $identity.tree; worktreeClean = $true }
+                provenance = [ordered]@{ upstreamRef = $identity.upstreamRef; upstreamCommit = $identity.upstreamCommit }
+                inventory = [ordered]@{
+                    tests = @([ordered]@{ path = 'tests/Проверка.Tests.ps1'; sha256 = (Get-FileHash -LiteralPath (Join-Path $Root 'tests/Проверка.Tests.ps1')).Hash.ToLowerInvariant() })
+                    scripts = @(foreach ($relative in $scripts) { [ordered]@{ path = $relative; sha256 = (Get-FileHash -LiteralPath (Join-Path $Root $relative)).Hash.ToLowerInvariant() } })
+                }
+                junit = [ordered]@{ path = 'build/pester.xml'; sha256 = (Get-FileHash -LiteralPath (Join-Path $Root 'build/pester.xml')).Hash.ToLowerInvariant() }
+            }
+            $path = Join-Path $Root 'build/full.json'
+            [IO.File]::WriteAllText($path, ($qualification | ConvertTo-Json -Depth 8), $utf8)
+            return [pscustomobject]@{ Root = $Root; Path = $path; Identity = $identity; Qualification = $qualification }
+        }
+        function Save-ForkScriptInventoryFixture {
+            param([object]$Fixture)
+            [IO.File]::WriteAllText($Fixture.Path, ($Fixture.Qualification | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        }
+    }
+    BeforeEach {
+        $fixture = New-ForkScriptInventoryFixture -Root (Join-Path $TestDrive ('Форк с пробелом ' + [guid]::NewGuid().ToString('N')))
+    }
+    It 'accepts the exact three-script receipt when the Full contract helper exists' {
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeTrue
+    }
+    It 'accepts an exact legacy two-script receipt only when the Full contract helper is absent' {
+        $legacy = New-ForkScriptInventoryFixture -Root (Join-Path $TestDrive 'Старый форк с пробелом') -Legacy
+        Test-ForkQualification -SourceRoot $legacy.Root -Path $legacy.Path -Identity $legacy.Identity | Should -BeTrue
+    }
+    It 'refuses a receipt that omits the existing Full contract helper' {
+        $fixture.Qualification.inventory.scripts = @($fixture.Qualification.inventory.scripts | Where-Object { $_.path -cne 'scripts/full-check-contract.ps1' })
+        Save-ForkScriptInventoryFixture $fixture
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+    It 'refuses an extra script entry rather than trusting an inventory subset' {
+        $extra = Join-Path $fixture.Root 'scripts/extra.ps1'
+        [IO.File]::WriteAllText($extra, '# foreign entry', [Text.UTF8Encoding]::new($false))
+        $fixture.Qualification.inventory.scripts += [ordered]@{ path = 'scripts/extra.ps1'; sha256 = (Get-FileHash -LiteralPath $extra).Hash.ToLowerInvariant() }
+        Save-ForkScriptInventoryFixture $fixture
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+    It 'refuses a Full contract helper whose actual source bytes changed after qualification' {
+        [IO.File]::AppendAllText((Join-Path $fixture.Root 'scripts/full-check-contract.ps1'), '# изменённый контракт', [Text.UTF8Encoding]::new($false))
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+    It 'refuses an incorrect recorded hash for the Full contract helper' {
+        ($fixture.Qualification.inventory.scripts | Where-Object { $_.path -ceq 'scripts/full-check-contract.ps1' }).sha256 = 'd' * 64
+        Save-ForkScriptInventoryFixture $fixture
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+    It 'refuses explicit provenance when the canonical release requires refs heads main' {
+        $fixture.Qualification.provenance.upstreamRef = 'explicit'
+        Save-ForkScriptInventoryFixture $fixture
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+    It 'refuses a helper inventory entry when the helper file no longer exists' {
+        Remove-Item -LiteralPath (Join-Path $fixture.Root 'scripts/full-check-contract.ps1')
+        Test-ForkQualification -SourceRoot $fixture.Root -Path $fixture.Path -Identity $fixture.Identity | Should -BeFalse
+    }
+}
+
+Describe 'Develop journey catalog hard budgets' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts\quality-contracts.ps1')
+    }
+
+    It 'retains the original deadlines when an older catalog omits route budgets' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.upgrade.PSObject.Properties.Remove('hardSeconds')
+        $catalog.developJourneys.routes.fresh.PSObject.Properties.Remove('hardSeconds')
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 2100
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+    }
+
+    It 'uses explicit positive integer route budgets and the complete Develop aggregate' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 3600
+        [int]$catalog.budgets.developHardSeconds | Should -Be 9000
+        ([int]$catalog.budgets.fullHardSeconds +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade) +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 9000
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        $map = @{ developJourneys=@{ routes=@{ fresh=@{ hardSeconds=[long]3600 } } } }
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $map -Journey fresh | Should -Be 3600
+    }
+
+    It 'refuses a present invalid route budget instead of using a legacy default: <label>' -ForEach @(
+        @{ label='null'; budget=$null }
+        @{ label='zero'; budget=0 }
+        @{ label='negative'; budget=-1 }
+        @{ label='fraction'; budget=3600.5 }
+        @{ label='numeric string'; budget='3600' }
+        @{ label='boolean'; budget=$true }
+        @{ label='array'; budget=@(3600,3600) }
+        @{ label='overflow'; budget=[long]2147483648 }
+    ) {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.fresh.hardSeconds = $budget
+        { Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
     }
 }

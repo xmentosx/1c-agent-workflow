@@ -235,33 +235,39 @@ Describe "controlled ai_rules_1c release overlay" {
 
     It "routes structural Form.xml edits through the specialized tool" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
-        foreach ($marker in @(
-            'existing `Form.xml` must use `1c-form-edit`',
-            'never a manual one-line fix',
-            'state why the form tool does not apply before editing'
-        )) {
-            $agentsText | Should -Match ([regex]::Escape($marker))
+        $agentsText | Should -Match 'Read the matching on-demand ITL rule before changing a\s+managed form'
+        $agentsText | Should -Match ([regex]::Escape('content/rules/itl-managed-form-context.md'))
+        # Tool semantics belong to the exact fork's metadata skill/domain rule
+        # and R8Policy regression; the source appendix owns their routing.
+        $ledger = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/ai-rules-overlay/sections.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($path in @('content/skills/1c-metadata-manage/SKILL.md', 'content/rules/forms-add.md',
+                'content/skills/1c-metadata-manage/docs/form-manage.md', 'tests/R8Policy.Tests.ps1')) {
+            $entry = @($ledger.pathDecisions | Where-Object path -eq $path)
+            $entry.Count | Should -Be 1
+            $entry[0].disposition | Should -Not -Be 'delete'
+            $entry[0].resultSha256 | Should -Match '^[0-9a-f]{64}$'
         }
     }
 
     It "keeps eligible local BSL fixes on quick-fix without weakening completion" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
-        foreach ($marker in @(
-            'An internal BSL fix that preserves public contracts may remain a quick-fix',
-            'do not promote it solely because it corrects existing behavior',
-            'relevant Vanessa coverage exists or was updated',
-            'a fresh successful `/itl-check` completed after the last change'
-        )) {
-            $agentsText | Should -Match ([regex]::Escape($marker))
-        }
-        $agentsText | Should -Not -Match 'public APIs.*changes to existing behavior always promote'
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        $agentsText | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
+        $agentsText | Should -Match 'helper-owned evidence assessment'
+        $userRules | Should -Match ([regex]::Escape('Quick-fix obeys `QUICKFIX_MAX_LINES`'))
+        $userRules | Should -Match 'sufficient current evidence'
+        $userRules | Should -Match 'retaining a regression and its cadence are separate risk-based decisions'
+        $userRules | Should -Match ([regex]::Escape('Run fresh unfiltered `/itl-check` after the last relevant edit'))
+        $userRules | Should -Match 'fragment-only proof remains partial'
+        $userRules | Should -Match ([regex]::Escape('Execution `off` does not prohibit authoring needed tests'))
+        $userRules | Should -Not -Match 'Do not author an `off` test layer'
     }
 
     It "keeps full-cycle execution separate from OpenSpec planning" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
         $forkUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\USER-RULES.md") -Raw -Encoding UTF8
         $projectUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
-        $agentsText | Should -Match 'Full-cycle is not OpenSpec'
+        $agentsText | Should -Match 'Full-cycle does not by itself\s+start OpenSpec'
         foreach ($text in @($forkUserRulesText, $projectUserRulesText)) {
             $text | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
             $text | Should -Match ([regex]::Escape('planningMode=direct|OpenSpec'))

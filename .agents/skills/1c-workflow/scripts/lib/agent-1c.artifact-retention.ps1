@@ -67,7 +67,9 @@ function Test-ItlArtifactPathWithoutReparse {
 function Get-ItlArtifactProtectedPaths {
     param([string]$ProjectRoot = $script:ProjectRoot)
     $paths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-    foreach ($candidate in @($script:ResolvedRunStatusPath, $script:ResolvedRunLogPath, $script:RunResultPath, $script:RunResultManifestPath)) {
+    foreach ($name in @('ResolvedRunStatusPath', 'ResolvedRunLogPath', 'RunResultPath', 'RunResultManifestPath')) {
+        $variable = Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue
+        $candidate = if ($null -ne $variable) { $variable.Value } else { $null }
         if ($candidate -and [IO.Path]::IsPathRooted([string]$candidate)) { [void]$paths.Add([IO.Path]::GetFullPath([string]$candidate)) }
     }
     $stateFiles = @(Get-DevBranchStateFiles)
@@ -77,6 +79,16 @@ function Get-ItlArtifactProtectedPaths {
                 foreach ($name in @('lastResultPath', 'lastResultManifestPath', 'finalResultPath', 'finalResultManifestPath', 'lastUnverifiedResultPath', 'lastVanessaStatusPath', 'lastVanessaReportPath', 'lastVanessaLogPath', 'lastYAxUnitReportPath', 'lastYAxUnitLogPath')) {
                     $value = [string](Get-StateValue -State $state -Name $name -Default '')
                     if ($value -and [IO.Path]::IsPathRooted($value)) { [void]$paths.Add([IO.Path]::GetFullPath($value)) }
+                }
+                $components = Get-StateValue -State $state -Name 'lastVerificationComponentEvidence' -Default $null
+                if ($null -ne $components) {
+                    foreach ($property in $components.PSObject.Properties) {
+                        foreach ($artifact in @($property.Value.artifacts)) {
+                            $full = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$artifact.path)))
+                            if (-not (Test-ItlArtifactPathInside -Root $ProjectRoot -Path $full)) { throw 'component evidence path escaped the project' }
+                            [void]$paths.Add($full)
+                        }
+                    }
                 }
                 if ([string](Get-StateValue -State $state -Name 'resetStatus' -Default '') -eq 'resetting') {
                     $value = [string](Get-StateValue -State $state -Name 'resetArchivePath' -Default '')
@@ -95,6 +107,39 @@ function Get-ItlArtifactProtectedPaths {
                 }
             } catch { throw "ITL_ARTIFACT_STATE_UNREADABLE: $($file.FullName): $($_.Exception.Message)" }
         }
+    }
+    $oneOffRoot = Join-Path $ProjectRoot '.agent-1c\verification-selection\one-off'
+    if (Test-Path -LiteralPath $oneOffRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $oneOffRoot -File -Filter '*.json' -ErrorAction Stop)) {
+            try {
+                $receipt = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json -ErrorAction Stop
+                if ([string]$receipt.status -ne 'passed') { continue }
+                foreach ($relative in @([string]$receipt.evidencePath) + @($receipt.artifacts | ForEach-Object { [string]$_.path })) {
+                    if (-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)') {
+                        throw "unsafe one-off evidence path '$relative'"
+                    }
+                    $full = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $relative))
+                    if (-not (Test-ItlArtifactPathInside -Root $ProjectRoot -Path $full)) {
+                        throw "one-off evidence path escaped the project: '$relative'"
+                    }
+                    [void]$paths.Add($full)
+                }
+            } catch { throw "ITL_ARTIFACT_ONE_OFF_RECEIPT_UNREADABLE: $($file.FullName): $($_.Exception.Message)" }
+        }
+    }
+    $selectionPath = Join-Path $ProjectRoot '.agent-1c/verification-selection/proof.json'
+    if (Test-Path -LiteralPath $selectionPath -PathType Leaf) {
+        try {
+            $proof = Read-Utf8Text -Path $selectionPath | ConvertFrom-Json -ErrorAction Stop
+            $receipts = if ($null -ne $proof.PSObject.Properties['suiteEvidence']) { @($proof.suiteEvidence) } else { @() }
+            foreach ($receipt in $receipts) {
+                foreach ($artifact in @($receipt.artifacts)) {
+                    $full = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$artifact.path)))
+                    if (-not (Test-ItlArtifactPathInside -Root $ProjectRoot -Path $full)) { throw 'retained evidence path escaped the project' }
+                    [void]$paths.Add($full)
+                }
+            }
+        } catch { throw "ITL_ARTIFACT_RETAINED_RECEIPT_UNREADABLE: $selectionPath`: $($_.Exception.Message)" }
     }
     return $paths
 }

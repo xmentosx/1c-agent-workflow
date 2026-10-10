@@ -241,6 +241,182 @@ func successfulProbeResult(name string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
+func probeVanessaCatalog(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestProbeSequenceKeepsOneSessionOrderAndExactUnicodeObservations(t *testing.T) {
+	const navigation = "e1cib/app/Обработка.ITLQ23UiProbe"
+	const diagnostic = "Форма Кириллица с пробелом: значение 14"
+	sequencePath := filepath.Join(t.TempDir(), "Вызовы UI с пробелом.json")
+	calls := []probeCall{
+		{Name: "manage_test_client", Arguments: map[string]any{"action": "connect", "profileName": "itl-ondemand"}},
+		{Name: "window_management", Arguments: map[string]any{"action": "open_navigation", "navigation_link": navigation}},
+		{Name: "get_active_window_data", Arguments: map[string]any{"type": "form_name"}},
+		{Name: "execute_form_actions", Arguments: map[string]any{"actions_json": `[{"action":"input_text","element_name":"InputValue","value":"7"},{"action":"click_button","element_name":"Calculate"}]`}},
+		{Name: "get_form_element_data", Arguments: map[string]any{"element_name": "InputValue"}},
+		{Name: "get_form_element_data", Arguments: map[string]any{"element_name": "OutputValue"}},
+		{Name: "manage_test_client", Arguments: map[string]any{"action": "disconnect"}},
+	}
+	raw, err := json.Marshal(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sequencePath, append([]byte{0xef, 0xbb, 0xbf}, raw...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls, err = readProbeSequence(sequencePath, probeVanessaCatalog(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []string
+	connected, formOpened, calculated := false, false, false
+	session := newProbeGatewaySession(t, func(name string, arguments map[string]any) *mcp.CallToolResult {
+		observed = append(observed, name)
+		switch name {
+		case "manage_test_client":
+			connected = arguments["action"] == "connect"
+		case "window_management":
+			if !connected || arguments["navigation_link"] != navigation {
+				t.Fatalf("navigation before connect or corrupted UTF-8 arguments: %#v", arguments)
+			}
+			formOpened = true
+		case "execute_form_actions":
+			if !formOpened || arguments["actions_json"] != calls[3].Arguments["actions_json"] {
+				t.Fatalf("input before navigation or changed batch: %#v", arguments)
+			}
+			calculated = true
+		case "get_form_element_data":
+			if !calculated {
+				t.Fatal("observation before the input/click batch")
+			}
+			value := 7
+			if arguments["element_name"] == "OutputValue" {
+				value = 14
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: diagnostic}}, StructuredContent: map[string]any{"value": value}}
+		}
+		return successfulProbeResult(name)
+	})
+	closeCalls := 0
+	records, err := executeProbeSequence(context.Background(), session, calls, func() error {
+		closeCalls++
+		return session.Close()
+	})
+	if err != nil || closeCalls != 1 || connected || len(records) != 7 {
+		t.Fatalf("err=%v closeCalls=%d connected=%v records=%#v", err, closeCalls, connected, records)
+	}
+	for index, call := range calls {
+		if observed[index] != call.Name || records[index].Name != call.Name || records[index].Error != "" {
+			t.Fatalf("changed sequence order/outcome at %d: %#v", index, records)
+		}
+	}
+	output := filepath.Join(t.TempDir(), "Наблюдение 7 в 14 с пробелом.json")
+	if err := writeProbeEvidence(output, records); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(evidence), navigation) || !strings.Contains(string(evidence), diagnostic) {
+		t.Fatalf("Unicode arguments or results did not survive evidence transport: %s", evidence)
+	}
+	var decoded []struct {
+		Result struct {
+			StructuredContent map[string]any `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(evidence, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded[4].Result.StructuredContent["value"] != float64(7) || decoded[5].Result.StructuredContent["value"] != float64(14) {
+		t.Fatalf("actual observations were lost or replaced: %s", evidence)
+	}
+}
+
+func TestProbeSequenceStopsAfterToolFailureAndKeepsActualErrorResult(t *testing.T) {
+	var observed []string
+	session := newProbeGatewaySession(t, func(name string, _ map[string]any) *mcp.CallToolResult {
+		observed = append(observed, name)
+		if name == "window_management" {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Форма не открылась Кириллица"}}, StructuredContent: map[string]any{"code": "ITL_VANESSA_TOOL_RESULT_FAILED"}}
+		}
+		return successfulProbeResult(name)
+	})
+	closeCalls := 0
+	records, err := executeProbeSequence(context.Background(), session, []probeCall{
+		{Name: "manage_test_client", Arguments: map[string]any{"action": "connect", "profileName": "itl-ondemand"}},
+		{Name: "window_management", Arguments: map[string]any{"action": "open_navigation", "navigation_link": "e1cib/app/Обработка.ITLQ23UiProbe"}},
+		{Name: "execute_form_actions", Arguments: map[string]any{"actions_json": "[]"}},
+	}, func() error { closeCalls++; return session.Close() })
+	if err == nil || !strings.Contains(err.Error(), "sequence call 2 window_management") || closeCalls != 1 || len(observed) != 2 || len(records) != 2 {
+		t.Fatalf("err=%v closeCalls=%d observed=%#v records=%#v", err, closeCalls, observed, records)
+	}
+	if !records[1].Result.IsError || records[1].Error == "" || records[1].Result.Content[0].(*mcp.TextContent).Text != "Форма не открылась Кириллица" {
+		t.Fatalf("actual failed result was hidden: %#v", records[1])
+	}
+}
+
+func TestProbeSequenceCancellationAndCleanupFailureRemainFailures(t *testing.T) {
+	for _, cancelBeforeCall := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelBeforeCall), func(t *testing.T) {
+			calls := 0
+			session := newProbeGatewaySession(t, func(name string, _ map[string]any) *mcp.CallToolResult { calls++; return successfulProbeResult(name) })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelBeforeCall {
+				cancel()
+			}
+			closeCalls := 0
+			records, err := executeProbeSequence(ctx, session, []probeCall{{Name: "get_active_window_data", Arguments: map[string]any{"type": "form_name"}}}, func() error {
+				closeCalls++
+				_ = session.Close()
+				return errors.New("owned cleanup failed Кириллица")
+			})
+			if err == nil || !strings.Contains(err.Error(), "owned cleanup failed Кириллица") || closeCalls != 1 {
+				t.Fatalf("err=%v closeCalls=%d", err, closeCalls)
+			}
+			if cancelBeforeCall && (!errors.Is(err, context.Canceled) || calls != 0 || len(records) != 0) {
+				t.Fatalf("cancellation ran a call or was lost: err=%v calls=%d records=%#v", err, calls, records)
+			}
+			if !cancelBeforeCall && (calls != 1 || len(records) != 1) {
+				t.Fatalf("cleanup failure discarded the actual observation: calls=%d records=%#v", calls, records)
+			}
+		})
+	}
+}
+
+func TestProbeSequenceRejectsInvalidInputBeforeFacadeLaunch(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"unknown tool":    []byte(`[{"name":"execute_batch","arguments":{}}]`),
+		"array arguments": []byte(`[{"name":"get_active_window_data","arguments":[]}]`),
+		"unknown field":   []byte(`[{"name":"get_active_window_data","result":"invented"}]`),
+		"trailing JSON":   []byte(`[{"name":"get_active_window_data"}] {}`),
+		"empty":           []byte(`[]`),
+		"invalid UTF8":    append([]byte(`[{"name":"get_active_window_data","arguments":{"type":"`), 0xff),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "Неизменный вход с пробелом.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if calls, err := readProbeSequence(path, probeVanessaCatalog(t)); err == nil || calls != nil {
+				t.Fatalf("invalid sequence accepted: calls=%#v err=%v", calls, err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(raw) {
+				t.Fatalf("preflight changed input bytes: err=%v", err)
+			}
+		})
+	}
+}
+
 func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing.T) {
 	type recordedCall struct {
 		name      string

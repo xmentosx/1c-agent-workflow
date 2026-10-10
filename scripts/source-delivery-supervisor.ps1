@@ -96,6 +96,7 @@ function Get-DeliveryCommonGitDirectory {
 }
 
 . (Join-Path $PSScriptRoot "source-delivery-process.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-release-recovery.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-queue.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-component.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-plan.ps1")

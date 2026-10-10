@@ -69,6 +69,23 @@ function Get-DeliveryIndexedTargetedRunPaths {
     } catch { return @() }
 }
 
+function Test-WorkflowTargetedRunProof {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Run,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree
+    )
+    try {
+        # Schemas 2 and 3 added timing/failure metadata to the same proof.
+        # Keep future formats closed until their producer contract is known.
+        if ([string]$Run.schemaVersion -cnotin @('1', '2', '3') -or [string]$Run.mode -ne 'Targeted' -or
+            [string]$Run.status -ne 'passed' -or [int]$Run.exitCode -ne 0 -or
+            [string]$Run.commit -ne $Commit -or [string]$Run.tree -ne $Tree) { return $false }
+        $passedStages = @($Run.stages | Where-Object { [string]$_.status -eq 'passed' } | ForEach-Object { [string]$_.name })
+        return $passedStages -contains 'pester' -and $passedStages -contains 'tracked-state' -and $passedStages -contains 'git-diff-check'
+    } catch { return $false }
+}
+
 function Get-ExactTargetedRunProof {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -85,10 +102,7 @@ function Get-ExactTargetedRunProof {
 
     foreach ($path in @(Get-DeliveryIndexedTargetedRunPaths -CommonGitPath $commonGitPath -Commit $Commit -Tree $Tree)) {
         try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
-        if ([int]$run.schemaVersion -ne 1 -or [string]$run.mode -ne "Targeted" -or [string]$run.status -ne "passed" -or
-            [int]$run.exitCode -ne 0 -or [string]$run.commit -ne $Commit -or [string]$run.tree -ne $Tree) { continue }
-        $stageNames = @($run.stages | Where-Object { [string]$_.status -eq "passed" } | ForEach-Object { [string]$_.name })
-        if ($stageNames -notcontains "pester" -or $stageNames -notcontains "tracked-state" -or $stageNames -notcontains "git-diff-check") { continue }
+        if (-not (Test-WorkflowTargetedRunProof -Run $run -Commit $Commit -Tree $Tree)) { continue }
         return [pscustomobject]@{
             path = $path
             sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -97,14 +111,11 @@ function Get-ExactTargetedRunProof {
     }
     # A missing, stale, or bounded index cannot weaken proof lookup. Raw proof is
     # immutable and remains the authority; the fallback also preserves the
-    # existing fail-closed schema-1 acceptance contract.
+    # existing exact identity and passed-stage acceptance contract.
     foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*-targeted-*.json" | Sort-Object Name -Descending)) {
         $path = $file.FullName
         try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
-        if ([int]$run.schemaVersion -ne 1 -or [string]$run.mode -ne "Targeted" -or [string]$run.status -ne "passed" -or
-            [int]$run.exitCode -ne 0 -or [string]$run.commit -ne $Commit -or [string]$run.tree -ne $Tree) { continue }
-        $stageNames = @($run.stages | Where-Object { [string]$_.status -eq "passed" } | ForEach-Object { [string]$_.name })
-        if ($stageNames -notcontains "pester" -or $stageNames -notcontains "tracked-state" -or $stageNames -notcontains "git-diff-check") { continue }
+        if (-not (Test-WorkflowTargetedRunProof -Run $run -Commit $Commit -Tree $Tree)) { continue }
         return [pscustomobject]@{
             path = $path
             sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -262,7 +273,6 @@ function Test-RecordedWorkflowContinuation {
         if ($Record.PSObject.Properties["currentTree"] -and [string]$Record.currentTree -cne $Tree) { return $false }
         $targetedCommit = if ($Record.PSObject.Properties["targetedCommit"] -and [string]$Record.targetedCommit) { [string]$Record.targetedCommit } else { $Commit }
         $targetedTree = if ($Record.PSObject.Properties["targetedTree"] -and [string]$Record.targetedTree) { [string]$Record.targetedTree } else { $Tree }
-        return [int]$run.schemaVersion -eq 1 -and [string]$run.mode -eq "Targeted" -and [string]$run.status -eq "passed" -and
-            [int]$run.exitCode -eq 0 -and [string]$run.commit -eq $targetedCommit -and [string]$run.tree -eq $targetedTree
+        return Test-WorkflowTargetedRunProof -Run $run -Commit $targetedCommit -Tree $targetedTree
     } catch { return $false }
 }

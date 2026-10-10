@@ -1,6 +1,7 @@
-function Get-AiRulesBaselineTarget {
-    $projectTemplatePath = Join-Path $script:ProjectRoot "templates\project.json"
-    $lockTemplatePath = Join-Path $script:ProjectRoot "templates\dependency-lock.json"
+﻿function Get-AiRulesBaselineTarget {
+    param([string]$TemplateRoot = $script:ProjectRoot)
+    $projectTemplatePath = Join-Path $TemplateRoot "templates\project.json"
+    $lockTemplatePath = Join-Path $TemplateRoot "templates\dependency-lock.json"
     if (-not (Test-Path -LiteralPath $projectTemplatePath -PathType Leaf) -or -not (Test-Path -LiteralPath $lockTemplatePath -PathType Leaf)) {
         return [pscustomobject]@{ isConfigured = $false; reason = "workflow templates are missing" }
     }
@@ -35,6 +36,55 @@ function Test-AiRulesManifestPathOwnedByWorkflow {
     return $Path.Replace("\", "/").TrimStart("./") -eq "dev.env"
 }
 
+function Test-AiRulesPlacedOnceProjectTemplate {
+    param(
+        [string]$Path,
+        [AllowNull()][object]$ManifestEntry,
+        [string]$Root = $script:ProjectRoot
+    )
+
+    # The fork's placed-once contract makes these three root templates user
+    # content. It never grants replacement/removal rights to arbitrary rules
+    # files. The ITL USER-RULES block still belongs to Update-UserRules, and
+    # effective override conflicts still stop only their dependent operation.
+    $relative = $Path.Replace('\', '/')
+    if ($relative -notin @('USER-RULES.md', 'memory.md', 'LLM-RULES.md')) { return $false }
+    $template = Get-ConfigValueFromObject -Object $ManifestEntry -Path 'template' -Default $false
+    $source = [string](Get-ConfigValueFromObject -Object $ManifestEntry -Path 'source' -Default '')
+    if ($template -isnot [bool] -or -not $template -or
+        -not [string]::Equals($source, $relative, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $target = Join-Path $Root $relative
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return $false }
+    try {
+        [void]([Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($target)))
+    } catch { return $false }
+    return $true
+}
+
+function Test-AiRulesLegacyUserGlobalPrompt {
+    param(
+        [string]$Path,
+        [AllowNull()][object]$ManifestEntry,
+        [string]$UserProfileRoot = [Environment]::GetFolderPath('UserProfile')
+    )
+
+    # Historical Codex command adapters stored absolute prompt keys. The
+    # current fork relinquishes only this ownership without touching the
+    # shared bytes. This is classification, never permission for global IO.
+    if (-not [IO.Path]::IsPathRooted($Path) -or
+        $Path -match '(^|[\\/])\.\.?(?:[\\/]|$)' -or
+        [string]::IsNullOrWhiteSpace($UserProfileRoot)) { return $false }
+    $source = [string](Get-ConfigValueFromObject -Object $ManifestEntry -Path 'source' -Default '')
+    if ($source -cnotmatch '^content/commands/[^/\\:]+\.md$') { return $false }
+    try {
+        $prefix = [IO.Path]::GetFullPath((Join-Path $UserProfileRoot '.codex/prompts')).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        $full = [IO.Path]::GetFullPath($Path)
+        if (-not $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $tail = $full.Substring($prefix.Length)
+        return $tail.Length -gt 0 -and $tail.IndexOf(':') -lt 0
+    } catch { return $false }
+}
+
 function Get-AiRulesManifestUserModifiedPaths {
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -44,10 +94,32 @@ function Get-AiRulesManifestUserModifiedPaths {
     if ($null -eq $manifest.files) {
         return @()
     }
-    return @($manifest.files.PSObject.Properties | Where-Object {
-        -not (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$_.Name)) -and
-        [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
+    $marked = @($manifest.files.PSObject.Properties | Where-Object {
+        if (Test-AiRulesLegacyUserGlobalPrompt -Path ([string]$_.Name) -ManifestEntry $_.Value) { return $false }
+        if (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$_.Name)) { return $false }
+        if (Test-AiRulesPlacedOnceProjectTemplate -Path ([string]$_.Name) -ManifestEntry $_.Value) { return $false }
+        if (-not [bool](Get-ConfigValueFromObject -Object $_.Value -Path 'userModified' -Default $false)) { return $false }
+        # Membership preflight is read-only and can run before a migration has
+        # cleared stale flags. Use the existing exact overlay proof here too;
+        # never clear or exempt an actual edit outside the ITL-owned block.
+        if (([string]$_.Name).Replace('\', '/').TrimStart('./') -eq 'USER-RULES.md' -and
+            (Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange -ManifestEntry $_.Value)) { return $false }
+        return $true
     } | ForEach-Object { [string]$_.Name })
+    # The old installer could leave an edited root without updating its
+    # userModified marker until its next run. Do not silently retain that old
+    # root while declaring the new upstream migration successful.
+    $rootEntry = $manifest.files.PSObject.Properties['AGENTS.md']
+    if ($null -ne $rootEntry -and 'AGENTS.md' -notin $marked) {
+        $rootPath = Join-Path $script:ProjectRoot 'AGENTS.md'
+        $recordedHash = [string](Get-ConfigValueFromObject -Object $rootEntry.Value -Path 'installedHash' -Default '')
+        if (-not (Test-Path -LiteralPath $rootPath -PathType Leaf) -or
+            $recordedHash -notmatch '^[0-9a-fA-F]{64}$' -or
+            -not (Test-AiRulesFileMatchesInstalledHash -Path $rootPath -InstalledHash $recordedHash)) {
+            $marked += 'AGENTS.md'
+        }
+    }
+    return @($marked | Select-Object -Unique)
 }
 
 function Test-AiRulesManifestHasUserChanges {
@@ -135,6 +207,103 @@ function Test-AiRulesFileMatchesInstalledHash {
         }
     }
     return $false
+}
+
+function Test-AiRulesPendingMergeManifestProvenance {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][object]$Candidate,
+        [Parameter(Mandatory = $true)][object]$Branch,
+        [Parameter(Mandatory = $true)][object]$Target
+    )
+
+    # A resolved manifest is metadata from immutable merge parents, not a
+    # source of new hashes or ownership claims. Compare every property,
+    # including timestamps; the lock comparator intentionally omits those.
+    $same = {
+        param($Left, $Right)
+        if ($null -eq $Left -or $null -eq $Right) { return $null -eq $Left -and $null -eq $Right }
+        $leftMap = $Left -is [Collections.IDictionary] -or $Left -is [pscustomobject]
+        $rightMap = $Right -is [Collections.IDictionary] -or $Right -is [pscustomobject]
+        if ($leftMap -or $rightMap) {
+            if (-not $leftMap -or -not $rightMap) { return $false }
+            $a = ConvertTo-Agent1cHashtable -Object $Left
+            $b = ConvertTo-Agent1cHashtable -Object $Right
+            if ($a.Count -ne $b.Count) { return $false }
+            foreach ($key in $a.Keys) {
+                if ([string]$key -cnotin @($b.Keys) -or -not (& $same $a[$key] $b[$key])) { return $false }
+            }
+            return $true
+        }
+        $leftArray = $Left -is [Collections.IEnumerable] -and $Left -isnot [string]
+        $rightArray = $Right -is [Collections.IEnumerable] -and $Right -isnot [string]
+        if ($leftArray -or $rightArray) {
+            if (-not $leftArray -or -not $rightArray) { return $false }
+            $a = @($Left); $b = @($Right)
+            if ($a.Count -ne $b.Count) { return $false }
+            for ($i = 0; $i -lt $a.Count; $i++) { if (-not (& $same $a[$i] $b[$i])) { return $false } }
+            return $true
+        }
+        return [object]::Equals($Left, $Right)
+    }
+    try {
+        $candidateMap = ConvertTo-Agent1cHashtable -Object $Candidate
+        $branchMap = ConvertTo-Agent1cHashtable -Object $Branch
+        $targetMap = ConvertTo-Agent1cHashtable -Object $Target
+        foreach ($manifest in @($candidateMap, $branchMap, $targetMap)) {
+            foreach ($member in @('files', 'foreignFiles')) {
+                if ($manifest[$member] -isnot [Collections.IDictionary] -and
+                    $manifest[$member] -isnot [pscustomobject]) { return $false }
+                $manifest[$member] = ConvertTo-Agent1cHashtable -Object $manifest[$member]
+            }
+        }
+        $expected = ConvertTo-Agent1cHashtable -Object $Target
+        $expected['files'] = ConvertTo-Agent1cHashtable -Object $targetMap['files']
+        $expected['foreignFiles'] = ConvertTo-Agent1cHashtable -Object $targetMap['foreignFiles']
+        foreach ($client in $branchMap['foreignFiles'].Keys) {
+            if (-not $expected['foreignFiles'].Contains($client)) { return $false }
+            $union = [Collections.Generic.List[string]]::new()
+            foreach ($relative in @($expected['foreignFiles'][$client]) + @($branchMap['foreignFiles'][$client])) {
+                if ([string]$relative -cnotin $union) { $union.Add([string]$relative) }
+            }
+            $expected['foreignFiles'][$client] = $union.ToArray()
+        }
+        # Existing upstream generated OpenSpec context can remain owned by
+        # the branch until the installer retires it. Its whole record and
+        # generation flag must already exist in that immutable parent.
+        $generatedPath = 'openspec/project.md'
+        $branchGenerated = Get-ConfigValueFromObject -Object $branchMap -Path 'integrations.openspec.projectMdGenerated' -Default $false
+        if (-not $expected['files'].Contains($generatedPath) -and
+            $candidateMap['files'].Contains($generatedPath)) {
+            if ($branchGenerated -isnot [bool] -or -not $branchGenerated -or
+                -not $branchMap['files'].Contains($generatedPath) -or
+                [string](Get-ConfigValueFromObject -Object $branchMap['files'][$generatedPath] -Path 'source' -Default '') -cne '<auto-generated:1c-rules>') { return $false }
+            $expected['files'][$generatedPath] = $branchMap['files'][$generatedPath]
+            $expected['integrations'] = ConvertTo-Agent1cHashtable -Object $expected['integrations']
+            $expected['integrations']['openspec'] = ConvertTo-Agent1cHashtable -Object $expected['integrations']['openspec']
+            $expected['integrations']['openspec']['projectMdGenerated'] = $branchGenerated
+        }
+        if ($candidateMap['files'].Count -ne $expected['files'].Count) { return $false }
+        foreach ($relative in @($expected['files'].Keys)) {
+            if ([string]$relative -cnotin @($candidateMap['files'].Keys)) { return $false }
+            $entry = $candidateMap['files'][$relative]
+            $known = (& $same $entry $targetMap['files'][$relative]) -or
+                (& $same $entry $branchMap['files'][$relative])
+            if (-not $known) { return $false }
+            if (Test-AiRulesLegacyUserGlobalPrompt -Path ([string]$relative) -ManifestEntry $entry) {
+                $expected['files'][$relative] = $entry
+                continue
+            }
+            if ([string]$relative -match '(^[\\/]|:|(^|[\\/])\.\.?(?:[\\/]|$))') { return $false }
+            $actualPath = Join-Path $Root ([string]$relative)
+            if ((Test-Path -LiteralPath $actualPath -PathType Leaf) -and
+                -not (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$relative)) -and
+                -not (Test-AiRulesPlacedOnceProjectTemplate -Path ([string]$relative) -ManifestEntry $entry -Root $Root) -and
+                -not (Test-AiRulesFileMatchesInstalledHash -Path $actualPath -InstalledHash ([string](Get-ConfigValueFromObject -Object $entry -Path 'installedHash' -Default '')))) { return $false }
+            $expected['files'][$relative] = $entry
+        }
+        return (& $same $candidateMap $expected)
+    } catch { return $false }
 }
 
 function Clear-StaleAiRulesEolModifiedMarkers {
@@ -503,6 +672,8 @@ function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
 }
 
 function Get-AiRulesMigrationPlan {
+    param([switch]$ReadOnly)
+
     $target = Get-AiRulesBaselineTarget
     if (-not $target.isConfigured) {
         return [pscustomobject]@{ status = "dormant"; eligible = $false; suppressRegularUpdate = $false; reason = $target.reason; target = $target }
@@ -529,11 +700,13 @@ function Get-AiRulesMigrationPlan {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         return [pscustomobject]@{ status = "manifest-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest is missing"; target = $target }
     }
-    Clear-StaleAiRulesEolModifiedMarkers | Out-Null
-    Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned | Out-Null
-    Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned | Out-Null
+    if (-not $ReadOnly) {
+        Clear-StaleAiRulesEolModifiedMarkers | Out-Null
+        Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned | Out-Null
+        Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned | Out-Null
+    }
     if (Test-AiRulesManifestHasUserChanges) {
-        return [pscustomobject]@{ status = "user-modified"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest contains userModified files"; target = $target }
+        return [pscustomobject]@{ status = "user-modified"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c root or manifest contains changed managed files"; target = $target }
     }
 
     $tools = @(Get-AiRules1cTools)
@@ -600,12 +773,52 @@ function Assert-AiRulesMigrationCandidateScope {
     }
 }
 
+function Get-AiRulesCandidateInstallInventory {
+    param([Parameter(Mandatory = $true)][object]$Checkout, [Parameter(Mandatory = $true)][string[]]$Tools)
+
+    Assert-AiRulesMigrationCandidateScope -RulesRoot $Checkout.root
+    $preflightRoot = Join-Path (Get-Agent1cTempRoot) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
+    try {
+        New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
+        $installScript = Join-Path $Checkout.root "install.ps1"
+        $installerOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installScript init `
+            -ProjectRoot $preflightRoot -Source $Checkout.root -Tools ($Tools -join ",") -NonInteractive -AssumeYes 2>&1)
+        $installerExitCode = $LASTEXITCODE
+        if ($installerExitCode -ne 0) {
+            throw "AI_RULES_CANDIDATE_PREFLIGHT_FAILED: exact fork installer exited $installerExitCode before any project file was copied. Repair or qualify the pinned fork candidate, then repeat update-workflow.`n$($installerOutput -join [Environment]::NewLine)"
+        }
+        $manifestPath = Join-Path $preflightRoot ".ai-rules.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "AI_RULES_CANDIDATE_PREFLIGHT_FAILED: exact fork installer did not create .ai-rules.json in isolation. Repair the pinned fork installer, then repeat update-workflow; project files were not copied."
+        }
+        $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $manifest.files) { throw "AI_RULES_CANDIDATE_PREFLIGHT_FAILED: isolated fork manifest has no file inventory. Repair the pinned fork installer, then repeat update-workflow; project files were not copied." }
+        $paths = [System.Collections.Generic.List[string]]::new()
+        foreach ($entry in @($manifest.files.PSObject.Properties)) {
+            $paths.Add([string]$entry.Name)
+        }
+        # The installer deliberately leaves its skip-if-exists OpenSpec
+        # scaffold outside manifest.files. It can still add missing files on
+        # update, so include those exact project-local targets in the snapshot.
+        $scaffoldRoot = Join-Path $Checkout.root 'openspec'
+        if (Test-Path -LiteralPath $scaffoldRoot -PathType Container) {
+            foreach ($file in @(Get-ChildItem -LiteralPath $scaffoldRoot -File -Recurse -ErrorAction Stop)) {
+                $relative = $file.FullName.Substring($scaffoldRoot.Length).TrimStart('\', '/').Replace('\', '/')
+                $paths.Add("openspec/$relative")
+            }
+        }
+        Write-Host "Fork candidate preflight: $($paths.Count) project-local paths for $($Tools -join ', ')."
+        return @($paths | Select-Object -Unique)
+    } finally {
+        Remove-Item -LiteralPath $preflightRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-AiRulesMigrationCandidatePreflight {
     param([object]$Plan)
 
     $target = $Plan.target
     $checkout = Sync-AiRules1cCheckout -RepoOverride $target.repo -RefOverride $target.ref -CommitOverride $target.commit
-    Assert-AiRulesMigrationCandidateScope -RulesRoot $checkout.root
 
     if (-not $target.upstreamCommit) {
         throw "Fork baseline does not record upstreamCommit."
@@ -615,36 +828,22 @@ function Invoke-AiRulesMigrationCandidatePreflight {
         throw "Installed aiRules upstream provenance is not an ancestor of the target upstream baseline: $($Plan.comparisonCommit)"
     }
 
-    $preflightRoot = Join-Path (Get-Agent1cTempRoot) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
-    try {
-        New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
-        $installScript = Join-Path $checkout.root "install.ps1"
-        & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installScript init `
-            -ProjectRoot $preflightRoot -Source $checkout.root -Tools ($Plan.tools -join ",") -NonInteractive -AssumeYes 2>&1 |
-            ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) {
-            throw "Fork candidate preflight installer failed with exit code $LASTEXITCODE"
-        }
-        $manifestPath = Join-Path $preflightRoot ".ai-rules.json"
-        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-            throw "Fork candidate preflight did not create .ai-rules.json"
-        }
-    } finally {
-        Remove-Item -LiteralPath $preflightRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    @(Get-AiRulesCandidateInstallInventory -Checkout $checkout -Tools @($Plan.tools)) | Out-Null
     return $checkout
 }
 
-function New-AiRulesMigrationSnapshot {
-    $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\ai-rules-migration-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
-    $payloadRoot = Join-Path $runRoot "payload"
-    New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
-    $relativePaths = @(
+function Get-AiRulesMigrationSnapshotRelativePaths {
+    $paths = @(
         ".agent-1c\project.json",
         ".agent-1c\dependency-lock.json",
+        ".agent-1c\client-surface.json",
+        ".agent-1c\mcp\client-managed.json",
         ".ai-rules.json",
         ".dev.env",
+        ".gitignore",
+        ".gitattributes",
         "AGENTS.md",
+        "CLAUDE.md",
         "USER-RULES.md",
         "LLM-RULES.md",
         "memory.md",
@@ -656,15 +855,27 @@ function New-AiRulesMigrationSnapshot {
         ".cursor",
         ".opencode",
         ".kimi-code",
+        ".kimi",
         ".qwen",
         ".commandcode",
         ".cline",
+        ".clinerules",
         ".pi",
+        ".zcode",
+        ".mimocode",
         "QWEN.md",
         ".mcp.json",
         "opencode.json",
         ".agents"
     )
+    return @(@($paths) + @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode') | Select-Object -Unique)
+}
+
+function New-AiRulesMigrationSnapshot {
+    $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\ai-rules-migration-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    $payloadRoot = Join-Path $runRoot "payload"
+    New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
+    $relativePaths = @(Get-AiRulesMigrationSnapshotRelativePaths)
     $entries = @()
     foreach ($relativePath in $relativePaths) {
         $source = Join-Path $script:ProjectRoot $relativePath
@@ -708,11 +919,56 @@ function Get-LegacyCodexPromptPaths {
 }
 
 function Restore-AiRulesMigrationSnapshot {
-    param([object]$Snapshot)
+    param([object]$Snapshot, [string[]]$PreservePaths = @())
+
+    $projectPrefix = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $payloadPrefix = [IO.Path]::GetFullPath($Snapshot.payloadRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $preserved = @($PreservePaths | ForEach-Object { [IO.Path]::GetFullPath($_) })
 
     foreach ($entry in @($Snapshot.entries)) {
         $relativePath = [string]$entry.path
-        $target = Join-Path $script:ProjectRoot $relativePath
+        $target = [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $relativePath))
+        $source = [IO.Path]::GetFullPath((Join-Path $Snapshot.payloadRoot $relativePath))
+        if (-not $target.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not $source.StartsWith($payloadPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "AI_RULES_SNAPSHOT_PATH_INVALID: snapshot path escapes its project or payload: $relativePath"
+        }
+        if ($target -in $preserved) { continue }
+        $targetPrefix = $target.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        $protectedChildren = @($preserved | Where-Object { $_.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase) })
+        if ($protectedChildren.Count -gt 0) {
+            # Restore this directory file-by-file: deleting its parent would also
+            # delete the late MCP edit or the receipts for already completed writes.
+            if (Test-Path -LiteralPath $target -PathType Leaf) {
+                throw "AI_RULES_SNAPSHOT_PATH_INVALID: protected MCP parent is a file: $relativePath"
+            }
+            $isKilo = ($relativePath -replace '/', '\').TrimEnd('\') -eq '.kilo'
+            $runtimePrefix = Join-Path $target 'worktrees'
+            foreach ($file in @(Get-ChildItem -LiteralPath $target -File -Force -Recurse -ErrorAction SilentlyContinue)) {
+                if ($file.FullName -in $preserved -or ($isKilo -and $file.FullName.StartsWith(($runtimePrefix + '\'), [StringComparison]::OrdinalIgnoreCase))) { continue }
+                Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath ($file.FullName.Substring($projectPrefix.Length))
+                Remove-Item -LiteralPath $file.FullName -Force
+            }
+            if ([bool]$entry.present) {
+                foreach ($file in @(Get-ChildItem -LiteralPath $source -File -Force -Recurse)) {
+                    $destination = Join-Path $target $file.FullName.Substring($source.Length + 1)
+                    if ($destination -in $preserved) { continue }
+                    Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath ($destination.Substring($projectPrefix.Length))
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+                    Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+                }
+            }
+            if (-not [bool]$entry.present -and (Test-Path -LiteralPath $target -PathType Container)) {
+                $directories = @((Get-ChildItem -LiteralPath $target -Directory -Force -Recurse | Sort-Object { $_.FullName.Length } -Descending).FullName) + @($target)
+                foreach ($directory in $directories) {
+                    if ($isKilo -and ($directory -eq $runtimePrefix -or $directory.StartsWith(($runtimePrefix + '\'), [StringComparison]::OrdinalIgnoreCase))) { continue }
+                    if (@(Get-ChildItem -LiteralPath $directory -Force).Count -eq 0) {
+                        Remove-Item -LiteralPath $directory -Force
+                    }
+                }
+            }
+            continue
+        }
         if (($relativePath -replace '/', '\').TrimEnd('\') -eq ".kilo") {
             if ((Test-Path -LiteralPath $target) -and -not (Test-Path -LiteralPath $target -PathType Container)) {
                 Remove-Item -LiteralPath $target -Force
@@ -750,7 +1006,7 @@ function Set-AiRulesMigrationTarget {
     $aiRules = ConvertTo-Agent1cHashtable -Object $config["aiRules"]
     $aiRules["repo"] = [string]$Target.repo
     $aiRules["ref"] = [string]$Target.ref
-    $aiRules["tools"] = @((Get-AiRules1cTools | Select-Object -First 1))
+    $aiRules["tools"] = @(Get-AiRules1cTools)
     $config["aiRules"] = $aiRules
     Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
 
@@ -859,9 +1115,15 @@ function Invoke-AiRulesBaselineMigration {
         return [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true; status = "migrated"; snapshotRoot = $snapshot.root }
     } catch {
         $failure = $_.Exception.Message
-        Restore-AiRulesMigrationSnapshot -Snapshot $snapshot
+        $preserveMcp = Test-ItlMcpFailurePreservesCurrentState -Message $failure
+        if ($preserveMcp) {
+            Restore-AiRulesMigrationSnapshot -Snapshot $snapshot -PreservePaths (Get-ItlMcpMigrationPreservePaths)
+        } else {
+            Restore-AiRulesMigrationSnapshot -Snapshot $snapshot
+        }
         Write-Utf8Text -Path (Join-Path $snapshot.root "migration-failure.txt") -Value ($failure + [Environment]::NewLine)
-        throw "ai_rules_1c migration failed and project files were restored from $($snapshot.root): $failure"
+        $preservation = if ($preserveMcp) { ' Current MCP files and ownership receipts were preserved; review the reported edit/conflict and repeat the original update.' } else { '' }
+        throw "ai_rules_1c migration failed and project files were restored from $($snapshot.root): $failure$preservation"
     }
 }
 
@@ -878,7 +1140,7 @@ function Write-AiRules1cStatusLines {
     if ($upstreamRef -or $upstreamCommit) {
         Write-Host "ai_rules_1c upstream provenance: $upstreamRef@$upstreamCommit"
     }
-    $plan = Get-AiRulesMigrationPlan
+    $plan = Get-AiRulesMigrationPlan -ReadOnly
     if ($plan.status -eq "eligible") {
         Write-Host "ai_rules_1c migration: pending -> $($plan.target.ref)"
     } elseif ($plan.status -notin @("dormant", "current")) {

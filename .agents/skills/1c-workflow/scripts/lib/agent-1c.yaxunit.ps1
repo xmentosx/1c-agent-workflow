@@ -123,6 +123,7 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = ($issues.Count -eq 0)
             issues = $issues
             groups = @()
+            obligations = @()
             assignments = $assignments
             registrationPaths = @()
             notApplicable = @()
@@ -131,16 +132,20 @@ function Read-YAxUnitSuiteCatalog {
     }
 
     $groupIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $obligationIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $groups = New-Object System.Collections.Generic.List[object]
+    $obligations = New-Object System.Collections.Generic.List[object]
     $registrationPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $notApplicable = New-Object System.Collections.Generic.List[object]
     $notApplicablePaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     try {
         foreach ($catalogPath in $catalogPaths) {
             $catalog = (Read-Utf8Text -Path $catalogPath) | ConvertFrom-Json
-            if ([int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0) -ne 1) {
-                throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1."
+            $schemaVersion = [int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0)
+            if ($schemaVersion -notin @(1, 2)) {
+                throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1 or 2."
             }
+            $catalogGroups = New-Object System.Collections.Generic.List[object]
             foreach ($decision in @(Get-YAxUnitCatalogValue -Value $catalog -Name "notApplicable" -Default @())) {
                 $path = ([string](Get-YAxUnitCatalogValue -Value $decision -Name "path" -Default "") -replace "\\", "/").TrimStart("/")
                 $sourceOid = [string](Get-YAxUnitCatalogValue -Value $decision -Name "sourceOid" -Default "")
@@ -185,18 +190,35 @@ function Read-YAxUnitSuiteCatalog {
                 if ($ownerPatterns.Count -eq 0) {
                     throw "YAXUNIT_SUITE_OWNERS_MISSING: group '$id' has no ownerPaths."
                 }
-                $groups.Add([pscustomobject][ordered]@{
+                $normalizedGroup = [pscustomobject][ordered]@{
                     id = $id
                     purpose = $purpose
                     modulePaths = $modulePatterns
                     ownerPaths = $ownerPatterns
                     source = Get-VerificationRepoRelativePath -Path $catalogPath
-                })
+                }
+                $groups.Add($normalizedGroup)
+                $catalogGroups.Add($normalizedGroup)
+            }
+            foreach ($obligation in @(Read-VerificationObligationDecisions -Catalog $catalog -CatalogPath $catalogPath -Runner yaxunit -RetainedEntries @($catalogGroups.ToArray()))) {
+                if (-not $obligationIds.Add([string]$obligation.id)) {
+                    throw "VERIFICATION_OBLIGATION_ID_DUPLICATE: '$($obligation.id)' appears in more than one catalog."
+                }
+                $obligations.Add($obligation)
             }
         }
 
         $assignments = New-Object System.Collections.Generic.List[object]
         $issues = New-Object System.Collections.Generic.List[string]
+        # One-off proof is checked by the common readiness assessor after
+        # classification. A pending receipt must not prevent retained tests.
+        foreach ($obligation in @($obligations.ToArray() | Where-Object { $_.retention -eq 'retained' -and -not $_.migratedFromSchema1 })) {
+            $group = @($groups.ToArray() | Where-Object id -eq $obligation.groupId)[0]
+            if (($obligation.cadence -eq 'explicit' -and $group.purpose -ne 'explicit-benchmark') -or
+                ($obligation.cadence -in @('affected', 'handoff') -and $group.purpose -ne 'default-fast')) {
+                $issues.Add("VERIFICATION_CADENCE_SELECTION_PENDING: obligation '$($obligation.id)' has cadence '$($obligation.cadence)' that the current YAxUnit selector cannot execute without changing its purpose. Preserve the group and choose a supported invocation route.")
+            }
+        }
         foreach ($moduleFile in @($ModuleFiles)) {
             $repoPath = Get-VerificationRepoRelativePath -Path $moduleFile
             if ($registrationPaths.Contains($repoPath)) {
@@ -214,7 +236,15 @@ function Read-YAxUnitSuiteCatalog {
                 $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = "__unclassified__"; purpose = ""; fullPath = $moduleFile })
                 $issues.Add("Unclassified YAxUnit module: $repoPath")
             } else {
-                $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = [string]$matches[0].id; purpose = [string]$matches[0].purpose; fullPath = $moduleFile })
+                $obligation = @($obligations.ToArray() | Where-Object groupId -eq $matches[0].id)[0]
+                $assignments.Add([pscustomobject]@{
+                    path = $repoPath
+                    groupId = [string]$matches[0].id
+                    purpose = [string]$matches[0].purpose
+                    obligationId = [string]$obligation.id
+                    cadence = [string]$obligation.cadence
+                    fullPath = $moduleFile
+                })
             }
         }
         foreach ($group in @($groups.ToArray())) {
@@ -254,6 +284,7 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = ($issues.Count -eq 0)
             issues = @($issues.ToArray())
             groups = @($groups.ToArray())
+            obligations = @($obligations.ToArray())
             assignments = @($assignments.ToArray())
             registrationPaths = @($registrationPaths)
             notApplicable = @($notApplicable.ToArray())
@@ -266,6 +297,7 @@ function Read-YAxUnitSuiteCatalog {
             classificationComplete = $false
             issues = @($_.Exception.Message)
             groups = @()
+            obligations = @()
             assignments = @()
             registrationPaths = @($registrationPaths)
             notApplicable = @($notApplicable.ToArray())
@@ -291,6 +323,141 @@ function Get-YAxUnitPinnedEntry {
         throw "ITL_YAXUNIT_WORKFLOW_PIN_INCOMPLETE: yaxunit.upstreamCommit is not a full Git commit."
     }
     return $entry
+}
+
+function Get-YAxUnitArtifactDiagnosticBaseline {
+    param([object]$PinnedEntry, [string]$ExtensionName)
+
+    if ($ExtensionName -cne 'YAXUNIT') { return $null }
+    $pin = [pscustomobject][ordered]@{
+        version = '25.12'
+        releaseTag = '25.12'
+        assetName = 'YAxUnit-25.12.cfe'
+        url = 'https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe'
+        sha256 = '805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70'
+        upstreamCommit = '15f7ae557d17b59bd80daad503efd8a3114690e5'
+        source = 'upstream release asset'
+    }
+    foreach ($field in $pin.PSObject.Properties.Name) {
+        $value = Get-StateValue -State $PinnedEntry -Name $field -Default $null
+        if ($value -isnot [string] -or $value -cne $pin.$field) { return $null }
+    }
+    return [pscustomobject][ordered]@{
+        id = 'yaxunit-25.12-vendor-diagnostics'
+        version = 1
+        extensionName = 'YAXUNIT'
+        pin = $pin
+    }
+}
+
+function Read-YAxUnitArtifactDiagnosticRaw {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $sha256 = [BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    $original = ([Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    if ($original.Length -gt 0 -and $original[0] -eq [char]0xFEFF) { $original = $original.Substring(1) }
+    if ($original.IndexOf([char]0xFEFF) -ge 0) { throw 'raw output contains an additional BOM' }
+    $text = Read-DesignerBatchStrictUtf8Text -Path $Path
+    $afterSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sha256 -cne $afterSha256 -or $original -cne $text) { throw 'raw output changed while reading' }
+    return [pscustomobject]@{ text = $text; sha256 = $sha256 }
+}
+
+function Get-YAxUnitArtifactDiagnosticMultiset {
+    param([string[]]$Lines)
+    $counts = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
+    foreach ($line in $Lines) {
+        if ($counts.ContainsKey($line)) { $counts[$line]++ } else { $counts.Add($line, 1) }
+    }
+    return @($counts.GetEnumerator() | ForEach-Object { [pscustomobject]@{ text = $_.Key; count = $_.Value } })
+}
+
+function Get-YAxUnitArtifactDiagnosticAssessment {
+    param([object]$Baseline, [string]$Step, [object]$Verdict, [string]$SourceFingerprint, [string]$ExtensionName)
+
+    $assessment = [pscustomobject][ordered]@{
+        status = 'rejected'; applyAllowed = $false; cleanPassed = $false
+        baseline = $null; step = $Step; sourceFingerprint = $SourceFingerprint; extensionName = $ExtensionName
+        nativePassed = (Get-StateValue -State $Verdict -Name 'passed' -Default $null)
+        exitCode = (Get-StateValue -State $Verdict -Name 'exitCode' -Default $null)
+        resultCode = (Get-StateValue -State $Verdict -Name 'resultCode' -Default $null)
+        raw = [pscustomobject]@{
+            logPath = [string](Get-StateValue -State $Verdict -Name 'logPath' -Default '')
+            logSha256 = ''; resultPath = [string](Get-StateValue -State $Verdict -Name 'resultPath' -Default '')
+            resultSha256 = ''; lines = @(); multiset = @()
+        }
+        expected = $null; rejectionReason = ''
+    }
+    try {
+        $canonical = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry (Get-StateValue -State $Baseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
+        if ($null -eq $canonical) { throw 'unsupported artifact pin or extension name' }
+        $assessment.baseline = $canonical
+        $baselineVersion = Get-StateValue -State $Baseline -Name 'version' -Default $null
+        if ([string](Get-StateValue -State $Baseline -Name 'id' -Default '') -cne $canonical.id -or
+            ($baselineVersion -isnot [int] -and $baselineVersion -isnot [long]) -or
+            $baselineVersion -ne $canonical.version -or
+            [string](Get-StateValue -State $Baseline -Name 'extensionName' -Default '') -cne $canonical.extensionName) {
+            throw 'baseline identity was changed'
+        }
+        if ($SourceFingerprint -cne ('sha256:' + $canonical.pin.sha256)) { throw 'artifact source fingerprint does not match the pin' }
+        $expectedExitCode = 0
+        if ($Step -ceq 'applicability') {
+            $expectedLines = @(
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+                'YAXUNIT: Не найден метод "ОбработкаОтображенияОшибки", указанный в аннотации метода "ЮТОбработкаОтображенияОшибки".'
+                'YAXUNIT: Не найден метод "ErrorDisplayProcessing", указанный в аннотации метода "ЮТErrorDisplayProcessing".'
+            )
+        } elseif ($Step -ceq 'configuration') {
+            $expectedExitCode = 101
+            $expectedLines = @(
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  СнятьВсеФлажки "СнятьВсеФлажки"'
+                'YAXUNIT Обработка.ЮТПомощникДляСозданияТестовыхДанных.Форма.Форма.Форма Отсутствует обработчик:  УстановитьВсеФлажки "УстановитьВсеФлажки"'
+            )
+        } else { throw 'check step has no vendor diagnostic baseline' }
+        $assessment.expected = [pscustomobject]@{
+            exitCode = $expectedExitCode; resultCode = $expectedExitCode
+            multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
+        if ($assessment.nativePassed -isnot [bool] -or $assessment.nativePassed) { throw 'vendor diagnostics cannot be a clean native verdict' }
+        foreach ($field in @('exitCode', 'resultCode')) {
+            $code = $assessment.$field
+            if (($code -isnot [int] -and $code -isnot [long]) -or $code -ne $expectedExitCode) { throw "unexpected $field" }
+        }
+        $assessment.raw.logSha256 = (Get-FileHash -LiteralPath $assessment.raw.logPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $log = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.logPath
+        $assessment.raw.logSha256 = $log.sha256
+        $rawLog = [regex]::Replace($log.text, '\r\n|\r', "`n")
+        if ($rawLog.EndsWith("`n")) { $rawLog = $rawLog.Substring(0, $rawLog.Length - 1) }
+        $assessment.raw.lines = @($rawLog -split "`n")
+        $assessment.raw.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $assessment.raw.lines)
+        # The pinned CFE also emits this complete applicability profile with
+        # its native extension version label. Keep raw bytes and reject mixed
+        # labels; this is not diagnostic text normalization or a version regex.
+        if ($Step -ceq 'applicability' -and $assessment.raw.lines[0].StartsWith('YAXUNIT (25.12): ', [StringComparison]::Ordinal)) {
+            $expectedLines = @($expectedLines | ForEach-Object { 'YAXUNIT (25.12)' + $_.Substring('YAXUNIT'.Length) })
+            $assessment.expected.multiset = @(Get-YAxUnitArtifactDiagnosticMultiset -Lines $expectedLines)
+        }
+        $assessment.raw.resultSha256 = (Get-FileHash -LiteralPath $assessment.raw.resultPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $result = Read-YAxUnitArtifactDiagnosticRaw -Path $assessment.raw.resultPath
+        $assessment.raw.resultSha256 = $result.sha256
+        $rawResult = [regex]::Replace($result.text, '\r\n|\r', "`n")
+        if ($rawResult.EndsWith("`n")) { $rawResult = $rawResult.Substring(0, $rawResult.Length - 1) }
+        if ($rawResult -cne [string]$expectedExitCode) { throw 'raw /DumpResult differs from the required code' }
+        if ($assessment.raw.lines.Count -ne $expectedLines.Count -or $assessment.raw.multiset.Count -ne $assessment.expected.multiset.Count) {
+            throw 'raw /Out diagnostic multiplicities differ from the baseline'
+        }
+        foreach ($expected in $assessment.expected.multiset) {
+            $matches = @($assessment.raw.multiset | Where-Object { $_.text -ceq $expected.text -and $_.count -eq $expected.count })
+            if ($matches.Count -ne 1) { throw 'raw /Out contains changed or unknown diagnostics' }
+        }
+        $assessment.status = 'vendor-warn'
+        $assessment.applyAllowed = $true
+    } catch { $assessment.rejectionReason = $_.Exception.Message }
+    return $assessment
 }
 
 function Get-YAxUnitCfePath {
@@ -399,15 +566,17 @@ function Ensure-YAxUnitExtensions {
     Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
     $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
     if (-not $engineMatches) {
-        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
-            -DesignerArgs @("/LoadCfg", $cfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
+        Invoke-GuardedCfeExtensionApply -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -CfePath $cfePath -ExtensionName $extensionName `
+            -ArtifactDiagnosticBaseline (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName $extensionName) | Out-Null
         Install-ItlOnDemandMcp | Out-Null
         [void](Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
             -ExtensionName $extensionName -Artifact ([pscustomobject]@{ sha256 = [string]$entry.sha256 }) `
             -User ([string](Get-EnvValue -Name "IB_USER")) -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) -Scope "yaxunit" -ReconcileYAxUnitProtections)
     }
     if (-not $testsMatch) {
-        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        Invoke-ConfigLoadDesignerAttempt -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint `
             -DesignerArgs @("/LoadConfigFromFiles", $testsPath, "-Extension", $testsExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg") | Out-Null
     }
     $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName, $testsExtensionName))
@@ -494,7 +663,7 @@ function Invoke-YAxUnitVerification {
                 Write-Host "[WARN] YAxUnit exit-code file says '$runnerExitCode', while the authoritative JUnit report passed."
             }
         }
-        Update-DevBranchState -State $State -Updates @{
+        $passedUpdates = @{
             lastYAxUnitStatus = "passed"
             lastYAxUnitReason = "JUnit report passed."
             lastYAxUnitTestAt = (Get-Date).ToString("o")
@@ -508,17 +677,22 @@ function Invoke-YAxUnitVerification {
             lastYAxUnitVersion = [string]$entry.version
             lastYAxUnitArtifactSha256 = ([string]$entry.sha256).ToLowerInvariant()
         }
+        Add-VerificationComponentEvidenceUpdates -Updates $passedUpdates -State $State -Component 'yaxunit' -Status 'passed' -ArtifactPaths @($reportPath)
+        Update-DevBranchState -State $State -Updates $passedUpdates
         Write-Host "YAxUnit verification passed: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
         return [pscustomobject]@{ status = "passed"; tests = $summary.tests; reportPath = $reportPath }
     } catch {
         $failure = $_
-        try { Update-DevBranchState -State $State -Updates @{
+        try { $failedUpdates = @{
             lastYAxUnitStatus = "failed"
             lastYAxUnitReason = $failure.Exception.Message
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath
             lastYAxUnitLogPath = $yaxunitLogPath
-        } } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" }
+        }
+        Add-VerificationComponentEvidenceUpdates -Updates $failedUpdates -State $State -Component 'yaxunit' -Status 'failed'
+        Update-DevBranchState -State $State -Updates $failedUpdates
+        } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" }
         Set-RunFailureContextFromMessage -Message $failure.Exception.Message -RequestedAction "check-dev-branch"
         if (-not $script:RunRequiredAction) { Set-RunFailureContext -RequiredAction "/itl-verify-fix" }
         throw $failure

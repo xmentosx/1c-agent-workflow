@@ -3808,6 +3808,25 @@ function Get-HostMcpResponseUtf8Text {
     return ([Text.UTF8Encoding]::new($false, $true).GetString($stream.ToArray()))
 }
 
+function Close-HostMcpConnection {
+    param([AllowNull()][object]$Connection)
+
+    # Only Open-HostMcpConnection can grant ownership; never infer it from headers.
+    $sessionId = [string](Get-ObjectValue -Object $Connection -Name "ownedSessionId" -Default "")
+    if ([string]::IsNullOrWhiteSpace($sessionId)) { return }
+    $Connection.ownedSessionId = ""
+    $url = [string]$Connection.url
+    try {
+        $headers = @{}
+        foreach ($key in $Connection.headers.Keys) { $headers[$key] = $Connection.headers[$key] }
+        $headers["mcp-session-id"] = $sessionId
+        Invoke-WebRequest -UseBasicParsing -Uri $url -Method Delete -Headers $headers -TimeoutSec 10 -ErrorAction Stop | Out-Null
+    } catch {
+        # Cleanup must not replace a tool/initialization failure or fail a valid result.
+        Write-Warning "Could not close the owned MCP session at '$url'; server expiry remains responsible. $($_.Exception.Message)" -WarningAction Continue
+    }
+}
+
 function Open-HostMcpConnection {
     param(
         [string]$Url,
@@ -3827,9 +3846,25 @@ function Open-HostMcpConnection {
     $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec
     $sessionId = [string]$response.Headers["mcp-session-id"]
     if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
-    $effectiveUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
-    Invoke-WebRequest -UseBasicParsing -Uri $effectiveUrl -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
-    return [pscustomobject]@{ url = $effectiveUrl; headers = $headers; nextId = 2 }
+    $connection = [pscustomobject]@{ url = $Url; headers = $headers; nextId = 2; ownedSessionId = $sessionId }
+    try {
+        $baseResponse = Get-ObjectValue -Object $response -Name "BaseResponse" -Default $null
+        $responseUri = Get-ObjectValue -Object $baseResponse -Name "ResponseUri" -Default $null
+        $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        if ([string]::IsNullOrWhiteSpace($effectiveUrl)) {
+            $request = Get-ObjectValue -Object $baseResponse -Name "RequestMessage" -Default $null
+            $responseUri = Get-ObjectValue -Object $request -Name "RequestUri" -Default $null
+            $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        }
+        # Windows PowerShell and pwsh expose different effective-URI properties.
+        # Keep the known initial URL if neither response shape supplies one.
+        if (-not [string]::IsNullOrWhiteSpace($effectiveUrl)) { $connection.url = $effectiveUrl }
+        Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
+        return $connection
+    } catch {
+        Close-HostMcpConnection -Connection $connection
+        throw
+    }
 }
 
 function Wait-HostMcpReadyConnection {
@@ -3928,39 +3963,47 @@ function Wait-HostMcpIndexCompletion {
     $successfulPolls = 0
     $lastText = ""
     $lastProbeError = ""
-    while ((Get-Date) -lt $deadline) {
-        try {
-            $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
-            $lastProbeError = ""
-        } catch {
-            $lastProbeError = $_.Exception.Message
-            $successfulPolls = 0
-            Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
-            if ((Get-Date) -ge $deadline) { break }
-            Start-Sleep -Seconds $PollSeconds
+    # The caller owns the initial connection; this wait owns any replacements.
+    $initialConnection = $Connection
+    try {
+        while ((Get-Date) -lt $deadline) {
             try {
-                $Connection = Open-HostMcpConnection -Url ([string]$Connection.url) -TimeoutSec 60
+                $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
+                $lastProbeError = ""
             } catch {
                 $lastProbeError = $_.Exception.Message
-                Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                $successfulPolls = 0
+                Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                if ((Get-Date) -ge $deadline) { break }
+                Start-Sleep -Seconds $PollSeconds
+                try {
+                    $reconnectUrl = [string]$Connection.url
+                    Close-HostMcpConnection -Connection $Connection
+                    $Connection = Open-HostMcpConnection -Url $reconnectUrl -TimeoutSec 60
+                } catch {
+                    $lastProbeError = $_.Exception.Message
+                    Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+                }
+                continue
             }
-            continue
+            $lastText = Get-HostMcpToolResultText -Result $result
+            $state = Get-HostMcpIndexState -Text $lastText
+            Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
+            if ($state -eq "failed") {
+                throw "Incremental indexing failed for '$ServerId' configId '$ConfigId': $lastText"
+            }
+            if ($state -eq "succeeded") {
+                $successfulPolls++
+                if ($successfulPolls -ge 2) { return }
+            } else {
+                $successfulPolls = 0
+            }
+            Start-Sleep -Seconds $PollSeconds
         }
-        $lastText = Get-HostMcpToolResultText -Result $result
-        $state = Get-HostMcpIndexState -Text $lastText
-        Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
-        if ($state -eq "failed") {
-            throw "Incremental indexing failed for '$ServerId' configId '$ConfigId': $lastText"
-        }
-        if ($state -eq "succeeded") {
-            $successfulPolls++
-            if ($successfulPolls -ge 2) { return }
-        } else {
-            $successfulPolls = 0
-        }
-        Start-Sleep -Seconds $PollSeconds
+        throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
+    } finally {
+        if (-not [object]::ReferenceEquals($Connection, $initialConnection)) { Close-HostMcpConnection -Connection $Connection }
     }
-    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
 }
 
 function Get-TrackedProjectServerForConfig {
@@ -3998,10 +4041,14 @@ function Invoke-CodeIncrementalIndex {
     Write-Host "Starting incremental code indexing for configId '$ConfigId' through $url"
     if ($DryRun) { return }
     $connection = Open-HostMcpConnection -Url $url
-    $accepted = Invoke-HostMcpTool -Connection $connection -Name "reindex" -Arguments ([ordered]@{ force = $false })
-    Write-Host "Code incremental indexing accepted: $(Get-HostMcpToolResultText -Result $accepted)"
-    Start-Sleep -Seconds $Settings.pollSeconds
-    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    try {
+        $accepted = Invoke-HostMcpTool -Connection $connection -Name "reindex" -Arguments ([ordered]@{ force = $false })
+        Write-Host "Code incremental indexing accepted: $(Get-HostMcpToolResultText -Result $accepted)"
+        Start-Sleep -Seconds $Settings.pollSeconds
+        Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    } finally {
+        Close-HostMcpConnection -Connection $connection
+    }
 }
 
 function Restart-GraphForIncrementalIndex {
@@ -4051,7 +4098,11 @@ function Invoke-GraphIncrementalIndex {
     Restart-GraphForIncrementalIndex -Config $Config -Server $Server -ConfigId $ConfigId
     if ($DryRun) { return }
     $connection = Wait-HostMcpReadyConnection -Url (Get-TrackedServerControlUrl -Server $Server) -ServerId "graph" -ConfigId $ConfigId
-    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    try {
+        Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+    } finally {
+        Close-HostMcpConnection -Connection $connection
+    }
 }
 
 function Get-TrackedConfigurationStateForId {
@@ -4440,6 +4491,7 @@ function Get-HostServerFunctionalHealth {
     if (-not $url) {
         return [pscustomobject]@{ status = "degraded"; message = "Tracked MCP server '$id' has no URL for functional qualification." }
     }
+    $connection = $null
     try {
         $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10
         $arguments = Get-HostServerSafeHealthArguments -ServerId $id
@@ -4450,6 +4502,8 @@ function Get-HostServerFunctionalHealth {
         return [pscustomobject]@{ status = "qualified"; message = "MCP safe health tool '$toolName' passed." }
     } catch {
         return [pscustomobject]@{ status = "degraded"; message = "MCP safe health tool '$toolName' failed: $($_.Exception.Message)" }
+    } finally {
+        Close-HostMcpConnection -Connection $connection
     }
 }
 

@@ -501,23 +501,27 @@ function Assert-FreshGlobalIndexTarget {
 function Get-HostMcpToolsList {
     param([string]$Url)
     $connection = Open-HostMcpConnection -Url $Url
-    $tools = @()
-    $cursor = ""
-    do {
-        $params = [ordered]@{}
-        if ($cursor) { $params["cursor"] = $cursor }
-        $payload = [ordered]@{ jsonrpc = "2.0"; id = [int]$connection.nextId; method = "tools/list"; params = $params }
-        $connection.nextId = [int]$connection.nextId + 1
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $connection.headers -Body ($payload | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec 60
-        $body = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
-        if ($null -ne $body.PSObject.Properties["error"]) { throw "MCP tools/list failed: $($body.error | ConvertTo-Json -Depth 10 -Compress)" }
-        $result = Get-ObjectValue -Object $body -Name "result" -Default $null
-        if ($null -eq $result) { throw "MCP tools/list returned no result." }
-        $tools += @(As-Array (Get-ObjectValue -Object $result -Name "tools" -Default @()))
-        $cursor = [string](Get-ObjectValue -Object $result -Name "nextCursor" -Default "")
-    } while ($cursor)
-    if ($tools.Count -eq 0) { throw "MCP tools/list returned no tools from $Url." }
-    return $tools
+    try {
+        $tools = @()
+        $cursor = ""
+        do {
+            $params = [ordered]@{}
+            if ($cursor) { $params["cursor"] = $cursor }
+            $payload = [ordered]@{ jsonrpc = "2.0"; id = [int]$connection.nextId; method = "tools/list"; params = $params }
+            $connection.nextId = [int]$connection.nextId + 1
+            $response = Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $connection.headers -Body ($payload | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec 60
+            $body = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
+            if ($null -ne $body.PSObject.Properties["error"]) { throw "MCP tools/list failed: $($body.error | ConvertTo-Json -Depth 10 -Compress)" }
+            $result = Get-ObjectValue -Object $body -Name "result" -Default $null
+            if ($null -eq $result) { throw "MCP tools/list returned no result." }
+            $tools += @(As-Array (Get-ObjectValue -Object $result -Name "tools" -Default @()))
+            $cursor = [string](Get-ObjectValue -Object $result -Name "nextCursor" -Default "")
+        } while ($cursor)
+        if ($tools.Count -eq 0) { throw "MCP tools/list returned no tools from $Url." }
+        return $tools
+    } finally {
+        Close-HostMcpConnection -Connection $connection
+    }
 }
 
 function Assert-BetaToolsAcceptOldCalls {
@@ -572,41 +576,45 @@ function Assert-BetaToolsAcceptOldCalls {
 function Assert-BetaDocsFunctionalCall {
     param([string]$Url, [switch]$NativeResponse, [string]$ExpectedGeneration = "")
     $connection = Open-HostMcpConnection -Url $Url
-    $arguments = if ($NativeResponse) { [ordered]@{ query = "HTTP"; top_k = 1; max_items = 1; max_chars = 4000 } } else { [ordered]@{ query = "String" } }
-    $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments $arguments
-    if ([bool](Get-ObjectValue -Object $response -Name "isError" -Default $false)) { throw "Docs docsearch returned an MCP error." }
-    if ($NativeResponse) {
-        # Stable Docs 4.1 returns one compact JSON text envelope. The public
-        # legacy proxy still owns its string wrapper until native cutover.
-        $texts = @(As-Array (Get-ObjectValue -Object $response -Name "content" -Default @()) | Where-Object { $_.type -eq "text" })
-        if ($texts.Count -ne 1) { throw "Native Docs docsearch requires one JSON text result." }
-        try { $payload = ConvertFrom-Json -InputObject ([string]$texts[0].text) -ErrorAction Stop }
-        catch { throw "Native Docs docsearch returned invalid JSON." }
-        $results = @(As-Array (Get-ObjectValue -Object $payload -Name "results" -Default @()))
-        if ([string](Get-ObjectValue -Object $payload -Name "schema_version" -Default "") -ne "4.1" -or
-            [string](Get-ObjectValue -Object $payload -Name "tool" -Default "") -ne "docsearch" -or
-            [string](Get-ObjectValue -Object $payload -Name "outcome" -Default "") -ne "ok" -or
-            $null -ne (Get-ObjectValue -Object $payload -Name "error" -Default $null) -or
-            (Get-ObjectValue -Object $payload -Name "returned" -Default 0) -ne 1 -or $results.Count -ne 1 -or
-            (Get-ObjectValue -Object $payload -Name "total" -Default 0) -lt 1) {
-            throw "Native Docs docsearch did not return one successful known-query result."
+    try {
+        $arguments = if ($NativeResponse) { [ordered]@{ query = "HTTP"; top_k = 1; max_items = 1; max_chars = 4000 } } else { [ordered]@{ query = "String" } }
+        $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments $arguments
+        if ([bool](Get-ObjectValue -Object $response -Name "isError" -Default $false)) { throw "Docs docsearch returned an MCP error." }
+        if ($NativeResponse) {
+            # Stable Docs 4.1 returns one compact JSON text envelope. The public
+            # legacy proxy still owns its string wrapper until native cutover.
+            $texts = @(As-Array (Get-ObjectValue -Object $response -Name "content" -Default @()) | Where-Object { $_.type -eq "text" })
+            if ($texts.Count -ne 1) { throw "Native Docs docsearch requires one JSON text result." }
+            try { $payload = ConvertFrom-Json -InputObject ([string]$texts[0].text) -ErrorAction Stop }
+            catch { throw "Native Docs docsearch returned invalid JSON." }
+            $results = @(As-Array (Get-ObjectValue -Object $payload -Name "results" -Default @()))
+            if ([string](Get-ObjectValue -Object $payload -Name "schema_version" -Default "") -ne "4.1" -or
+                [string](Get-ObjectValue -Object $payload -Name "tool" -Default "") -ne "docsearch" -or
+                [string](Get-ObjectValue -Object $payload -Name "outcome" -Default "") -ne "ok" -or
+                $null -ne (Get-ObjectValue -Object $payload -Name "error" -Default $null) -or
+                (Get-ObjectValue -Object $payload -Name "returned" -Default 0) -ne 1 -or $results.Count -ne 1 -or
+                (Get-ObjectValue -Object $payload -Name "total" -Default 0) -lt 1) {
+                throw "Native Docs docsearch did not return one successful known-query result."
+            }
+            $generation = [string](Get-ObjectValue -Object $payload -Name "generation" -Default "")
+            if (-not $generation -or ($ExpectedGeneration -and $generation -cne $ExpectedGeneration)) { throw "Native Docs docsearch generation differs from readiness." }
+            $hit = $results[0]
+            $citation = Get-ObjectValue -Object $hit -Name "citation" -Default $null
+            $name = [string](Get-ObjectValue -Object $citation -Name "full_name" -Default (Get-ObjectValue -Object $citation -Name "name" -Default ""))
+            $snippets = @(As-Array (Get-ObjectValue -Object $hit -Name "snippets" -Default @()))
+            if (-not [string](Get-ObjectValue -Object $hit -Name "doc_id" -Default "") -or -not $name -or
+                $snippets.Count -eq 0 -or @($snippets | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+                throw "Native Docs docsearch result lacks document identity, citation or snippets."
+            }
+            return
         }
-        $generation = [string](Get-ObjectValue -Object $payload -Name "generation" -Default "")
-        if (-not $generation -or ($ExpectedGeneration -and $generation -cne $ExpectedGeneration)) { throw "Native Docs docsearch generation differs from readiness." }
-        $hit = $results[0]
-        $citation = Get-ObjectValue -Object $hit -Name "citation" -Default $null
-        $name = [string](Get-ObjectValue -Object $citation -Name "full_name" -Default (Get-ObjectValue -Object $citation -Name "name" -Default ""))
-        $snippets = @(As-Array (Get-ObjectValue -Object $hit -Name "snippets" -Default @()))
-        if (-not [string](Get-ObjectValue -Object $hit -Name "doc_id" -Default "") -or -not $name -or
-            $snippets.Count -eq 0 -or @($snippets | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
-            throw "Native Docs docsearch result lacks document identity, citation or snippets."
+        $structured = Get-ObjectValue -Object $response -Name "structuredContent" -Default $null
+        $legacyResult = Get-ObjectValue -Object $structured -Name "result" -Default $null
+        if ($legacyResult -isnot [string] -or [string]::IsNullOrWhiteSpace($legacyResult)) {
+            throw "Beta Docs docsearch did not preserve a nonempty structuredContent.result string."
         }
-        return
-    }
-    $structured = Get-ObjectValue -Object $response -Name "structuredContent" -Default $null
-    $legacyResult = Get-ObjectValue -Object $structured -Name "result" -Default $null
-    if ($legacyResult -isnot [string] -or [string]::IsNullOrWhiteSpace($legacyResult)) {
-        throw "Beta Docs docsearch did not preserve a nonempty structuredContent.result string."
+    } finally {
+        Close-HostMcpConnection -Connection $connection
     }
 }
 
@@ -654,32 +662,36 @@ function Get-BetaConfigurationIndexActivity {
     param([string]$ServerId, [string]$Url)
     if ($ServerId -notin @("code", "graph")) { return $null }
     $connection = Open-HostMcpConnection -Url $Url
-    $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
-    $result = Invoke-HostMcpTool -Connection $connection -Name $tool
-    if ($ServerId -eq "graph") { return (ConvertFrom-GraphIndexStatus -Result $result) }
-    $payload = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
-    if ($null -eq $payload) { throw "'$ServerId' index status has no structuredContent." }
-    $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
-    if ($nested -is [string]) { $payload = $nested | ConvertFrom-Json }
-    if ($ServerId -eq "code") {
-        $data = Get-ObjectValue -Object $payload -Name "data" -Default $null
-        $indexing = Get-ObjectValue -Object $data -Name "indexing" -Default $null
-        $collections = Get-ObjectValue -Object $data -Name "collections" -Default $null
-        if ($null -eq $indexing -or $null -eq $collections) { throw "Code stats did not expose indexing state and collection counts." }
-        $indexError = [string](Get-ObjectValue -Object $indexing -Name "error" -Default "")
-        if ($indexError) { throw "Code indexing failed: $indexError" }
-        return [pscustomobject]@{
-            running = [bool](Get-ObjectValue -Object $indexing -Name "running" -Default $false)
-            phase = [string](Get-ObjectValue -Object $indexing -Name "phase" -Default "")
-            collections = $collections
-            coverage = [pscustomobject]@{
-                modules = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "structural_index" -Default $null) -Name "modules" -Default $null
-                objects = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "metadata_details" -Default $null) -Name "objects" -Default $null
-                forms = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "form_index" -Default $null) -Name "forms" -Default $null
+    try {
+        $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
+        $result = Invoke-HostMcpTool -Connection $connection -Name $tool
+        if ($ServerId -eq "graph") { return (ConvertFrom-GraphIndexStatus -Result $result) }
+        $payload = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
+        if ($null -eq $payload) { throw "'$ServerId' index status has no structuredContent." }
+        $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
+        if ($nested -is [string]) { $payload = $nested | ConvertFrom-Json }
+        if ($ServerId -eq "code") {
+            $data = Get-ObjectValue -Object $payload -Name "data" -Default $null
+            $indexing = Get-ObjectValue -Object $data -Name "indexing" -Default $null
+            $collections = Get-ObjectValue -Object $data -Name "collections" -Default $null
+            if ($null -eq $indexing -or $null -eq $collections) { throw "Code stats did not expose indexing state and collection counts." }
+            $indexError = [string](Get-ObjectValue -Object $indexing -Name "error" -Default "")
+            if ($indexError) { throw "Code indexing failed: $indexError" }
+            return [pscustomobject]@{
+                running = [bool](Get-ObjectValue -Object $indexing -Name "running" -Default $false)
+                phase = [string](Get-ObjectValue -Object $indexing -Name "phase" -Default "")
+                collections = $collections
+                coverage = [pscustomobject]@{
+                    modules = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "structural_index" -Default $null) -Name "modules" -Default $null
+                    objects = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "metadata_details" -Default $null) -Name "objects" -Default $null
+                    forms = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "form_index" -Default $null) -Name "forms" -Default $null
+                }
+                metadataProjectId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "project_id" -Default "")
+                metadataGenerationId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "published" -Default $null) -Name "generation_id" -Default "")
             }
-            metadataProjectId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "project_id" -Default "")
-            metadataGenerationId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "published" -Default $null) -Name "generation_id" -Default "")
         }
+    } finally {
+        Close-HostMcpConnection -Connection $connection
     }
 }
 
@@ -785,7 +797,8 @@ function Wait-BetaCandidateReady {
     $requestedBudget = [int](Get-ObjectValue -Object $Context -Name "indexReadyTimeoutSeconds" -Default 0)
     if ($requestedBudget -gt 0) { $budgetSeconds = $requestedBudget }
     $deadline = (Get-Date).AddSeconds($budgetSeconds)
-    [void](Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10)
+    $connection = Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10
+    Close-HostMcpConnection -Connection $connection
     $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false) -or [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false)) {
         [int][Math]::Max(1, [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
     } else { 7200 }
@@ -919,7 +932,8 @@ function Restore-StableAfterBetaFailure {
     }
     Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", $oldName) -TimeoutSec 60 -Description "restore stable restart policy"
     Invoke-DockerCommandChecked -Arguments @("start", $oldName) -TimeoutSec 180 -Description "restart stable $oldName"
-    [void](Wait-HostMcpReadyConnection -Url ([string]$Context.old.directUrl) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds 600)
+    $connection = Wait-HostMcpReadyConnection -Url ([string]$Context.old.directUrl) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds 600
+    Close-HostMcpConnection -Connection $connection
     if ($backup) {
         Invoke-DockerCommandChecked -Arguments @("rename", $backup, $proxyName) -TimeoutSec 60 -Description "restore stable tools proxy"
         Invoke-DockerCommandChecked -Arguments @("start", $proxyName) -TimeoutSec 120 -Description "restart stable tools proxy"

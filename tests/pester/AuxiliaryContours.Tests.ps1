@@ -300,7 +300,7 @@
                 function Get-AuxiliaryContourFingerprint {
                     [pscustomobject]@{ combined = "source-a"; configuration = [pscustomobject]@{ fingerprint = "config-a"; fileCount = 1 }; extensions = @() }
                 }
-                function Get-ConfigSourceFingerprint { [pscustomobject]@{ fileCount = 1 } }
+                function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = 'extension-a'; fileCount = 1 } }
                 function Read-AuxiliaryContourState { $script:auxState }
                 function Save-AuxiliaryContourState {
                     param($Contour, $Updates)

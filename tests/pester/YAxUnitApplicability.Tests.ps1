@@ -27,6 +27,7 @@
     It "accepts one exact notApplicable entry and rejects duplicate declarations" {
         $catalogPath = Join-Path $TestDrive 'yaxunit-suites.branch.json'
         $result = & {
+            . $SelectionModule
             . $YAxUnitModule
             function Get-YAxUnitSuiteCatalogPaths { @($catalogPath) }
             function Get-YAxUnitTestsPath { 'tests/yaxunit' }
@@ -73,6 +74,34 @@
         $result.classified.decisions[0].decision | Should -Be 'not-applicable'
         $result.stale.classificationComplete | Should -BeFalse
         $result.stale.issues[0] | Should -Match ('5' * 40)
+    }
+
+    It 'classifies current one-off coverage without calling it not-applicable and leaves unrelated new BSL unclassified' {
+        $result = & {
+            . $SelectionModule
+            $state = [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion=1;commit=('1'*40);legacy=$false } }
+            function Get-StateValue { param($State,$Name,$Default) if($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]){return $Default};$State.$Name }
+            function Get-GitOutput { '2'*40 }
+            function Get-VerificationSelectionEffectiveTree { '3'*40 }
+            function Get-VerificationSelectionChangedPaths { @('src/cf/Расчет суммы/Ext/Module.bsl') }
+            function Get-VerificationAcceptedMasterInput { [pscustomobject]@{importedPaths=@()} }
+            function Get-VerificationConfigurationMetadataRoots { [pscustomobject]@{configurationRoots=@('src/cf');extensionRoots=@()} }
+            function Get-GitObjectIdForTreePath { '4'*40 }
+            $catalog = [pscustomobject]@{groups=@();assignments=@();registrationPaths=@();notApplicable=@()}
+            $obligation = [pscustomobject]@{id='current-result';inputPaths=@('src/cf/Расчет суммы/**')}
+            $covered = Get-YAxUnitProductionApplicability -Catalog $catalog -State $state -ReadOnly -OneOffObligations @($obligation)
+            $obligation.inputPaths = @('src/cf/Другой расчет/**')
+            $uncovered = Get-YAxUnitProductionApplicability -Catalog $catalog -State $state -ReadOnly -OneOffObligations @($obligation)
+            function Update-DevBranchState { throw 'Read-only assessment tried to adopt a branch baseline' }
+            $missing = ''
+            try { Get-YAxUnitProductionApplicability -Catalog $catalog -State ([pscustomobject]@{}) -ReadOnly|Out-Null } catch { $missing=$_.Exception.Message }
+            [pscustomobject]@{covered=$covered;uncovered=$uncovered;missing=$missing}
+        }
+        $result.covered.classificationComplete | Should -BeTrue
+        $result.covered.decisions[0].decision | Should -Be 'one-off'
+        $result.covered.decisions[0].obligationIds | Should -Contain 'current-result'
+        $result.uncovered.classificationComplete | Should -BeFalse
+        $result.missing | Should -Match 'YAXUNIT_APPLICABILITY_BASELINE_MISSING'
     }
 
     It "reuses an existing registered default-fast group without demanding a new test" {
@@ -210,15 +239,27 @@
                 $inventoryAfter = Update-VerificationSuiteInventory -Reason 'applicability preflight' -EvaluateApplicability
                 $classified = Get-YAxUnitProductionApplicability -Catalog $catalog
                 $fingerprintBefore = Get-VerificationFingerprint
+                $proofState = [pscustomobject]@{
+                    stateProjectRoot = $tempRoot
+                    infoBaseKind = 'file'
+                    devBranchInfoBasePath = (Join-Path $tempRoot 'fixture-base')
+                    toolingInfoBaseGeneration = 'fixture-target-generation'
+                    vanessaServiceInfoBaseGeneration = 'fixture-runner-generation'
+                    lastConfigDesignerFingerprint = (Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+                    configLoadStatus = 'passed'
+                }
+                $proofUpdates = @{}
+                Add-VanessaVerificationEvidenceUpdates -Updates $proofUpdates -State $proofState -Status passed -Reason 'Fixture complete proof before applicability change' -Commit $baseline -Fingerprint $fingerprintBefore -ReportPath 'fixture-report' -LogPath 'fixture-log' -RecordFullVerificationEvidence
+                foreach ($name in $proofUpdates.Keys) { $proofState | Add-Member -NotePropertyName $name -NotePropertyValue $proofUpdates[$name] -Force }
+                $proofBeforeDecisionChange = Get-VerificationState -State $proofState -CurrentCommit $baseline -CurrentFingerprint $fingerprintBefore
                 $catalog.notApplicable[0].reason = 'Reconsidered interactive route'
                 [IO.File]::WriteAllText((Join-Path $tempRoot 'tests\yaxunit-suites.branch.json'),
                     ((@{ schemaVersion = 1; notApplicable = @($catalog.notApplicable) } | ConvertTo-Json -Depth 5)), [Text.UTF8Encoding]::new($false))
                 $fingerprintAfter = Get-VerificationFingerprint
-                $proofState = [pscustomobject]@{ lastVerificationStatus = 'passed'; lastVerifiedCommit = $baseline; lastVerifiedFingerprint = $fingerprintBefore }
                 $proofAfterDecisionChange = Get-VerificationState -State $proofState -CurrentCommit $baseline -CurrentFingerprint $fingerprintAfter
                 [IO.File]::WriteAllText((Join-Path $tempRoot $legacyDirtyPath), 'Процедура НоваяПравка() КонецПроцедуры', [Text.UTF8Encoding]::new($false))
                 $changedLegacy = Get-YAxUnitProductionApplicability -Catalog $catalog
-                [pscustomobject]@{ legacy = $legacy; adopted = $adopted; unclassified = $unclassified; classified = $classified; changedLegacy = $changedLegacy; inventoryLegacy = $inventoryLegacy; inventoryBefore = $inventoryBefore; inventoryAfter = $inventoryAfter; fingerprintBefore = $fingerprintBefore; fingerprintAfter = $fingerprintAfter; proofAfterDecisionChange = $proofAfterDecisionChange }
+                [pscustomobject]@{ legacy = $legacy; adopted = $adopted; unclassified = $unclassified; classified = $classified; changedLegacy = $changedLegacy; inventoryLegacy = $inventoryLegacy; inventoryBefore = $inventoryBefore; inventoryAfter = $inventoryAfter; fingerprintBefore = $fingerprintBefore; fingerprintAfter = $fingerprintAfter; proofBeforeDecisionChange = $proofBeforeDecisionChange; proofAfterDecisionChange = $proofAfterDecisionChange }
             }
             $result.legacy.classificationComplete | Should -BeTrue -Because ($result.legacy.issues -join '; ')
             @($result.legacy.decisions).Count | Should -Be 0
@@ -236,7 +277,11 @@
             $result.inventoryAfter.classificationComplete | Should -BeTrue
             $result.inventoryAfter.yaxunit.legacyBaseline | Should -BeTrue
             $result.fingerprintAfter | Should -Not -Be $result.fingerprintBefore
+            $result.proofBeforeDecisionChange.effectiveStatus | Should -Be 'passed'
+            $result.proofBeforeDecisionChange.isFreshPassed | Should -BeTrue
             $result.proofAfterDecisionChange.effectiveStatus | Should -Be 'stale'
+            $result.proofAfterDecisionChange.isFreshPassed | Should -BeFalse
+            $result.proofAfterDecisionChange.currentLoadedBaseIdentity | Should -Be $result.proofBeforeDecisionChange.currentLoadedBaseIdentity
             $result.changedLegacy.classificationComplete | Should -BeFalse
             @($result.changedLegacy.issues | Where-Object { $_ -match 'До Обновления' }).Count | Should -Be 1
         } finally {

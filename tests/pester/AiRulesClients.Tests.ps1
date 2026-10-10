@@ -35,7 +35,7 @@
             }
         }
 
-        @($results).Count | Should -Be 10
+        @($results).Count | Should -Be 12
         foreach ($result in @($results)) {
             $result.selected | Should -Be $result.defaultClient
             @($result.choices)[0] | Should -Be $result.defaultClient
@@ -64,6 +64,8 @@
                 qwen = "qwen.exe"
                 "command-code" = "command-code.exe"
                 cline = "cline.exe"
+                zcode = "zcode.exe"
+                mimocode = "mimocode.exe"
                 pi = "pi.exe"
             }
             [pscustomobject]@{
@@ -100,7 +102,7 @@
         $result.unknown | Should -Be ""
     }
 
-    It "migrates only the legacy dual client and rejects other multi-client inputs" {
+    It "preserves the configured client set while selecting a session client" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-targets-" + [guid]::NewGuid().ToString("N"))
         $savedAgentTools = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")
 
@@ -111,27 +113,50 @@
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $fromConfig = @(Get-AiRules1cTools)
-                $multiError = ""
                 [Environment]::SetEnvironmentVariable("AGENT_TOOLS", "cursor,kilo", "Process")
-                try { Get-AiRules1cTools | Out-Null } catch { $multiError = $_.Exception.Message }
+                $fromEnvironment = @(Get-AiRules1cTools)
                 [Environment]::SetEnvironmentVariable("AGENT_TOOLS", $null, "Process")
                 $AgentTarget = "claude-code"
                 $fromExplicit = @(Get-AiRules1cTools)
+                $missingSession = ""
+                try { Get-ItlActiveClient -Client 'claude-code' | Out-Null } catch { $missingSession = $_.Exception.Message }
                 [pscustomobject]@{
                     fromConfig = $fromConfig
-                    multiError = $multiError
+                    fromEnvironment = $fromEnvironment
                     fromExplicit = $fromExplicit
+                    missingSession = $missingSession
                 }
             }
 
-            @($result.fromConfig) | Should -Be @("kilocode")
-            $result.multiError | Should -Match "Multiple active agent clients are not supported"
-            @($result.fromExplicit) | Should -Be @("claude-code")
+            @($result.fromConfig) | Should -Be @("codex", "kilocode")
+            @($result.fromEnvironment) | Should -Be @("codex", "kilocode")
+            @($result.fromExplicit) | Should -Be @("codex", "kilocode")
+            $result.missingSession | Should -Match "ITL_CLIENT_NOT_ATTACHED"
         } finally {
             [Environment]::SetEnvironmentVariable("AGENT_TOOLS", $savedAgentTools, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "selects an explicitly attached session client and rejects an absent one" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-session-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot '.agent-1c\project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex","cursor"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot '.ai-rules.json') -Encoding UTF8 -Value '{"tools":["cursor","codex"],"files":{}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $selected = Get-ItlActiveClient -Client 'cursor'
+                $missing = ''
+                try { Get-ItlActiveClient -Client 'kilocode' | Out-Null } catch { $missing = $_.Exception.Message }
+                [pscustomobject]@{ selected = $selected; missing = $missing }
+            }
+            $result.selected | Should -Be 'cursor'
+            $result.missing | Should -Match 'ITL_CLIENT_NOT_ATTACHED'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
     }
 
@@ -146,6 +171,8 @@
                 $records = @()
                 foreach ($client in @(Get-SupportedAgentTargets)) {
                     $AgentTarget = $client
+                    Set-ProjectAiRulesClient -Client $client
+                    Read-ProjectConfig | Out-Null
                     Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (([ordered]@{ tools = @($client); files = [ordered]@{} } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
                     $adapter = Get-ItlClientAdapter -Client $client
                     $expectedSkillRoot = Join-Path (Join-Path $tempRoot ([string]$adapter.skillsPath)) "1c-metadata-manage"
@@ -166,6 +193,8 @@
                 }
 
                 $AgentTarget = "kilocode"
+                Set-ProjectAiRulesClient -Client "kilocode"
+                Read-ProjectConfig | Out-Null
                 Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
                 $kiloInit = Join-Path $tempRoot ".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts\cfe-init.ps1"
                 Remove-Item -LiteralPath $kiloInit -Force
@@ -175,7 +204,7 @@
                 [pscustomobject]@{ records = $records; missingError = $missingError }
             }
 
-            @($result.records).Count | Should -Be 10
+            @($result.records).Count | Should -Be 12
             foreach ($record in @($result.records)) {
                 $record.resolvedSkillRoot | Should -Be $record.expectedSkillRoot
                 $record.init | Should -Be (Join-Path $record.expectedSkillRoot "tools\1c-cfe-manage\scripts\cfe-init.ps1")
@@ -231,7 +260,7 @@
         @($violations).Count | Should -Be 0 -Because ($violations -join ", ")
     }
 
-    It "replaces a legacy client set instead of adding another client" {
+    It "adds a configured client without removing the installed client" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-add-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $rulesRoot = Join-Path $tempRoot "ai_rules_1c"
@@ -243,9 +272,15 @@
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\codex.yaml") -Encoding ASCII -Value "tool: codex"
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\kilocode.yaml") -Encoding ASCII -Value "tool: kilocode"
             foreach ($skillName in @("grill-me", "grill-with-docs")) {
-                $skillRoot = Join-Path $projectRoot ".kilo\skills\$skillName"
-                New-Item -ItemType Directory -Force -Path $skillRoot | Out-Null
-                Set-Content -LiteralPath (Join-Path $skillRoot "SKILL.md") -Encoding UTF8 -Value "# $skillName"
+                foreach ($clientSkillRoot in @(".kilo\skills", ".agents\skills")) {
+                    $skillRoot = Join-Path $projectRoot "$clientSkillRoot\$skillName"
+                    New-Item -ItemType Directory -Force -Path $skillRoot | Out-Null
+                    Set-Content -LiteralPath (Join-Path $skillRoot "SKILL.md") -Encoding UTF8 -Value "# $skillName"
+                    if ($clientSkillRoot -eq '.agents\skills') {
+                        New-Item -ItemType Directory -Force -Path (Join-Path $skillRoot 'agents') | Out-Null
+                        Set-Content -LiteralPath (Join-Path $skillRoot 'agents\openai.yaml') -Encoding UTF8 -Value "interface:`n  display_name: `"$skillName`""
+                    }
+                }
             }
             Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
 [CmdletBinding()]
@@ -269,7 +304,8 @@ if (Test-Path -LiteralPath $manifestPath) {
 }
 switch ($Command) {
     "init" { $currentTools = @($Tools) }
-    "remove" { $currentTools = @() }
+    "add" { $currentTools = @($currentTools) + $Tool }
+    "remove" { $currentTools = @($currentTools | Where-Object { $_ -ne $Tool }) }
 }
 $manifest = [ordered]@{
     tools = @($currentTools | Where-Object { $_ } | Select-Object -Unique)
@@ -289,23 +325,14 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
                 }
 
                 Invoke-AiRules1cInstaller -Command "update"
-                $unknownError = ""
-                $AgentTarget = "missing-client"
-                try {
-                    Invoke-AiRules1cInstaller -Command "update"
-                } catch {
-                    $unknownError = $_.Exception.Message
-                }
                 [pscustomobject]@{
                     calls = @(Get-Content -LiteralPath (Join-Path $projectRoot "installer-calls.txt"))
                     tools = @(Get-AiRules1cManifestToolNames)
-                    unknownError = $unknownError
                 }
             }
 
-            @($result.calls) | Should -Be @("remove|||delegated", "init||kilocode|delegated")
-            @($result.tools) | Should -Be @("kilocode")
-            $result.unknownError | Should -Match "Unsupported agent client"
+            @($result.calls) | Should -Be @("add|kilocode||delegated", "update|||delegated")
+            @($result.tools) | Should -Be @("codex", "kilocode")
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -357,12 +384,13 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding UTF8
 
         (Test-Path -LiteralPath $scriptPath -PathType Leaf) | Should -BeTrue
-        $text | Should -Match "codex.*kilocode.*claude-code.*cursor.*opencode.*kimi.*qwen.*command-code.*cline.*pi"
+        $text | Should -Match "codex.*kilocode.*claude-code.*cursor.*opencode.*kimi.*qwen.*command-code.*cline.*pi.*zcode.*mimocode"
+        $text | Should -Match 'compatibility requires exact checkout HEAD'
         $text | Should -Match "Assert-OpenSpecBundle"
         $text | Should -Match "git clone"
         $text | Should -Match "protocol must be 1.1"
         $text | Should -Match "Compatibility check changed user-scope Codex prompt"
-        $text | Should -Match 'docs/custom\.md,USER-RULES\.md'
+        $text | Should -Match 'docs/custom\.md.*Kilo shared config preservation failed'
         $text | Should -Match 'McpMode delegated'
         $text | Should -Match 'Repeated ai_rules update was not byte-idempotent'
         $text | Should -Match 'Exact-one-client manifest failed'
@@ -497,6 +525,89 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $env:TEMP = $savedTemp
             $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "isolates real project rule checkouts while another project holds its Git index lock and preserves same-root pins" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl правила cache " + [guid]::NewGuid().ToString("N"))
+        $projectA = Join-Path $tempRoot "проект один"
+        $projectB = Join-Path $tempRoot "проект два"
+        $sourceRoot = Join-Path $tempRoot "source правила"
+        $cacheRoot = Join-Path $tempRoot "cache правила"
+        $savedTemp = $env:TEMP
+        $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
+        $indexLock = $null
+        $indexLockPath = ""
+        try {
+            Remove-Item Env:\ITL_AI_RULES_SOURCE_PATH -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $sourceRoot, $cacheRoot | Out-Null
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $sourceRoot "README.md") -Encoding ASCII -Value "first pinned tag"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "first tag" *> $null
+            & git -C $sourceRoot tag "v1.0.0"
+            $commitA = (& git -C $sourceRoot rev-parse HEAD).Trim()
+            Set-Content -LiteralPath (Join-Path $sourceRoot "README.md") -Encoding ASCII -Value "second pinned tag"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "second tag" *> $null
+            & git -C $sourceRoot tag "v2.0.0"
+            $commitB = (& git -C $sourceRoot rev-parse HEAD).Trim()
+            foreach ($pair in @(@($projectA, "v1.0.0"), @($projectB, "v2.0.0"))) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $pair[0] ".agent-1c") | Out-Null
+                & git -C $pair[0] init *> $null
+                & git -C $pair[0] config user.email "test@example.invalid"
+                & git -C $pair[0] config user.name "ITL Test"
+                $config = [ordered]@{ dependencyMode="fresh"; aiRules=[ordered]@{ repo=$sourceRoot; ref=$pair[1]; tools=@("kilocode") } }
+                Set-Content -LiteralPath (Join-Path $pair[0] ".agent-1c/project.json") -Encoding UTF8 -Value ($config | ConvertTo-Json -Depth 6)
+                Set-Content -LiteralPath (Join-Path $pair[0] ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+                & git -C $pair[0] add .
+                & git -C $pair[0] commit -m "owned project baseline" *> $null
+            }
+            $env:TEMP = $cacheRoot
+            $first = & { . $HelperPath -ProjectRoot $projectA -Action help *> $null; Sync-AiRules1cCheckout }
+            $first.commit | Should -Be $commitA
+            $configHashA = (Get-FileHash -LiteralPath (Join-Path $first.root ".git/config") -Algorithm SHA256).Hash
+            $reuseMarker = Join-Path $first.root ".git/owned-reuse-marker"
+            [IO.File]::WriteAllText($reuseMarker, "exact existing checkout owner", [Text.UTF8Encoding]::new($false))
+            $sharedRoot = Join-Path $cacheRoot "ai_rules_1c"
+            New-Item -ItemType Directory -Force -Path $sharedRoot | Out-Null
+            $sharedSentinel = Join-Path $sharedRoot "old-shared-owner"
+            [IO.File]::WriteAllText($sharedSentinel, "old shared cache stays untouched", [Text.UTF8Encoding]::new($false))
+            $sharedSentinelHash = (Get-FileHash -LiteralPath $sharedSentinel -Algorithm SHA256).Hash
+            $indexLockPath = Join-Path $first.root ".git/index.lock"
+            $indexLock = [IO.File]::Open($indexLockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $lockBytes = [Text.Encoding]::UTF8.GetBytes("active first-project Git owner")
+            $indexLock.Write($lockBytes, 0, $lockBytes.Length)
+            $indexLock.Flush()
+            $second = & { . $HelperPath -ProjectRoot $projectB -Action help *> $null; Sync-AiRules1cCheckout }
+            $second.root | Should -Not -Be $first.root
+            $second.commit | Should -Be $commitB
+            (& git -C $first.root rev-parse HEAD).Trim() | Should -Be $commitA
+            (Get-FileHash -LiteralPath (Join-Path $first.root ".git/config") -Algorithm SHA256).Hash | Should -Be $configHashA
+            $indexLock.Length | Should -Be $lockBytes.Length
+            (Get-FileHash -LiteralPath $sharedSentinel -Algorithm SHA256).Hash | Should -Be $sharedSentinelHash
+            (& git -C $first.root config --local --get core.longpaths).Trim() | Should -Be "true"
+            (& git -C $second.root config --local --get core.longpaths).Trim() | Should -Be "true"
+            $indexLock.Dispose(); $indexLock = $null
+            Remove-Item -LiteralPath $indexLockPath -Force
+            $sameRoot = & { . $HelperPath -ProjectRoot ($projectA.ToUpperInvariant() + "\") -Action help *> $null; Sync-AiRules1cCheckout }
+            $sameRoot.root | Should -Be $first.root
+            $sameRoot.commit | Should -Be $commitA
+            [IO.File]::ReadAllText($reuseMarker) | Should -Be "exact existing checkout owner"
+            $badLock = [ordered]@{ schemaVersion=1; mode="fresh"; dependencies=[ordered]@{ aiRules1c=[ordered]@{ repo=$sourceRoot; ref="v1.0.0"; commit=$commitB } } }
+            Set-Content -LiteralPath (Join-Path $projectA ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value ($badLock | ConvertTo-Json -Depth 6)
+            { & { . $HelperPath -ProjectRoot $projectA -Action help *> $null; Sync-AiRules1cCheckout } } | Should -Throw "*tag/commit mismatch*"
+            (& git -C $first.root rev-parse HEAD).Trim() | Should -Be $commitA
+        } finally {
+            if ($null -ne $indexLock) { $indexLock.Dispose() }
+            $env:TEMP = $savedTemp
+            $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
+            $resolvedFixture = [IO.Path]::GetFullPath($tempRoot)
+            $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+            if (-not $resolvedFixture.StartsWith($fixtureParent, [StringComparison]::OrdinalIgnoreCase)) { throw "Fixture cleanup escaped its owned temporary root" }
+            Remove-Item -LiteralPath $resolvedFixture -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

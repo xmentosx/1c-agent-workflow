@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$E2EProjectRoot,
     [Parameter(Mandatory = $true)][string]$FixtureWorktree,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9][a-z0-9-]{1,40}$')][string]$NewDevBranchName
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9][a-z0-9-]{1,40}$')][string]$NewDevBranchName,
+    [string]$AgentTarget = ''
 )
 
 Set-StrictMode -Version Latest
@@ -56,8 +57,8 @@ if ([string]::Equals($fixtureRoot, $oldRoot, [StringComparison]::OrdinalIgnoreCa
     throw 'The configured Release worktree cannot serve as its own recovery fixture.'
 }
 if ($NewDevBranchName -in @($oldName, $fixtureName)) { throw 'The new Release branch name must differ from the configured and fixture branches.' }
-$fixtureStatus = (Invoke-RepositoryGit -RepositoryRoot $fixtureRoot -Arguments @('status', '--porcelain', '--untracked-files=all')).stdout
-if ($fixtureStatus) { throw "Fixture worktree has changes: $fixtureRoot" }
+$fixtureStatus = @(Get-RepositoryGitPathList -RepositoryRoot $fixtureRoot -Arguments @('status', '--porcelain', '--untracked-files=all', '-z'))
+if ($fixtureStatus.Count -gt 0) { throw "Fixture worktree has changes: $fixtureRoot" }
 $markerRelative = 'tests/features/workflow-release-e2e.feature'
 $marker = Join-Path $fixtureRoot 'tests\features\workflow-release-e2e.feature'
 if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or
@@ -78,14 +79,16 @@ if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw "Installed for
 
 Push-Location $fixtureRoot
 try {
-    & $helper -- -Action fork-dev-branch -DevBranchName $NewDevBranchName
+    $forkArguments = @('-Action', 'fork-dev-branch', '-DevBranchName', $NewDevBranchName)
+    if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $forkArguments += @('-AgentTarget', $AgentTarget) }
+    & $helper -- @forkArguments
     if ($LASTEXITCODE -ne 0) { throw "fork-dev-branch failed for '$NewDevBranchName'. The Release stand config is unchanged; repeat the same command after diagnosis." }
 } finally { Pop-Location }
 
 $newBranch = "itldev/$NewDevBranchName"
 $newRoot = Get-StandWorktreeForBranch -ProjectRoot $projectRoot -Branch $newBranch
 Assert-StandWorktreeOwned -ProjectRoot $projectRoot -WorktreeRoot $newRoot -ExpectedBranch $newBranch
-if ((Invoke-RepositoryGit -RepositoryRoot $newRoot -Arguments @('status', '--porcelain', '--untracked-files=all')).stdout) {
+if (@(Get-RepositoryGitPathList -RepositoryRoot $newRoot -Arguments @('status', '--porcelain', '--untracked-files=all', '-z')).Count -gt 0) {
     throw "Forked Release worktree is dirty: $newRoot. The stand config is unchanged."
 }
 if (-not (Test-Path -LiteralPath (Join-Path $newRoot 'tests\features\workflow-release-e2e.feature') -PathType Leaf)) {

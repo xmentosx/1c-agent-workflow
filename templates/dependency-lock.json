@@ -21,14 +21,24 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r36",
-      "commit": "451c5a52e5b614c67406445d4af4b636da043aec",
+      "ref": "itl-main-c1fb8e6-r41",
+      "commit": "84ed7c7a8dcc783159537f41f38196640ffa968c",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
-      "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 36,
+      "upstreamCommit": "c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb",
+      "downstreamRevision": 41,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-09-23T01:33:44Z"
+      "compatibilityCheckedAt": "2026-10-07T02:50:51Z"
+    },
+    "openSpecCli": {
+      "version": "1.13.1",
+      "source": "npm:@fission-ai/openspec@1.13.1",
+      "tarball": "https://registry.npmjs.org/@fission-ai/openspec/-/openspec-1.13.1.tgz",
+      "integrity": "sha512-UHJSV2n6ohjfRaJLvi526avOohFS/orCjM+7JPgvDzuEJbCCkykKfP2fp3gcsvthDLeWolMRT5JAE08MSPnr8Q==",
+      "packageLockSha256": "7fa9c50d3a7e194687346641755beffadb33c03486411e92fc3f84c09a5e06d4",
+      "scope": "project-versioned",
+      "minimumNode": "20.19.0",
+      "sourceRegistry": "https://registry.npmjs.org/"
     },
     "agentBrowser": {
       "version": "0.33.1",
@@ -84,14 +94,14 @@
     "vanessaAutomation": {
       "version": "1.2.043.42",
       "compatibilityVersion": "1.2.043.42",
-      "downstreamRevision": "itl-r1",
-      "assetName": "vanessa-automation-single.1.2.043.42-itl-r1.zip",
-      "releaseTag": "vanessa-automation-v1.2.043.42-itl-r1",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r1/vanessa-automation-single.1.2.043.42-itl-r1.zip",
-      "sha256": "749614bc295e05e813b92c689a22538c1d13caf8369827227f4edf782c5da6bc",
-      "epfSha256": "849c5067af4a6694c85b27cd358f35be73c93ff83fc3586541c22ae885288c16",
-      "manifestSha256": "f735d2e203e10309f07f7cca3d929b5c119b86aa0ac3ff317dcfea1457fbc52d",
-      "patchSha256": "316c4f4419ae8b50aa7a49b95cd5a43637165a61cc681db006e6ec47971101b5",
+      "downstreamRevision": "itl-r4",
+      "assetName": "vanessa-automation-single.1.2.043.42-itl-r4.zip",
+      "releaseTag": "vanessa-automation-v1.2.043.42-itl-r4",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r4/vanessa-automation-single.1.2.043.42-itl-r4.zip",
+      "sha256": "84aabfbf77511abd432c235625afb543aa3c182654e08a24bda3c4312c7d5f4c",
+      "epfSha256": "b1e5d7111115b6cea4fdf64774f31de2f485579f024e6af81c2b361ecabd4e1b",
+      "manifestSha256": "83c607e966714bb9bfb77837238adfdf4284f039b0ab38713bb7c437b269efbe",
+      "patchSha256": "8238207473428a147f69f5bc4693f2b11d2d59569344be255f375db7aa3fdc38",
       "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
       "source": "workflow-pinned"
     },
@@ -107,18 +117,28 @@
     "vanessaMcp": {
       "clientMcp": {
         "version": "v0.6.5",
-        "assetName": "client_mcp.cfe",
-        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe",
-        "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f",
-        "source": "template baseline",
-        "updatedAt": "2026-05-26T19:34:34Z"
+        "downstreamRevision": "itl-r1",
+        "manifestSha256": "33a6bf635d4690b9556019f8333bf58a70fc6cffa1a4fd9d22c980db7fb1e8bf",
+        "upstreamCommit": "3f6a066913057c2d6f2d61c0b429fd0707ab271b",
+        "assetName": "client_mcp.v0.6.5-itl-r1.cfe",
+        "releaseTag": "client-mcp-v0.6.5-itl-r1",
+        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.cfe",
+        "sha256": "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6",
+        "source": "workflow-pinned",
+        "correspondingSource": {
+          "assetName": "client_mcp.v0.6.5-itl-r1.sources.zip",
+          "releaseTag": "client-mcp-v0.6.5-itl-r1",
+          "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.sources.zip",
+          "sha256": "409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc",
+          "source": "workflow-pinned"
+        }
       },
       "vaExtension": {
         "version": "1.2.043.42",
-        "assetName": "VAExtension.1.32-itl-r1.cfe",
-        "releaseTag": "vanessa-automation-v1.2.043.42-itl-r1",
-        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r1/VAExtension.1.32-itl-r1.cfe",
-        "sha256": "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5",
+        "assetName": "VAExtension.1.32-itl-r4.cfe",
+        "releaseTag": "vanessa-automation-v1.2.043.42-itl-r4",
+        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r4/VAExtension.1.32-itl-r4.cfe",
+        "sha256": "24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c",
         "protocol": "itl-file-code-v1",
         "source": "workflow-pinned",
         "updatedAt": "2026-09-26T18:04:00Z"

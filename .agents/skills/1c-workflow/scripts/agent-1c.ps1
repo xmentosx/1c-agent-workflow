@@ -1,9 +1,15 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "provision-openspec-cli", "openspec-context", "openspec-new-change", "openspec-archive-change", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
+    [ValidateSet("", "status", "restore", "reconcile")]
+    [string]$WorkflowUpdateRecovery = "",
+    [string]$WorkflowUpdateSnapshotId = "",
+    [string]$WorkflowUpdateReconciliationFile = "",
+    [string]$OpenSpecChangeId = "",
+    [switch]$OpenSpecArchiveSkipSpecs,
     [string]$ConfigPath,
     [string]$DevBranchName,
     [switch]$CleanupDryRun,
@@ -98,6 +104,11 @@ param(
     [ValidateSet("", "yaxunit", "vanessa", "event-log", "all")]
     [string]$ExplicitVerificationComponent = "",
     [string]$RepairSessionId = "",
+    [string]$VerificationObligationId = "",
+    [string]$VerificationEvidencePath = "",
+    [ValidateSet("", "canonical-repair", "scenario-loop")]
+    [string]$VerificationRepairKind = "",
+    [int]$VerificationRepairMaxAttempts = 0,
     [string[]]$ConfigObjectPaths = @(),
     [switch]$PublishToWeb,
     [switch]$Force,
@@ -249,6 +260,8 @@ function Get-Agent1cReexecArguments {
     $arguments = [System.Collections.Generic.List[string]]::new()
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value (Resolve-Agent1cFullPath -Path $ProjectRoot)
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecChangeId" -Value $OpenSpecChangeId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecArchiveSkipSpecs" -Value $OpenSpecArchiveSkipSpecs
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value (Resolve-Agent1cFullPath -Path $ConfigPath)
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchName" -Value $DevBranchName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PeerDevBranchName" -Value $PeerDevBranchName
@@ -304,6 +317,10 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RepairSessionId" -Value $RepairSessionId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationObligationId" -Value $VerificationObligationId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationEvidencePath" -Value $VerificationEvidencePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationRepairKind" -Value $VerificationRepairKind
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationRepairMaxAttempts" -Value $(if ($VerificationRepairMaxAttempts -ne 0) { $VerificationRepairMaxAttempts } else { $null })
     if ($ConfigObjectPaths.Count -gt 0) { Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigObjectPaths" -Value ($ConfigObjectPaths -join ",") }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToWeb" -Value $PublishToWeb
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Force" -Value $Force
@@ -399,6 +416,8 @@ $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
 $script:Agent1cModuleFiles = @(
     "agent-1c.immutable-download.ps1",
     "agent-1c.core.ps1",
+    "agent-1c.package-content.ps1",
+    "agent-1c.openspec-cli.ps1",
     "agent-1c.ports.ps1",
     "agent-1c.sessions.ps1",
     "agent-1c.vanessa.ps1",
@@ -409,8 +428,13 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.vibecoding1c-mcp.ps1",
     "agent-1c.data-mcp.ps1",
     "agent-1c.roctup-mcp.ps1",
+    "agent-1c.platform-evidence.ps1",
+    "agent-1c.platform-diagnostics.ps1",
+    "agent-1c.platform-impact.ps1",
     "agent-1c.lifecycle.ps1",
+    "agent-1c.jsonc.ps1",
     "agent-1c.client-adapters.ps1",
+    "agent-1c.client-opencode.ps1",
     "agent-1c.ui-tools.ps1",
     "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
@@ -487,8 +511,14 @@ try {
         "publish-dev-branch" { Publish-DevBranch }
         "install-vanessa-automation" { Install-VanessaAutomation }
         "install-yaxunit" { Install-YAxUnit | Out-Null }
+        "provision-openspec-cli" { Provision-ItlOpenSpecCli | Out-Null }
+        "openspec-context" { Show-ItlOpenSpecContext -ChangeId $OpenSpecChangeId }
+        "openspec-new-change" { Invoke-ItlLocalOpenSpecNewChange -ChangeId $OpenSpecChangeId | ConvertTo-Json -Depth 5 -Compress }
+        "openspec-archive-change" { Invoke-ItlLocalOpenSpecArchiveChange -ChangeId $OpenSpecChangeId -SkipSpecs:$OpenSpecArchiveSkipSpecs | ConvertTo-Json -Depth 7 -Compress }
         "repair-dev-branch-tooling" { Repair-DevBranchTooling }
         "begin-verification-repair" { Start-ItlVerificationRepairSession }
+        "begin-one-off-proof" { Start-VerificationOneOffProof -ObligationId $VerificationObligationId -Force:$Force | ConvertTo-Json -Depth 8 -Compress }
+        "complete-one-off-proof" { Complete-VerificationOneOffProof -EvidencePath $VerificationEvidencePath | ConvertTo-Json -Depth 8 -Compress }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
         "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
@@ -505,7 +535,7 @@ try {
         "update-ai-rules" { Update-AiRules1c }
         "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
         "itl-repository-mode" { Set-SourceRepositoryUpdateMode -Mode $Mode }
-        "itl-switch-client" { Switch-ItlClient -Client $Client; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "itl-switch-client" { Switch-ItlClient -Client $Client -Mode $Mode }
         "update1cbase" { Invoke-ItlUpdate1cBaseBridge }
         "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }

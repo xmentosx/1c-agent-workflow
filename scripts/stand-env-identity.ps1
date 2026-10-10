@@ -1,3 +1,18 @@
+function Enter-SourceE2EClientMcpBuildScope {
+    # Derive before a helper rereads its persisted project paths. This transient
+    # source is confined to the actual E2E journey, never the Full Pester host.
+    $name = 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE'
+    $scope = [pscustomobject]@{ previousValue = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    [Environment]::SetEnvironmentVariable($name, [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process'), 'Process')
+    return $scope
+}
+
+function Exit-SourceE2EClientMcpBuildScope {
+    param([AllowNull()][object]$Scope)
+    if ($null -ne $Scope) {
+        [Environment]::SetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', $Scope.previousValue, 'Process')
+    }
+}
 Set-StrictMode -Version Latest
 
 # Source qualification chooses a client for each actual installed target. The
@@ -21,6 +36,35 @@ function Resolve-SourceE2EAgentTarget {
     if ($clients.Count -eq 1) { return $clients[0] }
     $choices = if ($clients.Count) { $clients -join ', ' } else { '<configured-client>' }
     throw "SOURCE_E2E_AGENT_TARGET_REQUIRED: unattended E2E target '$ProjectRoot' has $($clients.Count) configured clients ($choices). Repeat the same source-delivery.ps1, check.ps1 or invoke-*-e2e.ps1 command with -AgentTarget '<configured-client>' (choose from: $choices). The installed helper validates membership and attachment."
+}
+
+function Get-SourceE2ENativeLogsPath {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    $root = [IO.Path]::GetFullPath($ProjectRoot)
+    $logsPath = 'logs/1c'
+    $projectPath = Join-Path $root '.agent-1c/project.json'
+    if (Test-Path -LiteralPath $projectPath -PathType Leaf) {
+        $project = Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $property = $project.PSObject.Properties['logsPath']
+        if ($property -and $null -ne $property.Value -and [string]$property.Value -ne '') { $logsPath = [string]$property.Value }
+    }
+    $path = if ([IO.Path]::IsPathRooted($logsPath)) { $logsPath } else { Join-Path $root $logsPath }
+    return [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($path))
+}
+
+function Get-SourceE2EReleaseStand {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    $configPath = Join-Path ([IO.Path]::GetFullPath($ProjectRoot)) '.agent-1c\release-e2e.json'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        throw "Dedicated E2E stand config is missing: $configPath. Start from templates/release-e2e.example.json."
+    }
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $devBranchName = [string]$config.devBranchName
+    $worktreePath = [IO.Path]::GetFullPath([string]$config.worktreePath)
+    if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
+        throw 'release-e2e.json must contain an existing worktreePath and devBranchName.'
+    }
+    return [pscustomobject]@{ config = $config; worktreePath = $worktreePath; devBranchName = $devBranchName }
 }
 
 function Get-SourceE2EClientIdentity {

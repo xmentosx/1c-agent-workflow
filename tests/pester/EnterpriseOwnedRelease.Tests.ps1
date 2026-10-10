@@ -15,18 +15,20 @@
             $script:EnterpriseApplicationProbes = 0
             $script:EnterpriseInventoryReads = 0
             $script:Config = [pscustomobject]@{ logsPath = 'logs'; completionPostExitTimeoutSeconds = 5 }
-            function Resolve-EnterpriseClientExecutablePath { 'fake.exe' }
+            function Resolve-EnterpriseClientExecutablePath { '1cv8c.exe' }
             function Assert-InfoBaseAvailable {}
             function Invoke-OneCSessionAdmissionSet { param($Admissions, $StartProcess) & $StartProcess }
             function Get-CompletionPostExitTimeoutSeconds { 3 }
             function Publish-Agent1cLifecycleOperationProcessEvidence {}
             function Start-Process {
                 if ($Failure -eq 'launch') { throw 'native start outcome unknown' }
-                $process = [pscustomobject]@{ Id = 6100; HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
+                $script:EnterpriseProcessBirth = [DateTime]::UtcNow
+                $process = [pscustomobject]@{ Id = 6100; ProcessName = '1cv8c'; StartTime = $script:EnterpriseProcessBirth; ExitTime = $script:EnterpriseProcessBirth.AddMilliseconds(1); HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
                 $process | Add-Member ScriptMethod Refresh {}
                 $process | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds) $true }
                 return $process
             }
+            function Get-CimInstance { param($ClassName, $Filter, $OperationTimeoutSec, $ErrorAction); return @() }
             function Receive-DesignerProcessEnumeration {
                 param($ProbeState, $LogPath)
                 $script:EnterpriseInventoryReads++
@@ -35,7 +37,7 @@
                 }
                 $inventory = @([pscustomobject]@{ Name = '1cv8c.exe'; ProcessId = 6200; ParentProcessId = 1; CommandLine = 'ENTERPRISE /Out foreign.log' })
                 if ($Failure -eq 'child' -or ($Failure -eq 'delayed-child' -and $script:EnterpriseInventoryReads -gt 1)) {
-                    $inventory += [pscustomobject]@{ Name = '1cv8c.exe'; ProcessId = 6101; ParentProcessId = 6100; CommandLine = 'ENTERPRISE' }
+                    $inventory += [pscustomobject]@{ Name = '1cv8c.exe'; ProcessId = 6101; ParentProcessId = 6100; CreationDate = $script:EnterpriseProcessBirth.AddTicks(10); CommandLine = 'ENTERPRISE' }
                 }
                 [pscustomobject]@{ status = 'completed'; processes = $inventory; infoBaseReleaseChecked = $false; infoBaseReleased = $false }
             }

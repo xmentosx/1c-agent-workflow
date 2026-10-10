@@ -1,0 +1,879 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+    $context = Initialize-WorkflowPesterContext
+    $helperPath = $context.HelperPath
+
+    function New-MovedWorkflowUpdateFixture {
+        param([string]$Root, [string]$RepositoryRoot)
+        $main = Join-Path $Root 'Основной проект'
+        $old = Join-Path $Root 'Старый внешний/Рабочая ветка'
+        $moved = Join-Path $Root 'Новый внешний/Рабочая ветка'
+        $source = Join-Path $Root 'Кандидат пакета'
+        New-Item -ItemType Directory -Force -Path $main, (Split-Path -Parent $old), (Split-Path -Parent $moved), $source | Out-Null
+        & git -C $main init --quiet
+        & git -C $main symbolic-ref HEAD refs/heads/master
+        & git -C $main config user.email 'workflow-transition@example.invalid'
+        & git -C $main config user.name 'Workflow Transition Test'
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        [IO.File]::WriteAllText((Join-Path $main '.gitignore'), ".agent-1c/`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $main 'workflow.txt'), 'old', $utf8)
+        [IO.File]::WriteAllText((Join-Path $main 'business.txt'), 'before', $utf8)
+        $cutover = '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $main $cutover)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $RepositoryRoot $cutover) -Destination (Join-Path $main $cutover)
+        $packageContent = '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $main $packageContent)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $RepositoryRoot $packageContent) -Destination (Join-Path $main $packageContent)
+        & git -C $main add --all
+        & git -C $main commit --quiet -m base
+        & git -C $main worktree add --quiet -b itldev/moved $old
+        if ($LASTEXITCODE -ne 0) { throw 'Fixture worktree creation failed' }
+        $runtimeFields = @('eventLogBaselinePath','lastVanessaStatusPath','lastVerifiedReportPath',
+            'lastVanessaEventLogBaselinePath','forkHistoryPath','vanessaMcpVaExtensionInstallLogPath',
+            'devBranchInfoBasePath','verificationClassificationInventoryPath','lastConfigPartialLogPath',
+            'vanessaServiceInfoBasePath','lastConfigBaseUpdateListFile','lastVanessaLogPath',
+            'lastVerificationLogPath','lastEnterpriseAutoUpdateLogPath','worktreePath','lastLogPath',
+            'lastVanessaParamsPath','lastEnterpriseAutoUpdateEpfPath','lastVanessaReportPath',
+            'vanessaMcpClientMcpInstallLogPath','eventLogPendingCursorPath')
+        $state = [ordered]@{devBranchName='moved';safeDevBranchName='moved';devBranch='itldev/moved';
+            createdWithWorktree=$true;mainWorktreePath=$main;initializationStatus='ready'}
+        foreach ($name in $runtimeFields) { $state[$name] = Join-Path $old ('.agent-1c/runtime/' + $name) }
+        $state.worktreePath = $old
+        $cursorRelative = '.agent-1c/event-log-cursors/pending.json'
+        $state.eventLogPendingCursorPath = Join-Path $old $cursorRelative
+        $stateRelative = '.agent-1c/dev-branches/moved.json'
+        $recordRelative = '.agent-1c/locks/lifecycle-operation.json'
+        foreach ($relative in @($stateRelative, $cursorRelative, $recordRelative)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $old $relative)) | Out-Null
+        }
+        [IO.File]::WriteAllText((Join-Path $old $stateRelative), ($state | ConvertTo-Json), $utf8)
+        [IO.File]::WriteAllText((Join-Path $old $cursorRelative), '{"cursor":"keep pending Я"}', $utf8)
+        [IO.File]::WriteAllText((Join-Path $old $recordRelative), '{"status":"failed","action":"refresh-dev-branch","operationId":"keep moved"}', $utf8)
+        [IO.File]::WriteAllText((Join-Path $old 'business.txt'), 'staged business Я', $utf8)
+        & git -C $old add -- business.txt
+        [IO.File]::WriteAllText((Join-Path $old 'business.txt'), 'unstaged business Я', $utf8)
+        & git -C $main worktree move $old $moved
+        if ($LASTEXITCODE -ne 0) { throw 'Real Git worktree move failed' }
+        [IO.File]::WriteAllText((Join-Path $source 'workflow.txt'), 'new', $utf8)
+        return [pscustomobject]@{main=$main;old=$old;moved=$moved;runtimeFields=$runtimeFields;
+            statePath=(Join-Path $moved $stateRelative);cursorPath=(Join-Path $moved $cursorRelative);
+            recordPath=(Join-Path $moved $recordRelative);
+            source=[pscustomobject]@{root=$source;repo='fixture';ref='candidate';commit=('2' * 40);source='path'}}
+    }
+}
+
+Describe 'Package update in a moved registered worktree' {
+    It 'updates and resumes only package files after a real Git move without rebinding runtime state' {
+        $fixture = New-MovedWorkflowUpdateFixture -Root $TestDrive -RepositoryRoot $context.RepoRoot
+        $beforeState = [IO.File]::ReadAllBytes($fixture.statePath)
+        $beforeCursor = [IO.File]::ReadAllBytes($fixture.cursorPath)
+        $beforeRecord = [IO.File]::ReadAllBytes($fixture.recordPath)
+        $beforeHead = (& git -C $fixture.moved rev-parse HEAD).Trim()
+        $beforeIndex = (& git -C $fixture.moved rev-parse ':business.txt').Trim()
+        $fixture.runtimeFields | Should -HaveCount 21
+        Test-Path -LiteralPath $fixture.old | Should -BeFalse
+        $proof = & {
+            . $helperPath -ProjectRoot $fixture.moved -Action help -SkipAiRules *> $null
+            $state = Read-DevBranchState -Name ''
+            { Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'itl-check' } |
+                Should -Throw '*must be run from the development branch worktree*'
+            (Find-GitWorktreeByBranch -Branch 'itldev/moved').path | Should -Be $fixture.moved.Replace('\','/')
+            Write-Host ('Registered moved worktree: ' + $fixture.moved)
+            function Get-WorkflowPackageCopyDirectoryPaths { @() }
+            function Get-WorkflowPackageCopyFilePaths { @('workflow.txt') }
+            function Get-WorkflowUpdateSnapshotRelativePaths { @('workflow.txt') }
+            function Remove-LegacyWorkflowManagedFiles {}
+            function Update-WorkflowPackageLockEntry { param([object]$Source) }
+            function Invoke-WorkflowPackageFilePostCopy { [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()} }
+            function Get-WorkflowUpdateManagedPathSpecs { @('workflow.txt') }
+            function Set-ItlOnDemandMcpSemanticReloadRequiredAction { param([string]$Operation) }
+            $script:movedOriginalGuard = ${function:Enable-WorkflowExecutionGuardForCurrentRoot}
+            $script:movedLoseAcknowledgement = $true
+            function Enable-WorkflowExecutionGuardForCurrentRoot {
+                if ($script:movedLoseAcknowledgement) {
+                    $script:movedLoseAcknowledgement = $false
+                    throw 'lost moved branch commit acknowledgement'
+                }
+                & $script:movedOriginalGuard
+            }
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $fixture.source *> $null } |
+                Should -Throw '*lost moved branch commit acknowledgement*'
+            $committed = Get-CurrentCommit
+            $committed | Should -Not -Be $beforeHead
+            (Get-WorkflowUpdatePendingSnapshot).receipt.phase | Should -Be 'branch-commit-ready'
+            $resumed = Invoke-WorkflowDevelopmentBranchUpdate -Source $fixture.source
+            $resumed.status | Should -Be 'completed'
+            $resumed.commit | Should -Be $committed
+            $again = Invoke-WorkflowDevelopmentBranchUpdate -Source $fixture.source
+            $again.commit | Should -Be $committed
+            @(Get-GitPathList -Arguments @('diff','--cached','--name-only','-z')) | Should -Be @('business.txt')
+            @(Get-GitPathList -Arguments @('diff-tree','--no-commit-id','--name-only','-z','-r',$committed)) | Should -Be @('workflow.txt')
+            [pscustomobject]@{head=Get-CurrentCommit;pending=Get-WorkflowUpdatePendingSnapshot}
+        }
+        $proof.pending | Should -BeNullOrEmpty
+        [IO.File]::ReadAllText((Join-Path $fixture.moved 'workflow.txt')) | Should -Be 'new'
+        [IO.File]::ReadAllText((Join-Path $fixture.moved 'business.txt')) | Should -Be 'unstaged business Я'
+        (& git -C $fixture.moved rev-parse ':business.txt').Trim() | Should -Be $beforeIndex
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($fixture.statePath)) | Should -Be ([Convert]::ToBase64String($beforeState))
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($fixture.cursorPath)) | Should -Be ([Convert]::ToBase64String($beforeCursor))
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($fixture.recordPath)) | Should -Be ([Convert]::ToBase64String($beforeRecord))
+        Test-Path -LiteralPath $fixture.old | Should -BeFalse
+    }
+
+    It 'rejects <Mismatch> before changing package files or state' -ForEach @(
+        @{Mismatch='foreign-repository'}, @{Mismatch='foreign-branch'}
+    ) {
+        $fixture = New-MovedWorkflowUpdateFixture -Root (Join-Path $TestDrive $Mismatch) -RepositoryRoot $context.RepoRoot
+        $target = $fixture.moved
+        if ($Mismatch -eq 'foreign-repository') {
+            $target = Join-Path $TestDrive 'Чужой репозиторий'
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            & git -C $target init --quiet
+            & git -C $target symbolic-ref HEAD refs/heads/itldev/moved
+            & git -C $target config user.email 'workflow-transition@example.invalid'
+            & git -C $target config user.name 'Workflow Transition Test'
+            [IO.File]::WriteAllText((Join-Path $target 'workflow.txt'), 'foreign package', [Text.UTF8Encoding]::new($false))
+            & git -C $target add --all
+            & git -C $target commit --quiet -m foreign
+            $statePath = Join-Path $target '.agent-1c/dev-branches/moved.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $statePath) | Out-Null
+            Copy-Item -LiteralPath $fixture.statePath -Destination $statePath
+        } else {
+            $statePath = $fixture.statePath
+            $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $state.devBranch = 'itldev/another'
+            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        }
+        $stateHash = (Get-FileHash -LiteralPath $statePath).Hash
+        $packageHash = (Get-FileHash -LiteralPath (Join-Path $target 'workflow.txt')).Hash
+        $head = (& git -C $target rev-parse HEAD).Trim()
+        & {
+            . $helperPath -ProjectRoot $target -Action help -SkipAiRules *> $null
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $fixture.source *> $null } |
+                Should -Throw '*WORKFLOW_UPDATE_WORKTREE_IDENTITY_MISMATCH*'
+        }
+        (Get-FileHash -LiteralPath $statePath).Hash | Should -Be $stateHash
+        (Get-FileHash -LiteralPath (Join-Path $target 'workflow.txt')).Hash | Should -Be $packageHash
+        (& git -C $target rev-parse HEAD).Trim() | Should -Be $head
+        Test-Path -LiteralPath (Join-Path $target '.agent-1c/snapshots/workflow-update') | Should -BeFalse
+    }
+}
+
+Describe 'Workflow commit over a stopped development merge' {
+    It 'admits parent-proven staged managed merge results and blocks later user edits or foreign merge identity' {
+        $root = Join-Path $TestDrive 'Штатный pending merge с пробелами'
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'),(Join-Path $root 'openspec') | Out-Null
+        & git -C $root init --quiet
+        & git -C $root symbolic-ref HEAD refs/heads/master
+        & git -C $root config user.email 'workflow-transition@example.invalid'
+        & git -C $root config user.name 'Workflow Transition Test'
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/dev-branches/`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root 'AGENTS.md'), "branch rules`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root 'business.txt'), "base`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root 'openspec/project.md'), "generated context`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"schemaVersion":1}', $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), '{"schemaVersion":1,"dependencies":{}}', $utf8)
+        $branchManifest = [ordered]@{
+            protocol='1.1'; tools=@('codex'); updatedAt='2026-09-30T12:00:00Z'
+            files=[ordered]@{
+                'AGENTS.md'=@{source='AGENTS.md';installedHash=(Get-FileHash -LiteralPath (Join-Path $root 'AGENTS.md')).Hash.ToLowerInvariant()}
+                'openspec/project.md'=@{source='<auto-generated:1c-rules>';installedHash=(Get-FileHash -LiteralPath (Join-Path $root 'openspec/project.md')).Hash.ToLowerInvariant()}
+            }
+            foreignFiles=@{codex=@('known-host.md')}; contributions=@{ITL=@{owner='ITL';files=@()}}
+            integrations=@{openspec=@{detected=$true;projectMdGenerated=$true}}
+        }
+        [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'), ($branchManifest|ConvertTo-Json -Depth 30), $utf8)
+        & git -C $root add --all
+        & git -C $root commit --quiet -m base
+        & git -C $root branch itldev/eligibility
+        [IO.File]::WriteAllText((Join-Path $root 'AGENTS.md'), "incoming rules`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root 'business.txt'), "master intent`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"schemaVersion":1,"masterDefault":true}', $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), '{"schemaVersion":1,"dependencies":{"workflowPackage":{"commit":"1111111111111111111111111111111111111111"}}}', $utf8)
+        $targetManifest = [ordered]@{
+            protocol='1.1'; tools=@('codex'); updatedAt='2026-09-30T12:00:00Z'
+            files=[ordered]@{'AGENTS.md'=@{source='AGENTS.md';installedHash=(Get-FileHash -LiteralPath (Join-Path $root 'AGENTS.md')).Hash.ToLowerInvariant()}}
+            foreignFiles=@{codex=@('known-host.md','target-host.md')}; contributions=@{ITL=@{owner='ITL';files=@()}}
+            integrations=@{openspec=@{detected=$true}}
+        }
+        [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'), ($targetManifest|ConvertTo-Json -Depth 30), $utf8)
+        & git -C $root add --all
+        & git -C $root commit --quiet -m target
+        $target = ([string](& git -C $root rev-parse HEAD)).Trim()
+        & git -C $root checkout --quiet itldev/eligibility
+        [IO.File]::WriteAllText((Join-Path $root 'business.txt'), "branch intent`n", $utf8)
+        & git -C $root add -- business.txt
+        & git -C $root commit --quiet -m branch
+        $original = ([string](& git -C $root rev-parse HEAD)).Trim()
+        & git -C $root merge --no-edit master 2>$null
+        $LASTEXITCODE | Should -Be 1
+        # Retain the branch-owned generated context while accepting the
+        # immutable incoming rules and known foreign contributions.
+        $resolved = $targetManifest | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $resolved.files | Add-Member -NotePropertyName 'openspec/project.md' -NotePropertyValue $branchManifest.files.'openspec/project.md'
+        $resolved.integrations.openspec | Add-Member -NotePropertyName projectMdGenerated -NotePropertyValue $true
+        $resolvedText = $resolved | ConvertTo-Json -Depth 30
+        [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'), $resolvedText, $utf8)
+        & git -C $root add -- '.ai-rules.json'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c/dev-branches') | Out-Null
+        $statePath = Join-Path $root '.agent-1c/dev-branches/eligibility.json'
+        $proof = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $allowed = @(Get-DevBranchMergeIndexPaths)
+            $state = @{name='eligibility';devBranch='itldev/eligibility';worktreePath=$root;devBranchInfoBasePath=(Join-Path $root '.agent-1c/infobases/fixture');infoBaseKind='file';pendingMergeOperation='refresh-dev-branch';pendingMergeBranch='itldev/eligibility';pendingMergeBranchCommit=$original;pendingMergeTargetCommit=$target;pendingMergeStage='conflicts';pendingMergePaths=$allowed}
+            $stateText = $state | ConvertTo-Json -Depth 20
+            [IO.File]::WriteAllText($statePath,$stateText,$utf8)
+            $initial = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            $businessStages = @(Get-GitPathListAt -Root $root -Arguments @('ls-files','--unmerged','-z'))
+            [IO.File]::WriteAllText((Join-Path $root 'AGENTS.md'),"late user edit`n",$utf8)
+            Invoke-Git @('add','--','AGENTS.md')
+            $lateStaged = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            $forged = $resolvedText | ConvertFrom-Json
+            $forged.files.'AGENTS.md'.installedHash = (Get-FileHash -LiteralPath (Join-Path $root 'AGENTS.md')).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'),($forged|ConvertTo-Json -Depth 30),$utf8)
+            Invoke-Git @('add','--','.ai-rules.json')
+            $forgedStaged = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            [IO.File]::WriteAllText((Join-Path $root 'AGENTS.md'),"incoming rules`n",$utf8)
+            [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'),$resolvedText,$utf8)
+            Invoke-Git @('add','--','AGENTS.md','.ai-rules.json')
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"schemaVersion":1,"masterDefault":true,"lateEdit":true}',$utf8)
+            $lateUnstaged = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"schemaVersion":1,"masterDefault":true}',$utf8)
+            $state.pendingMergeTargetCommit = $original
+            [IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 20),$utf8)
+            $foreignTarget = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            $state.pendingMergeTargetCommit = $target
+            $state.pendingMergeBranchCommit = $target
+            [IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 20),$utf8)
+            $foreignHead = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            $state.pendingMergeBranchCommit = $original
+            $state.pendingMergePaths = @($allowed|Where-Object{$_ -cne 'AGENTS.md'})
+            [IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 20),$utf8)
+            $unknownOwnership = @(Get-WorkflowUpdateRootWriteSetConflicts -Root $root)
+            [IO.File]::WriteAllText($statePath,$stateText,$utf8)
+            [pscustomobject]@{initial=$initial;lateStaged=$lateStaged;forgedStaged=$forgedStaged;lateUnstaged=$lateUnstaged;foreignTarget=$foreignTarget;foreignHead=$foreignHead;unknownOwnership=$unknownOwnership;businessBefore=$businessStages;businessAfter=@(Get-GitPathListAt -Root $root -Arguments @('ls-files','--unmerged','-z'));head=Get-CurrentCommit;mergeHead=(Read-Utf8Text -Path ((Get-GitOutput @('rev-parse','--path-format=absolute','--git-path','MERGE_HEAD')).Trim())).Trim()}
+        }
+        $proof.initial | Should -HaveCount 0
+        $proof.lateStaged | Should -Contain 'AGENTS.md'
+        $proof.forgedStaged | Should -Contain '.ai-rules.json'
+        $proof.lateUnstaged | Should -Contain '.agent-1c/project.json'
+        $proof.foreignTarget | Should -Contain 'AGENTS.md'
+        $proof.foreignHead | Should -Contain 'AGENTS.md'
+        $proof.unknownOwnership | Should -Contain 'AGENTS.md'
+        ($proof.businessAfter -join "`0") | Should -Be ($proof.businessBefore -join "`0")
+        $proof.head | Should -Be $original
+        $proof.mergeHead | Should -Be $target
+        $manifestProof = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            # Match the production JSON-decoding boundary for all three
+            # inputs, including PS7's typed timestamp representation.
+            $branchManifest = $branchManifest|ConvertTo-Json -Depth 30|ConvertFrom-Json
+            $targetManifest = $targetManifest|ConvertTo-Json -Depth 30|ConvertFrom-Json
+            $candidate = $resolvedText|ConvertFrom-Json
+            $valid = Test-AiRulesPendingMergeManifestProvenance -Root $root -Candidate $candidate -Branch $branchManifest -Target $targetManifest
+            $candidate.foreignFiles.codex += 'arbitrary-user-owner.md'
+            $foreign = Test-AiRulesPendingMergeManifestProvenance -Root $root -Candidate $candidate -Branch $branchManifest -Target $targetManifest
+            $candidate = $resolvedText|ConvertFrom-Json
+            $candidate.files.'AGENTS.md'|Add-Member -NotePropertyName template -NotePropertyValue $true
+            $template = Test-AiRulesPendingMergeManifestProvenance -Root $root -Candidate $candidate -Branch $branchManifest -Target $targetManifest
+            $candidate = $resolvedText|ConvertFrom-Json
+            $candidate.files.PSObject.Properties.Remove('AGENTS.md')
+            $missing = Test-AiRulesPendingMergeManifestProvenance -Root $root -Candidate $candidate -Branch $branchManifest -Target $targetManifest
+            [pscustomobject]@{valid=$valid;foreign=$foreign;template=$template;missing=$missing}
+        }
+        $manifestProof.valid | Should -BeTrue
+        $manifestProof.foreign | Should -BeFalse
+        $manifestProof.template | Should -BeFalse
+        $manifestProof.missing | Should -BeFalse
+    }
+
+    It 'reports invalid merge manifest with bounded typed diagnostics and retains its original bytes' {
+        $root = Join-Path $TestDrive 'Повреждённый manifest с пробелом'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & git -C $root init --quiet
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $text = '{"privateBodyMarker":"' + ('retained diagnostic input ' * 1000)
+        [IO.File]::WriteAllText($manifestPath,$text,[Text.UTF8Encoding]::new($false))
+        $before = (Get-FileHash -LiteralPath $manifestPath).Hash
+        $errorText = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            try { Get-WorkflowUpdateRootWriteSetConflicts -Root $root; '' } catch { $_.Exception.Message }
+        }
+        $errorText | Should -Match '^WORKFLOW_UPDATE_RULES_MANIFEST_INVALID:'
+        $errorText | Should -Match 'type=.*; id='
+        $errorText.Length | Should -BeLessThan 900
+        $errorText | Should -Not -Match 'privateBodyMarker|retained diagnostic input'
+        (Get-FileHash -LiteralPath $manifestPath).Hash | Should -Be $before
+    }
+
+    It 'preserves every managed path and staged business when workflow argv exceeds the Windows limit' {
+        $root = Join-Path $TestDrive 'Большое обновление workflow с пробелами'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & git -C $root init --quiet
+        & git -C $root symbolic-ref HEAD refs/heads/itldev/large
+        & git -C $root config user.email 'workflow-transition@example.invalid'
+        & git -C $root config user.name 'Workflow Transition Test'
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'),".agent-1c/`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'business.txt'),'before',[Text.UTF8Encoding]::new($false))
+        $paths = @(1..420 | ForEach-Object { "managed/$_ Путь с пробелами и апострофом' сохранение полного набора файлов SKILL.md" })
+        New-Item -ItemType Directory -Path (Join-Path $root 'managed') | Out-Null
+        foreach ($path in $paths) { [IO.File]::WriteAllText((Join-Path $root $path),'before',[Text.UTF8Encoding]::new($false)) }
+        & git -C $root add --all
+        & git -C $root commit --quiet -m base
+        $LASTEXITCODE | Should -Be 0
+        foreach ($path in $paths) { [IO.File]::WriteAllText((Join-Path $root $path),'after',[Text.UTF8Encoding]::new($false)) }
+        [IO.File]::WriteAllText((Join-Path $root 'business.txt'),'staged business',[Text.UTF8Encoding]::new($false))
+        & git -C $root add -- business.txt
+        $indexPath = ([string](& git -C $root rev-parse --path-format=absolute --git-path index)).Trim()
+        $indexHash = (Get-FileHash -LiteralPath $indexPath).Hash
+        $businessBefore = [string](& git -C $root show ':business.txt')
+        $outcome = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $literals = @($paths | ForEach-Object { ':(literal)' + $_ })
+            (Join-NativeCommandLineArguments -Arguments (@('-C',$root,'-c','core.quotepath=false','ls-files','--stage','-z','--')+$literals)).Length | Should -BeGreaterThan 32767
+            $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @('managed')
+            (Get-FileHash -LiteralPath $indexPath).Hash | Should -Be $indexHash
+            @($plan.managedPaths).Count | Should -Be $paths.Count
+            @($plan.indexStateBefore).Count | Should -Be $paths.Count
+            $actual = @(Get-GitPathList -Arguments @('diff-tree','--no-commit-id','--name-only','-r','-z',$plan.newHead,'--'))
+            @($paths | Where-Object { $actual -cnotcontains $_ }).Count | Should -Be 0
+            @($actual | Where-Object { $paths -cnotcontains $_ }).Count | Should -Be 0
+            # Old receipts can have a different valid record order; compare
+            # their exact NUL records without changing the persisted receipt.
+            [Array]::Reverse($plan.indexStateBefore)
+            Apply-WorkflowBranchCommitPlan -Plan $plan | Out-Null
+            [pscustomobject]@{head=Get-CurrentCommit;candidate=$plan.newHead;staged=@(Get-GitPathList -Arguments @('diff','--cached','--name-only','-z'))}
+        }
+        $outcome.head | Should -Be $outcome.candidate
+        @($outcome.staged).Count | Should -Be 1
+        $outcome.staged[0] | Should -Be 'business.txt'
+        ([string](& git -C $root show ':business.txt')) | Should -Be $businessBefore
+        foreach ($path in $paths) { [IO.File]::ReadAllText((Join-Path $root $path)) | Should -Be 'after' }
+    }
+
+    It 'returns no partial branch plan when a later literal-path read batch fails' {
+        $root = Join-Path $TestDrive 'Ошибка второй пачки с пробелами'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'managed') | Out-Null
+        & git -C $root init --quiet
+        & git -C $root symbolic-ref HEAD refs/heads/itldev/batch-failure
+        & git -C $root config user.email 'workflow-transition@example.invalid'
+        & git -C $root config user.name 'Workflow Transition Test'
+        $paths = @(1..420 | ForEach-Object { "managed/$_ Полный набор управляемых файлов с пробелами и кириллицей SKILL.md" })
+        foreach ($path in $paths) { [IO.File]::WriteAllText((Join-Path $root $path),'before',[Text.UTF8Encoding]::new($false)) }
+        & git -C $root add --all
+        & git -C $root commit --quiet -m base
+        $before = ([string](& git -C $root rev-parse HEAD)).Trim()
+        $indexPath = ([string](& git -C $root rev-parse --path-format=absolute --git-path index)).Trim()
+        $indexHash = (Get-FileHash -LiteralPath $indexPath).Hash
+        foreach ($path in $paths) { [IO.File]::WriteAllText((Join-Path $root $path),'after',[Text.UTF8Encoding]::new($false)) }
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:originalPaths = (Get-Command Get-GitPathList).ScriptBlock
+            $script:stageReads = 0
+            function Get-GitPathList {
+                param([string[]]$Arguments)
+                if ($Arguments -contains '--stage') {
+                    $script:stageReads++
+                    if ($script:stageReads -eq 2) { throw 'original second batch failure' }
+                }
+                & $script:originalPaths -Arguments $Arguments
+            }
+            $plan = @()
+            $failure = try { $plan = @(New-WorkflowBranchCommitPlan -ManagedPathSpecs @('managed')); '' } catch { $_.Exception.Message }
+            [pscustomobject]@{failure=$failure;planCount=$plan.Count;stageReads=$script:stageReads}
+        }
+        $result.failure | Should -Be 'original second batch failure'
+        $result.planCount | Should -Be 0
+        $result.stageReads | Should -Be 2
+        ([string](& git -C $root rev-parse HEAD)).Trim() | Should -Be $before
+        (Get-FileHash -LiteralPath $indexPath).Hash | Should -Be $indexHash
+        @(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c') -Filter 'workflow-branch-index-*' -Recurse -ErrorAction SilentlyContinue).Count | Should -Be 0
+    }
+
+    It 'recovers a stopped branch update with current code before installing a newer immutable payload' {
+        $branch = Join-Path $TestDrive 'Остановленный update ветки'
+        $requiredSourceFiles = @('install-agent-1c-workflow.ps1','AGENT-INSTALL.md',
+            '.agents/skills/1c-workflow/scripts/agent-1c.ps1','.agents/skills/1c-workflow-fast/SKILL.md',
+            '.agents/skills/product-docs/SKILL.md','.agents/skills/itl-roctup-1c-data/SKILL.md',
+            '.agents/skills/itl-vanessa-ui-mcp/SKILL.md','.agents/skills/itl-remote-runner/SKILL.md',
+            '.agents/skills/itl-remote-agent/SKILL.md','.agents/skills/itl-performance/SKILL.md',
+            'templates/USER-RULES.append.md')
+        $sources = @()
+        foreach ($version in @('A','B')) {
+            $sourceRoot = Join-Path $TestDrive "Неизменный пакет $version"
+            foreach ($relative in @($requiredSourceFiles + 'workflow.txt')) {
+                $path = Join-Path $sourceRoot $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path, $version, [Text.UTF8Encoding]::new($false))
+            }
+            & git -C $sourceRoot init --quiet
+            & git -C $sourceRoot config user.email 'workflow-transition@example.invalid'
+            & git -C $sourceRoot config user.name 'Workflow Transition Test'
+            & git -C $sourceRoot add --all
+            & git -C $sourceRoot commit --quiet -m "immutable package $version"
+            $sources += [pscustomobject]@{root=$sourceRoot;repo='fixture';ref=$version;commit=([string](& git -C $sourceRoot rev-parse HEAD)).Trim();source='path'}
+        }
+        New-Item -ItemType Directory -Force -Path $branch | Out-Null
+        & git -C $branch init --quiet
+        & git -C $branch symbolic-ref HEAD refs/heads/itldev/stopped
+        & git -C $branch config user.email 'workflow-transition@example.invalid'
+        & git -C $branch config user.name 'Workflow Transition Test'
+        foreach ($entry in @(@('.gitignore',".agent-1c/`n"),@('workflow.txt','before'),@('business.txt','before'))) {
+            [IO.File]::WriteAllText((Join-Path $branch $entry[0]),$entry[1],[Text.UTF8Encoding]::new($false))
+        }
+        & git -C $branch add --all
+        & git -C $branch commit --quiet -m base
+        [IO.File]::WriteAllText((Join-Path $branch 'business.txt'),'staged business',[Text.UTF8Encoding]::new($false))
+        & git -C $branch add -- business.txt
+        $recordPath = Join-Path $branch '.agent-1c/locks/lifecycle-operation.json'
+        $recordText = '{"status":"failed","action":"refresh-dev-branch","operationId":"preserve"}'
+        $statePath = Join-Path $branch '.agent-1c/dev-branches/stopped.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $recordPath),(Split-Path -Parent $statePath) | Out-Null
+        [IO.File]::WriteAllText($recordPath,$recordText,[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($statePath,'{"devBranchName":"stopped","devBranchInfoBasePath":""}',[Text.UTF8Encoding]::new($false))
+        $hadOverride = Test-Path Env:ITL_WORKFLOW_SOURCE_PATH
+        $previousOverride = $env:ITL_WORKFLOW_SOURCE_PATH
+        try {
+            & {
+                . $helperPath -ProjectRoot $branch -Action help -SkipAiRules *> $null
+                function Get-WorkflowPackageCopyDirectoryPaths { @() }
+                function Get-WorkflowPackageCopyFilePaths { @('workflow.txt') }
+                $script:retiredPaths = @('.agents/skills/1c-metadata-manage/docs/form-patterns.md',
+                    '.agents/skills/1c-metadata-manage/docs/ssl-patterns.md',
+                    '.codex/rules/dev-standards-core.md','.codex/rules/development-process.md',
+                    '.codex/rules/rule-index.md','.codex/rules/verification-checklist.md')
+                $oldManifest = [ordered]@{files=[ordered]@{}}
+                foreach ($retired in $script:retiredPaths) {
+                    $retiredFile = Join-Path $branch $retired
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $retiredFile) | Out-Null
+                    [IO.File]::WriteAllText($retiredFile,'old managed rule',[Text.UTF8Encoding]::new($false))
+                    $oldManifest.files[$retired]=@{source=$retired;installedHash=(Get-FileHash -LiteralPath $retiredFile).Hash.ToLowerInvariant()}
+                }
+                [IO.File]::WriteAllText((Join-Path $branch '.ai-rules.json'),($oldManifest|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+                $unknown = Join-Path $branch '.codex/rules/user-extra.md'
+                [IO.File]::WriteAllText($unknown,'owned by user',[Text.UTF8Encoding]::new($false))
+                Invoke-Git (@('add','--','.ai-rules.json','.codex/rules/user-extra.md')+$script:retiredPaths)
+                Invoke-Git @('commit','--quiet','-m','original exact managed retirement inventory')
+                # Restore the preexisting staged business after the setup commit.
+                [IO.File]::WriteAllText((Join-Path $branch 'business.txt'),'staged business after inventory',[Text.UTF8Encoding]::new($false))
+                Invoke-Git @('add','--','business.txt')
+                [IO.File]::WriteAllText($unknown,'unrelated user policy stays dirty',[Text.UTF8Encoding]::new($false))
+                function Get-WorkflowUpdateSnapshotRelativePaths { param($SourceRoot,$AiRulesPathsAfter); @('workflow.txt','.ai-rules.json')+$script:retiredPaths }
+                function Get-WorkflowUpdateManagedPathSpecs { param($AiRulesPathsBefore,$ClientSurfacePathsBefore); @('workflow.txt','.ai-rules.json') }
+                function Remove-LegacyWorkflowManagedFiles {}
+                function Update-WorkflowPackageLockEntry { param($Source) }
+                function Enable-WorkflowExecutionGuardForCurrentRoot {}
+                function Set-ItlOnDemandMcpSemanticReloadRequiredAction { param($Operation) }
+                $script:stopOld = $true
+                $script:postCopyPayloads = @()
+                function Invoke-WorkflowPackageFilePostCopy {
+                    if ($script:stopOld) {
+                        foreach ($retired in $script:retiredPaths) { Remove-Item -LiteralPath (Join-Path $script:ProjectRoot $retired) }
+                        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot '.ai-rules.json'),'{"files":{}}',[Text.UTF8Encoding]::new($false))
+                        throw 'original helper defect after manifest retirements'
+                    }
+                    $script:postCopyPayloads += [IO.File]::ReadAllText((Join-Path $script:ProjectRoot 'workflow.txt'))
+                    $env:ITL_WORKFLOW_SOURCE_PATH | Should -Be @($sources | Where-Object ref -EQ $script:postCopyPayloads[-1])[0].root
+                    [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()}
+                }
+                $env:ITL_WORKFLOW_SOURCE_PATH = $sources[0].root
+                { Invoke-WorkflowDevelopmentBranchUpdate -Source $sources[0] *> $null } | Should -Throw '*WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE*original helper defect*'
+                $pending = Get-WorkflowUpdatePendingSnapshot
+                $pending.receipt.phase | Should -Be 'post-copy-failed'
+                $savedManifestRow=@($pending.snapshot.records|Where-Object relativePath -EQ '.ai-rules.json')[0]
+                $savedManifest=Read-Utf8Text $savedManifestRow.backupPath|ConvertFrom-Json
+                foreach($retired in $script:retiredPaths) {
+                    $null -ne $savedManifest.files.PSObject.Properties[$retired] | Should -BeTrue
+                    @($pending.snapshot.records.relativePath) | Should -Contain $retired
+                }
+                $script:stopOld = $false
+                $lateFile = Join-Path $branch $script:retiredPaths[0]
+                [IO.File]::WriteAllText($lateFile,'late user contribution',[Text.UTF8Encoding]::new($false))
+                { Invoke-WorkflowDevelopmentBranchUpdate -Source $sources[0] *> $null } | Should -Throw '*WORKFLOW_UPDATE_RECONCILIATION_REQUIRED*'
+                [IO.File]::ReadAllText($lateFile) | Should -Be 'late user contribution'
+                Remove-Item -LiteralPath $lateFile
+                $env:ITL_WORKFLOW_SOURCE_PATH = $sources[1].root
+                [IO.File]::WriteAllText((Join-Path $sources[0].root 'workflow.txt'),'changed pinned source',[Text.UTF8Encoding]::new($false))
+                { Invoke-WorkflowDevelopmentBranchUpdate -Source $sources[1] *> $null } | Should -Throw '*WORKFLOW_UPDATE_SOURCE_CHANGED*'
+                [IO.File]::ReadAllText((Join-Path $branch 'workflow.txt')) | Should -Be 'A'
+                [IO.File]::WriteAllText((Join-Path $sources[0].root 'workflow.txt'),'A',[Text.UTF8Encoding]::new($false))
+                $result = Invoke-WorkflowDevelopmentBranchUpdate -Source $sources[1]
+                $result.status | Should -Be 'completed'
+                $script:postCopyPayloads | Should -Be @('A','B')
+                $env:ITL_WORKFLOW_SOURCE_PATH | Should -Be $sources[1].root
+                [IO.File]::ReadAllText((Join-Path $branch 'workflow.txt')) | Should -Be 'B'
+                [IO.File]::ReadAllText($recordPath) | Should -Be $recordText
+                @(Get-GitPathListAt -Root $branch -Arguments @('diff','--cached','--name-only','-z')) | Should -Be @('business.txt')
+                [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -Be 'staged business after inventory'
+                @(Get-GitPathList -Arguments @('diff','--name-only','-z')) | Should -Be @('.codex/rules/user-extra.md')
+                [IO.File]::ReadAllText($unknown) | Should -Be 'unrelated user policy stays dirty'
+                foreach($retired in $script:retiredPaths) { @(Get-GitPathList -Arguments @('ls-files','-z','--',(':(literal)'+$retired))).Count | Should -Be 0 }
+                $null -eq (Get-WorkflowUpdatePendingSnapshot) | Should -BeTrue
+                $capsules = @(Get-ChildItem -LiteralPath (Join-Path $branch '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*' | ForEach-Object { Read-Utf8Text -Path (Join-Path $_.FullName 'transaction.json') | ConvertFrom-Json })
+                $capsules | Should -HaveCount 2
+                $recovered = @($capsules | Where-Object sourceCommit -EQ $sources[0].commit)[0]
+                $recovered.recoveryExecutorCommit | Should -Be $sources[1].commit
+                $recovered.sourceRoot | Should -Be $sources[0].root
+                # A backup-only prepared attempt has no applied old payload;
+                # it can restart with B even if the unused old checkout is gone.
+                $prepared = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('workflow.txt') -SnapshotParent (Join-Path $branch '.agent-1c/snapshots/workflow-update')
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $prepared -Source ([pscustomobject]@{root=(Join-Path $TestDrive 'Missing unused source');commit=('1'*40)}) -Phase prepared
+                $result = Invoke-WorkflowDevelopmentBranchUpdate -Source $sources[1]
+                $result.status | Should -Be 'completed'
+                $null -eq (Get-WorkflowUpdatePendingSnapshot) | Should -BeTrue
+                [IO.File]::ReadAllText($recordPath) | Should -Be $recordText
+                @(Get-GitPathListAt -Root $branch -Arguments @('diff','--cached','--name-only','-z')) | Should -Be @('business.txt')
+            }
+        } finally { if ($hadOverride) {$env:ITL_WORKFLOW_SOURCE_PATH=$previousOverride} else {Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue} }
+    }
+
+    It 'runs a branch file update without replacing a failed lifecycle record or staged business work' {
+        $branch = Join-Path $TestDrive 'Ветка файлового обновления'
+        $source = Join-Path $TestDrive 'Точный кандидат'
+        New-Item -ItemType Directory -Force -Path $branch, $source | Out-Null
+        & git -C $branch init --quiet
+        & git -C $branch symbolic-ref HEAD refs/heads/itldev/stopped
+        & git -C $branch config user.email 'workflow-transition@example.invalid'
+        & git -C $branch config user.name 'Workflow Transition Test'
+        [IO.File]::WriteAllText((Join-Path $branch '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'old', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $branch 'business.txt'), 'before', [Text.UTF8Encoding]::new($false))
+        $cutoverPath = Join-Path $branch '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cutoverPath) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1') -Destination $cutoverPath
+        $packageContentPath = Join-Path (Split-Path -Parent $cutoverPath) 'lib/agent-1c.package-content.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $packageContentPath) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1') -Destination $packageContentPath
+        & git -C $branch add --all
+        $legacyCheckpoint = Join-Path $branch '.agent-1c/execution-checkpoints/legacy.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyCheckpoint) | Out-Null
+        [IO.File]::WriteAllText($legacyCheckpoint, '{"recovery":"preserve"}', [Text.UTF8Encoding]::new($false))
+        & git -C $branch add -f -- '.agent-1c/execution-checkpoints/legacy.json'
+        & git -C $branch commit --quiet -m base
+        $before = (& git -C $branch rev-parse HEAD).Trim()
+        [IO.File]::WriteAllText((Join-Path $branch 'business.txt'), 'staged business', [Text.UTF8Encoding]::new($false))
+        & git -C $branch add -- business.txt
+        $recordPath = Join-Path $branch '.agent-1c/locks/lifecycle-operation.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $recordPath) | Out-Null
+        $recordText = '{"status":"failed","action":"refresh-dev-branch","operationId":"kept"}'
+        [IO.File]::WriteAllText($recordPath, $recordText, [Text.UTF8Encoding]::new($false))
+        $statePath = Join-Path $branch '.agent-1c/dev-branches/stopped.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $statePath) | Out-Null
+        [IO.File]::WriteAllText($statePath, '{"devBranchName":"stopped","devBranchInfoBasePath":""}', [Text.UTF8Encoding]::new($false))
+        $sourceCandidate = [pscustomobject]@{
+            root=$source;repo='fixture';ref='candidate';commit=('2' * 40);source='path' }
+        $interrupted = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $SkipAiRules = $true
+            function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @('workflow.txt') }
+            function Copy-WorkflowManagedDirectory { param([string]$SourceRoot,[string]$RelativePath)
+                [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'workflow.txt'), 'new', [Text.UTF8Encoding]::new($false)) }
+            function Copy-WorkflowManagedFile { param([string]$SourceRoot,[string]$RelativePath) }
+            function Remove-LegacyWorkflowManagedFiles {}
+            function Update-WorkflowPackageLockEntry { param([object]$Source) }
+            function Invoke-WorkflowPackageFilePostCopy { [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()} }
+            function Get-WorkflowUpdateManagedPathSpecs { param([string[]]$AiRulesPathsBefore,[string[]]$ClientSurfacePathsBefore); @('workflow.txt') }
+            function Set-ItlOnDemandMcpSemanticReloadRequiredAction { param([string]$Operation) }
+            function Enable-WorkflowExecutionGuardForCurrentRoot { throw 'simulated lost acknowledgement after branch commit' }
+            try { Invoke-WorkflowDevelopmentBranchUpdate -Source $sourceCandidate | Out-Null; 'not-interrupted' }
+            catch { $_.Exception.Message }
+        }
+        $interrupted | Should -Match 'simulated lost acknowledgement'
+        $candidateCommit = (& git -C $branch rev-parse HEAD).Trim()
+        $candidateCommit | Should -Not -Be $before
+        $snapshotRoot = @(Get-ChildItem -LiteralPath (Join-Path $branch '.agent-1c/snapshots/workflow-update') -Directory)
+        $snapshotRoot | Should -HaveCount 1
+        (Get-Content -LiteralPath (Join-Path $snapshotRoot[0].FullName 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json).phase |
+            Should -Be 'branch-commit-ready'
+        [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'late user edit', [Text.UTF8Encoding]::new($false))
+        $lateEdit = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $SkipAiRules = $true
+            try { Invoke-WorkflowDevelopmentBranchUpdate -Source $sourceCandidate | Out-Null; 'not-blocked' }
+            catch { $_.Exception.Message }
+        }
+        $lateEdit | Should -Match 'WORKFLOW_UPDATE_RECONCILIATION_REQUIRED.*workflow.txt'
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $candidateCommit
+        [IO.File]::ReadAllText((Join-Path $branch 'workflow.txt')) | Should -Be 'late user edit'
+        [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'new', [Text.UTF8Encoding]::new($false))
+        $updated = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $SkipAiRules = $true
+            function Set-ItlOnDemandMcpSemanticReloadRequiredAction { param([string]$Operation) }
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $sourceCandidate
+        }
+        $updated.status | Should -Be 'completed'
+        $updated.commit | Should -Be $candidateCommit
+        [IO.File]::ReadAllText($recordPath) | Should -Be $recordText
+        [IO.File]::ReadAllText($legacyCheckpoint) | Should -Be '{"recovery":"preserve"}'
+        @(& git -C $branch ls-files -- '.agent-1c/execution-checkpoints/legacy.json') | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $branch '.agent-1c/execution-guard-generation.json') -Raw -Encoding UTF8 | ConvertFrom-Json).generation | Should -Be 'execution-guards-v2'
+        [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -Be 'staged business'
+        @(& git -C $branch diff --cached --name-only) | Should -Be @('business.txt')
+        @(& git -C $branch diff-tree --no-commit-id --name-only -r HEAD) | Should -Contain 'workflow.txt'
+        @(& git -C $branch diff-tree --no-commit-id --name-only -r HEAD) | Should -Contain '.agent-1c/execution-checkpoints/legacy.json'
+        @(Get-ChildItem -LiteralPath (Join-Path $branch '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*') | Should -BeNullOrEmpty
+        $completed = @(Get-ChildItem -LiteralPath (Join-Path $branch '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*')
+        $completed | Should -HaveCount 1
+        $receipt = Get-Content -LiteralPath (Join-Path $completed[0].FullName 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.preUpdateHead | Should -Be $before
+        $receipt.completedHead | Should -Be $candidateCommit
+        [IO.File]::ReadAllText((Join-Path $completed[0].FullName $receipt.records[0].backupName)) | Should -Be 'old'
+    }
+
+    It 'preserves the merge target, conflict index, and original checkpoint while advancing only the workflow parent <UpdateCount> times' -ForEach @(
+        @{UpdateCount=1},
+        @{UpdateCount=2}
+    ) {
+        $scenarioRoot = if ($UpdateCount -eq 2) { Join-Path $TestDrive 'Повтор обновления workflow' } else { $TestDrive }
+        $main = Join-Path $scenarioRoot 'Главный проект'
+        $branch = Join-Path $scenarioRoot 'Ветка с пробелом'
+        New-Item -ItemType Directory -Force -Path $main | Out-Null
+        & git -C $main init --quiet
+        & git -C $main symbolic-ref HEAD refs/heads/master
+        & git -C $main config user.email 'workflow-transition@example.invalid'
+        & git -C $main config user.name 'Workflow Transition Test'
+        [IO.File]::WriteAllText((Join-Path $main '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $main 'workflow.txt'), 'old workflow', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $main 'business.txt'), 'base', [Text.UTF8Encoding]::new($false))
+        & git -C $main add --all
+        & git -C $main commit --quiet -m base
+        & git -C $main branch itldev/paused
+        & git -C $main worktree add --quiet $branch itldev/paused
+        [IO.File]::WriteAllText((Join-Path $main 'business.txt'), 'master target', [Text.UTF8Encoding]::new($false))
+        & git -C $main add business.txt
+        & git -C $main commit --quiet -m target
+        $target = (& git -C $main rev-parse HEAD).Trim()
+        [IO.File]::WriteAllText((Join-Path $branch 'business.txt'), 'branch work', [Text.UTF8Encoding]::new($false))
+        & git -C $branch add business.txt
+        & git -C $branch commit --quiet -m 'branch work'
+        $before = (& git -C $branch rev-parse HEAD).Trim()
+        & git -C $branch merge --no-edit master *> $null
+        $LASTEXITCODE | Should -Not -Be 0
+        $mergeHeadPath = (& git -C $branch rev-parse --git-path MERGE_HEAD).Trim()
+        Test-Path -LiteralPath $mergeHeadPath -PathType Leaf | Should -BeTrue
+
+        $snapshot = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $item = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('workflow.txt') `
+                -SnapshotParent (Join-Path $branch '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $item `
+                -Source ([pscustomobject]@{root='C:\qualified source';commit=('1' * 40)}) -Phase prepared
+            $item
+        }
+        [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'new workflow', [Text.UTF8Encoding]::new($false))
+        $plan = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $candidate = New-WorkflowBranchCommitPlan -ManagedPathSpecs @('workflow.txt')
+            Save-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot -Plan $candidate
+            Read-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot
+        }
+        Test-Path -LiteralPath (Join-Path $snapshot.root 'branch-commit.json') -PathType Leaf | Should -BeTrue
+        $workflowCommit = [string]$plan.newHead
+        $plan.oldHead | Should -Be $before
+        $workflowCommit | Should -Not -Be $before
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $before
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+
+        $state = [pscustomobject]@{
+            safeDevBranchName = 'paused'
+            devBranchName = 'paused'
+            devBranch = 'itldev/paused'
+            devBranchInfoBasePath = ''
+            stateProjectRoot = $branch
+            pendingMergeOperation = 'refresh-dev-branch'
+            pendingMergeBranch = 'itldev/paused'
+            pendingMergeBranchCommit = $before
+            pendingMergeTargetCommit = $target
+            pendingMergeStage = 'conflicts'
+            pendingMergePaths = @('business.txt')
+            pendingMergeConflictPaths = @('business.txt')
+        }
+        $wrongState = [pscustomobject]@{}
+        foreach ($property in @($state.PSObject.Properties)) {
+            $wrongState | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value
+        }
+        $wrongState.pendingMergeBranchCommit = $target
+        $wrongCheckpoint = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            try { Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $wrongState *> $null; '' }
+            catch { $_.Exception.Message }
+        }
+        $wrongCheckpoint | Should -Match 'WORKFLOW_UPDATE_PENDING_MERGE_CHECKPOINT_CHANGED'
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $before
+        $planPath = Join-Path $snapshot.root 'branch-commit.json'
+        $untouchedPlan = [IO.File]::ReadAllText($planPath)
+        $tamperedPlan = $untouchedPlan | ConvertFrom-Json
+        $tamperedPlan.managedPaths = @('workflow.txt', 'business.txt')
+        $tamperedPlan.managedPathSpecs = @('workflow.txt', 'business.txt')
+        [IO.File]::WriteAllText($planPath, ($tamperedPlan | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        $tampered = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            try { Read-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot *> $null; '' }
+            catch { $_.Exception.Message }
+        }
+        $tampered | Should -Match 'WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID.*before snapshot'
+        [IO.File]::WriteAllText($planPath, $untouchedPlan, [Text.UTF8Encoding]::new($false))
+        $foreignBlob = ('foreign staged workflow' | & git -C $branch hash-object -w --stdin).Trim()
+        & git -C $branch update-index --add --cacheinfo "100644,$foreignBlob,workflow.txt"
+        $LASTEXITCODE | Should -Be 0
+        $blocked = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            try { Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state *> $null; '' }
+            catch { $_.Exception.Message }
+        }
+        $blocked | Should -Match 'WORKFLOW_UPDATE_BRANCH_INDEX_CHANGED'
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $before
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+        & git -C $branch reset --quiet $before -- workflow.txt
+        $LASTEXITCODE | Should -Be 0
+        # Simulate a stopped updater immediately after moving the workflow
+        # branch ref, before it repaired the owned index or merge checkpoint.
+        & git -C $branch update-ref $plan.branchRef $workflowCommit $before
+        $LASTEXITCODE | Should -Be 0
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $workflowCommit
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+        $state.pendingMergeBranchCommit | Should -Be $before
+        $applied = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state
+        }
+        $applied.changed | Should -BeTrue
+        $record = Get-Content -LiteralPath (Join-Path $branch '.agent-1c/dev-branches/paused.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $record.pendingMergeBranchCommit | Should -Be $workflowCommit
+        $record.pendingMergeOriginalBranchCommit | Should -Be $before
+        $record.pendingMergeTargetCommit | Should -Be $target
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+        $repeat = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState (Read-DevBranchState -Name paused)
+        }
+        $repeat.commit | Should -Be $workflowCommit
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+        @(& git -C $branch diff --name-only --diff-filter=U) | Should -Contain 'business.txt'
+        @(& git -C $branch diff --cached --name-only -- workflow.txt) | Should -BeNullOrEmpty
+        [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -Match '<<<<<<<'
+        [IO.File]::ReadAllText((Join-Path $branch 'workflow.txt')) | Should -Be 'new workflow'
+
+        if ($UpdateCount -eq 2) {
+            $secondSnapshot = & {
+                . $helperPath -ProjectRoot $branch -Action help *> $null
+                $item = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('workflow.txt') `
+                    -SnapshotParent (Join-Path $branch '.agent-1c/snapshots/workflow-update')
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $item `
+                    -Source ([pscustomobject]@{root='C:\qualified source';commit=('2' * 40)}) -Phase prepared
+                $item
+            }
+            [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'newer fixed workflow', [Text.UTF8Encoding]::new($false))
+            $secondPlan = & {
+                . $helperPath -ProjectRoot $branch -Action help *> $null
+                $candidate = New-WorkflowBranchCommitPlan -ManagedPathSpecs @('workflow.txt')
+                Save-WorkflowBranchCommitPlanReceipt -Snapshot $secondSnapshot -Plan $candidate
+                Read-WorkflowBranchCommitPlanReceipt -Snapshot $secondSnapshot
+            }
+            $secondPlan.oldHead | Should -Be $workflowCommit
+            $secondInterrupted = & {
+                . $helperPath -ProjectRoot $branch -Action help *> $null
+                $script:RealWorkflowAdvance = (Get-Command Advance-PendingDevBranchMergeForWorkflowUpdate).ScriptBlock
+                function Advance-PendingDevBranchMergeForWorkflowUpdate {
+                    param($State,$OldHead,$NewHead,$ManagedPathSpecs)
+                    & $script:RealWorkflowAdvance -State $State -OldHead $OldHead -NewHead $NewHead `
+                        -ManagedPathSpecs $ManagedPathSpecs | Out-Null
+                    throw 'lost acknowledgement after the second real checkpoint advance'
+                }
+                try {
+                    Apply-WorkflowBranchCommitPlan -Plan $secondPlan -PendingMergeState (Read-DevBranchState -Name paused) | Out-Null
+                    'unexpected-completion'
+                } catch { $_.Exception.Message }
+            }
+            $secondInterrupted | Should -Be 'lost acknowledgement after the second real checkpoint advance'
+            $workflowCommit = [string]$secondPlan.newHead
+            ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $workflowCommit
+            ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+            $advanced = Get-Content -LiteralPath (Join-Path $branch '.agent-1c/dev-branches/paused.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $advanced.pendingMergeBranchCommit | Should -Be $workflowCommit
+            $advanced.pendingMergeOriginalBranchCommit | Should -Be $before
+            $advanced.pendingMergeTargetCommit | Should -Be $target
+            foreach ($wrongAnchor in @($target, ('0' * 40), $workflowCommit)) {
+                $wrongOriginal = $advanced | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+                $wrongOriginal.pendingMergeOriginalBranchCommit = $wrongAnchor
+                $rejected = & {
+                    . $helperPath -ProjectRoot $branch -Action help *> $null
+                    try { Apply-WorkflowBranchCommitPlan -Plan $secondPlan -PendingMergeState $wrongOriginal | Out-Null; 'not-blocked' }
+                    catch { $_.Exception.Message }
+                }
+                $rejected | Should -Match 'WORKFLOW_UPDATE_PENDING_MERGE_CHECKPOINT_CHANGED'
+                ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $workflowCommit
+                ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+            }
+            $secondRepeat = & {
+                . $helperPath -ProjectRoot $branch -Action help *> $null
+                $recorded = Read-WorkflowBranchCommitPlanReceipt -Snapshot $secondSnapshot
+                Apply-WorkflowBranchCommitPlan -Plan $recorded -PendingMergeState (Read-DevBranchState -Name paused)
+            }
+            $secondRepeat.commit | Should -Be $workflowCommit
+            ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $workflowCommit
+            ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+            @(& git -C $branch diff --cached --name-only -- workflow.txt) | Should -BeNullOrEmpty
+            [IO.File]::ReadAllText((Join-Path $branch 'workflow.txt')) | Should -Be 'newer fixed workflow'
+        }
+
+        $pausedRefresh = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $script:DevBranchName = 'paused'
+            try {
+                Resume-DevBranchLifecycleMergeIfPresent -State (Read-DevBranchState -Name paused) `
+                    -Operation 'refresh-dev-branch' -ConflictStage 'refresh.merge-conflicts' | Out-Null
+                'unexpected-completion'
+            } catch { $_.Exception.Message }
+        }
+        $pausedRefresh | Should -Match 'LIFECYCLE_MERGE_'
+        ((& git -C $branch rev-parse HEAD).Trim()) | Should -Be $workflowCommit
+        ((& git -C $branch rev-parse MERGE_HEAD).Trim()) | Should -Be $target
+
+        [IO.File]::WriteAllText((Join-Path $branch 'business.txt'), 'branch work + master target', [Text.UTF8Encoding]::new($false))
+        & git -C $branch add -- business.txt
+        $completed = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $script:DevBranchName = 'paused'
+            function Sync-AiRules1cManagedIgnoredFilesFromMain { param($State) }
+            function Assert-OneCConfigurationSourceIntegrity { param($ExportPath,$AdditionalPaths) }
+            function Restart-Agent1cAfterDevBranchMerge { param($Operation) throw 'ITL_TEST_POST_MERGE_RESTART' }
+            $saved = Read-DevBranchState -Name paused
+            $restart = try { Resume-DevBranchLifecycleMergeIfPresent -State $saved -Operation 'refresh-dev-branch' -ConflictStage 'refresh.merge-conflicts' | Out-Null; '' } catch { $_.Exception.Message }
+            $saved = Read-DevBranchState -Name paused
+            $pending = Get-PendingDevBranchMergeTransaction -State $saved
+            [pscustomobject]@{ restart=$restart; pending=$pending }
+        }
+        $mergeCommit = (& git -C $branch rev-parse HEAD).Trim()
+        $completed.restart | Should -Be 'ITL_TEST_POST_MERGE_RESTART'
+        $completed.pending.stage | Should -Be 'merged'
+        $completed.pending.branchCommit | Should -Be $workflowCommit
+        $completed.pending.originalBranchCommit | Should -Be $before
+        $completed.pending.targetCommit | Should -Be $target
+        $completed.pending.mergeCommit | Should -Be $mergeCommit
+        @(& git -C $branch rev-list --parents -n 1 HEAD) | Should -Match ([regex]::Escape("$mergeCommit $workflowCommit $target"))
+
+        [IO.File]::WriteAllText((Join-Path $branch 'workflow.txt'), 'post-merge workflow', [Text.UTF8Encoding]::new($false))
+        $postMerge = & {
+            . $helperPath -ProjectRoot $branch -Action help *> $null
+            $next = New-WorkflowBranchCommitPlan -ManagedPathSpecs @('workflow.txt')
+            Apply-WorkflowBranchCommitPlan -Plan $next -PendingMergeState (Read-DevBranchState -Name paused) | Out-Null
+            $saved = Read-DevBranchState -Name paused
+            $pending = Get-PendingDevBranchMergeTransaction -State $saved
+            [pscustomobject]@{
+                head = Get-CurrentCommit
+                branchCommit = $pending.branchCommit
+                targetCommit = $pending.targetCommit
+                postMergeHead = $pending.postMergeHead
+                resolved = Resolve-DevBranchLifecyclePostMergeHead -State $saved -Transaction $pending -Operation 'refresh-dev-branch'
+            }
+        }
+        $postMerge.head | Should -Be $postMerge.resolved
+        $postMerge.branchCommit | Should -Be $workflowCommit
+        $postMerge.targetCommit | Should -Be $target
+        $postMerge.postMergeHead | Should -Be $mergeCommit
+        [IO.File]::ReadAllText((Join-Path $branch 'business.txt')) | Should -Be 'branch work + master target'
+    }
+}

@@ -107,7 +107,9 @@ function Write-Vibecoding1cMcpJsonFile {
         [object]$Value
     )
 
-    Write-Utf8TextIfChanged -Path $Path -Value (($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine) | Out-Null
+    $content = ($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine
+    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and (Read-Utf8Text -Path $Path) -ceq $content) { return }
+    Write-Utf8TextAtomic -Path $Path -Value $content
 }
 
 function Read-Vibecoding1cMcpState {
@@ -1090,16 +1092,8 @@ function Get-Vibecoding1cMcpProductDocsStatus {
     $clientConfigured = $false
     try {
         $activeClient = Get-ItlActiveClient
-        $adapter = Get-ItlClientAdapter -Client $activeClient
-        $configPath = Join-Path $script:ProjectRoot $adapter.mcpPath
-        if ($activeClient -eq "codex") {
-            $clientConfigured = Test-Vibecoding1cMcpCodexConfigContainsName -Path $configPath -ClientName $clientName
-        } elseif (Test-Path -LiteralPath $configPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            $config = Read-Utf8Text -Path $configPath | ConvertFrom-Json
-            $containerName = $(if ($activeClient -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
-            $container = $config.PSObject.Properties[$containerName].Value
-            $clientConfigured = ($container -and @($container.PSObject.Properties.Name) -contains $clientName)
-        }
+        $entries = Read-ItlClientMcpEntries -Client $activeClient
+        $clientConfigured = $entries.Contains($clientName)
     } catch {
         $clientConfigured = $false
     }
@@ -3324,24 +3318,41 @@ function Get-Vibecoding1cMcpStatusSummary {
     $selection = Read-Vibecoding1cMcpSelection
     $context = Get-Vibecoding1cMcpScopeContext
     $client = ""
+    $inspectionClients = @()
+    $clientSelectionError = ""
+    $clientSelectionStatus = "available"
     try {
         $client = Get-ItlActiveClient
+        $inspectionClients = @($client)
     } catch {
-        $client = ""
+        $clientSelectionError = $_.Exception.Message
+        $clientSelectionStatus = "unavailable"
+        if ($clientSelectionError -match '^ITL_CLIENT_(NOT_ATTACHED|AMBIGUOUS):') {
+            $clientSelectionStatus = $matches[0].TrimEnd(':')
+            # Common status inspects configured surfaces; it does not select
+            # any of them as the invocation client or authorize a write.
+            try {
+                $inspectionClients = @(Get-AgentTargets | ForEach-Object { Get-ItlActiveClient -Client ([string]$_) })
+            } catch {
+                $inspectionClients = @()
+                $clientSelectionError = $_.Exception.Message
+                $clientSelectionStatus = "unavailable"
+            }
+        }
     }
-    $clientConfigKeys = @()
-    if ($client) {
-        $clientConfigKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
+    $clientConfigKeysByClient = @{}
+    foreach ($inspectionClient in $inspectionClients) {
+        $clientConfigKeysByClient[$inspectionClient] = @(Get-ItlClientMcpEndpointKeys -Client $inspectionClient)
     }
     $readyEndpoints = @((Get-Vibecoding1cMcpClientConfigEndpointSet).allEndpoints)
-    $activeEndpoints = @()
-    if ($client) {
-        $activeEndpoints = @($readyEndpoints | Where-Object {
-            $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
-            $clientKey = ConvertTo-ItlClientMcpKey -Name $clientName -Client $client
-            $clientConfigKeys -contains $clientKey
-        })
-    }
+    $activeEndpoints = @($readyEndpoints | Where-Object {
+        $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
+        foreach ($inspectionClient in $inspectionClients) {
+            $clientKey = ConvertTo-ItlClientMcpKey -Name $clientName -Client $inspectionClient
+            if ($clientConfigKeysByClient[$inspectionClient] -contains $clientKey) { return $true }
+        }
+        return $false
+    })
     $currentServers = @(Get-Vibecoding1cMcpCurrentStateServers -IncludeGlobal)
 
     $readyByKey = @{}
@@ -3454,6 +3465,10 @@ function Get-Vibecoding1cMcpStatusSummary {
 
     $state = Read-Vibecoding1cMcpState
     return [pscustomobject]@{
+        invocationClient = $client
+        inspectionClients = @($inspectionClients)
+        clientSelectionStatus = $clientSelectionStatus
+        clientSelectionError = $clientSelectionError
         active = @($active)
         skipped = @($skipped)
         staleServers = @($staleServers)
@@ -3468,6 +3483,9 @@ function Write-Vibecoding1cMcpSummaryLines {
         [string]$Indent = ""
     )
 
+    if ($Summary.PSObject.Properties['clientSelectionStatus'] -and $Summary.clientSelectionStatus -ne "available") {
+        Write-Host "${Indent}vibecoding1c MCP config inspection: clients=[$($Summary.inspectionClients -join ', ')]; read-only; invocation client unavailable ($($Summary.clientSelectionStatus)); membership unchanged."
+    }
     Write-Host "${Indent}vibecoding1c MCP configured servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.active)"
     Write-Host "${Indent}vibecoding1c MCP skipped servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.skipped)"
     Write-Host "${Indent}vibecoding1c MCP stale servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.staleServers)"
@@ -3669,13 +3687,17 @@ function Set-Vibecoding1cMcpManagedTextBlock {
     param(
         [string]$Path,
         [string]$BlockId,
-        [string]$Body
+        [string]$Body,
+        [switch]$PlanOnly,
+        [string]$ExistingText
     )
 
     $start = "# >>> vibecoding1c-mcp $BlockId"
     $end = "# <<< vibecoding1c-mcp $BlockId"
     $text = ""
-    if (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) {
+    if ($PSBoundParameters.ContainsKey('ExistingText')) {
+        $text = $ExistingText
+    } elseif (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) {
         $text = Read-Utf8Text -Path $Path
     }
     $pattern = "(?ms)^" + [regex]::Escape($start) + ".*?^" + [regex]::Escape($end) + "\r?\n?"
@@ -3684,6 +3706,7 @@ function Set-Vibecoding1cMcpManagedTextBlock {
     if ($text -and -not $text.EndsWith([Environment]::NewLine)) {
         $text += [Environment]::NewLine
     }
+    if ($PlanOnly) { return ($text + $block) }
     Write-Utf8TextIfChanged -Path $Path -Value ($text + $block) | Out-Null
 }
 
@@ -3849,21 +3872,32 @@ function Write-Vibecoding1cMcpKiloConfig {
 }
 
 function Write-Vibecoding1cMcpClientConfig {
-    param([string]$Client = "")
+    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces)
 
-    Write-Section "Write vibecoding1c MCP client config"
+    if (-not $PlanOnly) { Write-Section "Write vibecoding1c MCP client config" }
 
-    Ensure-GitIgnore
     $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
-    if (-not $Client) { $Client = Get-ItlActiveClient }
+    $selectedClients = if ($Clients.Count -gt 0) { @($Clients) } else { @($(if ($Client) { $Client } else { Get-ItlActiveClient })) }
     $endpoints = @($endpointSet.allEndpoints | ForEach-Object {
         $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "url" -Default "")
         $toolTimeoutSeconds = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "toolTimeoutSeconds" -Default 300) -Default 300
         if ($name -and $url) { [pscustomobject]@{ name = $name; url = $url; toolTimeoutSeconds = $toolTimeoutSeconds } }
     })
-    $path = Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "vibecoding1c" -Client $client
-    Write-Host "$client project MCP config: $path"
+    $requests = @($selectedClients | ForEach-Object { [pscustomobject]@{client=[string]$_; owner='vibecoding1c'; endpoints=$endpoints; replaceAiRulesServerIds=$ReplaceAiRulesServerIds} })
+    if ($IncludeClientSurfaces) {
+        foreach ($selectedClient in $selectedClients) {
+            $facade = Write-ItlOnDemandMcpClientConfig -Client $selectedClient -PlanOnly
+            if ($null -ne $facade) { $requests += $facade }
+            $ui = Sync-ItlUiToolsMcp -Client $selectedClient -PlanOnly
+            if ($null -ne $ui) { $requests += $ui }
+        }
+    }
+    $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly)
+    if (-not $PlanOnly) {
+        Ensure-GitIgnore
+        Write-Host "Project MCP configs for $($selectedClients -join ', '): $($paths -join ', ')"
+    }
 }
 
 function Show-Vibecoding1cMcpStatus {

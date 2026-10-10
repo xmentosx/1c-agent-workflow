@@ -4,9 +4,9 @@
 
 ## Общее правило готовности
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; direct full-cycle исключений не даёт. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
+Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке доработка под `exportPath`/`extensionsPath` проходит оценку применимых обязательств и fresh passed `/itl-check`; `testsPath` хранит сохраняемые тесты, а достаточное one-off proof не требует фиктивного файла теста. Запущенный runner с zero tests, invalid JUnit или failure остаётся ошибкой. На `master` правка исходников остаётся branch-safety blocker.
 
-Перед тестами алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` экспорт продолжается с предупреждением без подтверждения; закрытие ветки требует отдельного подтверждения.
+Перед тестами алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Режим `off` запрещает автоматический запуск, но не создание теста и не повторное использование уже свежего достаточного proof. При отсутствии такого proof пропуск остаётся partial: `verificationPolicy=block` блокирует result/close, `warn` допускает экспорт с предупреждением; закрытие ветки требует отдельного подтверждения.
 
 ## Процесс
 

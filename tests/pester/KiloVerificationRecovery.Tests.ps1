@@ -134,7 +134,7 @@
             & git -C $tempRoot init *> $null
 
             $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget kilocode *> $null
                 [pscustomobject]@{
                     provenance = Get-KiloFastSkillProvenance
                     output = ((Write-KiloClientSkillProvenanceStatusLines 6>&1) -join "`n")

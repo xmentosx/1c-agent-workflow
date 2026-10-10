@@ -1,6 +1,142 @@
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
+. (Join-Path $PSScriptRoot "stand-env-identity.ps1")
+
+function Get-DevelopE2EInputIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey,
+        [object]$Catalog = $null,
+        [string]$ProjectRoot = '', [string]$AiRulesSource = '', [string]$AgentTarget = '',
+        [object]$ExternalBinding = $null
+    )
+    try {
+        if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot }
+        $projection = Get-DevelopE2EJourneyContractProjection -Catalog $Catalog -Journey $Journey
+        $patterns = @($projection.contracts | ForEach-Object { @($_.paths) })
+        # Conservative source inventory; this is not an installed managed-copy policy.
+        $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
+        $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
+            'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1')
+        # Git inventory is unique. Ordinal ordering also stays identical between
+        # the Core supervisor and its Windows PowerShell checker child.
+        [string[]]$paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('ls-files','-z','--'))
+        [Array]::Sort($paths, [StringComparer]::Ordinal)
+        $inputs = @(foreach ($path in $paths) {
+            $matched = $false
+            foreach ($pattern in $patterns) { if (Test-QualityPathPattern -Path $path -Pattern ([string]$pattern)) { $matched = $true; break } }
+            if (-not $matched) { continue }
+            $physical = Join-Path $RepositoryRoot $path.Replace('/','\')
+            if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { throw 'DEVELOP_INPUT_MISSING' }
+            [ordered]@{ path=$path; sha256=(Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
+        if ($null -eq $ExternalBinding) {
+            if (-not $ProjectRoot -or -not $AiRulesSource) { return $null }
+            $stand = Get-DevelopE2EStandStateSha256 -ProjectRoot $ProjectRoot
+            $files = [ordered]@{}
+            foreach ($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
+                $physical = Join-Path $ProjectRoot $relative.Replace('/','\')
+                if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
+                $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+            }
+            # UI policy affects installed behavior but is not in the older semantic dotenv projection.
+            $ui = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*(?:AGENT_1C_)?UI_TESTING\s*=' })
+            $processValues = [ordered]@{}
+            foreach ($name in @((Get-DeliveryPlanSemanticDotEnvNames) + @('UI_TESTING','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE') | Sort-Object -Unique)) {
+                foreach ($key in @($name, "AGENT_1C_$name")) {
+                    $processValues[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+                }
+            }
+            $artifacts = [ordered]@{}
+            foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                $physical = [Environment]::GetEnvironmentVariable($name,'Process')
+                if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
+                $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $runtime = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { return $null }
+            $platformLine = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*PLATFORM_PATH\s*=' }) | Select-Object -Last 1
+            if (-not $platformLine) { return $null }
+            $platform = ($platformLine.Substring($platformLine.IndexOf('=') + 1)).Trim().Trim('"',"'")
+            if (Test-Path -LiteralPath $platform -PathType Container) { $platform = Join-Path $platform '1cv8.exe' }
+            if (-not (Test-Path -LiteralPath $platform -PathType Leaf)) { return $null }
+            $go = Get-Command go.exe -ErrorAction SilentlyContinue
+            if (-not $go -or -not (Test-Path -LiteralPath $go.Source -PathType Leaf)) { return $null }
+            $ExternalBinding = [ordered]@{
+                complete=$true; standStateSha256=$stand; root=[IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
+                files=$files; uiPolicySha256=Get-DevelopE2ECanonicalJsonSha256 -Value $ui
+                processEnvironmentSha256=Get-DevelopE2ECanonicalJsonSha256 -Value $processValues
+                osKernelSha256=(Get-FileHash -LiteralPath (Join-Path $env:SystemRoot 'System32\kernel32.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); freshProjectsRoot='C:\itlj'
+                client=Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
+                rulesCommit=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD')).stdout.Trim()
+                rulesTree=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
+                artifacts=$artifacts; nativeRuntimeSha256=(Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
+                platformSha256=(Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
+                goSha256=(Get-FileHash -LiteralPath $go.Source -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        }
+        if (-not $ExternalBinding.complete) { return $null }
+        $body = [ordered]@{ schemaVersion=1; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
+        return [pscustomobject]@{ schemaVersion=1; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+    } catch { return $null }
+}
+
+function Test-DevelopE2ENewerJourneyFailure {
+    param([string]$RepositoryRoot, [object]$Report, [string]$CurrentCommit, [string]$CurrentTree, [object]$InputIdentity = $null)
+    $common = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
+    $runRoot = Join-Path $common 'itl/runs'
+    if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $false }
+    foreach ($runFile in @(Get-ChildItem -LiteralPath $runRoot -File -Filter '*-develop-*.json')) {
+        try {
+            $run = Get-Content -LiteralPath $runFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $journey = [string]$Report.journey
+            if ([string]$run.status -ne 'failed' -or [datetime]$run.finishedAt -le [datetime]$Report.finishedAt -or
+                @($run.stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.status -eq 'failed' }).Count -eq 0) { continue }
+            if (-not (Get-Command Get-WorkflowContinuationEndpoint -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'release-qualification.ps1') }
+            if (-not (Get-WorkflowContinuationEndpoint -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$run.commit) -CurrentCommit $CurrentCommit -CurrentTree $CurrentTree)) { continue }
+            # Older failed journeys lack external facts. They cannot authorize a
+            # replay of a pass; only a newer actual execution can resolve them.
+            if ($null -eq $InputIdentity -or -not $run.PSObject.Properties['journeyInputIdentities']) { return $true }
+            $property = $run.journeyInputIdentities.PSObject.Properties[$journey]
+            if (-not $property -or -not $property.Value) { return $true }
+            $failedInput = $property.Value
+            if ((Get-DevelopE2ECanonicalJsonSha256 -Value $failedInput.inventory) -cne [string]$failedInput.fingerprint) { return $true }
+            if ([string]$failedInput.fingerprint -ceq [string]$InputIdentity.fingerprint) { return $true }
+        } catch { return $true }
+    }
+    return $false
+}
+
+function Get-DevelopE2EAncestorQualification {
+    param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity)
+    if ($null -eq $InputIdentity) { return $null }
+    if (-not (Get-Command Get-WorkflowContinuationProof -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'release-qualification.ps1') }
+    $current = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $common = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
+    $root = Join-Path $common 'itl/develop-e2e-qualifications'
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $null }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter manifest.json | Sort-Object LastWriteTimeUtc -Descending)) {
+        try {
+            $manifest = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([int]$manifest.schemaVersion -ne 2 -or [string]$manifest.kind -ne 'itl-develop-e2e-qualification-cache' -or [string]$manifest.identity.journey -ne $Journey -or
+                [string]$manifest.inputIdentity.fingerprint -cne [string]$InputIdentity.fingerprint -or
+                (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$InputIdentity.fingerprint) { continue }
+            $reportPath = Join-Path $file.DirectoryName 'route-report.json'
+            if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) { continue }
+            $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $qualifiedTree = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse',"$([string]$report.repository.commit)^{tree}")).stdout.Trim()
+            if ($qualifiedTree -cne [string]$report.repository.tree -or $qualifiedTree -cne [string]$manifest.identity.tree) { continue }
+            $expectedIdentity = if ($IdentitySha256) { $IdentitySha256 } else { [string]$report.identitySha256 }
+            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 $expectedIdentity -StandStateSha256 $StandStateSha256)) { continue }
+            $continuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
+            if (-not $continuation) { continue }
+            if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) { continue }
+            return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity }
+        } catch { continue }
+    }
+    return $null
+}
 
 function Get-DevelopE2EChangedPaths {
     param(
@@ -267,7 +403,8 @@ function Save-DevelopE2EQualification {
         [Parameter(Mandatory = $true)][string]$Tree,
         [Parameter(Mandatory = $true)][ValidateSet("upgrade", "fresh")][string]$Journey,
         [Parameter(Mandatory = $true)][string]$IdentitySha256,
-        [Parameter(Mandatory = $true)][string]$StandStateSha256
+        [Parameter(Mandatory = $true)][string]$StandStateSha256,
+        [object]$InputIdentity = $null
     )
 
     if (-not (Test-DevelopE2ERouteReport -Path $ReportPath -Tree $Tree -Journey $Journey -IdentitySha256 $IdentitySha256 -StandStateSha256 $StandStateSha256)) {
@@ -283,7 +420,7 @@ function Save-DevelopE2EQualification {
         Copy-Item -LiteralPath $ReportPath -Destination $temporaryReport -Force
         $reportSha256 = (Get-FileHash -LiteralPath $temporaryReport -Algorithm SHA256).Hash.ToLowerInvariant()
         $manifest = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = $(if ($null -eq $InputIdentity) { 1 } else { 2 })
             kind = "itl-develop-e2e-qualification-cache"
             identity = [ordered]@{
                 tree = $Tree
@@ -296,7 +433,8 @@ function Save-DevelopE2EQualification {
             }
             savedAt = [DateTime]::UtcNow.ToString("o")
         }
-        [IO.File]::WriteAllText($temporaryManifest, (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        if ($null -ne $InputIdentity) { $manifest['inputIdentity'] = $InputIdentity }
+        [IO.File]::WriteAllText($temporaryManifest, (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         Move-Item -LiteralPath $temporaryReport -Destination (Join-Path $target "route-report.json") -Force
         Move-Item -LiteralPath $temporaryManifest -Destination (Join-Path $target "manifest.json") -Force
     } finally {
@@ -321,7 +459,7 @@ function Restore-DevelopE2EQualification {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { return $false }
     try {
         $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.kind -ne "itl-develop-e2e-qualification-cache" -or
+        if ([int]$manifest.schemaVersion -notin @(1,2) -or [string]$manifest.kind -ne "itl-develop-e2e-qualification-cache" -or
             [string]$manifest.identity.tree -ne $Tree -or [string]$manifest.identity.reportKind -ne "itl-develop-e2e-route-report" -or
             [string]$manifest.identity.identitySha256 -ne $IdentitySha256 -or [string]$manifest.identity.journey -ne $Journey -or
             [string]$manifest.identity.standStateSha256 -ne $StandStateSha256 -or
@@ -329,6 +467,8 @@ function Restore-DevelopE2EQualification {
             -not (Test-DevelopE2ERouteReport -Path $reportPath -Tree $Tree -Journey $Journey -IdentitySha256 $IdentitySha256 -StandStateSha256 $StandStateSha256)) { return $false }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$manifest.identity.planSha256 -ne [string]$report.planSha256) { return $false }
+        $current = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree) { return $false }
 
         $parent = Split-Path -Parent $OutputPath
         if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }

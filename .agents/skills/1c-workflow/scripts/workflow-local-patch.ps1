@@ -16,6 +16,7 @@ $utf8 = New-Object Text.UTF8Encoding $false
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 . (Join-Path $PSScriptRoot 'lib/agent-1c.core.ps1')
+. (Join-Path $PSScriptRoot 'lib/agent-1c.vanessa.ps1')
 . (Join-Path $PSScriptRoot 'lib/agent-1c.lifecycle.ps1')
 . (Join-Path $PSScriptRoot 'lib/agent-1c.local-patch.ps1')
 if ($Action -eq 'Find') { ConvertTo-Json -InputObject @(Find-WorkflowFixArchive -Query $Query -Limit $Limit) -Depth 5; return }

@@ -7,24 +7,31 @@ param(
     [string]$AgentTarget = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ResumeMode = "Auto",
-    [string]$Capabilities = ""
+    [string]$Capabilities = "",
+    # Internal mutating publication subphase; never used by Plan/readiness.
+    [switch]$RecoverInterruptedExtensionOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-process.ps1")
+$clientMcpBuildScope = $null
+try {
+    $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $AiRulesSource = [System.IO.Path]::GetFullPath($AiRulesSource)
 if (-not (Test-Path -LiteralPath $AiRulesSource -PathType Container)) {
     throw "Release ai_rules source is missing: $AiRulesSource"
 }
-$configPath = Join-Path $ProjectRoot ".agent-1c\release-e2e.json"
-if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-    throw "Dedicated E2E stand config is missing: $configPath. Start from templates/release-e2e.example.json."
-}
-$config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$releaseStand = Get-SourceE2EReleaseStand -ProjectRoot $ProjectRoot
+$config = $releaseStand.config
 
 function Get-E2EReleaseConfigValue {
     param([string]$Name)
@@ -45,11 +52,8 @@ function Get-E2ERecordValue {
     return $property.Value
 }
 
-$devBranchName = [string]$config.devBranchName
-$worktreePath = [System.IO.Path]::GetFullPath([string]$config.worktreePath)
-if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
-    throw "release-e2e.json must contain an existing worktreePath and devBranchName."
-}
+$devBranchName = $releaseStand.devBranchName
+$worktreePath = $releaseStand.worktreePath
 
 function Get-E2EDotEnvValue {
     param([string]$Name)
@@ -212,9 +216,18 @@ function Start-E2EHelperAtRoot {
     foreach ($argument in @($AdditionalArguments)) {
         $parts += (ConvertTo-NativeArgument ([string]$argument))
     }
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
-        -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath -PassThru
+    $jobHandle = [IntPtr]::Zero
+    $ownedJob = $Action -eq 'release-e2e-extension-smoke' -or ($Action -eq 'release-e2e-restore' -and $script:inExtensionRecovery)
+    if ($ownedJob) {
+        $started = Start-DeliveryProcess -ArgumentList ($parts -join " ") -WorkingDirectory $Root `
+            -StandardOutputPath $stdoutPath -StandardErrorPath $stderrPath
+        $process = $started.process
+        $jobHandle = $started.jobHandle
+    } else {
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
+            -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath -PassThru
+    }
     $startedAtUtc = [DateTime]::UtcNow
     try {
         $processStartTime = $process.StartTime
@@ -222,7 +235,7 @@ function Start-E2EHelperAtRoot {
             $startedAtUtc = $processStartTime.ToUniversalTime()
         }
     } catch {}
-    return [pscustomobject]@{
+    $invocation = [pscustomobject]@{
         process = $process
         action = $Action
         root = $Root
@@ -230,7 +243,12 @@ function Start-E2EHelperAtRoot {
         stderrPath = $stderrPath
         startedAtUtc = $startedAtUtc
         exitedAtUtc = $null
+        jobHandle = $jobHandle
+        nativeQuiescent = $false
+        ownedJob = $ownedJob
     }
+    if ($Action -eq 'release-e2e-restore' -and $script:inExtensionRecovery) { $script:lastRecoveryRestoreInvocation = $invocation }
+    return $invocation
 }
 
 function Complete-E2EHelperProcess {
@@ -245,11 +263,18 @@ function Complete-E2EHelperProcess {
         $TimeoutSeconds = [Math]::Min($TimeoutSeconds, $remaining)
     }
     $process = $Invocation.process
+    $ownsJob = $null -ne $Invocation.PSObject.Properties['ownedJob'] -and [bool]$Invocation.ownedJob
     # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
     # unless the native process handle is materialized before the wait.
     $null = $process.Handle
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $process.Kill() } catch {}
+        if ($ownsJob) {
+            $null = Stop-DeliveryProcessJobAndWait -JobHandle $Invocation.jobHandle -Process $process
+            Close-DeliveryProcessJob -JobHandle $Invocation.jobHandle -Process $process
+            $Invocation.jobHandle = [IntPtr]::Zero
+            $Invocation.nativeQuiescent = $true
+            $Invocation.exitedAtUtc = [DateTime]::UtcNow
+        } else { try { $process.Kill() } catch {} }
         if ($AllowFailure) { return [pscustomobject]@{ exitCode = -1; stdoutPath = $Invocation.stdoutPath; stderrPath = $Invocation.stderrPath } }
         throw "$($Invocation.action) timed out after $TimeoutSeconds seconds."
     }
@@ -264,6 +289,12 @@ function Complete-E2EHelperProcess {
     } catch {}
     $Invocation.exitedAtUtc = $exitedAtUtc
     $exitCode = [int]$process.ExitCode
+    if ($ownsJob) {
+        $null = Stop-DeliveryProcessJobAndWait -JobHandle $Invocation.jobHandle -Process $process
+        Close-DeliveryProcessJob -JobHandle $Invocation.jobHandle -Process $process
+        $Invocation.jobHandle = [IntPtr]::Zero
+        $Invocation.nativeQuiescent = $true
+    }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$($Invocation.action) failed with exit code $exitCode. See $($Invocation.stdoutPath) and $($Invocation.stderrPath)"
     }
@@ -607,6 +638,9 @@ function Assert-E2EUnsafeActionProtectionConfirmed {
 function ConvertTo-E2EHashtable {
     param([object]$Value)
     if ($null -eq $Value) { return $null }
+    # Windows PowerShell pipeline wrappers for JSON scalar array elements can
+    # satisfy PSCustomObject. Preserve their values before record recursion.
+    if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
     if ($Value -is [System.Collections.IDictionary]) {
         $result = [ordered]@{}
         foreach ($key in $Value.Keys) { $result[[string]$key] = ConvertTo-E2EHashtable $Value[$key] }
@@ -672,12 +706,15 @@ $crossReleaseReuse = $false
 $previousWorkflowCommit = ""
 $previousRunnerSha256 = ""
 $releaseContinuationProof = $null
+$releaseSourceContinuationRequired = $true
 $continuationBoundaryStage = ""
 $promotedCapabilityPath = ""
 $stageTimers = @{}
 $activeStageName = ""
 $activeStageDeadlineUtc = $null
 $releaseStageBudgets = @{}
+$script:inExtensionRecovery = $false
+$script:lastRecoveryRestoreInvocation = $null
 
 function Write-E2ECheckpoint {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpointPath) | Out-Null
@@ -908,24 +945,17 @@ function Test-E2EStagePassed {
     $record = $checkpoint["stages"][$Name]
     if ([string]$record.status -ne "passed") { return $false }
     $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
-    if ([string]$record.fingerprint -ne $expectedFingerprint) {
-        $stageOrder = @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")
-        $stageIndex = [Array]::IndexOf($stageOrder, $Name)
-        $boundaryIndex = [Array]::IndexOf($stageOrder, $continuationBoundaryStage)
-        $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { "" }
-        $completedReleaseContinuation = $crossReleaseReuse -and $releaseContinuationProof -and -not $continuationBoundaryStage
-        $beforeFailedStage = $boundaryIndex -ge 0 -and $stageIndex -ge 0 -and $stageIndex -lt $boundaryIndex
-        $canRebind = $crossReleaseReuse -and $releaseContinuationProof -and ($completedReleaseContinuation -or $beforeFailedStage) -and
-            [string]$record.fingerprint -eq $legacyFingerprint
-        if ($canRebind) {
-            $record["fingerprint"] = $expectedFingerprint
-            $record["reuseReason"] = if ($completedReleaseContinuation) { "exact Targeted continuation after completed release" } else { "exact Targeted continuation before failed stage '$continuationBoundaryStage'" }
-            Write-E2ECheckpoint
-        } else {
-            $script:invalidatedStages += $Name
-            $script:invalidationDetails += [ordered]@{ stage = $Name; reason = "stage fingerprint changed"; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
-            return $false
-        }
+    $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { '' }
+    $decision = Get-E2EAdmissionStageDecision -Name $Name -Record $record -CurrentFingerprint $expectedFingerprint -LegacyFingerprint $legacyFingerprint -CrossReleaseReuse $crossReleaseReuse -ContinuationProof $releaseContinuationProof -ContinuationBoundaryStage $continuationBoundaryStage -SourceContinuationRequired $releaseSourceContinuationRequired
+    if ($decision.action -eq 'rerun') {
+        $script:invalidatedStages += $Name
+        $script:invalidationDetails += [ordered]@{ stage = $Name; reason = $decision.reason; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
+        return $false
+    }
+    if ($decision.action -eq 'rebind') {
+        $record['fingerprint'] = $expectedFingerprint
+        $record['reuseReason'] = $decision.reason
+        Write-E2ECheckpoint
     }
     if ([string]$record.evidencePath) {
         try {
@@ -1523,6 +1553,15 @@ foreach ($name in @(
     }
 }
 $restartLegacyRunRelative = ""
+. (Join-Path $PSScriptRoot 'git-path-list.ps1')
+. (Join-Path $PSScriptRoot 'release-qualification.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/extension-recovery.ps1')
+. (Join-Path $PSScriptRoot 'release-e2e/extension-recovery-owner.ps1')
+if ($RecoverInterruptedExtensionOnly) {
+    $recoveryResult = Invoke-E2EInterruptedExtensionRecovery
+    if ($null -ne $recoveryResult) { $recoveryResult | ConvertTo-Json -Depth 12 }
+    return
+}
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
     $restartLegacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
 }
@@ -1545,54 +1584,55 @@ $runnerSha256 = Get-E2ECanonicalTextSha256 -Path $PSCommandPath
 $helperSha256 = Get-E2ECanonicalTextSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
 $clientSelectionIdentity = Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
+. (Join-Path $PSScriptRoot "quality-contracts.ps1")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
+. (Join-Path $stageModuleRoot "workflow-transition.ps1")
+. (Join-Path $stageModuleRoot "admission.ps1")
 
 function Test-E2EManagedRefreshHead {
-    param(
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
-        [Parameter(Mandatory = $true)][string]$CurrentHead,
-        [Parameter(Mandatory = $true)][string]$ExpectedHead,
-        [Parameter(Mandatory = $true)][string]$MasterHead,
-        [Parameter(Mandatory = $true)][string]$ExportPath
-    )
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)][string]$CurrentHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead, [Parameter(Mandatory = $true)][string]$MasterHead,
+        [Parameter(Mandatory = $true)][string]$ExportPath, [string]$WorkflowRoot = '')
+    return Test-E2EAdmissionManagedRefreshHead -RepositoryRoot $RepositoryRoot -CurrentHead $CurrentHead -ExpectedHead $ExpectedHead -MasterHead $MasterHead -ExportPath $ExportPath -WorkflowRoot $WorkflowRoot
+}
 
-    $currentRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $CurrentHead)).stdout.Trim()
-    $currentParts = @($currentRecord -split '\s+' | Where-Object { $_ })
-    if ($currentParts.Count -eq 3 -and $currentParts[1] -eq $ExpectedHead -and $currentParts[2] -eq $MasterHead) {
-        return $true
+function Get-E2EStageAdmissionContext {
+    if (-not (Get-Variable -Name E2ETrackedInputFiles -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:E2ETrackedInputFiles = @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @('ls-files', '-z', '--') | ForEach-Object {
+            $path = Join-Path $workflowRoot ([string]$_).Replace('/', '\')
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
+        })
     }
-    if ($currentParts.Count -ne 2) { return $false }
+    return [ordered]@{
+        workflowRoot = $workflowRoot; workflowCommit = $workflowCommit; stageModuleRoot = $stageModuleRoot
+        stageDefinitions = $script:ReleaseE2EStageDefinitions
+        trackedInputFilesProvided = $true; trackedInputFiles = @($script:E2ETrackedInputFiles)
+        aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
+        clientSelection = $clientSelectionIdentity
+        serverConfiguration = [ordered]@{
+            serverProjectRoot = Get-E2EReleaseConfigValue -Name 'serverProjectRoot'
+            serverWorktreePath = Get-E2EReleaseConfigValue -Name 'serverWorktreePath'
+            serverDevBranchName = Get-E2EReleaseConfigValue -Name 'serverDevBranchName'
+        }
+    }
+}
 
-    $mergeHead = [string]$currentParts[1]
-    $mergeRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $mergeHead)).stdout.Trim()
-    $mergeParts = @($mergeRecord -split '\s+' | Where-Object { $_ })
-    if ($mergeParts.Count -ne 3 -or $mergeParts[1] -ne $ExpectedHead -or $mergeParts[2] -ne $MasterHead) {
-        return $false
-    }
-
-    $subject = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("show", "-s", "--format=%s", $CurrentHead)).stdout.Trim()
-    $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
-    $cursorPath = "$normalizedExportPath/ConfigDumpInfo.xml"
-    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @(
-        "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", $CurrentHead, "--"
-    ) | ForEach-Object { ([string]$_ -replace "\\", "/") })
-    if ($changedPaths.Count -eq 0) { return $false }
-
-    if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
-        return $changedPaths.Count -eq 1 -and $changedPaths[0] -ceq $cursorPath
-    }
-    if ($subject -ceq "chore: persist branch refresh state") {
-        $allowedPaths = @($cursorPath, ".kilo/kilo.json")
-        return $changedPaths -ccontains ".kilo/kilo.json" -and @($changedPaths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0
-    }
-    return $false
+function Get-E2EReleaseAdmissionContext {
+    $context = Get-E2EStageAdmissionContext
+    $project = Get-Content -LiteralPath (Join-Path $worktreePath '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $context.projectRoot = $ProjectRoot; $context.worktreePath = $worktreePath; $context.branch = $branch
+    $context.currentHead = (Invoke-RepositoryGit -RepositoryRoot $worktreePath -Arguments @('rev-parse', 'HEAD')).stdout.Trim()
+    $context.masterHead = (Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('rev-parse', 'HEAD')).stdout.Trim()
+    $context.worktreeClean = @(Get-RepositoryGitPathList -RepositoryRoot $worktreePath -Arguments @('status', '--porcelain', '--untracked-files=all', '-z')).Count -eq 0
+    $context.exportPath = [string](Get-E2EAdmissionValue $project 'exportPath' ''); $context.resumeMode = $ResumeMode
+    $context.workflowTree = $workflowTree; $context.runnerSha256 = $runnerSha256; $context.helperSha256 = $helperSha256
+    return $context
 }
 foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
-$releaseStageCatalog = Get-Content -LiteralPath (Join-Path $stageModuleRoot "stages.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-if ([int]$releaseStageCatalog.schemaVersion -ne 1) { throw "Unsupported Release E2E stage catalog schema." }
+$releaseStageCatalog = Get-QualityReleaseStageCatalog -RepositoryRoot (Split-Path -Parent $PSScriptRoot)
 foreach ($stage in @($releaseStageCatalog.stages)) {
     $stageId = [string]$stage.id
     if ($script:releaseStageBudgets.ContainsKey($stageId)) { throw "Release E2E stage budget catalog contains duplicate '$stageId'." }
@@ -1603,19 +1643,13 @@ foreach ($stage in @($releaseStageCatalog.stages)) {
 }
 if (@($script:ReleaseE2EStageDefinitions.Keys | Where-Object { -not $script:releaseStageBudgets.ContainsKey([string]$_) }).Count -gt 0) { throw "Release E2E stage budget catalog is incomplete." }
 $selectedCapabilitySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-function Add-SelectedReleaseE2ECapability {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    if (-not $script:ReleaseE2EStageDefinitions.Contains($Name)) { throw "RELEASE_E2E_CAPABILITY_UNKNOWN: $Name" }
-    foreach ($dependency in @($script:ReleaseE2EStageDefinitions[$Name].dependsOn)) { Add-SelectedReleaseE2ECapability -Name ([string]$dependency) }
-    [void]$selectedCapabilitySet.Add($Name)
-}
 $requestedCapabilities = @($Capabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
-if ($requestedCapabilities.Count -eq 0) {
-    foreach ($stage in @($releaseStageCatalog.stages)) { Add-SelectedReleaseE2ECapability -Name ([string]$stage.id) }
-} else {
-    foreach ($capability in $requestedCapabilities) { Add-SelectedReleaseE2ECapability -Name ([string]$capability) }
+foreach ($capability in $requestedCapabilities) {
+    if (-not $script:ReleaseE2EStageDefinitions.Contains($capability)) { throw "RELEASE_E2E_CAPABILITY_UNKNOWN: $capability" }
 }
-$selectedCapabilities = @($releaseStageCatalog.stages | Where-Object { $selectedCapabilitySet.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+# Direct runner empty scope means ALL; the planner passes explicit Release intent.
+$selectedCapabilities = @(Resolve-QualityReleaseCapabilities -Catalog $releaseStageCatalog -RequireRelease:($requestedCapabilities.Count -eq 0) -ReleaseCapability $requestedCapabilities)
+foreach ($capability in $selectedCapabilities) { [void]$selectedCapabilitySet.Add($capability) }
 function Test-ReleaseE2ECapabilitySelected {
     param([Parameter(Mandatory = $true)][string]$Name)
     return $selectedCapabilitySet.Contains($Name)
@@ -1629,62 +1663,13 @@ $serverResetConfigured = [bool]$serverResetDisposition.configured
 
 function Get-E2EStageInputFiles {
     param([string]$Name)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    if (-not $definition) { throw "Unknown Release E2E stage definition: $Name" }
-    if (-not (Get-Variable -Name E2ETrackedInputFiles -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:E2ETrackedInputFiles = @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("ls-files", "-z", "--") | ForEach-Object {
-            $path = Join-Path $workflowRoot ([string]$_).Replace('/', '\')
-            if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
-        })
-    }
-    $allFiles = @($script:E2ETrackedInputFiles)
-    $resolved = New-Object System.Collections.Generic.List[string]
-    foreach ($patternText in @($definition.paths)) {
-        $normalizedPattern = ([string]$patternText).Replace('\', '/')
-        if ($normalizedPattern.IndexOfAny([char[]]'*?') -ge 0) {
-            $pattern = New-Object System.Management.Automation.WildcardPattern($normalizedPattern, [System.Management.Automation.WildcardOptions]::IgnoreCase)
-            $matches = @($allFiles | Where-Object {
-                $relative = $_.FullName.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
-                $pattern.IsMatch($relative)
-            })
-            if ($matches.Count -eq 0) { throw "Release E2E stage '$Name' input pattern matched no files: $patternText" }
-            foreach ($match in $matches) { $resolved.Add($match.FullName) | Out-Null }
-        } else {
-            $path = Join-Path $workflowRoot $normalizedPattern.Replace('/', '\')
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release E2E stage '$Name' input is missing: $patternText" }
-            $resolved.Add([System.IO.Path]::GetFullPath($path)) | Out-Null
-        }
-    }
-    $resolved.Add((Join-Path $workflowRoot "scripts/stand-env-identity.ps1")) | Out-Null
-    $resolved.Add((Join-Path $stageModuleRoot ([string]$definition.moduleFile))) | Out-Null
-    return @($resolved | Sort-Object -Unique)
+    return Get-E2EAdmissionStageInputFiles -Context (Get-E2EStageAdmissionContext) -Name $Name
 }
 
 function Get-E2EStageFingerprint {
     param([string]$Name, [string]$RunnerSha256 = $runnerSha256)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    $inputs = @()
-    foreach ($path in @(Get-E2EStageInputFiles -Name $Name)) {
-        $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2ECanonicalTextSha256 -Path $path }
-    }
-    $dependencies = @()
-    foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency -RunnerSha256 $RunnerSha256 } }
-    $stageConfiguration = if ($Name -eq "server-reset") {
-        [ordered]@{
-            serverProjectRoot = Get-E2EReleaseConfigValue -Name "serverProjectRoot"
-            serverWorktreePath = Get-E2EReleaseConfigValue -Name "serverWorktreePath"
-            serverDevBranchName = Get-E2EReleaseConfigValue -Name "serverDevBranchName"
-        }
-    } else { $null }
-    $payload = [ordered]@{
-        schemaVersion = 2; name = $Name; version = [int]$definition.version
-        aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
-        inputs = $inputs; dependencies = $dependencies; stageConfiguration = $stageConfiguration
-        clientSelection = $clientSelectionIdentity
-    }
-    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+    # Retain the legacy signature; schema 2 does not include whole-runner SHA.
+    return Get-E2EAdmissionStageFingerprint -Context (Get-E2EStageAdmissionContext) -Name $Name
 }
 
 function Copy-E2ECapabilityFile {
@@ -1893,22 +1878,7 @@ function Save-E2ECapabilityCache {
 
 function Test-E2EStageInputsUnchanged {
     param([string]$Name, [string]$QualifiedCommit)
-    $definition = $script:ReleaseE2EStageDefinitions[$Name]
-    if (-not $definition) { return $false }
-    $patterns = @($definition.paths) + @(
-        "scripts/release-e2e/$([string]$definition.moduleFile)",
-        "scripts/release-e2e/common.ps1",
-        "scripts/stand-env-identity.ps1"
-    )
-    foreach ($dependency in @($definition.dependsOn)) {
-        if (-not (Test-E2EStageInputsUnchanged -Name ([string]$dependency) -QualifiedCommit $QualifiedCommit)) { return $false }
-    }
-    foreach ($changedPath in @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("diff", "--name-only", "-z", $QualifiedCommit, $workflowCommit, "--"))) {
-        foreach ($pattern in $patterns) {
-            if (Test-WorkflowContinuationPattern -Path ([string]$changedPath) -Pattern ([string]$pattern)) { return $false }
-        }
-    }
-    return $true
+    return Test-E2EAdmissionStageInputsUnchanged -Context (Get-E2EStageAdmissionContext) -Name $Name -QualifiedCommit $QualifiedCommit
 }
 
 function Find-E2ECompletedCapabilityCache {
@@ -2114,30 +2084,19 @@ if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
 
 if ($checkpoint) {
     $identity = $checkpoint["identity"]
-    $checkpointSchema = [int]$checkpoint["schemaVersion"]
-    $scopeMatches = $checkpointSchema -in @(1, 2, 3) -and
-        [string]$identity.projectRoot -eq $ProjectRoot -and
-        [string]$identity.worktreePath -eq $worktreePath -and
-        [string]$identity.branch -eq $branch
-    if (-not $scopeMatches) {
-        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch. schema=$checkpointSchema project='$([string]$identity.projectRoot)' expectedProject='$ProjectRoot' worktree='$([string]$identity.worktreePath)' expectedWorktree='$worktreePath' branch='$([string]$identity.branch)' expectedBranch='$branch'."
-    }
-    if ($checkpointSchema -lt 3 -and $ResumeMode -eq "Auto") {
-        throw "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED: checkpoint schema v$checkpointSchema requires one scripted -ResumeMode Restart migration."
-    }
-    $releaseIdentityMatches =
-        [string]$identity.workflowCommit -eq $workflowCommit -and
-        [string]$identity.workflowTree -eq $workflowTree -and
-        [string]$identity.runnerSha256 -eq $runnerSha256 -and
-        [string]$identity.aiRulesCommit -eq $aiRulesCommit -and
-        [string]$identity.helperSha256 -eq $helperSha256 -and
-        [string]$identity["clientSelection"] -ceq $clientSelectionIdentity -and
-        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
-    if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) {
-        $crossReleaseReuse = $true
+    $admissionContext = Get-E2EReleaseAdmissionContext
+    $admission = Get-E2EReleaseCheckpointAdmission -Context $admissionContext -Checkpoint $checkpoint
+    if (-not $admission.allowed) { throw "$($admission.code): $($admission.reason). current HEAD '$($admissionContext.currentHead)', checkpoint HEAD '$($checkpoint['expectedHead'])'." }
+    Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
+    # Evaluate before mutation, then let existing owners restore/rebind/write.
+    [void](Get-E2EAdmissionCheckpointStageDecisions -Context $admissionContext -Checkpoint $checkpoint -Admission $admission)
+    $releaseIdentityMatches = $admission.exactIdentity
+    $crossReleaseReuse = $admission.crossReleaseReuse
+    $releaseContinuationProof = $admission.continuationProof
+    $releaseSourceContinuationRequired = $admission.sourceContinuationRequired
+    if ($crossReleaseReuse) {
         $previousWorkflowCommit = [string]$identity.workflowCommit
         $previousRunnerSha256 = [string]$identity.runnerSha256
-        $releaseContinuationProof = if ([string]$identity["clientSelection"] -ceq $clientSelectionIdentity) { Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree } else { $null }
         if ($releaseContinuationProof) {
             foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 [void](Restore-E2EInterruptedCapabilityStage -Name $stageName)
@@ -2150,50 +2109,14 @@ if ($checkpoint) {
             }
         }
     }
-    $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
-    if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) {
-        $managedRefreshMerge = $false
-        $worktreeCleanForRefresh = @(& git -C $worktreePath status --porcelain --untracked-files=all).Count -eq 0
-        $parents = @()
-        $standMasterHead = ""
-        if ($crossReleaseReuse -and $worktreeCleanForRefresh) {
-            $parents = @((& git -C $worktreePath rev-list --parents -n 1 $currentHead).Trim() -split '\s+')
-            $standMasterHead = (& git -C $ProjectRoot rev-parse HEAD).Trim()
-            $refreshProjectConfig = Get-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            $managedRefreshMerge = Test-E2EManagedRefreshHead `
-                -RepositoryRoot $worktreePath `
-                -CurrentHead $currentHead `
-                -ExpectedHead ([string]$checkpoint["expectedHead"]) `
-                -MasterHead $standMasterHead `
-                -ExportPath ([string]$refreshProjectConfig.exportPath)
-        }
-        if (-not $managedRefreshMerge) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'. crossRelease=$crossReleaseReuse continuation=$([bool]$releaseContinuationProof) clean=$worktreeCleanForRefresh parents='$($parents -join ',')' master='$standMasterHead'." }
-    }
 
     if (-not $checkpoint["snapshots"].Contains("baseline")) {
         if ($checkpoint["stages"].Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: baseline snapshot was not checkpointed before stage execution." }
         Remove-Item -LiteralPath $baselineSnapshotPath -Force -ErrorAction SilentlyContinue
         $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
         Write-E2ECheckpoint
-    } else {
-        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["baseline"].path) -Sha256 ([string]$checkpoint["snapshots"]["baseline"].sha256) -Label "baseline infobase snapshot"
     }
-    $baselineStateRecord = $checkpoint["stateFiles"]["baseline"]
-    Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.stateCopyPath) -Sha256 ([string]$baselineStateRecord.stateSha256) -Label "baseline branch state"
-    if ([string]$baselineStateRecord.envCopyPath) {
-        Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.envCopyPath) -Sha256 ([string]$baselineStateRecord.envSha256) -Label "baseline .dev.env"
-    }
-    if ($checkpoint["stages"].Contains("config-cadence") -and [string]$checkpoint["stages"]["config-cadence"].status -eq "passed") {
-        if (-not $checkpoint["snapshots"].Contains("postConfig") -or -not $checkpoint["stateFiles"].Contains("postConfig")) {
-            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: passed config-cadence has no post-config snapshot/state."
-        }
-        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["postConfig"].path) -Sha256 ([string]$checkpoint["snapshots"]["postConfig"].sha256) -Label "post-config infobase snapshot"
-        $postConfigStateRecord = $checkpoint["stateFiles"]["postConfig"]
-        Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.stateCopyPath) -Sha256 ([string]$postConfigStateRecord.stateSha256) -Label "post-config branch state"
-        if ([string]$postConfigStateRecord.envCopyPath) {
-            Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.envCopyPath) -Sha256 ([string]$postConfigStateRecord.envSha256) -Label "post-config .dev.env"
-        }
-    }
+    Assert-E2EAdmissionCheckpointSupport -Context $admissionContext -Checkpoint $checkpoint
 
     if ($ResumeMode -eq "Restart") {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
@@ -2602,12 +2525,38 @@ try {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "extension-smoke" -Status "running"
         $executedStages += "extension-smoke"
+        $recoveryContext = Get-E2EExtensionRecoveryContext -Record $checkpoint
+        $extensionOwnership = New-ReleaseExtensionRecoveryOwnership -Checkpoint $checkpoint -Context $recoveryContext `
+            -ExtensionName $extensionSmokeName -WriteSet (Get-E2EExtensionWriteSet -ExtensionName $extensionSmokeName) `
+            -AssertCompatibility { param($ctx, $record, $owned) Assert-E2EExtensionRecoveryCompatibility -Record $record -Ownership $owned }
+        $checkpoint['extensionRecovery'] = $extensionOwnership
+        Write-E2ECheckpoint
+        $extensionInvocation = $null
         try {
             Remove-Item -LiteralPath $extensionSmokeEvidencePath -Force -ErrorAction SilentlyContinue
-            Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
+            $extensionInvocation = Start-E2EHelperAtRoot -Root $worktreePath -BranchName $devBranchName `
+                -Action "release-e2e-extension-smoke" -AdditionalArguments @(
                 "-ExtensionName", $extensionSmokeName,
                 "-ReleaseAiRulesSource", $AiRulesSource
-            ) | Out-Null
+            )
+            $extensionOwnership['invocation'] = [ordered]@{
+                childProcessId = $extensionInvocation.process.Id
+                childStartedAtUtc = $extensionInvocation.startedAtUtc.ToString('o')
+            }
+            Write-E2ECheckpoint
+            try { Complete-E2EHelperProcess -Invocation $extensionInvocation -TimeoutSeconds 7200 | Out-Null }
+            finally {
+                if (-not $extensionInvocation.nativeQuiescent) {
+                    try {
+                        $null = Stop-DeliveryProcessJobAndWait -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                        $extensionInvocation.nativeQuiescent = $true
+                        $extensionInvocation.exitedAtUtc = [DateTime]::UtcNow
+                    } finally {
+                        Close-DeliveryProcessJob -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                        $extensionInvocation.jobHandle = [IntPtr]::Zero
+                    }
+                }
+            }
             if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
                 throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
             }
@@ -2630,9 +2579,29 @@ try {
                 throw "Release E2E extension evidence does not prove transactional content preservation, explicit metadata updates, Empty/CFE roundtrip, idempotence, real TestClient UI, and database restoration."
             }
             Set-E2EStageStatus -Name "extension-smoke" -Status "passed" -EvidencePath $extensionSmokeEvidencePath
+            $extensionOwnership['status'] = 'completed'
+            Write-E2ECheckpoint
         } catch {
-            Set-E2EStageStatus -Name "extension-smoke" -Status "failed" -ErrorText $_.Exception.Message
-            throw
+            $extensionFailure = $_
+            if ($null -ne $extensionInvocation -and -not $extensionInvocation.nativeQuiescent -and $extensionInvocation.jobHandle -ne [IntPtr]::Zero) {
+                try {
+                    $null = Stop-DeliveryProcessJobAndWait -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                    $extensionInvocation.nativeQuiescent = $true
+                    $extensionInvocation.exitedAtUtc = [DateTime]::UtcNow
+                } finally {
+                    Close-DeliveryProcessJob -JobHandle $extensionInvocation.jobHandle -Process $extensionInvocation.process
+                    $extensionInvocation.jobHandle = [IntPtr]::Zero
+                }
+            }
+            Set-E2EStageStatus -Name "extension-smoke" -Status "failed" -ErrorText $extensionFailure.Exception.Message
+            if ($null -ne $extensionInvocation -and $extensionInvocation.nativeQuiescent) {
+                $checkpoint['extensionRecovery'] = Complete-ReleaseExtensionRecoveryOwnership -Ownership $extensionOwnership `
+                    -Context $recoveryContext -Checkpoint $checkpoint `
+                    -AssertCompatibility { param($ctx, $record, $owned) Assert-E2EExtensionRecoveryCompatibility -Record $record -Ownership $owned } `
+                    -GetStopEvidence { Get-E2EExtensionStopEvidence -Context $recoveryContext -Invocation $extensionInvocation }
+                Write-E2ECheckpoint
+            }
+            throw $extensionFailure
         }
     } else {
         $resumedStages += "extension-smoke"
@@ -2652,6 +2621,13 @@ try {
         }
         $e2eDependencyLockBytes = [IO.File]::ReadAllBytes($e2eDependencyLockPath)
         try {
+            # Candidate promotion restores the rollback baseline before importing
+            # passed capabilities. MCP needs the paired applied configuration,
+            # including when config/extension were not selected for this run.
+            if ($crossReleaseReuse -and $checkpoint["stages"].Contains("config-cadence") -and
+                [string]$checkpoint["stages"]["config-cadence"]["status"] -eq "passed") {
+                Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+            }
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $utf8 = [System.Text.Encoding]::UTF8
             $vanessaSmokeEvidenceRoot = Join-Path $worktreePath "build\test-results\release-e2e"
@@ -3070,3 +3046,6 @@ if ($failure) {
     exit 1
 }
 Write-Host "Release E2E passed. Summary: $OutputPath"
+} finally {
+    Exit-SourceE2EClientMcpBuildScope -Scope $clientMcpBuildScope
+}

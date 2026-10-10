@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "enclosingOverheadSeconds": 1140,
   "stages": [
     {
       "id": "seed-parallel",
@@ -34,7 +35,7 @@
     {
       "id": "config-cadence",
       "version": 3,
-      "budgetSeconds": 1200,
+      "budgetSeconds": 4800,
       "dependsOn": [],
       "paths": [
         "scripts/stand-env-identity.ps1",
@@ -61,8 +62,8 @@
     },
     {
       "id": "extension-smoke",
-      "version": 2,
-      "budgetSeconds": 900,
+      "version": 3,
+      "budgetSeconds": 1200,
       "dependsOn": ["config-cadence"],
       "paths": [
         "scripts/stand-env-identity.ps1",
@@ -70,13 +71,16 @@
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
-        "scripts/release-e2e/extension-smoke.ps1"
+        "scripts/release-e2e/extension-smoke.ps1",
+        "scripts/release-e2e/extension-recovery.ps1",
+        "scripts/release-e2e/extension-recovery-owner.ps1",
+        "scripts/source-delivery-process.ps1"
       ]
     },
     {
       "id": "ondemand-mcp",
       "version": 5,
-      "budgetSeconds": 900,
+      "budgetSeconds": 1500,
       "dependsOn": [],
       "paths": [
         "scripts/stand-env-identity.ps1",

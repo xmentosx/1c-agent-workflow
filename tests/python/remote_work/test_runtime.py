@@ -1045,7 +1045,62 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertEqual("failed", state["status"])
         self.assertTrue(result["error"].startswith("RESOURCE_LIMIT_EXCEEDED"), result)
         self.assertIn("job-memory-growth", result["error"])
-        self.assertEqual(["COMMAND_FAILED: exit=7"], result["cleanupErrors"])
+        processes = result["resourceEvidence"]["processes"]
+        self.assertEqual(2, len(processes))
+        primary, cleanup = processes
+        self.assertNotEqual(primary["pid"], cleanup["pid"])
+        self.assertEqual(primary["breach"], json.loads(result["error"].split(": ", 1)[1]))
+        telemetry = [json.loads(line) for line in
+                     (self.spool / "runs" / state["id"] / "resource-telemetry.jsonl")
+                     .read_text(encoding="utf-8").splitlines()]
+        for process in processes:
+            self.assertEqual(result["resourceEvidence"]["contextId"], process["resourceContextId"])
+            if process["breach"] is not None:
+                self.assertEqual("job-memory-growth", process["breach"]["metric"])
+                self.assertEqual(4 * 1024 * 1024, process["breach"]["limit"])
+                self.assertGreater(process["breach"]["observed"], process["breach"]["limit"])
+                self.assertIn(process["breach"],
+                              [sample["breach"] for sample in telemetry
+                               if sample["pid"] == process["pid"]])
+        # The same 4 MiB guard also covers interpreter/conhost startup during
+        # cleanup. A slow startup can breach before Python reaches SystemExit(7).
+        if cleanup["breach"] is None:
+            self.assertEqual(["COMMAND_FAILED: exit=7"], result["cleanupErrors"])
+        else:
+            self.assertEqual(1, len(result["cleanupErrors"]))
+            self.assertTrue(result["cleanupErrors"][0].startswith("RESOURCE_LIMIT_EXCEEDED: "))
+            self.assertEqual(cleanup["breach"],
+                             json.loads(result["cleanupErrors"][0].split(": ", 1)[1]))
+
+    def test_primary_resource_error_is_preserved_for_both_cleanup_failures(self):
+        breach = {"code": "RESOURCE_LIMIT_EXCEEDED", "metric": "job-memory-growth",
+                  "observed": 6291456, "limit": 4194304, "capturedAt": "2026-01-01T00:00:00Z"}
+        primary = "RESOURCE_LIMIT_EXCEEDED: " + json.dumps(breach)
+        secondary_resource = "RESOURCE_LIMIT_EXCEEDED: " + json.dumps(
+            dict(breach, observed=5242880, capturedAt="2026-01-01T00:00:01Z"))
+        for index, secondary in enumerate(("COMMAND_FAILED: exit=7", secondary_resource)):
+            with self.subTest(cleanup=secondary):
+                self.scenario["adapter"] = "command"
+                self.scenario["commands"]["action"] = [
+                    sys.executable, "-c",
+                    "import time; blocks=[]\nfor _ in range(30):\n blocks.append(bytearray(1024*1024)); time.sleep(.1)"]
+                self.scenario["commands"]["cleanup"] = [sys.executable, "-c", "raise SystemExit(7)"]
+                self.profile["targets"]["fixture"]["resourceLimits"] = {
+                    "maxGrowthMb": 4, "growthWindowSeconds": 2, "pollIntervalSeconds": 0.1}
+                _, package = self.package(name=f"cleanup-failure-{index}")
+                # Isolate exception composition; the preceding native test
+                # retains the original workload and proves the resource guard.
+                with patch.object(common.ResourceContext, "process", side_effect=[
+                        WorkError(primary), WorkError(secondary)]) as launch:
+                    state, result = self.execute(package)
+                self.assertEqual("failed", state["status"])
+                self.assertEqual(primary, result["error"])
+                self.assertEqual([secondary], result["cleanupErrors"])
+                for key, value in self.profile["targets"]["fixture"]["resourceLimits"].items():
+                    self.assertEqual(value, result["resourceEvidence"]["policy"][key])
+                self.assertEqual(2, launch.call_count)
+                self.assertEqual(self.scenario["commands"]["action"], launch.call_args_list[0].args[0])
+                self.assertEqual(self.scenario["commands"]["cleanup"], launch.call_args_list[1].args[0])
 
     @unittest.skipUnless(os.name == "nt", "native Job Object contract is Windows-only")
     def test_windows_resource_breaker_captures_owned_tree_and_keeps_foreign_process(self):

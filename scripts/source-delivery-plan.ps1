@@ -22,24 +22,29 @@ function Get-DeliveryCanonicalJsonSha256 {
 
 function Get-DeliveryPlanIdentity {
     param([Parameter(Mandatory = $true)][object]$Plan)
-    return [ordered]@{
+    $identity = [ordered]@{
         protocolVersion=1; supervisorCommit=[string]$Plan.supervisor.commit; supervisorChannel=[string]$Plan.supervisor.channel
         candidateCommit=[string]$Plan.candidate.commit; candidateTree=[string]$Plan.candidate.tree; baseCommit=[string]$Plan.candidate.baseCommit
         requireRelease=[bool]$Plan.requireRelease; releaseCapabilities=@($Plan.releaseCapabilities); paths=@($Plan.paths); contracts=@($Plan.contracts); stages=@($Plan.stages | ForEach-Object {
             [ordered]@{ id=[string]$_.id; version=[int]$_.version; mode=[string]$_.mode; dependsOn=@($_.dependsOn); budgetSeconds=[int]$_.budgetSeconds; alwaysExecute=[bool]($_.PSObject.Properties["alwaysExecute"] -and [bool]$_.alwaysExecute); inputFingerprint=[string]$_.inputFingerprint }
         })
     }
+    if ($Plan.PSObject.Properties['releaseEnclosingOverheadSeconds']) {
+        $identity['releaseEnclosingOverheadSeconds'] = [int]$Plan.releaseEnclosingOverheadSeconds
+    }
+    return $identity
 }
 
 function Get-DeliveryStageEvidencePath {
-    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint)
+    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint, [string]$EvidenceRoot = '')
     $safeStage = $StageId -replace '[^A-Za-z0-9._-]', '-'
-    return Join-Path (Get-DeliveryEvidenceRoot) "$safeStage\$Fingerprint\evidence.json"
+    if (-not $EvidenceRoot) { $EvidenceRoot = Get-DeliveryEvidenceRoot }
+    return Join-Path $EvidenceRoot "$safeStage\$Fingerprint\evidence.json"
 }
 
 function Test-DeliveryStageEvidence {
-    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint)
-    $path = Get-DeliveryStageEvidencePath -StageId $StageId -Fingerprint $Fingerprint
+    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint, [string]$EvidenceRoot = '')
+    $path = Get-DeliveryStageEvidencePath -StageId $StageId -Fingerprint $Fingerprint -EvidenceRoot $EvidenceRoot
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
     try {
         $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -149,38 +154,12 @@ function Get-DeliveryInputFingerprint {
 
 function Get-DeliveryReleaseStageCatalog {
     param([Parameter(Mandatory = $true)][string]$CandidateRoot)
-    $path = Join-Path $CandidateRoot "scripts\release-e2e\stages.json"
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release stage catalog is missing: $path" }
-    $catalog = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ([int]$catalog.schemaVersion -ne 1 -or @($catalog.stages).Count -eq 0) { throw "Release stage catalog must use schemaVersion 1 and contain stages." }
-    $ids = @($catalog.stages | ForEach-Object { [string]$_.id })
-    if (@($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Release stage catalog ids must be unique." }
-    foreach ($stage in @($catalog.stages)) {
-        if (-not [string]$stage.id -or [int]$stage.version -le 0 -or [int]$stage.budgetSeconds -le 0 -or @($stage.paths).Count -eq 0) {
-            throw "Release stage definitions require id, version, budgetSeconds, and paths."
-        }
-        foreach ($dependency in @($stage.dependsOn)) { if ([string]$dependency -notin $ids) { throw "Release stage '$($stage.id)' has unknown dependency '$dependency'." } }
-    }
-    return $catalog
+    return Get-QualityReleaseStageCatalog -RepositoryRoot $CandidateRoot
 }
 
 function Resolve-DeliveryRequiredReleaseCapabilities {
     param([Parameter(Mandatory = $true)][object]$Catalog, [switch]$RequireRelease, [string[]]$ReleaseCapability = @())
-    $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $definitions = @{}
-    foreach ($definition in @($Catalog.stages)) { $definitions[[string]$definition.id] = $definition }
-    function Add-RequiredReleaseCapability {
-        param([Parameter(Mandatory = $true)][string]$Name)
-        if (-not $definitions.ContainsKey($Name)) { throw "DELIVERY_RELEASE_CAPABILITY_UNKNOWN: $Name" }
-        foreach ($dependency in @($definitions[$Name].dependsOn)) { Add-RequiredReleaseCapability -Name ([string]$dependency) }
-        [void]$selected.Add($Name)
-    }
-    if ($RequireRelease) {
-        foreach ($definition in @($Catalog.stages)) { Add-RequiredReleaseCapability -Name ([string]$definition.id) }
-    } else {
-        foreach ($capability in @($ReleaseCapability | Where-Object { [string]$_ } | Sort-Object -Unique)) { Add-RequiredReleaseCapability -Name ([string]$capability) }
-    }
-    return @($Catalog.stages | Where-Object { $selected.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+    return @(Resolve-QualityReleaseCapabilities -Catalog $Catalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
 }
 
 function Get-DeliverySupervisorChannel {
@@ -292,11 +271,13 @@ function New-DeliveryQualityPlanForCandidate {
     if (@($journeyPlan.unknownPaths).Count -gt 0) { throw "QUALITY_OWNER_MISSING: $(@($journeyPlan.unknownPaths) -join ', ')" }
     $stages = [Collections.Generic.List[object]]::new()
     $developEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
-    # check.ps1 restores Develop static and journey proofs for the exact tree.
-    # Include that tree in immutable stage keys so a plan never budgets old-tree
-    # evidence as reuse while the child must execute a new journey.
+    # Resolve this invocation's authoritative common Git directory once. Proof
+    # contents and their SHA are still read and validated for every stage.
+    $evidenceRoot = Get-DeliveryEvidenceRoot
+    # Static qualification stays current. Journey reuse has its own complete
+    # shared input contract; legacy evidence retains the exact-tree fallback.
     $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests)) -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree })
-    $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint
+    $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint -EvidenceRoot $evidenceRoot
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
     $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
     foreach ($journey in @($journeyPlan.journeys)) {
@@ -304,15 +285,29 @@ function New-DeliveryQualityPlanForCandidate {
         $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })
         $stageId = "develop.$journey"
         $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
-        $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint
+        $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint -EvidenceRoot $evidenceRoot
         $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
-        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=$(if($journey -eq "upgrade"){1200}else{2100}); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
+        $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
+        $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
+        $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
+        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' })
+        if ($inputs) {
+            $fingerprint = [string]$inputs.fingerprint
+            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs
+            $reusable = $null -ne $ancestor
+        }
+        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified ancestor with complete matching journey inputs"}elseif($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
+    $releaseEnclosingOverhead = $null
     if ($RequireRelease -or @($ReleaseCapability).Count -gt 0) {
     $releaseCatalog = Get-DeliveryReleaseStageCatalog -CandidateRoot $CandidateRoot
     $orderedReleaseCapabilities = @(Resolve-DeliveryRequiredReleaseCapabilities -Catalog $releaseCatalog -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability)
     if ($orderedReleaseCapabilities.Count -gt 0) {
+        if ($releaseCatalog.PSObject.Properties['enclosingOverheadSeconds']) {
+            $releaseBudget = Get-ReleaseE2EBudgetProjection -StageCatalog $releaseCatalog -QualityCatalog $catalog -ReleaseCapability $orderedReleaseCapabilities
+            $releaseEnclosingOverhead = [int]$releaseBudget.enclosingOverheadSeconds
+        }
         $releaseEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Release
         $fingerprints = @{}
         foreach ($definition in @($releaseCatalog.stages | Where-Object { [string]$_.id -in $orderedReleaseCapabilities })) {
@@ -321,14 +316,14 @@ function New-DeliveryQualityPlanForCandidate {
             $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version ([int]$definition.version) -CandidateRoot $CandidateRoot -Pattern @($definition.paths) -DependencyFingerprint $dependencies -ExternalIdentity $releaseEnvironment
             $fingerprints[[string]$definition.id] = $fingerprint
             $alwaysExecute = $definition.PSObject.Properties["alwaysExecute"] -and [bool]$definition.alwaysExecute
-            $proof = if ($alwaysExecute) { $null } else { Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint }
+            $proof = if ($alwaysExecute) { $null } else { Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint -EvidenceRoot $evidenceRoot }
             $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=[int]$definition.version; mode="Release"; dependsOn=@($definition.dependsOn | ForEach-Object { "release.$_" }); budgetSeconds=[int]$definition.budgetSeconds; alwaysExecute=[bool]$alwaysExecute; inputFingerprint=$fingerprint; execution=$(if($proof){"reuse"}else{"execute"}); reason=$(if($alwaysExecute){"freshness and cleanup contract"}elseif($proof){"matching stage evidence"}else{"required Release capability"}) }) | Out-Null
         }
     }
     }
     $watch.Stop()
     if ($watch.Elapsed.TotalSeconds -gt 30) { throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]$watch.Elapsed.TotalSeconds)s; hard limit is 30s." }
-    $executedBudget = 0
+    [int64]$executedBudget = 0
     foreach ($stage in @($stages)) { if ([string]$stage.execution -eq "execute") { $executedBudget += [int]$stage.budgetSeconds } }
     $plan = [pscustomobject][ordered]@{
         schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
@@ -336,6 +331,10 @@ function New-DeliveryQualityPlanForCandidate {
         candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
         requireRelease=[bool]($orderedReleaseCapabilities.Count -gt 0); releaseCapabilities=$orderedReleaseCapabilities; paths=@($paths); contracts=@($selection.contracts | ForEach-Object { [string]$_.id }); stages=@($stages)
         executedBudgetSeconds=$executedBudget; planningDurationMs=[int64]$watch.ElapsedMilliseconds
+    }
+    if ($null -ne $releaseEnclosingOverhead) {
+        $plan | Add-Member -NotePropertyName releaseEnclosingOverheadSeconds -NotePropertyValue $releaseEnclosingOverhead
+        $plan.executedBudgetSeconds += $releaseEnclosingOverhead
     }
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
     return $plan
@@ -369,6 +368,9 @@ function Get-DeliveryPlanGateBudgetSeconds {
     param([Parameter(Mandatory = $true)][object]$Plan, [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode)
     $budget = 0
     foreach ($stage in @($Plan.stages | Where-Object { [string]$_.mode -eq $Mode -and [string]$_.execution -eq "execute" })) { $budget += [int]$stage.budgetSeconds }
+    if ($Mode -eq 'Release' -and $Plan.PSObject.Properties['releaseEnclosingOverheadSeconds']) {
+        $budget += [int]$Plan.releaseEnclosingOverheadSeconds
+    }
     # A reused plan still gets a bounded supervisor pass that validates and
     # materializes exact-candidate qualification from immutable evidence.
     return [Math]::Max(900, $budget)
