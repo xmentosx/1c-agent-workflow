@@ -205,7 +205,6 @@
 
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\USER-RULES.append.md') -Raw -Encoding UTF8
         $userRules | Should -Match 'Let bounded database executions finish or cancel them through their exact owner'
-        $userRules | Should -Match 'Let bounded database executions finish or cancel them through their exact owner'
         $userRules | Should -Match 'waiting-for-base.*normal serialization'
         $userRules | Should -Match 'Never stop a foreign or ambiguously identified 1C process'
         $userRules | Should -Match 'old database-access tickets as authority'
@@ -437,6 +436,13 @@
             $workflowIndexText | Should -Match ([regex]::Escape($topic))
         }
         $workflowIndexText | Should -Match "Open only the matching topic file"
+        $referenceRoot = Join-Path $RepoRoot '.agents/skills/1c-workflow/references'
+        $topics = @([regex]::Matches($workflowIndexText, '(?m)^- `(?<topic>[^`\r\n]+\.md)`:'))
+        $topics.Count | Should -BeGreaterThan 0
+        foreach ($topic in $topics) {
+            $target = $topic.Groups['topic'].Value
+            (Test-Path -LiteralPath (Join-Path $referenceRoot $target) -PathType Leaf) | Should -BeTrue -Because "workflow.md references missing topic $target"
+        }
         foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
             $workflowIndexText | Should -Match ([regex]::Escape($client))
         }

@@ -80,7 +80,16 @@ expectations; все шесть runtime cases прошли на immutable head. 
 границы допустимой правки ожиданий и перенос static routes:
 [journey-static-selection.md](journey-static-selection.md).
 
-Завершить успешную RegisterChange исправленной связной единицы. Затем закрыть identity
+Исправленная единица зарегистрирована: commit
+`3d2658d5d416ea14ff11300f4e4d0281d48e82e1`, exact tree
+`682b95e6e4361b3f3d06bab9f11060782dc0ca3c`; 241/0/0,
+check-summary 1256977 ms, raw registration 1259549 ms.
+Raw proof: common Git `itl/runs/20261010-225036-523-targeted-7518fcf152be4180bf1f91fc3fb4f478.json`.
+Executed 5 workers, reused 5 matching proofs; native runtime cases сохранили
+доказательство из первого immutable прогона. После gate tracked tree чистое;
+Status подтвердил принятую head общей очереди. Публикации не было.
+
+Следующий шаг: закрыть identity
 агрегированного Full proof у checker owner и компонентные runtime у их owners.
 Семь Python/Node host suites пока консервативно nonreusable. A.6 целиком остаётся
 незавершённой; расширение delivery authority относится к отдельному checkpoint C.

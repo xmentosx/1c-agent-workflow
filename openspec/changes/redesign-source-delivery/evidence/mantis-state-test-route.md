@@ -49,7 +49,15 @@ Ignored artifacts этого worktree:
 HostMantis wrapper запускает test_index.py через UTF-8 native transport;
 проверка полного owner route принадлежит единственной RegisterChange этой
 единицы. Повторять отдельно весь неизменённый Index suite перед ней не нужно.
-Пока registration не прошла, автоматическую приёмку не считать доказанной.
+Регистрация завершена: commit `3cf487bd032a8e66c15ebb2ac7b1a189a86aaaa4`,
+tree `08880735da9eac1d63444d84f5dfd049e85ec8f5`; Targeted 194 passed,
+0 failed / 0 skipped, check-summary 66007 ms, raw registration 68215 ms.
+HostMantis case действительно исполнил существующий `test_index.py` через
+UTF-8 native helper и прошёл; loader equivalence выше устанавливает включение
+перенесённого метода в этот неизменённый маршрут. Gate выполнил три workers,
+без reuse. Tracked tree чистое, Status принял head в ту же очередь.
+Raw proof: common Git `itl/runs/20261010-231216-547-targeted-7a075e755be740d181dc42d6a877e679.json`.
+Это автоматическая приёмка State route, а не real Zvec qualification.
 
 Остальные 12 исходно рассмотренных Mantis случаев требуют своих component
 routes и воспроизводимого runtime. Полный аудит 2814 определений и пакет B.4
