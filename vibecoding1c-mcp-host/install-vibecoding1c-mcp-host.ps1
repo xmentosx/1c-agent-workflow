@@ -3317,7 +3317,18 @@ function Repair-TrackedMcpHostAndPublish {
             }
         }
 
-        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") { continue }
+        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") {
+            $proof = Get-HostDirectEndpointProof -Config $Config -Server $server
+            if ($proof.status -eq "mismatch") {
+                Write-Warning "Direct MCP '$id' serves a foreign endpoint; restarting only its qualified idle container once."
+                Invoke-DockerCommandChecked -Arguments @("restart", "--time", "20", ([string]$proof.container_id)) -TimeoutSec 60 -Description "repair direct MCP identity $containerName"
+                if (-not (Wait-HostTcpPortOpen -Port $hostPort)) { throw "Direct MCP '$id' port did not recover. Repeat reconcile -ServerId $id after restoring Docker availability." }
+                $proof = Get-HostDirectEndpointProof -Config $Config -Server $server -Refresh
+                if ($proof.status -ne "matched") { throw "Direct MCP '$id' identity did not recover after one restart. Inspect its published route, then repeat reconcile -ServerId $id. No further restart was attempted." }
+            }
+            if ($proof.status -ne "matched") { Write-Warning "Direct MCP '$id' identity is $($proof.status): $($proof.reason). Container retained; repeat reconcile -ServerId $id when indexing/transport is ready." }
+            continue
+        }
 
         $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
         $proxyPort = [int](Get-ObjectValue -Object $server -Name "proxyPort" -Default ($hostPort + [int]$settings.portOffset))
@@ -3516,6 +3527,10 @@ function Write-McpHostWatchdogRunState {
         status = $Status
         message = $Message
     }
+    $proofCache = Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $proofCache -and $null -ne $proofCache.Value) {
+        $state["endpointProofs"] = @($proofCache.Value.Values)
+    }
     Write-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $Config) -Value $state
 }
 
@@ -3540,6 +3555,9 @@ function Invoke-McpHostWatchdogRunCore {
         $graphRepairMessage = ""
         while ($true) {
             try {
+                # Proofs belong only to this locked reconciliation attempt. A
+                # daemon recovery begins a new attempt; owner restarts refresh.
+                $script:DirectEndpointProofCache = @{}
                 try {
                     $graphRepairCount = Repair-TrackedGraphHealthchecks -Config $Config
                     if ($graphRepairCount -gt 0) {
@@ -3567,7 +3585,9 @@ function Invoke-McpHostWatchdogRunCore {
 
         $dockerRecovery = @($dockerRecoveryEvents) -join " -> "
         $degradedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()) | Where-Object {
-            [string](Get-ObjectValue -Object $_ -Name "health" -Default "") -eq "degraded"
+            $badStates = @("degraded", "stopped", "missing", "unreachable", "unknown", "unavailable", "remote-disconnected")
+            [string](Get-ObjectValue -Object $_ -Name "health" -Default "") -in $badStates -or
+                [string](Get-ObjectValue -Object $_ -Name "status" -Default "") -in $badStates
         } | ForEach-Object {
             $name = [string](Get-ObjectValue -Object $_ -Name "name" -Default (Get-ObjectValue -Object $_ -Name "id" -Default "unknown"))
             $reason = [string](Get-ObjectValue -Object $_ -Name "functionalMessage" -Default "functional qualification failed")
@@ -3603,6 +3623,8 @@ function Invoke-McpHostWatchdogRunCore {
             Write-Warning "Could not persist watchdog failure state: $($_.Exception.Message)"
         }
         throw "MCP host watchdog reconcile failed: $message"
+    } finally {
+        Remove-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
     }
 }
 
@@ -4507,8 +4529,50 @@ function Get-HostServerFunctionalHealth {
     }
 }
 
+function Get-HostDirectEndpointProof {
+    param([object]$Config, [object]$Server, [switch]$Refresh)
+    $cacheVariable = Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
+    $cache = $(if ($null -ne $cacheVariable) { $cacheVariable.Value } else { $null })
+    $key = "{0}|{1}|{2}|{3}" -f $Server.id, $Server.containerName, $Server.url, $Server.hostPort
+    if ($null -ne $cache -and -not $Refresh -and $cache.ContainsKey($key)) {
+        $cached = $cache[$key].proof
+        if ($cached.status -ne "matched") { return $cached }
+        try {
+            $binding = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Id}} {{.State.Status}}", ([string]$Server.containerName)) -TimeoutSec 10 -Description "validate cached direct MCP identity") -join ""
+            if ($binding.Trim() -eq "$($cached.container_id) running") { return $cached }
+        } catch { }
+        $cache.Remove($key)
+    }
+    try {
+        $python = Ensure-PythonRuntime -Config $Config
+        $probe = Join-Path $PSScriptRoot "../mcp-host/endpoint_identity.py"
+        $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+        $arguments = @("-B", "-X", "utf8", $probe, "--container", ([string]$Server.containerName), "--url", ([string]$Server.url),
+            "--host-port", ([string]$Server.hostPort), "--timeout", "5")
+        $tool = Get-HostServerSafeHealthTool -ServerId $id
+        if ($tool) {
+            $arguments += @("--health-tool", $tool)
+            $healthArguments = Get-HostServerSafeHealthArguments -ServerId $id
+            if ($null -ne $healthArguments) {
+                # Base64 avoids native Windows escaping of serialized Unicode JSON.
+                $encoded = [Convert]::ToBase64String($script:Utf8NoBom.GetBytes(($healthArguments | ConvertTo-Json -Compress)))
+                $arguments += @("--health-arguments-base64", $encoded)
+            }
+        }
+        # Includes bounded internal/public protocol calls, two 30s safe calls,
+        # session cleanup and Docker transport. Typical live proof took 4-15s.
+        $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments $arguments -TimeoutSec 180 -Description "read-only direct MCP identity $id"
+        if ($result.exitCode -ne 0) { throw "Endpoint identity probe failed." }
+        $proof = (($result.lines -join "`n") | ConvertFrom-Json)
+    } catch {
+        $proof = [pscustomobject]@{ status = "unverified"; reason = $_.Exception.GetType().Name; stage = "probe process" }
+    }
+    if ($null -ne $cache) { $cache[$key] = @{ serverId = [string]$Server.id; containerName = [string]$Server.containerName; proof = $proof } }
+    return $proof
+}
+
 function Get-HostServerPublishStatus {
-    param([object]$Server)
+    param([object]$Server, [object]$Config)
 
     $proxyUrl = [string](Get-ObjectValue -Object $Server -Name "proxyUrl" -Default "")
     if ($proxyUrl -and [string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -ne "direct") {
@@ -4544,8 +4608,10 @@ function Get-HostServerPublishStatus {
     if (Test-HostTcpPortOpen -Port $hostPort) {
         if ([string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -eq "direct") {
             try {
-                if (@(Get-HostMcpToolsList -Url ([string]$Server.url)).Count -eq 0) { return "unreachable" }
-            } catch { return "unreachable" }
+                $proof = Get-HostDirectEndpointProof -Config $Config -Server $Server
+                if ($proof.status -eq "mismatch") { return "unreachable" }
+                if ($proof.status -ne "matched") { return "unknown" }
+            } catch { return "unknown" }
         }
         return "running"
     }
@@ -4575,13 +4641,28 @@ function Update-HostStateForPublish {
             }
         }
 
-        $publishStatus = Get-HostServerPublishStatus -Server $serverHash
+        $publishStatus = Get-HostServerPublishStatus -Server $serverHash -Config $Config
         $currentStatus = [string](Get-ObjectValue -Object $serverHash -Name "status" -Default "")
         if ($currentStatus -ne $publishStatus) {
             $serverHash["status"] = $publishStatus
             $changed = $true
         }
-        $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
+        $directProof = $null
+        if ([string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct" -and $publishStatus -in @("running", "unknown")) {
+            $directProof = Get-HostDirectEndpointProof -Config $Config -Server $serverHash
+        }
+        if ($null -ne $directProof -and $directProof.status -ne "matched") {
+            $details = @("Direct MCP qualification is $($directProof.status)")
+            foreach ($field in @("stage", "method", "reason", "timeoutSeconds")) {
+                $value = Get-ObjectValue -Object $directProof -Name $field -Default ""
+                if ([string]$value) { $details += "${field}=$value" }
+            }
+            $functionalHealth = [pscustomobject]@{ status = "degraded"; message = ($details -join "; ") }
+        } elseif ($null -ne $directProof -and $id -eq "codechecker" -and (Get-ObjectValue -Object $directProof -Name "health_passed" -Default $false)) {
+            $functionalHealth = [pscustomobject]@{ status = "qualified"; message = "Internal and public MCP identity and safe health tool 'fetch_its' passed." }
+        } else {
+            $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
+        }
         $effectiveHealth = $(if ([string]$functionalHealth.status -eq "degraded") { "degraded" } else { $publishStatus })
         $currentHealth = [string](Get-ObjectValue -Object $serverHash -Name "health" -Default "")
         if ($currentHealth -ne $effectiveHealth) {
@@ -4698,7 +4779,7 @@ function Enable-BookStackDirectEndpoint {
             Write-Host "DRY-RUN: qualify and publish BookStack at $url, then remove $proxyName. The direct container and index are retained."
             return
         }
-        if ((Get-HostServerPublishStatus -Server $native) -ne "running") {
+        if ((Get-HostServerPublishStatus -Server $native -Config $Config) -ne "running") {
             throw "BookStack direct MCP is not ready at $url. Restore its availability and repeat bookstack-direct; the proxy is retained."
         }
         $health = Get-HostServerFunctionalHealth -Server $native
@@ -5378,23 +5459,36 @@ function Publish-Registry {
     $registryRoot = Get-RegistryRoot -Config $Config
     Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
-    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)) {
-        Write-Host "Registry already matches the qualified host state; publish skipped."
-        return
+    $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
+    if ($hostUnchanged) {
+        $pending = Invoke-ProcessWithTimeout -FilePath "git" -Arguments @("-C", $registryRoot, "rev-list", "--count", "@{upstream}..HEAD") -TimeoutSec 30 -Description "Check pending registry publication"
+        $pendingCount = 0
+        if ($pending.exitCode -ne 0 -or -not [int]::TryParse(($pending.lines -join "").Trim(), [ref]$pendingCount)) {
+            throw "Could not determine pending registry commits in $registryRoot; publication is unverified."
+        }
+        if ($pendingCount -eq 0) {
+            Write-Host "Registry already matches the qualified host state and upstream; publish skipped."
+            return
+        }
+        Write-Host "Registry payload unchanged; retrying delivery of $pendingCount pending commit(s)."
     }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
-        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
-        Write-Host "Registry written: $registryPath"
+        if (-not $hostUnchanged) {
+            Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
+            Write-Host "Registry written: $registryPath"
+        }
         if ($DryRun) {
             return
         }
-        Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
-        $status = ((& git -C $registryRoot status --porcelain) -join "`n")
-        if ($status) {
-            Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
-        } else {
-            Write-Host "Registry unchanged."
+        if (-not $hostUnchanged) {
+            Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
+            $status = ((& git -C $registryRoot status --porcelain) -join "`n")
+            if ($status) {
+                Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
+            } else {
+                Write-Host "Registry unchanged."
+            }
         }
         try {
             Invoke-Git -Root $registryRoot -Arguments @("push")
@@ -5405,6 +5499,7 @@ function Publish-Registry {
             }
             Write-Host "Registry push failed; rebasing once and retrying publish."
             Invoke-Git -Root $registryRoot -Arguments @("pull", "--rebase")
+            $hostUnchanged = $SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)
         }
     }
 }
@@ -5494,7 +5589,10 @@ switch ($Action) {
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "reconcile" {
-        Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId
+        $lease = Enter-McpHostMaintenanceLock -Config $config -Operation "reconcile" -WaitSeconds 0
+        if (-not $lease.acquired) { throw "Host maintenance is active. Repeat reconcile after it completes; no runtime was changed." }
+        try { Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId }
+        finally { Exit-McpHostMaintenanceLock -Lease $lease }
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "watchdog-install" {
