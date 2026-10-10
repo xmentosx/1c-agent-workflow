@@ -162,7 +162,7 @@ Describe 'Source quality catalog contracts' {
         )
         $expectedTests = @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
-            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
             "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
@@ -175,7 +175,7 @@ Describe 'Source quality catalog contracts' {
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
         @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
-        @($selection.tests).Count | Should -Be 19
+        @($selection.tests).Count | Should -Be 20
 
         $observedSeconds = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
@@ -282,8 +282,9 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 66
+        @($currentSelection.tests).Count | Should -Be 67
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
+            "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/SourceQualityCatalog.Tests.ps1")
         # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
@@ -508,7 +509,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')
         @($selected.unknownPaths) | Should -BeNullOrEmpty
-        @($selected.tests) | Should -Be @('tests/pester/SourceQualityCatalog.Tests.ps1')
+        @($selected.tests) | Should -Be @('tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
     }
 
     It 'invalidates every existing qualification consumer when the catalog bytes change' {
@@ -534,7 +535,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $catalog=$actualCatalog
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
-            $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion')
+            $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))

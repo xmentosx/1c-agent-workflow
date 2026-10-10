@@ -48,3 +48,18 @@ runtime assertions и negative cases не ослаблялись.
 LocalQualityGate и ReleaseGate изменены переносом, поэтому их оставшиеся process
 сценарии должны один раз пройти регистрацию данной единицы. Отдельный Full
 ради окончания разработки не требуется.
+
+## Уточнение входов селектора после 747aa75f
+
+Review выявил недостающий input нового HostTestSelection: его прежний
+standalone-mcp-host owner не включал catalog bytes в digest. Исправление в
+следующей единице передаёт selector существующему source-quality-catalog owner.
+Catalog-only теперь выбирает два дешёвых файла (24 + 10 cases); изменение
+компонента выбирает его реальный suite и общий HostTooling, не повторяя
+неизменённый selector. Набор assertions самого селектора сохранён; ожидания
+строго отражают эту новую границу.
+
+Fingerprint regression расширен на selector: все семь consumers сохраняют
+точный digest для неизменённых входов и меняют его после изменения catalog bytes.
+Focused proof двух файлов: 34 passed, 0 failed / 0 skipped; worker span 13619 ms.
+Это исправляет конкретную пропущенную dependency, а не снимает обязательный proof.

@@ -19,7 +19,6 @@ Describe 'Independent host component source verification' {
         @($selection.unknownPaths) | Should -BeNullOrEmpty
         $expected = @(
             "tests/pester/$Test.Tests.ps1",
-            'tests/pester/HostTestSelection.Tests.ps1',
             'tests/pester/HostTooling.Tests.ps1'
         ) | Sort-Object
         @($selection.tests | Sort-Object) | Should -Be @($expected)
@@ -32,7 +31,6 @@ Describe 'Independent host component source verification' {
             'tests/pester/HostLinux.Tests.ps1',
             'tests/pester/HostNativeTransport.Tests.ps1',
             'tests/pester/HostSppr.Tests.ps1',
-            'tests/pester/HostTestSelection.Tests.ps1',
             'tests/pester/HostTooling.Tests.ps1'
         )
     }
