@@ -38,15 +38,50 @@
 
     It 'retains the capacity error after a bounded wait and never launches' {
         Mock Invoke-OneCSessionAdmissionSet {
+            $script:AdmissionAttempts++
             throw (New-OneCSessionCapacityError -Waitable -Message 'ITL_ONEC_SESSION_LIMIT: max=1 active=1')
         }
-        {
-            Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $basePath -SessionWaitTimeoutSeconds 0.05 -ScriptBlock {
-                Invoke-OneCSessionProcessStart -StartProcess { $script:NativeStarts++ }
-            }
-        } | Should -Throw '*ITL_ONEC_SESSION_LIMIT*active=1*'
+        $admissions = @([pscustomobject]@{infoBaseKind='file';infoBasePath=$basePath;requiredSessions=1;expectedChildRole='';purpose='1c-process'})
+        # Establish admission before measuring the separate 50 ms capacity wait.
+        Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose '1c-process' -WaitTimeoutSeconds 10 -ScriptBlock {
+            {
+                Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $basePath -SessionWaitTimeoutSeconds 0.05 -ScriptBlock {
+                    Invoke-OneCSessionProcessStart -StartProcess { $script:NativeStarts++ }
+                }
+            } | Should -Throw '*ITL_ONEC_SESSION_LIMIT*active=1*'
+        }
+        $script:AdmissionAttempts | Should -BeGreaterThan 0
         $script:NativeStarts | Should -Be 0
         Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0 -Exactly
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+    }
+
+    It 'reports the execution guard timeout before capacity is inspected and never launches' {
+        Mock Invoke-OneCSessionAdmissionSet {
+            $script:AdmissionAttempts++
+            throw (New-OneCSessionCapacityError -Waitable -Message 'ITL_ONEC_SESSION_LIMIT: max=1 active=1')
+        }
+        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1')
+        $admissions = @([pscustomobject]@{infoBaseKind='file';infoBasePath=$basePath;requiredSessions=1;expectedChildRole='';purpose='1c-process'})
+        $settings = Get-OneCExecutionGuardSettings
+        $request = [ordered]@{schemaVersion=1;root=$settings.root;bases=@(ConvertTo-OneCExecutionGuardBases -Admissions $admissions);
+            operation='1c-process';executionId=[guid]::NewGuid().ToString('N');timeout=10;cancelPath='';phaseDeadline=$null}
+        $holder = $null
+        try {
+            # A separate owner holds the same resource without granting inherited admission.
+            $holder = Start-ItlExecutionGuardHost -Request $request -Python $settings.python
+            {
+                Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $basePath -SessionWaitTimeoutSeconds 0.05 -ScriptBlock {
+                    Invoke-OneCSessionProcessStart -StartProcess { $script:NativeStarts++ }
+                }
+            } | Should -Throw '*EXECUTION_GUARD_WAIT_TIMEOUT*'
+        } finally {
+            if ($null -ne $holder) { Complete-ItlExecutionGuardHost -Owner $holder -Result succeeded -ErrorMessage '' | Out-Null }
+        }
+        $script:AdmissionAttempts | Should -Be 0
+        $script:NativeStarts | Should -Be 0
+        Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0 -Exactly
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
     }
 
     It 'observes cancellation while capacity is occupied without touching its owner' {
