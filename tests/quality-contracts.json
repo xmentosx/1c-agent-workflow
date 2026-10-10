@@ -145,6 +145,16 @@
       "tests": ["tests/pester/SourceQualityCatalog.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1"]
     },
     {
+      "id": "pester-runtime-proof",
+      "owner": "actual Pester child runtime and cache admission",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/PesterRuntimeProof.Tests.ps1",
+      "paths": ["scripts/invoke-pester-runtime.ps1", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "tests": ["tests/pester/PesterRuntimeProof.Tests.ps1"]
+    },
+    {
       "id": "source-quality-gate",
       "owner": "source quality and qualification",
       "gate": "targeted",

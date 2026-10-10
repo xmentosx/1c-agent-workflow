@@ -499,6 +499,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-overlay-lock.ps1"),
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
+        (Join-Path $repoRoot "scripts\invoke-pester-runtime.ps1"),
         (Join-Path $repoRoot "scripts\run-pester-shard.ps1"),
         (Join-Path $repoRoot "scripts\pester-timings.json"),
         (Join-Path $repoRoot "scripts\release-qualification.ps1"),
@@ -983,6 +984,8 @@ try {
                 cacheLookupMs = [int64]$pesterShardSummary.cacheLookupMs
                 workerSpanMs = [int64]$pesterShardSummary.workerSpanMs
                 identityInventoryMs = [int64]$pesterShardSummary.identityInventoryMs
+                runtimeProbeMs = [int64]$pesterShardSummary.runtimeProbeMs
+                runtimeIdentityStatus = [string]$pesterShardSummary.runtimeIdentityStatus
                 legacyDigestCount = [int]$pesterShardSummary.legacyDigestCount
             })
         }

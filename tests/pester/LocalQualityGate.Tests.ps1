@@ -31,7 +31,7 @@ Describe 'Scheduler-independent Pester proof' {
             # Produce the previous runtime key through the real runner. Keep all
             # owner inputs, child execution and cache manifest checks unchanged.
             $legacy = [IO.File]::ReadAllText($runner)
-            $legacy = $legacy.Replace('$lines.Add($runtimeIdentity)', '$lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")')
+            $legacy = $legacy.Replace('$lines.Add($runtimeIdentity)', '$lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|workers=$WorkerCount")')
             $legacy = $legacy.Replace('$PSScriptRoot', ("'" + (Split-Path -Parent $runner).Replace("'", "''") + "'"))
             $producerPath = Join-Path $TestDrive 'legacy-shard-runner.ps1'
             [IO.File]::WriteAllText($producerPath, $legacy, [Text.UTF8Encoding]::new($false))
@@ -832,17 +832,20 @@ exit $exitCode
     }
     It "owns shard archive and cache hashing without Get-FileHash" {
         $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
+        $hashOwnerPath = Join-Path $RepoRoot "scripts\invoke-pester-runtime.ps1"
         $runner = Get-Content -LiteralPath $runnerPath -Raw -Encoding UTF8
         $runner | Should -Not -Match '\bGet-FileHash\b'
 
         $tokens = $null
         $errors = $null
-        $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        $ast = [Management.Automation.Language.Parser]::ParseFile($hashOwnerPath, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-PesterShardFileSha256" }, $true)
         $definition | Should -Not -BeNullOrEmpty
-        $definition.Extent.StartOffset | Should -BeLessThan $runner.IndexOf('function Initialize-VanessaSourceBuildArchiveForPester', [StringComparison]::Ordinal)
-        $definition.Extent.StartOffset | Should -BeLessThan $runner.IndexOf('function Get-ShardInputDigest', [StringComparison]::Ordinal)
+        $ownerOffset = $runner.IndexOf('. (Join-Path $PSScriptRoot "invoke-pester-runtime.ps1")', [StringComparison]::Ordinal)
+        $ownerOffset | Should -BeGreaterThan -1
+        $ownerOffset | Should -BeLessThan $runner.IndexOf('function Initialize-VanessaSourceBuildArchiveForPester', [StringComparison]::Ordinal)
+        $ownerOffset | Should -BeLessThan $runner.IndexOf('function Get-ShardInputDigest', [StringComparison]::Ordinal)
 
         $payloadPath = Join-Path $TestDrive "hash probe data.bin"
         $payload = [byte[]](0, 1, 2, 3, 10, 13, 127, 128, 255)
@@ -1044,7 +1047,11 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match 'fingerprintPlanMs'; $runner | Should -Match 'cacheLookupMs'; $runner | Should -Match 'workerSpanMs'
         $runner.IndexOf('$workerSpanStopwatch.Stop()') | Should -BeGreaterThan $runner.IndexOf('while (-not $stopScheduling -and $pendingSerial.Count -gt 0)')
         $runner | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
-        $worker | Should -Match 'SpecialFolder\]::MyDocuments'
+        $runtimeOwner = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/invoke-pester-runtime.ps1') -Raw -Encoding UTF8
+        $runtimeOwner | Should -Match 'SpecialFolder\]::MyDocuments'
+        $worker | Should -Match "\. \(Join-Path \`$PSScriptRoot 'invoke-pester-runtime\.ps1'\)"
+        $worker.IndexOf('Initialize-PesterShardModulePath') | Should -BeGreaterThan -1
+        $worker.IndexOf('Initialize-PesterShardModulePath') | Should -BeLessThan $worker.IndexOf('Import-Module Pester')
         $worker | Should -Match 'Invoke-Pester -Configuration'
         $worker | Should -Match '\$env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "execution-guards-v2"'
         $localRunner | Should -Match '& powershell\.exe @runnerArguments'

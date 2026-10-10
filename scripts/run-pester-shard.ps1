@@ -1,8 +1,9 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
-    [Parameter(Mandatory = $true)][string]$PlanPath,
-    [Parameter(Mandatory = $true)][string]$JunitPath,
-    [Parameter(Mandatory = $true)][string]$ResultPath
+    [Parameter(Mandatory = $true, ParameterSetName = 'Run')][string]$PlanPath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Run')][string]$JunitPath,
+    [Parameter(Mandatory = $true)][string]$ResultPath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Runtime')][switch]$RuntimeIdentityOnly
 )
 
 Set-StrictMode -Version Latest
@@ -13,16 +14,17 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 
-if ($env:OS -eq "Windows_NT" -and [string]$PSVersionTable.PSEdition -eq "Desktop") {
-    $documents = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
-    $userModuleRoot = [IO.Path]::GetFullPath((Join-Path $documents "WindowsPowerShell\Modules"))
-    $moduleRoots = @($env:PSModulePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if (-not @($moduleRoots | Where-Object {
-        try { [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $userModuleRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) }
-        catch { $false }
-    }).Count) {
-        $env:PSModulePath = (@($userModuleRoot) + $moduleRoots) -join ';'
+. (Join-Path $PSScriptRoot 'invoke-pester-runtime.ps1')
+Initialize-PesterShardModulePath
+if ($RuntimeIdentityOnly) {
+    try {
+        Import-Module Pester -MinimumVersion 5.0.0 -Force
+        $receipt = Get-PesterShardRuntimeReceipt
+    } catch {
+        $receipt = [pscustomobject]@{status='unknown';identity=$null;reason=$_.Exception.Message;durationMs=0}
     }
+    [IO.File]::WriteAllText($ResultPath, ($receipt | ConvertTo-Json -Depth 6), $utf8NoBom)
+    exit 0
 }
 
 $plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -33,8 +35,15 @@ $startedAt = [DateTime]::UtcNow
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $result = $null
 $failure = $null
+$runtimeBefore = $null
+$runtimeAfter = $null
 try {
-    Import-Module Pester -MinimumVersion 5.0.0 -Force
+    $expectedRuntime = $plan.PSObject.Properties['runtimeIdentity']
+    if ($expectedRuntime -and $expectedRuntime.Value) {
+        try { Import-Module -Name ([string]$expectedRuntime.Value.pesterManifestPath) -MinimumVersion 5.0.0 -Force }
+        catch { Import-Module Pester -MinimumVersion 5.0.0 -Force }
+    } else { Import-Module Pester -MinimumVersion 5.0.0 -Force }
+    $runtimeBefore = Get-PesterShardRuntimeReceipt
     $configuration = New-PesterConfiguration
     $configuration.Run.Path = @($plan.paths)
     $configuration.Run.PassThru = $true
@@ -58,6 +67,13 @@ try {
 } catch {
     $failure = $_.Exception.Message
 } finally {
+    $runtimeAfter = Get-PesterShardRuntimeReceipt
+    $runtime = $null
+    $runtimeReason = [string]$runtimeAfter.reason
+    if ($runtimeBefore -and $runtimeBefore.status -eq 'known' -and $runtimeAfter.status -eq 'known') {
+        if ($runtimeBefore.identity.identitySha256 -ceq $runtimeAfter.identity.identitySha256) { $runtime = $runtimeAfter.identity }
+        else { $runtimeReason = 'Runtime inputs changed during execution; this passed result cannot qualify reuse.' }
+    }
     [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $null, "Process")
     [Environment]::SetEnvironmentVariable("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", $null, "Process")
     if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
@@ -72,6 +88,8 @@ try {
         finishedAt = [DateTime]::UtcNow.ToString("o")
         durationMs = [int64]$stopwatch.ElapsedMilliseconds
         pesterVersion = $(if (Get-Module Pester) { [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version) } else { "" })
+        runtimeIdentity = $runtime
+        runtimeIdentityReason = $runtimeReason
         paths = @($plan.paths)
         junitPath = $JunitPath
         passed = $(if ($result) { [int]$result.PassedCount } else { 0 })

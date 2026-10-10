@@ -26,21 +26,7 @@ function ConvertTo-NativeArgument {
     return '"' + $Value.Replace('"', '\"') + '"'
 }
 
-function Get-PesterShardFileSha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $stream = $null
-    $sha256 = $null
-    try {
-        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
-        $hashBytes = $sha256.ComputeHash($stream)
-        return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
-    } finally {
-        if ($null -ne $sha256) { $sha256.Dispose() }
-        if ($null -ne $stream) { $stream.Dispose() }
-    }
-}
+. (Join-Path $PSScriptRoot "invoke-pester-runtime.ps1")
 
 function Get-TextSha256 {
     param([string[]]$Lines)
@@ -77,8 +63,75 @@ if ($pesterExternalInputsProperty) {
     }
 }
 $sharedInputs = @(
-    "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1"
+    "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1", "scripts/invoke-pester-runtime.ps1"
 )
+$powerShellCommand = Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$script:pesterPowerShellExecutable = $(if ($powerShellCommand) { [string]$powerShellCommand.Source } else { 'powershell.exe' })
+$script:pesterRuntimeReceipt = [pscustomobject]@{status='unknown';identity=$null;reason='Runtime has not been observed.';durationMs=0}
+
+function Start-PesterWorkerProcess {
+    param([string[]]$Arguments, [string]$StdinPath, [string]$StdoutPath, [string]$StderrPath)
+    $originalPowerShellModulePath = $env:PSModulePath
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    try {
+        if ($resetModulePathForWindowsPowerShell) {
+            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
+            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
+                catch { return $true }
+            })
+            $env:PSModulePath = $compatibleModuleRoots -join ';'
+        }
+        return Start-Process -FilePath $script:pesterPowerShellExecutable -ArgumentList ($Arguments -join ' ') -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $StdinPath -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath -PassThru
+    } finally {
+        if ($resetModulePathForWindowsPowerShell) {
+            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
+            else { $env:PSModulePath = $originalPowerShellModulePath }
+        }
+    }
+}
+
+function Get-PesterWorkerRuntimeReceipt {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $process = $null
+    $probeRoot = Join-Path $workerRoot ('runtime-' + [guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText(($probeRoot + '.stdin.txt'), '', [Text.UTF8Encoding]::new($false))
+        $arguments = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(ConvertTo-NativeArgument $workerScript),'-RuntimeIdentityOnly','-ResultPath',(ConvertTo-NativeArgument ($probeRoot + '.json')))
+        $process = Start-PesterWorkerProcess -Arguments $arguments -StdinPath ($probeRoot + '.stdin.txt') -StdoutPath ($probeRoot + '.stdout.log') -StderrPath ($probeRoot + '.stderr.log')
+        # Desktop Start-Process can lose ExitCode after WaitForExit unless its
+        # native handle was acquired while the process was still running.
+        $null = $process.Handle
+        if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'Runtime identity probe exceeded 15 seconds; execute tests without reuse.' }
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw 'Runtime identity probe failed; execute tests without reuse.' }
+        $receipt = Get-Content -LiteralPath ($probeRoot + '.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($receipt.status -eq 'known') {
+            if (-not $receipt.identity -or [string]$receipt.identity.identitySha256 -notmatch '^[a-f0-9]{64}$' -or
+                -not [IO.Path]::IsPathRooted([string]$receipt.identity.pesterManifestPath) -or
+                -not [string]::Equals([IO.Path]::GetFullPath([string]$receipt.identity.executablePath), [IO.Path]::GetFullPath($script:pesterPowerShellExecutable), [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Runtime identity probe did not describe the selected executable.'
+            }
+        } elseif ($receipt.status -ne 'unknown') { throw 'Runtime identity probe returned an unsupported status.' }
+        $receipt.durationMs = [int64]$watch.ElapsedMilliseconds
+        return $receipt
+    } catch {
+        return [pscustomobject]@{status='unknown';identity=$null;reason=$_.Exception.Message;durationMs=[int64]$watch.ElapsedMilliseconds}
+    } finally {
+        if ($process) { $process.Dispose() }
+        $watch.Stop()
+    }
+}
+
+function Test-PesterShardResultRuntime {
+    param([object]$Result)
+    $receiptVariable = Get-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue
+    if (-not $receiptVariable -or -not $receiptVariable.Value -or $receiptVariable.Value.status -ne 'known') { return $false }
+    $actual = $Result.PSObject.Properties['runtimeIdentity']
+    return $actual -and $actual.Value -and $actual.Value.PSObject.Properties['identitySha256'] -and
+        [string]$actual.Value.identitySha256 -ceq [string]$receiptVariable.Value.identity.identitySha256
+}
 
 function Initialize-VanessaSourceBuildArchiveForPester {
     $lockPath = Join-Path $RepositoryRoot "templates\dependency-lock.json"
@@ -326,12 +379,15 @@ function Get-ShardInputDigest {
     # The selected tests are distinct from their shared owner input set.
     # Deduplicating that set must never make different test files one shard.
     foreach ($test in @($relativeTests | Sort-Object -Unique)) { $lines.Add("selected-test=$test") }
-    $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
-    if (-not $pester) { return "" }
+    $receiptVariable = Get-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue
+    if (-not $receiptVariable -or -not $receiptVariable.Value -or $receiptVariable.Value.status -ne 'known') { return '' }
+    $runtime = $receiptVariable.Value.identity
     # Parallelism belongs to the parent scheduler; each isolated child receives
     # the same test/runner inputs. Retain old keys only for verified cache lookup.
-    $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)"
-    if ($LegacyWorkerCount -gt 0) { $runtimeIdentity += "|workers=$LegacyWorkerCount" }
+    $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|child=$($runtime.identitySha256)"
+    # Old scheduler keys are lookup candidates only. Their protected result must
+    # independently prove the current child identity before any reuse.
+    if ($LegacyWorkerCount -gt 0) { $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|workers=$LegacyWorkerCount" }
     $lines.Add($runtimeIdentity)
     $externalInputNames = if ($IncludeLegacyGlobalExternalInputs) {
         @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
@@ -374,6 +430,7 @@ function Get-ShardCacheEntryRoot {
                     if (-not $producerRoot -or -not [string]$producerRoot.Value) { continue }
                     $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
                     if (-not (Test-ShardResultTestPath -Result $result -TestPath $TestPath -SourceRoot ([string]$producerRoot.Value))) { continue }
+                    if (-not (Test-PesterShardResultRuntime -Result $result)) { continue }
                 }
                 return $entryRoot
             }
@@ -405,6 +462,7 @@ function Save-ShardCache {
     param([string]$Digest, [string]$ResultPath, [string]$JunitPath)
     if (-not $Digest) { return }
     $result = Get-Content -LiteralPath $ResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not (Test-PesterShardResultRuntime -Result $result)) { return }
     if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0 -or -not (Test-Path -LiteralPath $JunitPath -PathType Leaf)) { return }
     if (-not $result.PSObject.Properties['paths'] -or @($result.paths).Count -ne 1) { return }
     $testPath = [string]$result.paths[0]
@@ -491,6 +549,7 @@ $items = @($testFiles | ForEach-Object {
 } | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
+$script:pesterRuntimeReceipt = Get-PesterWorkerRuntimeReceipt
 $entries = New-Object System.Collections.Generic.List[object]
 $pendingParallel = New-Object System.Collections.Generic.Queue[object]
 $pendingSerial = New-Object System.Collections.Generic.Queue[object]
@@ -587,6 +646,7 @@ foreach ($item in $items) {
         inputDigest = $digest
         legacyInputDigests = @($legacyDigests)
         legacyArchiveCandidates = @($script:pesterVanessaArchiveCandidates)
+        runtimeIdentity = $script:pesterRuntimeReceipt.identity
         paths = @([string]$item.path)
     }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
@@ -607,25 +667,7 @@ $fingerprintPlanStopwatch.Stop()
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
-    $originalPowerShellModulePath = $env:PSModulePath
-    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
-    try {
-        if ($resetModulePathForWindowsPowerShell) {
-            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
-            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
-                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
-                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
-                catch { return $true }
-            })
-            $env:PSModulePath = $compatibleModuleRoots -join ';'
-        }
-        $Entry.process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $Entry.stdinPath -RedirectStandardOutput $Entry.stdoutPath -RedirectStandardError $Entry.stderrPath -PassThru
-    } finally {
-        if ($resetModulePathForWindowsPowerShell) {
-            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
-            else { $env:PSModulePath = $originalPowerShellModulePath }
-        }
-    }
+    $Entry.process = Start-PesterWorkerProcess -Arguments $args -StdinPath $Entry.stdinPath -StdoutPath $Entry.stdoutPath -StderrPath $Entry.stderrPath
     $null = $Entry.process.Handle
 }
 
@@ -640,6 +682,10 @@ function Complete-PesterFileEntry {
             return $false
         }
         $workerResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
+        if ($Entry.digest -and -not (Test-PesterShardResultRuntime -Result $workerResult)) {
+            $Entry.digest = ''
+            $workerResult | Add-Member -NotePropertyName reuseReason -NotePropertyValue 'Actual worker runtime differs from qualified probe or changed during execution; result is not reusable.' -Force
+        }
         $workerResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue ([string]$Entry.digest) -Force
         [IO.File]::WriteAllText($Entry.resultPath, (($workerResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         $script:results += $workerResult
@@ -750,6 +796,10 @@ $summary = [ordered]@{
     cacheLookupMs = [int64]$script:pesterCacheLookupMs
     workerSpanMs = [int64]$workerSpanStopwatch.ElapsedMilliseconds
     identityInventoryMs = [int64]$script:pesterIdentityInventoryMs
+    runtimeProbeMs = [int64]$script:pesterRuntimeReceipt.durationMs
+    runtimeIdentityStatus = [string]$script:pesterRuntimeReceipt.status
+    runtimeIdentityReason = [string]$script:pesterRuntimeReceipt.reason
+    runtimeIdentity = $script:pesterRuntimeReceipt.identity
     legacyDigestCount = [int]$script:pesterLegacyDigestCount
     workers = @($results | Sort-Object worker)
     junitPath = $JunitPath

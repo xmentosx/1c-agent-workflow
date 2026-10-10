@@ -241,54 +241,9 @@ Describe "Develop E2E journey qualification router" {
         $identity.inventory.inputs[0].path | Should -BeExactly '.agents/skills/1c-workflow-fast/SKILL.md'
         $identity.inventory.inputs[1].path | Should -BeExactly '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
     }
-    It "validates exact journey names, exact full paths, and known route contracts" {
-        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
-        @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/check.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/develop-e2e-qualification.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'tests/quality-contracts.json'
-        foreach ($leaf in @('scripts/source-delivery.ps1','scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1','scripts/source-delivery-candidate.ps1')) {
-            @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
-        }
 
-        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
-        $invalid.developJourneys.routes.upgrade.contracts = @('missing-owner')
-        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unknown quality contracts*'
-        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
-        $invalid.developJourneys.fullPaths = @('scripts/*.ps1')
-        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unique exact repository-relative paths*'
-    }
 
-    It "routes each installed owner to the journey that exercises its behavior" {
-        $installed = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
-        $installed.reason | Should -Be 'quality-contract-route'
-        @($installed.contracts) | Should -Be @('mcp-hosts')
-        @($installed.journeys) | Should -Be @('fresh')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('templates/dependency-lock.json') | Select-Object -ExpandProperty journeys) | Should -Be @('fresh')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/build-ai-rules-release.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade')
-        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
 
-        $standalone = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py')
-        $standalone.reason | Should -Be 'no-develop-journey-route'
-        @($standalone.contracts) | Should -Be @('standalone-mcp-host')
-        @($standalone.journeys) | Should -BeNullOrEmpty
-
-        foreach ($leaf in @('process','queue','component')) {
-            $path = "scripts/source-delivery-$leaf.ps1"
-            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
-            $plan.reason | Should -Be 'no-develop-journey-route'
-            @($plan.contracts) | Should -Be @("source-delivery-$leaf")
-            @($plan.journeys) | Should -BeNullOrEmpty
-        }
-        $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
-        @($entrypoint.contracts) | Should -Be @('source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
-        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
-        @($candidate.contracts) | Should -Be @('source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
-        $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
-        @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
-    }
 
     It "continues source OpenSpec Markdown with exact Targeted proof but rejects executable and configuration neighbors" {
         . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')

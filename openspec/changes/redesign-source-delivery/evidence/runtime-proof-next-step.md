@@ -1,5 +1,10 @@
 # Следующая единица A.6: фактический runtime Pester child
 
+Обновление: owner-local реализация и focused приёмка описаны в
+[pester-runtime-proof.md](pester-runtime-proof.md). Ниже сохранена исходная
+постановка; её формулировки о выполняющейся регистрации относятся к моменту
+планирования. Текущая база этой единицы — `ccadf4482655810203119b6088a79c5e2bbd034d`.
+
 База следующей работы: 747aa75facdbd5a16f386e8d3c743d321d772010.
 Branch codex/source-runtime-proof, повторно использован чистый managed worktree
 redesign-source-delivery. Зарегистрированный JSON branch сохранён.

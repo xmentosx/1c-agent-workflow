@@ -5,6 +5,33 @@
 }
 
 Describe 'Source quality catalog contracts' {
+    It 'invalidates whole-gate script inventory when the worker runtime helper changes' {
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions=foreach($name in @('Get-RelativeRepositoryPath','Get-CanonicalTextSha256','New-InventoryEntry','Test-HasExactInventory','Get-WorkflowGateScriptPaths')) {
+            $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            $function | Should -Not -BeNullOrEmpty
+            $function.Extent.Text
+        }
+        & {
+            param($FixtureRoot, $Definitions)
+            foreach($definition in $Definitions) { . ([scriptblock]::Create($definition)) }
+            $repoRoot=$FixtureRoot
+            $paths=@(Get-WorkflowGateScriptPaths)
+            foreach($path in $paths) {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path,'# unchanged qualification input',[Text.UTF8Encoding]::new($true))
+            }
+            $relative=@($paths | ForEach-Object { Get-RelativeRepositoryPath -Path $_ -Root $repoRoot })
+            $relative | Should -Contain 'scripts/invoke-pester-runtime.ps1'
+            $inventory=@($paths | ForEach-Object { New-InventoryEntry -Path $_ -Root $repoRoot })
+            Test-HasExactInventory -Entries $inventory -ActualPaths $relative -Root $repoRoot | Should -BeTrue
+            Add-Content -LiteralPath (Join-Path $repoRoot 'scripts/invoke-pester-runtime.ps1') -Encoding UTF8 -Value '# changed runtime contract'
+            Test-HasExactInventory -Entries $inventory -ActualPaths $relative -Root $repoRoot | Should -BeFalse
+        } (Join-Path $TestDrive 'Whole gate Проект') $definitions
+    }
+
     It 'allows the observed passing cold cohorts and retains bounded aggregate budgets' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
@@ -533,6 +560,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $catalogPath=Join-Path $RepositoryRoot 'tests/quality-contracts.json'
             Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination $catalogPath
             $catalog=$actualCatalog
+            $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{pesterVersion='fixture';identitySha256=('a'*64)}}
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
             $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection')
@@ -564,5 +592,79 @@ Describe 'Catalog selection and qualified consumer inputs' {
                 Get-ShardInputDigest -Paths @($path) | Should -Not -Be $before[$name] -Because "$name still consumes the catalog during full qualification"
             }
         }
+    }
+}
+
+Describe 'Source catalog Develop journey selection' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts/develop-e2e-qualification.ps1')
+    }
+    It 'keeps the <Component> test owner outside installed 1C journeys' -ForEach @(
+        @{Component='Mantis';Path='vibecoding1c-mcp-host/mantis-ticket-mcp/mantis_index.py';Owner='host-mantis-tests'}
+        @{Component='BookStack';Path='vibecoding1c-mcp-host/bookstack-product-docs-mcp/server.py';Owner='host-bookstack-tests'}
+        @{Component='CodeChecker';Path='vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py';Owner='host-codechecker-tests'}
+        @{Component='CodeChecker beta';Path='vibecoding1c-mcp-host/codechecker-beta-overlay/patch_mcp_server.py';Owner='host-codechecker-tests'}
+        @{Component='SPPR';Path='vibecoding1c-mcp-host/sppr-mcp/sppr_service.py';Owner='host-sppr-tests'}
+        @{Component='Node proxy';Path='vibecoding1c-mcp-host/tools-list-proxy/tools-list-proxy.js';Owner='host-tools-proxy-tests'}
+        @{Component='Linux host';Path='vibecoding1c-mcp-host/linux-native-host/watchdog.py';Owner='host-linux-tests'}
+        @{Component='Native transport';Path='vibecoding1c-mcp-host/index-snapshot.py';Owner='host-native-transport'}
+    ) {
+        $plan=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($Path)
+        $plan.reason | Should -Be 'no-develop-journey-route'
+        @($plan.contracts) | Should -Be @($Owner,'standalone-mcp-host')
+        @($plan.journeys) | Should -BeNullOrEmpty
+        @($plan.unknownPaths) | Should -BeNullOrEmpty
+        @($plan.matchedFullPaths) | Should -BeNullOrEmpty
+    }
+
+    It "validates exact journey names, exact full paths, and known route contracts" {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/check.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/develop-e2e-qualification.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'tests/quality-contracts.json'
+        foreach ($leaf in @('scripts/source-delivery.ps1','scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1','scripts/source-delivery-candidate.ps1')) {
+            @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
+        }
+
+        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+        $invalid.developJourneys.routes.upgrade.contracts = @('missing-owner')
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unknown quality contracts*'
+        $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+        $invalid.developJourneys.fullPaths = @('scripts/*.ps1')
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unique exact repository-relative paths*'
+    }
+
+    It "routes each installed owner to the journey that exercises its behavior" {
+        $installed = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
+        $installed.reason | Should -Be 'quality-contract-route'
+        @($installed.contracts) | Should -Be @('mcp-hosts')
+        @($installed.journeys) | Should -Be @('fresh')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('templates/dependency-lock.json') | Select-Object -ExpandProperty journeys) | Should -Be @('fresh')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/build-ai-rules-release.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
+
+        $standalone = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py')
+        $standalone.reason | Should -Be 'no-develop-journey-route'
+        @($standalone.contracts) | Should -Be @('host-codechecker-tests','standalone-mcp-host')
+        @($standalone.journeys) | Should -BeNullOrEmpty
+
+        foreach ($leaf in @('process','queue','component')) {
+            $path = "scripts/source-delivery-$leaf.ps1"
+            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
+            $plan.reason | Should -Be 'no-develop-journey-route'
+            $expectedContracts=@("source-delivery-$leaf")
+            if($leaf -eq 'process') { $expectedContracts += 'source-quality-catalog' }
+            @($plan.contracts) | Should -Be $expectedContracts
+            @($plan.journeys) | Should -BeNullOrEmpty
+        }
+        $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
+        @($entrypoint.contracts) | Should -Be @('source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
+        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
+        @($candidate.contracts) | Should -Be @('source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
+        $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
+        @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 }
