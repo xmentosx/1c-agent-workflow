@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1"],
+  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1"],
   "budgets": {
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
@@ -136,13 +136,23 @@
       "tests": ["tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
     },
     {
+      "id": "source-quality-catalog",
+      "owner": "static source selection, catalog budgets and compatibility",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceQualityCatalog.Tests.ps1",
+      "paths": ["tests/quality-contracts.json", "scripts/release-e2e/stages.json", "scripts/source-delivery-process.ps1"],
+      "tests": ["tests/pester/SourceQualityCatalog.Tests.ps1"]
+    },
+    {
       "id": "source-quality-gate",
       "owner": "source quality and qualification",
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1", "scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/stand-env-identity.ps1", "scripts/git-path-list.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1", "scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/stand-env-identity.ps1", "scripts/git-path-list.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json"],
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/SourceQualityCatalog.Tests.ps1"]
     },
     {
       "id": "source-delivery-entrypoint",
@@ -388,13 +398,79 @@
       "tests": ["tests/pester/ChatGptBridge.Tests.ps1"]
     },
     {
+      "id": "host-native-transport",
+      "owner": "real host child-process Unicode snapshot and endpoint transport",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/HostNativeTransport.Tests.ps1",
+      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "tests/python/test_host_index_snapshot.py"],
+      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "tests": ["tests/pester/HostNativeTransport.Tests.ps1"]
+    },
+    {
+      "id": "host-linux-tests",
+      "owner": "Linux host watchdog and refresh source regressions",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/HostLinux.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/linux-native-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1"],
+      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "tests": ["tests/pester/HostLinux.Tests.ps1"]
+    },
+    {
+      "id": "host-codechecker-tests",
+      "owner": "CodeChecker overlay Python source regressions",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/HostCodeChecker.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/codechecker-overlay/*", "vibecoding1c-mcp-host/codechecker-beta-overlay/*"],
+      "tests": ["tests/pester/HostCodeChecker.Tests.ps1"]
+    },
+    {
+      "id": "host-tools-proxy-tests",
+      "owner": "Node MCP tools-list proxy contract and HTTP regressions",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/HostToolsProxy.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/tools-list-proxy/*", "tests/node/*"],
+      "tests": ["tests/pester/HostToolsProxy.Tests.ps1"]
+    },
+    {
+      "id": "host-bookstack-tests",
+      "owner": "BookStack product documentation MCP source regressions",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/HostBookStack.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/bookstack-product-docs-mcp/*"],
+      "tests": ["tests/pester/HostBookStack.Tests.ps1"]
+    },
+    {
+      "id": "host-mantis-tests",
+      "owner": "Mantis MCP read index recovery and write journal source regressions",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/HostMantis.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/mantis-ticket-mcp/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1"],
+      "tests": ["tests/pester/HostMantis.Tests.ps1"]
+    },
+    {
+      "id": "host-sppr-tests",
+      "owner": "SPPR corpus and HTTP source regressions with its own Python environment",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/HostSppr.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/sppr-mcp/*", "vibecoding1c-mcp-host/sppr-host.ps1", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1"],
+      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "tests": ["tests/pester/HostSppr.Tests.ps1"]
+    },
+    {
       "id": "standalone-mcp-host",
       "owner": "standalone MCP host and CodeChecker overlay",
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/HostTooling.Tests.ps1",
       "paths": ["mcp-host/*", "vibecoding1c-mcp-host/*", "tests/node/*", "tests/python/test_host_index_snapshot.py"],
-      "tests": ["tests/pester/HostTooling.Tests.ps1"]
+      "tests": ["tests/pester/HostTooling.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1"]
     },
     {
       "id": "clients-rules",

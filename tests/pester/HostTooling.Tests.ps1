@@ -21,17 +21,7 @@
         @($errors).Count | Should -Be 0
     }
 
-    It "checks dedicated Linux watchdog and refresh ownership boundaries" -Tag LinuxHost {
-        $configPath = Join-Path $TestDrive 'linux-host.json'
-        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
-        & {
-            . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $python = Resolve-PythonExecutable -Config @{}
-            $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/linux-native-host'
-            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B','-m','unittest','discover','-s',$testPath,'-p','test_*.py') -TimeoutSec 30 -Description 'Linux host ownership and refresh regressions'
-            $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
-        }
-    }
+
 
     It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(
         @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
@@ -279,24 +269,7 @@
         }
     }
 
-    It "round trips Python Unicode evidence through the host child-process helper" -Tag BookStackQwen {
-        $root = Join-Path $TestDrive "документы с пробелом"
-        New-Item -ItemType Directory -Path $root -Force | Out-Null
-        $configPath = Join-Path $root "host.config.json"
-        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
-        $scriptPath = Join-Path $root "проверка.py"
-        [IO.File]::WriteAllText($scriptPath, "import sys; print(sys.argv[1])", [Text.UTF8Encoding]::new($false))
-        & {
-            . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $oldEncoding = $env:PYTHONIOENCODING
-            try {
-                $env:PYTHONIOENCODING = "utf-8"
-                $result = Invoke-ProcessCapture -FilePath python -Arguments @($scriptPath, $root)
-                $result.exitCode | Should -Be 0
-                $result.lines[0] | Should -BeExactly $root
-            } finally { $env:PYTHONIOENCODING = $oldEncoding }
-        }
-    }
+
 
     It "continues the BookStack replacement after existing maintenance completes" -Tag BookStackQwen {
         $configPath = Join-Path $TestDrive "bookstack-maintenance.json"
@@ -1175,12 +1148,7 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "restores the stable CodeChecker logic tool in the beta image" -Tag BetaCutover {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-beta-overlay\test_patch_mcp_server.py"
-        $output = & python $testPath 2>&1
-        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 3 tests"
-    }
+
 
     It "parses the standalone MCP host config dump helper" {
         $tokens = $null
@@ -1223,92 +1191,15 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "preserves MCP tool contracts while compacting only descriptions" {
-        $testPath = Join-Path $RepoRoot "tests\node\tools-list-proxy.test.js"
-        $windowsNodeAbortExitCode = -1073740791
-        $output = @()
-        $exitCode = 1
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            $output = & node $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -eq 0 -or $exitCode -ne $windowsNodeAbortExitCode) {
-                break
-            }
-            Start-Sleep -Milliseconds 1500
-        }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
-        $contract = Get-Content -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $maximumLength = [int]$contract.descriptionPolicy.maximumApprovedDescriptionCharacters
-        $remember = [string]$contract.servers.templates.toolDescriptions.remember.compact
-        $recall = [string]$contract.servers.templates.toolDescriptions.recall.compact
 
-        $remember | Should -Match 'shared cross-project memory'
-        $remember | Should -Match 'Never use it for project-specific facts'
-        $recall | Should -Match 'shared cross-project memory'
-        $recall | Should -Match 'verify results against the current project'
-        $remember.Length | Should -BeLessOrEqual $maximumLength
-        $recall.Length | Should -BeLessOrEqual $maximumLength
 
-        $codechecker = $contract.servers.codechecker
-        $codechecker.toolCount | Should -Be 12
-        $codechecker.structuralSha256 | Should -Be "ddad947b18a4f4b535faeeb80301daa0fd11c1d0f04a0d162b3029ed49e1f5fa"
-        $codechecker.toolDescriptions.check_1c_logic.sourceSha256 | Should -Be "0bcab7643d1d868bfe15c52eb232110c2740b9bc01ff252408d01e318a958ffd"
-        $codechecker.toolDescriptions.check_1c_logic.compact | Should -Match 'without checking syntax or style'
-    }
 
-    It "bounds BookStack MCP responses and keeps explicit continuation" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 50 tests"
-    }
 
-    It "applies the shared codechecker transport retry contract" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "OK"
-    }
 
-    It "keeps the Mantis MCP transport stateless" {
-        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
-        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 12 tests"
-    }
 
-    It "qualifies Mantis delta, recovery and write journal through UTF-8 native transport" {
-        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
-        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
-        $script:ProjectRoot = $RepoRoot
-        $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/mantis-ticket-mcp/test_index.py'
-        $result = Invoke-ItlNativeProcessCapture -FilePath (Get-Command python).Source -Arguments @('-X', 'utf8', $testPath)
-        $result.exitCode | Should -Be 0 -Because $result.stderr
-        $result.stderr | Should -Match 'OK'
-        $result.stdout | Should -Match ([regex]::Escape('Mantis UTF-8: путь с пробелом / original имя.txt'))
-    }
+
+
+
 
     It "isolates SPPR runtime volumes and rejects credentials inside reader mounts" -Tag Sppr {
         $root = Join-Path $TestDrive 'СППР хост с пробелом'
@@ -1388,27 +1279,7 @@ services:
         }
     }
 
-    It "qualifies SPPR corpus and HTTP tools with the selected isolated Python runtime" -Tag Sppr {
-        $python = if ($env:SPPR_TEST_PYTHON) { $env:SPPR_TEST_PYTHON } else { Join-Path $RepoRoot 'build\sppr-venv\Scripts\python.exe' }
-        if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-            throw 'Prepare build/sppr-venv with sppr-mcp/requirements.txt or set SPPR_TEST_PYTHON to that isolated runtime, then repeat the SPPR owner tests.'
-        }
-        $hostPath = Join-Path $TestDrive 'sppr-transport-host.json'
-        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
-        & {
-            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
-            foreach ($name in @('test_sppr.py','test_transport.py')) {
-                $path = Join-Path $RepoRoot ('vibecoding1c-mcp-host\sppr-mcp\' + $name)
-                $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B',$path) -TimeoutSec 120
-                $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
-                ($result.lines -join "`n") | Should -Match 'OK'
-            }
-            $unicode = 'C:\СППР проверка\путь с пробелом\описание.json'
-            $probe = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-c','import sys; print(sys.argv[1])',$unicode) -TimeoutSec 30
-            $probe.exitCode | Should -Be 0
-            $probe.lines[0] | Should -BeExactly $unicode
-        }
-    }
+
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
@@ -4600,19 +4471,7 @@ services:
         }
     }
 
-    It "round-trips a real retained SQLite/vector snapshot and rejects invalid archives before modifying data" -Tag StableCutover {
-        $tempRoot = Join-Path $TestDrive 'snapshot данные с пробелом'
-        New-Item -ItemType Directory -Path $tempRoot | Out-Null
-        $configPath = Join-Path $tempRoot 'host.config.json'
-        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
-        & {
-            . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $python = Resolve-PythonExecutable -Config @{}
-            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X', 'utf8', '-B', (Join-Path $RepoRoot 'tests/python/test_host_index_snapshot.py'), (Join-Path $RepoRoot 'vibecoding1c-mcp-host/index-snapshot.py'), $tempRoot) -TimeoutSec 30 -Description 'SQLite snapshot round trip'
-            $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
-            ($result.lines -join [Environment]::NewLine) | Should -Match ([regex]::Escape('Снимок: ' + $tempRoot))
-        }
-    }
+
 
     It "stops the owned snapshot container if its Docker client times out" -Tag StableCutover {
         $configPath = Join-Path $TestDrive 'snapshot-timeout.json'
@@ -5170,12 +5029,7 @@ Describe 'Direct MCP endpoint recovery' -Tag DirectEndpointRecovery {
         $McpHostPath = $context.McpHostPath
     }
 
-    It 'executes the shared real HTTP identity and Linux ownership regressions' {
-        foreach ($test in @('mcp-host/test_endpoint_identity.py', 'mcp-host/linux/test_watchdog.py')) {
-            $output = & python -B -X utf8 (Join-Path $RepoRoot $test) 2>&1
-            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        }
-    }
+
 
     It 'recovers an open foreign direct endpoint once and preserves the other MCP: <Scenario>' -TestCases @(
         @{ Scenario = 'repaired' }, @{ Scenario = 'matched' }, @{ Scenario = 'unverified' },

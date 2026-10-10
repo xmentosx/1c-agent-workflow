@@ -1,0 +1,567 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+    $context = Initialize-WorkflowPesterContext
+    $RepoRoot = $context.RepoRoot
+}
+
+Describe 'Source quality catalog contracts' {
+    It 'allows the observed passing cold cohorts and retains bounded aggregate budgets' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        # 2026-10-09: Targeted exhausted 2100s before an ~8-minute serial tail;
+        # Full exhausted 2700s before a 642-second successful continuation.
+        $catalog.budgets.targetedHardSeconds | Should -BeGreaterThan (2100 + 480 + 300)
+        $catalog.budgets.fullHardSeconds | Should -BeGreaterThan (2700 + 642 + 300)
+        $catalog.budgets.targetedHardSeconds | Should -BeLessThan $catalog.budgets.fullHardSeconds
+        $catalog.budgets.developHardSeconds | Should -Be ($catalog.budgets.fullHardSeconds + $catalog.developJourneys.routes.upgrade.hardSeconds + $catalog.developJourneys.routes.fresh.hardSeconds)
+        Get-ReleaseE2EBudgetProjection -QualityCatalog $catalog -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot) | Should -Not -BeNullOrEmpty
+    }
+
+    It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
+        $path = Join-Path $RepoRoot "scripts\check.ps1"
+        $tokens = $null
+        $errors = $null
+        [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        $text | Should -Match '\[ValidateSet\("Targeted", "Smoke", "Fast", "Full", "Develop", "Release"\)\]'; $text | Should -Match '\[string\]\$Mode = "Smoke"'
+        $text | Should -Match 'Fast is deprecated and now aliases Smoke'; $text | Should -Match 'resolve-targeted-tests\.ps1'; $text | Should -Match 'smokeTests'
+        $text | Should -Match '\$journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog \$qualityCatalog -Journey \$Journey'
+        $text | Should -Match 'TimeoutSeconds \$journeyHardSeconds'; $text | Should -Match 'TimeoutSeconds \$releaseE2EHardBudgetSeconds'; $text | Should -Not -Match 'TimeoutSeconds 14400'
+        $text | Should -Match 'targetBudgetSeconds'; $text | Should -Match 'slowestStages'; $text | Should -Match 'ProgressPaths \(Join-Path \$outputRoot "pester-shards"\)'
+        $text | Should -Match 'LastWriteTimeUtc\.Ticks'; $text | Should -Match '-ProgressPaths \$releaseProgressPaths -LogName "release-e2e"'
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1"); $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        $ownedTests = @($catalog.contracts | ForEach-Object { @($_.tests) } | ForEach-Object { ([string]$_).Replace('\\','/') } | Sort-Object -Unique); @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests\pester") -File -Filter "*.Tests.ps1" | ForEach-Object { "tests/pester/$($_.Name)" } | Where-Object { $_ -notin $ownedTests }) | Should -BeNullOrEmpty
+        @(Get-PublicLifecycleActions -RepositoryRoot $RepoRoot).Count | Should -BeGreaterThan 50
+        $known = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("docs/путь с пробелами/пример.md", "scripts/source-delivery.ps1"); @($known.unknownPaths) | Should -BeNullOrEmpty
+        @($known.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($known.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
+        @($known.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        $unknown = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("unowned/новый файл.ps1")
+        @($unknown.unknownPaths) | Should -Be @("unowned/новый файл.ps1")
+        $retired = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/TriageContract.Tests.ps1")
+        @($retired.tests) | Should -Be @("tests/pester/ParserDocsBudgets.Tests.ps1")
+        $retiredDelivery = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/SourceDelivery.Tests.ps1")
+        @($retiredDelivery.tests) | Should -Be @("tests/pester/SourceDeliveryPublish.Tests.ps1")
+        foreach ($retiredExecutionTest in @(
+            "AuxiliaryDatabaseAdmission", "DatabaseAccessModes", "DevBranchMutationAdmission",
+            "DevBranchVerificationAdmission", "InitializationDatabaseAdmission", "LifecycleDatabaseContinuation",
+            "MasterDatabaseAdmission", "OneCDatabaseRestorationJournal", "OneCFileRestorationJournal",
+            "OneCNativeJournalPersistence", "OneCNativeOperationJournal", "OneCNativeRecoveryGeneration",
+            "OneCNativeRunOwnership", "VanessaCleanupAdmission"
+        )) {
+            $retiredExecution = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/$retiredExecutionTest.Tests.ps1")
+            @($retiredExecution.unknownPaths) | Should -BeNullOrEmpty
+            @($retiredExecution.tests).Count | Should -Be 1
+        }
+        $sourceRules = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("AGENTS.md")
+        @($sourceRules.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
+        @($sourceRules.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        $cutover = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1")
+        @($cutover.contracts.id) | Should -Contain "lifecycle"
+        @($cutover.tests) | Should -Contain "tests/pester/ExecutionGuardCutover.Tests.ps1"
+        $retiredProducer = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/database-access-producers.json")
+        @($retiredProducer.contracts.id) | Should -Contain "remote-performance"
+        @($retiredProducer.tests) | Should -Contain "tests/pester/RemotePerformance.Tests.ps1"
+        $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
+        @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
+        @($roctupOnly.tests) | Should -Be @("tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1")
+        foreach ($sharedPath in @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1")) {
+            $sharedSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($sharedPath)
+            @($sharedSelection.tests) | Should -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
+            @($sharedSelection.tests) | Should -Contain "tests/pester/PortRegistryLifecycle.Tests.ps1"
+        }
+        $unrelatedLifecycle = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1")
+        @($unrelatedLifecycle.tests) | Should -Not -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
+        $onDemandOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1")
+        @($onDemandOnly.contracts.id) | Should -Be @("mcp-hosts")
+        @($onDemandOnly.tests) | Should -Contain "tests/pester/OnDemandMcp.Tests.ps1"
+        $dependencyLockOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("templates/dependency-lock.json")
+        @($dependencyLockOnly.contracts.id) | Should -Be @("dependency-lock")
+        @($dependencyLockOnly.tests) | Should -Contain "tests/pester/DependencyLocks.Tests.ps1"
+        @($dependencyLockOnly.tests) | Should -Contain "tests/pester/GitHubDependencyFallback.Tests.ps1"
+        @($dependencyLockOnly.tests) | Should -Contain "tests/pester/VanessaArtifactIntegration.Tests.ps1"
+        @($dependencyLockOnly.tests) | Should -Not -Contain "tests/pester/BootstrapUpdate.Tests.ps1"
+        @($catalog.smokeTests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
+        $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
+        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog", "source-delivery-process")
+        @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualityCatalog.Tests.ps1'
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
+        $queueOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-queue.ps1")
+        @($queueOnly.contracts.id) | Should -Be @("source-delivery-queue")
+        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryQueue.Tests.ps1")
+        $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
+        @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
+        @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
+        $postGatePaths = @(
+            "scripts/source-delivery.ps1",
+            "scripts/source-delivery-supervisor.ps1",
+            "scripts/source-delivery-plan.ps1",
+            "scripts/source-delivery-resources.ps1",
+            "scripts/source-delivery-ref-cleanup.ps1",
+            "scripts/source-delivery-process.ps1",
+            "scripts/source-delivery-queue.ps1",
+            "scripts/source-delivery-candidate.ps1",
+            "scripts/source-delivery-release-recovery.ps1",
+            "scripts/source-delivery-component.ps1",
+            "scripts/source-delivery-cleanup.ps1"
+        )
+        @($catalog.continuationScopes.deliveryPostGate) | Should -Be $postGatePaths
+        foreach ($postGatePath in $postGatePaths) {
+            @($catalog.continuationScopes.gate) | Should -Not -Contain $postGatePath
+        }
+        @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
+        $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
+        $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $check | Should -Match 'Invoke-PowerShellChild -ScriptPath \$shardRunner -Arguments \$shardArguments -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
+        $check | Should -Match '-TimeoutSeconds \$pesterHardBudgetSeconds -ProgressPaths \(Join-Path \$outputRoot "pester-shards"\) -LogName "pester-shards"' -Because "the complete Pester inventory must use the catalog Full hard budget and treat shard artifacts as live progress"
+        [int]$catalog.budgets.targetedHardSeconds | Should -BeGreaterOrEqual 1200
+        [int]$catalog.budgets.fullHardSeconds | Should -BeGreaterOrEqual 1800
+        [int]($catalog.contracts | Where-Object id -eq "source-delivery-candidate").budgetSeconds | Should -BeGreaterOrEqual 1200
+    }
+
+    It "uses the catalog Targeted worker default only when PesterWorkers is implicit" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 4
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 0 | Should -Be 1
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        foreach ($mode in @("Smoke", "Full", "Develop", "Release")) {
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        }
+
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $check | Should -Match '\[int\]\$PesterWorkers = 3'
+        $check | Should -Match '\$pesterWorkersExplicit = \$PSBoundParameters\.ContainsKey\("PesterWorkers"\)'
+        $check | Should -Match '"-WorkerCount", \[string\]\$effectivePesterWorkers, "-RequestedWorkerCount", \[string\]\$PesterWorkers'
+        $check | Should -Match 'pesterWorkers = \[ordered\]@\{\s*requested = \[int\]\$PesterWorkers\s*explicit = \[bool\]\$pesterWorkersExplicit\s*effective = \[int\]\$effectivePesterWorkers'
+        $focusedWrapper = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8
+        $focusedWrapper | Should -Match '\$pesterWorkersExplicit = \$PSBoundParameters\.ContainsKey\("PesterWorkers"\)'
+        $focusedWrapper | Should -Match '"-RequestedWorkerCount", \[string\]\$PesterWorkers'
+        $focusedWrapper | Should -Match 'if \(-not \$pesterWorkersExplicit\) \{ \$runnerArguments \+= "-WorkerCountDefaulted" \}'
+    }
+
+    It "keeps the exact stabilization E owner selection and models four workers with hard-budget reserve" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $ePaths = @(
+            "docs/local-quality-gate.md", "docs/workflow-stabilization-history.md", "docs/workflow-stabilization-plan.md",
+            "scripts/check.ps1", "scripts/pester-timings.json", "scripts/source-delivery-ref-cleanup.ps1", "scripts/source-delivery-supervisor.ps1",
+            "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/SourceDelivery.TestSupport.ps1",
+            "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/quality-contracts.json"
+        )
+        $expectedTests = @(
+            "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
+            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
+            "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
+            "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
+            "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1",
+            "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
+            "tests/pester/SourceQualityCatalog.Tests.ps1"
+        )
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
+        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.tests) | Should -Be $expectedTests
+        @($selection.tests).Count | Should -Be 19
+
+        $observedSeconds = [ordered]@{
+            "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
+            "DevelopStaticQualificationCache.Tests.ps1" = 16.008; "LocalQualityGate.Tests.ps1" = 232.946
+            "ParserDocsBudgets.Tests.ps1" = 12.688; "ReleaseGate.Tests.ps1" = 176.030; "ReleaseReadiness.Tests.ps1" = 104.107
+            # The client-selection delta makes immutable Plan proof part of the entrypoint owner.
+            # Native PS5 qualification on 2026-10-02 measured its complete 20-case suite at 29.530 seconds.
+            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryPlan.Tests.ps1" = 29.530
+            "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
+            "SourceDeliveryPublish.Tests.ps1" = 243.396; "SourceDeliveryPublishContinuation.Tests.ps1" = 252.135
+            "SourceDeliveryPublishQualification.Tests.ps1" = 459.824; "SourceDeliveryPublishRecovery.Tests.ps1" = 332.610
+            "SourceDeliveryPublishReleaseTrain.Tests.ps1" = 345.565; "SourceDeliveryQueue.Tests.ps1" = 351.430
+            "SourceDeliveryRefCleanup.Tests.ps1" = 191.680; "SourceDeliveryResourceLedger.Tests.ps1" = 191.731
+        }
+        $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $updatedOrderingWeights = [ordered]@{
+            "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
+            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=233
+            "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
+            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
+            "SourceDeliveryProcessLifetime.Tests.ps1"=7
+            "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
+            "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
+            "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
+        }
+        foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
+        # The complete native 2026-10-08 run measured 549.137 seconds (37/0/0).
+        # This current ordering weight does not replace the historical E measurements below.
+        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 550
+        [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
+        [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 200
+        $estimate = {
+            param([double[]]$ParallelSeconds, [double[]]$SerialSeconds, [int]$WorkerCount, [double]$OverheadSeconds)
+            $lanes = New-Object double[] $WorkerCount
+            foreach ($seconds in @($ParallelSeconds | Sort-Object -Descending)) {
+                $lane = 0
+                for ($index = 1; $index -lt $lanes.Count; $index++) { if ($lanes[$index] -lt $lanes[$lane]) { $lane = $index } }
+                $lanes[$lane] += $seconds
+            }
+            $parallelCriticalPath = 0.0; foreach ($seconds in $lanes) { $parallelCriticalPath = [Math]::Max($parallelCriticalPath, $seconds) }
+            $serialCriticalPath = 0.0; foreach ($seconds in $SerialSeconds) { $serialCriticalPath += $seconds }
+            return $parallelCriticalPath + $serialCriticalPath + $OverheadSeconds
+        }
+        $serial = @([double]$observedSeconds["ReleaseGate.Tests.ps1"])
+        $parallel = @($observedSeconds.GetEnumerator() | Where-Object Key -ne "ReleaseGate.Tests.ps1" | ForEach-Object { [double]$_.Value })
+        # The first E run left about ten seconds outside shard execution; round that observed orchestration remainder up to 15 seconds.
+        $overhead = 15.0
+        $three = & $estimate $parallel $serial 3 $overhead
+        $four = & $estimate $parallel $serial 4 $overhead
+        # This E measurement motivated four workers under the then-current 20-minute budget.
+        # A later capacity correction must not rewrite that historical comparison.
+        $historicalHardSeconds = 1200.0
+        $three | Should -BeGreaterThan $historicalHardSeconds
+        ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
+        ([double]$catalog.budgets.targetedHardSeconds - $four) | Should -BeGreaterThan 200
+    }
+
+    It "fits the observed lifecycle cohort and mandatory serial tail without changing runtime watchdogs" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $historicalPaths = @(
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/c1-final-local-qualification.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/test-plan.md",
+            "templates/dependency-lock.json",
+            "tests/pester/CompactItlRunner.Tests.ps1",
+            "tests/pester/LifecycleOperationLock.Tests.ps1")
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
+        $gate6Tests = @(
+            "tests/pester/PlatformGate6Trigger.Tests.ps1",
+            "tests/pester/PlatformLegacyContext.Tests.ps1",
+            "tests/pester/PlatformLegacyDiagnostics.Tests.ps1",
+            "tests/pester/PlatformLegacyImpact.Tests.ps1",
+            "tests/pester/PlatformLoadContinuation.Tests.ps1",
+            "tests/pester/PlatformSourceCoverage.Tests.ps1")
+        # Retain the original observed 57-file cohort. Gate 6 and the split
+        # Mantis suite extend it: Mantis executes the actual Vanessa/core helpers.
+        $splitHostConsumers = @('tests/pester/HostMantis.Tests.ps1')
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 64
+        foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
+        foreach ($test in $splitHostConsumers) { @($selection.tests) | Should -Contain $test }
+        foreach ($test in @("DevBranchLifecycle", "CompactItlRunner", "DependencyLocks")) {
+            @($selection.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
+        }
+        # Source 0bc3ff21: prelude and the actual 55-file parallel cohort before the hard stop.
+        $preludeSeconds = 84.859
+        $parallelSpanSeconds = 917.257
+        # Historical complete 38-case Compact plus the nine new passed durations from after-2,
+        # and two corrected cases from after-nested-streaming. This is a capacity model,
+        # not a claim that the complete 49-case file has passed or a new tracked timing weight.
+        $oldCompactSeconds = 239.771
+        $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
+        $dependencySeconds = 14.161
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $estimatedCriticalPath | Should -BeGreaterThan 1200
+        ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
+        # Catalog-only changes now select static catalog proof. An explicitly
+        # changed process-suite test still selects itself; retain that closure.
+        $currentSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($historicalPaths + @(
+            "docs/local-quality-gate.md",
+            "openspec/changes/upgrade-ai-rules-upstream-20a083e5/tasks.md",
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+            "tests/quality-contracts.json"))
+        @($currentSelection.tests).Count | Should -Be 66
+        @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
+            "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/SourceQualityCatalog.Tests.ps1")
+        # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
+        # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
+        $currentParallelSpanSeconds = 936.459
+        $serialReleaseSeconds = 198.938
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
+        ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
+        [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
+    }
+
+    It "does not cache a shard whose external runtime identity is not modeled" {
+        $runnerPath = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        $pathDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardRelativeTestPath' }, $true)
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardInputDigest' }, $true)
+        $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($actualCatalog.pesterNonReusableTests) | Should -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
+        $result = & {
+            $RepositoryRoot = $RepoRoot
+            # Contracts and hashing dependencies deliberately absent: the
+            # runtime exclusion must apply before any cache key is produced.
+            $catalog = [pscustomobject]@{ pesterNonReusableTests = @('tests/pester/VanessaNestedSelection.Tests.ps1') }
+            . ([scriptblock]::Create($pathDefinition.Extent.Text))
+            . ([scriptblock]::Create($definition.Extent.Text))
+            $path = Join-Path $RepoRoot 'tests/pester/VanessaNestedSelection.Tests.ps1'
+            @((Get-ShardInputDigest -Paths @($path)), (Get-ShardInputDigest -Paths @($path) -IncludeLegacyGlobalExternalInputs))
+        }
+        @($result | Where-Object { $_ }) | Should -BeNullOrEmpty
+    }
+
+    It "classifies Release readiness repairs as resumable Release harness changes" {
+        $catalog = Get-Content -LiteralPath (Join-Path $RepoRoot "tests\quality-contracts.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($catalog.continuationScopes.release) | Should -Contain "scripts/test-release-readiness.ps1"
+    }
+}
+
+Describe 'Develop journey catalog hard budgets' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts\quality-contracts.ps1')
+    }
+
+    It 'retains the original deadlines when an older catalog omits route budgets' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.upgrade.PSObject.Properties.Remove('hardSeconds')
+        $catalog.developJourneys.routes.fresh.PSObject.Properties.Remove('hardSeconds')
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 2100
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+    }
+
+    It 'uses explicit positive integer route budgets and the complete Develop aggregate' {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 5400
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 3600
+        [int]$catalog.budgets.developHardSeconds | Should -Be 13200
+        ([int]$catalog.budgets.fullHardSeconds +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade) +
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 13200
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        $map = @{ developJourneys=@{ routes=@{ fresh=@{ hardSeconds=[long]3600 } } } }
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $map -Journey fresh | Should -Be 3600
+    }
+
+    It 'refuses a present invalid route budget instead of using a legacy default: <label>' -ForEach @(
+        @{ label='null'; budget=$null }
+        @{ label='zero'; budget=0 }
+        @{ label='negative'; budget=-1 }
+        @{ label='fraction'; budget=3600.5 }
+        @{ label='numeric string'; budget='3600' }
+        @{ label='boolean'; budget=$true }
+        @{ label='array'; budget=@(3600,3600) }
+        @{ label='overflow'; budget=[long]2147483648 }
+    ) {
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $catalog.developJourneys.routes.fresh.hardSeconds = $budget
+        { Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
+        { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog } |
+            Should -Throw '*QUALITY_DEVELOP_JOURNEY_BUDGET_INVALID*'
+    }
+}
+
+Describe 'Shared Release budget projection' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $budgetRepoRoot = $context.RepoRoot
+        . (Join-Path $budgetRepoRoot 'scripts/quality-contracts.ps1')
+        . (Join-Path $budgetRepoRoot 'scripts/source-delivery-process.ps1')
+        function Get-BudgetOwnerAst {
+            param([string]$RelativePath)
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $budgetRepoRoot $RelativePath), [ref]$tokens, [ref]$errors)
+            if (@($errors).Count) { throw "Budget owner did not parse: $RelativePath" }
+            return $ast
+        }
+    }
+
+    It 'projects full and selected dependency budgets without broadening capability scope' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $full = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
+        $full.capabilities | Should -Be @($stages.stages.id)
+        $full.fullStageSeconds | Should -Be 11700
+        $full.enclosingOverheadSeconds | Should -Be 1140
+        $full.e2eHardSeconds | Should -Be 12840
+        $full.gateHardSeconds | Should -Be ($quality.budgets.fullHardSeconds + $full.e2eHardSeconds)
+        $full.gateHardSeconds | Should -Be $quality.budgets.releaseHardSeconds
+        $partial = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup','extension-smoke')
+        $partial.capabilities | Should -Be @('config-cadence','extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
+        $partial.summedStageSeconds | Should -Be 8400
+        $partial.e2eHardSeconds | Should -Be 9540
+        $onlyMcp = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'ondemand-mcp'
+        $onlyMcp.capabilities | Should -Be @('ondemand-mcp')
+        $onlyMcp.e2eHardSeconds | Should -Be 2640
+        $onlyMcp.gateHardSeconds | Should -Be $full.gateHardSeconds
+        $none = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality
+        @($none.capabilities).Count | Should -Be 0
+        $none.e2eHardSeconds | Should -Be 0
+    }
+
+    It 'keeps the old pinned supervisor allowance equal to the validated full projection' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $projection = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease
+        # Exact legacy wire consumer: it only reads the serialized quality field.
+        $oldCatalog = Get-Content -LiteralPath (Join-Path $budgetRepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $oldPinnedAllowance = [int]$oldCatalog.budgets.releaseHardSeconds + 300
+        $oldPinnedAllowance | Should -Be ($projection.gateHardSeconds + 300)
+        Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot | Should -Be $oldPinnedAllowance
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds 8940 | Should -Be $oldPinnedAllowance
+        $largerPlanBudget = $oldPinnedAllowance + 1000
+        Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $budgetRepoRoot -PlanBudgetSeconds $largerPlanBudget | Should -Be $largerPlanBudget
+        $quality.budgets.releaseHardSeconds--
+        { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*PROJECTION_MISMATCH*'
+    }
+
+    It 'retains old candidate budgets but rejects a malformed present contract and cycles' {
+        $stages = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $quality = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $stages.PSObject.Properties.Remove('enclosingOverheadSeconds')
+        ($stages.stages | Where-Object id -eq 'config-cadence').budgetSeconds = 1200
+        $quality.budgets.releaseHardSeconds = 7200
+        $old = Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -ReleaseCapability 'extension-smoke'
+        $old.usesLegacyModeBudget | Should -BeTrue
+        $old.stageBudgets['config-cadence'] | Should -Be 1200
+        $old.e2eHardSeconds | Should -Be 7200
+        $old.gateHardSeconds | Should -Be 7200
+        $stages | Add-Member -NotePropertyName enclosingOverheadSeconds -NotePropertyValue $null
+        foreach ($bad in @($null, 0, -1, '1140', 1.5, [long]2147483648)) {
+            $stages.enclosingOverheadSeconds = $bad
+            { Get-ReleaseE2EBudgetProjection -StageCatalog $stages -QualityCatalog $quality -RequireRelease } | Should -Throw '*BUDGET_INVALID*'
+        }
+        $stages.enclosingOverheadSeconds = 1140
+        ($stages.stages | Where-Object id -eq 'config-cadence').dependsOn = @('extension-smoke')
+        { Resolve-QualityReleaseCapabilities -Catalog $stages -ReleaseCapability 'extension-smoke' } | Should -Throw '*DEPENDENCY_CYCLE*'
+    }
+
+    It 'passes the selected projection to the real child call and retains enclosing timeout clipping' {
+        $ast = Get-BudgetOwnerAst -RelativePath 'scripts/check.ps1'
+        $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $budgetRepoRoot
+        $repoRoot = $budgetRepoRoot
+        $effectiveMode = 'Release'
+        $selectedReleaseCapabilities = @('extension-smoke','ondemand-mcp','verification-refresh','result-cleanup')
+        $initialization = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.Contains('$releaseBudget = Get-ReleaseE2EBudgetProjection') })
+        $initialization.Count | Should -Be 1
+        . ([scriptblock]::Create($initialization[0].Extent.Text))
+        $modeHardBudgetSeconds | Should -Be 17040
+        $releaseE2EHardBudgetSeconds | Should -Be 9540
+        $call = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-PowerShellChild' -and $node.Extent.Text.Contains('-LogName "release-e2e"') }, $true))
+        $call.Count | Should -Be 1
+        function Invoke-PowerShellChild {
+            param($ScriptPath, $Arguments, $TimeoutSeconds, $NoProgressSeconds, $ProgressPaths, $LogName)
+            [pscustomobject]@{ timeout=$TimeoutSeconds; noProgress=$NoProgressSeconds; name=$LogName }
+        }
+        $e2eScript = 'fixture'; $releaseE2EArguments = @(); $releaseProgressPaths = @()
+        $observed = & ([scriptblock]::Create($call[0].Extent.Text))
+        $observed.timeout | Should -Be 9540
+        $observed.noProgress | Should -Be 900
+        $wait = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-PowerShellChildProcess' }, $true)
+        $clip = @($wait.Body.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -in @('$remainingOverallSeconds', '$effectiveTimeoutSeconds') })
+        $clip.Count | Should -Be 2
+        $TimeoutSeconds = $observed.timeout
+        $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(8600) }
+        foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
+        $effectiveTimeoutSeconds | Should -Be 8440
+        $overallStopwatch = [pscustomobject]@{ Elapsed=[timespan]::FromSeconds(10) }
+        foreach ($statement in $clip) { . ([scriptblock]::Create($statement.Extent.Text)) }
+        $effectiveTimeoutSeconds | Should -Be 9540
+    }
+
+    It 'forwards the remaining original cadence deadline to the unchanged helper timeout owner' {
+        $ast = Get-BudgetOwnerAst -RelativePath 'scripts/invoke-release-e2e.ps1'
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Complete-E2EHelperProcess' }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $process = [pscustomobject]@{ Handle=1; ExitCode=0; ExitTime=[DateTime]::UtcNow; timedWaits=[Collections.Generic.List[int]]::new() }
+        $process | Add-Member ScriptMethod WaitForExit { param($milliseconds) if ($null -ne $milliseconds) { $this.timedWaits.Add([int]$milliseconds); return $true } }
+        $process | Add-Member ScriptMethod Refresh {}
+        $invocation = [pscustomobject]@{ process=$process; action='check-dev-branch'; stdoutPath='fixture.out'; stderrPath='fixture.err'; exitedAtUtc=$null }
+        $script:activeStageName = 'config-cadence'
+        $catalog = Get-QualityReleaseStageCatalog -RepositoryRoot $budgetRepoRoot
+        $cadenceSeconds = [int]($catalog.stages | Where-Object id -eq 'config-cadence').budgetSeconds
+        # A slow first metadata check consumes the observed fresh-check envelope.
+        $remainingModelSeconds = $cadenceSeconds - 1773
+        $script:activeStageDeadlineUtc = [DateTime]::UtcNow.AddSeconds($remainingModelSeconds)
+        try {
+            $result = Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds 7200
+            $result.exitCode | Should -Be 0
+            $process.timedWaits.Count | Should -Be 1
+            $process.timedWaits[0] | Should -BeGreaterThan 1773000
+            $process.timedWaits[0] | Should -BeLessOrEqual ($remainingModelSeconds * 1000)
+        } finally { $script:activeStageDeadlineUtc = $null; $script:activeStageName = '' }
+    }
+}
+
+Describe 'Catalog selection and qualified consumer inputs' {
+    It 'selects static catalog proof without launching publication process suites' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')
+        @($selected.unknownPaths) | Should -BeNullOrEmpty
+        @($selected.tests) | Should -Be @('tests/pester/SourceQualityCatalog.Tests.ps1')
+    }
+
+    It 'invalidates every existing qualification consumer when the catalog bytes change' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $actualCatalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        & {
+            foreach($name in @('Get-ShardRelativeTestPath','Get-ShardInputDigest','Get-TextSha256')) {
+                $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true)
+                $definition | Should -Not -BeNullOrEmpty
+                . ([scriptblock]::Create($definition.Extent.Text))
+            }
+            function Get-ShardTrackedFileIdentity {
+                param($RelativePath,$AbsolutePath)
+                (Get-FileHash -LiteralPath $AbsolutePath -Algorithm SHA256).Hash
+            }
+            $RepositoryRoot=Join-Path $TestDrive 'Каталог proof с пробелом'
+            New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot 'tests/pester') -Force | Out-Null
+            $catalogPath=Join-Path $RepositoryRoot 'tests/quality-contracts.json'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination $catalogPath
+            $catalog=$actualCatalog
+            $sharedInputs=@()
+            $pesterExternalInputsByTest=@{}
+            $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion')
+            $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+            . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+            $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
+            $consumerTests=@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+            $patterns=@($catalog.contracts | Where-Object { @($_.tests | Where-Object { $_ -in $consumerTests }).Count -gt 0 } | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ } | Sort-Object -Unique)
+            $dependencies=@($actualPaths | Where-Object { $path=$_; @($patterns | Where-Object { $path -like $_ }).Count -gt 0 })
+            foreach($relative in $dependencies) {
+                if($relative -eq 'tests/quality-contracts.json'){continue}
+                $absolute=Join-Path $RepositoryRoot $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absolute) | Out-Null
+                [IO.File]::WriteAllText($absolute,'unchanged dependency fixture',[Text.UTF8Encoding]::new($false))
+            }
+            $trackedPaths=@($trackedPaths+$dependencies | Sort-Object -Unique)
+            $before=@{}
+            foreach($name in $consumers) {
+                $path=Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')
+                [IO.File]::WriteAllText($path,'# unchanged test source',[Text.UTF8Encoding]::new($true))
+                $digest=Get-ShardInputDigest -Paths @($path)
+                $digest | Should -Not -BeNullOrEmpty
+                Get-ShardInputDigest -Paths @($path) | Should -BeExactly $digest
+                $before[$name]=$digest
+            }
+            [IO.File]::AppendAllText($catalogPath,"`n",[Text.UTF8Encoding]::new($false))
+            foreach($name in $consumers) {
+                $path=Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')
+                Get-ShardInputDigest -Paths @($path) | Should -Not -Be $before[$name] -Because "$name still consumes the catalog during full qualification"
+            }
+        }
+    }
+}

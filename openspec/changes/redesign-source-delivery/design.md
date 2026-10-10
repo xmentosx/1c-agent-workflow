@@ -131,6 +131,18 @@ commit и прежний immutable состав. Старую queue приним
 понимать новые принятые записи, сохранять commits и не сбрасывать concurrent work.
 Точный compatible rollback проверяется fixture перед включением нового протокола.
 
+**Активация source registration.** Обнаруженный после первой регистрации
+writer mismatch описан в [доказательствах](evidence/registration-authority.md).
+Сейчас RegisterChange выбирает опубликованный master; публикация develop сама
+по себе не активирует ни новый registration protocol, ни новый index writer.
+Предлагается выбирать опубликованный develop supervisor для новых source
+registrations, сохраняя immutable authority уже начатых планов и master-owned
+release operations. Этот выбор канала является частью ожидающего checkpoint,
+а не рутинной заменой строки. До переключения fixture должен доказать переход
+существующей очереди, старый план, безопасный resume и compatible rollback.
+Не передавать authority незарегистрированному task checkout, не обходить locks
+и не менять опубликованные refs ради активации.
+
 **Границы ресурсов и платформ.** Затрагиваются source registration, candidate
 worktrees, common-Git refs/checkpoints/proof и delivery. Lifecycle/1C guards,
 remote agents, MCP runtime и пользовательские infobases не получают новой

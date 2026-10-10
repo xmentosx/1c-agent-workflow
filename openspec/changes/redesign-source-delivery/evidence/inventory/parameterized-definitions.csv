@@ -1,0 +1,748 @@
+"sourceCommit","file","line","name","parameter","expression","constantCount","status"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/AiRulesMigration.Tests.ps1","227","preserves user policy in declared templates while protecting undeclared managed USER-RULES","ForEach","@(
+        @{PlacedOnce=$true;ExpectedStatus='eligible'},
+        @{PlacedOnce=$false;ExpectedStatus='user-modified'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ArtifactCacheIsolation.Tests.ps1","96","acquires the exact pinned ROCTUP artifact without changing the tracked lock for <cacheState> cache","TestCases","@(
+        @{ cacheState = 'cold' }
+        @{ cacheState = 'corrupt' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1","197","keeps Git path diagnostics usable with optional lifecycle phase (<Case>)","TestCases","@(
+        @{ Case = 'undefined'; Phase = $null; Expected = '<none>' },
+        @{ Case = 'caller-defined'; Phase = 'observed-caller-phase'; Expected = 'observed-caller-phase' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/BranchSeedRefreshLite.Tests.ps1","9","keeps the authoritative seed fingerprint byte-exact through <Scenario> with autocrlf true","ForEach","@(
+        @{ Scenario = 'first initialization'; Legacy = $false; FailDumpOnce = $false }
+        @{ Scenario = 'legacy master sync'; Legacy = $true; FailDumpOnce = $false }
+        @{ Scenario = 'failed master sync and same-command retry'; Legacy = $true; FailDumpOnce = $true }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/BranchSourceSyncGroup.Tests.ps1","247","rejects malformed explicit group membership: <case>","ForEach","@(
+        @{case='scalar peers';request=@{schemaVersion=1;peers='peer-a';recipients=@('primary')}}
+        @{case='scalar recipients';request=@{schemaVersion=1;peers=@('peer-a');recipients='primary'}}
+        @{case='duplicate alias';request=@{schemaVersion=1;peers=@('peer-a','itldev/PEER-A');recipients=@('primary')}}
+        @{case='unknown recipient';request=@{schemaVersion=1;peers=@('peer-a');recipients=@('primary','peer-b')}}
+        @{case='unknown option';request=@{schemaVersion=1;peers=@('peer-a');recipients=@('primary');all=$true}}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/CavemanPolicyTransition.Tests.ps1","240","preserves exact fresh <Kind> bytes and a later intentional on","TestCases","@(
+        @{Kind='BOM CRLF'; Bom=$true; NewLine=""`r`n""},
+        @{Kind='BOM LF'; Bom=$true; NewLine=""`n""},
+        @{Kind='no BOM LF'; Bom=$false; NewLine=""`n""}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/CavemanPolicyTransition.Tests.ps1","272","continues or refuses the authentic <Kind> legacy target without rebinding receipt hashes","TestCases","@(
+        @{Kind='before write'; Policy='caveman'; Refuse=$false},
+        @{Kind='after write'; Policy='caveman'; Refuse=$false},
+        @{Kind='late edit'; Policy='caveman'; Refuse=$true},
+        @{Kind='invalid target hash'; Policy='caveman'; Refuse=$true},
+        @{Kind='non-Caveman target'; Policy='ui-testing'; Refuse=$true}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientAdaptersAndModes.Tests.ps1","267","refuses native OpenSpec target probes without <SourceCase> source provenance and resumes the same manifest","ForEach","@(
+        @{SourceCase='missing'}, @{SourceCase='empty'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientAdaptersAndModes.Tests.ps1","342","keeps native legacy discovery inside declared project paths for <Case>","ForEach","@(
+        @{ Case = 'rooted target'; RequiresPathContinuation = $true }
+        @{ Case = 'internal escaping target'; RequiresPathContinuation = $true }
+        @{ Case = 'internal escaping non-skill target'; RequiresPathContinuation = $true }
+        @{ Case = 'source traversal'; RequiresPathContinuation = $true }
+        @{ Case = 'foreign client source'; RequiresPathContinuation = $false }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientJsonc.Tests.ps1","89","accepts legal <Case> JSON values without PowerShell binding changing their type","ForEach","@(
+        @{ Case = 'empty string'; InputValue = ''; Expected = '{""owned"": """"}' },
+        @{ Case = 'empty array'; InputValue = @(); Expected = '{""owned"": []}' },
+        @{ Case = 'false'; InputValue = $false; Expected = '{""owned"": false}' },
+        @{ Case = 'zero'; InputValue = 0; Expected = '{""owned"": 0}' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientJsonc.Tests.ps1","100","removes <Case> without consuming adjacent comments or foreign properties","ForEach","@(
+        @{ Case = 'first'; Text = '{""target"":0,/* next */""keep"":1}'; Expected = '{/* next */""keep"":1}' },
+        @{ Case = 'last'; Text = '{""keep"":1,/* prev */""target"":0/* after */}'; Expected = '{""keep"":1/* prev *//* after */}' },
+        @{ Case = 'middle'; Text = '{""a"":1,/* left */""target"":0,/* right */""z"":2}'; Expected = '{""a"":1,/* left *//* right */""z"":2}' },
+        @{ Case = 'trailing'; Text = '{""keep"":1,""target"":0,/* close */}'; Expected = '{""keep"":1,/* close */}' },
+        @{ Case = 'only'; Text = ""{//lead`r`n""""target"""":0,/* tail */}""; Expected = ""{//lead`r`n/* tail */}"" }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientJsonc.Tests.ps1","128","refuses ambiguous <Case> for both editors without changing the input text","ForEach","@(
+        @{ Case = 'ancestor'; Text = '{""mcp"":{},""mcp"":{}}'; Path = @('mcp', 'owned') },
+        @{ Case = 'leaf'; Text = '{""mcp"":{""owned"":1,""owned"":2}}'; Path = @('mcp', 'owned') },
+        @{ Case = 'escaped name'; Text = '{""mcp"":{""owned"":1,""\u006fwned"":2}}'; Path = @('mcp', 'owned') }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientJsonc.Tests.ps1","158","rejects malformed JSONC <Case> rather than rewriting or globally stripping commas","ForEach","@(
+        @{ Case = 'unterminated comment'; Text = '{/* open' },
+        @{ Case = 'unterminated string'; Text = '{""a"":""open}' },
+        @{ Case = 'bad escape'; Text = '{""a"":""\q""}' },
+        @{ Case = 'bad number'; Text = '{""a"":01}' },
+        @{ Case = 'missing comma'; Text = '{""a"":1 ""b"":2}' },
+        @{ Case = 'repeated comma'; Text = '{""a"":1,,}' },
+        @{ Case = 'extra root'; Text = '{}[]' },
+        @{ Case = 'unquoted key'; Text = '{a:1}' }
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ClientMcpBuild.Tests.ps1","111","rejects changed module or dump-index bytes even when an archive hash is updated","TestCases","@(@{File='Module.bsl'},@{File='ConfigDumpInfo.xml'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/CompactItlRunner.Tests.ps1","37","keeps Windows PowerShell built-in modules available when invoked from PowerShell Core","Skip","(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue))",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/CompactItlRunner.Tests.ps1","506","dispatches real classification and preserves its <Case> result without verification proof","TestCases","@(
+        @{ Case='ready'; HelperExit=0; ErrorPattern='' },
+        @{ Case='missing-suite'; HelperExit=1; ErrorPattern='Unclassified Vanessa feature' },
+        @{ Case='unowned-path'; HelperExit=1; ErrorPattern='VERIFICATION_SUITE_OWNERS_MISSING' },
+        @{ Case='source-without-git'; HelperExit=1; ErrorPattern='YAXUNIT_APPLICABILITY_BASELINE_MISSING' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/CompactItlRunner.Tests.ps1","1638","rejects a <Mode> observation from the private child channel","ForEach","@(@{Mode='foreign'},@{Mode='stale'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ConfigRepositoryRootLock.Tests.ps1","94","rejects malformed metadata missing root membership and duplicate identity before requesting locks","TestCases","@(
+        @{ defect = 'malformed' }, @{ defect = 'missing-member' }, @{ defect = 'duplicate' }, @{ defect = 'wrong-type' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ConfigRepositoryRootLock.Tests.ps1","126","orders a root-only request before the remaining objects and preserves both phase outcomes","TestCases","@(
+        @{ failurePhase = 0; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 1; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 2; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 0; silentRoot = $true; rootSuccessMarker = $false },
+        @{ failurePhase = 0; silentRoot = $true; rootSuccessMarker = $true }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DependencyLocks.Tests.ps1","288","updates canonical pins without replacing compatibility runtime metadata for <clientPolicy>","TestCases","@(
+        @{ clientPolicy = 'published legacy baseline'; expectedClientSource = 'compatibility-manifest' }
+        @{ clientPolicy = 'current owned pin'; expectedClientSource = 'workflow-pinned' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","114","keeps configured credentials across guarded loads and rollback (<Case>)","TestCases","@(
+        @{ Case='scaffold-defaults'; LoadMode='Empty'; Credentials='omitted'; Borrowed=$true; Fail=$false },
+        @{ Case='cfe-defaults'; LoadMode='Cfe'; Credentials='omitted'; Borrowed=$true; Fail=$false },
+        @{ Case='direct-defaults'; LoadMode='Direct'; Credentials='omitted'; Borrowed=$false; Fail=$false },
+        @{ Case='explicit-override'; LoadMode='Empty'; Credentials='override'; Borrowed=$true; Fail=$false },
+        @{ Case='explicit-anonymous'; LoadMode='Empty'; Credentials='empty'; Borrowed=$true; Fail=$false },
+        @{ Case='user-only-override'; LoadMode='Empty'; Credentials='user'; Borrowed=$true; Fail=$false },
+        @{ Case='password-only-override'; LoadMode='Empty'; Credentials='password'; Borrowed=$true; Fail=$false },
+        @{ Case='rollback-defaults'; LoadMode='Empty'; Credentials='omitted'; Borrowed=$false; Fail=$true }
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","198","continues only bound unchanged outside-scope structural findings (<Case>)","TestCases","@(
+        @{ Case='legacy'; allowed=$true },
+        @{ Case='increased'; allowed=$false },
+        @{ Case='unknown'; allowed=$false },
+        @{ Case='inside'; allowed=$false },
+        @{ Case='changed-before-log'; allowed=$false },
+        @{ Case='changed-before-result'; allowed=$false }
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","356","rejects a <Defect> enclosing snapshot before editable mutation without creating an ambient journal","TestCases","@(
+        @{ Defect='changed DT'; expected='missing or changed' },
+        @{ Defect='wrong target'; expected='another infobase' },
+        @{ Defect='changed duty'; expected='restoration duty' }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","746","restores the original snapshot without applying when vendor checks fail (<Problem>)","TestCases","@(
+        @{Problem='modules'; Step='modules'; Count=4}
+        @{Problem='app-extra'; Step='applicability'; Count=5}
+        @{Problem='app-code'; Step='applicability'; Count=5}
+        @{Problem='config-extra'; Step='configuration'; Count=6}
+        @{Problem='config-code'; Step='configuration'; Count=6}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","765","refuses changed CFE bytes at every vendor admission boundary (<Drift>)","TestCases","@(
+        @{Drift='snapshot'; Count=2}
+        @{Drift='load'; Count=3}
+        @{Drift='check'; Count=6}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerBatchChecks.Tests.ps1","779","rejects vendor context outside its immutable dependency load before any native operation (<Scope>)","TestCases","@(
+        @{Scope='baseline'}
+        @{Scope='version-string'}
+        @{Scope='version-bool'}
+        @{Scope='extension'}
+        @{Scope='cf'}
+        @{Scope='from-files'}
+        @{Scope='static'}
+    )","7","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","9","rejects an old child of a reused launcher PID through <enumerationMode> while retaining valid descendants","TestCases","@(@{enumerationMode='fallback'},@{enumerationMode='worker'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","136","retains a child born at captured invocation start with <fraction> residual ticks through <boundaryKind>","TestCases","@(
+        @{fraction=0;boundaryKind='parsed'},@{fraction=1;boundaryKind='parsed'},@{fraction=9;boundaryKind='parsed'},
+        @{fraction=0;boundaryKind='utc'},@{fraction=1;boundaryKind='utc'},@{fraction=9;boundaryKind='utc'}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","160","tracks only 1C children inside an actual OneScript launcher lifetime and rejects its PID recycled by <parentName>","TestCases","@(@{parentName='oscript.exe'},@{parentName='powershell.exe'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","244","retains genuine children inside the captured parent lifetime after native or non-native parent PID reuse through <enumerationMode>","TestCases","@(@{enumerationMode='fallback'},@{enumerationMode='worker'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","319","preserves independently matched scope ownership when a worker-observed child PID is reused through <enumerationMode>","TestCases","@(@{enumerationMode='fallback'},@{enumerationMode='worker'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","504","releases a failed <family> after delayed owned processes exit without requiring an artifact","TestCases","@(
+        @{family='capture'}, @{family='repository-update'}, @{family='dump-files'}, @{family='dump-cfg'}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerCompletion.Tests.ps1","1298","resets Designer release confirmation after a fresh <observation> observation","TestCases","@(
+        @{ observation = ""active""; querySucceeded = $true; active = $true }
+        @{ observation = ""failed""; querySucceeded = $false; active = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerExportSharedBase.Tests.ps1","181","completes public <Kind> export with skipped load, fresh proof and the official manifest","TestCases","@(
+        @{ Kind = 'configuration'; ResultKind = 'cf' }, @{ Kind = 'extension'; ResultKind = 'cfe' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerExportSharedBase.Tests.ps1","206","does not publish a manifest after <Failure>","TestCases","@(
+        @{ Failure = 'source-changed'; Error = 'content changed during artifact export' },
+        @{ Failure = 'verification-lost'; Error = 'verification was lost during artifact export' },
+        @{ Failure = 'nonzero-exit'; Error = 'failed with exit code 1' },
+        @{ Failure = 'owned-process-active'; Error = '^DESIGNER_POST_EXIT_PROBE_TIMEOUT' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerExportSharedBase.Tests.ps1","224","completes <Kind> export while the other session keeps the infobase open","TestCases","@(
+        @{ Kind = 'configuration'; Extension = '.cf' }, @{ Kind = 'extension'; Extension = '.cfe' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerExportSharedBase.Tests.ps1","240","rejects <Failure> even with an output file and a surviving unrelated session","TestCases","@(
+        @{ Failure = 'empty-output'; Error = '^DESIGNER_POST_EXIT_PROBE_TIMEOUT' },
+        @{ Failure = 'owned-process-active'; Error = '^DESIGNER_POST_EXIT_PROBE_TIMEOUT' },
+        @{ Failure = 'log-error'; Error = 'failed: Error saving configuration' },
+        @{ Failure = 'nonzero-exit'; Error = 'failed with exit code 1' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DesignerExportSharedBase.Tests.ps1","254","preserves exclusive-release evidence for <Operation>","TestCases","@(
+        @{ Operation = 'dump-ib' }, @{ Operation = 'mixed-dump-and-update' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","105","repairs proven legacy fork ownership with <EquivalentReceipts> equivalent receipts and reaches the ordinary endpoint writer","ForEach","@(@{EquivalentReceipts=1},@{EquivalentReceipts=2})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","125","recognizes only a known legacy retirement in the main ownership capsule: <LegacyDocument>","ForEach","@(@{LegacyDocument='known'},@{LegacyDocument='custom'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","148","keeps the ordinary user collision for <Fault> provenance","ForEach","@(
+            @{Fault='tampered-main-backup'},@{Fault='main-receipt-hash'},@{Fault='main-receipt-context'},@{Fault='ready-branch'},@{Fault='target-config-drift'},@{Fault='target-before-marker'},@{Fault='wrong-fork'},@{Fault='foreign-main'},@{Fault='business-main-commit'},@{Fault='forged-business-capsule'},@{Fault='different-ownership-receipts'}
+        )","11","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","333","rejects Release workflow resume with <Fault>","TestCases","@(
+            @{Fault='foreign commit'}, @{Fault='CF change'}, @{Fault='CFE change'},
+            @{Fault='missing receipt'}, @{Fault='tampered backup'}, @{Fault='dirty lock'}
+        )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","464","acknowledges a ready fork only across proved source workflow updates (business advance: <BusinessAdvance>)","ForEach","@(
+            @{BusinessAdvance=$false}, @{BusinessAdvance=$true}
+        )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","496","keeps a completed <Kind> restore and target generation on retry, with <Damage> evidence","ForEach","@(
+            @{Kind='file';Damage='intact'}, @{Kind='server';Damage='intact'},
+            @{Kind='file';Damage='history'}, @{Kind='file';Damage='baseline'}, @{Kind='server';Damage='launcher'}
+        )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","567","rejects a business commit authorized only by a forged <Authority> manifest and coherent receipt hashes","ForEach","@(
+            @{Authority='backup';BusinessPath='src/cf/Модуль.bsl'}, @{Authority='new HEAD source';BusinessPath='src/cf/Модуль.bsl'},
+            @{Authority='new HEAD generic';BusinessPath='business.txt'}, @{Authority='new generic path';BusinessPath='new-business.txt'},
+            @{Authority='new OpenSpec business';BusinessPath='openspec/changes/business-proposal.md'}
+        )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","617","rejects <Fault> instead of accepting an unproven fork workflow transition","ForEach","@(
+            @{Fault='missing receipt';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID*'}, @{Fault='ambiguous receipt';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_CHAIN_UNPROVEN*'},
+            @{Fault='tampered backup';ExpectedFailure='*WORKFLOW_UPDATE_ROLLBACK_BACKUP_INVALID*'}, @{Fault='foreign business commit';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_CHAIN_UNPROVEN*'},
+            @{Fault='staged owned edit';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_DIRTY*'}, @{Fault='unstaged owned edit';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_DIRTY*'},
+            @{Fault='wrong first lock';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN*'}, @{Fault='changed current lock';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_DIRTY*'},
+            @{Fault='wrong branch identity';ExpectedFailure='*DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID*'}
+        )","9","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","3587","rejects reset before checkpoint when the pending refresh is not a proven completed merge (<Case>)","TestCases","@(
+        @{ Case = 'active-merge'; Expected = 'RESET_DEV_BRANCH_GIT_MERGE_IN_PROGRESS' },
+        @{ Case = 'conflicts'; Expected = 'RESET_DEV_BRANCH_REFRESH_NOT_MERGED' },
+        @{ Case = 'other-operation'; Expected = 'LIFECYCLE_MERGE_OPERATION_MISMATCH' },
+        @{ Case = 'unrelated-head'; Expected = 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","3625","validates the reset seed only after acquiring its reader lease for <Kind>","ForEach","@(
+        @{ Kind = 'file' }, @{ Kind = 'server' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","3653","keeps the captured server reset seed leased and verifies <SeedCondition> before provider restore","ForEach","@(
+        @{ SeedCondition = 'valid' }, @{ SeedCondition = 'corrupted' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","4103","restores the project dump cursor before <operation> verification when the caller directory differs","TestCases","@(
+        @{ operation = 'check' },
+        @{ operation = 'export' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","8140","expands only a changed Template <Change> to its owner, descriptor, and DCS payload","TestCases","@(
+        @{ Change = ""descriptor"" }
+        @{ Change = ""payload"" }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","8197","rejects an inconsistent Template aggregate: <Case>","TestCases","@(
+        @{ Case = ""missing owner registration""; ExpectedCode = ""template-owner-registration-invalid"" }
+        @{ Case = ""descriptor name differs from path""; ExpectedCode = ""template-name-path-mismatch"" }
+        @{ Case = ""TemplateType differs from payload""; ExpectedCode = ""template-payload-type-mismatch"" }
+        @{ Case = ""owner main schema reference is unresolved""; ExpectedCode = ""template-owner-reference-unresolved"" }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","8519","completes reset then refresh-lite with an inherited form diagnostic (resume=<Resume>)","TestCases","@(
+        @{ Resume = $false }, @{ Resume = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","8593","keeps reset form validation for <Change> despite equal parent blobs (invalid commands: <InvalidCommands>)","TestCases","@(
+        foreach ($change in @('staged', 'unstaged', 'staged-reverted-worktree', 'repair', 'relative-repair')) {
+            foreach ($invalid in @($false, $true)) { @{ Change = $change; InvalidCommands = $invalid } }
+        }
+    )",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","9253","resumes the original refresh on a corrective descendant without changing failed verification (<Operation>, <Checkpoint>, <EvidenceKind>)","TestCases","@(
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","9362","keeps a pending refresh when full verification is stale (<Operation>, <EvidenceKind>)","TestCases","@(
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevBranchLifecycle.Tests.ps1","9402","keeps diagnostic partial and unknown evidence from completing a pending refresh despite actual freshness (<Operation>, <EvidenceKind>)","TestCases","@(
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'diagnostic' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'diagnostic' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'partial' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'partial' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'partial/skipped' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'partial/skipped' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'unknown' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'unknown' }
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/DevelopConfigurationRejection.Tests.ps1","121","rejects missing rollback, attempted apply or unreleased native work","ForEach","@(
+        @{field='snapshotRestored';value=$false},@{field='cursorRestored';value=$false},
+        @{field='applyStarted';value=$true},@{field='nativeOperationsReleased';value=$false}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/GitHubDependencyFallback.Tests.ps1","194","keeps the tracked lock byte-identical when acquiring the same verified ROCTUP pin from <priorSource>","TestCases","@(
+        @{ priorSource = 'template baseline' }
+        @{ priorSource = 'compatibility-manifest' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","36","protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>","TestCases","@(
+        @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
+        @{ Existing = $false; Deny = $true }, @{ Existing = $true; Deny = $true }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","402","retains a working route on <Failure> failure and resumes BookStack proxy removal","TestCases","@(
+        @{ Failure = 'tools' }, @{ Failure = 'health' }, @{ Failure = 'publish' }, @{ Failure = 'remove' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","492","isolates modern Graph runtime and protects credentials (stable: <StableRelease>, ACL denied: <DenyAcl>)","TestCases","@(@{ DenyAcl = $false; StableRelease = $false }, @{ DenyAcl = $true; StableRelease = $false }, @{ DenyAcl = $false; StableRelease = $true }, @{ DenyAcl = $true; StableRelease = $true })","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","2142","does not report watchdog success while a tracked endpoint is <Status>","TestCases","@(
+        @{ Status = 'unreachable' }, @{ Status = 'missing' }, @{ Status = 'unknown' }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","2162","retries pending registry delivery without changing an unchanged payload: dryRun=<IsDryRun>","TestCases","@(
+        @{ IsDryRun = $false }, @{ IsDryRun = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","4447","keeps forward upgrades on the new tracked runtime and resumes through reconcile after <FailureStage>","TestCases","@(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }, @{ FailureStage = 'none' })","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","4565","restores retained data before restarting the accepted service on <FailureStage> failure","TestCases","@(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' })","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","4640","converts only the accepted stable <ServerId> image to the same public native address","TestCases","@(@{ ServerId = 'ssl' }, @{ ServerId = 'templates' })","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","4944","releases a session when initialized notification fails and preserves that failure if cleanup fails","TestCases","@(@{ CleanupFails = $false }, @{ CleanupFails = $true })","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","4954","releases after a later tools page fails and does not replace the primary error","TestCases","@(@{ CleanupFails = $false }, @{ CleanupFails = $true })","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","5009","closes initial and replacement indexing sessions on successful completion and terminal failure","TestCases","@(@{ Fails = $false }, @{ Fails = $true })","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","5056","uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>","TestCases","@(
+        @{ Scenario = 'direct'; FailNotify = $false }, @{ Scenario = 'direct'; FailNotify = $true },
+        @{ Scenario = 'redirect'; FailNotify = $false }, @{ Scenario = 'redirect'; FailNotify = $true },
+        @{ Scenario = 'fallback'; FailNotify = $false }, @{ Scenario = 'fallback'; FailNotify = $true }
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/HostTooling.Tests.ps1","5180","recovers an open foreign direct endpoint once and preserves the other MCP: <Scenario>","TestCases","@(
+        @{ Scenario = 'repaired' }, @{ Scenario = 'matched' }, @{ Scenario = 'unverified' },
+        @{ Scenario = 'indexing' }, @{ Scenario = 'stuck' }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LayeredClientObservation.Tests.ps1","105","preserves the existing <Client> configured Product Docs and UI key observations","TestCases","@(
+        @{ Client = 'codex'; Path = '.codex/config.toml'; Text = ""[mcp_servers.`""BookStack-product-docs-mcp`""]`nurl = `""http://fixture/docs`""`n[mcp_servers.agent-browser]`ncommand = `""fixture`""`n[mcp_servers.agent-browser.env]`nFIXTURE = `""значение с пробелом`""`n"" },
+        @{ Client = 'cursor'; Path = '.cursor/mcp.json'; Text = '{""mcpServers"":{""BookStack-product-docs-mcp"":{""url"":""http://fixture/docs""},""agent-browser"":{""command"":""fixture""}}}' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LayeredClientObservation.Tests.ps1","120","does not turn a foreign layered endpoint into an attached executing client (<Case>)","TestCases","@(
+        @{ Case = 'unattached'; Configured = @('cursor'); Installed = @('cursor'); Error = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'membership mismatch'; Configured = @('opencode'); Installed = @('cursor'); Error = 'Configured and installed ai_rules_1c clients disagree' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LifecycleLockWaiting.Tests.ps1","241","checks current inputs after waiting when <InputKind> changed","ForEach","@(
+        @{ InputKind='config' }, @{ InputKind='environment' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LifecycleOperationLock.Tests.ps1","71","refuses an existing publication with <Defect> instead of admitting another generation","ForEach","@(
+        @{Defect='missing'}, @{Defect='malformed'}, @{Defect='operation id'}, @{Defect='owner pid'}, @{Defect='start time'}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LifecycleOperationLock.Tests.ps1","282","runs reset through <Scenario> with real worktree archives and seed leases","ForEach","@(
+        @{ Scenario = ""parallel branches"" }, @{ Scenario = ""interruption and resume"" }, @{ Scenario = ""updated helper handoff"" },
+        @{ Scenario = ""pending refresh"" }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LocalQualityGate.Tests.ps1","7","reuses Targeted proof in Full with another worker limit, retaining input and SHA guards: <Producer>","ForEach","@(
+        @{ Producer = 'current' }
+        @{ Producer = 'legacy-workers-4' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LocalQualityGate.Tests.ps1","83","observes owned native progress while retaining idle and hard limits: <Scenario>","TestCases","@(
+        @{ Scenario = 'release-worktree'; ExpectedFailure = ''; NativeRoot = 'release' }
+        @{ Scenario = 'configured-relative-worktree'; ExpectedFailure = ''; NativeRoot = 'release'; LogLayout = 'relative' }
+        @{ Scenario = 'configured-absolute-main'; ExpectedFailure = ''; NativeRoot = 'main'; LogLayout = 'absolute' }
+        @{ Scenario = 'foreign-worktree'; ExpectedFailure = 'no progress for 10 seconds'; NativeRoot = 'foreign' }
+        @{ Scenario = 'hard-timeout'; ExpectedFailure = 'remaining mode budget 12 seconds'; NativeRoot = 'release' }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LocalQualityGate.Tests.ps1","237","preserves a valid-hash foreign <Kind> cache entry and executes then reuses the requested test","ForEach","@(
+        @{ Kind = 'different file' }, @{ Kind = 'same basename under another relative directory' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LocalQualityGate.Tests.ps1","334","rejects malformed reuse input paths: <kind>","TestCases","@(
+        @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
+        @{kind='outside';paths=@('../secret.ps1')},
+        @{kind='absolute';paths=@('C:\outside.ps1')},
+        @{kind='duplicate';paths=@('lib/core.ps1','lib/core.ps1')}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/LocalQualityGate.Tests.ps1","1719","refuses a present invalid route budget instead of using a legacy default: <label>","ForEach","@(
+        @{ label='null'; budget=$null }
+        @{ label='zero'; budget=0 }
+        @{ label='negative'; budget=-1 }
+        @{ label='fraction'; budget=3600.5 }
+        @{ label='numeric string'; budget='3600' }
+        @{ label='boolean'; budget=$true }
+        @{ label='array'; budget=@(3600,3600) }
+        @{ label='overflow'; budget=[long]2147483648 }
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/McpConfig.Tests.ps1","2421","inspects configured MCP status without changing an unattached or ambiguous invocation client (<Case>)","TestCases","@(
+        @{ Case = 'single-unattached'; Clients = @('kilocode'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-unattached'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-ambiguous'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = ''; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_AMBIGUOUS' },
+        @{ Case = 'attached-self-only'; Clients = @('kilocode', 'cursor'); InvocationClient = 'kilocode'; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = 'kilocode'; ExpectedStatus = 'available' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MergePreservation.Tests.ps1","97","recognizes duplicate additions without accepting different bodies or reordered existing content: <caseName>","TestCases","@(
+        @{ caseName='identical new methods'; extension='bsl'; original=""Procedure Start()`nEndProcedure`n`nProcedure Finish()`nEndProcedure`n""; addition=""Procedure Shared()`n Message(1);`nEndProcedure`n`n""; different=$false; reorder=$false; expected=0 }
+        @{ caseName='same method name with different bodies'; extension='bsl'; original=""Procedure Start()`nEndProcedure`n`nProcedure Finish()`nEndProcedure`n""; addition=""Procedure Shared()`n Message(1);`nEndProcedure`n`n""; different=$true; reorder=$false; expected=1 }
+        @{ caseName='both shared method copies removed'; extension='bsl'; original=""Procedure Start()`nEndProcedure`n`nProcedure Finish()`nEndProcedure`n""; addition=""Procedure Shared()`n Message(1);`nEndProcedure`n`n""; different=$false; reorder=$false; expected=1; resultBase=$true }
+        @{ caseName='identical parent additions removed'; extension='bsl'; original=""Procedure Start()`nEndProcedure`n`nProcedure Finish()`nEndProcedure`n""; addition=""Procedure Shared()`n Message(1);`nEndProcedure`n`n""; different=$false; reorder=$false; expected=1; resultBase=$true; sameParents=$true }
+        @{ caseName='identical form definitions'; extension='xml'; original='<Form><Items><Item name=""One""/><Item name=""Two""/></Items></Form>'; addition='<Item name=""Shared"" title=""One""/>'; different=$false; reorder=$false; expected=0 }
+        @{ caseName='same form identity with different properties'; extension='xml'; original='<Form><Items><Item name=""One""/><Item name=""Two""/></Items></Form>'; addition='<Item name=""Shared"" title=""One""/>'; different=$true; reorder=$false; expected=1 }
+        @{ caseName='existing form order changed'; extension='xml'; original='<Form><Items><Item name=""One""/><Item name=""Two""/></Items></Form>'; addition='<Item name=""Shared"" title=""One""/>'; different=$false; reorder=$true; expected=1 }
+        @{ caseName='both XML additions reverted to base'; extension='xml'; original='<Form><Items><Item name=""One""/><Item name=""Two""/></Items></Form>'; addition='<Item name=""Shared"" title=""One""/>'; different=$false; reorder=$false; expected=1; resultBase=$true }
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MergePreservation.Tests.ps1","227","prevents <operation> from committing a lost repair even after the conflict list is empty","ForEach","@(
+        @{operation='refresh-dev-branch'}, @{operation='refresh-dev-branch-lite'}, @{operation='close-dev-branch'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MultiClientMcpOwnership.Tests.ps1","353","transfers exact copied ownership and preserves policy (explicit target: <ExplicitTarget>)","ForEach","@(@{ExplicitTarget=$false},@{ExplicitTarget=$true})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MultiClientMcpOwnership.Tests.ps1","385","refuses <Mutation> proof drift without changing target bytes","ForEach","@(@{Mutation='target-config'},@{Mutation='source-config'},@{Mutation='source-ownership'},@{Mutation='config-hash'},@{Mutation='ownership-hash'})","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MultiClientMcpOwnership.Tests.ps1","404","keeps an <Proof> config unowned and the ordinary collision strict","ForEach","@(@{Proof='absent'},@{Proof='empty'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/MultiClientMcpOwnership.Tests.ps1","441","preserves <Conflict> without adopting ownership","ForEach","@(@{Conflict='foreign-owner'},@{Conflict='jsonc'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/OnDemandPostLoadScope.Tests.ps1","26","stops only the loaded <Kind> base and preserves auxiliary runtime in the same branch","TestCases","@(
+        @{Kind='file'}, @{Kind='server'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/OneCNativeInvocationOwnership.Tests.ps1","21","preserves a different <difference> despite a reused process id","TestCases","@(
+        @{difference='database'},@{difference='output'},@{difference='mode'},@{difference='start-time'},@{difference='executable'}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/OpenCodeConfigLayers.Tests.ps1","187","transfers nested ownership in <Order> order without moving the path or losing user policy","ForEach","@(@{Order='release-first'},@{Order='receive-first'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/OpenCodeConfigLayers.Tests.ps1","320","Q24 legacy cleanup removes only physical <Marker> markers with lossless JSONC and repeat","ForEach","@(@{Marker='itl-branch-mcp'},@{Marker='vanessa-mcp'},@{Marker='vanessa-ui-mcp'})","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PendingMergeWorkflowTransition.Tests.ps1","123","rejects <Mismatch> before changing package files or state","ForEach","@(
+        @{Mismatch='foreign-repository'}, @{Mismatch='foreign-branch'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PendingMergeWorkflowTransition.Tests.ps1","625","preserves the merge target, conflict index, and original checkpoint while advancing only the workflow parent <UpdateCount> times","ForEach","@(
+        @{UpdateCount=1},
+        @{UpdateCount=2}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyContext.Tests.ps1","131","uses the fingerprint exclusion without granting changed metadata for <Change>","ForEach","@(
+        @{Change='comment'},@{Change='dump only'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyContext.Tests.ps1","143","rejects unrelated fingerprints and incomplete target proof for <Case>","ForEach","@(
+        @{Case='unrelated fingerprint'},@{Case='different previous tree'},@{Case='seed mismatch'},@{Case='seed source absent'},
+        @{Case='seed sync absent'},@{Case='normal loaded time absent'},@{Case='pending load'},@{Case='different database kind'},
+        @{Case='moved target'},@{Case='missing current tree'}
+    )","10","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyContext.Tests.ps1","165","keeps unknown metadata impact on the strict path for <Change>","ForEach","@(
+        @{Change='descriptor'},@{Change='root property'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyDiagnostics.Tests.ps1","80","requires both native binding and current compilation for <Case>","ForEach","@(
+        @{Case='missing current compilation';Binding=$true;Compilation=$false},
+        @{Case='unproved native binding';Binding=$false;Compilation=$true}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyDiagnostics.Tests.ps1","98","rejects unknown text and incomplete native compiler pairing for <Case>","ForEach","@(
+        @{Case='missing context';Shape='incomplete'},
+        @{Case='unsupported runtime mode';Shape='wrong-mode'},
+        @{Case='wrong context statement';Shape='wrong-statement'},
+        @{Case='context without native indentation';Shape='unindented'},
+        @{Case='unknown preceding line';Shape='unknown-first'},
+        @{Case='nonexact repository notice';Shape='modified-notice'}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyDiagnostics.Tests.ps1","258","requires exact unchanged-owner hashes for <Case>","ForEach","@(
+        @{Case='missing proof';ProofKind='missing'},
+        @{Case='changed bytes';ProofKind='changed'},
+        @{Case='invalid hash';ProofKind='invalid'},
+        @{Case='duplicate owner';ProofKind='duplicate'},
+        @{Case='different owner case';ProofKind='case'}
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyImpact.Tests.ps1","119","refuses declaration global and conditional surfaces (<Case>)","ForEach","@(
+        @{Case='routine kind';Old='Функция';New='Процедура'},
+        @{Case='signature';Old='Параметр = 1';New='Параметр = 2'},
+        @{Case='export';Old=' Экспорт';New=''},
+        @{Case='context';Old='&НаСервере';New='&НаКлиенте'},
+        @{Case='conditional';Old='#Если Сервер Тогда';New='#Если Клиент Тогда'},
+        @{Case='global';Old='Перем Общая Экспорт;';New='Перем Другая Экспорт;'}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyImpact.Tests.ps1","144","refuses deletions additions to existing objects and unknown changed payloads (<Case>)","ForEach","@(
+        @{Case='deletion'},@{Case='existing addition'},@{Case='unknown payload'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyImpact.Tests.ps1","156","refuses unsafe additive roots and UUID ownership (<Case>)","ForEach","@(
+        @{Case='root property'},@{Case='existing child removed'},@{Case='unmatched entry'},@{Case='duplicate entry'},@{Case='UUID collision'},@{Case='missing entry'}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyImpact.Tests.ps1","174","refuses added names already referenced by unchanged old source (<Case>)","ForEach","@(
+        @{Case='object name';Reference='НоваяПроверка'},
+        @{Case='definition UUID';Reference='33333333-3333-3333-3333-333333333333'},
+        @{Case='exported routine';Reference='ЗапуститьНовуюПроверку'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLegacyImpact.Tests.ps1","187","refuses ambient or unresolved shared dependencies of a new object (<Case>)","ForEach","@(
+        @{Case='ambient';Properties='<Global>true</Global>';Body=''},
+        @{Case='shared reference';Properties='';Body='Процедура Новая() Экспорт Старый.Вызвать(); КонецПроцедуры'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLoadContinuation.Tests.ps1","247","refuses changed current MCP inputs after editable load and restores the exact original target for <Fault>","ForEach","@(
+        @{Fault='source changed'},@{Fault='receipt changed'},@{Fault='result changed'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/PlatformLoadContinuation.Tests.ps1","293","does not restore previous proof from uncertain borrowed or changed ownership for <Fault>","ForEach","@(
+        @{Fault='restore uncertain'},@{Fault='borrowed failure'},@{Fault='owner drift'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseExtensionRecovery.Tests.ps1","157","restores when only <CreatedFiles> declared files were created without inventing additional ownership","ForEach","@(@{ CreatedFiles = 0 }, @{ CreatedFiles = 1 })","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseExtensionRecovery.Tests.ps1","165","refuses foreign file or changed owned bytes before restoring and preserves them: <Mutation>","ForEach","@(@{ Mutation = 'foreign' }, @{ Mutation = 'edit' }, @{ Mutation = 'foreign-business' })","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseExtensionRecovery.Tests.ps1","180","refuses <Mutation> binding drift before any restoration","ForEach","@(
+        @{ Mutation = 'snapshot' }, @{ Mutation = 'saved-state' }, @{ Mutation = 'saved-env' }, @{ Mutation = 'current-state' }, @{ Mutation = 'current-env' },
+        @{ Mutation = 'target' }, @{ Mutation = 'head' }, @{ Mutation = 'common-git' }, @{ Mutation = 'helper' }, @{ Mutation = 'child' }, @{ Mutation = 'native-active' }, @{ Mutation = 'raw-stop' }, @{ Mutation = 'archive-in-run' }
+    )","13","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseExtensionRecovery.Tests.ps1","290","refuses unsafe legacy stop context before restoration: <Mutation>","ForEach","@(
+        @{ Mutation = 'no-approval' }, @{ Mutation = 'changed-record' }, @{ Mutation = 'wrong-action' }, @{ Mutation = 'wrong-pid' }, @{ Mutation = 'native-active' }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseGate.Tests.ps1","1618","retains the original merge and failure for unsupported <Case> semantics","ForEach","@(
+        @{Case='unknown-top'},@{Case='unknown-integration'},@{Case='branch-only-rule'},@{Case='forged-hash'},
+        @{Case='business-conflict'},@{Case='parent-mismatch'},@{Case='stage-mismatch'},@{Case='version-mismatch'}
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseGate.Tests.ps1","1697","selects the actual <Runner> root and resumes the same ambiguous operation explicitly","ForEach","@(@{Runner='Develop'},@{Runner='Release'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseGate.Tests.ps1","1878","preserves the native application boundary for <Case>","ForEach","@(
+        @{Case='cross-source passed config';Cross=$true;Passed=$true;Corrupt=$false;Ready=$false;ExpectedRestore=1;ExpectedError=''},
+        @{Case='same-source recovered live base';Cross=$false;Passed=$true;Corrupt=$false;Ready=$true;ExpectedRestore=0;ExpectedError=''},
+        @{Case='unqualified config';Cross=$true;Passed=$false;Corrupt=$false;Ready=$false;ExpectedRestore=0;ExpectedError='ITL_INFOBASE_APPLICATION_NOT_READY'},
+        @{Case='corrupt post-config snapshot';Cross=$true;Passed=$true;Corrupt=$true;Ready=$false;ExpectedRestore=0;ExpectedError='SHA256'}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseGate.Tests.ps1","2110","preserves the original managed <Kind> transition in early and runner predicates without changing Git","ForEach","@(@{Kind='merge'},@{Kind='cursor'},@{Kind='state'})","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseReadiness.Tests.ps1","404","compares managed Python sources independently of generated caches for <Kind>","TestCases","@(
+        @{ Kind = 'cache-only'; ExpectedDrift = $false },
+        @{ Kind = 'modified-source'; ExpectedDrift = $true },
+        @{ Kind = 'missing-source'; ExpectedDrift = $true },
+        @{ Kind = 'extra-source'; ExpectedDrift = $true }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseReadiness.Tests.ps1","702","checks exact saved <Kind> bytes before reuse without editing or printing them","ForEach","@(@{Kind='state'},@{Kind='envCopy'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ReleaseStandRecovery.Tests.ps1","13","keeps the damaged stand and checkpoint with <Selection> client selection","ForEach","@(
+        @{Selection='omitted';Client='';Reject=$false},
+        @{Selection='explicit attached kilocode';Client='kilocode';Reject=$false},
+        @{Selection='explicit unattached codex';Client='codex';Reject=$true}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryProcess.Tests.ps1","14","confirms descendant exit before Close when parentAlreadyExited=<ParentAlreadyExited>","ForEach","@(
+        @{ ParentAlreadyExited = $false },
+        @{ ParentAlreadyExited = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryProcess.Tests.ps1","139","fails closed without emitting a stopped proof for invalid job handle <Handle>","ForEach","@(
+        @{ Handle = [int64]0 },
+        @{ Handle = [int64]-1 }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryReleaseRecovery.Tests.ps1","86","recovers before readiness in <Caller> using native Unicode child transport","ForEach","@(
+        @{ Caller = 'Publish-AccumulatedDevelop' }, @{ Caller = 'Release-DevelopToMaster' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","422","bounds a real hanging publication probe and removes its descendant process","Skip","($env:OS -ne 'Windows_NT')",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","496","bounds reader drain when an exited git root leaves a pipe-holding descendant","Skip","($env:OS -ne 'Windows_NT')",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","770","preserves a <State> snapshot referenced by the <Layout> checkpoint beyond plan retention, then cleans it after checkpoint removal","TestCases","@(
+        @{ Layout = 'preferred'; State = 'retained' }, @{ Layout = 'legacy-run'; State = 'retained' },
+        @{ Layout = 'preferred'; State = 'cleanup-pending' }, @{ Layout = 'legacy-run'; State = 'cleanup-pending' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","805","cleans the actual producer <Layout> <Snapshot> path and preserves the worktree","TestCases","@(
+        @{ Layout = 'preferred'; Snapshot = 'baseline' }, @{ Layout = 'preferred'; Snapshot = 'post-config' },
+        @{ Layout = 'legacy-run'; Snapshot = 'baseline' }, @{ Layout = 'legacy-run'; Snapshot = 'post-config' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","821","preserves a pending snapshot while another record has <State> ownership, then cleans it after release","TestCases","@(
+        @{ State = 'retained' }, @{ State = 'active' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","837","rejects unowned layout <RelativePath>","TestCases","@(
+        @{ RelativePath = '../foreign-snapshot.dt' },
+        @{ RelativePath = '.agent-1c/runs/release-e2e-other/run/snapshots/baseline.dt' },
+        @{ RelativePath = '.agent-1c/runs/release-e2e/run/snapshots/manual-backup.dt' },
+        @{ RelativePath = '.agent-1c/runs/release-e2e/run/nested/snapshots/baseline.dt' },
+        @{ RelativePath = '.agent-1c/snapshots/unowned.dt' }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","853","preserves <Failure> evidence instead of deleting the snapshot","TestCases","@(
+        @{ Failure = 'changed-sha'; Error = 'snapshot SHA differs' },
+        @{ Failure = 'dirty-worktree'; Error = 'tracked drift' },
+        @{ Failure = 'active-process'; Error = 'active process' }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","935","protects the <Status> checkpoint reference even when the recorded snapshot SHA differs","TestCases","@(
+        @{ Status = 'passed' }, @{ Status = 'failed' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryResourceLedger.Tests.ps1","948","preserves the snapshot and warns for <Problem> checkpoint data","TestCases","@(
+        @{ Problem = 'malformed'; Value = '{invalid' },
+        @{ Problem = 'relative-path'; Value = '{""snapshots"":{""baseline"":{""path"":""snapshots/baseline.dt""}}}' },
+        @{ Problem = 'boolean-snapshots'; Value = '{""snapshots"":false}' },
+        @{ Problem = 'numeric-snapshots'; Value = '{""snapshots"":1}' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryRunIndex.Tests.ps1","112","serializes two process writers without losing either raw record or index entry","Skip","(-not (Get-Command powershell.exe -ErrorAction SilentlyContinue))",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryRunIndex.Tests.ps1","274","rejects unsupported raw proof versions and incomplete or failed current proof","TestCases","@(
+        @{ Schema = 4; Damage = 'none' }, @{ Schema = 3; Damage = 'failed-status' },
+        @{ Schema = 3; Damage = 'missing-stage' }, @{ Schema = 3; Damage = 'exit-code' }
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceDeliveryRunIndex.Tests.ps1","316","runs the rebuild and read contract in Windows PowerShell 5.1 at one path containing spaces and Cyrillic","Skip","(-not (Get-Command powershell.exe -ErrorAction SilentlyContinue))",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","359","preserves legacy user-global prompt ownership through read-only update admission","ForEach","@(
+        @{Marked=$false}, @{Marked=$true}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","465","does not turn arbitrary absolute or escaping manifest paths into legacy prompt ownership","ForEach","@(
+        @{Case='arbitrary absolute';Tail='.codex/config.toml';Source='content/commands/test-fix-loop.md';Outside=$false},
+        @{Case='other profile';Tail='.codex/prompts/test-fix-loop.md';Source='content/commands/test-fix-loop.md';Outside=$true},
+        @{Case='escaping prompt path';Tail='.codex/prompts/../outside.md';Source='content/commands/test-fix-loop.md';Outside=$false},
+        @{Case='unknown source';Tail='.codex/prompts/test-fix-loop.md';Source='content/rules/test-fix-loop.md';Outside=$false},
+        @{Case='missing source';Tail='.codex/prompts/test-fix-loop.md';Source=$null;Outside=$false},
+        @{Case='empty source';Tail='.codex/prompts/test-fix-loop.md';Source='';Outside=$false},
+        @{Case='escaping command source';Tail='.codex/prompts/test-fix-loop.md';Source='content/commands/../rules.md';Outside=$false}
+    )","7","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","526","preserves declared placed-once project templates instead of blocking their user additions","ForEach","@(
+        @{TemplateName='USER-RULES.md';Marked=$false},
+        @{TemplateName='USER-RULES.md';Marked=$true},
+        @{TemplateName='memory.md';Marked=$false},
+        @{TemplateName='memory.md';Marked=$true},
+        @{TemplateName='LLM-RULES.md';Marked=$false},
+        @{TemplateName='LLM-RULES.md';Marked=$true}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","562","keeps modified-rule protection when a template declaration is outside the placed-once contract","ForEach","@(
+        @{RelativePath='.codex/rules/example.md';TemplateFlag=$true;DeclaredSource='.codex/rules/example.md';InvalidBytes=$false},
+        @{RelativePath='USER-RULES.md';TemplateFlag=$true;DeclaredSource='other-policy.md';InvalidBytes=$false},
+        @{RelativePath='memory.md';TemplateFlag='true';DeclaredSource='memory.md';InvalidBytes=$false},
+        @{RelativePath='LLM-RULES.md';TemplateFlag=$true;DeclaredSource='LLM-RULES.md';InvalidBytes=$true}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","622","verifies the full wide Unicode master write-set without losing <State> cleanliness","TestCases","@(
+        @{ State='clean'; Dirty=$false }
+        @{ State='dirty managed'; Dirty=$true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","709","commits the original root snapshot write-set after rules advance: <Case>","TestCases","@(
+        @{ Case='retired OpenSpec alias'; OwnedPath='.agents/skills/opsx-apply/SKILL.md'; Retired=$true }
+        @{ Case='tracked client config with foreign prefix'; OwnedPath='.codex/config.toml'; Retired=$false }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/SourceUpgradeHandoff.Tests.ps1","786","preserves master when an original owned config backup is <BackupFault>","TestCases","@(
+        @{BackupFault='missing'}
+        @{BackupFault='corrupted'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ToolingReadiness.Tests.ps1","59","ignores probe artifacts before a checkpoint with legacyTemplate=<LegacyTemplate>","TestCases","@(
+        @{ LegacyTemplate=$true }, @{ LegacyTemplate=$false }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/ToolingReadiness.Tests.ps1","296","keeps the original failure category for <Message>","TestCases","@(
+        @{Message='ITL_YAXUNIT_ZERO_TESTS: zero'; Category='missing-suite'},
+        @{Message='ITL_YAXUNIT_TESTS_FAILED: assertion'; Category='product-assertion'},
+        @{Message='ITL_YAXUNIT_REPORT_MISSING: missing'; Category='runner'},
+        @{Message='ITL_TOOLING_EXTENSION_NOT_READY: VAExtension'; Category='runner'}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","50","preserves an explicit <Value> in an existing scope","TestCases","@(
+        @{Value='off'}, @{Value='auto'}, @{Value='essential'}, @{Value='invalid'}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","69","sets a persisted essential default for a new wizard scope with <Kind> value","TestCases","@(
+        @{Kind='missing'; Line=''}, @{Kind='empty'; Line=""UI_TESTING=`n""}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","262","uses the recorded <Kind> target and defers unsupported rules without losing same-package retry","TestCases","@(
+        @{Kind='new'; Expected='essential'}, @{Kind='pinned-old'; Expected='manual'}, @{Kind='skip-then-upgrade'; Expected='essential'}, @{Kind='same-supported'; Expected='manual'}, @{Kind='unknown-before'; Expected='manual'}, @{Kind='incomplete-before'; Expected='manual'}, @{Kind='skip-empty'; Expected='essential'}
+    )","7","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","427","resumes the original <Kind> transition from the applying receipt","TestCases","@(
+        @{Kind='existing'; NewScope=$false; FirstSupportedRules=$false; Line=""UI_TESTING=manual`n""},
+        @{Kind='new-default'; NewScope=$true; FirstSupportedRules=$false; Line=""OTHER=keep`n""},
+        @{Kind='first-supported-default'; NewScope=$false; FirstSupportedRules=$true; Line=""UI_TESTING=`nOTHER=keep`n""}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","538","preserves a UTF8 BOM and exact unrelated bytes in a <Kind> transition and resume","TestCases","@(
+        @{Kind='existing';NewScope=$false;Line=""UI_TESTING=manual`r`nOTHER=Кириллица с пробелом`r`n""},
+        @{Kind='new-default';NewScope=$true;Line=""UI_TESTING=`r`nOTHER=Кириллица с пробелом`r`n""}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","603","preserves exact <Kind> bytes through session limit Vanessa settings and UI migration","TestCases","@(
+        @{Kind='BOM CRLF';Bom=$true;NewLine=""`r`n""},
+        @{Kind='BOM LF';Bom=$true;NewLine=""`n""},
+        @{Kind='plain CRLF';Bom=$false;NewLine=""`r`n""},
+        @{Kind='plain LF';Bom=$false;NewLine=""`n""}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","661","does not write a <Kind> dotenv when the supplied values make no change","TestCases","@(
+        @{Kind='BOM CRLF';Bom=$true;NewLine=""`r`n""},
+        @{Kind='BOM LF';Bom=$true;NewLine=""`n""},
+        @{Kind='plain CRLF';Bom=$false;NewLine=""`r`n""},
+        @{Kind='plain LF';Bom=$false;NewLine=""`n""}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/UiTestingPolicyTransition.Tests.ps1","687","preserves exact <Kind> bytes through session Caveman and UI owners","TestCases","@(
+        @{Kind='BOM CRLF'; Bom=$true; NewLine=""`r`n""},
+        @{Kind='BOM LF'; Bom=$true; NewLine=""`n""},
+        @{Kind='no BOM LF'; Bom=$false; NewLine=""`n""}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaAuthoring.Tests.ps1","148","accepts canonical Russian UTF-8 with optional leading BOM: <withBom>","TestCases","@(
+        @{ withBom = $false }
+        @{ withBom = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaAuthoring.Tests.ps1","176","rejects NUL and disallowed C0/C1 controls: <name>","TestCases","@(
+        @{ name = ""nul""; suffix = [byte[]](0x00); reason = ""nul""; detail = """" }
+        @{ name = ""c0""; suffix = [byte[]](0x01); reason = ""control-character""; detail = "" codePoint=U+0001"" }
+        @{ name = ""c1""; suffix = [byte[]](0xC2, 0x85); reason = ""control-character""; detail = "" codePoint=U+0085"" }
+    )",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaBuildRuntime.Tests.ps1","89","does not report an extension artifact after a failed or empty native build: <failure>","TestCases","@(@{failure='load'},@{failure='dump'},@{failure='missing'},@{failure='empty'})","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","109","reproduces the original receiver losing the outcome after executing the code: <case>","TestCases","@(@{case='legacy-void'},@{case='legacy-failed'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","191","reproduces upstream false success without an active monitor: <case>","TestCases","@(@{case='no-monitor'}, @{case='wrong-client'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","198","rejects missing ownership or a pending command instead of returning success: <case>","TestCases","@(
+        @{case='no-monitor'; error='ITL_CLIENT_CODE_MONITOR_NOT_STARTED'},
+        @{case='wrong-client'; error='ITL_CLIENT_CODE_MONITOR_NOT_STARTED_FOR_CLIENT'},
+        @{case='pending'; error='ITL_CLIENT_CODE_COMPLETION_UNKNOWN'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","210","preserves actual execution and correlated completion: <case>","TestCases","@(
+        @{case='void'}, @{case='value'}, @{case='multiline'}, @{case='failed'}, @{case='malformed'},
+        @{case='timeout'}, @{case='wrong-response'}, @{case='publish-failure'}, @{case='repeat-failed'}
+    )","9","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","235","keeps the selected connection and request identity stable: <case>","TestCases","@(
+        @{case='identity-selected-route'},@{case='identity-pid-becomes-known'},@{case='identity-host-case'},@{case='identity-switch-during-wait'}
+    )","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","243","rejects operations without their own connection ownership: <case>","TestCases","@(
+        @{case='identity-foreign-send';error='ITL_CLIENT_CODE_MONITOR_NOT_STARTED_FOR_CLIENT'},
+        @{case='identity-foreign-wait';error='ITL_CLIENT_CODE_PENDING_BELONGS_TO_ANOTHER_CLIENT'},
+        @{case='identity-missing-endpoint';error='ITL_CLIENT_CODE_CONNECTION_IDENTITY_MISSING'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaClientCode.Tests.ps1","261","resumes the exact durable request without repeating its effect: <case>","TestCases","@(
+        @{case='restart-terminal'}, @{case='restart-unclaimed'}, @{case='restart-unpublished'}
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaNestedSelection.Tests.ps1","98","keeps every selected physical path once and in the requested order after the candidate hunk","TestCases","@(
+        @{ reverse = $false }, @{ reverse = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaPatchedArtifact.Tests.ps1","200","repairs the actual upstream missing handler while retaining every working control and module: <form>","TestCases","@(
+        @{ form = 'VAExtension_НажатьГиперссылкуHTMLДокумента' },
+        @{ form = 'VAExtension_НажатьКнопкуHTMLДокумента' }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaPatchedArtifact.Tests.ps1","357","preserves system wrapper blocking, close and SelectedForm callback: <name>","TestCases","@(
+        @{name='AllFunctionsForm';form='VAExtension_ОткрытьВсеФункции'},
+        @{name='DesktopCustomization';form='VAExtension_ОткрытьНастройкаНачальнойСтраницы'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaRowCriteria.Tests.ps1","77","preserves navigation and error outcomes after the shipping hunk: <case>","TestCases","@(
+        @{case='identifier'}, @{case='spaces'}, @{case='multiple'}, @{case='punctuation'}, @{case='case'},
+        @{case='repeated'}, @{case='equals'}, @{case='no-match'}, @{case='unknown-column'}, @{case='empty'}
+    )","10","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaRunnerTopology.Tests.ps1","323","reserves peak client capacity per database for <layout> scenarios","TestCases","@(
+        @{layout='sequential';separator=""`nСценарий: Другой пользователь"";expected=1},
+        @{layout='simultaneous';separator='';expected=2}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VanessaTestClientPorts.Tests.ps1","10","runs the original allocator and shipping correction: <case>","TestCases","@(
+        @{case='baseline'}, @{case='own-free'}, @{case='assigned-free'}, @{case='foreign-reserved'}, @{case='native-busy'}, @{case='exhausted'}
+    )","6","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VerificationAcceptedMaster.Tests.ps1","135","selects all existing acceptance suites for <Case>, preserving the user index","TestCases","@(
+        @{ Case = 'configuration' }, @{ Case = 'extension' }, @{ Case = 'custom-extension-root' },
+        @{ Case = 'addition' }, @{ Case = 'deletion' }, @{ Case = 'rename' },
+        @{ Case = 'master-ahead' }, @{ Case = 'index-only-edit' }, @{ Case = 'owned-branch-edit' }, @{ Case = 'pm5-imported-paths' }
+    )","10","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VerificationAcceptedMaster.Tests.ps1","156","keeps <Case> unclassified rather than hiding it behind full acceptance","TestCases","@(
+        @{ Case = 'own-before-import' }, @{ Case = 'own-after-import' },
+        @{ Case = 'imported-staged-edit' }, @{ Case = 'imported-unstaged-edit' },
+        @{ Case = 'not-accepted' }, @{ Case = 'master-missing' }, @{ Case = 'master-unrelated' },
+        @{ Case = 'runtime-and-own' }, @{ Case = 'support-and-own' },
+        @{ Case = 'unclassified-catalog' }, @{ Case = 'unmanaged-branch' }, @{ Case = 'ambiguous-ancestor' }
+    )","12","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VerificationAggregateAssessment.Tests.ps1","85","keeps duplicate titles and scenario names ambiguous across selected and unselected suites","TestCases","@(@{Selected=@('orders','integration')}, @{Selected=@('orders')})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/VerificationAggregateAssessment.Tests.ps1","233","assesses <Kind> current proof with all runners off and rejects changed evidence without starting a runner","ForEach","@(
+        @{ Kind='one-off-only'; Retained=$false },
+        @{ Kind='one-off and retained affected/handoff'; Retained=$true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowLocalPatch.Tests.ps1","346","preserves the patch through configuration-only <Operation>","TestCases","@(
+            @{Operation='refresh-dev-branch';Full=$true}, @{Operation='refresh-dev-branch-lite';Full=$false}
+        )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowLocalPatch.Tests.ps1","510","uses incoming managed changes for legacy provenance: <ChangedPath>","TestCases","@(
+            @{ChangedPath='product.txt';Expected='same'},
+            @{ChangedPath='AGENT-INSTALL.md';Expected='changed'},
+            @{ChangedPath='.agents/skills/1c-workflow/new-rule.md';Expected='changed'}
+        )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","285","preserves a later change to <relative> before any rollback write","ForEach","@(
+        @{relative='.dev.env'}, @{relative='.agent-1c/mcp/client-managed.json'}
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","467","preserves late owned worktree or staged changes and every business stage when finalization refuses <Change>","ForEach","@(@{Change='worktree'},@{Change='staged'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","511","finishes known legacy retirement through the branch update owner with AlreadyAbsent=<AlreadyAbsent>","ForEach","@(@{AlreadyAbsent=$false},@{AlreadyAbsent=$true})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","548","preserves a custom README arriving after snapshot capture and completes the same <Owner> update after preserving <Conflict>","ForEach","@(@{Owner='branch';Conflict='worktree'},@{Owner='master';Conflict='worktree'},@{Owner='branch';Conflict='staged'},@{Owner='master';Conflict='staged'})","4","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","654","does not certify custom legacy bytes while recording <Phase>","ForEach","@(@{Phase='branch-commit-ready'},@{Phase='master-commit-ready'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","677","replays a ready receipt after the <Owner> commit without requiring the retired original index entries","ForEach","@(@{Owner='branch'},@{Owner='master'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","748","rejects a forged fork transition which <Change> even with a complete consistent update capsule","ForEach","@(@{Change='deletes a custom README'},@{Change='rewrites a known README'})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","776","never adopts a custom or staged README from its basename: <Case>","ForEach","@(@{Case='custom-existing'},@{Case='custom-deleted'},@{Case='staged-deletion'},@{Case='staged-content'},@{Case='unmerged'})","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","934","refuses ambiguous committed-detail repair for <Change> without changing the receipt or Git HEAD","ForEach","@(
+        @{Change='backup';Category='WORKFLOW_UPDATE_RECONCILIATION_BACKUP_INVALID'},
+        @{Change='parent';Category='WORKFLOW_UPDATE_MASTER_HEAD_CHANGED'},
+        @{Change='subject';Category='WORKFLOW_UPDATE_MASTER_HEAD_CHANGED'},
+        @{Change='business';Category='WORKFLOW_UPDATE_MASTER_COMMIT_PATHS_CHANGED'},
+        @{Change='OpenCode';Category='WORKFLOW_UPDATE_MASTER_COMMIT_PATHS_CHANGED'},
+        @{Change='dirty';Category='WORKFLOW_UPDATE_MASTER_COMMIT_DIRTY'},
+        @{Change='partial';Category='WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID'},
+        @{Change='executor';Category='WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID'}
+    )","8","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/WorkflowUpdateRollback.Tests.ps1","1110","scopes <Kind> target config selection to this invocation and restores the previous executor context on failure","ForEach","@(@{Kind='new';Expected=4},@{Kind='old';Expected=1})","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","307","rejects changed or missing pin field <Field>","TestCases","@(
+        @{ Field = 'version' }, @{ Field = 'releaseTag' }, @{ Field = 'assetName' }, @{ Field = 'url' }
+        @{ Field = 'sha256' }, @{ Field = 'upstreamCommit' }, @{ Field = 'source' }
+    )","7","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","319","admits only the complete official <Step> raw multiset without claiming clean native checks","TestCases","@(
+        @{ Step = 'applicability'; Hash = '3e0d9bff581de21dbb6cbb14112c037dcffbab9e5ef5f2493185e35ad0b5b6a0'; Count = 4; Code = 0 }
+        @{ Step = 'configuration'; Hash = '8d4cf5ed0431de8fa6637e44a2409936d888ee993e81a3af6b18543fc1cc3b87'; Count = 2; Code = 101 }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","359","rejects a version-labelled applicability profile with <Mutation>","TestCases","@(
+        @{ Mutation = 'different version' }, @{ Mutation = 'mixed labels' }, @{ Mutation = 'changed annotation' }
+        @{ Mutation = 'missing repetition' }, @{ Mutation = 'extra diagnostic' }
+    )","5","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","397","refuses <Mutation> rather than trusting filtered diagnostics or caller allowances","TestCases","@(
+        @{ Mutation = 'neutral extra' }, @{ Mutation = 'unknown diagnostic' }, @{ Mutation = 'changed annotation' }
+        @{ Mutation = 'case changed' }, @{ Mutation = 'missing repetition' }, @{ Mutation = 'extra repetition' }
+        @{ Mutation = 'interior blank' }, @{ Mutation = 'extra terminal newline' }, @{ Mutation = 'second BOM' }
+        @{ Mutation = 'invalid UTF8' }, @{ Mutation = 'invalid result' }, @{ Mutation = 'result whitespace' }
+        @{ Mutation = 'result code drift' }, @{ Mutation = 'exit code drift' }, @{ Mutation = 'false clean verdict' }
+        @{ Mutation = 'source drift' }, @{ Mutation = 'pin drift' }, @{ Mutation = 'id drift' }
+        @{ Mutation = 'version drift' }, @{ Mutation = 'string version' }, @{ Mutation = 'boolean version' }
+        @{ Mutation = 'extension drift' }, @{ Mutation = 'other extension' }
+        @{ Mutation = 'modules step' }, @{ Mutation = 'cross-step raw' }, @{ Mutation = 'single handler space' }
+    )","26","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","552","uses a canonical baseline only for the engine and preserves legacy reuse for <Scenario>","TestCases","@(
+        @{ Scenario = 'engine reload'; EngineCalls = 1; TestCalls = 0; Stops = 1 }
+        @{ Scenario = 'tests reload'; EngineCalls = 0; TestCalls = 1; Stops = 1 }
+        @{ Scenario = 'schema1 reuse'; EngineCalls = 0; TestCalls = 0; Stops = 0 }
+    )","3","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tests/pester/YAxUnitVerification.Tests.ps1","584","binds actual Release preparation to the engine pin and retains failure before protection proof when apply fails=<Fails>","TestCases","@(
+        @{ Fails = $false }, @{ Fails = $true }
+    )","2","safe-constant-definition-count"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tools/itl-ondemand-mcp/catalog_test.go","69","nested Go subtest","t.Run","t.Run(test.family, func(t *testing.T) {",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/main_test.go","368","nested Go subtest","t.Run","t.Run(fmt.Sprint(cancelBeforeCall), func(t *testing.T) {",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/main_test.go","404","nested Go subtest","t.Run","t.Run(name, func(t *testing.T) {",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tools/itl-ondemand-mcp/profile_owner_windows_test.go","18","nested Go subtest","t.Run","t.Run(fmt.Sprintf(""response-persisted-%t"", persist), func(t *testing.T) {",,"expression-not-expanded"
+"fa0e3c91694112c1da3ecda7209a8a81ea828264","tools/itl-ondemand-mcp/runtime_integration_test.go","772","nested Go subtest","t.Run","t.Run(test.name, func(t *testing.T) {",,"expression-not-expanded"

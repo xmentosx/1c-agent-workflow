@@ -1,0 +1,38 @@
+{
+  "sourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+  "mode": "static-read-only",
+  "files": 166,
+  "definitions": 2814,
+  "families": [
+    {
+      "family": "go",
+      "files": 10,
+      "definitions": 91.0
+    },
+    {
+      "family": "node",
+      "files": 1,
+      "definitions": 8.0
+    },
+    {
+      "family": "pester",
+      "files": 120,
+      "definitions": 2142.0
+    },
+    {
+      "family": "python",
+      "files": 35,
+      "definitions": 573.0
+    }
+  ],
+  "multipleOwnerPesterFiles": 34,
+  "literalNestedCountCases": 3,
+  "normalizedDuplicateBodyGroups": 0,
+  "semanticReviewComplete": false,
+  "limitations": [
+    "Static definitions are not expanded executions.",
+    "Node top-level assertions and integration functions are inventoried separately.",
+    "Declared owners and flags do not prove semantic necessity or equivalent replacement.",
+    "Pester timing values are prior scheduler observations, not current or nested-runtime timings."
+  ]
+}
