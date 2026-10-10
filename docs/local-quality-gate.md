@@ -118,6 +118,18 @@ Full с тремя используют один proof при совпадени
 Неизвестный owner или отсутствующая обязательная reuse dependency по-прежнему
 запрещают reuse. Это совместимость исходного кэша, без переноса live E2E proof.
 
+Full schema 4 хранит actual child/OS/Pester identity и полный per-file input
+manifest scheduler. Whole-Pester reuse требует совпадения этого manifest с
+новым расчётом того же scheduler, включая external inputs; версия модуля в
+родительском процессе не заменяет эту проверку. Старые Full records читаются,
+но без manifest не разрешают whole shortcut. Unknown/nonreusable inputs или
+изменение runtime во время теста оставляют текущий результат `passed` с
+`reusable=false`. Cache/compatibility transport сохраняет этот факт; checker
+продолжает обычным scheduler, переиспользуя подходящие shards и исполняя остальные.
+Release после свежего static gate повторно валидирует прежние Develop routes
+и только затем обновляет их Full binding. Runtime/stand, newer-failure, SHA,
+dirty-state и E2E obligations сохраняются. Ручной дополнительный Full не нужен.
+
 `reuseInputPaths` контракта добавляет загружаемые зависимости только в digest
 его test-файлов и не расширяет выбор `Targeted` по `paths`. Контракт нативной
 сборки учитывает весь набор модулей хелпера и зависимостей guard. Отсутствующий

@@ -189,7 +189,7 @@ Describe 'Source quality catalog contracts' {
         )
         $expectedTests = @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
-            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
             "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
@@ -200,9 +200,8 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "pester-full-input-proof", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
-        @($selection.tests).Count | Should -Be 20
 
         $observedSeconds = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
@@ -257,7 +256,10 @@ Describe 'Source quality catalog contracts' {
         $historicalHardSeconds = 1200.0
         $three | Should -BeGreaterThan $historicalHardSeconds
         ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
-        ([double]$catalog.budgets.targetedHardSeconds - $four) | Should -BeGreaterThan 200
+        # Keep the historical measured comparison intact. Current selection
+        # additionally owns the aggregate-input regression (63.54 s focused).
+        $currentFour = & $estimate ($parallel + @([double]$trackedTimings.files.'FullInputProof.Tests.ps1')) $serial 4 $overhead
+        ([double]$catalog.budgets.targetedHardSeconds - $currentFour) | Should -BeGreaterThan 200
     }
 
     It "fits the observed lifecycle cohort and mandatory serial tail without changing runtime watchdogs" {

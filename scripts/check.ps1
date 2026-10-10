@@ -105,6 +105,8 @@ $pesterResult = $null
 $qualifiedResult = $null
 $pesterVersion = ""
 $pesterShardSummary = $null
+$pesterInputIdentity = $null
+$pesterInputIdentityObserved = $false
 $failure = $null
 $aiRulesRelease = $null
 $forkSourceRoot = ""
@@ -512,14 +514,32 @@ function Get-WorkflowGateScriptPaths {
     return @($paths | Sort-Object -Unique)
 }
 
+function Get-CurrentPesterInputIdentity {
+    if ($script:pesterInputIdentityObserved) { return $script:pesterInputIdentity }
+    $script:pesterInputIdentityObserved = $true
+    try {
+        $identityRoot = Join-Path $outputRoot 'pester-input-identity'
+        $arguments = @('-RepositoryRoot',$repoRoot,'-OutputRoot',$identityRoot,'-JunitPath',(Join-Path $identityRoot 'unused.xml'),'-InputIdentityOnly')
+        if ($resolvedAiRulesSource) { $arguments += @('-AiRulesSource',$resolvedAiRulesSource) }
+        Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/invoke-pester-shards.ps1') -Arguments $arguments -TimeoutSeconds 300 -NoProgressSeconds 120 -LogName 'pester-input-identity'
+        $identity = Get-Content -LiteralPath (Join-Path $identityRoot 'pester-shards/input-identity.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (Test-PesterInputIdentityRecord $identity) { $script:pesterInputIdentity = $identity }
+    } catch {
+        # Observation cannot qualify reuse; the ordinary scheduler remains the
+        # original task's execution route, including its unknown-input policy.
+        $script:pesterInputIdentity = $null
+    }
+    return $script:pesterInputIdentity
+}
+
 function Test-WorkflowQualification {
     param([string]$Path, [string]$Commit, [string]$Tree, [object]$ForkIdentity, [switch]$AllowIndependentExactTree)
     if (-not (Test-Path $Path -PathType Leaf)) { return $null }
     try {
         $q = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$q.schemaVersion -notin @(1, 2, 3) -or [string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $null }
+        if ([int]$q.schemaVersion -notin @(1,2,3,4) -or -not (Test-WorkflowFullQualificationRecord $q)) { return $null }
         if (-not [bool]$q.repository.worktreeClean) { return $null }
-        if ([int]$q.schemaVersion -eq 3 -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
+        if (([int]$q.schemaVersion -eq 3 -or ([int]$q.schemaVersion -eq 4 -and $q.PSObject.Properties['continuation'])) -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
         $evidenceCommit = if ([int]$q.schemaVersion -ge 2 -and [string]$q.repository.evidenceCommit) { [string]$q.repository.evidenceCommit } else { [string]$q.repository.commit }
         $continuation = $null
         $reuseArguments = @{
@@ -546,13 +566,11 @@ function Test-WorkflowQualification {
             [string]$q.fork.upstreamCommit -ne [string]$ForkIdentity.upstreamCommit) { return $null }
         $forkQualification = [string]$q.fork.qualificationPath
         if (-not (Test-Path -LiteralPath $forkQualification -PathType Leaf) -or (Get-FileHash -LiteralPath $forkQualification -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.fork.qualificationSha256).ToLowerInvariant()) { return $null }
-        $currentPester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
         $currentPlatform = if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" }
         $currentOs = if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString }
-        if ([string]$q.environment.powershellVersion -ne [string]$PSVersionTable.PSVersion -or
-            [string]$q.environment.powershellEdition -ne [string]$PSVersionTable.PSEdition -or
-            [string]$q.environment.pesterVersion -ne [string]$currentPester.Version -or
-            [string]$q.environment.platform -ne $currentPlatform -or [string]$q.environment.os -ne $currentOs) { return $null }
+        $parentMatches = [string]$q.environment.powershellVersion -eq [string]$PSVersionTable.PSVersion -and
+            [string]$q.environment.powershellEdition -eq [string]$PSVersionTable.PSEdition -and
+            [string]$q.environment.platform -eq $currentPlatform -and [string]$q.environment.os -eq $currentOs
         if (-not $continuation) {
             $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $repoRoot })
             if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $null }
@@ -562,7 +580,9 @@ function Test-WorkflowQualification {
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $repoRoot ([string]$q.junit.path).Replace('/', '\') }
         if (-not (Test-Path $junit -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.junit.sha256).ToLowerInvariant()) { return $null }
-        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit; continuation = $continuation }
+        $canReusePester = [int]$q.schemaVersion -eq 4 -and [bool]$q.reusable -and $parentMatches -and -not $continuation -and
+            (Test-PesterInputIdentityMatch -Recorded $q.pesterInputs -Current (Get-CurrentPesterInputIdentity))
+        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit; continuation = $continuation; canReusePester=[bool]$canReusePester }
     } catch { return $null }
 }
 
@@ -592,11 +612,14 @@ function Write-WorkflowQualification {
             qualificationPath = $forkQualificationPath; qualificationSha256 = $forkQualificationSha256
         }
     }
+    $pesterInputs = if ($SourceQualification) { $SourceQualification.pesterInputs } else { $pesterShardSummary.inputIdentity }
+    if (-not (Test-PesterInputIdentityRecord $pesterInputs)) { throw 'Passed Full qualification requires the actual scheduler input manifest.' }
     $qualification = [ordered]@{
-        schemaVersion = $(if ($ContinuationProof) { 3 } else { 2 })
+        schemaVersion = 4
         kind = "itl-workflow-full-qualification"
         status = "passed"
-        reusable = $true
+        reusable = [bool]$pesterInputs.reusable
+        pesterInputs = $pesterInputs
         repository = [ordered]@{ name = "1c-agent-workflow"; commit = $Commit; tree = $Tree; worktreeClean = $true; evidenceCommit = $EvidenceCommit; reuseKind = $ReuseKind }
         fork = $forkRecord
         environment = [ordered]@{
@@ -696,6 +719,18 @@ function Test-DevelopQualification {
         } elseif ($ExpectedIdentitySha256) { return $null }
         return [pscustomobject]@{ qualification = $qualification; reuseKind = $reuseKind; continuation = $continuation }
     } catch { return $null }
+}
+
+function Update-DevelopQualificationFullBinding {
+    param([string]$Commit, [string]$Tree, [object]$PreviousFullProof, [string]$ExpectedIdentitySha256, [string]$ExpectedStandStateSha256)
+    $arguments = @{Commit=$Commit;Tree=$Tree;ExpectedIdentitySha256=$ExpectedIdentitySha256;ExpectedStandStateSha256=$ExpectedStandStateSha256}
+    $validated = Test-DevelopQualification @arguments -FullProof $PreviousFullProof
+    if (-not $validated) { throw 'Develop evidence changed during static requalification. Run Develop before Release.' }
+    $validated.qualification.fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($developQualificationFullPath, (($validated.qualification | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $current = Test-DevelopQualification @arguments
+    if (-not $current) { throw 'Develop evidence could not be bound to the freshly passed Full result.' }
+    return $current
 }
 
 function Write-DevelopContinuationQualification {
@@ -811,11 +846,6 @@ try {
     if ($sourceIsLocal) {
         try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($effectiveMode -eq "Release") { throw } }
     }
-    if ($effectiveMode -eq "Release") {
-        $releaseFullProof = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
-        if (-not $releaseFullProof) { throw "Release requires reusable Full evidence or an exact Targeted continuation for the candidate tree." }
-    }
-
     $trackedBefore = @(& git status --porcelain --untracked-files=no)
     Invoke-GateStage -Name "git-diff-check" -Reason "always-run preflight" -Body {
         & git diff --check HEAD -- .
@@ -852,6 +882,11 @@ try {
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
         } | Out-Null
+    }
+
+    if ($effectiveMode -eq "Release") {
+        $releaseFullProof = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        if (-not $releaseFullProof) { throw "Release requires passed Full evidence or an exact Targeted continuation for the candidate tree." }
     }
 
     if ($effectiveMode -eq "Develop") {
@@ -900,7 +935,7 @@ try {
         } else {
             Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
         }
-        if ($qualificationMatch) {
+        if ($qualificationMatch -and $qualificationMatch.canReusePester) {
             $reuseQualification = $true
             $existingQualification = $qualificationMatch.qualification
             $qualificationReuseKind = [string]$qualificationMatch.reuseKind
@@ -1063,6 +1098,11 @@ try {
         [void](Write-DevelopContinuationQualification -Commit $commit -Tree $tree -SourceProof $releaseDevelopProof -ContinuationProof $releaseDevelopProof.continuation)
         $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
         if (-not $releaseDevelopProof) { throw "Release continuation did not materialize an exact reusable Develop qualification." }
+    } elseif ($effectiveMode -eq 'Release' -and -not $reuseQualification) {
+        # Requalifying static inputs does not invent a new E2E success. Recheck
+        # the original routes against the current stand and newer failures,
+        # then bind that same evidence to the newly passed Full record.
+        $releaseDevelopProof = Update-DevelopQualificationFullBinding -Commit $commit -Tree $tree -PreviousFullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
     }
 
     if ($effectiveMode -eq "Develop") {

@@ -1,3 +1,23 @@
+. (Join-Path $PSScriptRoot 'invoke-pester-runtime.ps1')
+
+function Test-WorkflowFullQualificationRecord {
+    param([object]$Qualification)
+    try {
+        if (-not $Qualification -or [string]$Qualification.kind -cne 'itl-workflow-full-qualification' -or
+            [string]$Qualification.status -cne 'passed') { return $false }
+        # Some legacy transport callers historically validated the envelope
+        # without a schema field. Strict readers still enforce their versions.
+        if (-not $Qualification.PSObject.Properties['schemaVersion']) { return [bool]$Qualification.reusable }
+        if ([int]$Qualification.schemaVersion -in @(1,2,3)) { return [bool]$Qualification.reusable }
+        if ([int]$Qualification.schemaVersion -ne 4 -or $Qualification.reusable -isnot [bool] -or
+            -not (Test-PesterInputIdentityRecord $Qualification.pesterInputs) -or
+            [bool]$Qualification.reusable -ne [bool]$Qualification.pesterInputs.reusable) { return $false }
+        $tests = @($Qualification.inventory.tests | Where-Object { [string]$_.path -like '*.Tests.ps1' } | ForEach-Object { [string]$_.path } | Sort-Object)
+        $inputs = @($Qualification.pesterInputs.files | ForEach-Object { [string]$_.path } | Sort-Object)
+        return $tests.Count -gt 0 -and ($tests -join "`n") -ceq ($inputs -join "`n")
+    } catch { return $false }
+}
+
 function Get-WorkflowQualificationReuseKind {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,

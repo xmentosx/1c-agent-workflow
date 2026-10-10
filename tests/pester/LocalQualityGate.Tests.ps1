@@ -875,6 +875,8 @@ Get-PesterShardFileSha256 -Path `$Path
         $check | Should -Match 'Test-DevelopQualification'
         $check | Should -Match 'Test-WorkflowQualification -Path \$qualificationFullPath.*-ForkIdentity \$aiRulesRelease'
         $check | Should -Match 'FullProof\.qualification\.repository\.commit'
+        $check | Should -Match 'qualificationMatch -and \$qualificationMatch\.canReusePester'
+        $check | Should -Match 'Update-DevelopQualificationFullBinding -Commit \$commit -Tree \$tree -PreviousFullProof \$releaseFullProof'
         $check | Should -Match 'Write-DevelopQualification'
         $developProofIndex = $check.IndexOf('$releaseDevelopProof = Test-DevelopQualification', [StringComparison]::Ordinal)
         $fullRewriteIndex = $check.IndexOf('$existingQualification = Write-WorkflowQualification', [StringComparison]::Ordinal)

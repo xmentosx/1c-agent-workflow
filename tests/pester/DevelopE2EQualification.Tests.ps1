@@ -695,7 +695,7 @@ Describe "Develop E2E journey qualification router" {
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        foreach ($name in @('Get-RelativeRepositoryPath', 'Write-DevelopQualification', 'Test-DevelopQualification')) {
+        foreach ($name in @('Get-RelativeRepositoryPath', 'Write-DevelopQualification', 'Test-DevelopQualification', 'Update-DevelopQualificationFullBinding')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
@@ -760,6 +760,21 @@ Describe "Develop E2E journey qualification router" {
         Test-DevelopQualification @arguments | Should -BeNullOrEmpty
         $arguments.ExpectedStandStateSha256 = $standHash
         (Test-DevelopQualification @arguments).reuseKind | Should -Be 'exact-commit'
+        $previousFullProof = [pscustomobject]@{qualification=(Get-Content -LiteralPath $qualificationFullPath -Raw -Encoding UTF8|ConvertFrom-Json)}
+        $originalReportSha = (Get-FileHash -LiteralPath (Join-Path $repoRoot $qualification.e2e.path)).Hash
+        $originalRouteHashes = @($records.Values | ForEach-Object { (Get-FileHash -LiteralPath $_.path).Hash })
+        Write-Utf8Json -Path $qualificationFullPath -Value @{status='passed';repository=@{commit=$commit;tree=$tree};staticRefresh='fresh scheduler qualification'}
+        Test-DevelopQualification @arguments | Should -BeNullOrEmpty
+        $developBefore = (Get-FileHash -LiteralPath $developQualificationFullPath).Hash
+        $arguments.ExpectedStandStateSha256 = 'd' * 64
+        { Update-DevelopQualificationFullBinding @arguments -PreviousFullProof $previousFullProof } | Should -Throw '*Run Develop before Release*'
+        (Get-FileHash -LiteralPath $developQualificationFullPath).Hash | Should -Be $developBefore
+        $arguments.ExpectedStandStateSha256 = $standHash
+        $rebound = Update-DevelopQualificationFullBinding @arguments -PreviousFullProof $previousFullProof
+        $rebound.reuseKind | Should -Be 'exact-commit'
+        $rebound.qualification.fullQualificationSha256 | Should -Be (Get-FileHash -LiteralPath $qualificationFullPath).Hash.ToLowerInvariant()
+        (Get-FileHash -LiteralPath (Join-Path $repoRoot $qualification.e2e.path)).Hash | Should -Be $originalReportSha
+        @($records.Values | ForEach-Object { (Get-FileHash -LiteralPath $_.path).Hash }) | Should -Be $originalRouteHashes
         Add-Content -LiteralPath $records.fresh.path -Value 'tampered'
         Test-DevelopQualification @arguments | Should -BeNullOrEmpty
     }

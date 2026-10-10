@@ -150,9 +150,19 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/PesterRuntimeProof.Tests.ps1",
-      "paths": ["scripts/invoke-pester-runtime.ps1", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1"],
+      "paths": ["scripts/invoke-pester-runtime.ps1", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1", "tests/pester/PesterRuntimeSupport.ps1"],
       "reuseInputPaths": ["tests/quality-contracts.json", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
       "tests": ["tests/pester/PesterRuntimeProof.Tests.ps1"]
+    },
+    {
+      "id": "pester-full-input-proof",
+      "owner": "Full aggregate input qualification and nonreusable continuation",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/FullInputProof.Tests.ps1",
+      "paths": ["scripts/check.ps1", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/source-delivery-candidate.ps1", "scripts/invoke-pester-runtime.ps1", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1", "tests/pester/PesterRuntimeSupport.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "tests": ["tests/pester/FullInputProof.Tests.ps1"]
     },
     {
       "id": "source-quality-gate",

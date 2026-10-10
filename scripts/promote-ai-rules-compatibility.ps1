@@ -9,6 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object System.Text.UTF8Encoding $false
+. (Join-Path $PSScriptRoot 'release-qualification.ps1')
 
 function ConvertTo-PromotionUtcDateTime {
     param([Parameter(Mandatory = $true)][AllowNull()][object]$Value)
@@ -39,8 +40,8 @@ if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) { throw "Dependency 
 $qualification = Get-Content -LiteralPath $QualificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $head = (& git -C $RepositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
 $tree = (& git -C $RepositoryRoot rev-parse 'HEAD^{tree}').Trim().ToLowerInvariant()
-if ([string]$qualification.kind -ne "itl-workflow-full-qualification" -or [string]$qualification.status -ne "passed" -or -not [bool]$qualification.reusable) {
-    throw "Workflow qualification is not a reusable passed Full result."
+if (-not (Test-WorkflowFullQualificationRecord $qualification)) {
+    throw "Workflow qualification is not a valid passed Full result."
 }
 if ([string]$qualification.repository.commit -ne $head -or [string]$qualification.repository.tree -ne $tree -or -not [bool]$qualification.repository.worktreeClean) {
     throw "Workflow qualification does not match the exact clean HEAD tree."

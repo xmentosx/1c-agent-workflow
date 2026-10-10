@@ -64,6 +64,8 @@ function Get-PesterShardRuntimeReceipt {
             schemaVersion = 1
             powerShellVersion = [string]$PSVersionTable.PSVersion
             powerShellEdition = [string]$PSVersionTable.PSEdition
+            platform = $(if ($PSVersionTable.ContainsKey('Platform')) { [string]$PSVersionTable.Platform } else { 'Win32NT' })
+            osVersion = [string][Environment]::OSVersion.VersionString
             processBits = [IntPtr]::Size * 8
             executablePath = $executable
             executableSha256 = Get-PesterShardFileSha256 -Path $executable
@@ -82,4 +84,61 @@ function Get-PesterShardRuntimeReceipt {
     } catch {
         return [pscustomobject]@{status='unknown'; identity=$null; reason=$_.Exception.Message; durationMs=[int64]$watch.ElapsedMilliseconds}
     } finally { $watch.Stop() }
+}
+
+function New-PesterInputIdentity {
+    param([string]$RepositoryRoot, [object[]]$Entries, [object]$RuntimeReceipt)
+    $root = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $files = @($Entries | ForEach-Object {
+        if (@($_.paths).Count -ne 1) { throw 'Pester input identity requires one test file per entry.' }
+        $path = [IO.Path]::GetFullPath([string]$_.paths[0])
+        if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'Pester input identity path is outside its repository.' }
+        [pscustomobject]@{ path=$path.Substring($root.Length).Replace('\','/'); digest=[string]$_.inputDigest }
+    } | Sort-Object path)
+    $known = $RuntimeReceipt -and [string]$RuntimeReceipt.status -eq 'known'
+    $runtimeSha = if ($known) { [string]$RuntimeReceipt.identity.identitySha256 } else { '' }
+    $reusable = $known -and $runtimeSha -cmatch '^[a-f0-9]{64}$' -and $files.Count -gt 0 -and
+        @($files | Where-Object { $_.digest -cnotmatch '^[a-f0-9]{64}$' }).Count -eq 0
+    return [pscustomobject]@{
+        schemaVersion=1; kind='itl-pester-input-identity'
+        runtimeIdentityStatus=$(if ($known) { 'known' } else { 'unknown' })
+        runtimeIdentitySha256=$runtimeSha; files=$files; reusable=[bool]$reusable
+    }
+}
+
+function Test-PesterInputIdentityRecord {
+    param([object]$Identity)
+    try {
+        if (-not $Identity -or [int]$Identity.schemaVersion -ne 1 -or [string]$Identity.kind -cne 'itl-pester-input-identity' -or
+            $Identity.reusable -isnot [bool] -or [string]$Identity.runtimeIdentityStatus -cnotin @('known','unknown')) { return $false }
+        $known = [string]$Identity.runtimeIdentityStatus -ceq 'known'
+        if (($known -and [string]$Identity.runtimeIdentitySha256 -cnotmatch '^[a-f0-9]{64}$') -or
+            (-not $known -and [string]$Identity.runtimeIdentitySha256)) { return $false }
+        $paths = @{}
+        $allKnown = $true
+        foreach ($file in @($Identity.files)) {
+            $path = [string]$file.path
+            if ($path -notmatch '^tests/pester/[^/\\]+\.Tests\.ps1$' -or $paths.ContainsKey($path) -or
+                ([string]$file.digest -and [string]$file.digest -cnotmatch '^[a-f0-9]{64}$')) { return $false }
+            $paths[$path] = $true
+            if (-not [string]$file.digest) { $allKnown = $false }
+        }
+        if ($paths.Count -eq 0) { return $false }
+        return [bool]$Identity.reusable -eq ($known -and $allKnown)
+    } catch { return $false }
+}
+
+function Test-PesterInputIdentityMatch {
+    param([object]$Recorded, [object]$Current)
+    if (-not (Test-PesterInputIdentityRecord $Recorded) -or -not (Test-PesterInputIdentityRecord $Current) -or
+        -not [bool]$Recorded.reusable -or -not [bool]$Current.reusable -or
+        [string]$Recorded.runtimeIdentitySha256 -cne [string]$Current.runtimeIdentitySha256) { return $false }
+    $before = @($Recorded.files | Sort-Object path)
+    $after = @($Current.files | Sort-Object path)
+    if ($before.Count -ne $after.Count) { return $false }
+    for ($index=0; $index -lt $before.Count; $index++) {
+        if ([string]$before[$index].path -cne [string]$after[$index].path -or
+            [string]$before[$index].digest -cne [string]$after[$index].digest) { return $false }
+    }
+    return $true
 }

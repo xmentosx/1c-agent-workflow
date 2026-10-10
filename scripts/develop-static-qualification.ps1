@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-qualification.ps1')
 
 if (-not (Get-Command Get-RepositoryCommonGitDirectory -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot "git-path-list.ps1")
@@ -25,10 +26,7 @@ function Test-DevelopStaticQualificationSource {
     if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $PesterPath -PathType Leaf)) { return $false }
     try {
         $qualification = Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$qualification.schemaVersion -notin @(1, 2, 3) -or
-            [string]$qualification.kind -ne "itl-workflow-full-qualification" -or
-            [string]$qualification.status -ne "passed" -or
-            -not [bool]$qualification.reusable -or
+        if ([int]$qualification.schemaVersion -notin @(1,2,3,4) -or -not (Test-WorkflowFullQualificationRecord $qualification) -or
             -not [bool]$qualification.repository.worktreeClean -or
             [string]$qualification.repository.tree -ne $Tree) { return $false }
         $pesterHash = (Get-FileHash -LiteralPath $PesterPath -Algorithm SHA256).Hash.ToLowerInvariant()

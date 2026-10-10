@@ -232,8 +232,7 @@ function Restore-DevelopCompatibilityQualification {
     try {
         $qualification = Get-Content -LiteralPath $source -Raw -Encoding UTF8 | ConvertFrom-Json
         $head = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
-        if ([string]$qualification.kind -cne "itl-workflow-full-qualification" -or [string]$qualification.status -cne "passed" -or
-            -not [bool]$qualification.reusable -or [string]$qualification.repository.commit -cne $head -or
+        if (-not (Test-WorkflowFullQualificationRecord $qualification) -or [string]$qualification.repository.commit -cne $head -or
             [string]$qualification.repository.tree -cne $Tree -or -not [bool]$qualification.repository.worktreeClean -or
             [int]$qualification.result.failed -ne 0 -or [int]$qualification.result.skipped -ne 0) { return $false }
     } catch { return $false }

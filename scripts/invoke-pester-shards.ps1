@@ -7,7 +7,8 @@ param(
     [string]$SelectionPath = "",
     [ValidateRange(1, 4)][int]$WorkerCount = 3,
     [ValidateRange(0, 4)][int]$RequestedWorkerCount = 0,
-    [switch]$WorkerCountDefaulted
+    [switch]$WorkerCountDefaulted,
+    [switch]$InputIdentityOnly
 )
 
 Set-StrictMode -Version Latest
@@ -558,6 +559,17 @@ $failures = @()
 $index = 0
 Initialize-PesterTrackedIdentityCache
 $fingerprintPlanStopwatch = [Diagnostics.Stopwatch]::StartNew()
+if ($InputIdentityOnly) {
+    $inputEntries = @($items | ForEach-Object {
+        [pscustomobject]@{paths=@([string]$_.path); inputDigest=(Get-ShardInputDigest -Paths @([string]$_.path) -AdditionalInputs $selectionAdditionalInputs)}
+    })
+    $identity = New-PesterInputIdentity -RepositoryRoot $RepositoryRoot -Entries $inputEntries -RuntimeReceipt $script:pesterRuntimeReceipt
+    $fingerprintPlanStopwatch.Stop()
+    $identity | Add-Member -NotePropertyName durationMs -NotePropertyValue ([int64]$fingerprintPlanStopwatch.ElapsedMilliseconds + [int64]$script:pesterRuntimeReceipt.durationMs)
+    [IO.File]::WriteAllText((Join-Path $workerRoot 'input-identity.json'), (($identity | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $identity | ConvertTo-Json -Depth 8
+    return
+}
 foreach ($item in $items) {
     $index++
     $planPath = Join-Path $workerRoot ("worker-{0}.plan.json" -f $index)
@@ -800,6 +812,7 @@ $summary = [ordered]@{
     runtimeIdentityStatus = [string]$script:pesterRuntimeReceipt.status
     runtimeIdentityReason = [string]$script:pesterRuntimeReceipt.reason
     runtimeIdentity = $script:pesterRuntimeReceipt.identity
+    inputIdentity = New-PesterInputIdentity -RepositoryRoot $RepositoryRoot -Entries @($results) -RuntimeReceipt $script:pesterRuntimeReceipt
     legacyDigestCount = [int]$script:pesterLegacyDigestCount
     workers = @($results | Sort-Object worker)
     junitPath = $JunitPath
