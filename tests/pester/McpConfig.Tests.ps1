@@ -355,7 +355,9 @@
         $HelperText | Should -Not -Match "-p 8006:8006"
         $HelperText | Should -Not -Match "ITL_MCP_(?!RECONCILE_INTEGRITY_FAILED)"
         $HelperText | Should -Not -Match "/itl-mcp"
-        $HelperText | Should -Not -Match "itl-mcp"
+        # This exact receipt kind is the documented source-validation protocol,
+        # not a legacy MCP command. Keep the legacy-name guard for all other text.
+        $HelperText.Replace("'itl-mcp-source-validation'", "''") | Should -Not -Match "itl-mcp"
         $HelperText | Should -Not -Match "(?<![A-Za-z0-9])mcpSetupDuringInit"
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $false
