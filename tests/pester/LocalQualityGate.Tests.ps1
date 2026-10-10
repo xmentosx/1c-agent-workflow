@@ -1287,17 +1287,28 @@ Get-PesterShardFileSha256 -Path `$Path
     }
     It "removes only unconfigured workflow Release E2E worktrees after a passed journey" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl e2e worktrees Проект " + [guid]::NewGuid().ToString("N")); $main = Join-Path $root "main"; $release = Join-Path $root "release"; $develop = Join-Path $root "develop"; $stale = Join-Path $root "stale"
+        $preserved = Join-Path $root "retained evidence"
         try {
             New-Item -ItemType Directory -Force -Path $main | Out-Null; & git -C $main init --quiet; & git -C $main config user.name "ITL Test"; & git -C $main config user.email "itl-test@example.invalid"
             Set-Content -LiteralPath (Join-Path $main ".gitignore") -Encoding ASCII -Value ".agent-1c/`nbuild/"; Set-Content -LiteralPath (Join-Path $main "README.md") -Encoding ASCII -Value "fixture"
             & git -C $main add .gitignore README.md; & git -C $main commit --quiet -m init
             & git -C $main worktree add --quiet -b itldev/workflow-release-e2e $release; & git -C $main worktree add --quiet -b itldev/workflow-release-e2e-preflight $develop; & git -C $main worktree add --quiet -b itldev/workflow-release-e2e-rules $stale
+            & git -C $main worktree add --quiet -b itldev/workflow-release-e2e-retained $preserved
+            $pendingPath = Join-Path $preserved ".agent-1c/dev-branches/workflow-release-e2e-retained.json"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pendingPath) | Out-Null
+            [IO.File]::WriteAllText($pendingPath, '{"pendingMergeOperation":"refresh-dev-branch","pendingMergeStage":"merged"}', [Text.UTF8Encoding]::new($false))
+            $pendingHash = (Get-FileHash -LiteralPath $pendingPath -Algorithm SHA256).Hash
+            Set-Content -LiteralPath (Join-Path $preserved "README.md") -Encoding ASCII -Value "preserved user edit"
             New-Item -ItemType Directory -Force -Path (Join-Path $main ".agent-1c"), (Join-Path $stale "build\result") | Out-Null
-            [IO.File]::WriteAllText((Join-Path $main ".agent-1c\release-e2e.json"), (([ordered]@{ schemaVersion=1; devBranchName="workflow-release-e2e"; worktreePath=$release; developDevBranchName="workflow-release-e2e-preflight"; developWorktreePath=$develop } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $main ".agent-1c\release-e2e.json"), (([ordered]@{ schemaVersion=1; devBranchName="workflow-release-e2e"; worktreePath=$release; developDevBranchName="workflow-release-e2e-preflight"; developWorktreePath=$develop; preserveWorktreePaths=@($preserved) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             Set-Content -LiteralPath (Join-Path $stale "build\result\obsolete.cf") -Encoding ASCII -Value "obsolete"
             . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
             $cleanup = Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $main
             $cleanup.removedWorktrees | Should -Be 1; Test-Path -LiteralPath $stale | Should -BeFalse; Test-Path -LiteralPath $release | Should -BeTrue; Test-Path -LiteralPath $develop | Should -BeTrue
+            Test-Path -LiteralPath $preserved -PathType Container | Should -BeTrue
+            (Get-FileHash -LiteralPath $pendingPath -Algorithm SHA256).Hash | Should -BeExactly $pendingHash
+            (Get-Content -LiteralPath (Join-Path $preserved "README.md") -Raw).Trim() | Should -BeExactly "preserved user edit"
+            & git -C $main show-ref --verify --quiet refs/heads/itldev/workflow-release-e2e-retained; $LASTEXITCODE | Should -Be 0
             & git -C $main show-ref --verify --quiet refs/heads/itldev/workflow-release-e2e-rules; $LASTEXITCODE | Should -Be 1
             $dirty = Join-Path $root "dirty"; & git -C $main worktree add --quiet -b itldev/workflow-release-e2e-dirty $dirty
             Set-Content -LiteralPath (Join-Path $dirty "README.md") -Encoding ASCII -Value "tracked drift"

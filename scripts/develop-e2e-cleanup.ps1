@@ -421,9 +421,13 @@ function Remove-DevelopE2EStaleStandWorktrees {
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $preservedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     [void]$preservedPaths.Add($resolvedProjectRoot.TrimEnd('\', '/'))
-    foreach ($propertyName in @("worktreePath", "developWorktreePath")) {
-        if ($config.PSObject.Properties[$propertyName] -and [string]$config.$propertyName) {
-            [void]$preservedPaths.Add(([IO.Path]::GetFullPath([string]$config.$propertyName)).TrimEnd('\', '/'))
+    foreach ($propertyName in @("worktreePath", "developWorktreePath", "preserveWorktreePaths")) {
+        if ($config.PSObject.Properties[$propertyName]) {
+            foreach ($path in @($config.$propertyName)) {
+                if ([string]$path) {
+                    [void]$preservedPaths.Add(([IO.Path]::GetFullPath([string]$path)).TrimEnd('\', '/'))
+                }
+            }
         }
     }
 
