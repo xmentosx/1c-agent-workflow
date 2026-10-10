@@ -4,9 +4,12 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import math
 import time
 from collections import deque
 from urllib.error import HTTPError, URLError
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -21,20 +24,41 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class HttpStatusError(SpprError):
-    def __init__(self, status):
+    def __init__(self, status, retry_after=0):
         self.status = status
+        self.retry_after = retry_after
         super().__init__(f"HTTP {status}; verify endpoint/access or retry later. Remote body redacted.")
 
 
+class HttpNetworkError(SpprError):
+    def __init__(self, message="Network request failed; verify connectivity and retry. Details redacted.", *, category="network"):
+        self.category = category
+        super().__init__(message)
+
+
+def retry_after_seconds(value):
+    if not value:
+        return 0
+    try:
+        seconds = float(value)
+        return max(0, seconds) if math.isfinite(seconds) else 0
+    except (TypeError, ValueError):
+        try:
+            return max(0, (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+
 class Http:
-    def __init__(self, timeout=30, max_bytes=16 * 1024 * 1024, before=lambda: None):
-        self.timeout, self.max_bytes, self.before = timeout, max_bytes, before
+    def __init__(self, timeout=30, max_bytes=16 * 1024 * 1024, before=lambda: None, attempts=3):
+        self.timeout, self.max_bytes, self.before, self.attempts = timeout, max_bytes, before, attempts
         self.opener = build_opener(NoRedirect())
         self.requests = self.bytes = 0
 
     def request(self, url, *, headers=None, body=None):
-        for attempt in range(3):
+        for attempt in range(self.attempts):
             self.before()
+            retry_after = 0
             try:
                 self.requests += 1
                 req = Request(url, data=body, headers=headers or {}, method="GET" if body is None else "POST")
@@ -46,13 +70,18 @@ class Http:
                     return data
             except HTTPError as exc:
                 code = exc.code
+                retry_after = retry_after_seconds(exc.headers.get("Retry-After")) if code == 429 else 0
                 exc.close()
-                if code not in (429, 502, 503, 504) or attempt == 2:
-                    raise HttpStatusError(code) from None
-            except (URLError, TimeoutError, OSError):
-                if attempt == 2:
-                    raise SpprError("Network request failed; verify connectivity and retry. Details redacted.") from None
-            time.sleep(0.25 * (attempt + 1))
+                if code not in (429, 502, 503, 504) or attempt == self.attempts - 1:
+                    raise HttpStatusError(code, retry_after) from None
+                if retry_after > 60:
+                    raise HttpStatusError(code, retry_after) from None
+            except (URLError, TimeoutError, OSError) as exc:
+                if attempt == self.attempts - 1:
+                    reason = exc.reason if isinstance(exc, URLError) else exc
+                    category = "timeout" if isinstance(reason, TimeoutError) else "network"
+                    raise HttpNetworkError(category=category) from None
+            time.sleep(max(0.25 * (attempt + 1), min(retry_after, 60)))
         raise SpprError("Request failed.")
 
 
@@ -118,7 +147,7 @@ class OData:
         path = quote(entity, safe="_")
         if identifier:
             path += "(guid'" + guid(identifier) + "')"
-        url = self.settings.odata_url + path + "?" + urlencode({"$format": "json", **params})
+        url = self.settings.odata_url + path + "?" + urlencode({"$format": "json", **params}, quote_via=quote)
         try:
             return json.loads(self.http.request(url, headers=self.headers).decode("utf-8-sig"))
         except (ValueError, UnicodeError):

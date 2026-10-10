@@ -6,12 +6,14 @@ import ctypes
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from sppr_core import Policy, Settings, SpprError, now
 from sppr_embeddings import Embeddings
-from sppr_odata import Collection, OData, collect
+from sppr_odata import OData, collect
 from sppr_store import Store, atomic_json, writer_lock
+from sppr_worker import embed_pending
 
 
 def require_user_session():
@@ -46,7 +48,13 @@ def load_credentials(path):
         raise SpprError("Collector credential file is unavailable/invalid; configure username/password outside Git.") from None
 
 
-def run(settings, credentials, operation="collect", outside_window=False, session_check=require_user_session):
+def run(settings, credentials, operation="collect", outside_window=False, session_check=require_user_session,
+        continuous=False):
+    if operation == "embed-pending":
+        # The managed interactive task stays busy while a backlog exists. A
+        # bounded run ends before its 12-hour Task Scheduler execution limit.
+        return embed_pending(settings, credentials, session_check,
+                             max_seconds=11 * 3600 if continuous else None)
     policy = Policy.load(settings.policy)
     store = Store(settings)
 
@@ -58,24 +66,21 @@ def run(settings, credentials, operation="collect", outside_window=False, sessio
 
     with writer_lock(settings.state):
         started = now()
+        begun = time.monotonic()
         try:
             guard()
             atomic_json(settings.state / "attempt.json", {"state": "running", "started": started, "operation": operation})
             previous, vectors = store.previous()
-            provider = Embeddings(settings, credentials.get("api_key", ""), before=guard)
-            if operation == "embed-pending":
-                with store.reader() as (db, manifest):
-                    eligible = {k: v for k, v in previous.items() if policy.permits(v["roots"])}
-                    edges = [json.loads(row[0]) for row in db.execute("SELECT data FROM edges")]
-                    edges = [e for e in edges if e["source"] in eligible]
-                    collection = Collection(eligible, edges, manifest["observed_start"], manifest["observed_end"], manifest["coverage"])
-            else:
-                source = OData(settings, credentials["username"], credentials["password"], before=guard)
-                collection = collect(source, settings, policy, previous)
+            source = OData(settings, credentials["username"], credentials["password"], before=guard)
+            collection = collect(source, settings, policy, previous)
             guard()
-            result = store.publish(collection, policy, provider, vectors, before=guard)
+            result = store.publish(collection, policy, previous_vectors=vectors,
+                                   previous_objects=previous, before=guard)
             atomic_json(settings.state / "attempt.json", {"state": "succeeded", "started": started, "finished": now(),
-                                                         "operation": operation, "generation": result["generation"]})
+                                                         "operation": operation, "generation": result["generation"],
+                                                         "elapsed_seconds": round(time.monotonic() - begun, 3),
+                                                         "odata_requests": source.http.requests,
+                                                         "odata_response_bytes": source.http.bytes})
             return result
         except (SpprError, KeyboardInterrupt) as exc:
             message = str(exc) if isinstance(exc, SpprError) else "Collection interrupted; previous generation retained."
@@ -94,10 +99,13 @@ def main(argv=None):
     parser.add_argument("--config", required=True)
     parser.add_argument("--credentials")
     parser.add_argument("--outside-window", action="store_true", help="Explicit one-off operator authorization for a daytime full scan")
+    parser.add_argument("--continuous", action="store_true", help="Keep the interactive embedding task running while work remains")
     parser.add_argument("--generation")
     args = parser.parse_args(argv)
     try:
         settings = Settings.load(args.config)
+        if args.continuous and args.operation != "embed-pending":
+            raise SpprError("--continuous applies only to embed-pending.")
         if args.operation == "status":
             from sppr_service import Service
             result = Service(settings, Embeddings(settings, "")).status()
@@ -107,7 +115,8 @@ def main(argv=None):
         else:
             if not args.credentials:
                 raise SpprError("Provide --credentials with an external collector credential file.")
-            result = run(settings, load_credentials(args.credentials), args.operation, args.outside_window)
+            result = run(settings, load_credentials(args.credentials), args.operation,
+                         args.outside_window, continuous=args.continuous)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except SpprError as exc:

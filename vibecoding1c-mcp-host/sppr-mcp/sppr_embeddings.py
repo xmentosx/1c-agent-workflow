@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import json
 from collections import OrderedDict
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from threading import Lock
 
 import numpy as np
 
 from sppr_core import SpprError
 from sppr_odata import Http
+
+
+class QueryWaitTimeout(SpprError):
+    """Another call owns this query vector but exceeded the interactive wait."""
 
 
 def vector(values, dimension):
@@ -23,10 +28,11 @@ def vector(values, dimension):
 
 
 class Embeddings:
-    def __init__(self, settings, api_key, before=lambda: None):
+    def __init__(self, settings, api_key, before=lambda: None, *, timeout=None, attempts=3):
         self.settings = settings
         self.api_key = api_key
-        self.http = Http(settings.timeout, settings.max_response_bytes, before)
+        self.http = Http(settings.embedding_timeout if timeout is None else timeout,
+                         settings.max_response_bytes, before, attempts=attempts)
         self.usage = {"requests": 0, "tokens": 0}
 
     def embed(self, texts):
@@ -36,8 +42,10 @@ class Embeddings:
         if self.settings.dimension != 4096:
             body["dimensions"] = self.settings.dimension
         headers = {"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"}
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.request_bytes = len(payload)
         raw = self.http.request(self.settings.api_base.rstrip("/") + "/embeddings", headers=headers,
-                                body=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+                                body=payload)
         self.usage["requests"] += 1
         try:
             data = json.loads(raw)
@@ -55,17 +63,36 @@ class QueryCache:
     def __init__(self, settings, provider):
         self.settings, self.provider = settings, provider
         self.values = OrderedDict()
+        self.pending = {}
         self.lock = Lock()
 
     def get(self, query):
         marker = (self.settings.profile, query)
-        # One bounded critical section also coalesces identical concurrent misses.
         with self.lock:
             if marker in self.values:
                 self.values.move_to_end(marker)
                 return self.values[marker], True
+            future = self.pending.get(marker)
+            owner = future is None
+            if owner:
+                future = self.pending[marker] = Future()
+        # Coalesce identical misses without blocking other keys or ready vectors.
+        if not owner:
+            try:
+                return future.result(timeout=self.settings.query_timeout + 1), True
+            except FutureTimeout:
+                raise QueryWaitTimeout("Query embedding timed out; lexical results remain available.") from None
+        try:
             value = self.provider.embed([self.settings.query_instruction + query])[0]
+        except BaseException as exc:
+            with self.lock:
+                self.pending.pop(marker)
+                future.set_exception(exc)
+            raise
+        with self.lock:
             self.values[marker] = value
             while len(self.values) > self.settings.cache_size:
                 self.values.popitem(last=False)
+            self.pending.pop(marker)
+            future.set_result(value)
             return value, False

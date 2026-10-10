@@ -323,36 +323,40 @@
         }
     }
 
-    It "uses direct BookStack for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect {
+    It "uses direct BookStack and SPPR for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect,Sppr {
         $configPath = Join-Path $TestDrive 'bookstack direct кириллица.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $state = @{ servers = @() }
             function Read-HostState { return $state }
-            function Get-HostPort { return 18005 }
+            function Get-HostPort { return $directPort }
             function Get-HostLocalValues { return @{} }
             function Test-HostServerNeedsEmbedding { return $false }
             function Invoke-DockerCommandChecked { throw 'unexpected Docker mutation' }
             function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
-            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'mantis') } }
-            $definition = @{ id = 'bookstack'; scope = 'global'; image = 'pinned'; containerNameTemplate = 'itl-bookstack' }
-            foreach ($legacy in @($false, $true)) {
-                if ($legacy) { $state.servers = @(@{ id = 'bookstack'; scope = 'global'; configId = ''; url = 'http://host:22005/mcp'; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
-                $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
-                Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
-                $runtime.endpointMode | Should -Be 'direct'
-                $runtime.url | Should -Be 'http://host:18005/mcp'
-                $runtime.directUrl | Should -Be $runtime.url
-                $runtime.proxyPort | Should -Be 0
-                $runtime.proxyContainerName | Should -BeNullOrEmpty
-                $runtime.proxyContractPath | Should -BeNullOrEmpty
+            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr', 'mantis') } }
+            foreach ($nativeId in @('bookstack','sppr')) {
+                $directPort = if ($nativeId -eq 'sppr') { 18007 } else { 18005 }
+                $definition = @{ id = $nativeId; scope = 'global'; image = 'pinned'; containerNameTemplate = "itl-$nativeId" }
+                $state.servers = @()
+                foreach ($legacy in @($false, $true)) {
+                    if ($legacy) { $state.servers = @(@{ id = $nativeId; scope = 'global'; configId = ''; url = "http://host:$($directPort+4000)/mcp"; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
+                    $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
+                    Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                    $runtime.endpointMode | Should -Be 'direct'
+                    $runtime.url | Should -Be "http://host:$directPort/mcp"
+                    $runtime.directUrl | Should -Be $runtime.url
+                    $runtime.proxyPort | Should -Be 0
+                    $runtime.proxyContainerName | Should -BeNullOrEmpty
+                    $runtime.proxyContractPath | Should -BeNullOrEmpty
+                }
+                $state.servers = @($runtime)
+                '{}' | Set-Content (Get-HostStatePath -Config $config)
+                Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId $nativeId
             }
             $definition.id = 'mantis'
             (New-ServerRuntime -Config $config -Server $definition -Index 0).endpointMode | Should -Be 'proxy'
-            $state.servers = @($runtime)
-            '{}' | Set-Content (Get-HostStatePath -Config $config)
-            Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId bookstack
         }
     }
 
@@ -1335,7 +1339,7 @@ services:
         }
     }
 
-    It "uses Limited InteractiveToken for the SPPR task and never enables missed-run catch-up" -Tag Sppr {
+    It "uses Limited InteractiveToken for both SPPR tasks and never enables missed-run catch-up" -Tag Sppr {
         $root = Join-Path $TestDrive 'СППР задача с пробелом'
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $hostPath = Join-Path $root 'host.json'
@@ -1344,7 +1348,7 @@ services:
         @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $hostPath *> $null
-            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; taskPath = '\ITL\'; description = 'owned fixture'; pythonPath = 'C:\СППР runtime\python.exe' } }
+            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; embeddingTaskName = 'fixture-sppr-embeddings'; taskPath = '\ITL\'; description = 'owned fixture'; embeddingDescription = 'owned embeddings fixture'; pythonPath = 'C:\СППР runtime\python.exe'; settings = @{ embedding_interval_minutes = 5; embedding_run_seconds = 240; timeout = 30 } } }
             function Get-ScheduledTask { return $null }
             function Initialize-SpprRuntime { }
             function Invoke-ProcessWithTimeout { return @{ exitCode = 0; lines = @('01:00') } }
@@ -1353,17 +1357,32 @@ services:
                 $Execute | Should -Be 'C:\СППР runtime\python.exe'
                 $Argument | Should -Match ([regex]::Escape('"C:\СППР пример\collector.json"'))
                 $Argument | Should -Not -Match 'outside-window'
-                return @{ owned = $true }
+                return @{ owned = $true; argument = $Argument }
             }
-            function New-ScheduledTaskTrigger { param([switch]$Daily,$At); return @{ at = $At } }
+            function New-ScheduledTaskTrigger { param([switch]$Daily,[switch]$Once,[switch]$AtLogOn,$At,$User,$RepetitionInterval); return @{ at = $At; daily = $Daily.IsPresent; once = $Once.IsPresent; logon = $AtLogOn.IsPresent; interval = $RepetitionInterval } }
             function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel); $LogonType | Should -Be 'Interactive'; $RunLevel | Should -Be 'Limited'; return @{ user = $UserId } }
             function New-ScheduledTaskSettingsSet {
                 param($MultipleInstances,$ExecutionTimeLimit,[switch]$Hidden,[switch]$StartWhenAvailable)
                 $MultipleInstances | Should -Be 'IgnoreNew'
                 $StartWhenAvailable | Should -BeFalse
-                return @{ bounded = $true }
+                return @{ bounded = $true; executionLimit = $ExecutionTimeLimit }
             }
-            function Register-ScheduledTask { param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force); $TaskName | Should -Be 'fixture-sppr' }
+            function Register-ScheduledTask {
+                param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force)
+                $TaskName | Should -BeIn @('fixture-sppr','fixture-sppr-embeddings')
+                if ($TaskName -eq 'fixture-sppr-embeddings') {
+                    $Action.argument | Should -Match '--continuous'
+                    $Settings.executionLimit.TotalHours | Should -Be 12
+                    @($Trigger).Count | Should -Be 2
+                    @($Trigger | Where-Object logon).Count | Should -Be 1
+                    @($Trigger | Where-Object once).Count | Should -Be 1
+                    $Description | Should -Be 'owned embeddings fixture'
+                } else {
+                    $Action.argument | Should -Not -Match '--continuous'
+                    $Description | Should -Be 'owned fixture'
+                    $Trigger.daily | Should -BeTrue
+                }
+            }
             Install-SpprCollector -Config @{} *> $null
             { Assert-SpprTaskOwned -Task @{ Description = 'another owner' } -Settings @{ description = 'owned fixture' } } | Should -Throw '*another owner*'
         }
@@ -2020,6 +2039,196 @@ services:
                 Remove-Variable -Scope Script -Name GraphHealthShimInstalled -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "qualifies native CodeChecker once per watchdog attempt and reuses its safe call" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'watchdog проверка с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $server = @{ id = 'codechecker'; name = 'checker'; scope = 'global'; containerName = 'checker-native'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }
+            $script:HealthBudgetState = @{ servers = @($server) }
+            $script:HealthBudgetRuns = 0; $script:HealthBudgetArguments = @(); $script:HealthBudgetLimit = 0
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                param($FilePath, $Arguments, $TimeoutSec)
+                $script:HealthBudgetRuns++; $script:HealthBudgetArguments = $Arguments; $script:HealthBudgetLimit = $TimeoutSec
+                return @{ exitCode = 0; lines = @('{"status":"matched","container_id":"fixture-id","health_passed":true,"elapsedSeconds":11.3}') }
+            }
+            function Invoke-DockerCommandCapture { return 'fixture-id running' }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Read-HostState { return $script:HealthBudgetState }
+            function Write-HostState { param($Config, $State) $script:HealthBudgetState = $State }
+            function Get-HostServerFunctionalHealth { throw 'A qualified CodeChecker must not issue another fetch_its' }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish {
+                Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+                Update-HostStateForPublish -Config $config
+                Update-HostStateForPublish -Config $config
+            }
+            Invoke-McpHostWatchdogRunCore -Config $config *> $null
+            $script:HealthBudgetRuns | Should -Be 1
+            $script:HealthBudgetLimit | Should -Be 180
+            $script:HealthBudgetArguments | Should -Contain '--health-arguments-base64'
+            $script:HealthBudgetState.servers[0].status | Should -Be 'running'
+            $script:HealthBudgetState.servers[0].functionalStatus | Should -Be 'qualified'
+            $record = @(ConvertTo-RegistryServers -State $script:HealthBudgetState -HostId fixture -PublishedAt fixture)[0]
+            $record.health | Should -Be 'running'
+            $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)
+            $state.status | Should -Be 'succeeded'
+            @($state.endpointProofs).Count | Should -Be 1
+            $state.endpointProofs[0].proof.elapsedSeconds | Should -Be 11.3
+            Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
+            $script:HealthBudgetRuns | Should -Be 2
+        }
+    }
+
+    It "invalidates cycle proof after an owned restart or a changed container identity" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-cache.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:DirectEndpointProofCache = @{}
+            $script:CachedProofRuns = 0; $script:CachedContainerId = 'first-id'
+            $server = @{ id = 'codechecker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003 }
+            function Ensure-PythonRuntime { return 'fixture-python' }
+            function Invoke-ProcessWithTimeout {
+                $script:CachedProofRuns++
+                return @{ exitCode = 0; lines = @((@{ status = 'matched'; container_id = $script:CachedContainerId; health_passed = $true } | ConvertTo-Json -Compress)) }
+            }
+            function Invoke-DockerCommandCapture { return "$script:CachedContainerId running" }
+            try {
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                Get-HostDirectEndpointProof -Config @{} -Server $server | Out-Null
+                $script:CachedProofRuns | Should -Be 1
+                Get-HostDirectEndpointProof -Config @{} -Server $server -Refresh | Out-Null
+                $script:CachedProofRuns | Should -Be 2
+                $script:CachedContainerId = 'replacement-id'
+                (Get-HostDirectEndpointProof -Config @{} -Server $server).container_id | Should -Be 'replacement-id'
+                $script:CachedProofRuns | Should -Be 3
+            } finally { Remove-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "publishes a functional timeout with its cause and records watchdog failure" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'proof-timeout.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            $script:TimeoutProofState = @{ servers = @(@{ id = 'codechecker'; scope = 'global'; name = 'checker'; containerName = 'checker'; url = 'http://host:22003/mcp'; hostPort = 22003; endpointMode = 'direct' }) }
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified'; stage = 'public safe health'; method = 'tools/call'; reason = 'TimeoutError'; timeoutSeconds = 30 } }
+            function Read-HostState { return $script:TimeoutProofState }
+            function Write-HostState { param($Config, $State) $script:TimeoutProofState = $State }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { Update-HostStateForPublish -Config $config }
+            function Publish-Registry { }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*TimeoutError*'
+            $record = @(ConvertTo-RegistryServers -State $script:TimeoutProofState -HostId fixture -PublishedAt fixture)[0]
+            $record.status | Should -Be 'unknown'
+            $record.health | Should -Be 'degraded'
+            $record.functionalMessage | Should -Match 'stage=public safe health; method=tools/call; reason=TimeoutError; timeoutSeconds=30'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
+    It "does not report watchdog success while a tracked endpoint is <Status>" -Tag DirectHealthBudget -TestCases @(
+        @{ Status = 'unreachable' }, @{ Status = 'missing' }, @{ Status = 'unknown' }
+    ) {
+        param($Status)
+        $configPath = Join-Path $TestDrive ('watchdog-' + $Status + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{ stateRoot = $TestDrive; watchdog = @{ enabled = $true } }
+            function Repair-DockerDesktopAvailability { return 'already-available' }
+            function Repair-TrackedGraphHealthchecks { return 0 }
+            function Repair-TrackedMcpHostAndPublish { }
+            function Update-HostStateForPublish { }
+            function Publish-Registry { }
+            function Read-HostState { return @{ servers = @(@{ name = 'checker'; status = $Status; health = $Status; functionalMessage = 'fixture unavailable' }) } }
+            { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*checker*'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
+        }
+    }
+
+    It "retries pending registry delivery without changing an unchanged payload: dryRun=<IsDryRun>" -Tag RegistryPendingPublication -TestCases @(
+        @{ IsDryRun = $false }, @{ IsDryRun = $true }
+    ) {
+        param($IsDryRun)
+        $stateRoot = Join-Path $TestDrive ('реестр с пробелом-' + $IsDryRun)
+        New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+        $configPath = Join-Path $stateRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $stateRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $registryRoot = Join-Path $stateRoot 'registry'
+            $remote = Join-Path $stateRoot 'remote.git'
+            Invoke-Git -Root $stateRoot -Arguments @('init', '--bare', $remote) *> $null
+            Invoke-Git -Root $stateRoot -Arguments @('init', $registryRoot) *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.name', 'Registry fixture') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('config', 'user.email', 'registry@example.invalid') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('remote', 'add', 'origin', $remote) *> $null
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"unreachable"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'previous published health') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('push', '-u', 'origin', 'HEAD') *> $null
+            $publishedHead = (Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join ''
+            Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Value '{"status":"running"}' -Encoding UTF8
+            Invoke-Git -Root $registryRoot -Arguments @('add', 'registry.json') *> $null
+            Invoke-Git -Root $registryRoot -Arguments @('commit', '-m', 'qualified health awaiting delivery') *> $null
+            $pendingHead = (Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join ''
+            $config = @{ stateRoot = $stateRoot; registryRepo = $remote }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Write-MergedRegistryPayload { throw 'Unchanged payload must not be rewritten' }
+            $realInvokeGit = ${function:Invoke-Git}
+            $delivery = @{ rejectPush = $true; pushCalls = 0 }
+            function Invoke-Git {
+                param($Root, $Arguments)
+                if ($Arguments[0] -eq 'push') {
+                    $delivery.pushCalls++
+                    if ($delivery.rejectPush) { throw 'fixture credentials unavailable' }
+                }
+                & $realInvokeGit -Root $Root -Arguments $Arguments
+            }
+            $DryRun = $IsDryRun
+            if ($IsDryRun) {
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 0
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+            } else {
+                { Publish-Registry -Config $config -SkipUnchangedHost *> $null } | Should -Throw '*fixture credentials unavailable*'
+                $delivery.pushCalls | Should -Be 2
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $publishedHead
+                $delivery.rejectPush = $false
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                ((Get-GitOutput -Root $remote -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+                $delivery.pushCalls | Should -Be 3
+                Publish-Registry -Config $config -SkipUnchangedHost *> $null
+                $delivery.pushCalls | Should -Be 3
+            }
+            ((Get-GitOutput -Root $registryRoot -Arguments @('rev-parse', 'HEAD')) -join '') | Should -Be $pendingHead
+        }
+    }
+
+    It "does not claim unchanged registry delivery when upstream evidence is unavailable" -Tag RegistryPendingPublication {
+        $configPath = Join-Path $TestDrive 'registry-unverified.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Ensure-GitCheckout { }
+            function Test-RegistryCurrentHostMatchesState { return $true }
+            function Invoke-ProcessWithTimeout { return @{ exitCode = 128; lines = @('upstream unavailable') } }
+            function Invoke-Git { throw 'Publication must not be claimed' }
+            { Publish-Registry -Config @{ stateRoot = $TestDrive } -SkipUnchangedHost *> $null } | Should -Throw '*publication is unverified*'
+        }
     }
 
     It "records watchdog success, failure, and disabled runs" {
@@ -4543,6 +4752,7 @@ services:
             function Get-HostContainerPublishState { return 'running' }
             function Wait-HostTcpPortOpen { return $true }
             function Test-ToolsListProxyReady { return $false }
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
             function Enable-TrackedToolsListProxiesAndPublish { $script:NativeRepairAttempts++; if ($script:NativeRepairAttempts -eq 1) { throw 'fixture proxy failure' } }
             Repair-TrackedMcpHostAndPublish -Config @{ toolsListProxy = @{ enabled = $true; serverIds = @('code') } } -TargetServerId code
             $script:NativeRepairAttempts | Should -Be 2
@@ -4565,11 +4775,11 @@ services:
             $published.url | Should -Be $server.url
             $published.proxyUrl | Should -BeNullOrEmpty
             $published.toolsContractStatus | Should -Be 'native'
-            function Get-HostMcpToolsList { return @() }
-            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
-            function Get-HostMcpToolsList { throw 'invalid MCP' }
-            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
-            function Get-HostMcpToolsList { return @(@{ name = 'vector_store_state' }) }
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified' } }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
+            function Get-HostDirectEndpointProof { throw 'invalid MCP' }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unknown'
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
             (Get-HostServerPublishStatus -Server $server) | Should -Be 'running'
         }
     }
@@ -4948,6 +5158,72 @@ Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
             $listener.Stop()
             if (-not $async.IsCompleted) { $worker.Stop() }
             $worker.Dispose()
+        }
+    }
+}
+
+Describe 'Direct MCP endpoint recovery' -Tag DirectEndpointRecovery {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $McpHostPath = $context.McpHostPath
+    }
+
+    It 'executes the shared real HTTP identity and Linux ownership regressions' {
+        foreach ($test in @('mcp-host/test_endpoint_identity.py', 'mcp-host/linux/test_watchdog.py')) {
+            $output = & python -B -X utf8 (Join-Path $RepoRoot $test) 2>&1
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        }
+    }
+
+    It 'recovers an open foreign direct endpoint once and preserves the other MCP: <Scenario>' -TestCases @(
+        @{ Scenario = 'repaired' }, @{ Scenario = 'matched' }, @{ Scenario = 'unverified' },
+        @{ Scenario = 'indexing' }, @{ Scenario = 'stuck' }
+    ) {
+        param($Scenario)
+        $configPath = Join-Path $TestDrive 'хост с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'bookstack'; endpointMode = 'direct'; hostPort = 18005; containerName = 'itl-bookstack' },
+                @{ id = 'sppr'; endpointMode = 'direct'; hostPort = 18007; containerName = 'itl-sppr' }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostStatePath { return $configPath }
+            function Invoke-DockerCommand { return 0 }
+            function Get-HostContainerPublishState { return 'running' }
+            function Wait-HostTcpPortOpen { return $true }
+            $script:DirectCommands = @(); $script:DirectProofs = 0; $script:DirectPublishes = 0
+            function Invoke-DockerCommandChecked { param($Arguments) $script:DirectCommands += ,$Arguments }
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server)
+                if ($Server.id -eq 'sppr') { return @{ status = 'matched' } }
+                $script:DirectProofs++
+                $status = $Scenario
+                if ($Scenario -in @('repaired', 'stuck')) {
+                    $status = if ($script:DirectProofs -eq 1 -or $Scenario -eq 'stuck') { 'mismatch' } else { 'matched' }
+                }
+                return @{ status = $status; container_id = ('a' * 64); reason = 'fixture' }
+            }
+            function Publish-Registry { $script:DirectPublishes++ }
+            $config = @{ toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr') } }
+            if ($Scenario -eq 'stuck') {
+                { Repair-TrackedMcpHostAndPublish -Config $config } | Should -Throw '*after one restart*'
+                $script:DirectPublishes | Should -Be 0
+            } else {
+                Repair-TrackedMcpHostAndPublish -Config $config
+                $script:DirectPublishes | Should -Be 1
+            }
+            $restarts = @($script:DirectCommands | Where-Object { $_[0] -eq 'restart' })
+            if ($Scenario -in @('repaired', 'stuck')) {
+                $restarts.Count | Should -Be 1
+                ($restarts[0] -join '|') | Should -BeExactly ('restart|--time|20|' + ('a' * 64))
+                $script:DirectProofs | Should -Be 2
+            } else { $restarts.Count | Should -Be 0 }
+            @($restarts | Where-Object { $_ -contains 'itl-sppr' }).Count | Should -Be 0
+            Remove-Variable -Scope Script -Name DirectCommands,DirectProofs,DirectPublishes -ErrorAction SilentlyContinue
         }
     }
 }

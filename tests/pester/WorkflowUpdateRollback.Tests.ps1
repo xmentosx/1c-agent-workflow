@@ -692,6 +692,11 @@ Describe 'Branch workflow finalization preserves unrelated index entries' -Tag '
             function Write-WorkflowUpdateFollowUp {}
             function Read-DependencyLockManifest {@{dependencies=@{workflowPackage=@{source='path';commit=('a'*40);ref='master';repo='fixture'}}}}
             function Invoke-WorkflowPackageFilePostCopy {throw 'A committed checkpoint must not replay file post-copy.'}
+            $readyMcpRefresh=@{calls=0}
+            function Refresh-Vibecoding1cMcpRegistry {$readyMcpRefresh.calls++;throw 'A ready checkpoint must not refresh the registry.'}
+            $selectionPath=Get-Vibecoding1cMcpSelectionPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectionPath)|Out-Null
+            Write-Utf8Text -Path $selectionPath -Value '{}'
             $source=[pscustomobject]@{root=$repoRoot;commit=('a'*40);ref='master';repo='fixture';source='path'}
             $before=Get-CurrentCommit
             $businessBefore=@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0"
@@ -731,6 +736,7 @@ Describe 'Branch workflow finalization preserves unrelated index entries' -Tag '
                 & {$LifecyclePhase='post-copy';$OperationContinuation=$true;Update-WorkflowPackage}
             }
             Get-CurrentCommit|Should -BeExactly $committed
+            $readyMcpRefresh.calls|Should -Be 0
             Get-WorkflowUpdatePendingSnapshot|Should -BeNullOrEmpty
             (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0")|Should -BeExactly $businessBefore
             $retained=@(Get-ChildItem (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-completed-*')

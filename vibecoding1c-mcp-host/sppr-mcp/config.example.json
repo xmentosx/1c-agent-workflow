@@ -8,6 +8,12 @@
   "model": "qwen/qwen3-embedding-8b",
   "dimension": 4096,
   "cache_size": 256,
+  "embedding_timeout": 120,
+  "query_timeout": 45,
+  "embedding_workers": 4,
+  "embedding_batch_size": 16,
+  "embedding_run_seconds": 240,
+  "embedding_interval_minutes": 5,
   "night_start": "01:00",
   "night_end": "06:00",
   "time_zone": "Europe/Moscow"

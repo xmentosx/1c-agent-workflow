@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SPPR_CONFIG=/config/reader.json
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SPPR_CONFIG=/config/reader.json SPPR_READER_CACHE_DIR=/tmp/sppr-reader-cache
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt

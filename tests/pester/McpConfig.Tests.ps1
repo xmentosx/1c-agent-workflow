@@ -19,7 +19,7 @@
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $registryRoot = Join-Path $root 'registry'
         New-Item -ItemType Directory -Path $registryRoot -Force | Out-Null
-        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:22007/mcp'; health = 'running' }
+        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:18007/mcp'; endpointMode = 'direct'; health = 'running' }
         @{ schemaVersion = 1; host = @{ hostId = 'dev-ermakov' }; configurations = @(); servers = @($endpoint) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Encoding UTF8
         & {
             . $HelperPath -ProjectRoot $root -Action help -McpServerId sppr -McpProvider local *> $null
@@ -43,9 +43,48 @@
             Write-Vibecoding1cMcpCodexConfig -Path $path -BlockId 'fixture-sppr' -Endpoints @($runtime)
             $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
             $text | Should -Match 'mcp_servers."sppr-knowledge"'
-            $text | Should -Match 'http://dev-ermakov:22007/mcp'
+            $text | Should -Match 'http://dev-ermakov:18007/mcp'
+            $text | Should -Not -Match ':22007/'
             $text | Should -Match 'http://external.test/mcp'
             $text | Should -Not -Match 'password|credential|collector|odata'
+        }
+    }
+
+    It "refreshes the registry before discovering a newly published SPPR during MCP setup" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР обновление с пробелом'
+        $publisher = Join-Path $root 'published registry'
+        $registryRoot = Join-Path $root 'local registry'
+        New-Item -ItemType Directory -Path $publisher -Force | Out-Null
+        & git init --quiet $publisher
+        & git -C $publisher config user.email 'test@example.com'
+        & git -C $publisher config user.name 'Test User'
+        @{ schemaVersion = 1; configurations = @(); servers = @() } | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath (Join-Path $publisher 'registry.json') -Encoding UTF8
+        & git -C $publisher add registry.json
+        & git -C $publisher commit --quiet -m 'initial registry'
+        & git clone --quiet $publisher $registryRoot
+
+        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:18007/mcp'; health = 'running' }
+        @{ schemaVersion = 1; host = @{ hostId = 'dev-ermakov' }; configurations = @(); servers = @($endpoint) } |
+            ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $publisher 'registry.json') -Encoding UTF8
+        & git -C $publisher add registry.json
+        & git -C $publisher commit --quiet -m 'publish SPPR'
+
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Vibecoding1cMcpRegistryRoot { return $registryRoot }
+            function Test-Vibecoding1cMcpRegistryPathOverride { return $false }
+            function Get-Vibecoding1cMcpRegistryRepo { return $publisher }
+            function Test-Vibecoding1cMcpBookStackVirtualServerEnabled { return $false }
+            function Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled { return $false }
+            function Read-Vibecoding1cMcpManifest { return (Add-Vibecoding1cMcpVirtualServersToManifest -Manifest @{ servers = @() }) }
+            function Get-Vibecoding1cMcpTargetScopes { return @('global') }
+            function Get-Vibecoding1cMcpSelectionPath { return (Join-Path $root 'selection.json') }
+            Set-Content -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -Value '{}' -Encoding UTF8
+            @(Select-Vibecoding1cMcpManifestServers | Where-Object { $_.id -eq 'sppr' }).Count | Should -Be 0
+            $selection = [pscustomobject]@{ defaultProvider = 'local'; servers = @() }
+            (Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry).isComplete | Should -BeTrue
+            @(Select-Vibecoding1cMcpManifestServers | Where-Object { $_.id -eq 'sppr' }).Count | Should -Be 1
         }
     }
 
@@ -1119,6 +1158,8 @@
                 ($duplicate.reasons -join [Environment]::NewLine) | Should -Match "docs/global remote provider has multiple matching hosts and no hostId"
 
                 $endpoint = (Get-Vibecoding1cMcpRegistryServers -Registry (Read-Vibecoding1cMcpRegistry) | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "hostId" -Default "") -eq "host-b" } | Select-Object -First 1)
+                $endpoint.hostPublishedAt | Should -Be "2026-07-05T00:05:00Z"
+                $endpoint.indexedAt | Should -Be "2026-07-05T00:05:00Z"
                 $details = Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $endpoint
                 $details | Should -Match "hostId=host-b"
                 $details | Should -Match ([regex]::Escape("url=http://host-b:18100/mcp"))

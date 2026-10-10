@@ -93,7 +93,7 @@ The MCP SHALL bound page size, text and traversal work while providing an explic
 - **THEN** continuation is invalidated and no newly excluded content is returned
 
 ### Requirement: Read-only MCP interface and common visibility
-The MCP SHALL expose search, object reading, relation listing and index status to admitted clients with the same corpus visibility. It MUST NOT expose source mutation, arbitrary SQL/OData execution or automatic full-rescan commands through those tools. Payloads SHALL avoid duplicating complete structured JSON in text.
+The MCP SHALL expose search, object reading, relation listing, index status, bounded context collection, exact enumeration and shortest stored paths to admitted clients with the same corpus visibility. It MUST NOT expose source mutation, arbitrary SQL/OData execution or automatic full-rescan commands through those tools. Payloads SHALL avoid duplicating complete structured JSON in text.
 
 #### Scenario: Two admitted clients request the same object
 - **WHEN** two clients use identical parameters against the same generation and policy
@@ -102,3 +102,32 @@ The MCP SHALL expose search, object reading, relation listing and index status t
 #### Scenario: Client attempts to supply an arbitrary OData expression
 - **WHEN** a tool receives an unsupported raw query or write parameter
 - **THEN** it rejects that input with supported parameter guidance and performs no source mutation or unbounded fetch
+
+### Requirement: Bounded context and connection evidence
+`get_sppr_context` SHALL traverse incoming/outgoing stored relationships from one or more indexed seeds in one generation, deduplicate nodes and retain distinct relationship rows. It SHALL return compact cards with navigation, predecessor evidence, optional selected card/row fields, and explicit boundary/frontier records. Depth, admitted object count and adjacency work SHALL be bounded separately from page size. Development-role interpretation SHALL reuse the existing authoritative rule over allowed indexed evidence, not assume missing memberships from a truncated walk.
+
+#### Scenario: Idea investigation reaches cycles and excluded objects
+- **WHEN** an idea connects through technical projects to cyclic shared solutions and an excluded project
+- **THEN** allowed objects appear once, each reached card has connection evidence, realization rows remain separately readable, and excluded contents never appear
+
+#### Scenario: Traversal stops before a separate developer task
+- **WHEN** a depth/object/work limit stops traversal
+- **THEN** stop reasons and continuation are explicit and the idea is not falsely classified as using its ChTZ as the developer task
+
+### Requirement: Complete enumeration and selective batch reading
+`list_sppr_objects` SHALL enumerate all indexed objects matching the same exact filters as search with a stable order, total and generation-bound continuation. `read_sppr_object` SHALL preserve its single-object response while accepting up to twenty object IDs for bounded batch reading with optional field selection. Long field values and metadata SHALL remain reconstructable through continuation.
+
+#### Scenario: More matching cards than a search page
+- **WHEN** forty-five ideas match an exact status filter
+- **THEN** enumeration returns all forty-five across pages without a query embedding call
+
+### Requirement: Scoped search and shortest paths
+Search SHALL optionally restrict fragments by selected indexed cards and field names, including incoming realization rows while retaining source-card/edge provenance. `find_sppr_paths` SHALL explain bounded shortest stored paths between eligible endpoints, honor direction and relationship filters, and distinguish complete absence from a truncated search. Semantic similarity MUST NOT create graph edges.
+
+#### Scenario: Search implementation attached to an idea through a TP row
+- **WHEN** only the idea and realization field are selected
+- **THEN** the idea is found from the incoming realization and the excerpt identifies the source TP and exact row
+
+#### Scenario: Multiple shortest routes or interrupted exploration
+- **WHEN** several shortest stored routes exist or exploration reaches a limit
+- **THEN** returned routes retain edge IDs and the response reports omitted routes or exploration limits without claiming unrestricted completeness

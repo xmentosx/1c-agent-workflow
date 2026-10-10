@@ -3,8 +3,12 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import sqlite3
 import tempfile
+import threading
+import time
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +20,10 @@ import numpy as np
 from sppr_core import (BUSINESS_FIELDS, IDENTITY, KINDS, LOOKUPS, Policy, Settings, SpprError,
                        fields_from, guid, key, navigation, rich_text)
 from sppr_embeddings import QueryCache, vector
-from sppr_odata import Collection, HttpStatusError, Schema, collect
+from sppr_odata import Collection, Http, HttpNetworkError, HttpStatusError, Schema, collect
 from sppr_service import Service
 from sppr_store import Store, atomic_json, writer_lock
+from sppr_worker import embed_pending
 
 TP = "Catalog_ТехническиеПроекты"
 IDEA = "Catalog_Идеи"
@@ -208,9 +213,21 @@ class SpprTests(unittest.TestCase):
     def collect(self, previous=None):
         return collect(self.source, self.settings, self.policy, previous)
 
-    def publish(self):
+    def publish(self, *, embed=True):
         previous, vectors = self.store.previous()
-        return self.store.publish(self.collect(previous), self.policy, self.provider, vectors)
+        result = self.store.publish(self.collect(previous), self.policy,
+                                    previous_vectors=vectors, previous_objects=previous)
+        if embed:
+            try:
+                progress = self.embed()
+                result["semantic_complete"] = progress["semantic_complete"]
+            except SpprError:
+                pass
+        return result
+
+    def embed(self, **kwargs):
+        with patch("sppr_worker.Embeddings", return_value=self.provider):
+            return embed_pending(self.settings, {"api_key": "fixture"}, lambda: None, **kwargs)
 
     def read_fields(self, service, object_id):
         fields, cursor = {}, None
@@ -220,6 +237,192 @@ class SpprTests(unittest.TestCase):
             cursor = page["cursor"]
             if not cursor:
                 return fields
+
+    def all_items(self, method, **kwargs):
+        items, cursor = [], None
+        for _ in range(1000):
+            page = method(**kwargs, cursor=cursor)
+            self.assertLess(len(json.dumps(page, ensure_ascii=False).encode("utf-8")), 32000)
+            items.extend(page["items"])
+            cursor = page["cursor"]
+            if cursor is None:
+                return items, page
+        self.fail("Continuation failed to terminate")
+
+    def test_context_cycles_rows_roles_and_selected_text_without_provider(self):
+        self.role_fixture(separate=True)
+        # Keep the foreign endpoint and shared cyclic solution graph in this fixture.
+        self.source.idea_row(1, 90, "Foreign endpoint reference", row=2, kind=TP)
+        self.source.idea_row(2, 91, "Unsupported endpoint", row=2, kind="Catalog_ФункцииМеханизмов")
+        text = "Кириллица и пробелы 🙂 " * 500
+        self.source.data[key(IDEA, uuid(3))]["Описание"] = text
+        self.publish()
+        service = Service(self.settings, self.provider)
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.context, object_ids=[key(IDEA, uuid(3))],
+                                    depth=6, fields=["Описание", "РеализацияИдеи"], limit=5)
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertTrue(last["complete"])
+        nodes = [i["object"]["id"] for i in items if i["kind"] == "object"]
+        self.assertEqual(set(nodes), {key(IDEA, uuid(3)), key(TP, uuid(1)), key(TP, uuid(2)),
+                                     key(SOLUTION, uuid(6)), key(SOLUTION, uuid(7))})
+        self.assertEqual(len(nodes), len(set(nodes)))
+        edges = [i for i in items if i["kind"] == "relation"]
+        self.assertEqual(len(edges), len({e["id"] for e in edges}))
+        roles = [i for i in items if i["kind"] == "development"]
+        self.assertEqual(roles[0]["mode"], "separate_tp")
+        self.assertEqual(roles[0]["chtz"], key(TP, uuid(1)))
+        self.assertEqual(roles[0]["developer_task"], key(TP, uuid(2)))
+        parts = [i for i in items if i["kind"] == "field" and i["object_id"] == key(IDEA, uuid(3))]
+        self.assertEqual("".join(i["value"] for i in parts), text)
+        realizations = [i for i in items if i["kind"] == "field" and i.get("edge_id")]
+        self.assertTrue(any(i["value"] == "Реализация разработчика" for i in realizations))
+        self.assertNotIn("FOREIGN-TEXT-TRAP", json.dumps(items))
+        self.assertTrue(any(i["kind"] == "boundary" and i["id"] == key(TP, uuid(90)) for i in items))
+        self.assertTrue(any(i["kind"] == "boundary" and i["links"] is None for i in items))
+        for i in items:
+            if i["kind"] == "object" and i["depth"]:
+                self.assertIn(i["via"]["edge_id"], {e["id"] for e in edges})
+
+    def test_context_limits_have_frontier_and_never_infer_same_tp_from_partial_walk(self):
+        self.role_fixture(separate=True)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        items, last = self.all_items(service.context, object_ids=[idea], depth=0)
+        self.assertIn("depth", last["stop_reasons"])
+        self.assertFalse(last["complete"])
+        self.assertEqual([i for i in items if i["kind"] == "development"][0]["mode"], "separate_tp")
+        self.assertTrue(any(i["kind"] == "frontier" and i["object_id"] == idea for i in items))
+        items, last = self.all_items(service.context, object_ids=[idea], depth=6, max_objects=2)
+        self.assertIn("max_objects", last["stop_reasons"])
+        self.assertEqual(last["object_count"], 2)
+        from sppr_retrieval import Graph
+        with patch.object(Graph, "EDGE_BUDGET", 1):
+            items, last = self.all_items(service.context, object_ids=[idea], depth=6)
+            self.assertIn("edge_budget", last["stop_reasons"])
+        items, last = self.all_items(service.context, object_ids=[idea], direction="outgoing", relations=["Решение_Key"])
+        self.assertEqual(last["object_count"], 1)
+        self.assertTrue(last["complete"])
+
+    def test_list_objects_exhausts_exact_filters_without_embeddings(self):
+        for n in range(100, 145):
+            self.source.add(IDEA, n, Статус="В работе")
+        self.publish()
+        service = Service(self.settings, self.provider)
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.list_objects, filters={"type": IDEA, "status": "В работе"}, limit=7)
+        self.assertEqual(len(items), 45)
+        self.assertEqual(last["total"], 45)
+        self.assertEqual([i["id"] for i in items], sorted(i["id"] for i in items))
+        self.assertTrue(last["complete"])
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertEqual(service.list_objects({"project": B})["total"], 0)
+        with self.assertRaisesRegex(SpprError, "Supported filters"):
+            service.list_objects({"raw_sql": "SELECT *"})
+
+    def test_batch_read_keeps_single_read_and_projects_fields(self):
+        text = "Очень длинное описание 🙂 " * 600
+        self.source.data[key(TP, uuid(1))]["Описание"] = text
+        self.publish()
+        service = Service(self.settings, self.provider)
+        ids = [key(TP, uuid(1)), key(IDEA, uuid(3))]
+        items, last = self.all_items(service.read, object_id=ids, fields=["Описание"], limit=3)
+        parts = [i["value"] for i in items if i["kind"] == "field" and i["object_id"] == ids[0]]
+        self.assertEqual("".join(parts), text)
+        self.assertEqual(len([i for i in items if i["kind"] == "object"]), 2)
+        self.assertTrue(last["complete"])
+        single = service.read(ids[0], fields=["Описание"], limit=1)
+        self.assertIn("object", single)
+        self.assertEqual(single["fields"][0]["field"], "Описание")
+        with self.assertRaisesRegex(SpprError, "single"):
+            service.read(ids, edge_id="row")
+        with self.assertRaisesRegex(SpprError, "unavailable"):
+            service.read(ids + [key(TP, uuid(90))])
+
+    def test_scoped_search_filters_fragments_and_preserves_incoming_realization_source(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        result = service.search("Реализация", object_ids=[idea], fields=["РеализацияИдеи"])
+        self.assertEqual([h["id"] for h in result["hits"]], [idea])
+        excerpt = result["hits"][0]["excerpt"]
+        self.assertEqual(excerpt["field"], "РеализацияИдеи")
+        self.assertEqual(excerpt["object_id"], key(TP, uuid(1)))
+        self.assertIsNotNone(excerpt["edge_id"])
+        self.assertTrue(service.search("Реализация", object_ids=[idea], fields=["Описание"])["query_vector_cached"])
+        self.provider.fail = True
+        self.assertEqual(service.search("54321", object_ids=[key(TP, uuid(1))], fields=["Описание"])["hits"], [])
+        self.assertEqual(service.search("Реализация", object_ids=[key(TP, uuid(90))])["hits"], [])
+        scoped = service.search("Реализация", object_ids=[idea], fields=["NoSuchField"])
+        self.assertEqual(scoped["hits"], [])
+
+    def test_shortest_paths_direction_multiple_paths_and_honest_limits(self):
+        self.source.data[key(TP, uuid(2))]["Решение_Key"] = uuid(6)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        a, b = key(IDEA, uuid(3)), key(SOLUTION, uuid(6))
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.paths, source_id=a, target_id=b, max_paths=10, limit=2)
+        paths = [i for i in items if i["kind"] == "path"]
+        self.assertEqual(len(paths), 2)
+        self.assertTrue(all(len(i["edge_ids"]) == 2 for i in paths))
+        self.assertTrue(last["complete"])
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertFalse(service.paths(a, b, direction="outgoing")["found"])
+        self.assertFalse(service.paths(a, b, relations=["Parent_Key"])["found"])
+        self.assertIn("depth", service.paths(a, b, depth=1)["stop_reasons"])
+        self.assertIn("max_paths", service.paths(a, b, max_paths=1)["stop_reasons"])
+        self.assertIn("max_objects", service.paths(a, b, max_objects=1)["stop_reasons"])
+        self.assertTrue(service.paths(a, a, depth=0)["found"])
+        with self.assertRaisesRegex(SpprError, "outside"):
+            service.paths(a, key(TP, uuid(90)))
+
+    def test_new_cursors_bind_parameters_generation_and_current_policy(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        a, b = key(IDEA, uuid(3)), key(TP, uuid(1))
+        requests = [(service.context, {"object_ids": [a]}),
+                    (service.paths, {"source_id": a, "target_id": b}),
+                    (service.list_objects, {}), (service.read, {"object_id": [a, b], "fields": ["Описание"]})]
+        cursors = []
+        for method, args in requests:
+            token = method(**args, limit=1)["cursor"]
+            self.assertIsNotNone(token)
+            cursors.append(token)
+            with self.assertRaisesRegex(SpprError, "Continuation"):
+                method(**args, limit=2, cursor=token)
+        self.publish()
+        for (method, args), token in zip(requests, cursors):
+            with self.assertRaisesRegex(SpprError, "Continuation"):
+                method(**args, limit=1, cursor=token)
+        token = service.list_objects(limit=1)["cursor"]
+        self.set_policy([])
+        with self.assertRaisesRegex(SpprError, "Continuation"):
+            service.list_objects(limit=1, cursor=token)
+        for method, args in requests:
+            if method != service.list_objects:
+                with self.assertRaises(SpprError):
+                    method(**args)
+
+    def test_new_selection_validation_and_revocation_before_response(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        for args in ({"depth": True}, {"depth": 7}, {"max_objects": 201}, {"fields": []},
+                     {"relations": []}, {"direction": "any"}, {"limit": 21}):
+            with self.assertRaises(SpprError):
+                service.context([idea], **args)
+        with self.assertRaises(SpprError):
+            service.context([])
+        original = service.compact
+        def revoke(*args):
+            result = original(*args)
+            self.set_policy([])
+            return result
+        with patch.object(service, "compact", side_effect=revoke):
+            with self.assertRaisesRegex(SpprError, "policy changed"):
+                service.context([idea])
 
     def role_fixture(self, separate=False):
         self.source.lookup("Catalog_итлТипыТП", 51, "(Эпик)", СрезТП="ЧТЗ")
@@ -242,7 +445,7 @@ class SpprTests(unittest.TestCase):
         self.assertEqual([e["target"] for e in basis], [key(TP, uuid(90))])
         self.assertEqual(basis[0]["target_state"], "outside_corpus_or_unavailable")
         self.assertFalse(any(identifier == uuid(90) for _, identifier, _ in self.source.reads))
-        self.store.publish(collected, self.policy, self.provider)
+        self.store.publish(collected, self.policy)
         service = Service(self.settings, self.provider)
         fields = self.read_fields(service, key(IDEA, uuid(3)))
         self.assertEqual(fields["Основание_Type"]["value"], "StandardODATA." + TP)
@@ -313,7 +516,7 @@ class SpprTests(unittest.TestCase):
         changed = self.collect(old.objects)
         self.assertEqual({e["id"] for e in changed.edges}, {e["id"] for e in old.edges})
         self.assertFalse(any("Catalog_итлТехническиеИдентификаторы" in kind for kind, _, _ in self.source.reads))
-        self.store.publish(changed, self.policy, self.provider)
+        self.store.publish(changed, self.policy)
         page = Service(self.settings, self.provider).relations(key(IDEA, uuid(3)), limit=20)
         self.assertEqual(sum(bool(e["technical_id"]) for e in page["relations"]), 5)
 
@@ -324,7 +527,7 @@ class SpprTests(unittest.TestCase):
         result = self.collect()
         self.assertFalse(any(e["technical_id"] for e in result.edges))
         self.assertEqual(result.objects[key(IDEA, uuid(3))]["fields"]["итлШагиПроцессов/1/ТехническийИдентификатор_Key"]["value"], uuid(61))
-        self.store.publish(result, self.policy, self.provider)
+        self.store.publish(result, self.policy)
         service = Service(self.settings, self.provider)
         generation = service.status()["generation"]
         row["ШагПроцесса_Key"] = uuid(5)
@@ -463,7 +666,7 @@ class SpprTests(unittest.TestCase):
         self.assertEqual(self.source.reads, [])
         self.assertEqual(result.objects[key(TP, uuid(1))]["tables"], old[key(TP, uuid(1))]["tables"])
         self.assertIsNot(result.objects[key(TP, uuid(1))]["tables"], old[key(TP, uuid(1))]["tables"])
-        self.store.publish(result, self.policy, self.provider, vectors)
+        self.store.publish(result, self.policy, vectors)
         self.assertEqual(len(self.provider.calls), before)
 
     def test_table_update_uses_parent_version_and_embeds_only_changed_text(self):
@@ -476,7 +679,8 @@ class SpprTests(unittest.TestCase):
         self.assertIn("Новая реализация после изменения карточки", json.dumps(result.edges, ensure_ascii=False))
         self.assertEqual(set(self.source.table_reads), {(TP, uuid(1), table) for table in KINDS[TP].tables})
         before = len(self.provider.calls)
-        self.store.publish(result, self.policy, self.provider, vectors)
+        self.store.publish(result, self.policy, vectors)
+        self.embed()
         new_calls = self.provider.calls[before:]
         self.assertEqual(sum(map(len, new_calls)), 1)
 
@@ -610,25 +814,30 @@ class SpprTests(unittest.TestCase):
         self.assertEqual(service.search("планирование")["hits"], [])
 
     def test_revocation_during_embedding_does_not_publish(self):
-        self.publish()
+        self.publish(embed=False)
         generation = self.store.manifest()["generation"]
         self.provider.hook = lambda: self.set_policy([])
         with self.assertRaisesRegex(SpprError, "policy changed"):
-            self.store.publish(self.collect(), self.policy, self.provider)
+            self.embed(workers=1)
         self.assertEqual(self.store.manifest()["generation"], generation)
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 0)
 
     def test_query_lru_and_new_generation_results(self):
         self.publish()
         service = Service(self.settings, self.provider)
         first = service.search("54321")
         self.assertEqual(first["hits"][0]["id"], key(TP, uuid(1)))
+        self.assertFalse(first["vector_cache_hit"])
         calls = len(self.provider.calls)
-        self.assertTrue(service.search("54321")["query_vector_cached"])
+        repeated = service.search("54321")
+        self.assertTrue(repeated["query_vector_cached"])
+        self.assertTrue(repeated["vector_cache_hit"])
         self.assertEqual(calls, len(self.provider.calls))
         self.source.data[key(TP, uuid(1))].update(Description="Новый заголовок", DataVersion="v2")
         self.publish()
         result = service.search("54321")
         self.assertTrue(result["query_vector_cached"])
+        self.assertFalse(result["vector_cache_hit"])
         self.assertEqual(result["hits"][0]["title"], "Новый заголовок")
         service.search("второй")
         service.search("третий")
@@ -639,12 +848,32 @@ class SpprTests(unittest.TestCase):
     def test_outage_cached_uncached_and_changed_text(self):
         self.publish()
         service = Service(self.settings, self.provider)
-        service.search("54321")
+        first = service.search("54321")
+        self.assertEqual(first["search_mode"], "hybrid")
+        self.assertIsNone(first["degradation_kind"])
+        self.assertGreaterEqual(first["timing_ms"]["query_vector"], 0)
+        for phase in ("setup", "lexical", "vector_prepare", "vector_score", "fragment_rank"):
+            self.assertGreaterEqual(first["timing_ms"][phase], 0)
         self.provider.fail = True
-        self.assertEqual(service.search("54321")["search_mode"], "hybrid")
+        cached = service.search("54321")
+        self.assertEqual(cached["search_mode"], "hybrid")
+        self.assertTrue(cached["query_vector_cached"])
         failed = service.search("проблемы")
         self.assertEqual(failed["search_mode"], "lexical_exact")
         self.assertTrue(failed["degradation"])
+        self.assertEqual(failed["degradation_kind"], "embedding_error")
+        self.assertGreaterEqual(failed["timing_ms"]["local_search"], 0)
+        diagnostics = service.status()["search_diagnostics"]
+        self.assertEqual(diagnostics["query_timeout_seconds"], 45)
+        self.assertEqual(diagnostics["counts"], {"requests": 3, "hybrid": 2,
+                                                 "query_cache_misses": 2, "query_cache_hits": 1,
+                                                 "lexical_only": 1})
+        self.assertEqual(diagnostics["fallbacks"], {"embedding_error": 1})
+        self.assertEqual(diagnostics["uncached_query_vector"]["samples"], 2)
+        self.assertEqual(diagnostics["cached_query_vector"]["samples"], 1)
+        self.assertEqual(diagnostics["local_search"]["samples"], 3)
+        self.assertNotIn("54321", json.dumps(diagnostics))
+        self.assertNotIn("проблемы", json.dumps(diagnostics))
         self.source.data[key(TP, uuid(1))].update(Описание="НЕБЫВАЛЫЙ новый текст", DataVersion="v3")
         result = self.publish()
         self.assertFalse(result["semantic_complete"])
@@ -702,6 +931,12 @@ class SpprTests(unittest.TestCase):
         xml = '<FormattedDocument><id>INTERNAL-ID</id><content><p><text>Первый</text></p><p><text>Второй</text></p></content></FormattedDocument>'
         encoded = base64.b64encode(xml.encode()).decode()
         self.assertEqual(rich_text(encoded, "application/xml+xdto"), "Первый\nВторой")
+        wrapped = "\r\n".join(encoded[pos:pos + 64] for pos in range(0, len(encoded), 64)) + "\r\n"
+        self.assertEqual(rich_text(wrapped, "application/xml+xdto"), "Первый\nВторой")
+        self.assertEqual(rich_text(" \t" + wrapped, "application/xml+xdto"), "Первый\nВторой")
+        for invalid in (encoded + "!", encoded + "\x00", encoded + "\u00a0"):
+            with self.assertRaisesRegex(SpprError, "Invalid Base64"):
+                rich_text(invalid, "application/xml+xdto")
         for xml in ('<!DOCTYPE x [<!ENTITY y SYSTEM "http://trap.test">]><FormattedDocument/>', '<Unknown/>', '<broken',
                     '<FormattedDocument><unknown>unreadable content</unknown></FormattedDocument>'):
             with self.assertRaises(SpprError):
@@ -797,17 +1032,314 @@ class SpprTests(unittest.TestCase):
         self.source.data[key(TP, uuid(1))].update(Описание="Новый текст без вектора", DataVersion="v2")
         self.assertFalse(self.publish()["semantic_complete"])
         self.provider.fail = False
-        with patch("collector.OData") as odata, patch("collector.Embeddings", return_value=self.provider):
+        with patch("collector.OData") as odata, patch("sppr_worker.Embeddings", return_value=self.provider):
             result = run(self.settings, credentials, operation="embed-pending", session_check=lambda: None)
             odata.assert_not_called()
         self.assertTrue(result["semantic_complete"])
+
+    def test_lexical_publication_precedes_embedding_and_search_avoids_empty_semantic_corpus(self):
+        result = self.publish(embed=False)
+        self.assertEqual(self.provider.calls, [])
+        service = Service(self.settings, self.provider)
+        status = service.status()
+        self.assertEqual(status["semantic_progress"]["vectors"], 0)
+        self.assertGreater(status["semantic_progress"]["pending"], 0)
+        found = service.search("планирования")
+        self.assertTrue(found["hits"])
+        self.assertEqual(found["search_mode"], "lexical_exact")
+        self.assertEqual(self.provider.calls, [])
+        self.assertEqual(self.store.manifest()["generation"], result["generation"])
+        completed = self.embed()
+        self.assertTrue(completed["semantic_complete"])
+        self.assertEqual(self.store.manifest()["generation"], result["generation"])
+        self.assertEqual(service.search("планирования")["search_mode"], "hybrid")
+
+    def test_embedding_requests_overlap_and_committed_batches_survive_retry(self):
+        self.publish(embed=False)
+        barrier = threading.Barrier(4)
+        lock = threading.Lock()
+        activity = {"entered": 0, "active": 0, "peak": 0}
+
+        def concurrent_hook():
+            with lock:
+                activity["entered"] += 1
+                activity["active"] += 1
+                activity["peak"] = max(activity["peak"], activity["active"])
+                first_wave = activity["entered"] <= 4
+            if first_wave:
+                barrier.wait(timeout=5)
+            time.sleep(0.005)
+            with lock:
+                activity["active"] -= 1
+
+        self.provider.hook = concurrent_hook
+        result = self.embed(workers=4, batch_size=1)
+        self.assertTrue(result["semantic_complete"])
+        self.assertEqual(activity["peak"], 4)
+        self.assertEqual(len(self.provider.calls), len({batch[0] for batch in self.provider.calls}))
+        with closing(sqlite3.connect(self.store.vectors.path)) as journal:
+            saved = journal.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+        self.assertGreater(saved, 4)
+        self.provider.hook = None
+        before = len(self.provider.calls)
+        self.embed(workers=4, batch_size=1)
+        self.assertEqual(len(self.provider.calls), before)
+
+    def test_six_embedding_requests_overlap_and_continuous_task_has_bounded_run(self):
+        from collector import run
+        self.publish(embed=False)
+        barrier = threading.Barrier(6)
+        active = {"count": 0, "peak": 0, "entered": 0}
+        lock = threading.Lock()
+        def hook():
+            with lock:
+                active["entered"] += 1
+                active["count"] += 1
+                active["peak"] = max(active["peak"], active["count"])
+                first_wave = active["entered"] <= 6
+            if first_wave:
+                barrier.wait(timeout=5)
+            with lock:
+                active["count"] -= 1
+        self.provider.hook = hook
+        self.embed(workers=6, batch_size=1)
+        self.assertEqual(active["peak"], 6)
+        with patch("collector.embed_pending", return_value={}) as pending:
+            run(self.settings, {"api_key": "fixture"}, operation="embed-pending",
+                session_check=lambda: None, continuous=True)
+        self.assertEqual(pending.call_args.kwargs["max_seconds"], 11 * 3600)
+
+    def test_changed_cards_are_embedded_before_historic_backlog(self):
+        self.publish(embed=False)
+        previous, vectors = self.store.previous()
+        idea = key(IDEA, uuid(3))
+        self.source.data[idea].update(Описание="Новая приоритетная идея", DataVersion="v2")
+        self.store.publish(self.collect(previous), self.policy,
+                           previous_vectors=vectors, previous_objects=previous)
+        with self.store.reader() as (db, _):
+            target = db.execute("SELECT text FROM fragments WHERE object_id=? AND priority=1 ORDER BY id LIMIT 1",
+                                (idea,)).fetchone()[0]
+            old = db.execute("SELECT COUNT(*) FROM fragments WHERE priority=0").fetchone()[0]
+        self.assertGreater(old, 0)
+        self.embed(workers=1, batch_size=1)
+        self.assertEqual(self.provider.calls[0][0], target)
+
+    def test_network_batch_retry_preserves_progress_and_provider_metrics(self):
+        self.publish(embed=False)
+        calls = 0
+        def flaky():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise HttpNetworkError("fixture network reset")
+        self.provider.hook = flaky
+        result = self.embed(workers=1, batch_size=32)
+        self.assertTrue(result["semantic_complete"])
+        self.assertEqual(result["transient_failures"], 1)
+        self.assertGreaterEqual(result["provider_5m"]["http_attempts"], 2)
+        self.assertEqual(result["provider_5m"]["failed_batches"], 1)
+        self.assertEqual(result["provider_5m"]["saved_vectors"], result["saved_vectors"])
+
+    def test_rate_limit_cooldown_survives_scheduled_restart(self):
+        self.publish(embed=False)
+        def rate_limited():
+            raise HttpStatusError(429, retry_after=120)
+        self.provider.hook = rate_limited
+        deferred = self.embed(workers=1, max_seconds=1)
+        self.assertEqual(deferred["state"], "deferred")
+        self.assertEqual(len(self.provider.calls), 1)
+        self.assertGreater(deferred["retry_not_before"], time.time() + 100)
+        self.assertEqual(self.embed(workers=1, max_seconds=1)["state"], "deferred")
+        self.assertEqual(len(self.provider.calls), 1)
+        atomic_json(self.settings.state / "embed_attempt.json",
+                    {"generation": self.store.manifest()["generation"],
+                     "retry_not_before": time.time() - 1})
+        self.provider.hook = None
+        self.assertTrue(self.embed(workers=1)["semantic_complete"])
+
+    def test_query_http_uses_one_attempt_and_search_keeps_lexical_results(self):
+        from concurrent.futures import Future
+        from urllib.error import URLError
+        class Offline:
+            def open(self, *_args, **_kwargs):
+                raise URLError("fixture offline")
+        http = Http(timeout=1, attempts=1)
+        http.opener = Offline()
+        with patch("sppr_odata.time.sleep") as sleep:
+            with self.assertRaises(HttpNetworkError) as offline:
+                http.request("https://example.invalid/embeddings")
+        self.assertEqual(offline.exception.category, "network")
+        self.assertEqual(http.requests, 1)
+        sleep.assert_not_called()
+        class TimedOut:
+            def open(self, *_args, **_kwargs):
+                raise URLError(TimeoutError("fixture slow socket"))
+        http.opener = TimedOut()
+        with self.assertRaises(HttpNetworkError) as timeout:
+            http.request("https://example.invalid/embeddings")
+        self.assertEqual(timeout.exception.category, "timeout")
+        self.assertNotIn("fixture slow socket", str(timeout.exception))
+        self.publish()
+        class OfflineQuery:
+            def embed(self, _texts):
+                raise HttpNetworkError("fixture network reset")
+        result = Service(self.settings, OfflineQuery()).search("планирования")
+        self.assertEqual(result["search_mode"], "lexical_exact")
+        self.assertTrue(result["hits"])
+        self.assertIn("fixture network reset", result["degradation"])
+        self.assertEqual(result["degradation_kind"], "network")
+        class TimeoutQuery:
+            def embed(self, _texts):
+                raise HttpNetworkError(category="timeout")
+        timed = Service(self.settings, TimeoutQuery())
+        fallback = timed.search("планирования")
+        self.assertEqual(fallback["search_mode"], "lexical_exact")
+        self.assertEqual(fallback["degradation_kind"], "timeout")
+        self.assertEqual(timed.status()["search_diagnostics"]["fallbacks"], {"timeout": 1})
+        bounded = QueryCache(replace(self.settings, query_timeout=1), FakeEmbeddings())
+        bounded.pending[(self.settings.profile, "same query")] = Future()
+        begun = time.monotonic()
+        with self.assertRaisesRegex(SpprError, "timed out"):
+            bounded.get("same query")
+        self.assertLess(time.monotonic() - begun, 3)
+
+    def test_search_reads_published_vectors_while_worker_waits_for_provider(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.publish()
+        idea = key(IDEA, uuid(3))
+        self.source.data[idea].update(Описание="Новая идея во время поиска", DataVersion="v2")
+        self.publish(embed=False)
+        entered, release = threading.Event(), threading.Event()
+        def waiting():
+            entered.set()
+            self.assertTrue(release.wait(5))
+        self.provider.hook = waiting
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.embed, workers=1, batch_size=1)
+            try:
+                self.assertTrue(entered.wait(5))
+                begun = time.monotonic()
+                result = Service(self.settings, FakeEmbeddings()).search("Карточка")
+                self.assertLess(time.monotonic() - begun, 2)
+                self.assertTrue(result["hits"])
+                self.assertEqual(result["search_mode"], "hybrid")
+            finally:
+                release.set()
+            self.assertTrue(pending.result(timeout=15)["semantic_complete"])
+
+    def test_unpublished_journal_batches_do_not_mutate_reader_snapshot(self):
+        self.publish(embed=False)
+        with self.store.reader(live_vectors=True) as (db, _):
+            pending = self.store.pending_page(db, self.policy, self.settings.profile, 0, 2)
+        self.assertEqual(len(pending), 2)
+        value = vector([1, 2, 3, 4], self.settings.dimension)
+        self.store.vectors.insert(self.settings.profile, [(pending[0]["hash"], value)])
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 0)
+        first = self.store.vectors.publish_snapshot(force=True)
+        self.assertGreater(first["snapshot_bytes"], 0)
+        self.assertGreaterEqual(first["elapsed_seconds"], 0)
+        first_file = self.settings.state / ("vectors-" + first["generation"] + ".sqlite")
+        first_size = first_file.stat().st_size
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 1)
+        service = Service(self.settings, self.provider)
+        self.assertFalse(service.search("Карточка")["vector_cache_hit"])
+        self.assertTrue(service.search("Карточка")["vector_cache_hit"])
+        self.store.vectors.insert(self.settings.profile, [(pending[1]["hash"], value)])
+        self.assertEqual(first_file.stat().st_size, first_size)
+        self.assertEqual(self.store.vectors.snapshot()[0]["generation"], first["generation"])
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 1)
+        with self.store.reader(live_vectors=True) as (db, manifest):
+            ready = self.store.semantic_progress(db, manifest)["vectors"]
+        self.store.vectors.publish_snapshot(force=True)
+        self.assertGreater(ready, 1)
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], ready)
+        self.assertFalse(service.search("Карточка")["vector_cache_hit"])
+
+    def test_reader_caches_immutable_corpus_and_vector_snapshots(self):
+        published = self.publish(embed=False)
+        cache = Path(self.temp.name) / "локальный кеш с пробелом"
+        with patch.dict("os.environ", {"SPPR_READER_CACHE_DIR": str(cache)}):
+            service = Service(self.settings, self.provider)
+            self.assertEqual(service.status()["visible_objects"], published["objects"])
+            corpus = cache / (published["generation"] + ".sqlite")
+            self.assertEqual(corpus.read_bytes(),
+                             (self.settings.state / corpus.name).read_bytes())
+            with self.store.reader(live_vectors=True) as (db, _):
+                pending = self.store.pending_page(db, self.policy, self.settings.profile, 0, 1)
+            self.store.vectors.insert(self.settings.profile,
+                                      [(pending[0]["hash"], vector([1, 2, 3, 4], self.settings.dimension))])
+            snapshot = self.store.vectors.publish_snapshot(force=True)
+            self.assertEqual(service.status()["semantic_progress"]["vectors"], 1)
+            vector_file = cache / ("vectors-" + snapshot["generation"] + ".sqlite")
+            self.assertEqual(vector_file.read_bytes(),
+                             (self.settings.state / vector_file.name).read_bytes())
+            self.assertEqual(service.search("Карточка")["search_mode"], "hybrid")
+
+    def test_all_query_terms_outrank_partial_semantic_matches(self):
+        self.source.add(IDEA, 10, Description="Загрузка из MSP")
+        self.source.add(IDEA, 11, Description="Загрузка данных из MS Excel")
+        self.publish()
+        result = Service(self.settings, self.provider).search("загрузка из excel", limit=20)
+        ids = [hit["id"] for hit in result["hits"]]
+        self.assertEqual(result["search_mode"], "hybrid")
+        self.assertEqual(ids[0], key(IDEA, uuid(11)))
+        self.assertIn(key(IDEA, uuid(10)), ids)
+
+    def test_failed_batch_resumes_without_resending_committed_vectors(self):
+        self.publish(embed=False)
+        count = 0
+        def fail_second():
+            nonlocal count
+            count += 1
+            if count == 2:
+                self.provider.fail = True
+        self.provider.hook = fail_second
+        with self.assertRaisesRegex(SpprError, "provider unavailable"):
+            self.embed(workers=1, batch_size=2)
+        first = set(self.provider.calls[0])
+        with closing(sqlite3.connect(self.store.vectors.path)) as journal:
+            self.assertEqual(journal.execute("SELECT COUNT(*) FROM vectors").fetchone()[0], 2)
+        self.provider.hook = None
+        self.provider.fail = False
+        self.embed(workers=1, batch_size=2)
+        self.assertTrue(first.isdisjoint(text for batch in self.provider.calls[2:] for text in batch))
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["pending"], 0)
+
+    def test_legacy_snapshot_vectors_migrate_without_provider_request(self):
+        legacy = self.publish(embed=False)
+        path = self.settings.state / (legacy["generation"] + ".sqlite")
+        saved = vector([1, 2, 3, 4], self.settings.dimension).astype(np.float32).tobytes()
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("UPDATE fragments SET vector=? WHERE id=(SELECT MIN(id) FROM fragments)", (saved,))
+            db.commit()
+        self.store.vectors.path.unlink(missing_ok=True)
+        legacy.pop("vector_storage")
+        atomic_json(self.settings.state / "active.json", legacy)
+        migrated = self.publish(embed=False)
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 1)
+        self.assertEqual(self.provider.calls, [])
+        self.assertNotEqual(migrated["generation"], legacy["generation"])
+
+    def test_vector_journal_reclaims_only_unreferenced_hashes_after_generation_prune(self):
+        unique = "УНИКАЛЬНЫЙ-ФРАГМЕНТ-ДЛЯ-УДАЛЕНИЯ"
+        deleted = self.source.add(TP, 8, Description=unique)
+        self.publish()
+        with closing(sqlite3.connect(self.store.vectors.path)) as journal:
+            before = journal.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+        deleted["DeletionMark"] = True
+        for _ in range(self.settings.generations_to_keep):
+            self.publish(embed=False)
+        with closing(sqlite3.connect(self.store.vectors.path)) as journal:
+            after = journal.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+        self.assertLess(after, before)
+        self.assertNotIn(key(TP, uuid(8)), [hit["id"] for hit in Service(self.settings, self.provider).search(unique)["hits"]])
 
     def test_publication_abort_on_session_loss_and_cleanup_failure(self):
         original = self.publish()
         def stopped():
             raise SpprError("User session is closing")
         with self.assertRaisesRegex(SpprError, "session is closing"):
-            self.store.publish(self.collect(), self.policy, self.provider, before=stopped)
+            self.store.publish(self.collect(), self.policy, before=stopped)
         self.assertEqual(self.store.manifest()["generation"], original["generation"])
         with patch.object(Path, "glob", side_effect=OSError("cleanup denied")):
             result = self.publish()

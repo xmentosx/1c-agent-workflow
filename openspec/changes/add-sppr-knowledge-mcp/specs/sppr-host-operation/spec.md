@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Isolated operation on the existing host
-The SPPR component SHALL run on `dev-ermakov` through the existing MCP host registration/proxy conventions with its own configuration, state and schedule. Installation, recovery and removal MUST NOT change other servers' corpus, embedding profiles or indexing schedules.
+The SPPR component SHALL run on `dev-ermakov` through the existing MCP host registration with a direct native HTTP endpoint, its own configuration, state and schedule. Fresh and previously proxied runtime construction MUST select direct mode without creating a tools-list proxy. Installation, recovery and removal MUST NOT change other servers' corpus, embedding profiles or indexing schedules.
 
 #### Scenario: Install or recover the SPPR component
 - **WHEN** an authorized operator installs or restarts it

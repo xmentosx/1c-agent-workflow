@@ -28,6 +28,7 @@ class TransportTests(unittest.TestCase):
     set_policy = fixtures.SpprTests.set_policy
     collect = fixtures.SpprTests.collect
     publish = fixtures.SpprTests.publish
+    embed = fixtures.SpprTests.embed
 
 
 def test_odata_projection_utf8_no_redirect(self):
@@ -47,6 +48,10 @@ def test_odata_projection_utf8_no_redirect(self):
             if self.path.endswith("$metadata"):
                 body = fixture_schema()
             else:
+                if "+" in urlsplit(self.path).query:
+                    self.send_response(500)  # 1C treats form-encoded spaces as literal plus signs.
+                    self.end_headers()
+                    return
                 query = parse_qs(urlsplit(self.path).query)
                 select = query["$select"][0].split(",")
                 value = {k: v for k, v in row.items() if k in select}
@@ -73,6 +78,8 @@ def test_odata_projection_utf8_no_redirect(self):
         auth = base64.b64decode(observed[-1][1][6:]).decode("utf-8")
         self.assertEqual(auth, "Ермаков тест:пароль-фикстура")
         query = parse_qs(urlsplit(observed[-1][0]).query)
+        self.assertIn("%20", observed[-1][0])
+        self.assertNotIn("+", urlsplit(observed[-1][0]).query)
         self.assertIn("Owner_Key eq guid'" + A + "'", query["$filter"][0])
         mode["bad"] = True
         with self.assertRaisesRegex(SpprError, "ownership/version"):
@@ -112,7 +119,12 @@ def test_mcp_over_real_http_two_clients(self):
         for _ in range(2):
             async with Client(f"http://127.0.0.1:{port}/mcp") as client:
                 tools = await client.list_tools()
-                self.assertEqual({t.name for t in tools}, {"search_sppr", "read_sppr_object", "list_sppr_relations", "sppr_index_status"})
+                self.assertEqual({t.name for t in tools}, {"search_sppr", "read_sppr_object", "list_sppr_relations", "sppr_index_status",
+                                                         "get_sppr_context", "list_sppr_objects", "find_sppr_paths"})
+                # Seven bounded tools replace repeated client-side orchestration;
+                # keep the always-on schema below this measured explicit budget.
+                self.assertLess(len(json.dumps([t.model_dump(mode="json", exclude_none=True) for t in tools],
+                                               ensure_ascii=False, separators=(",", ":")).encode("utf-8")), 8000)
                 for tool in tools:
                     self.assertTrue(tool.annotations.readOnlyHint)
                 hit = await client.call_tool("search_sppr", {"query": "54321"})
@@ -129,10 +141,53 @@ def test_mcp_over_real_http_two_clients(self):
                 self.assertEqual(context["mode"], "separate_tp")
                 self.assertEqual(context["chtz"]["id"], key(TP, uuid(1)))
                 self.assertEqual(context["developer_task"]["id"], key(TP, uuid(2)))
+                batch = await client.call_tool("read_sppr_object", {"object_id": [key(TP, uuid(1)), key(IDEA, uuid(3))], "fields": ["Описание"]})
+                self.assertEqual(len([i for i in batch.structured_content["items"] if i["kind"] == "object"]), 2)
+                listing = await client.call_tool("list_sppr_objects", {"filters": {"type": TP}, "limit": 1})
+                self.assertEqual(listing.structured_content["total"], 2)
+                self.assertIsNotNone(listing.structured_content["cursor"])
+                graph = await client.call_tool("get_sppr_context", {"object_ids": [key(IDEA, uuid(3))], "depth": 2, "limit": 1})
+                self.assertGreaterEqual(graph.structured_content["object_count"], 3)
+                more_graph = await client.call_tool("get_sppr_context", {"object_ids": [key(IDEA, uuid(3))], "depth": 2, "limit": 1,
+                                                                       "cursor": graph.structured_content["cursor"]})
+                self.assertNotEqual(graph.structured_content["items"], more_graph.structured_content["items"])
+                paths = await client.call_tool("find_sppr_paths", {"source_id": key(IDEA, uuid(3)), "target_id": key(TP, uuid(1))})
+                self.assertTrue(paths.structured_content["found"])
+                scoped = await client.call_tool("search_sppr", {"query": "Реализация", "object_ids": [key(IDEA, uuid(3))], "fields": ["РеализацияИдеи"]})
+                self.assertEqual(scoped.structured_content["hits"][0]["id"], key(IDEA, uuid(3)))
                 status = await client.call_tool("sppr_index_status", {})
                 self.assertEqual(status.structured_content["state"], "available")
                 self.assertNotIn("DO-NOT-READ-SECRET", json.dumps(status.structured_content))
         self.assertEqual(responses[0], responses[1])
+        entered, release = threading.Event(), threading.Event()
+        def slow_provider():
+            entered.set()
+            if not release.wait(10):
+                raise SpprError("fixture provider wait expired")
+        self.provider.hook = slow_provider
+        calls = len(self.provider.calls)
+        async with Client(f"http://127.0.0.1:{port}/mcp") as first, Client(f"http://127.0.0.1:{port}/mcp") as second:
+            pending = asyncio.create_task(first.call_tool("search_sppr", {"query": "slow uncached query"}))
+            duplicate = None
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                duplicate = asyncio.create_task(second.call_tool("search_sppr", {"query": "slow uncached query"}))
+                status, card, warm = await asyncio.wait_for(asyncio.gather(
+                    second.call_tool("sppr_index_status", {}),
+                    second.call_tool("read_sppr_object", {"object_id": key(TP, uuid(1))}),
+                    second.call_tool("search_sppr", {"query": "54321"}),
+                ), timeout=2)
+                self.assertEqual(status.structured_content["state"], "available")
+                self.assertEqual(card.structured_content["object"]["id"], key(TP, uuid(1)))
+                self.assertTrue(warm.structured_content["query_vector_cached"])
+                self.assertFalse(pending.done())
+            finally:
+                release.set()
+                await pending
+                if duplicate is not None:
+                    await duplicate
+                self.provider.hook = None
+        self.assertEqual(len(self.provider.calls), calls + 1)
     try:
         asyncio.run(exercise())
     finally:
