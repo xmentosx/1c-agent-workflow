@@ -2248,5 +2248,19 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(self.state.one("SELECT import_page,import_start FROM projects WHERE id=2"), progress)
 
 
+class StateMigrationTests(unittest.TestCase):
+    def test_legacy_state_migrates_to_safe_pause(self):
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state = State(root / "state", root / "files")
+            state.run("DELETE FROM meta WHERE key='index_paused'")
+            state.close()
+            state = State(root / "state", root / "files")
+            try:
+                self.assertEqual(state.one("SELECT value FROM meta WHERE key='index_paused'")["value"], "1")
+            finally:
+                state.close()
+
+
 if __name__ == "__main__":
     unittest.main()

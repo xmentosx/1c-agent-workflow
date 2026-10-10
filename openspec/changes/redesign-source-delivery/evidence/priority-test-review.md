@@ -48,6 +48,11 @@ POSIX locking: соответствующий skip явно записан в in
 
 ## Mantis: 13 существующих сценариев вне автоматического маршрута
 
+Обновление одного сценария: [State route и equivalence](mantis-state-test-route.md).
+Исходный метод legacy_state_migrates_to_safe_pause подготовлен к переносу без
+изменения тела; original-case ledger сохранён. Автоматическая приёмка переноса
+ещё ожидает регистрации. Остальные 12 маршрутов не объявляются исправленными.
+
 Индивидуальные решения и source identities сохранены в
 `mantis-route-gap-review.csv`. Просмотрены тела трёх extraction, семи Zvec и
 трёх real protocol cases, включая параметры и родственные test_index assertions.

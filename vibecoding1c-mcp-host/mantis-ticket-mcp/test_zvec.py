@@ -89,18 +89,6 @@ class ZvecTests(unittest.TestCase):
             vectors.close()
             state.close()
 
-    def test_legacy_state_migrates_to_safe_pause(self):
-        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
-            root = Path(directory)
-            state = State(root / "state", root / "files")
-            state.run("DELETE FROM meta WHERE key='index_paused'")
-            state.close()
-            state = State(root / "state", root / "files")
-            try:
-                self.assertEqual(state.one("SELECT value FROM meta WHERE key='index_paused'")["value"], "1")
-            finally:
-                state.close()
-
     def test_full_disk_batch_uses_one_segment_and_reopens(self):
         with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
             root = Path(directory)
