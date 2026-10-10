@@ -6,6 +6,10 @@
 
 Каноническое описание инструментов и переменных MCP: [документация OneRPA по MCP-серверам 1С](https://docs.onerpa.ru/mcp-servery-1c).
 
+### Обновления Linux VM dev-karimov-new
+
+Перед заменой образов прочитайте постоянный контракт [hosts/dev-karimov-new в приватном GitLab-дистрибутиве](http://gitlabserv01.itland.local/root/MCP-vibecoding1c/-/tree/main/hosts/dev-karimov-new). Его установленный вход — `/opt/itl-mcp/host-upgrade/upgrade.py`; подробные команды и продолжение после отказа находятся в соседнем `README.md`. Этот владелец использует существующий watchdog lock, защищает тома, модели, nightly, настройки Neo4j/Graph и требует изолированную квалификацию Code crash/resume для каждого нового pin. Временный handoff агента не нужен; полный файл исправления от старого образа нельзя переносить без подтверждения совместимости. Windows installer ниже не управляет этой Linux VM.
+
 ## Что получается
 
 После `setup` на выделенной машине будут:
