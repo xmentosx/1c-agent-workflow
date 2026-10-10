@@ -9428,6 +9428,26 @@ function Update-WorkflowPackage {
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     if ([string]$pendingPostCopy.receipt.phase -eq 'post-copy-running') {
         $filePostCopy = Invoke-WorkflowPackageFilePostCopy
+        # Capture refreshed client configs in the same post-copy checkpoint.
+        # Ready/committed continuations must keep their already recorded bytes.
+        if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
+            $mcpRegistryRefreshed = $false
+            try {
+                Refresh-Vibecoding1cMcpRegistry
+                $mcpRegistryRefreshed = $true
+            } catch {
+                Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
+            }
+            if ($mcpRegistryRefreshed) {
+                $mcpSelection = Read-Vibecoding1cMcpSelection
+                $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
+                if ($mcpSelectionCompleteness.isComplete) {
+                    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "update-workflow MCP reconcile" | Out-Null
+                } else {
+                    Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
+                }
+            }
+        }
         Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $pendingPostCopy.snapshot -BeforeCommit ([string]$pendingPostCopy.receipt.preUpdateHead) -RequireOriginalIndex
         $aiRulesPathsBefore = @($filePostCopy.aiRulesPathsBefore)
         $clientSurfacePathsBefore = @($filePostCopy.clientSurfacePathsBefore)
@@ -9463,25 +9483,6 @@ function Update-WorkflowPackage {
             plannedChangePaths = @($pendingPostCopy.receipt.plannedChangePaths)
         }
     }
-    if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
-        $mcpRegistryRefreshed = $false
-        try {
-            Refresh-Vibecoding1cMcpRegistry
-            $mcpRegistryRefreshed = $true
-        } catch {
-            Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
-        }
-        if ($mcpRegistryRefreshed) {
-            $mcpSelection = Read-Vibecoding1cMcpSelection
-            $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
-            if ($mcpSelectionCompleteness.isComplete) {
-                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "update-workflow MCP reconcile" | Out-Null
-            } else {
-                Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
-            }
-        }
-    }
-
     $workflowLock = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $workflowDependencies = ConvertTo-Agent1cHashtable -Object $workflowLock["dependencies"]
     $workflowEntry = ConvertTo-Agent1cHashtable -Object $workflowDependencies["workflowPackage"]

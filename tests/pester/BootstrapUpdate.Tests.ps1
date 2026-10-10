@@ -1081,6 +1081,9 @@ local after
             $updatedKiloConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json") | ConvertFrom-Json
             $updatedKiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $updatedKiloConfig.mcp.'sppr-knowledge'.url | Should -Be 'http://dev-ermakov:18007/mcp'
+            $committedKiloConfigText = (& git -C $projectRoot show 'HEAD:.kilo/kilo.json') -join "`n"
+            $LASTEXITCODE | Should -Be 0
+            ($committedKiloConfigText | ConvertFrom-Json).mcp.'sppr-knowledge'.url | Should -Be 'http://dev-ermakov:18007/mcp'
             ((Get-Content -LiteralPath (Join-Path $mcpLocalHome 'registry\registry.json') -Raw -Encoding UTF8 | ConvertFrom-Json).servers[0].id) | Should -Be 'sppr'
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
 
