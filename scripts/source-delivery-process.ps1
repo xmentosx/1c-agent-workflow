@@ -827,6 +827,8 @@ function Get-DeliveryFailureClass {
 $script:DeliveryRunHotIndexCapacity = 2048
 $script:DeliveryRunHotIndexLockTimeoutMilliseconds = 30000
 
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
+
 function Get-DeliveryRunHotIndexPath {
     return Join-Path (Get-DeliveryCommonGitDirectory) "itl\run-index\v1\hot.json"
 }
@@ -917,7 +919,7 @@ function New-DeliveryRunHotIndex {
         foreach ($file in @(Get-ChildItem -LiteralPath $RunRoot -File -Filter "*.json" | Sort-Object Name -Descending)) {
             [void]$processed.Add([IO.Path]::GetFullPath($file.FullName))
             try {
-                $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
                 if (-not (Test-DeliveryRunRecordShape -Record $record)) { $invalidCount++; continue }
                 $entry = ConvertTo-DeliveryRunHotIndexEntry -Record $record -RawPath $file.FullName
                 $valid.Add($entry) | Out-Null
@@ -945,7 +947,7 @@ function New-DeliveryRunHotIndex {
 }
 
 function Get-DeliveryRunHotIndexContentSha256 {
-    param([Parameter(Mandatory = $true)][object]$Index)
+    param([Parameter(Mandatory = $true)][object]$Index, [switch]$LegacyCore)
     $content = [pscustomobject][ordered]@{
         schemaVersion=[int]$Index.schemaVersion; kind=[string]$Index.kind; capacity=[int]$Index.capacity
         sourceDirectory=[string]$Index.sourceDirectory; sourceDirectoryLastWriteTimeUtc=[string]$Index.sourceDirectoryLastWriteTimeUtc
@@ -953,7 +955,7 @@ function Get-DeliveryRunHotIndexContentSha256 {
         totalDurationMs=[int64]$Index.totalDurationMs; byMode=@($Index.byMode); entries=@($Index.entries)
         truncated=[bool]$Index.truncated; updatedAt=[string]$Index.updatedAt
     }
-    $bytes = [Text.Encoding]::UTF8.GetBytes(($content | ConvertTo-Json -Depth 16 -Compress))
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($content | ConvertTo-DeliveryProofJson -Depth 16 -Compress -LegacyCore:$LegacyCore))
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose() }
@@ -969,7 +971,7 @@ function Write-DeliveryRunHotIndex {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $temporary = Join-Path $parent ("hot." + [guid]::NewGuid().ToString("N") + ".tmp")
     try {
-        [IO.File]::WriteAllText($temporary, (($Index | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($temporary, (($Index | ConvertTo-DeliveryProofJson -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         Move-Item -LiteralPath $temporary -Destination $path -Force
     } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
     return $path
@@ -985,11 +987,12 @@ function Read-DeliveryRunHotIndex {
         return [pscustomobject]@{ status="stale"; path=$path; index=$null; error='pending raw run records require serialized repair' }
     }
     try {
-        $index = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $index = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
         if ([int]$index.schemaVersion -ne 1 -or [string]$index.kind -cne "itl-delivery-run-hot-index" -or
             [int]$index.capacity -ne $script:DeliveryRunHotIndexCapacity -or @($index.entries).Count -gt $script:DeliveryRunHotIndexCapacity -or
-            [int64]$index.validRunCount -lt @($index.entries).Count -or [string]$index.contentSha256 -notmatch '^[a-f0-9]{64}$' -or
-            [string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index)) { throw "unsupported, inconsistent, or SHA-mismatched index schema" }
+            [int64]$index.validRunCount -lt @($index.entries).Count -or [string]$index.contentSha256 -notmatch '^[a-f0-9]{64}$') { throw "unsupported or inconsistent index schema" }
+        if ([string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index) -and
+            [string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index -LegacyCore)) { throw "SHA-mismatched index schema" }
         $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
         if ([IO.Path]::GetFullPath([string]$index.sourceDirectory) -cne [IO.Path]::GetFullPath($runRoot)) { throw "source directory mismatch" }
         if (-not $IgnoreSourceStamp) {
@@ -1017,7 +1020,7 @@ function Repair-DeliveryRunHotIndex {
         $path = Write-DeliveryRunHotIndex -Index $index
         foreach ($marker in $pending) {
             try {
-                $markerState = Get-Content -LiteralPath $marker.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                $markerState = Get-Content -LiteralPath $marker.FullName -Raw -Encoding UTF8 | ConvertFrom-DeliveryProofJson
                 if ([int]$markerState.schemaVersion -ne 1 -or [string]$markerState.kind -cne 'itl-delivery-run-index-pending' -or
                     [int]$markerState.writerPid -le 0 -or -not $markerState.PSObject.Properties['writerStartedAt']) { throw 'invalid marker contract' }
                 $markedRawPath = [IO.Path]::GetFullPath([string]$markerState.rawPath)

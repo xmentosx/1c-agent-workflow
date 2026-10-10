@@ -1,0 +1,39 @@
+# Приёмка redesign-source-delivery
+
+Требования: [specs](specs). Задачи и текущий прогресс: [tasks.md](tasks.md).
+Ни один сценарий ниже пока не подтверждён для новой реализации.
+
+| ID | Приёмочный сценарий | Обязательное доказательство |
+|---|---|---|
+| T01 | Полный аудит | Все tracked семейства и nested routes, case identity, риск/решение, retained proof для замен/удалений; unresolved явно остаются unresolved |
+| T02 | Docs-only delta | Выбранные проверки, отсутствие запуска Python/1С, холодное/прогретое полное время |
+| T03 | Изолированный MCP | Только свои production/test/environment inputs; чужая отсутствующая среда не мешает, отсутствующая собственная корректно подготавливается/обрабатывается |
+| T04 | Изменение общей зависимости | Инвалидируются затронутые proofs; независимые сохранены; unknown identity не квалифицирует reuse |
+| T05 | Две параллельные регистрации | Перекрывающиеся интервалы, принятые refs/tree, собственные artifacts/ports/processes, корректный concurrent cache write |
+| T06 | Настоящая отмена | Реальный Ctrl+C/child boundary, завершены owned descendants, соседняя задача продолжает выполняться |
+| T07 | Native Unicode | Точные stdout/stderr/arguments на пути с пробелом и кириллицей при успехе и отказе; исходник корректен в PS5.1 |
+| T08 | JSON/evidence cross-runtime | Запись/чтение PS5.1 и поддерживаемого Core в обе стороны, precision/offset/escaping/int64, исходный valid hash; реальная порча отвергается |
+| T09 | Исходная PM5 negative | Неизменённый reproducer и declared Designer baseline; отказ до Apply, snapshot/cursor rollback, receipt через реальный процесс |
+| T10 | Положительный upgrade/fresh | Известные исходные состояния, fresh passed, export/SHA; отсутствие чужих веток в работе стенда |
+| T11 | Следующий кандидат | Автоматическая подготовка ожидаемого перехода и detection неверного состояния без ручных metadata правок |
+| T12 | Конфликт комбинации | Отказ при регистрации до release qualification, сохранён accepted candidate и task work |
+| T13 | CAS movement | Нет принятия stale proof; пересборка только с необходимой инвалидацией, bounded общий бюджет |
+| T14 | Freeze и новая регистрация | Квалификация прежнего состава не изменяется; новый head сохраняется после очистки опубликованного |
+| T15 | Сбой доставки | Retained valid proof и отсутствие повторного запуска 1С при неизменённых входах; SHA/remote failures не обходятся |
+| T16 | Старые queue/plan и rollback | Совместимое продолжение закреплённым owner либо практическое безопасное продолжение; concurrent work не потеряна |
+| T17 | Полное время и публикация | Cold/warm/retry/end-to-end сравнение; штатный PublishDevelop после разрешения, remote SHA/tree, installability, очередь и activeOperation |
+
+## Порядок проверки
+
+Во время разработки — непосредственно затронутые checks пакетами, без
+неизменённых повторов. Каждая законченная единица регистрируется один раз через
+RegisterChange. Final qualification проводится для общего кандидата; fixture
+успех не подменяет обязательный live proof. Без server stand evidence результат
+остаётся unverified по действующему контракту, а не новым publication blocker.
+
+## Фиксация результатов
+
+Для каждого T-ID сохранять source commit/tree, фактические входы/окружение,
+команду или owner operation, outcome, длительность, SHA и путь доказательства.
+Runtime artifacts остаются ignored. Прямая правка очереди/индекса/статуса не
+является допустимым способом получить passing result.

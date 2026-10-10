@@ -235,6 +235,15 @@
       "tests": ["tests/pester/SourceDeliveryProcess.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1"]
     },
     {
+      "id": "source-evidence-transport",
+      "owner": "stateless hashed delivery evidence JSON transport",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceProofJson.Tests.ps1",
+      "paths": ["scripts/source-proof-json.ps1", "tests/fixtures/delivery-run-index/*"],
+      "tests": ["tests/pester/SourceProofJson.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-queue",
       "owner": "delivery queue registration",
       "gate": "targeted",

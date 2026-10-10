@@ -53,6 +53,30 @@ Describe 'Delivery run hot index' {
         $script:CommonGit = ''
     }
 
+    It 'reads the immutable legacy Core proof on either runtime and rejects changed payload' {
+        $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
+        $script:CommonGit = "C:\proof fixture $nonAscii"
+        $fixturePath = Join-Path $RepoRoot 'tests/fixtures/delivery-run-index/legacy-core.json'
+        $indexPath = Join-Path $TestDrive 'legacy-core.json'
+        Copy-Item -LiteralPath $fixturePath -Destination $indexPath
+        Mock Get-DeliveryRunHotIndexPath { $indexPath }
+
+        $beforeBytes = [IO.File]::ReadAllBytes($indexPath)
+        $state = Read-DeliveryRunHotIndex -IgnoreSourceStamp
+        $state.status | Should -Be 'ready'
+        $state.index.updatedAt | Should -BeExactly '2026-10-10T20:33:00.7091234Z'
+        $state.index.entries[0].startedAt | Should -BeExactly '2026-10-10T23:33:00.7091234+03:00'
+        [string]$state.index.totalDurationMs | Should -BeExactly '9223372036854775807'
+        (Get-DeliveryRunHotIndexContentSha256 -Index $state.index -LegacyCore) | Should -BeExactly 'e4d3a3ddd332a40633dd5698ff6f723f37c9c96bcf4bdc585bf8a0813dffad54'
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexPath)) | Should -BeExactly ([Convert]::ToBase64String($beforeBytes))
+
+        Write-DeliveryRunHotIndex -Index $state.index | Out-Null
+        (Read-DeliveryRunHotIndex -IgnoreSourceStamp).status | Should -Be 'ready'
+        $state.index.entries[0].message = 'tampered'
+        [IO.File]::WriteAllText($indexPath, ($state.index | ConvertTo-DeliveryProofJson -Depth 16), [Text.UTF8Encoding]::new($false))
+        (Read-DeliveryRunHotIndex -IgnoreSourceStamp).status | Should -Be 'corrupt'
+    }
+
     It 'rebuilds 10000 raw runs into a bounded hot index and resolves more than the old latest-200 timing window' {
         $runRoot = New-RunIndexStore
         $started = [DateTime]::Parse('2026-09-01T00:00:00Z').ToUniversalTime()
