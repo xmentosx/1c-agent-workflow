@@ -7,6 +7,7 @@ BeforeAll {
         @{path='scripts/invoke-develop-e2e.ps1';names=@('Read-CompactSummary','Invoke-DevelopUpgradeRefresh')},
         @{path='scripts/check.ps1';names=@('Get-DevelopE2EIdentitySha256')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1';names=@('Write-ConfigLoadRejectionEvidence')},
+        @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1';names=@('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Set-RunResultArtifacts')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1';names=@('Test-OneCNativeOperationJournalReleased')}
     )) {
         $tokens=$null; $errors=$null
@@ -53,7 +54,7 @@ BeforeAll {
         $console=Join-Path $root 'console.log'
         $hostLines=@(Write-ConfigLoadRejectionEvidence -Failure $failure 6>&1 | ForEach-Object { [string]$_ })
         [IO.File]::WriteAllText($console,($hostLines -join [Environment]::NewLine),[Text.UTF8Encoding]::new($false))
-        $summary=[pscustomobject]@{action='refresh-dev-branch';status='failed';error=$message;logPath=$console}
+        $summary=[pscustomobject]@{action='refresh-dev-branch';status='failed';error=$message;logPath=$console;resultPath=$script:RunResultPath}
         $stdout=Join-Path $root 'stdout.log'; Write-RejectionJson $stdout $summary
         Write-RejectionJson (Join-Path $root '.agent-1c/dev-branches/fixture.json') @{
             devBranchInfoBasePath=(Join-Path $root 'base');infoBaseKind='file';pendingMergeOperation='refresh-dev-branch';pendingMergeStage='merged'
@@ -96,6 +97,17 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         [void](Invoke-DevelopUpgradeRefresh -Name retry -Root $fixture.Root -BranchName fixture -ExpectedConfigurationRejection $fixture.Expected -AdditionalArguments $script:refreshArguments -AfterSemanticRepair)
         $script:refreshArguments | Should -Be @('-ConfigLoadMode','Full')
     }
+    It 'accepts the current structured result artifact when reexec did not capture child host output' {
+        $fixture=New-RejectionFixture
+        [IO.File]::WriteAllText($fixture.Summary.logPath,'Parent console: continuing through the current helper.')
+        $fixture.Summary.resultPath | Should -BeExactly $fixture.Receipt
+        (Assert-FixtureRejection $fixture).status | Should -BeExactly 'passed'
+    }
+    It 'refuses a console marker without a current structured result artifact' {
+        $fixture=New-RejectionFixture
+        $fixture.Summary.resultPath=''; Write-RejectionJson $fixture.Result.stdout $fixture.Summary
+        { Assert-FixtureRejection $fixture } | Should -Throw '*ROLLBACK_UNPROVEN*'
+    }
     It 'rejects a successful refresh instead of silently losing the negative reproducer' {
         $fixture=New-RejectionFixture; $fixture.Result.exitCode=0
         { Assert-FixtureRejection $fixture } | Should -Throw '*UNEXPECTED_RESULT*'
@@ -125,8 +137,10 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         foreach ($field in @('cursorRestored','applyStarted')) {
             $fixture=New-RejectionFixture
             $fixture.Failure.Exception.Data['ItlConfigLoadSnapshotRestored'].$field=($field -eq 'applyStarted')
+            $script:RunResultPath=''
             $output=Write-ConfigLoadRejectionEvidence -Failure $fixture.Failure 6>&1 | Out-String
             $output | Should -Not -Match 'GATE6_REJECTION_EVIDENCE'
+            $script:RunResultPath | Should -BeNullOrEmpty
         }
     }
     It 'records unconfirmed native release and refuses to qualify it' {

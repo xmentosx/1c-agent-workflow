@@ -754,8 +754,8 @@ try {
         }
     }
 
-    It "preserves the exact child failure status across fresh-process stderr" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-failure-" + [guid]::NewGuid().ToString("N"))
+    It "preserves the exact child failure status and result artifact across fresh-process stderr" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl lifecycle child отказ " + [guid]::NewGuid().ToString("N"))
         $childPath = Join-Path $tempRoot "failing-child.ps1"
         $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
         $statusPath = Join-Path $tempRoot "status.json"
@@ -773,7 +773,9 @@ $record | Add-Member -NotePropertyName detail -NotePropertyValue $message -Force
 $record | Add-Member -NotePropertyName exitCode -NotePropertyValue 1 -Force; $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue $now -Force
 $record | Add-Member -NotePropertyName finishedAt -NotePropertyValue $now -Force; $record | Add-Member -NotePropertyName continuationPid -NotePropertyValue $PID -Force
 $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $lifecyclePath -Encoding UTF8
-[ordered]@{ schemaVersion=1; status="failed"; action=$Action; pid=$PID; projectRoot=$ProjectRoot; startedAt=$now; updatedAt=$now; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
+$resultPath = Join-Path $ProjectRoot 'receipt отказ.json'
+[IO.File]::WriteAllText($resultPath,'owned child diagnostic result',[Text.UTF8Encoding]::new($false))
+[ordered]@{ schemaVersion=1; status="failed"; action=$Action; pid=$PID; projectRoot=$ProjectRoot; startedAt=$now; updatedAt=$now; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; resultPath=$resultPath; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
 [Console]::Error.WriteLine("ITL failure: status=failed; errorCategory=runner; requiredAction=none; completion=failed.")
 [Console]::Error.WriteLine($message)
 exit 1
@@ -805,6 +807,8 @@ try {
             $status.status | Should -Be "failed"; $status.stage | Should -Be "refresh.load"
             $status.errorCategory | Should -Be "runner"; $status.requiredAction | Should -BeNullOrEmpty
             $status.errorMessage | Should -Be "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: .kilo/kilo.json"
+            $status.resultPath | Should -BeExactly (Join-Path $tempRoot 'receipt отказ.json')
+            [IO.File]::ReadAllText($status.resultPath,[Text.UTF8Encoding]::new($false,$true)) | Should -BeExactly 'owned child diagnostic result'
             $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lifecycle.status | Should -Be "failed"; $lifecycle.phase | Should -Be "refresh.load"; $lifecycle.errorMessage | Should -Be $status.errorMessage
         } finally {

@@ -24,10 +24,10 @@ function Assert-DevelopConfigurationRejection {
     }
     $console = [IO.Path]::GetFullPath([string]$summary.logPath)
     if (-not $console.StartsWith($rootPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'DEVELOP_NEGATIVE_CONSOLE_TARGET_CHANGED' }
-    $text = Get-Content -LiteralPath $console -Raw -Encoding UTF8
-    $markers = [regex]::Matches($text, '(?m)^GATE6_REJECTION_EVIDENCE: (.+)\r?$')
-    if ($markers.Count -ne 1) { throw 'DEVELOP_NEGATIVE_ROLLBACK_UNPROVEN: one current checked-load receipt is required.' }
-    $path = $markers[0].Groups[1].Value.Trim()
+    # The terminal run status forwards the child's result artifact through reexec.
+    # Its host output need not be present in the parent's compact console.
+    $path = [string]$summary.resultPath
+    if ([string]::IsNullOrWhiteSpace($path)) { throw 'DEVELOP_NEGATIVE_ROLLBACK_UNPROVEN: one current checked-load receipt is required.' }
     if (-not ([IO.Path]::GetFullPath($path)).StartsWith($rootPath, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'DEVELOP_NEGATIVE_RECEIPT_TARGET_CHANGED'
     }

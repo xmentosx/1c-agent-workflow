@@ -2431,6 +2431,7 @@ function Write-ConfigLoadRejectionEvidence {
         snapshotSha256=$restored.snapshotSha256;snapshotRestored=$true;cursorRestored=$true;applyStarted=$false;
         nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts}
     [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+    Set-RunResultArtifacts -ResultPath $path
     Write-Host "GATE6_REJECTION_EVIDENCE: $path"
 }
 
