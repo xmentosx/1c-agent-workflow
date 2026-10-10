@@ -1,3 +1,18 @@
+function Get-DevelopPositiveStandRoot {
+    param([string]$ProjectRoot, [object]$Config)
+    $property = $Config.PSObject.Properties['developConfigurationRejection']
+    if (-not $property) { return '' }
+    $positiveRoot = [IO.Path]::GetFullPath([string]$property.Value.positiveProjectRoot)
+    if ([string]::Equals($positiveRoot, [IO.Path]::GetFullPath($ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEVELOP_NEGATIVE_POSITIVE_STAND_REQUIRED: the successful journey needs a separate valid fixture.'
+    }
+    $positiveConfig = Get-Content -LiteralPath (Join-Path $positiveRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($positiveConfig.PSObject.Properties['developConfigurationRejection']) {
+        throw 'DEVELOP_NEGATIVE_RECURSION_FORBIDDEN: the positive stand must run the complete successful journey.'
+    }
+    return $positiveRoot
+}
+
 function Enter-SourceE2EClientMcpBuildScope {
     # Derive before a helper rereads its persisted project paths. This transient
     # source is confined to the actual E2E journey, never the Full Pester host.
@@ -78,6 +93,13 @@ function Get-SourceE2EClientIdentity {
             foreach ($name in @('worktreePath', 'developWorktreePath', 'serverProjectRoot', 'serverWorktreePath')) {
                 $property = $stand.PSObject.Properties[$name]
                 if ($property -and [string]$property.Value) { $roots[$name] = [IO.Path]::GetFullPath([string]$property.Value) }
+            }
+            $negative = $stand.PSObject.Properties['developConfigurationRejection']
+            if ($negative) {
+                $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $stand
+                $positive = Get-Content -LiteralPath (Join-Path $positiveRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $roots['positiveProject'] = $positiveRoot
+                $roots['positiveDevelop'] = [IO.Path]::GetFullPath([string]$positive.developWorktreePath)
             }
         }
     }

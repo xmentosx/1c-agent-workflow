@@ -779,6 +779,14 @@ function Get-DevelopE2EIdentitySha256 {
         powershellVersion = [string]$PSVersionTable.PSVersion
         powershellEdition = [string]$PSVersionTable.PSEdition
     }
+    if (Test-Path -LiteralPath $standConfig -PathType Leaf) {
+        $config = Get-Content -LiteralPath $standConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $root -Config $config
+        if ($positiveRoot) {
+            $identity['positiveStandIdentitySha256'] = Get-DevelopE2EIdentitySha256 -ReleaseContext $ReleaseContext `
+                -ForkIdentity $ForkIdentity -ProjectRoot $positiveRoot -AgentTarget $AgentTarget
+        }
+    }
     return Get-DevelopE2ECanonicalJsonSha256 -Value $identity
 }
 

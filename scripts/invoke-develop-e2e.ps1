@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
+. (Join-Path $PSScriptRoot "develop-configuration-rejection.ps1")
 $utf8 = [Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
@@ -344,15 +345,21 @@ function Repair-DevelopUpgradeManifestConflict {
 }
 
 function Invoke-DevelopUpgradeRefresh {
-    param([string]$Name,[string]$Root,[string]$BranchName,[string[]]$AdditionalArguments=@())
+    param([string]$Name,[string]$Root,[string]$BranchName,[string[]]$AdditionalArguments=@(),[AllowNull()][object]$ExpectedConfigurationRejection=$null,[switch]$AfterSemanticRepair)
+    if ($null -ne $ExpectedConfigurationRejection -and -not $AfterSemanticRepair) {
+        $AdditionalArguments += @('-ConfigLoadMode','Full')
+    }
     $result=Invoke-InstalledAction -Name $Name -Root $Root -Action 'refresh-dev-branch' -AdditionalArguments $AdditionalArguments -TimeoutSeconds 5400 -AllowFailure
     $summary=Read-CompactSummary -ProcessResult $result
     if ([int]$result.exitCode -eq 0 -and [string]$summary.status -ceq 'succeeded') { return $result }
+    if ($null -ne $ExpectedConfigurationRejection -and
+        [string]$summary.error -match '^GATE6_CHECK_FAILED: step=configuration;') { return $result }
     $repaired=$false
-    try { $repaired=Repair-DevelopUpgradeManifestConflict -Root $Root -BranchName $BranchName -ProcessResult $result }
+    try { if (-not $AfterSemanticRepair) { $repaired=Repair-DevelopUpgradeManifestConflict -Root $Root -BranchName $BranchName -ProcessResult $result } }
     catch { Write-Warning "Develop manifest semantic repair was refused: $($_.Exception.Message)" }
     if ($repaired) {
-        return Invoke-InstalledAction -Name ($Name+'-semantic-repair') -Root $Root -Action 'refresh-dev-branch' -AdditionalArguments $AdditionalArguments -TimeoutSeconds 5400
+        return Invoke-DevelopUpgradeRefresh -Name ($Name+'-semantic-repair') -Root $Root -BranchName $BranchName `
+            -AdditionalArguments $AdditionalArguments -ExpectedConfigurationRejection $ExpectedConfigurationRejection -AfterSemanticRepair
     }
     throw "$Name failed with exit code $($result.exitCode). See $($result.stdout) and $($result.stderr)"
 }
@@ -557,6 +564,8 @@ try {
         $journeys.upgrade.status = "running"
         $journeys.upgrade.startedAt = [DateTime]::UtcNow.ToString("o")
         $standConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot ".agent-1c\release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $positiveStandRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $standConfig
+        $expectedConfigurationRejection = if ($positiveStandRoot) { $standConfig.developConfigurationRejection } else { $null }
         $developBranchName = [string]$standConfig.developDevBranchName
         $developWorktreeValue = [string]$standConfig.developWorktreePath
         if (-not $developBranchName -or -not $developWorktreeValue) {
@@ -583,16 +592,33 @@ try {
         [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
-        [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName)
-        if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
-            [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
+        $refreshResult = Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName `
+            -ExpectedConfigurationRejection $expectedConfigurationRejection
+        if ($positiveStandRoot) {
+            $journeys.upgrade.configurationRejection = Assert-DevelopConfigurationRejection -ProcessResult $refreshResult `
+                -Expected $standConfig.developConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
+            $positiveOutput = Join-Path $outputRoot 'upgrade-positive/develop-e2e-summary.json'
+            [void](Invoke-DevelopProcess -Name 'upgrade-positive' -WorkingRoot $positiveStandRoot -ScriptPath $PSCommandPath `
+                -Arguments @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
+                    '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade') -TimeoutSeconds 3600)
+            $positive = Get-Content -LiteralPath $positiveOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$positive.status -cne 'passed' -or [string]$positive.candidate.commit -cne $candidateCommit -or
+                [string]$positive.candidate.tree -cne $candidateTree -or @($positive.journeys).Count -ne 1 -or
+                [string]$positive.journeys[0].name -cne 'upgrade' -or [string]$positive.journeys[0].status -cne 'passed') {
+                throw 'DEVELOP_POSITIVE_JOURNEY_UNPROVEN'
+            }
+            $journeys.upgrade.positiveJourney = [ordered]@{path=$positiveOutput;sha256=(Get-FileHash -LiteralPath $positiveOutput -Algorithm SHA256).Hash.ToLowerInvariant();summary=$positive}
+        } else {
+            if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
+                [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
+            }
+            Set-DevelopStandVanessaFeature -Root $standBranchRoot
+            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+            $exportSummary = Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600)
+            if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
+            Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
+            $journeys.upgrade.artifactCleanup = Remove-DevelopE2EExportArtifacts -Root $standBranchRoot -Summary $exportSummary
         }
-        Set-DevelopStandVanessaFeature -Root $standBranchRoot
-        [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-        $exportSummary = Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600)
-        if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
-        Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
-        $journeys.upgrade.artifactCleanup = Remove-DevelopE2EExportArtifacts -Root $standBranchRoot -Summary $exportSummary
         $journeys.upgrade.status = "passed"
         $journeys.upgrade.finishedAt = [DateTime]::UtcNow.ToString("o")
         $activeJourney = ""
@@ -603,6 +629,9 @@ try {
         $journeys.fresh.status = "running"
         $journeys.fresh.startedAt = [DateTime]::UtcNow.ToString("o")
         $freshTimings = $journeys.fresh.operationTimings
+        $freshStandConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $freshTemplateRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $freshStandConfig
+        if (-not $freshTemplateRoot) { $freshTemplateRoot = $ProjectRoot }
         $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
         $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "p $cyrillicPathSegment"
         $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -612,8 +641,8 @@ try {
                 throw "DEVELOP_E2E_SPECIAL_PATH_REQUIRED: fresh project root must contain both whitespace and non-ASCII text: '$freshRoot'."
             }
             New-Item -ItemType Directory -Force -Path (Join-Path $freshRoot ".agent-1c") | Out-Null
-            Copy-Item -LiteralPath (Join-Path $ProjectRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
-            $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(EXPORT_PATH|EXTENSION_NAME|INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_.*|ROCTUP_MCP_.*|VANESSA_MCP_.*|VANESSA_TEST_PORT|UI_TESTING|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
+            Copy-Item -LiteralPath (Join-Path $freshTemplateRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
+            $envLines = @([IO.File]::ReadAllLines((Join-Path $freshTemplateRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(EXPORT_PATH|EXTENSION_NAME|INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_.*|ROCTUP_MCP_.*|VANESSA_MCP_.*|VANESSA_TEST_PORT|UI_TESTING|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
             $envLines += "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed"
             [IO.File]::WriteAllText((Join-Path $freshRoot ".dev.env"), (($envLines -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         })

@@ -17,7 +17,7 @@ function Get-DevelopE2EInputIdentity {
         $patterns = @($projection.contracts | ForEach-Object { @($_.paths) })
         # Conservative source inventory; this is not an installed managed-copy policy.
         $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
-        $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
+        $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
             'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1')
         # Git inventory is unique. Ordinal ordering also stays identical between
         # the Core supervisor and its Windows PowerShell checker child.
@@ -74,6 +74,14 @@ function Get-DevelopE2EInputIdentity {
                 artifacts=$artifacts; nativeRuntimeSha256=(Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
                 platformSha256=(Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
                 goSha256=(Get-FileHash -LiteralPath $go.Source -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $config = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
+            if ($positiveRoot) {
+                $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey upgrade -Catalog $Catalog `
+                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget
+                if ($null -eq $positiveIdentity) { return $null }
+                $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
             }
         }
         if (-not $ExternalBinding.complete) { return $null }
@@ -235,10 +243,17 @@ function Get-DevelopE2EStandRepositories {
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { throw "Develop E2E stand config is missing: $configPath" }
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $developRoot = [IO.Path]::GetFullPath([string]$config.developWorktreePath)
-    return @(
+    $repositories = @(
         [pscustomobject]@{ path = $root; role = "master" },
         [pscustomobject]@{ path = $developRoot; role = "develop" }
     )
+    $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $root -Config $config
+    if ($positiveRoot) {
+        $positive = Get-Content -LiteralPath (Join-Path $positiveRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $repositories += @([pscustomobject]@{path=$positiveRoot;role='positiveMaster'},
+            [pscustomobject]@{path=[IO.Path]::GetFullPath([string]$positive.developWorktreePath);role='positiveDevelop'})
+    }
+    return $repositories
 }
 
 function Get-DevelopE2EStandContentState {
@@ -252,7 +267,7 @@ function Get-DevelopE2EStandContentState {
     $state = [ordered]@{ schemaVersion = 2; repositories = @() }
     foreach ($entry in @(Get-DevelopE2EStandRepositories -ProjectRoot $ProjectRoot)) {
         $path = [string]$entry.path
-        $commit = if ([string]$entry.role -eq "master") { $MasterCommit } else { $DevelopCommit }
+        $commit = if ([string]$entry.role -eq "master") { $MasterCommit } elseif ([string]$entry.role -eq 'develop') { $DevelopCommit } else { 'HEAD' }
         $resolvedCommit = (& git -C $path rev-parse $commit 2>$null).Trim()
         if ($LASTEXITCODE -ne 0 -or $resolvedCommit -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E cannot resolve $($entry.role) stand commit '$commit': $path" }
         $tracked = @(& git -C $path status --porcelain --untracked-files=no 2>$null)

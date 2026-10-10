@@ -9,7 +9,7 @@
     "fullTargetSeconds": 600,
     "fullHardSeconds": 4200,
     "developTargetSeconds": 1500,
-    "developHardSeconds": 9000,
+    "developHardSeconds": 13200,
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 17040
   },
@@ -53,7 +53,8 @@
     ],
     "develop": [
       "scripts/invoke-develop-e2e.ps1",
-      "scripts/develop-e2e-cleanup.ps1"
+      "scripts/develop-e2e-cleanup.ps1",
+      "scripts/develop-configuration-rejection.ps1"
     ],
     "release": [
       "scripts/build-client-mcp-patched.ps1",
@@ -70,12 +71,13 @@
     "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
+      "scripts/develop-configuration-rejection.ps1",
       "scripts/stand-env-identity.ps1",
       "scripts/git-path-list.ps1"
     ],
     "routes": {
       "upgrade": {
-        "hardSeconds": 1200,
+        "hardSeconds": 5400,
         "contracts": ["immutable-download", "bootstrap-update", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "clients-rules"]
       },
       "fresh": {
@@ -265,8 +267,8 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
+      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
       "id": "dependency-lock",

@@ -365,6 +365,7 @@ Describe "Release gate scripts" {
         $operation.Count | Should -Be 1
         & {
             $ProjectRoot = Join-Path $TestDrive 'Исходный стенд с пробелами'
+            $freshTemplateRoot = $ProjectRoot
             $FreshProjectsRoot = Join-Path $TestDrive 'Новые проекты с пробелами'
             $freshRoot = Join-Path $FreshProjectsRoot 'p Проект\новый'
             New-Item -ItemType Directory -Path (Join-Path $ProjectRoot '.agent-1c') -Force | Out-Null

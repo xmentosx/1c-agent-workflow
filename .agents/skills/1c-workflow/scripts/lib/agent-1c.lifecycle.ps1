@@ -2282,6 +2282,7 @@ function Invoke-ConfigLoadDesignerAttempt {
     }
     $snapshot = New-DesignerGate6Snapshot -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -EnclosingSnapshot $EnclosingSnapshot
     $applySucceeded = $false
+    $applyStarted = $false
     try {
     if ($null -ne $StaticCoverageContext) {
         Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
@@ -2353,6 +2354,7 @@ function Invoke-ConfigLoadDesignerAttempt {
     # This is the first database apply. A failed or missing check never reaches it.
     $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
     $contentKind = if ($ExtensionName) { 'extension' } else { 'configuration' }
+    $applyStarted = $true
     Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
         -NativeEffectContract ([pscustomobject]@{ schemaVersion=1; kind='update-db-cfg'; project=[IO.Path]::GetFullPath($script:ProjectRoot)
             sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence; staticCoverage=$StaticCoverageContext }) `
@@ -2384,6 +2386,8 @@ function Invoke-ConfigLoadDesignerAttempt {
             $originalFailure.Exception.Data['ItlConfigLoadSnapshotRestored'] = [pscustomobject]@{
                 projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot); infoBaseKind=$InfoBaseKind; infoBasePath=$InfoBasePath
                 snapshotPath=$snapshot.path; snapshotSha256=$snapshot.sha256; cursorRestored=$false
+                applyStarted=$applyStarted; sourceFingerprint=$SourceFingerprint; restorationLogPath=[string]$script:LastLogPath
+                nativeOperationsReleased=$true
             }
         } catch {
             throw "GATE6_SNAPSHOT_RECOVERY_FAILED: $($originalFailure.Exception.Message) Rollback is unconfirmed; preserve snapshot '$($snapshot.path)' (SHA256 $($snapshot.sha256)) and diagnostics '$failureLogPath'. Restore this exact target through the existing snapshot recovery owner before repeating the original operation. Recovery: $($_.Exception.Message)"
@@ -2398,6 +2402,36 @@ function Invoke-ConfigLoadDesignerAttempt {
             catch { Write-Warning "Checked load completed but snapshot cleanup failed; snapshot retained at '$($snapshot.path)': $($_.Exception.Message)" }
         }
     }
+}
+
+function Write-ConfigLoadRejectionEvidence {
+    param([object]$Failure)
+    # Diagnostic evidence only; it grants no admission, recovery, or verification success.
+    if (-not $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored') -or
+        $Failure.Exception.Message -notmatch '^GATE6_CHECK_FAILED: step=configuration;') { return }
+    $restored = $Failure.Exception.Data['ItlConfigLoadSnapshotRestored']
+    if (-not $restored.cursorRestored -or $restored.applyStarted -or
+        $Failure.Exception.Message -notmatch '; result=(.+?); log=(.+?); diagnostics=') { return }
+    $paths = @($Matches[1], $Matches[2], [string]$restored.restorationLogPath)
+    $artifacts = @(foreach ($path in $paths) {
+        [ordered]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    $directory = Split-Path -Parent $paths[1]
+    $path = New-TimestampedFilePath -Directory $directory -Prefix '1c-gate6-rejection' -Extension '.json'
+    $journal = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
+    # A successful owned RestoreIB returns only after its native release. The
+    # diagnostic journal is optional in ordinary lifecycle dispatch; when
+    # present it must independently confirm every recorded operation/duty.
+    $nativeReleased = $restored.nativeOperationsReleased -eq $true
+    if ($null -ne $journal -and $null -ne $journal.Value) {
+        $nativeReleased = $nativeReleased -and (Test-OneCNativeOperationJournalReleased -Journal $journal.Value)
+    }
+    $receipt = [ordered]@{schemaVersion=1;kind='itl-gate6-rejection';projectRoot=$restored.projectRoot;
+        infoBaseKind=$restored.infoBaseKind;infoBasePath=$restored.infoBasePath;sourceFingerprint=$restored.sourceFingerprint;
+        snapshotSha256=$restored.snapshotSha256;snapshotRestored=$true;cursorRestored=$true;applyStarted=$false;
+        nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts}
+    [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+    Write-Host "GATE6_REJECTION_EVIDENCE: $path"
 }
 
 function Invoke-GuardedCfeExtensionApply {
@@ -3801,6 +3835,8 @@ function Load-ConfigFromFiles {
         } catch {
             Write-Warning "Previous Designer proof was not restored after checked rollback: $($_.Exception.Message). Preserve diagnostics and repeat the original operation through its recovery owner."
         }
+        try { Write-ConfigLoadRejectionEvidence -Failure $loadFailure }
+        catch { Write-Warning "Checked-load rejection evidence could not be saved: $($_.Exception.Message)" }
         throw $loadFailure
     }
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."

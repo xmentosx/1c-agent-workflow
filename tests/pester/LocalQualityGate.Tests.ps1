@@ -75,7 +75,7 @@ Describe 'Scheduler-independent Pester proof' {
         $catalog.budgets.targetedHardSeconds | Should -BeGreaterThan (2100 + 480 + 300)
         $catalog.budgets.fullHardSeconds | Should -BeGreaterThan (2700 + 642 + 300)
         $catalog.budgets.targetedHardSeconds | Should -BeLessThan $catalog.budgets.fullHardSeconds
-        $catalog.budgets.developHardSeconds | Should -Be ($catalog.budgets.fullHardSeconds + 1200 + 3600)
+        $catalog.budgets.developHardSeconds | Should -Be ($catalog.budgets.fullHardSeconds + $catalog.developJourneys.routes.upgrade.hardSeconds + $catalog.developJourneys.routes.fresh.hardSeconds)
         Get-ReleaseE2EBudgetProjection -QualityCatalog $catalog -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $RepoRoot) | Should -Not -BeNullOrEmpty
     }
 }
@@ -982,7 +982,9 @@ exit $exitCode
             & git -C $root config user.email "itl-test@example.invalid"
             foreach ($relativePath in @(
                 "scripts\quality-contracts.ps1",
+                "scripts\develop-configuration-rejection.ps1",
                 "tests\quality-contracts.json",
+                "tests\pester\DevelopConfigurationRejection.Tests.ps1",
                 "tests\pester\TestSupport.ps1",
                 "tests\pester\Agent1cEntrypoint.Tests.ps1",
                 "tests\pester\AuxiliaryContours.Tests.ps1",
@@ -1692,12 +1694,12 @@ Describe 'Develop journey catalog hard budgets' {
 
     It 'uses explicit positive integer route budgets and the complete Develop aggregate' {
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 1200
+        Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade | Should -Be 5400
         Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh | Should -Be 3600
-        [int]$catalog.budgets.developHardSeconds | Should -Be 9000
+        [int]$catalog.budgets.developHardSeconds | Should -Be 13200
         ([int]$catalog.budgets.fullHardSeconds +
             (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey upgrade) +
-            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 9000
+            (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey fresh)) | Should -Be 13200
         Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
         $map = @{ developJourneys=@{ routes=@{ fresh=@{ hardSeconds=[long]3600 } } } }
         Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $map -Journey fresh | Should -Be 3600
