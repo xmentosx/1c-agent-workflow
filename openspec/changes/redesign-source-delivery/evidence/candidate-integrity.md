@@ -1,5 +1,13 @@
 # Qualified candidate integrity (C8)
 
+Accepted through RegisterChange at 8ad8a94d67f5457dc3537dc48a893a634190f0d1,
+tree4a1deaad0aa2f5232423748cdbff379eed5718ec: Targeted244/0/0,
+30 executed/0 reused, check1254593ms/raw1256923ms, fingerprint8891ms,
+worker span1233623ms. Raw
+itl/runs/20261011-115531-973-targeted-04a37f702ccd482e8d334a5f1ed2d778.json.
+Official Status: queuehead8ad8a94d, indexready, invalid0, activeOperationnull.
+Subsequent C9/C11 implementation and native evidence: [candidate recovery](candidate-recovery.md).
+
 The existing publication coordinator owns the new private integrity helper.
 Before external finalization and again after it, the helper requires the exact
 qualified commit, tree and clean working tree, including untracked files.

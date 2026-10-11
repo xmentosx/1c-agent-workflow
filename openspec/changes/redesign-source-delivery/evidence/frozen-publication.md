@@ -82,19 +82,14 @@ Get-SourceRegistrationSnapshot. Оба fixture приведены к новым 
 короткие owner checks должны завершаться до дорогих native групп, без добавления
 новых проверок или ослабления существующих.
 
-C.8 реализуется в [candidate-integrity.md](candidate-integrity.md): проверка
+C.8 принят в [candidate-integrity.md](candidate-integrity.md): проверка
 неизменности перед finalizer и после него, отправка явного qualified commit.
 Native callback scenarios доказали продолжение того же плана через существующее
 восстановление, без нового reset/replanning и без повторного Develop.
-После выделения helper ещё требуется canonical acceptance. Для исправления
-самого замороженного исходника и исторического controller C.9/C.11 остаются
-открыты; ручное удаление checkpoint недопустимо. Уже отправленный кандидат
-нужно завершить через recovery.
-
-Полный rollback исторического controller и все семейства отказов доставки пока
-не проверены. Native legacy-record совместимость и golden identity уже доказаны;
-это не подмена исторического controller текущим. C.9/C.11 остаются открыты.
-Также требуется автоматический выбор прежней plan authority при обычном повторе
-PublishDevelop без явного ResumePlan: сейчас wrapper закрепляет её только при
-явном флаге. Новый published owner не должен переинтерпретировать старый attempt.
+Приёмка C.8 — RegisterChange8ad8a94d, Targeted244/0/0. Исправление замороженных
+входов, явный Replan, повреждённый proof, divergent remote, фактический исторический
+controller, совместимый функциональный rollback и автоматический выбор прежней
+authority описаны в [candidate-recovery.md](candidate-recovery.md).
+C.9/C.11 имеют focused native proof и ожидают единый Targeted. Ручное удаление
+checkpoint недопустимо; уже отправленный кандидат завершается через recovery.
 Реальной публикации проекта и новой проверки пользовательских баз не было.

@@ -35,6 +35,7 @@ function Get-DeliveryPlanIdentity {
     if ($Plan.PSObject.Properties['queue']) {
         $identity['queue'] = @($Plan.queue | ForEach-Object { [ordered]@{ id=[string]$_.id; base=[string]$_.base; head=[string]$_.head } })
     }
+    if ($Plan.PSObject.Properties['replacesPlanId']) { $identity['replacesPlanId'] = [string]$Plan.replacesPlanId }
     return $identity
 }
 
@@ -53,20 +54,62 @@ function Get-DeliveryStageEvidencePath {
 }
 
 function Test-DeliveryStageEvidence {
-    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint, [string]$EvidenceRoot = '')
+    param([Parameter(Mandatory = $true)][string]$StageId, [Parameter(Mandatory = $true)][string]$Fingerprint, [string]$EvidenceRoot = '', [ref]$InvalidReason)
+    if ($InvalidReason) { $InvalidReason.Value = '' }
     $path = Get-DeliveryStageEvidencePath -StageId $StageId -Fingerprint $Fingerprint -EvidenceRoot $EvidenceRoot
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
     try {
         $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([int]$record.schemaVersion -ne 1 -or [string]$record.status -ne "passed" -or
-            [string]$record.stageId -ne $StageId -or [string]$record.inputFingerprint -ne $Fingerprint) { return $null }
+            [string]$record.stageId -ne $StageId -or [string]$record.inputFingerprint -ne $Fingerprint) { throw "stage '$StageId', input '$Fingerprint': record schema, status or identity mismatch at '$path'" }
         if ([string]$record.proof.path) {
             $proofPath = [string]$record.proof.path
-            if (-not (Test-Path -LiteralPath $proofPath -PathType Leaf) -or
-                (Get-DeliveryFileSha256 -Path $proofPath) -ne ([string]$record.proof.sha256).ToLowerInvariant()) { return $null }
+            if (-not (Test-Path -LiteralPath $proofPath -PathType Leaf)) { throw "stage '$StageId': proof '$proofPath' is missing; expected SHA256 '$([string]$record.proof.sha256)'" }
+            $actualProofSha = Get-DeliveryFileSha256 -Path $proofPath
+            if ($actualProofSha -ne ([string]$record.proof.sha256).ToLowerInvariant()) { throw "stage '$StageId': proof '$proofPath' SHA256 changed; expected '$([string]$record.proof.sha256)', actual '$actualProofSha'" }
         }
         return $record
-    } catch { return $null }
+    } catch {
+        if ($InvalidReason) { $InvalidReason.Value = "evidence '$path': $($_.Exception.Message)" }
+        return $null
+    }
+}
+
+function Get-DeliveryPlanInvalidEvidence {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+    $evidenceRoot = Get-DeliveryEvidenceRoot
+    foreach ($stage in @($Plan.stages)) {
+        if (-not [string]$stage.inputFingerprint) { continue }
+        $path = Get-DeliveryStageEvidencePath -StageId ([string]$stage.id) -Fingerprint ([string]$stage.inputFingerprint) -EvidenceRoot $evidenceRoot
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $reason = ''
+        $valid = Test-DeliveryStageEvidence -StageId ([string]$stage.id) -Fingerprint ([string]$stage.inputFingerprint) -EvidenceRoot $evidenceRoot -InvalidReason ([ref]$reason)
+        if (-not $valid) { [pscustomobject]@{ stageId=[string]$stage.id; mode=[string]$stage.mode; fingerprint=[string]$stage.inputFingerprint; path=$path; sha256=(Get-DeliveryFileSha256 -Path $path); reason=$reason } }
+    }
+}
+
+function Move-DeliveryRejectedEvidence {
+    param([Parameter(Mandatory = $true)][object[]]$Evidence)
+    # Only explicit replacement under the publication operation lease reaches
+    # this repair. A valid immutable proof is never replaced or removed.
+    foreach ($item in $Evidence) {
+        if ((Get-DeliveryFileSha256 -Path ([string]$item.path)) -cne [string]$item.sha256 -or
+            (Test-DeliveryStageEvidence -StageId ([string]$item.stageId) -Fingerprint ([string]$item.fingerprint))) {
+            throw "DELIVERY_EVIDENCE_MOVED: '$([string]$item.path)' changed during repair; publication checkpoint and queue were preserved. Repeat the same PublishDevelop options to revalidate and continue its saved replacement; Status shows the current plan ID."
+        }
+        $root = Join-Path (Get-DeliveryCommonGitDirectory) 'itl/evidence-rejected/v1'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $destination = Join-Path $root (([string]$item.stageId -replace '[^A-Za-z0-9._-]','-')+'-'+[string]$item.fingerprint+'-'+[guid]::NewGuid().ToString('N'))
+        $sourceDirectory = [IO.Path]::GetFullPath((Split-Path -Parent ([string]$item.path)))
+        $destination = [IO.Path]::GetFullPath($destination)
+        $evidencePrefix = [IO.Path]::GetFullPath((Get-DeliveryEvidenceRoot)).TrimEnd('\')+'\'
+        $archivePrefix = [IO.Path]::GetFullPath($root).TrimEnd('\')+'\'
+        if (-not $sourceDirectory.StartsWith($evidencePrefix,[StringComparison]::OrdinalIgnoreCase) -or -not $destination.StartsWith($archivePrefix,[StringComparison]::OrdinalIgnoreCase)) {
+            throw 'DELIVERY_EVIDENCE_ARCHIVE_SCOPE: generated evidence paths left the common-Git evidence roots. Checkpoint and queue were preserved; restore the compatible evidence owner before continuing this publication.'
+        }
+        Move-Item -LiteralPath $sourceDirectory -Destination $destination
+        [pscustomobject]@{ stageId=[string]$item.stageId; fingerprint=[string]$item.fingerprint; originalPath=[string]$item.path; archivePath=$destination; sha256=[string]$item.sha256; reason=[string]$item.reason }
+    }
 }
 
 function Save-DeliveryStageEvidence {
@@ -368,7 +411,28 @@ function Save-DeliveryQualityPlan {
 function Assert-DeliveryQualityPlanMayRun {
     param([Parameter(Mandatory = $true)][object]$Plan)
     if ([string]$Plan.status -eq "blocked") { throw (@($Plan.blockers) -join "; ") }
-    if ($ResumePlan -and [string]$Plan.planId -ne $ResumePlan) { throw "DELIVERY_RESUME_PLAN_MISMATCH: requested '$ResumePlan', current '$([string]$Plan.planId)'." }
+    if ($ResumePlan -and [string]$Plan.planId -ne $ResumePlan) {
+        $before=$null
+        try { $before=Get-Content -LiteralPath (Join-Path (Get-DeliveryPlanRoot) "$ResumePlan.json") -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+        $differences=@()
+        if ($before) {
+            foreach ($field in @('commit','tree','baseCommit')) {
+                if ([string]$before.candidate.$field -cne [string]$Plan.candidate.$field) { $differences += "candidate.$field expected '$([string]$before.candidate.$field)', actual '$([string]$Plan.candidate.$field)'" }
+            }
+            foreach ($stage in @($Plan.stages)) {
+                $old=@($before.stages | Where-Object id -eq ([string]$stage.id))
+                if ($old.Count -ne 1) { $differences += "stage '$([string]$stage.id)' added"; continue }
+                foreach ($field in @('version','budgetSeconds','inputFingerprint')) {
+                    if ([string]$old[0].$field -cne [string]$stage.$field) { $differences += "stage '$([string]$stage.id)' $field expected '$([string]$old[0].$field)', actual '$([string]$stage.$field)'" }
+                }
+            }
+        }
+        $detail=if($differences.Count){(@($differences | Select-Object -First 8) -join '; ')+$(if($differences.Count -gt 8){"; $($differences.Count-8) further changed inputs"})}else{"candidate '$([string]$Plan.candidate.commit)', tree '$([string]$Plan.candidate.tree)'; sealed policy or environment inputs changed"}
+        $continuation = if ((Get-Variable -Name Action -ErrorAction SilentlyContinue) -and $Action -eq 'PublishDevelop') {
+            "Review these inputs, then repeat the same PublishDevelop options with -Replan '$ResumePlan'."
+        } else { 'Inspect source-delivery Status and continue through the original master publication owner.' }
+        throw "DELIVERY_RESUME_PLAN_MISMATCH: requested '$ResumePlan', current '$([string]$Plan.planId)'; $detail. Original immutable plan and proof were preserved. $continuation"
+    }
     if ([int]$Plan.executedBudgetSeconds -gt 3600 -and $ApproveLongPlan -ne [string]$Plan.planId) {
         throw "LONG_PLAN_APPROVAL_REQUIRED: plan '$([string]$Plan.planId)' requires $([int]$Plan.executedBudgetSeconds)s; pass -ApproveLongPlan '$([string]$Plan.planId)'."
     }
@@ -413,7 +477,7 @@ function New-AccumulatedDeliveryPlan {
     $worktree = $null
     try {
         $worktree = New-DeliveryWorktree -StartPoint (Get-SourceRegistrationStartPoint -Snapshot $snapshot) -Purpose "plan-develop"
-        Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
+        Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries -PublishedDevelop $remoteBefore
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate

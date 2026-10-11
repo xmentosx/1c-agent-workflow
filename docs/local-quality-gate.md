@@ -27,6 +27,18 @@ push сохраняет checkpoint; тот же вызов завершает о
 уже опубликованного кандидата. Применимость proof по окружению и входам
 продолжает проверять существующий владелец квалификации.
 
+Обычный повтор автоматически закрепляет authority активного плана. При
+изменившихся входах или remote до push `PublishDevelop -Replan <originalPlanId>`
+явно создаёт замену, сохраняя прежние plan/proof и checkpoint по SHA. Повтор
+этого Replan продолжает зафиксированную замену. Неизменённые входы не сбрасывают
+circuit breaker. Повреждённый выбранный proof сообщает путь/SHA/причину;
+Replan архивирует только повторно подтверждённый повреждённый record. Валидные
+этапы остаются применимыми по прежним правилам. Закрытый ResumePlan возвращает
+already-reachable без новой квалификации и изменения следующей очереди.
+Исторический активный план завершается прежним owner перед новым RegisterChange;
+функциональный rollback сохраняет совместимый queue decoder. Сценарии и пределы
+доказательств: [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
+
 Проверка проходит вне общей блокировки. После успеха один Git CAS принимает
 `base/head` задачи, `refs/itl/develop-candidate/head` и immutable membership blob
 `refs/itl/develop-candidate/state`. При гонке регистрация пересобирает комбинацию;

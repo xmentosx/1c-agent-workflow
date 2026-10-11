@@ -1,7 +1,8 @@
 
     . (Join-Path $PSScriptRoot 'SourceDelivery.TestSupport.ps1')
-    function New-FrozenFixture {
-        $fixture=New-DeliveryFixture
+    function Copy-FrozenSupervisorClosure {
+        param([object]$Fixture)
+        $fixture=$Fixture
         # Resume requires an actual published supervisor, including its imports.
         $scripts=Join-Path $fixture.root 'scripts'
         New-Item -ItemType Directory -Force -Path $scripts | Out-Null
@@ -11,6 +12,10 @@
         $target=Join-Path $fixture.root $relative
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
+    }
+    function New-FrozenFixture {
+        $fixture=New-DeliveryFixture
+        Copy-FrozenSupervisorClosure -Fixture $fixture
         & git -C $fixture.root add --all
         & git -C $fixture.root commit --quiet -m 'test: publish production supervisor closure'
         & git -C $fixture.root push --quiet origin HEAD:develop

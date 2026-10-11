@@ -37,12 +37,14 @@
 Describe 'Shared source candidate registration' {
     It 'bounds repeated CAS losses by one original deadline and leaves an agent-readable continuation' {
         & {
-            $definition=(Get-DeliveryFunctionDefinitions -Names Register-SourceChange | Select-Object -First 1).Extent.Text
-            Invoke-Expression $definition
+            foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Register-SourceChange','Assert-SourceRegistrationTransitionReady'))) {
+                Invoke-Expression $definition.Extent.Text
+            }
             $script:Root=$TestDrive; $script:Remote='origin'; $script:GateScript='injected-gate.ps1'
             $script:budgetReads=0; $script:gateDeadlines=@(); $script:casAttempts=0
             $BaseRef=''; $QueueId='bounded-race'; $CoverageContract=@()
             function Assert-CleanDeliveryWorktree { }
+            function Get-DevelopPublicationAttemptPath { Join-Path $TestDrive 'no-publication-attempt.json' }
             function Get-GitValue { param($Arguments); if ($Arguments[-1] -eq 'HEAD') { return ('b'*40) }; return ('a'*40) }
             function ConvertTo-QueueRefName { param($Value) return $Value }
             function Get-SourceGateHardBudgetSeconds { param($Mode,$WorkingRoot,[switch]$AllowMissingCatalog); $script:budgetReads++; return 0.55 }

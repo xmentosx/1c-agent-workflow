@@ -70,4 +70,62 @@ $lock=Join-Path $SourceRepositoryRoot '.git/refs/itl/develop-queue/alpha/head.lo
             @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
         } finally { Remove-DeliveryFixture $fixture }
     }
+    It 'recovers the original qualified candidate after cleanup failed and remote develop advanced' {
+        $fixture=$null
+        try {
+            $fixture=New-FrozenFixture
+            $first=Add-FrozenTask $fixture alpha
+            $firstTree=(& git -C $fixture.root rev-parse "$first^{tree}").Trim()
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $injected=Join-Path $fixture.root 'build/locking-finalizer.ps1'
+            $body=Get-Content -LiteralPath $fixture.finalizer -Raw -Encoding UTF8
+            $at=$body.LastIndexOf('exit 0',[StringComparison]::Ordinal)
+            if($at -lt 0){throw 'Fixture finalizer exit changed'}
+            $hook=@'
+$lock=Join-Path $SourceRepositoryRoot '.git/refs/itl/develop-queue/alpha/head.lock'
+[IO.File]::WriteAllText($lock,'private test fault')
+'@
+            [IO.File]::WriteAllText($injected,($body.Substring(0,$at)+$hook+"`n"+$body.Substring($at)),[Text.UTF8Encoding]::new($true))
+            $fixture.finalizer=$injected
+            (Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure).exitCode | Should -Not -Be 0
+            $attempt=Read-FrozenAttempt $fixture
+            $attempt.phase | Should -Be 'remote-pushed'
+            $planId=[string]$attempt.planId
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $first
+            # Remove only this fixture's injected fault; no runtime lock is bypassed.
+            Remove-Item -LiteralPath (Join-Path $fixture.root '.git/refs/itl/develop-queue/alpha/head.lock') -Force
+            & git -C $fixture.root switch --quiet -c remote-advance $first
+            $later=Add-FrozenTask $fixture foreign
+            & git -C $fixture.root push --quiet origin HEAD:develop
+            $LASTEXITCODE | Should -Be 0
+            & git -C $fixture.root switch --quiet -c beta $fixture.base
+            $beta=Add-FrozenTask $fixture beta
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
+            $before=@(Get-Content -LiteralPath $fixture.modeLog | Where-Object {$_ -ne 'Targeted'})
+            $finalizerBefore=@(Get-Content -LiteralPath $fixture.finalizerLog)
+            $recovered=(Invoke-FrozenDelivery $fixture PublishDevelop @('-ResumePlan',$planId)).stdout | ConvertFrom-Json
+            $recovered.recovered | Should -BeTrue
+            $recovered.commit | Should -BeExactly $first
+            $recovered.tree | Should -BeExactly $firstTree
+            $recovered.remoteHead | Should -BeExactly $later
+            @(Get-Content -LiteralPath $fixture.modeLog | Where-Object {$_ -ne 'Targeted'}) | Should -Be $before
+            @(Get-Content -LiteralPath $fixture.finalizerLog) | Should -Be $finalizerBefore
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/beta/head).Trim() | Should -Be $beta
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue/alpha).Count | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $fixture.root '.git/itl/publication-attempts/develop.json') | Should -BeFalse
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -BeExactly $later
+            $stateBefore=(& git -C $fixture.root rev-parse refs/itl/develop-candidate/state).Trim()
+            $closed=(Invoke-FrozenDelivery $fixture PublishDevelop @('-ResumePlan',$planId)).stdout | ConvertFrom-Json
+            $closed.status | Should -BeExactly 'already-reachable'
+            $closed.commit | Should -BeExactly $first
+            $closed.remoteHead | Should -BeExactly $later
+            $closed.qualificationStatus | Should -BeExactly 'not-revalidated'
+            ($closed.PSObject.Properties.Name -contains 'dependenciesInstallable') | Should -BeFalse
+            (& git -C $fixture.root rev-parse refs/itl/develop-candidate/state).Trim() | Should -BeExactly $stateBefore
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/beta/head).Trim() | Should -BeExactly $beta
+            Test-Path -LiteralPath (Join-Path $fixture.root '.git/itl/publication-attempts/develop.json') | Should -BeFalse
+            @(Get-Content -LiteralPath $fixture.modeLog | Where-Object {$_ -ne 'Targeted'}) | Should -Be $before
+            @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
+        } finally { Remove-DeliveryFixture $fixture }
+    }
 }

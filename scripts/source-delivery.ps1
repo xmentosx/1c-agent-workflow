@@ -23,6 +23,7 @@ param(
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
     [string]$ResumePlan = "",
+    [string]$Replan = "",
     [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
@@ -148,6 +149,26 @@ try {
     $requestedChannel = if ($Action -in @("RegisterChange", "Plan", "PublishDevelop")) { "develop" } else { "master" }
     $selectedChannel = $requestedChannel
     $recordedSupervisor = ""
+    if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
+    $activeAttempt = $null
+    if ($Action -eq 'PublishDevelop') {
+        $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
+        $activeAttemptPath = Join-Path $commonGitPath 'itl/publication-attempts/develop.json'
+        if (Test-Path -LiteralPath $activeAttemptPath -PathType Leaf) {
+            try { $activeAttempt = Get-Content -LiteralPath $activeAttemptPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+            catch { throw "DELIVERY_CHECKPOINT_INVALID: '$activeAttemptPath': $($_.Exception.Message). The checkpoint and queue were preserved." }
+        }
+        if ($Replan) { $ResumePlan = $Replan }
+        elseif (-not $ResumePlan -and $activeAttempt -and $activeAttempt.PSObject.Properties['planId'] -and [string]$activeAttempt.planId) {
+            $activePlanPath = Join-Path $commonGitPath "itl/plans/v1/$([string]$activeAttempt.planId).json"
+            $activePlan = Get-Content -LiteralPath $activePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            # Unpublished custom-gate fixtures retain their bootstrap boundary.
+            if (-not [bool]$activePlan.supervisor.bootstrap) {
+                $ResumePlan = [string]$activeAttempt.planId
+                $PSBoundParameters['ResumePlan'] = $ResumePlan
+            }
+        }
+    }
     if ($ResumePlan) {
         if ($ResumePlan -notmatch '^[a-f0-9]{64}$') { throw "DELIVERY_RESUME_PLAN_INVALID: plan id must be a lowercase SHA256." }
         $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
@@ -159,6 +180,24 @@ try {
         if ([int]$savedPlan.schemaVersion -ne 1 -or [string]$savedPlan.kind -ne "itl-delivery-plan" -or
             [string]$savedPlan.planId -cne $ResumePlan -or $recordedSupervisor -notmatch '^[a-f0-9]{40}$') {
             throw "DELIVERY_RESUME_PLAN_INVALID: saved plan identity or supervisor commit is invalid."
+        }
+        if ($Action -eq 'PublishDevelop' -and -not $Replan -and -not $savedPlan.PSObject.Properties['queue'] -and $activeAttempt) {
+            if (-not $activeAttempt.PSObject.Properties['planId'] -or [string]$activeAttempt.planId -cne $ResumePlan) {
+                throw "DELIVERY_LEGACY_CHECKPOINT_CHANGED: requested '$ResumePlan'; active checkpoint has another plan. Both immutable plans and the queue were preserved; continue the active plan shown by Status."
+            }
+            $expected = @($activeAttempt.queue | Sort-Object id | ForEach-Object { "$($_.id)|$($_.base)|$($_.head)" }) -join "`n"
+            $pairs = @{}
+            $refs = (Invoke-RepositoryGit -RepositoryRoot $candidateRoot -Arguments @('for-each-ref','--format=%(refname) %(objectname)','refs/itl/develop-queue')).stdout
+            foreach ($line in @($refs -split '\r?\n' | Where-Object { $_ })) {
+                if ($line -match '^refs/itl/develop-queue/(.+)/(base|head) ([a-f0-9]{40})$') {
+                    if (-not $pairs.ContainsKey($Matches[1])) { $pairs[$Matches[1]] = @{} }
+                    $pairs[$Matches[1]][$Matches[2]] = $Matches[3]
+                }
+            }
+            $actual = @($pairs.Keys | Sort-Object | ForEach-Object { "$($_)|$($pairs[$_]['base'])|$($pairs[$_]['head'])" }) -join "`n"
+            if ($actual -cne $expected) {
+                throw "DELIVERY_LEGACY_PLAN_INPUT_CHANGED: queue membership differs from frozen plan '$ResumePlan'. The historical controller was not invoked; its checkpoint and proof were preserved. Review the new registrations, then repeat the same PublishDevelop options with -Replan '$ResumePlan' to create a replacement under the recorded authority."
+            }
         }
         $recordedChannel = if ($savedPlan.supervisor.PSObject.Properties.Name -contains "channel") { [string]$savedPlan.supervisor.channel } else { "" }
         if ($recordedChannel) {
@@ -234,7 +273,25 @@ try {
     $parseErrors = $null
     $supervisorAst = [Management.Automation.Language.Parser]::ParseFile($supervisorPath, [ref]$tokens, [ref]$parseErrors)
     if ($parseErrors.Count -gt 0) { throw "Delivery supervisor script has parse errors: $supervisorPath" }
+    if ($Action -in @('RegisterChange','PublishDevelop')) {
+        $queueModule=Join-Path (Split-Path -Parent $supervisorPath) 'source-delivery-queue.ps1'
+        $queueDecoder=$null
+        if (Test-Path -LiteralPath $queueModule) {
+            $queueAst=[Management.Automation.Language.Parser]::ParseFile($queueModule,[ref]$tokens,[ref]$parseErrors)
+            $queueDecoder=$queueAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SourceRegistrationSnapshot'},$true)
+        }
+        if (-not $queueDecoder -and (Invoke-RepositoryGit -RepositoryRoot $candidateRoot -Arguments @('show-ref','--verify','refs/itl/develop-candidate/state') -AllowFailure).exitCode -eq 0) {
+            throw "DELIVERY_LEGACY_CONTROLLER_PROTOCOL: recorded controller '$supervisorCommit' predates the accepted candidate protocol. Its closed plan cannot write the new queue. Continue current PublishDevelop without that closed ResumePlan; retain the compatible queue decoder in a functional rollback. Accepted commits, immutable plans and proof were preserved."
+        }
+    }
     Assert-DeliveryBootstrapAgentTargetSupport -SupervisorAst $supervisorAst -SupervisorCommit $supervisorCommit -BoundParameters $arguments
+    if ($Replan -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Replan' }).Count -eq 0) {
+        if ($savedPlan.PSObject.Properties['queue']) { throw "DELIVERY_REPLAN_UNSUPPORTED: recorded supervisor '$supervisorCommit' cannot replace this frozen plan. Its checkpoint and queue were preserved." }
+        if ($activeAttempt -and [string]$activeAttempt.planId -cne $Replan) { throw "DELIVERY_REPLAN_CHECKPOINT_CHANGED: continue active plan '$([string]$activeAttempt.planId)' before replacing another plan." }
+        # An explicit legacy replacement uses that owner's original rebuild;
+        # its immutable original plan/evidence and all queue refs are retained.
+        $arguments.Remove('Replan')
+    }
     if ($supervisorAst.ParamBlock -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "SupervisorChannel" }).Count -gt 0) {
         $arguments["SupervisorChannel"] = $selectedChannel
     }

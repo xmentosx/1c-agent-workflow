@@ -23,6 +23,7 @@ param(
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
     [string]$ResumePlan = "",
+    [string]$Replan = "",
     [string]$ApproveLongPlan = "",
     [string]$SupervisorCommit = "",
     [ValidateSet("develop", "master")]
@@ -74,7 +75,7 @@ $script:DeliverySupervisorBootstrap = [bool]$BootstrapSupervisor
 $script:DeliveryCustomGateBoundary = [bool]$GateScript -and $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
 
 function Invoke-DeliveryGit {
-    param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][string]$StandardInput = $null)
+    param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][object]$StandardInput = $null)
     return Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure -StandardInput $StandardInput
 }
 
@@ -127,6 +128,7 @@ if ($CleanupExecutor) {
 if ($RequireRelease -and $Action -notin @("Plan", "PublishDevelop")) { throw "-RequireRelease is valid only with -Action Plan or PublishDevelop." }
 if ($RetryBlockedStage -and $Action -ne "PublishDevelop") { throw "-RetryBlockedStage is valid only with -Action PublishDevelop." }
 if ($ResumePlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ResumePlan is valid only for a publication action." }
+if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
 if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
 if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }

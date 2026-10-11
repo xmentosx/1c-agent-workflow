@@ -14,7 +14,9 @@ function Invoke-RepositoryGit {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [AllowNull()][string]$StandardInput = $null,
+        # A typed string coerces omitted null to ''; keep omission distinct
+        # from explicitly empty stdin (for example hash-object --stdin).
+        [AllowNull()][object]$StandardInput = $null,
         [switch]$AllowFailure
     )
 
@@ -26,7 +28,7 @@ function Invoke-RepositoryGit {
         $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-git-stdout-$token.txt")
         $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-git-stderr-$token.txt")
         try {
-            [IO.File]::WriteAllText($inputPath, $StandardInput.TrimStart([char]0xFEFF), [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText($inputPath, ([string]$StandardInput).TrimStart([char]0xFEFF), [Text.UTF8Encoding]::new($false))
             $native = Start-Process -FilePath "git.exe" -ArgumentList $argumentLine -WindowStyle Hidden -RedirectStandardInput $inputPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru
             $null = $native.Handle
             $result = [pscustomobject]@{
@@ -48,7 +50,7 @@ function Invoke-RepositoryGit {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.RedirectStandardInput = $false
+    $startInfo.RedirectStandardInput = $true
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     if ($startInfo.PSObject.Properties.Name -contains "StandardOutputEncoding") {
         $startInfo.StandardOutputEncoding = $utf8
@@ -59,9 +61,12 @@ function Invoke-RepositoryGit {
     $process.StartInfo = $startInfo
     try {
         if (-not $process.Start()) { throw "Unable to start git." }
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.Close()
         $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         $result = [pscustomobject]@{ exitCode = [int]$process.ExitCode; stdout = $stdout; stderr = $stderr }
         if ($result.exitCode -ne 0 -and -not $AllowFailure) {
             throw "git $($Arguments -join ' ') failed with exit code $($result.exitCode): $($result.stderr.Trim())"

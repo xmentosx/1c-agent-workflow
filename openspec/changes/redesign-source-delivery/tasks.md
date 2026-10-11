@@ -226,14 +226,19 @@ Targeted для каждого подпункта: группировать св
   до окончательного proof; исключить неподтверждённое изменение дерева после него.
   Exact commit/tree/clean guard и явный SHA push реализованы; native продолжение
   исходного плана описано в [candidate-integrity](evidence/candidate-integrity.md).
-  Единица принимается только после штатной RegisterChange; C.9/C.11 остаются открыты.
+  Принято RegisterChange 8ad8a94d: Targeted244/0/0,30 executed/0 reused,
+  check1254593ms/raw1256923ms. [Приёмка](evidence/candidate-integrity.md).
 - [ ] C.9 Публикация использует proof соответствующего кандидата; сбой
   доставки сохраняет применимую квалификацию. Неприменимость или повреждение
   proof сообщается с конкретным входом и причиной, без повторного общего ремонта.
+  Реализовано, focused native passed; окончательный Targeted ожидается.
+  [Измерения и границы](evidence/candidate-recovery.md).
 - [x] C.10 Сохранить конкурентные регистрации при завершении выпуска;
   очищать только действительно опубликованные и совпадающие записи очереди.
 - [ ] C.11 Проверить переход существующей очереди и планов на новый контракт,
   safe resume и откат; не редактировать состояние вручную и не обходить locks.
+  Реальные source bodies fa0e3c91, legacy transition и совместимый функциональный
+  rollback проверены; ожидается единая регистрация этой единицы.
 
 Приёмка C:
 
@@ -243,8 +248,10 @@ Targeted для каждого подпункта: группировать св
   при его завершении.
 - [ ] CA.4 Отказ доставки повторяет доставку без повторного запуска 1С,
   если входы доказательства не изменились.
+  Native coordinator сохраняет один fake Develop; реальный 1С proof остаётся V.7.
 - [ ] CA.5 Изменение входов, повреждённый proof и remote movement вызывают
   корректное решение владельца; ложная квалификация и прямой обход публикации исключены.
+  Native recovery scenarios passed; ожидается штатный Targeted.
 
 ## Проверки, поставка и конечная приёмка
 
@@ -340,3 +347,5 @@ definition benchmark44087→4793ms; native acceptance новой единицы 
 | 2026-10-11 | A.1, Compact native acceptance | Зарегистрирован 1af9455b: Targeted 138/0/0, check 313153 ms, raw 315369 ms; цель 300 s пока превышена. Raw itl/runs/20261011-013849-875-targeted-8223405fa56645419ca7fc12f9aa781f.json. Четыре группы реально перекрывались 49.13 s, console начался после завершения всех parallel и занял 6949 ms. Все 49 Compact expanded cases passed; fresh группа 274018 ms остаётся критическим путём. Официальный Status подтвердил исходный base fa0e3c91/head 1af9455b/activeOperation null. Это приёмка split; остальные требования плана остаются открыты. |
 | 2026-10-11 | C.7/C.10/CA.3 приняты | fcd87638 зарегистрирован: Targeted213/0/0,18 executed /5 reused, check651469ms, raw653175ms, clean treec171a65c. Raw itl/runs/20261011-081529-074-targeted-c32f20f6ff7242d7853f3dbb9dabb3a4.json; Status queueheadfcd87638/indexready/invalid0/activeOperationnull. Шесть native/identity frozen cases passed. C.8/C.9/C.11,300s и реальная публикация остаются открыты. |
 | 2026-10-11 | A.3, короткий admission и audit Plan27 | Все15 SourceQueue It точно перенесены в четыре suites, input closure сохранён. Existing scheduler выполняет short admission до native workers, без второго запуска cached proof. Native sequencing/failure/continuation/cache2/0 за31.26s; short owner/catalog7/0 за4.94s; parser/docs3/0 за3.24s. Plan necessity27:26 тел совпадают, один ранее исправленный fixture598; audit303/2814,2511 pending. [Контракт и границы](evidence/source-preflight.md). Требуется одна штатная RegisterChange этой coherent единицы; A целиком и300s не завершены. |
+| 2026-10-11 | C.8 принят | 8ad8a94d, tree4a1deaad: Targeted244/0/0,30 executed/0 reused, check1254593ms/raw1256923ms, fingerprint8891ms. Raw itl/runs/20261011-115531-973-targeted-04a37f702ccd482e8d334a5f1ed2d778.json; Status queuehead8ad8a94d/indexready/invalid0/activeOperationnull. |
+| 2026-10-11 | C.9/C.11 подготовлены | Native recovery, реальный historical transition и совместимый rollback passed; Git transport3/0, catalog2/0. Измеренный fa0 registration22280→4101ms при тех же18Git calls. [Подробности](evidence/candidate-recovery.md). Ожидается одна RegisterChange; весь audit309/2814,300s и V.7 не закрыты. |

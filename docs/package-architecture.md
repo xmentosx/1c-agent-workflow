@@ -32,8 +32,12 @@ attempt freezes queue membership and its queued candidate; a saved plan also
 binds membership, while legacy plans retain their original identity and authority.
 Publication cleanup compares only frozen queue pairs, preserves later work, and
 retries ref movement without repeating qualification. Post-push recovery uses
-the frozen attempt rather than next-release registrations. Full historical
-controller rollback acceptance remains tracked separately in that change.
+the frozen attempt rather than next-release registrations. Historical-plan
+transition and functional rollback retaining a compatible queue decoder have
+native acceptance in [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
+Explicit PublishDevelop Replan archives the original checkpoint and rejected
+proof through this same owner; unchanged inputs cannot reset its circuit breaker.
+This adds no state owner, lock family or master-channel authority.
 
 The develop authority boundary is channel-local, not candidate-local: the
 supervisor is the tracked published tip before the operation, never the queued

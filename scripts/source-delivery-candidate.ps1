@@ -23,7 +23,8 @@ function Remove-DeliveryWorktree {
 }
 
 function Add-QueuedRangesToCandidate {
-    param([string]$CandidateRoot, [object[]]$Entries)
+    param([string]$CandidateRoot, [object[]]$Entries, [string]$PublishedDevelop = '')
+    if ($PublishedDevelop) { $Entries = @([pscustomobject]@{ id='published-develop'; head=$PublishedDevelop }) + @($Entries) }
     foreach ($entry in @($Entries)) {
         $already = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, "HEAD") -AllowFailure
         if ($already.exitCode -eq 0) { continue }
@@ -66,6 +67,22 @@ function Sync-LocalDevelopAfterPublish {
 
 function Get-DevelopPublicationAttemptPath {
     return Join-Path (Get-DeliveryCommonGitDirectory) "itl\publication-attempts\develop.json"
+}
+
+function Assert-DevelopSourceControllerCompatibility {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+    $supervisor = Join-Path $CandidateRoot 'scripts/source-delivery-supervisor.ps1'
+    if ($script:DeliveryCustomGateBoundary -and -not (Test-Path -LiteralPath $supervisor)) { return }
+    $queuePath = Join-Path $CandidateRoot 'scripts/source-delivery-queue.ps1'
+    $tokens=$null; $errors=$null
+    if (-not (Test-Path -LiteralPath $queuePath)) { throw 'DELIVERY_CONTROLLER_PROTOCOL_INCOMPATIBLE: candidate has no source queue decoder. Preserve the published controller protocol while rolling back functional changes, register that repair and repeat PublishDevelop.' }
+    $ast=[Management.Automation.Language.Parser]::ParseFile($queuePath,[ref]$tokens,[ref]$errors)
+    $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true))
+    $cleanup=@($functions | Where-Object Name -eq 'Clear-PublishedQueueEntries')
+    $compatible=$errors.Count -eq 0 -and @($functions | Where-Object Name -eq 'Get-SourceRegistrationSnapshot').Count -eq 1 -and
+        @($functions | Where-Object Name -eq 'Try-AcceptSourceRegistration').Count -eq 1 -and $cleanup.Count -eq 1 -and
+        @($cleanup[0].Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Entries' }).Count -eq 1
+    if (-not $compatible) { throw "DELIVERY_CONTROLLER_PROTOCOL_INCOMPATIBLE: '$queuePath' cannot read and atomically update accepted candidates or clean only frozen entries. Keep the compatible published queue module in the functional rollback, register the repair, then repeat PublishDevelop. Candidate, registrations and existing proof were preserved." }
 }
 
 function Get-DeliveryTextSha256 {
@@ -456,7 +473,7 @@ function New-DevelopPublicationAttempt {
     )
     $now = [DateTime]::UtcNow.ToString("o")
     $attempt = [pscustomobject]@{
-        schemaVersion = 1; identity = $Identity; remote = $script:Remote; remoteBefore = $RemoteBefore
+        schemaVersion = 1; sourceRegistrationProtocol = 1; identity = $Identity; remote = $script:Remote; remoteBefore = $RemoteBefore
         candidate = $Candidate; tree = $Tree; requireRelease = [bool]$RequireRelease; phase = "candidate-built"
         gateIdentity = (Get-DeliveryFileIdentity -Path $script:GateScript)
         componentFinalizerIdentity = (Get-DeliveryComponentFinalizerIdentity)
@@ -515,17 +532,19 @@ function Test-ExactPassedDeliveryRun {
 function Complete-InterruptedDevelopPublication {
     param([Parameter(Mandatory = $true)][string]$RemoteBefore, [Parameter(Mandatory = $true)][object[]]$Entries)
     $attempt = Read-DevelopPublicationAttempt
-    if (-not $attempt -or (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 3 -or
-        [string]$attempt.candidate -ne $RemoteBefore) { return $null }
+    if (-not $attempt -or (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 3) { return $null }
+    $publishedCommit = [string]$attempt.candidate
+    if ($publishedCommit -cne $RemoteBefore -and
+        (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',$publishedCommit,$RemoteBefore) -AllowFailure).exitCode -ne 0) { return $null }
     foreach ($entry in @($attempt.queue)) {
         if ((Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $RemoteBefore) -AllowFailure).exitCode -ne 0) { return $null }
     }
-    $remoteTree = Get-GitValue -Arguments @("rev-parse", "$RemoteBefore^{tree}")
-    if ($remoteTree -ne [string]$attempt.tree) { return $null }
-    $installability = Get-DevelopCommitInstallability -Commit $RemoteBefore
+    $publishedTree = Get-GitValue -Arguments @("rev-parse", "$publishedCommit^{tree}")
+    if ($publishedTree -ne [string]$attempt.tree) { return $null }
+    $installability = Get-DevelopCommitInstallability -Commit $publishedCommit
     if (-not [bool]$installability.installable) { throw "Published develop is not installable; recovery will not report success." }
     if (-not $script:ComponentFinalizerScript) {
-        [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $script:Root -CandidateCommit $RemoteBefore)
+        [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $script:Root -CandidateCommit $publishedCommit)
     }
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore -Entries @($attempt.queue)
     Sync-LocalDevelopAfterPublish
@@ -535,7 +554,7 @@ function Complete-InterruptedDevelopPublication {
         Remove-DevelopPublicationAttempt
     }
     return [pscustomobject]@{
-        status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree
+        status = "published"; branch = "develop"; commit = $publishedCommit; tree = $publishedTree; remoteHead = $RemoteBefore
         developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
         aiRulesCompatibility = [string]$installability.aiRulesStatus
         releaseQualified = [bool]$attempt.requireRelease
@@ -543,7 +562,7 @@ function Complete-InterruptedDevelopPublication {
         fullReleaseQualified = $(if ($attempt.PSObject.Properties.Name -contains "fullReleaseRequested") { [bool]$attempt.fullReleaseRequested } else { $false })
         componentPublication = $attempt.componentPublication; recovered = $true
         qualificationStartedAt = [string]$attempt.startedAt
-        qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $remoteTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt)
+        qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $publishedTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt)
     }
 }
 
@@ -558,15 +577,47 @@ function Publish-AccumulatedDevelop {
     if ($interrupted) { return $interrupted }
     $frozenAttempt = Read-DevelopPublicationAttempt
     $frozenPlan = $null
+    $replacementOriginal = $null
+    $replacementArchive = ''
+    $replacementAccepted = $false
+    $originalAttemptBytes = if ($frozenAttempt) { [IO.File]::ReadAllBytes((Get-DevelopPublicationAttemptPath)) } else { $null }
+    if ($Replan) {
+        if ($Replan -notmatch '^[a-f0-9]{64}$' -or -not $frozenAttempt) { throw 'DELIVERY_REPLAN_INVALID: name the active plan shown by Status; its checkpoint and queue were preserved.' }
+        $replacementPlanPath = Join-Path (Get-DeliveryPlanRoot) "$Replan.json"
+        $replacementPlan = Get-Content -LiteralPath $replacementPlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ((Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $replacementPlan)) -cne $Replan) { throw "DELIVERY_REPLAN_INVALID: original immutable plan identity is invalid at '$replacementPlanPath'; checkpoint and proof were preserved." }
+        if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {
+            $replacementOriginal = $frozenAttempt
+            $attemptPath = Get-DevelopPublicationAttemptPath
+            $archiveRoot = Join-Path (Split-Path -Parent $attemptPath) "replaced/$Replan"
+            New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+            $replacementArchive = Join-Path $archiveRoot ((Get-DeliveryFileSha256 -Path $attemptPath)+'.json')
+            if (-not (Test-Path -LiteralPath $replacementArchive)) { Copy-Item -LiteralPath $attemptPath -Destination $replacementArchive }
+            $frozenAttempt = $null
+        } elseif (-not $frozenAttempt.PSObject.Properties['replacesPlanId'] -or [string]$frozenAttempt.replacesPlanId -cne $Replan) {
+            throw "DELIVERY_REPLAN_CHECKPOINT_CHANGED: active plan differs from '$Replan'; continue the active plan shown by Status."
+        }
+    }
     if ($ResumePlan) {
         $frozenPlan = Get-Content -LiteralPath (Join-Path (Get-DeliveryPlanRoot) "$ResumePlan.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if ((Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $frozenPlan)) -cne $ResumePlan) { throw "Saved delivery plan identity is invalid. The queue and checkpoint were preserved; inspect source-delivery Status before resuming the original plan." }
+        if ($Action -eq 'PublishDevelop' -and -not $frozenAttempt -and
+            (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$frozenPlan.candidate.commit,$remoteBefore) -AllowFailure).exitCode -eq 0) {
+            return [pscustomobject]@{
+                status='already-reachable'; branch='develop'; commit=[string]$frozenPlan.candidate.commit
+                tree=[string]$frozenPlan.candidate.tree; remoteHead=$remoteBefore; planId=$ResumePlan
+                developPublished=$true; masterReleased=$false; qualificationStatus='not-revalidated'
+            }
+        }
         if ($frozenPlan.PSObject.Properties['queue']) { $entries = @($frozenPlan.queue) }
         else { $entries = @($entries | Where-Object { (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$_.head,[string]$frozenPlan.candidate.commit) -AllowFailure).exitCode -eq 0 }) }
         if ($frozenAttempt -and $frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -cne $ResumePlan) {
             throw "A different publication checkpoint is active. Finish its plan '$([string]$frozenAttempt.planId)' with the same publication action before starting plan '$ResumePlan'; both plans and all registrations were preserved."
         }
     } elseif ($frozenAttempt) { $entries = @($frozenAttempt.queue) }
+    if ($Action -eq 'PublishDevelop' -and $frozenAttempt -and [string]$frozenAttempt.remoteBefore -cne $remoteBefore) {
+        throw "DELIVERY_REMOTE_MOVED: frozen base '$([string]$frozenAttempt.remoteBefore)', current origin/develop '$remoteBefore'. The original checkpoint and proof were preserved. Review remote movement, then repeat the same PublishDevelop options with -Replan '$([string]$frozenAttempt.planId)'."
+    }
     if ($entries.Count -eq 0 -and -not $frozenPlan) { throw "There are no registered develop changes to publish." }
 
     $worktree = $null
@@ -584,13 +635,14 @@ function Publish-AccumulatedDevelop {
             $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
         }
         $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "publish-develop"
-        Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
+        Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries -PublishedDevelop $remoteBefore
         $queuedTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $queuedCandidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $attemptIdentity = Get-DevelopPublicationIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $queuedCandidate -Tree $queuedTree
         $attempt = Read-DevelopPublicationAttempt
         $priorAttempt = $attempt
-        if ($attempt -and [string]$attempt.identity -ne $attemptIdentity -and $attempt.PSObject.Properties.Name -contains "promotionRef") {
+        if ($replacementOriginal) { $attempt = $null }
+        if ($attempt -and -not $ResumePlan -and -not $Replan -and [string]$attempt.identity -ne $attemptIdentity -and $attempt.PSObject.Properties.Name -contains "promotionRef") {
             Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef)
         }
         $promotionRestored = $false
@@ -599,6 +651,7 @@ function Publish-AccumulatedDevelop {
         }
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+        Assert-DevelopSourceControllerCompatibility -CandidateRoot $worktree.path
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         $componentReleaseCapabilities = @($componentPlan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
         if ($componentReleaseCapabilities.Count -gt 0 -and -not $fullReleaseRequested) {
@@ -614,6 +667,7 @@ function Publish-AccumulatedDevelop {
             $attempt | Add-Member -NotePropertyName componentPlan -NotePropertyValue $componentPlan
         }
         $attempt | Add-Member -NotePropertyName queuedCandidate -NotePropertyValue $queuedCandidate -Force
+        if ($Replan) { $attempt | Add-Member -NotePropertyName replacesPlanId -NotePropertyValue $Replan -Force }
         $attempt.candidate = $candidate
         $attempt.tree = $candidateTree
         Write-DevelopPublicationAttempt -Attempt $attempt
@@ -636,9 +690,54 @@ function Publish-AccumulatedDevelop {
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
         if (-not $frozenPlan -or $frozenPlan.PSObject.Properties['queue']) { Set-DeliveryPlanQueue -Plan $deliveryPlan -Entries $entries }
+        $invalidEvidence = @(if ($Action -eq 'PublishDevelop') { Get-DeliveryPlanInvalidEvidence -Plan $deliveryPlan })
+        if ($replacementOriginal -and $invalidEvidence.Count -eq 0) {
+            $priorIdentity = Get-DeliveryPlanIdentity -Plan $replacementPlan
+            $nextIdentity = Get-DeliveryPlanIdentity -Plan $deliveryPlan
+            $priorIdentity.Remove('replacesPlanId'); $nextIdentity.Remove('replacesPlanId')
+            if ((Get-DeliveryCanonicalJsonSha256 -Value $priorIdentity) -ceq (Get-DeliveryCanonicalJsonSha256 -Value $nextIdentity)) {
+                throw "DELIVERY_REPLAN_INPUTS_UNCHANGED: plan '$Replan' still has the same candidate, owner inputs and valid evidence. Continue its original publication; after diagnosing a repeated stage failure use -RetryBlockedStage, rather than replacing its circuit breaker."
+            }
+        }
+        if ($attempt.PSObject.Properties['replacesPlanId']) {
+            $deliveryPlan | Add-Member -NotePropertyName replacesPlanId -NotePropertyValue ([string]$attempt.replacesPlanId) -Force
+            $deliveryPlan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $deliveryPlan)
+        }
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
         $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidate }) -State "active"
+        # Pin a first plan even when its long-budget approval is still pending.
+        # A mismatched existing plan keeps its original checkpoint bytes.
+        if ($Action -eq 'PublishDevelop' -and (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId)) {
+            $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
+            $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
+            Write-DevelopPublicationAttempt -Attempt $attempt
+            $replacementAccepted = $true
+        }
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
+        if ($invalidEvidence.Count -gt 0) {
+            if (-not $Replan) {
+                if (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId) {
+                    $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
+                    $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
+                    Write-DevelopPublicationAttempt -Attempt $attempt
+                    $replacementAccepted = $true
+                }
+                throw "DELIVERY_STAGE_EVIDENCE_CORRUPT: $(@($invalidEvidence.reason) -join '; '). Original evidence was preserved. Repeat the same PublishDevelop options with -Replan '$([string]$deliveryPlan.planId)' to archive the rejected proof and qualify these inputs again."
+            }
+            $retainDevelop = @($invalidEvidence | Where-Object mode -eq 'Develop').Count -eq 0 -and $priorAttempt -and
+                [string]$priorAttempt.candidate -ceq $candidate -and [string]$priorAttempt.tree -ceq $candidateTree -and
+                (Get-DevelopPublicationPhaseRank -Phase ([string]$priorAttempt.phase)) -ge 1 -and $priorAttempt.PSObject.Properties['developEnvironmentIdentity']
+            $attempt.phase = if ($retainDevelop) { 'develop-qualified' } else { 'candidate-built' }
+            if ($retainDevelop) { $attempt | Add-Member -NotePropertyName developEnvironmentIdentity -NotePropertyValue ([string]$priorAttempt.developEnvironmentIdentity) -Force }
+            $attempt.componentPublication = $null
+            $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
+            $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
+            Write-DevelopPublicationAttempt -Attempt $attempt
+            $replacementAccepted = $true
+            $rejected = @(Move-DeliveryRejectedEvidence -Evidence $invalidEvidence)
+            $attempt | Add-Member -NotePropertyName rejectedEvidence -NotePropertyValue $rejected -Force
+        }
+        $replacementAccepted = $true
         $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
         $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
         $attempt | Add-Member -NotePropertyName releaseCapabilities -NotePropertyValue @($deliveryPlan.releaseCapabilities) -Force
@@ -774,6 +873,14 @@ function Publish-AccumulatedDevelop {
             qualificationStartedAt = [string]$attempt.startedAt
             qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -OperationStartedAt $operationStartedAt
         }
+    } catch {
+        if ($originalAttemptBytes -and -not $replacementAccepted) {
+            $attemptPath = Get-DevelopPublicationAttemptPath
+            $restorePath = "$attemptPath.$([guid]::NewGuid().ToString('N')).tmp"
+            [IO.File]::WriteAllBytes($restorePath, $originalAttemptBytes)
+            Move-Item -LiteralPath $restorePath -Destination $attemptPath -Force
+        }
+        throw
     } finally {
         if (-not $deliverySucceeded -and $deliveryPlan -and $worktree) {
             foreach ($mode in @("Develop", "Release")) {

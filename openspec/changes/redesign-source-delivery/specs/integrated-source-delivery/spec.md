@@ -47,6 +47,16 @@ owner-controlled recovery and no-bypass rules.
 - **WHEN** delivery fails after candidate qualification and qualification inputs remain unchanged
 - **THEN** recovery resumes delivery with the retained evidence and does not launch 1C again
 
+#### Scenario: Inputs change or selected proof is damaged
+- **WHEN** a frozen develop plan cannot reuse its inputs or selected proof
+- **THEN** the owner reports the changed input or exact rejected proof path and SHA, preserves the original plan, and permits explicit replacement through Replan
+- **AND** retries of the replacement keep its frozen membership and valid independent proof, while unchanged inputs cannot reset the circuit breaker
+
+#### Scenario: Remote advances after successful push
+- **WHEN** cleanup of the original candidate is pending and remote develop has advanced beyond it
+- **THEN** recovery verifies original-candidate ancestry, completes only matching frozen queue cleanup and reports the original commit/tree separately from the current remote head
+- **AND** repeating the closed plan preserves the next queue without asserting fresh qualification
+
 ### Requirement: Existing state has a safe transition
 The workflow SHALL preserve pending queue work, pinned publication authority,
 existing proof and supported cancellation/recovery when introducing the common
@@ -56,3 +66,8 @@ checkpoint required by the repository before dependent implementation.
 #### Scenario: Existing queue is adopted
 - **WHEN** the new implementation encounters an existing queue or saved publication plan
 - **THEN** it follows a verified compatible transition or returns an owner-usable continuation without manual state edits or lost work
+
+#### Scenario: Historical plan and functional controller rollback
+- **WHEN** an active historical plan predates the new candidate protocol
+- **THEN** its original authority completes the transition before new-protocol registration proceeds
+- **AND** a functional rollback retains a compatible queue decoder or is rejected before qualification with a repair continuation preserving all queued work

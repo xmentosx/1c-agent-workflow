@@ -212,6 +212,22 @@ function Clear-PublishedQueueEntries {
     throw "Published candidate queue cleanup observed repeated concurrent movement. Accepted refs and publication checkpoint were preserved; repeat the same publication command to finish cleanup without requalifying the published candidate."
 }
 
+function Assert-SourceRegistrationTransitionReady {
+    $attemptPath = Get-DevelopPublicationAttemptPath
+    if (-not (Test-Path -LiteralPath $attemptPath -PathType Leaf)) { return }
+    $attempt = Get-Content -LiteralPath $attemptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $activePlanId = if ($attempt.PSObject.Properties['planId']) { [string]$attempt.planId } else { '' }
+    if ($attempt.PSObject.Properties['sourceRegistrationProtocol'] -and [int]$attempt.sourceRegistrationProtocol -eq 1) { return }
+    if ($attempt.PSObject.Properties['planId'] -and [string]$attempt.planId) {
+        $planPath = Join-Path (Get-DeliveryPlanRoot) "$([string]$attempt.planId).json"
+        if (Test-Path -LiteralPath $planPath -PathType Leaf) {
+            $plan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($plan.PSObject.Properties['queue']) { return }
+        }
+    }
+    throw "DELIVERY_LEGACY_PUBLICATION_ACTIVE: the historical publication checkpoint '$attemptPath' must finish before the first candidate-CAS registration. Continue its original PublishDevelop options under plan '$activePlanId', then repeat this RegisterChange with the same QueueId. No registration, task work or proof was changed."
+}
+
 function Register-SourceChange {
     Assert-CleanDeliveryWorktree
     $head = Get-GitValue -Arguments @("rev-parse", "HEAD")
@@ -229,6 +245,7 @@ function Register-SourceChange {
                 throw "Registration exhausted its original $budgetSeconds second budget. Candidate, task and proof are preserved; repeat RegisterChange with the same QueueId '$id' from the unchanged source checkout."
             }
             $attempt++
+            Assert-SourceRegistrationTransitionReady
             $snapshot = Get-SourceRegistrationSnapshot
             $old = @($snapshot.entries | Where-Object id -eq $id)
             $oldBase = if ($old.Count) { [string]$old[0].base } else { "" }
@@ -253,8 +270,7 @@ function Register-SourceChange {
             $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
             if (-not $worktree) { $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "register" }
             else { [void](Invoke-WorktreeGit -Root $worktree.path -Arguments @("reset", "--hard", $startPoint)) }
-            Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries @([pscustomobject]@{ id="published-develop"; head=$snapshot.remoteBefore })
-            Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $snapshot.entries
+            Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $snapshot.entries -PublishedDevelop $snapshot.remoteBefore
             Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries @([pscustomobject]@{ id=$id; head=$head })
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
