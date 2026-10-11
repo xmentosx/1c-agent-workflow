@@ -1,0 +1,94 @@
+param([Parameter(Mandatory=$true)][string]$RepositoryRoot,[string]$HistoricalJunit='')
+# Explicit source-only audit ledger, not execution or acceptance of tests.
+$ErrorActionPreference='Stop'
+$root=[IO.Path]::GetFullPath($RepositoryRoot)
+$evidence=Join-Path $root 'openspec/changes/redesign-source-delivery/evidence'
+$originalFile='tests/pester/LocalQualityGate.Tests.ps1'
+$inventory=@(Import-Csv (Join-Path $evidence 'inventory/test-cases.csv')|Where-Object file -CEQ $originalFile)
+if($inventory.Count -ne 56){throw 'Expected the frozen 56-definition LocalQuality inventory'}
+$file=Import-Csv (Join-Path $evidence 'inventory/test-files.csv')|Where-Object file -CEQ $originalFile
+$current=@(foreach($name in @('LocalQualityGate','SourceQualityCatalog','PesterCacheCompatibility','ReleaseProgressObservation','PesterShardIdentity','E2EArtifactCleanup','ForkQualificationInventory')) {
+    $relative='tests/pester/'+$name+'.Tests.ps1';$path=Join-Path $root $relative
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+    if($errors){throw "Cannot inspect $relative"}
+    foreach($node in $ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'It'},$true)) {
+        [pscustomobject]@{name=$node.CommandElements[1].Value;file=$relative;line=$node.Extent.StartLineNumber;body=$node.Extent.Text;sourceSha256=(Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant()}
+    }
+})
+# Each record is an individual reviewed behavior, including explicit parameter outcomes.
+$reviews=@'
+7|Worker count changes wrongly invalidate valid proof or admit corrupt results|Actual scheduler, legacy runtime key transform, private Git cache|native-process|2 producers: cold/reuse/owner delta/corrupt SHA; exact execution counters|Legacy is generated actual runner; no real 1C|retain
+70|Observed cold cohorts exceed aggregate deadline|Actual catalog and budget projection|function/catalog|Historical lower bounds and complete Full+upgrade+fresh aggregate|Capacity arithmetic is not new timing proof|retain
+83|Foreign logs keep a hung task alive or valid logs time out|Actual check child functions and progress assignment, stand-env identity|native-process/time|5 cases: release default, configured relative, configured absolute main, foreign idle, hard timeout; exact Unicode and bounds|Real timer and child writer, no Designer; do not compress waits|retain
+222|Equal owner inputs confuse different tests or worktrees|Actual scheduler, private Git worktree and cache|native-process/Git|Two digests, exact Alpha/Beta counts and merged JUnit survive worktree reuse|Synthetic tests, not production native build|retain
+237|Foreign valid-hash result qualifies requested test|Actual scheduler with forged foreign cache|native-process/Git|Different file and same basename elsewhere both re-execute Alpha; preserve foreign bytes; later exact reuse|Two path collision shapes are distinct|retain
+264|Prior local foreign result contaminates shared cache|Actual scheduler, relocated cache slot, swapped local result|native-process/Git|Alpha re-executes, Beta reuses, JUnit belongs to exact tests|Local-result admission differs from shared-slot case|retain
+280|Loaded native dependency changes or disappearance leave stale proof valid|Actual scheduler/catalog and Get-ClientMcpBuildInputPaths; synthetic native inputs|native-process/Git|Four independent helper/guard mutations each invalidate then reuse; missing input remains nonreusable; coverage closure|Does not compile native component; input file bodies are fixtures|retain
+334|Reuse patterns escape repo or become ambiguous|Actual reuse-path validator|function|5 failures: empty list, blank path, traversal, absolute, duplicate|Validator only, not OS traversal enforcement|retain
+347|Core module path leaks into Windows PowerShell child|Actual check Start-PowerShellChildProcess AST|static-wiring|Filter precedes launch and finally restores path|Ordering/source assertions do not execute Core to Desktop transition|retain; behavior-proof follow-up
+371|Redirected child output corrupts Unicode|Actual Pester worker, native Windows PowerShell child|native-process|Exact stdout/stderr markers with whitespace and Cyrillic, passed result|Worker boundary, not full delivery|retain
+405|Failure path loses diagnostics or converts UTF-8 incorrectly|Actual checker child functions and deliberately failing actual shard|native-process|Exit 1, failed worker/no reuse, exact Unicode and referenced diagnostics|Extracted check functions, not entire check invocation|retain
+491|Successful over-target warning corrupts output through delivery|Actual checker startup/warning AST and delivery child functions|native-process|Injected over-target summary; success 0, localized warning/summary path exact, stderr empty|Does not consume a real slow gate budget|retain
+554|Short modes accidentally acquire broad suites or wrong ownership|Actual check source, catalog and resolver|static/function|Public modes, owner coverage and exact named component/delivery routes|Large mixed source/capacity contract; behavior routes also need process proof|retain; scope follow-up
+663|Implicit worker default changes explicit requests or unrelated modes|Actual worker count resolver and wrapper/check source|function/static|CPU clipping, implicit Targeted 4, explicit 3, all other modes 3, provenance wiring|Only arithmetic and source wiring, not scheduling capacity|retain
+685|Focused wrapper reports defaulted workers as explicit|Actual focused test wrapper invoking ParserDocs suite|native-process|Requested 3, explicit false, effective 3 in real summary|Nested suite intentionally retained; not Targeted default 4|retain
+695|Owner selection loses required E tests or ordering capacity reserve|Actual catalog resolver plus recorded cold duration model|function/capacity|Exact current E owner/tests; unchanged historical 3/4 lane comparison and reserve|Current extracted groups extend route; model is not fresh Full timing|retain; historical model follow-up
+775|Lifecycle cohort omits mandatory owners or serial tail budget|Actual catalog resolver and preserved historical 57-file workload|function/capacity|Explicit additive consumers, full current closure and historical serial reserve|Not live parallelism proof; historical observations remain unchanged|retain; historical model follow-up
+839|Narrow semantic impact skips unknown/shared entrypoint behavior|Actual AST impact resolver and synthetic baseline/current text|function/AST|Single/multiple action union; unknown parameter/function/action, reordered functions, defaults, top-level changes, dynamic labels, absent inputs fall back|Synthetic text, not launched helper|retain
+893|Resolver CLI loses schema/additional entrypoint input|Actual resolver CLI with explicit changed path and BaseRef|native-process/Git|Schema 2, mandatory fallback tests, full entrypoint input; canonical CRLF/LF no-impact route|No 1C helper execution|retain
+910|Deleted or renamed entrypoint breaks fallback or misses new digest|Actual Git delete/rename, resolver and scheduler|native-process/Git|Both topology changes fall back; renamed additional input mutation forces rerun|Distinct missing-file and moved-input contracts|retain
+976|Real BaseRef route misses common/domain regression|Disposable clone of actual source, actual resolver and selected suite|native-process/Git|Auxiliary leaf narrows selection; dispatch mutant is killed by selected read-only canary|Private source fixture, not real infobase|retain
+1039|Additional semantic entrypoint input leaves selected shards reusable|Actual scheduler with schema 2 additional input|native-process|Both selected tests rerun with different digests after entrypoint edit|Input closure test, not entrypoint business behavior|retain
+1081|Unknown external runtime acquires a reusable digest|Actual scheduler hash function with catalog exclusion|function|Current/legacy digest both empty before hashing contracts exist|Explicit Vanessa exclusion only; aggregate identity separately tested|retain
+1101|Nonreusable passed file cannot finish or is silently cached|Actual scheduler invoked twice and execution counter|native-process|Both pass, execute twice, empty digest and zero reuse|Unknown identity is represented, not runtime health verified|retain
+1133|Hashing accidentally uses unreliable Get-FileHash owner|Actual archive hash function and poisoned Get-FileHash; imports inspected|function/static|Exact byte payload SHA while poisoned cmdlet cannot be called|No real archive extraction or worker subprocess in this case|retain
+1164|Release repeats Develop or omits static/live safety wiring|Actual check, qualifications, concatenated delivery sources and Develop source|static-wiring|Schema/rebind/fork/rollback/fresh/export/SHA and UTF-8 markers remain|Marker presence across concatenated files cannot prove actual calling sequence or E2E|retain; behavior-proof and scope follow-up
+1205|Cleanup removes foreign duplicate launcher entry or misses owned tree|Actual cleanup, private Git main/worktree and launcher|Git/filesystem|Exact owned roots/entries removed; foreign same-ID entry preserved; one BOM backup|No real launcher or 1C processes|retain
+1216|Git-unregistered leftover Cyrillic branch is never removed|Actual cleanup and recreated orphan branch .git pointer|Git/filesystem|Owned main/orphan deleted, sibling retained|Reproduces residual directory state, not injected OS deletion failure|retain
+1241|Bulk cleanup deletes live or user launcher registrations|Actual cleanup and private launcher entries|filesystem|Only missing owned entry removed; live and user entries survive|Does not operate user launcher|retain
+1249|Nested Unicode path is missed or backups grow forever|Actual cleanup, nested special path and five backups|filesystem|Owned nested entry removed and exactly three backups retained|Synthetic launcher only|retain
+1261|Release seed cleanup deletes a user entry for same connection|Actual cleanup with owned/user entries sharing connection|filesystem|Only exact owned missing release-seed entry removed|Connection equality alone is deliberately insufficient|retain
+1271|Export cleanup deletes unrelated result files|Actual cleanup with valid manifest/SHA and current/old CF artifacts|filesystem|Four owned artifact files removed, nonzero bytes, unrelated text preserved|Positive valid manifest only; does not prove invalid SHA is rejected|retain; negative-proof follow-up
+1288|Stale worktree sweep destroys configured/pending/dirty work|Actual Git worktrees, pending journal, user edit and cleanup|Git/filesystem|Only stale unconfigured worktree/ref deleted; retained bytes/ref intact; dirty tree rejects and remains|No real 1C process or failed OS delete|retain
+1319|Scheduler loses checkpoints, cleanup or bounded worker wiring|Actual scheduler, worker, runtime and wrapper source|static-wiring|Individual checkpoints, ordering, cache, metrics, guard fallback and module setup markers|Many implementation-shape assertions; does not itself execute bounded concurrency|retain; behavior-proof and scope follow-up
+1354|Worker overrides explicit guard authority or pollutes external root|Actual worker child, explicit root and hashed sentinel|native-process|Explicit root preserved, private fallback, unchanged sentinel, environment restored|Does not acquire a real guarded operation|retain
+1392|Identical committed bytes invalidate useful focused proof|Actual scheduler and real Git dirty-to-commit transition|native-process/Git|Same digest/reuse after commit; explicit/implicit worker provenance retained|Not permission to ignore global dirty-state guards|retain
+1418|Owner-selected upgrade moves after full Pester or loses metrics|Actual check and catalog source/order|static-wiring|Upgrade before Pester, fail-fast upgrade declaration, timing wiring|Does not execute real upgrade fail-fast sequence|retain; behavior-proof follow-up
+1431|Declared archive or test bytes do not invalidate exact cache|Actual scheduler with private Git, byte arrays and cache|native-process/Git|Same archive bytes at new path reuse; nested cache recovery; canonical CRLF/LF reuse; changed archive/test rerun|Byte arrays are not real Vanessa ZIP/build acceptance|retain
+1450|Undeclared environment identities invalidate unrelated proof|Actual scheduler with changed archive/fork env paths|native-process|Changed undeclared external files keep same reusable digest|Declared external invalidation has a separate case|retain
+1464|Unchanged requested test needlessly reruns with neighbor edits|Actual scheduler, fixture runner-v1/v2 and added neighbor test|native-process/Git|Unchanged selected test reuses despite fixture-file and neighbor changes|Actual scheduler executable is unchanged; title overstates runner repair coverage|retain; clarify scope follow-up
+1479|Failed stage reruns completed predecessor or skips downstream files|Actual serial scheduler, A pass/B fail/C pending then B repair|native-process|Resume reuses A and executes corrected B plus downstream C|Single-worker ordering intentionally retained|retain
+1502|Wrong tree or sibling commit qualifies reusable proof|Actual qualification function and real Git graph|Git/function|Exact and schema2 ancestor-same-tree pass; schema1/sibling/changed-tree reject|Fixture commits, not delivery publication|retain
+1526|Cross-tree continuation admits forged candidate or production changes|Actual continuation validators, Git graph and synthetic Targeted proof|Git/function|Declared test scope and managed candidate allow; forged/unmanaged/production change reject|Synthetic passed raw proof; not real RegisterChange end-to-end|retain
+1585|Readiness harness repair cannot resume original Release|Actual continuation scope catalog|catalog|Exact readiness path remains allowed Release continuation|Declaration only, not live recovery acceptance|retain
+1590|Source-only guidance leaks into installed surfaces or Git hooks|Actual source/installed skill directory inventory and source docs|static/filesystem|Exact source-only skills and no .githooks; required documentation markers|Actual installed-copy boundary belongs to BootstrapUpdate tests|retain
+1653|Current three-script fork receipt is wrongly rejected|Actual check fork validator and private current script inventory|function/filesystem|Exact current receipt accepted|Synthetic passed receipt; no real fork Full gate|retain
+1656|Legacy two-script receipt loses compatibility|Actual fork validator with helper physically absent|function/filesystem|Exact legacy receipt accepted only without helper|Absence is deliberate legacy topology|retain
+1660|Current helper can be omitted from receipt|Actual fork validator with helper present and record omitted|function/filesystem|Omission rejected|Different from actual helper deletion|retain
+1665|Extra receipt script hides mismatched inventory|Actual fork validator and extra record|function/filesystem|Superset rejected|Exact set completeness, not hash mismatch|retain
+1672|Changed actual helper bytes reuse old qualification|Actual fork validator and modified helper file|function/filesystem|Source byte mutation rejected|Receipt unchanged, distinct from forged recorded hash|retain
+1676|Forged helper hash is trusted|Actual fork validator and altered recorded hash|function/filesystem|Incorrect recorded hash rejected|Actual helper unchanged|retain
+1681|Explicit fork provenance passes canonical main release|Actual fork validator with explicit upstream ref|function/filesystem|Explicit ref rejected for canonical main expectation|No remote ref lookup in this fixture|retain
+1686|Receipt references absent current helper|Actual fork validator after helper deletion|function/filesystem|Missing helper with recorded entry rejected|Different from valid two-script legacy receipt|retain
+1697|Older catalogs lose original route deadlines|Actual catalog budget functions with route fields removed|function|Legacy upgrade1200/fresh2100 and valid catalog|Compatibility fallback only for absent fields|retain
+1706|Explicit route budgets are omitted from aggregate|Actual budget functions with object/map catalogs|function/catalog|Positive integers, upgrade5400/fresh3600/aggregate13200, hashtable support|Arithmetic, not measured journey duration|retain
+1719|Invalid present budget silently falls back to legacy|Actual budget reader and catalog validator|function|8 values null/zero/negative/fraction/string/bool/array/overflow rejected by both owners|Type and presence boundaries differ; keep all variants|retain
+'@ -split '\r?\n'
+$historical=@()
+if($HistoricalJunit){[xml]$xml=Get-Content -LiteralPath $HistoricalJunit -Raw -Encoding UTF8;$historical=@($xml.SelectNodes('//testcase'))}
+$rows=@(foreach($record in $reviews) {
+    $v=$record -split '\|',7
+    if($v.Count -ne 7){throw "Malformed review: $record"}
+    $old=@($inventory|Where-Object {[int]$_.line -eq [int]$v[0]})
+    if($old.Count -ne 1){throw "Missing original review identity: $($v[0])"};$old=$old[0]
+    $now=@($current|Where-Object name -CEQ $old.name)
+    if($now.Count -ne 1){throw "Original definition no longer unique: $($old.name)"};$now=$now[0]
+    $prefix=($old.name -split '<',2)[0]
+    $cases=@($historical|Where-Object {([string]$_.name).Contains('.'+$prefix)})
+    $seconds=if($cases.Count){($cases|ForEach-Object {[double]::Parse($_.time,[Globalization.CultureInfo]::InvariantCulture)}|Measure-Object -Sum).Sum}else{$null}
+    [pscustomobject][ordered]@{sourceCommit='fa0e3c91694112c1da3ecda7209a8a81ea828264';file=$originalFile;originalLine=$old.line;name=$old.name;normalizedBodySha256=$old.normalizedBodySha256;sourceSha256=$file.sourceSha256;owners=$old.owners;risk=$v[1];inputs=$v[2];level=$v[3];environment='Windows PowerShell 5.1/Pester, private TestDrive/temp roots; Git/native children where explicitly stated';resources='Original private fixture, environment restoration and cleanup retained; no real infobase';retainedProof=$v[4];limitation=$v[5];decision=$v[6];currentFile=$now.file;currentLine=$now.line;currentSourceSha256=$now.sourceSha256;historicalExpandedCases=$cases.Count;historicalSeconds=$(if($null -ne $seconds){([double]$seconds).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}else{''});history='Named 012a1225 worker-1 JUnit where matched; no per-case flake history inferred; current refactor acceptance separate'}
+})
+if($rows.Count -ne 56 -or @($rows.originalLine|Sort-Object -Unique).Count -ne 56){throw 'Necessity review must cover every original definition once'}
+$rows|Export-Csv (Join-Path $evidence 'local-quality-review.csv') -NoTypeInformation -Encoding UTF8
+[pscustomobject]@{reviewedOriginalDefinitions=$rows.Count;matchedHistoricalExpandedCases=($rows|Measure-Object historicalExpandedCases -Sum).Sum;newTestsRun=$false}|ConvertTo-Json -Compress

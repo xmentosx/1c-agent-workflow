@@ -195,8 +195,8 @@ Describe 'Source quality catalog contracts' {
         )
         $expectedTests = @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
-            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
-            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
             "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
@@ -206,7 +206,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "pester-full-input-proof", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -225,7 +225,7 @@ Describe 'Source quality catalog contracts' {
         $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $updatedOrderingWeights = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
-            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=233
+            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=275
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
             "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
             "SourceDeliveryProcessLifetime.Tests.ps1"=7
@@ -234,6 +234,13 @@ Describe 'Source quality catalog contracts' {
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
         }
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
+        # 012a1225 named worker JUnit: same original 56 expanded cases.
+        # Individual case sums plus 5 seconds per file for setup, rounded up.
+        [double]$trackedTimings.files.'PesterCacheCompatibility.Tests.ps1' | Should -Be 67
+        [double]$trackedTimings.files.'PesterShardIdentity.Tests.ps1' | Should -Be 159
+        [double]$trackedTimings.files.'ReleaseProgressObservation.Tests.ps1' | Should -Be 122
+        [double]$trackedTimings.files.'E2EArtifactCleanup.Tests.ps1' | Should -Be 17
+        [double]$trackedTimings.files.'ForkQualificationInventory.Tests.ps1' | Should -Be 6
         # The historical complete native file remains represented below. Its
         # transferred groups now have individual measured-cost ordering weights.
         [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 10
@@ -543,6 +550,36 @@ Describe 'Shared Release budget projection' {
 }
 
 Describe 'Catalog selection and qualified consumer inputs' {
+    It 'routes extracted cache, progress, cleanup and fork behavior independently with every direct suite retained' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $names=@('E2EArtifactCleanup','ForkQualificationInventory','PesterCacheCompatibility','PesterShardIdentity','ReleaseProgressObservation')
+        $groups=@($names|ForEach-Object {'tests/pester/'+$_+'.Tests.ps1'})
+        foreach($test in $groups) {
+            $selection=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test)
+            @($selection.unknownPaths) | Should -BeNullOrEmpty
+            @($selection.tests) | Should -Be @($test)
+            @($catalog.smokeTests) | Should -Contain $test -Because 'the original Smoke file included every transferred case'
+        }
+        $routes=@(
+            @{path='scripts/check.ps1';expected=@('ForkQualificationInventory','ReleaseProgressObservation')}
+            @{path='scripts/invoke-pester-shards.ps1';expected=@('PesterCacheCompatibility','PesterShardIdentity')}
+            @{path='scripts/client-mcp-build.ps1';expected=@('PesterShardIdentity')}
+            @{path='scripts/develop-e2e-cleanup.ps1';expected=@('E2EArtifactCleanup')}
+            @{path='scripts/git-path-list.ps1';expected=@('E2EArtifactCleanup','PesterCacheCompatibility','PesterShardIdentity')}
+            @{path='scripts/stand-env-identity.ps1';expected=@('ReleaseProgressObservation')}
+            @{path='scripts/build-client-mcp-patched.ps1';expected=@()}
+            @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1';expected=@()}
+            @{path='scripts/pester-timings.json';expected=@()}
+            @{path='tests/quality-contracts.json';expected=@()}
+        )
+        foreach($route in $routes) {
+            $selection=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($route.path)
+            @($selection.unknownPaths) | Should -BeNullOrEmpty
+            @($selection.tests|Where-Object {$_ -in $groups}) | Should -Be @($route.expected|ForEach-Object {'tests/pester/'+$_+'.Tests.ps1'}) -Because $route.path
+        }
+    }
+
     It 'selects extracted Release groups only for their behavior and preserves every direct suite route' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
@@ -599,7 +636,9 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
             $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
-                'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission')
+                'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
+                'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory')
+            $catalogIndependent=@('PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
@@ -625,7 +664,12 @@ Describe 'Catalog selection and qualified consumer inputs' {
             [IO.File]::AppendAllText($catalogPath,"`n",[Text.UTF8Encoding]::new($false))
             foreach($name in $consumers) {
                 $path=Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')
-                Get-ShardInputDigest -Paths @($path) | Should -Not -Be $before[$name] -Because "$name still consumes the catalog during full qualification"
+                $changed=Get-ShardInputDigest -Paths @($path)
+                if($name -in $catalogIndependent) {
+                    $changed | Should -BeExactly $before[$name] -Because "$name does not read the real catalog as fixture input"
+                } else {
+                    $changed | Should -Not -Be $before[$name] -Because "$name still consumes the catalog during full qualification"
+                }
             }
             # Definitions loaded by the workflow-transition module remain Full
             # inputs even when their standalone component does not select Release.
@@ -640,8 +684,8 @@ Describe 'Catalog selection and qualified consumer inputs' {
             foreach($name in $consumers) {
                 $path=Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')
                 $changed=Get-ShardInputDigest -Paths @($path)
-                if($name -in @('LocalQualityGate','ReleaseOrchestration','ReleaseAdmission')) {
-                    $changed | Should -Not -Be $afterCatalog[$name] -Because "$name loads the helper definitions"
+                if($name -in @('PesterShardIdentity','ReleaseOrchestration','ReleaseAdmission')) {
+                    $changed | Should -Not -Be $afterCatalog[$name] -Because "$name declares this helper as a reuse dependency"
                 } else {
                     $changed | Should -BeExactly $afterCatalog[$name] -Because "$name does not consume this helper"
                 }
@@ -720,6 +764,6 @@ Describe 'Source catalog Develop journey selection' {
         $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
         @($candidate.contracts) | Should -Be @('pester-full-input-proof','source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
         $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
-        @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
+        @($cleanup.contracts) | Should -Be @('e2e-artifact-cleanup-tests','source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 }

@@ -87,6 +87,11 @@
     }
   },
   "smokeTests": [
+    "tests/pester/E2EArtifactCleanup.Tests.ps1",
+    "tests/pester/ForkQualificationInventory.Tests.ps1",
+    "tests/pester/PesterCacheCompatibility.Tests.ps1",
+    "tests/pester/PesterShardIdentity.Tests.ps1",
+    "tests/pester/ReleaseProgressObservation.Tests.ps1",
     "tests/pester/LocalQualityGate.Tests.ps1",
     "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
     "tests/pester/LifecycleOperationLock.Tests.ps1",
@@ -117,6 +122,101 @@
     "tests/pester/BootstrapUpdate.Tests.ps1": ["ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE"]
   },
   "contracts": [
+    {
+      "id": "pester-cache-compatibility",
+      "owner": "Pester scheduler-independent current and legacy cache compatibility",
+      "gate": "targeted",
+      "budgetSeconds": 150,
+      "primaryTest": "tests/pester/PesterCacheCompatibility.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/invoke-pester-runtime.ps1",
+        "scripts/invoke-pester-shards.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/run-pester-shard.ps1"
+      ],
+      "tests": [
+        "tests/pester/PesterCacheCompatibility.Tests.ps1"
+      ]
+    },
+    {
+      "id": "pester-shard-identity",
+      "owner": "Exact test identity, foreign result isolation and native dependency cache inputs",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/PesterShardIdentity.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1",
+        "scripts/client-mcp-build.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/invoke-pester-runtime.ps1",
+        "scripts/invoke-pester-shards.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/run-pester-shard.ps1"
+      ],
+      "reuseInputPaths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/*.ps1",
+        ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py",
+        ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1",
+        "scripts/build-client-mcp-patched.ps1",
+        "scripts/client-mcp-build.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/vanessa-build-runtime.ps1",
+        "tests/fixtures/client-mcp-language/*",
+        "tests/quality-contracts.json",
+        "third-party/client-mcp/*"
+      ],
+      "tests": [
+        "tests/pester/PesterShardIdentity.Tests.ps1"
+      ]
+    },
+    {
+      "id": "release-progress-observation",
+      "owner": "Owned native progress and unchanged idle and hard deadlines",
+      "gate": "targeted",
+      "budgetSeconds": 150,
+      "primaryTest": "tests/pester/ReleaseProgressObservation.Tests.ps1",
+      "paths": [
+        "scripts/check.ps1",
+        "scripts/stand-env-identity.ps1"
+      ],
+      "tests": [
+        "tests/pester/ReleaseProgressObservation.Tests.ps1"
+      ]
+    },
+    {
+      "id": "e2e-artifact-cleanup-tests",
+      "owner": "Exact disposable E2E worktrees, launcher entries and exported files",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/E2EArtifactCleanup.Tests.ps1",
+      "paths": [
+        "scripts/develop-e2e-cleanup.ps1",
+        "scripts/git-path-list.ps1"
+      ],
+      "tests": [
+        "tests/pester/E2EArtifactCleanup.Tests.ps1"
+      ]
+    },
+    {
+      "id": "fork-qualification-inventory",
+      "owner": "Exact controlled-fork qualification script and byte inventory",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/ForkQualificationInventory.Tests.ps1",
+      "paths": [
+        "scripts/check.ps1"
+      ],
+      "tests": [
+        "tests/pester/ForkQualificationInventory.Tests.ps1"
+      ]
+    },
     {
       "id": "remote-performance",
       "owner": "portable remote jobs and execution-host measurements",
@@ -283,9 +383,28 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/ClientMcpBuild.Tests.ps1",
-      "paths": ["scripts/build-client-mcp-patched.ps1", "scripts/client-mcp-build.ps1", "third-party/client-mcp/*", "tests/fixtures/client-mcp-language/*"],
-      "reuseInputPaths": ["scripts/vanessa-build-runtime.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/lib/*.ps1", ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1", ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py"],
-      "tests": ["tests/pester/ClientMcpBuild.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+      "paths": [
+        "scripts/build-client-mcp-patched.ps1",
+        "scripts/client-mcp-build.ps1",
+        "third-party/client-mcp/*",
+        "tests/fixtures/client-mcp-language/*"
+      ],
+      "reuseInputPaths": [
+        "scripts/vanessa-build-runtime.ps1",
+        "scripts/git-path-list.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/*.ps1",
+        ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1",
+        ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py",
+        ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py"
+      ],
+      "tests": [
+        "tests/pester/ClientMcpBuild.Tests.ps1",
+        "tests/pester/VanessaBuildRuntime.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-cleanup",

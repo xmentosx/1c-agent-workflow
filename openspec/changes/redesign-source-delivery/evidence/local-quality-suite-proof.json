@@ -1,0 +1,22 @@
+﻿{
+    "sourceCommit":  "012a122588fa78e674138760536101465b06db76",
+    "originalDefinitions":  46,
+    "currentDefinitions":  46,
+    "exactItMultiset":  true,
+    "exactTopLevelBeforeAll":  true,
+    "exactTransferredDescribeAndScopedSetup":  true,
+    "retainedLocalDefinitions":  24,
+    "files":  [
+                  "tests/pester/LocalQualityGate.Tests.ps1",
+                  "tests/pester/E2EArtifactCleanup.Tests.ps1",
+                  "tests/pester/ForkQualificationInventory.Tests.ps1",
+                  "tests/pester/PesterCacheCompatibility.Tests.ps1",
+                  "tests/pester/PesterShardIdentity.Tests.ps1",
+                  "tests/pester/ReleaseProgressObservation.Tests.ps1"
+              ],
+    "runtimeAcceptance":  "Separate; AST equality proves retained source, not executed scenarios",
+    "originalExpandedCases":  56,
+    "currentExpandedCases":  56,
+    "exactExpandedNames":  true,
+    "postTransferExactItMultiset":  true
+}

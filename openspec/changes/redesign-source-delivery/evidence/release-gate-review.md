@@ -103,4 +103,10 @@ runtime; fake snapshot/helper не доказывает настоящую со�
 dotenv case не исполняет запрет произвольного target; overlap арифметика без
 process handles не доказывает одновременность; прямой corrupt-SHA helper не
 доказывает весь runner branch. Эти случаи пока оставлены с честной границей.
-RegisterChange и общий аудит A/B/C ещё не завершены; публикации здесь нет.
+RegisterChange завершён для `012a122588fa78e674138760536101465b06db76`, tree
+`4a30d30d5c8ca04cdcd23266c94e9443227f3999`: 246/0/0, 16 executed / 0 reused,
+check 1308567 ms, raw 1310953 ms. Исходная запись:
+`itl/runs/20261011-003147-933-targeted-cc873328578e4d38af0032cd06d81177.json`.
+Штатный Status подтвердил ту же очередь base `fa0e3c91` / head `012a1225`,
+activeOperation отсутствует; tracked state child чист. Общий аудит A/B/C ещё
+не завершён; публикации здесь нет.
