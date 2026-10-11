@@ -92,3 +92,22 @@ fixture runner-v1/v2 не меняет настоящий scheduler; полож�
 Явное воспроизведение ledger — `evidence/build-local-quality-review.ps1` с
 `-RepositoryRoot` и optional `-HistoricalJunit`; без последнего cost/history
 не объявляются известными. Скрипт не запускает тесты и не является routine check.
+
+## Принятая регистрация и оставшаяся стоимость
+
+`2a8c205296b3fc3379d205be4c82b2a5243992f5`, tree
+`7da66f15565b4cb12b18e21385ddd015c0bba5a1`, зарегистрирован в прежнюю очередь
+base `fa0e3c91`: 206/0/0, 14 executed / 0 reused; check 390564 ms, raw 392909 ms.
+Исходная запись:
+`itl/runs/20261011-010515-268-targeted-99daae6192dd43a58f9d898aa804073b.json`.
+Штатный Status подтвердил head `2a8c2052`, activeOperation отсутствует;
+tracked state основного рабочего дерева чист. Это не публикация.
+
+Целевой бюджет 300 s превышен. Канонический scheduler summary связывает
+LocalQualityGate 24 cases с 311827 ms, ReleaseReadiness 19 cases с 229278 ms,
+DevelopE2EQualification 20 cases с 201653 ms. Эти суммы нельзя складывать в
+wall time: группы выполнялись параллельно. Source-quality-gate всё ещё выбирает
+смешанную группу потребителей для checker/timing изменений. Следующая работа
+должна уточнить их реальные production dependencies и остаток LocalQualityGate,
+сохраняя исходные native scenarios. Нельзя объявлять пяти минут достигнутыми,
+поднимать целевой бюджет или заменять process boundary арифметикой.

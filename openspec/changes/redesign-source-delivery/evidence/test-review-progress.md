@@ -3,13 +3,14 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 180 определений имеют явный предметный
-review, 2634 остаются pending. Из рассмотренных: Pester 147, Python 28, Go 5,
+[Summary](review-index-summary.json): 217 определений имеют явный предметный
+review, 2597 остаются pending. Из рассмотренных: Pester 184, Python 28, Go 5,
 Node 0. Это охват исходных определений, не количество запусков или новых тестов.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
 boundaries, 11 host wrappers, семь параметризованных определений и новый
-15-case nested review и все 56 исходных определений LocalQualityGate.
+15-case nested review, все 56 исходных определений LocalQualityGate и частичный
+22-definition review CompactItlRunner.
 Параметризованные строки deduplicate по исходному
 определению. Review wrapper не означает review вложенных Python/Node cases;
 AST transfer proof сам по себе не считается решением о необходимости.
@@ -63,6 +64,26 @@ assertion.
 [границы, split и доказательства](local-quality-review.md) закрывают review
 исходных definitions этого файла. 47 retain, девять retain с конкретным follow-up;
 целых тестов не удалено. Пять независимых групп сохраняют все исходные It и
-expanded cases, но требуют своей регистрации. Следующий priority — оставшиеся
+expanded cases; зарегистрированы в `2a8c2052`: 206/0/0, check 390564 ms.
+Целевой бюджет 300 s ещё превышен. Следующий priority — оставшиеся
 CompactItlRunner и DevBranchLifecycle, а также не закрытые follow-ups уже
-рассмотренных случаев. 2634 pending не объявляются рассмотренными по AST transfer.
+рассмотренных случаев. Остальные pending не объявляются рассмотренными по AST transfer.
+
+## CompactItlRunner
+
+[Частичный review](compact-runner-review.md) добавляет 22 предметно просмотренных
+определений к пяти ранее разобранным границам: 27/45 этого файла, ещё 18 pending.
+Текущий source SHA совпал с frozen baseline. Все 22 retain, пять с конкретным
+follow-up. Новые tests/gates для read-only аудита не запускались.
+
+## ReleaseReadiness
+
+[Все 15 исходных определений / 19 expanded cases](readiness-review.csv)
+просмотрены по телам. [Closure и решения](readiness-review.md) сохраняют
+реальные archive/encoding/Git/checkpoint boundaries. Один независимый owner
+исключает checker/timings/scheduler из выбора readiness, добавляет пропущенный
+lifecycle route и сохраняет loaded/stage fingerprint inputs. Исходный файл
+не изменён, necessity review не запускал его заново. Static/function проверка
+catalog: первоначально 36 passed / 2 failed (явный дополнительный owner и
+неполный dependency inventory тестового fixture); оба исходных случая после
+исправления прошли 2/0 за 14.96 s. Acceptance регистрации фиксируется отдельно.
