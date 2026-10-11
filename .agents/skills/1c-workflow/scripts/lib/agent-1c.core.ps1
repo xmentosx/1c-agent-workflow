@@ -7296,6 +7296,11 @@ function Invoke-NativeProcessAndWaitResult {
         throw "Failed to start process: $FilePath"
     }
 
+    # Windows PowerShell Start-Process can lose the exit status after the child
+    # exits unless its native handle is retained before monitoring begins.
+    # In that case [int]$process.ExitCode would silently turn null into success.
+    $null = $process.Handle
+
     $nativeProcessStartedAtUtc = ''
     try { $nativeProcessStartedAtUtc = $process.StartTime.ToUniversalTime().ToString('o') } catch { }
     Set-DesignerNativeLaunchIdentity -Record $nativeOperationRecord -Process $process -FilePath $FilePath

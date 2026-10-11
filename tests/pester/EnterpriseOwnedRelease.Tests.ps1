@@ -23,7 +23,7 @@
             function Start-Process {
                 if ($Failure -eq 'launch') { throw 'native start outcome unknown' }
                 $script:EnterpriseProcessBirth = [DateTime]::UtcNow
-                $process = [pscustomobject]@{ Id = 6100; ProcessName = '1cv8c'; StartTime = $script:EnterpriseProcessBirth; ExitTime = $script:EnterpriseProcessBirth.AddMilliseconds(1); HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
+                $process = [pscustomobject]@{ Handle = [IntPtr]123;  Id = 6100; ProcessName = '1cv8c'; StartTime = $script:EnterpriseProcessBirth; ExitTime = $script:EnterpriseProcessBirth.AddMilliseconds(1); HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
                 $process | Add-Member ScriptMethod Refresh {}
                 $process | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds) $true }
                 return $process

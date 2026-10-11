@@ -515,7 +515,7 @@
             $script:Config = [pscustomobject]@{platformPath=$platformPath; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=8; designerDumpStabilitySeconds=0}
             $script:ReleasePolls = 0
             $script:ReleaseEvidence = $false
-            $fakeProcess = [pscustomobject]@{Id=9451;HasExited=$true;ExitCode=1}
+            $fakeProcess = [pscustomobject]@{ Handle = [IntPtr]123; Id=9451;HasExited=$true;ExitCode=1}
             $fakeProcess | Add-Member ScriptMethod Refresh { }
             $fakeProcess | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds); return $true }
             function Start-Process { return $fakeProcess }
@@ -605,6 +605,7 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ProbeCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4242
                 HasExited = $true
                 ExitCode = 0
@@ -638,6 +639,7 @@
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4243
                 HasExited = $true
                 ExitCode = 0
@@ -666,6 +668,7 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ProbeCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4244
                 HasExited = $true
                 ExitCode = 0
@@ -697,6 +700,7 @@
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4245
                 HasExited = $true
                 ExitCode = 0
@@ -727,6 +731,7 @@
             $script:CleanupCalls = 0
             $script:StopCalls = 0
             $fakeProcess = [pscustomobject]@{
+                Handle = [IntPtr]123
                 Id = 4246
                 HasExited = $true
                 ExitCode = 0

@@ -152,7 +152,7 @@ while ($true) {
     It "fails closed when a live process working set cannot be sampled" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $fakeProcess = [pscustomobject]@{ Id = 424242; HasExited = $false; ExitCode = 0 }
+            $fakeProcess = [pscustomobject]@{ Handle = [IntPtr]123;  Id = 424242; HasExited = $false; ExitCode = 0 }
             $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { throw "working set unavailable" }
             function Start-Process {
                 param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru)

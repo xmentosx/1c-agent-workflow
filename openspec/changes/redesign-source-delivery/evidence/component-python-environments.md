@@ -53,6 +53,14 @@ PM5 negative acceptance and trial publication remain separate open tasks.
 
 ## Additional necessity review
 
+Canonical RegisterChange accepted `1480c842`: 149 passed,0 failed,0 skipped;
+16 executed shards,0 reused. Check218731ms/raw221381ms, including
+fingerprint4021ms, runtime probe1004ms and worker span207346ms. This component
+preparation change meets the300s target; it is not evidence of total publication
+time or the same workload as earlier coordinator changes. Named raw record:
+`20261011-201356-657-targeted-4734adc30d98445fb944fabaf7544a96.json`.
+Status confirmed accepted queue head, indexready/invalid0/activeOperationnull.
+
 [node-proxy-review.csv](node-proxy-review.csv) covers all eight frozen Node
 definitions: seven native HTTP/process journeys and top-level transformations.
 They protect distinct risks; all retained. CLI port reservation and bounded

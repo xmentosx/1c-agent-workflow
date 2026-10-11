@@ -1388,21 +1388,42 @@ public static class $fixtureTypeName {
     }
 
     It "serializes launcher-list mutations with a dedicated cross-process file lock" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-lock-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl launcher lock Кириллица " + [guid]::NewGuid().ToString("N"))
         try {
             $listPath = Join-Path $tempRoot "1C\1CEStart\ibases.v8i"
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $childPath = Join-Path $tempRoot 'lock child.ps1'
+            $childText = @'
+param([string]$HelperPath,[string]$ProjectRoot,[string]$ListPath)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+try {
+    $lock = Enter-LauncherListLock -ListPath $ListPath -TimeoutSeconds 1
+    try { [Console]::WriteLine('acquired') } finally { $lock.Dispose() }
+    exit 0
+} catch {
+    [Console]::WriteLine($_.Exception.Message)
+    exit 23
+}
+'@
+            [IO.File]::WriteAllText($childPath, $childText, [Text.UTF8Encoding]::new($true))
+            $invokeChild = {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $native = Invoke-NativeProcessAndWaitResult -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @(
+                    '-NoProfile', '-File', $childPath, $HelperPath, $RepoRoot, $listPath
+                ) -TimeoutSeconds 30 -StdoutPath (Join-Path $tempRoot 'stdout.txt') -StderrPath (Join-Path $tempRoot 'stderr.txt')
+                [pscustomobject]@{ exitCode=$native.exitCode; text=Read-Utf8Text -Path (Join-Path $tempRoot 'stdout.txt') }
+            }
             $firstLock = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 Enter-LauncherListLock -ListPath $listPath -TimeoutSeconds 1
             }
             try {
-                {
-                    & {
-                        . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-                        $secondLock = Enter-LauncherListLock -ListPath $listPath -TimeoutSeconds 1
-                        $secondLock.Dispose()
-                    }
-                } | Should -Throw "LAUNCHER_LIST_LOCK_TIMEOUT*"
+                $blocked = & $invokeChild
+                $blocked.exitCode | Should -Be 23
+                $blocked.text | Should -Match '^LAUNCHER_LIST_LOCK_TIMEOUT'
+                $blocked.text | Should -Match ([regex]::Escape($listPath + '.itl.lock'))
             } finally {
                 $firstLock.Dispose()
             }
@@ -1413,6 +1434,9 @@ public static class $fixtureTypeName {
             }
             $reacquired | Should -Not -BeNullOrEmpty
             $reacquired.Dispose()
+            $afterRelease = & $invokeChild
+            $afterRelease.exitCode | Should -Be 0
+            $afterRelease.text.Trim() | Should -BeExactly 'acquired'
 
             $HelperText | Should -Match '(?s)function Register-DevBranchInLauncher\s*\{.*?Enter-LauncherListLock.*?Register-DevBranchInLauncherUnlocked.*?finally\s*\{\s*\$listLock\.Dispose\(\)'
         } finally {
@@ -1712,50 +1736,59 @@ public static class $fixtureTypeName {
     }
 
     It "persists passed Enterprise normalization evidence before later refresh work can fail" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-normalization-evidence-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl normalization Кириллица " + [guid]::NewGuid().ToString("N"))
         try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            $statePath = Join-Path $tempRoot "branch.json"
-            Set-Content -LiteralPath $statePath -Encoding UTF8 -Value "{}"
+            $statePath = Join-Path $tempRoot '.agent-1c/dev-branches/branch.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path $statePath) | Out-Null
+            $initial = @{ safeDevBranchName='branch'; devBranchName='Ветка с пробелом'; devBranchInfoBasePath='C:\bases\branch'; infoBaseKind='file' }
+            [IO.File]::WriteAllText($statePath, ($initial | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            $childPath = Join-Path $tempRoot 'normalization child.ps1'
+            $childText = @'
+param([string]$HelperPath,[string]$ProjectRoot,[string]$StatePath)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+function Get-SourceInfoBasePath { 'C:\bases\source' }
+function Invoke-DevBranchEnterpriseAutoUpdate {
+    # Only Enterprise is synthetic. Both state writes use the actual lifecycle owner.
+    $pending = Read-DevBranchStateFile -Path $StatePath
+    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'pending-observed.json'), ($pending | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    [pscustomobject]@{ epfPath='C:\tools\auto.epf'; logPath='C:\logs\current-enterprise.log'; resultPath='C:\logs\current-enterprise.result.json'; updatedAt='2026-08-31T18:00:48+03:00' }
+}
+try {
+    $state = Read-DevBranchStateFile -Path $StatePath
+    $updates = @{}
+    Ensure-DevBranchEnterpriseNormalized -State $state -Reason config-load -Updates $updates 6>$null | Out-Null
+    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'updates.json'), ($updates | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    throw 'simulated later runner failure'
+} catch {
+    [Console]::WriteLine($_.Exception.Message)
+    exit 17
+}
+'@
+            [IO.File]::WriteAllText($childPath, $childText, [Text.UTF8Encoding]::new($true))
             $result = & {
-                param($StatePath)
-                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-                $script:PersistedStatuses = [System.Collections.Generic.List[string]]::new()
-                function Get-SourceInfoBasePath { return "C:\bases\source" }
-                function Invoke-DevBranchEnterpriseAutoUpdate {
-                    [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\current-enterprise.log"; resultPath = "C:\logs\current-enterprise.result.json"; updatedAt = "2026-08-31T18:00:48+03:00" }
-                }
-                function Update-DevBranchState {
-                    param([object]$State, [hashtable]$Updates)
-                    if ($Updates.ContainsKey("enterpriseNormalizationStatus")) {
-                        $script:PersistedStatuses.Add([string]$Updates.enterpriseNormalizationStatus) | Out-Null
-                    }
-                    foreach ($key in $Updates.Keys) {
-                        if ($null -eq $State.PSObject.Properties[$key]) {
-                            $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
-                        } else {
-                            $State.PSObject.Properties[$key].Value = $Updates[$key]
-                        }
-                    }
-                }
-                $state = [pscustomobject]@{ statePath = $StatePath; devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
-                $updates = @{}
-                Ensure-DevBranchEnterpriseNormalized -State $state -Reason config-load -Updates $updates 6>$null | Out-Null
-                try { throw "simulated later runner failure" } catch {}
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $native = Invoke-NativeProcessAndWaitResult -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @(
+                    '-NoProfile', '-File', $childPath, $HelperPath, $tempRoot, $statePath
+                ) -TimeoutSeconds 30 -StdoutPath (Join-Path $tempRoot 'stdout.txt') -StderrPath (Join-Path $tempRoot 'stderr.txt')
                 [pscustomobject]@{
-                    statuses = @($script:PersistedStatuses)
-                    persistedStatus = $state.enterpriseNormalizationStatus
-                    persistedAt = $state.enterpriseNormalizedAt
-                    persistedLog = $state.lastEnterpriseAutoUpdateLogPath
-                    pendingUpdatesStatus = $updates.enterpriseNormalizationStatus
+                    exitCode=$native.exitCode
+                    text=Read-Utf8Text -Path (Join-Path $tempRoot 'stdout.txt')
+                    persisted=Read-DevBranchStateFile -Path $statePath
+                    pending=Read-Utf8Text -Path (Join-Path $tempRoot 'pending-observed.json') | ConvertFrom-Json
+                    updates=Read-Utf8Text -Path (Join-Path $tempRoot 'updates.json') | ConvertFrom-Json
                 }
-            } $statePath
-
-            $result.statuses | Should -Be @("pending", "passed")
-            $result.persistedStatus | Should -Be "passed"
-            $result.persistedAt | Should -Be "2026-08-31T18:00:48+03:00"
-            $result.persistedLog | Should -Be "C:\logs\current-enterprise.log"
-            $result.pendingUpdatesStatus | Should -Be "passed"
+            }
+            $result.exitCode | Should -Be 17
+            $result.text.Trim() | Should -BeExactly 'simulated later runner failure'
+            @($result.pending.enterpriseNormalizationStatus, $result.persisted.enterpriseNormalizationStatus) | Should -Be @('pending', 'passed')
+            $result.persisted.enterpriseNormalizationStatus | Should -Be 'passed'
+            $result.persisted.enterpriseNormalizedAt | Should -Be '2026-08-31T18:00:48+03:00'
+            $result.persisted.lastEnterpriseAutoUpdateLogPath | Should -Be 'C:\logs\current-enterprise.log'
+            $result.updates.enterpriseNormalizationStatus | Should -Be 'passed'
+            $result.persisted.devBranchName | Should -BeExactly 'Ветка с пробелом'
+            $result.persisted.enterpriseNormalizationProofVersion | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1964,9 +1997,9 @@ public static class $fixtureTypeName {
             $baseTree = ((& git -C $tempRoot rev-parse "${baseCommit}:src/cf") -join "").Trim()
 
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration changed=`"true`" />" -Encoding UTF8
-            $trackedEnumName = "СѓРїРѕ_РџРѕРІРµРґРµРЅРёРµРџСЂРёР—Р°РіСЂСѓР·РєРµРќРµСЂР°СЃСЃС‡РёС‚Р°РЅРЅРѕР№Р’РµСЂСЃРёРё.xml"
-            $untrackedEnumName = "СѓРїРѕ_РџРѕРІРµРґРµРЅРёРµРџСЂРёР—Р°РїРёСЃРёРќРµСЂР°СЃСЃС‡РёС‚Р°РЅРЅРѕР№Р’РµСЂСЃРёРё.xml"
-            $spacedModuleName = "РњРѕРґСѓР»СЊ СЃ РїСЂРѕР±РµР»РѕРј.xml"
+            $trackedEnumName = "упо_ПроведениеПриЗагрузкеНерассчитаннойВерсии.xml"
+            $untrackedEnumName = "упо_ПроведениеПриЗаписиНерассчитаннойВерсии.xml"
+            $spacedModuleName = "Модуль с пробелом.xml"
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Enums\$trackedEnumName") -Value "<Enum />" -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Enums\$untrackedEnumName") -Value "<Enum />" -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\CommonModules\$spacedModuleName") -Value "<CommonModule />" -Encoding UTF8
@@ -2043,7 +2076,7 @@ public static class $fixtureTypeName {
 
     It "treats empty Git path list output as an empty array" {
         $tempParent = Join-Path ([System.IO.Path]::GetTempPath()) ("itl git paths parent " + [guid]::NewGuid().ToString("N"))
-        $tempRoot = Join-Path $tempParent "РїСЂРѕРµРєС‚ СЃ РїСЂРѕР±РµР»РѕРј"
+        $tempRoot = Join-Path $tempParent "проект с пробелом"
 
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null

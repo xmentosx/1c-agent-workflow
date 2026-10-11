@@ -205,7 +205,8 @@ Targeted для каждого подпункта: группировать св
 ## Пакет C — общий кандидат, квалификация, доставка
 
 Точный архитектурный checkpoint в `design.md` подтверждён пользователем
-2026-10-11. Реализация и доказательства совместимости ещё не завершены.
+2026-10-11. Source-реализация и native coordinator compatibility приняты;
+реальная приёмка CA.4 и пробный выпуск V.7 ещё не выполнены.
 
 - [x] C.1 Описать invariant общего кандидата и единственного владельца
   `source-delivery`: состояния и переходы, очередь/refs, bounded waiting,
@@ -357,3 +358,4 @@ definition benchmark44087→4793ms; native acceptance новой единицы 
 
 | 2026-10-11 | C.9/C.11/CA.5 приняты | bc8a1dfc,tree3b88d62e:Targeted324/0/0,36 executed/9 reused,check454191ms/raw455607ms. Raw itl/runs/20261011-145432-660-targeted-0870c1aed642405dabecac860c3eabc8.json; Status queueheadbc8a1dfc/indexready/invalid0/activeOperationnull. 300s,CA.4 real1C,V.7 и весь план не завершены. |
 | 2026-10-11 | B.4 и Node necessity подготовлены | Собственные Python среды шести source-компонентов, проверка фактических пакетов и owned repair. Исходные component routes passed; новый repair1/0,82.01s; final focused19/0,46.35s. Все8 frozen Node definitions разобраны, retained; audit317/2814,2497 pending. [Доказательства и ограничения](evidence/component-python-environments.md). Требуется одна штатная RegisterChange этой единицы. |
+| 2026-10-11 | B.1/B.3 / A.4, фактические lifecycle boundaries | Исправлен подтверждённый native exit23→0 через удержание Process.Handle до monitoring. Два существующих It теперь используют реальный дочерний процесс и запись/readback штатного состояния; две Unicode-фикстуры очищены от persisted mojibake без изменения topology/assertions. Focused4/0 и19/0; 26 явных review, общий охват343/2814. [Причина, proof и ограничения](evidence/lifecycle-native-boundaries.md). Targeted этой связной единицы принадлежит RegisterChange; статус принятия проверяется через Status. Полный аудит, A/B live-приёмка и V.7 остаются открыты. |
