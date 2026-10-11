@@ -2,14 +2,14 @@
     "schemaVersion":  1,
     "baselineCommit":  "fa0e3c91694112c1da3ecda7209a8a81ea828264",
     "baselineDefinitions":  2814,
-    "reviewedOriginalDefinitions":  407,
-    "pendingOriginalDefinitions":  2407,
+    "reviewedOriginalDefinitions":  519,
+    "pendingOriginalDefinitions":  2295,
     "indexIsComplete":  false,
     "familyCoverage":  [
                            {
                                "family":  "python",
                                "baseline":  573,
-                               "reviewed":  88
+                               "reviewed":  114
                            },
                            {
                                "family":  "node",
@@ -24,7 +24,7 @@
                            {
                                "family":  "go",
                                "baseline":  91,
-                               "reviewed":  5
+                               "reviewed":  91
                            }
                        ],
     "evidenceMeaning":  "Deduplicated navigation over explicit semantic reviews, not new acceptance or gate evidence",

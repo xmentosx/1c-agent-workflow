@@ -16,6 +16,8 @@ Describe 'Independent host component source verification' {
         @{ Component='ChatGPT guide'; Path='docs/itl-workflow/CHATGPT.ru.md'; Expected=@('tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ParserDocsBudgets.Tests.ps1') }
         @{ Component='ChatGPT bootstrap'; Path='.agents/skills/1c-workflow/chatgpt/bootstrap-prompt.ru.md'; Expected=@('tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ChatGptInstall.Tests.ps1') }
         @{ Component='ChatGPT bridge'; Path='.agents/skills/1c-workflow/chatgpt/mcp_bridge.py'; Expected=@('tests/pester/ChatGptBridge.Tests.ps1','tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ChatGptInstall.Tests.ps1') }
+        @{ Component='Go source tests'; Path='tools/itl-ondemand-mcp/catalog_test.go'; Expected=@('tests/pester/McpConfig.Tests.ps1','tests/pester/OnDemandMcp.Tests.ps1','tests/pester/OnDemandPostLoadScope.Tests.ps1','tests/pester/OneCStartupDialogs.Tests.ps1','tests/pester/OnDemandGo.Tests.ps1') }
+        @{ Component='Go shared execution guard'; Path='.agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py'; Expected=@('tests/pester/OnDemandGo.Tests.ps1','tests/pester/PythonRuntime.Tests.ps1','tests/pester/RemotePerformance.Tests.ps1') }
     ) {
         param($Component, $Path, $Test, $Expected)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($Path)
@@ -40,7 +42,8 @@ Describe 'Independent host component source verification' {
             'tests/pester/HostSourceRuntime.Tests.ps1',
             'tests/pester/HostSppr.Tests.ps1',
             'tests/pester/HostTestSelection.Tests.ps1',
-            'tests/pester/HostTooling.Tests.ps1'
+            'tests/pester/HostTooling.Tests.ps1',
+            'tests/pester/OnDemandGo.Tests.ps1'
         )
     }
 
@@ -60,7 +63,7 @@ Describe 'Independent host component source verification' {
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         $RepositoryRoot=$RepoRoot
-        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy')) {
+        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy','OnDemandGo')) {
             $path=Join-Path $RepoRoot "tests/pester/$name.Tests.ps1"
             Get-ShardInputDigest -Paths @($path) | Should -BeNullOrEmpty
         }

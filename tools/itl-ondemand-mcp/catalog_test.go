@@ -172,11 +172,11 @@ func TestLoadedCatalogConcurrentValidationIsSafe(t *testing.T) {
 }
 
 func TestParseBrokerOutputUsesLastMarker(t *testing.T) {
-	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\n")
+	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"stopped","url":"http://127.0.0.1:6002/mcp"}` + "\r\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\r\ntrailing noise\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Status != "running" || info.URL == "" {
+	if info.Status != "running" || info.URL != "http://127.0.0.1:6003/mcp" {
 		t.Fatalf("unexpected info: %#v", info)
 	}
 }
