@@ -5,62 +5,15 @@
 
 Describe 'Optional ChatGPT RDC bridge' {
     It 'passes its isolated Python regressions' {
-        $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        . (Join-Path $script:Repo 'scripts/host-test-runtime.ps1')
+        $python = Get-SourceHostTestPython -RepositoryRoot $script:Repo -Component ChatGpt
         $testRoot = Join-Path $script:Repo 'tests/python/chatgpt'
-        $output = & $python -m unittest discover -s $testRoot -p 'test_*.py' 2>&1
-        $LASTEXITCODE | Should -Be 0 -Because ($output -join "`n")
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & $python -X utf8 -B -m unittest discover -s $testRoot -p 'test_*.py' 2>&1
+            $nativeExitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousPreference }
+        $nativeExitCode | Should -Be 0 -Because ($output -join "`n")
     }
-
-    It 'keeps the ChatGPT integration inside the installed workflow package' {
-        $readme = Get-Content -LiteralPath (Join-Path $script:Sidecar 'README.ru.md') -Raw -Encoding UTF8
-        $readme | Should -Match 'PROJECT_ROOT'
-        $readme | Should -Match '\.codex/config\.toml'
-        Test-Path -LiteralPath (Join-Path $script:Repo '.agents/plugins/marketplace.json') | Should -BeFalse
-        Test-Path -LiteralPath (Join-Path $script:Sidecar '.agents/plugins/marketplace.json') | Should -BeFalse
-        @(Get-ChildItem -LiteralPath $script:Sidecar -Recurse -Filter 'SKILL.md' -File -ErrorAction SilentlyContinue).Count | Should -Be 0
-        Test-Path -LiteralPath (Join-Path $script:Sidecar 'plugins') | Should -BeFalse
-    }
-
-    It 'installs the sidecar as tracked workflow content without agent-1c runtime copies' {
-        $target = Join-Path $TestDrive 'Тест КОРП (ветка)-1'
-        $installer = Join-Path $script:Repo 'install-agent-1c-workflow.ps1'
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $installer `
-            -ProjectRoot $target -SourceRoot $script:Repo -NoInit -SkipWorkflowSourceFreshnessCheck *> $null
-        $LASTEXITCODE | Should -Be 0
-
-        $installed = Join-Path $target '.agents/skills/1c-workflow/chatgpt'
-        Test-Path -LiteralPath (Join-Path $installed 'mcp_bridge.py') -PathType Leaf | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $installed 'bootstrap-prompt.ru.md') -PathType Leaf | Should -BeTrue
-        @(Get-ChildItem -LiteralPath $installed -Recurse -Filter 'SKILL.md' -File -ErrorAction SilentlyContinue).Count | Should -Be 0
-        Test-Path -LiteralPath (Join-Path $installed 'plugins') | Should -BeFalse
-        Test-Path -LiteralPath (Join-Path $target 'docs/itl-workflow/CHATGPT.ru.md') -PathType Leaf | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $target '.agent-1c/chatgpt') | Should -BeFalse
-
-        $bootstrap = Get-Content -LiteralPath (Join-Path $installed 'bootstrap-prompt.ru.md') -Raw -Encoding UTF8
-        $bootstrap | Should -Match ([regex]::Escape('Set-Location -LiteralPath "<PROJECT_ROOT>"'))
-        $bootstrap | Should -Match ([regex]::Escape('python -X utf8 .\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root . project-info'))
-        $bootstrap | Should -Match 'файловый API RDC'
-        $bootstrap | Should -Not -Match 'python <PROJECT_ROOT>'
-        $bootstrap | Should -Not -Match 'WORKFLOW_ROOT'
-    }
-    It 'ships ChatGPT Project instructions for master, dev, and workflow-source worktrees' {
-        $guide = Get-Content -LiteralPath (Join-Path $script:Repo 'docs/itl-workflow/CHATGPT.ru.md') -Raw -Encoding UTF8
-        $guide | Should -Match 'RDC_DEVICE_ID'
-        $guide | Should -Not -Match 'PROJECT_KIND='
-        $guide | Should -Match 'source-delivery\.ps1'
-        $guide | Should -Match 'itl-refresh-all'
-        $guide | Should -Match 'itl-remote-runner'
-        ([regex]::Matches($guide, [regex]::Escape('Set-Location -LiteralPath "<PROJECT_ROOT>"; python -X utf8 .\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root . project-info'))).Count | Should -Be 2
-        $guide | Should -Match 'файловый API RDC'
-        $guide | Should -Not -Match ([regex]::Escape('python "<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py"'))
-        $completionRule = 'Не завершай конечную задачу после промежуточного успешного шага'
-        ([regex]::Matches($guide, [regex]::Escape($completionRule))).Count | Should -Be 3
-        $guide | Should -Match 'без запроса подтверждения пользователя'
-        $guide | Should -Match 'status.*validate.*form-validate.*validate-test-classification'
-        $guide | Should -Match 'fresh passed'
-        $guide | Should -Match 'реальном blocker'
-        $guide | Should -Match 'объём контекста.*количество tool-вызовов'
-        $guide | Should -Not -Match 'WORKFLOW_ROOT'
-    }
-
 }

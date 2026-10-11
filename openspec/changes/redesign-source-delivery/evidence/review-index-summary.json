@@ -1,33 +1,33 @@
-{
-  "schemaVersion": 1,
-  "baselineCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
-  "baselineDefinitions": 2814,
-  "reviewedOriginalDefinitions": 343,
-  "pendingOriginalDefinitions": 2471,
-  "indexIsComplete": false,
-  "familyCoverage": [
-    {
-      "family": "go",
-      "baseline": 91,
-      "reviewed": 5
-    },
-    {
-      "family": "node",
-      "baseline": 8,
-      "reviewed": 8
-    },
-    {
-      "family": "pester",
-      "baseline": 2142,
-      "reviewed": 302
-    },
-    {
-      "family": "python",
-      "baseline": 573,
-      "reviewed": 28
-    }
-  ],
-  "evidenceMeaning": "Deduplicated navigation over explicit semantic reviews, not new acceptance or gate evidence",
-  "parameterMeaning": "29 outcomes of seven definitions and 46 Release variants of 33 definitions are included, never added to original-definition totals",
-  "unreviewedMeaning": "All original definitions absent from review-index.csv remain pending; transfer proof alone is not necessity review"
+﻿{
+    "schemaVersion":  1,
+    "baselineCommit":  "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+    "baselineDefinitions":  2814,
+    "reviewedOriginalDefinitions":  407,
+    "pendingOriginalDefinitions":  2407,
+    "indexIsComplete":  false,
+    "familyCoverage":  [
+                           {
+                               "family":  "python",
+                               "baseline":  573,
+                               "reviewed":  88
+                           },
+                           {
+                               "family":  "node",
+                               "baseline":  8,
+                               "reviewed":  8
+                           },
+                           {
+                               "family":  "pester",
+                               "baseline":  2142,
+                               "reviewed":  306
+                           },
+                           {
+                               "family":  "go",
+                               "baseline":  91,
+                               "reviewed":  5
+                           }
+                       ],
+    "evidenceMeaning":  "Deduplicated navigation over explicit semantic reviews, not new acceptance or gate evidence",
+    "parameterMeaning":  "29 outcomes of seven definitions and 46 Release variants of 33 definitions are included, never added to original-definition totals",
+    "unreviewedMeaning":  "All original definitions absent from review-index.csv remain pending; transfer proof alone is not necessity review"
 }

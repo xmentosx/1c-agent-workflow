@@ -2,7 +2,7 @@
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$RepositoryRoot,
-        [Parameter(Mandatory=$true)][ValidateSet('Native','Linux','CodeChecker','BookStack','Mantis','Sppr')][string]$Component
+        [Parameter(Mandatory=$true)][ValidateSet('Native','Linux','CodeChecker','BookStack','Mantis','Sppr','ChatGpt')][string]$Component
     )
     # Source verification owns these disposable, checkout-local environments.
     # Installed host runtimes and their lifecycle remain owned by the installer.

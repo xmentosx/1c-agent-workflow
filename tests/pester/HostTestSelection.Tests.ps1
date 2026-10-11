@@ -5,7 +5,7 @@
 }
 
 Describe 'Independent host component source verification' {
-    It 'selects only the <Component> environment and common host behavior' -ForEach @(
+    It 'selects independent verification for <Component>' -ForEach @(
         @{ Component='Mantis'; Path='vibecoding1c-mcp-host/mantis-ticket-mcp/mantis_index.py'; Test='HostMantis' }
         @{ Component='BookStack'; Path='vibecoding1c-mcp-host/bookstack-product-docs-mcp/server.py'; Test='HostBookStack' }
         @{ Component='CodeChecker'; Path='vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py'; Test='HostCodeChecker' }
@@ -13,21 +13,25 @@ Describe 'Independent host component source verification' {
         @{ Component='SPPR'; Path='vibecoding1c-mcp-host/sppr-mcp/sppr_service.py'; Test='HostSppr' }
         @{ Component='Node proxy'; Path='vibecoding1c-mcp-host/tools-list-proxy/tools-list-proxy.js'; Test='HostToolsProxy' }
         @{ Component='Linux host'; Path='vibecoding1c-mcp-host/linux-native-host/watchdog.py'; Test='HostLinux' }
+        @{ Component='ChatGPT guide'; Path='docs/itl-workflow/CHATGPT.ru.md'; Expected=@('tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ParserDocsBudgets.Tests.ps1') }
+        @{ Component='ChatGPT bootstrap'; Path='.agents/skills/1c-workflow/chatgpt/bootstrap-prompt.ru.md'; Expected=@('tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ChatGptInstall.Tests.ps1') }
+        @{ Component='ChatGPT bridge'; Path='.agents/skills/1c-workflow/chatgpt/mcp_bridge.py'; Expected=@('tests/pester/ChatGptBridge.Tests.ps1','tests/pester/ChatGptSourcePolicy.Tests.ps1','tests/pester/ChatGptInstall.Tests.ps1') }
     ) {
-        param($Component, $Path, $Test)
+        param($Component, $Path, $Test, $Expected)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($Path)
         @($selection.unknownPaths) | Should -BeNullOrEmpty
-        $expected = @(
+        $expectedTests = if ($Expected) { @($Expected) | Sort-Object } else { @(
             "tests/pester/$Test.Tests.ps1",
             'tests/pester/HostTooling.Tests.ps1'
-        ) | Sort-Object
-        @($selection.tests | Sort-Object) | Should -Be @($expected)
+        ) | Sort-Object }
+        @($selection.tests | Sort-Object) | Should -Be @($expectedTests)
     }
 
     It 'keeps the real shared installer consumers selected' {
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1')
         @($selection.unknownPaths) | Should -BeNullOrEmpty
         @($selection.tests | Sort-Object) | Should -Be @(
+            'tests/pester/ChatGptBridge.Tests.ps1',
             'tests/pester/HostBookStack.Tests.ps1',
             'tests/pester/HostCodeChecker.Tests.ps1',
             'tests/pester/HostLinux.Tests.ps1',
@@ -56,7 +60,7 @@ Describe 'Independent host component source verification' {
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         $RepositoryRoot=$RepoRoot
-        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime')) {
+        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy')) {
             $path=Join-Path $RepoRoot "tests/pester/$name.Tests.ps1"
             Get-ShardInputDigest -Paths @($path) | Should -BeNullOrEmpty
         }
