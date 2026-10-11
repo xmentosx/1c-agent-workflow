@@ -283,6 +283,27 @@ Targeted для каждого подпункта: группировать св
   без соответствующего разрешения. Подтвердить опубликованный SHA/tree,
   installable-зависимости, корректное состояние очереди и отсутствие active operation.
 
+## Следующая архитектурная граница B
+
+Исследование 2026-10-12 установило: обычный fork удаляет обязательный pending
+state отрицательной PM5-регрессии; одного существующего snapshot restore
+недостаточно для доказанного переноса branch context в disposable project.
+В [design.md, checkpoint B](design.md#b-checkpoint-переноса-состояния-qualification-fixture-ожидает-решения)
+сохранено конкретное предложение узкого opt-in lifecycle adapter. Его новая
+граница требует решения по правилу `docs/package-architecture.md`; реализация
+этого adapter ещё не начата. Это не повторное согласование этапа C.
+Аудит тестов и уже разрешённые source исправления от этого решения не зависят.
+
+Текущее состояние source: единица `ed6e1ae1` зарегистрирована — 235 passed,
+0 failed, 0 skipped; check125831ms/raw127470ms, 16 executed/0 reused.
+Go wrapper исполнил 107 expanded Go cases без skips. Сохранён полный raw proof
+в ignored `build/redesign-source-delivery/candidate-protocol/accepted-ed6e1ae1`.
+Публикации и live qualification не было. Поэлементный аудит — 524/2814:
+Go91/91, Node8/8, Python114/573, Pester311/2142; ещё2290 требуют разбора.
+Последние пять решений сохраняют AST/dispatch/probe completeness, read-only
+user-rule diagnostics и все шесть вариантов реального OneScript port allocator.
+Это не завершение всего плана и не разрешение публикации V.7.
+
 ## Как продолжать и отмечать прогресс
 
 1. Прочитать этот файл и указанные контракты; обновить только изменившиеся факты.

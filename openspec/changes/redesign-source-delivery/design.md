@@ -163,6 +163,85 @@ service и always-on клиентского контекста не появля
 resume прежнего плана, incompatible state continuation и transfer retry без
 повторной 1С. Fixture не подменяет финальные реальные qualification journeys.
 
+### B. Checkpoint переноса состояния qualification fixture (ожидает решения)
+
+Исследование 2026-10-12 выявило границу, не разрешённую checkpoint этапа C.
+Обычный `fork-dev-branch` вызывает `Remove-DevBranchForkTransientState` и удаляет
+`pendingMerge*`, `pendingRefresh*`, cursor и runtime ownership. Это правильное
+поведение пользовательского fork. У исходного отрицательного PM5-стенда,
+напротив, требуются `pendingMergeOperation=refresh-dev-branch`,
+`pendingMergeStage=merged` и отсутствие trusted Designer fingerprint/tree.
+Заменить его обычным fork означает изменить предусловия регрессии.
+
+Текущий upgrade в `invoke-develop-e2e.ps1` обновляет постоянно используемый
+проект и оставляет новый HEAD/установку/базу. `Restore-DevelopE2ETrackedState`
+восстанавливает только dirty tracked files относительно текущего HEAD.
+`release-e2e-snapshot/restore` уже владеет guarded DumpIB/RestoreIB, но не
+доказывает перенос исходного branch state в другой project context.
+
+**Предлагаемый инвариант и владелец.** Qualification работает в новом,
+принадлежащем сценарию проекте, восстановленном из проверенного fixture capsule.
+Lifecycle остаётся единственным владельцем базы и восстановления branch state.
+Source factory выбирает фазу и вызывает этот владелец; не пишет cursor,
+Designer proof, pending state или status вручную. Обычный fork не меняется.
+
+**Новая граница.** Узкий opt-in адаптер lifecycle материализует состояние capsule
+в другом принадлежащем qualification project context. Он переносит только
+объявленный branch и необходимые ему Git objects/history; foreign branch refs,
+leases, PID, порты, launcher и client MCP ownership не переносятся. Связанные
+пути переназначаются владельцем только внутри нового target root. Pending
+operation/cursor и отсутствие либо наличие application baseline сохраняются
+семантически; перенос не создаёт доверенный proof из одного имени поля.
+Snapshot SHA, state/environment bytes, Git endpoints и declared expected outcome
+образуют один вход восстановления. Частично materialized root не является proof.
+
+**Фазы.** Upgrade начинается с immutable published workflow commit и его locks;
+после штатного update-workflow проверяется exact candidate commit/tree.
+Installed-candidate Release начинается с exact candidate. Negative PM5 и positive
+journeys используют разные принадлежащие сценарию roots/базы. Seed не обновляется
+кандидатом; следующий кандидат материализуется из того же проверенного seed.
+Snapshot получают один раз для данного seed, а не делают новый DumpIB перед
+каждым маленьким source Targeted. Изменение declared seed инвалидирует capsule.
+
+**Почему существующей композиции недостаточно.** Stateless readiness только
+отвергает mismatch. Обычный fork удаляет обязательный pending state. Восстановление
+постоянного стенда на месте сохраняет накопленные unrelated branches и расширяет
+восстановление на его изменённую историю. Нужен ограниченный перенос состояния,
+а не ещё один preflight или ослабление исходной regression.
+
+**Границы воздействия.** Затронуты source Develop/Release fixture preparation и
+внутренний opt-in lifecycle adapter. Не затронуты пользовательские проекты,
+обычный fork/refresh/check/export, master publication authority, общий кандидат,
+очередь, guards, server support и clients. Нет нового coordinator, lock family,
+machine-wide state, elevation, сервиса или always-on client context. Режим server
+сохраняет существующее unverified правило; без своего доказанного disposable
+target серверная база не назначается целью автоматически.
+
+**Ожидание, отмена, recovery.** Native действия используют существующие per-infobase
+guard, execution context и ограниченные бюджеты DumpIB/RestoreIB. Status и логи
+остаются у текущего qualification owner. Отмена освобождает только owned child
+processes; capsule и неуспешный target сохраняются для диагностики. Повтор того же
+owner action проверяет capsule и незавершённый target, продолжает либо создаёт
+следующий owned disposable target; никаких прямых reset/status edits агентом.
+Успех требует полного materialization, затем исходного upgrade/check/export.
+
+**Совместимость и откат.** Старые Release checkpoints продолжаются прежним owner;
+им не приписывается portable identity. Новый adapter не мигрирует существующие
+пользовательские state files. При его откате seed и исходный PM5-стенд остаются
+сохранёнными; неуспешные owned targets не объявляются пригодными для старого пути.
+
+**Решающая приёмка.** Сначала сохранить неизменённый исходный PM5 reproducer и его
+реальный child receipt. Затем сравнить перенесённый negative: exact source SHA и
+diagnostic, отсутствующий trusted baseline, исходные pending/cursor, отказ до
+Apply и snapshot/cursor rollback. Независимый positive заканчивается fresh passed,
+export/SHA. Два последовательных кандидата стартуют из одного seed без ручных
+правок и не затрагивают соседний проект. Broken capsule/wrong target останавливают
+только dependent journey и дают повторяемое owner continuation. Fixture tests
+не заменяют эти live proofs; подготовка и восстановление измеряются отдельно.
+
+Это предложение для checkpoint, не разрешение реализации новой границы и не
+завершённые B.5–B.9/BA. Согласование C остаётся действующим для реализованного C.
+
 ## Risks / Trade-offs
 
 - Неполные dependency inputs → негативные invalidation tests и консервативный
