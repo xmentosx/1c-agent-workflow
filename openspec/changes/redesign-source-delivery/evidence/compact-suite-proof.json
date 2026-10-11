@@ -1,0 +1,23 @@
+{
+  "sourceSha256": "4892160074cde776872ef86a969291cfb73575bc5bfef6d2fb81a9e314ceb846",
+  "originalDefinitions": 45,
+  "retainedSerialDefinitions": 3,
+  "transferredDefinitions": 42,
+  "exactItMultiset": true,
+  "exactScopedSetup": true,
+  "exactFreshDescribe": true,
+  "files": [
+    "tests/pester/CompactItlRunner.Tests.ps1",
+    "tests/pester/CompactRunnerFreshContinuation.Tests.ps1",
+    "tests/pester/CompactRunnerReports.Tests.ps1",
+    "tests/pester/CompactRunnerRouting.Tests.ps1",
+    "tests/pester/CompactRunnerWatchdog.Tests.ps1"
+  ],
+  "runtimeAcceptance": "Separate native Targeted required; source transfer is not runtime or concurrent isolation proof",
+  "discovery": {
+    "beforeExpandedCases": 49,
+    "afterExpandedCases": 49,
+    "identicalExpandedNames": true,
+    "host": "Windows PowerShell 5.1 native discovery"
+  }
+}

@@ -3,8 +3,8 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 217 определений имеют явный предметный
-review, 2597 остаются pending. Из рассмотренных: Pester 184, Python 28, Go 5,
+[Summary](review-index-summary.json): 235 определений имеют явный предметный
+review, 2579 остаются pending. Из рассмотренных: Pester 202, Python 28, Go 5,
 Node 0. Это охват исходных определений, не количество запусков или новых тестов.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
@@ -71,10 +71,12 @@ CompactItlRunner и DevBranchLifecycle, а также не закрытые foll
 
 ## CompactItlRunner
 
-[Частичный review](compact-runner-review.md) добавляет 22 предметно просмотренных
-определений к пяти ранее разобранным границам: 27/45 этого файла, ещё 18 pending.
-Текущий source SHA совпал с frozen baseline. Все 22 retain, пять с конкретным
-follow-up. Новые tests/gates для read-only аудита не запускались.
+[Полный review](compact-runner-review.md) содержит 40 предметно просмотренных
+определений и пять ранее разобранных границ: 45/45 этого файла. Перед переносом
+source SHA совпал с frozen baseline. Все retained, индивидуальные follow-ups
+сохранены. Necessity review не запускал native suite. 42 It перенесены в четыре
+isolated worker suites; оригинальные Win32 console/job boundaries остаются serial.
+Exact body/setup proof отделён от ещё необходимой native acceptance.
 
 ## ReleaseReadiness
 
@@ -86,4 +88,6 @@ lifecycle route и сохраняет loaded/stage fingerprint inputs. Исхо�
 не изменён, necessity review не запускал его заново. Static/function проверка
 catalog: первоначально 36 passed / 2 failed (явный дополнительный owner и
 неполный dependency inventory тестового fixture); оба исходных случая после
-исправления прошли 2/0 за 14.96 s. Acceptance регистрации фиксируется отдельно.
+исправления прошли 2/0 за 14.96 s. Штатная регистрация `bd0f06f1`: 88/0/0,
+check 67083 ms, raw 69092 ms; очередь сохранила исходный base fa0e3c91.
+Публикация не выполнялась. Это приёмка выделенного owner, не всего плана.
