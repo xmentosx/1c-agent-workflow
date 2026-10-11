@@ -106,6 +106,14 @@ timing weights, последовательность Compact или no-progress 
 
 Tracked timings задают порядок запуска и округляются вверх от сохранённых
 наблюдений; это не обещание длительности и не отдельный timeout.
+
+В sharded runner выбранный `SourceDeliveryAdmission.Tests.ps1` завершается до
+запуска дорогих parallel files. Его ошибка сохраняется в обычном summary/JUnit
+и останавливает дальнейшее планирование; исправление продолжается той же
+регистрацией. Это прежние четыре короткие проверки, выделенные из смешанного
+файла очереди. Passed cache используется по прежним точным входам, без второго
+запуска admission. Затем работают прежние parallel workers и serial tail;
+исключения для console/process isolation и предел workers сохраняются.
 `Targeted` получает изменённые пути через NUL-delimited Git output и
 `tests/quality-contracts.json`. Неизвестный путь останавливает проверку и требует
 назначить владельца — полного fallback-прогона нет.

@@ -549,6 +549,9 @@ if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 
 # Preserve the former ReleaseGate serial admission for every extracted group.
 # A file transfer alone is not evidence that these native boundaries may overlap.
 $serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "DevelopManifestContinuation.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
+# These existing short owner checks finish before costly native files start.
+# Keep this scheduling policy beside serial admission; cached files stay reused.
+$preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1")
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
@@ -559,8 +562,9 @@ $items = @($testFiles | ForEach-Object {
         path = $_.FullName
         weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $defaultSeconds })
         serial = $serialTestNames -contains $_.Name
+        preflight = $preflightTestNames -contains $_.Name
     }
-} | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
+} | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "preflight"; Descending = $true }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
 $script:pesterRuntimeReceipt = Get-PesterWorkerRuntimeReceipt
@@ -678,7 +682,7 @@ foreach ($item in $items) {
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue $reuseReason -Force }
     $entry = [pscustomobject]@{
-        worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest
+        worker = $index; serial = [bool]$item.serial; preflight = [bool]$item.preflight; process = $null; reused = [bool]$cached; digest = $digest
         planPath = $planPath; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath; stdinPath = $stdinPath
     }
     $entries.Add($entry) | Out-Null
@@ -736,6 +740,7 @@ $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
 $workerSpanStopwatch = [Diagnostics.Stopwatch]::StartNew()
 while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count -gt 0)) {
     while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
+        if ($active.Count -gt 0 -and $active[0].preflight -and -not $pendingParallel.Peek().preflight) { break }
         $next = $pendingParallel.Dequeue()
         Start-PesterFileEntry -Entry $next
         $active.Add($next) | Out-Null

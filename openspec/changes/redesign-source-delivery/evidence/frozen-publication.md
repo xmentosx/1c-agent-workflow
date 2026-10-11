@@ -2,7 +2,14 @@
 
 Предыдущая единица C.3–C.6 принята как7084a7df. Эта единица продолжает того же
 владельца source-delivery: отдельного координатора, shadow queue или новой
-authority нет. Штатная регистрация этой единицы ещё требуется.
+authority нет. Единица принята какfcd8763895555f0c3d12a38777fa9120408e2800:
+Targeted213/0/0,18 executed /5 reused, check651469ms, raw653175ms,
+fingerprint planning5359ms, clean treec171a65c2ed8d2bf25ca258f9b2cf5501d246605.
+Raw: itl/runs/20261011-081529-074-targeted-c32f20f6ff7242d7853f3dbb9dabb3a4.json.
+Официальный Status подтвердил queue headfcd87638, indexStatus ready,
+invalidCount0, activeOperation null. C.7/C.10/CA.3 закрыты; остальные открытые
+границы ниже сохраняются. Цель300s не достигнута; сравнивать failed и passed
+прогоны как ускорение нельзя. Реальной публикации проекта не было.
 
 `Plan` использует принятый интегрированный кандидат, включает копию queue
 id/base/head в идентичность новых планов. Старый schema1 без queue сохраняет

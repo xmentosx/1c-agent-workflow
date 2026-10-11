@@ -174,7 +174,7 @@ Describe 'Source quality catalog contracts' {
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $queueOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-queue.ps1")
         @($queueOnly.contracts.id) | Should -Be @("source-candidate-registration", "source-delivery-queue")
-        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1")
+        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1")
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
@@ -249,7 +249,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1",
-            "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
@@ -279,11 +279,11 @@ Describe 'Source quality catalog contracts' {
             "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
             "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=48
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
-            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
+            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=91
             "SourceDeliveryProcessLifetime.Tests.ps1"=7
             "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
             "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
-            "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
+            "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=192
         }
         [double]$trackedTimings.files.'LocalGateTransport.Tests.ps1' | Should -Be 20
         # 3e589904 actual named JUnit sums plus 5 seconds, rounded up.
@@ -332,7 +332,9 @@ Describe 'Source quality catalog contracts' {
         ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
         # Keep the historical measured comparison intact. Current selection
         # additionally owns aggregate-input and candidate-registration regressions.
-        $currentFour = & $estimate ($parallel + @([double]$trackedTimings.files.'FullInputProof.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryCandidateRegistration.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryFrozenPublication.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryFrozenPlan.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryLegacyPlan.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryPublicationCleanup.Tests.ps1')) $serial 4 $overhead
+        $currentParallel = @($observedSeconds.GetEnumerator() | Where-Object Key -notin @('ReleaseGate.Tests.ps1','SourceDeliveryQueue.Tests.ps1','SourceDeliveryPlan.Tests.ps1') | ForEach-Object { [double]$_.Value })
+        $currentParallel += @('SourceDeliveryQueue.Tests.ps1','SourceDeliveryAuthority.Tests.ps1','SourceDeliveryOperationRecovery.Tests.ps1','SourceDeliveryPlan.Tests.ps1','FullInputProof.Tests.ps1','SourceDeliveryCandidateRegistration.Tests.ps1','SourceDeliveryFrozenPublication.Tests.ps1','SourceDeliveryFrozenPlan.Tests.ps1','SourceDeliveryLegacyPlan.Tests.ps1','SourceDeliveryPublicationCleanup.Tests.ps1') | ForEach-Object { [double]$trackedTimings.files.$_ }
+        $currentFour = & $estimate $currentParallel $serial 4 ($overhead + [double]$trackedTimings.files.'SourceDeliveryAdmission.Tests.ps1')
         ([double]$catalog.budgets.targetedHardSeconds - $currentFour) | Should -BeGreaterThan 200
     }
 
