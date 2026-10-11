@@ -31,6 +31,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$deliveryUtf8 = New-Object Text.UTF8Encoding($false)
+[Console]::InputEncoding = $deliveryUtf8
+[Console]::OutputEncoding = $deliveryUtf8
+$OutputEncoding = $deliveryUtf8
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
@@ -141,7 +145,7 @@ $supervisorPath = $localSupervisor
 $supervisorCommit = ""
 $bootstrapSupervisor = $true
 try {
-    $requestedChannel = if ($Action -in @("Plan", "PublishDevelop")) { "develop" } else { "master" }
+    $requestedChannel = if ($Action -in @("RegisterChange", "Plan", "PublishDevelop")) { "develop" } else { "master" }
     $selectedChannel = $requestedChannel
     $recordedSupervisor = ""
     if ($ResumePlan) {

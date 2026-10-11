@@ -652,7 +652,8 @@ function Close-DeliveryProcessJob {
 }
 
 function Invoke-SourceGate {
-    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @())
+    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
+    if ([DateTime]::UtcNow -ge $DeadlineUtc) { throw "$Mode source gate has no remaining operation budget; continue the original operation from its preserved checkpoint." }
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
     if (-not (Test-Path -LiteralPath $gate -PathType Leaf)) { throw "Source gate was not found: $gate" }
     $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $gate, "-Mode", $Mode)
@@ -686,6 +687,10 @@ function Invoke-SourceGate {
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
         $hardSeconds = Get-SourceGateSupervisionBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -PlanBudgetSeconds $HardBudgetSeconds -InjectedGate:($gate -ne $authoritativeGate)
+        if ($DeadlineUtc -ne [DateTime]::MaxValue) {
+            $remainingSeconds = ($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds
+            $hardSeconds = [Math]::Min([double]$hardSeconds, [Math]::Max(0.0, [double]$remainingSeconds))
+        }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L
@@ -719,6 +724,7 @@ function Invoke-SourceGate {
         if ($jobCloseError) { throw $jobCloseError }
         if ($historyError) { throw $historyError }
     }
+    if ($PassThru) { return $runRecordPath }
 }
 
 function Assert-DeliveryReleaseStandReady {

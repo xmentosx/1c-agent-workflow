@@ -141,7 +141,7 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         @($status.cleanupPolicy.promoteRelease) | Should -Be @('develop', 'master')
     }
 
-It "runs the published develop supervisor for Plan and PublishDevelop, and master for release" {
+It "runs the published develop supervisor for registration, Plan and PublishDevelop, and master for release" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
@@ -164,7 +164,7 @@ param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]
             & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
             & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
 
-            foreach ($action in @('Plan','PublishDevelop')) {
+            foreach ($action in @('RegisterChange','Plan','PublishDevelop')) {
                 $payload = (Invoke-DeliveryTestPowerShell -Arguments @('-Action',$action,'-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
                 $payload.status | Should -Be 'develop-supervisor'
                 $payload.supervisorCommit | Should -Be $developCommit
@@ -339,7 +339,7 @@ It "rejects a ResumePlan whose recorded supervisor is not trusted by origin mast
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 
-It "registers base and head atomically for a path with Cyrillic and spaces" {
+It "registers Unicode queue refs atomically and rejects the original parallel conflict before publication" {
         $fixture = $null; $parallelRoot = ""; try {
             $fixture = New-DeliveryFixture
             $tests = Join-Path $fixture.root "tests\pester"
@@ -359,11 +359,15 @@ It "registers base and head atomically for a path with Cyrillic and spaces" {
             Set-Content -LiteralPath (Join-Path $parallelRoot "скрипт с пробелами.ps1") -Encoding UTF8 -Value "'conflicting second'"
             Set-Content -LiteralPath (Join-Path $parallelRoot "tests\pester\Second.Tests.ps1") -Encoding UTF8 -Value "Describe 'second' { It 'works' { `$true | Should -BeTrue } }"
             & git -C $parallelRoot add --all; & git -C $parallelRoot commit -m "feat: parallel fixture" *> $null
-            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $parallelRoot + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "parallel-two") | Out-Null
+            $conflict = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $parallelRoot + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "parallel-two") -AllowFailure
+            $conflict.exitCode | Should -Not -Be 0
+            $conflict.stderr | Should -Match 'conflicts with the develop candidate'
             $status = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))
-            $statusPayload = $status.stdout | ConvertFrom-Json; @($statusPayload.queue.id | Sort-Object) | Should -Be @("codex/parallel-branch", "parallel-two"); [int]$statusPayload.runHistory.count | Should -BeGreaterOrEqual 2; [int]($statusPayload.runHistory.byMode | Where-Object mode -eq Targeted | Select-Object -ExpandProperty count) | Should -BeGreaterOrEqual 2
-            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
-            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -HaveCount 4
+            $statusPayload = $status.stdout | ConvertFrom-Json
+            @($statusPayload.queue.id) | Should -Be @("codex/parallel-branch")
+            [int]($statusPayload.runHistory.byMode | Where-Object mode -eq Targeted | Select-Object -ExpandProperty count) | Should -Be 1
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -HaveCount 2
+            (& git -C $fixture.root rev-parse refs/itl/develop-candidate/head).Trim() | Should -Be $head
         } finally {
             if ($fixture -and $parallelRoot) { & git -C $fixture.root worktree remove --force $parallelRoot *> $null }
             Remove-DeliveryFixture -Fixture $fixture

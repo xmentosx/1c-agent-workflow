@@ -8,15 +8,34 @@
   -CoverageContract <existing-contract-id>
 ```
 
-For the first registration of a queue, `Targeted` uses `origin/develop` (or the
-explicit `-BaseRef`). A later registration under the same `QueueId` uses the
-previous queue head, so it verifies only the newly appended commits while the
-original queue base remains unchanged. A non-descendant replacement fails
-closed instead of silently retesting or rewriting another range.
+Регистрация собирает общий кандидат из опубликованного develop, уже принятой
+очереди и задачи в отдельном worktree. `Targeted` проверяет дельту от предыдущего
+принятого кандидата. При первом переходе старой очереди без такого кандидата
+базой проверки служит develop: старые записи включаются в проверяемую комбинацию.
+Список изменений самой задачи и её coverage считают от прежнего head её QueueId
+(либо `origin/develop` / явного `-BaseRef` для новой очереди). Исходный queue base
+сохраняется. Замена диапазона, не продолжающая принятый head, отклоняется.
+
+Проверка проходит вне общей блокировки. После успеха один Git CAS принимает
+`base/head` задачи, `refs/itl/develop-candidate/head` и immutable membership blob
+`refs/itl/develop-candidate/state`. При гонке регистрация пересобирает комбинацию;
+существующий shard cache повторно использует только доказанно совпавшие входы.
+Один исходный бюджет Targeted охватывает все попытки и дочерние проверки.
+Отказ сохраняет исходную задачу, принятые refs и worktree кандидата с
+`build/source-registration/checkpoint.json`; штатное продолжение — тот же
+RegisterChange из исходной задачи с прежним QueueId. Новый вызов получает новый
+бюджет, сохраняя доказательства прежних запусков. Отмена не удаляет принятую очередь.
+
+Новые регистрации выбирают опубликованный develop supervisor. До публикации
+нового владельца действует его прежний протокол; исходники задачи не получают
+authority. Старый владелец может читать сохранённый интерфейс queue base/head;
+его поздние записи включаются и проверяются следующим новым владельцем.
+`Status.sourceCandidate` показывает `legacy`, `ready` или `requires-integration`;
+это состояние интеграции, не доказательство квалификации выпуска.
 
 `-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
-`base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
+queue и candidate refs. Эти refs общие для worktree, но не
 публикуются. `-Action Status` показывает компактную очередь, текущую фазу и три
 последних запуска; `-StatusDetail Full` добавляет полные stage/test records
 успешных/неуспешных gate из общего Git-каталога `.git/itl/runs` со временем по режимам.

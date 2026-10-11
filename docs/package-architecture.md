@@ -17,6 +17,19 @@ This source-only document describes the package layout for maintainers. It is no
   while `source-delivery-plan.ps1` and `source-delivery-resources.ps1` own the
   immutable selective plan/evidence and common-Git resource ledger.
 
+The approved source candidate protocol keeps the existing supervisor as its
+single owner. RegisterChange, Plan, and PublishDevelop select published develop;
+master promotion and release keep master authority. Registration constructs an
+integrated candidate outside the operation lease, then atomically compares and
+updates queue base/head and candidate head/membership refs in common Git. One
+original deadline covers CAS retries and child gates. A failed attempt preserves
+the source task, accepted refs, candidate worktree/checkpoint, and existing proof;
+the continuation is the same RegisterChange from the source checkout. Legacy
+base/head records remain readable and are integrated on the next registration.
+This protocol checkpoint was approved by the user on 2026-10-11 in
+`openspec/changes/redesign-source-delivery/design.md`; frozen publication and
+full controller rollback acceptance remain separate implementation work there.
+
 The develop authority boundary is channel-local, not candidate-local: the
 supervisor is the tracked published tip before the operation, never the queued
 candidate or a dirty checkout. It alone holds the existing operation lease and

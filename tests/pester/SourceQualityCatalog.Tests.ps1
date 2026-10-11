@@ -167,14 +167,14 @@ Describe 'Source quality catalog contracts' {
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
-        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', "source-delivery-process")
+        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', "source-delivery-process", "source-candidate-registration")
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualityCatalog.Tests.ps1'
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $queueOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-queue.ps1")
-        @($queueOnly.contracts.id) | Should -Be @("source-delivery-queue")
-        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryQueue.Tests.ps1")
+        @($queueOnly.contracts.id) | Should -Be @("source-candidate-registration", "source-delivery-queue")
+        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1")
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
@@ -249,7 +249,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1",
-            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
@@ -258,7 +258,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -331,8 +331,8 @@ Describe 'Source quality catalog contracts' {
         $three | Should -BeGreaterThan $historicalHardSeconds
         ($historicalHardSeconds - $four) | Should -BeGreaterThan 200
         # Keep the historical measured comparison intact. Current selection
-        # additionally owns the aggregate-input regression (63.54 s focused).
-        $currentFour = & $estimate ($parallel + @([double]$trackedTimings.files.'FullInputProof.Tests.ps1')) $serial 4 $overhead
+        # additionally owns aggregate-input and candidate-registration regressions.
+        $currentFour = & $estimate ($parallel + @([double]$trackedTimings.files.'FullInputProof.Tests.ps1', [double]$trackedTimings.files.'SourceDeliveryCandidateRegistration.Tests.ps1')) $serial 4 $overhead
         ([double]$catalog.budgets.targetedHardSeconds - $currentFour) | Should -BeGreaterThan 200
     }
 
@@ -930,14 +930,15 @@ Describe 'Source catalog Develop journey selection' {
             $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
             $plan.reason | Should -Be 'no-develop-journey-route'
             $expectedContracts=@("source-delivery-$leaf")
-            if($leaf -eq 'process') { $expectedContracts = @('release-orchestration-tests') + $expectedContracts + @('source-quality-catalog') }
+            if($leaf -eq 'process') { $expectedContracts = @('release-orchestration-tests','source-candidate-registration') + $expectedContracts + @('source-quality-catalog') }
+            if($leaf -eq 'queue') { $expectedContracts = @('source-candidate-registration') + $expectedContracts }
             @($plan.contracts) | Should -Be $expectedContracts
             @($plan.journeys) | Should -BeNullOrEmpty
         }
         $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
-        @($entrypoint.contracts) | Should -Be @('source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
+        @($entrypoint.contracts) | Should -Be @('source-candidate-registration','source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
         $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
-        @($candidate.contracts) | Should -Be @('pester-full-input-proof','source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
+        @($candidate.contracts) | Should -Be @('pester-full-input-proof','source-candidate-registration','source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
         $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
         @($cleanup.contracts) | Should -Be @('e2e-artifact-cleanup-tests','source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }

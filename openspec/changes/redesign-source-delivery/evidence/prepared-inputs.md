@@ -63,5 +63,11 @@ resolver, timings или Develop E2E; эти связи убраны. Catalog-on
 быстрым selection proof, а static cache file не ослаблен и остаётся в Full.
 Положительные/отрицательные routes и mutation canary проверяют эту границу.
 
-Приёмка всей единицы и пяти минут ещё не подтверждена. Продолжаются полный
-necessity audit, подготовка компонентных runtime/стендов и согласование C.
+Единица зарегистрирована как `fccd40483b059ba2757aae4b1470017bae5cf53a`, tree
+`fe5265dd3a519bbba1ff8a98538710be60c13bf1`: Targeted 156/0/0, 13 executed / 0 reused,
+check 388505 ms, raw 394135 ms. Raw:
+`itl/runs/20261011-052633-556-targeted-37e2946d99e0490297efba493c163728.json`.
+Fingerprint preparation заняла 11545 ms. Cohort отличается от прежнего запуска;
+это не сравнение скорости полного gate на одинаковой нагрузке. Цель пяти минут
+остаётся недостигнутой. Продолжаются полный necessity audit, подготовка
+компонентных сред и реализация подтверждённого пользователем checkpoint C.
