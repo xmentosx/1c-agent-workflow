@@ -26,7 +26,7 @@ function Add-OriginalReview {
     $entry.decisions=@($entry.decisions+$Decision|Sort-Object -Unique)
     $entry.scope=@($entry.scope+$Scope|Sort-Object -Unique)
 }
-foreach($ledger in @('parser-docs-review.csv','release-gate-review.csv','nested-boundary-review.csv','local-quality-review.csv','compact-runner-review.csv','readiness-review.csv')) {
+foreach($ledger in @('parser-docs-review.csv','release-gate-review.csv','nested-boundary-review.csv','local-quality-review.csv','compact-runner-review.csv','readiness-review.csv','develop-qualification-review.csv')) {
     foreach($row in Import-Csv (Join-Path $evidence $ledger)) {
         Add-OriginalReview $row.file ([int]$row.originalLine) $row.name $ledger $row.decision 'Individual behavior/risk review; runtime acceptance is separate' -BodySha256 $row.normalizedBodySha256 -SourceSha256 $row.sourceSha256
     }

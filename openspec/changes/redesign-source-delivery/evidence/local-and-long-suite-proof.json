@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "1af9455b2647abfa482aab342ef75dd2e57db434",
+  "suites": [
+    {
+      "source": "tests/pester/LocalQualityGate.Tests.ps1",
+      "sourceSha256": "72a9dae8ca9f1d04bd0d31248aea0566366a2c018f76911ccb2378e2e44f8ef6",
+      "originalDefinitions": 24,
+      "currentDefinitions": 24,
+      "retainedDefinitions": 7,
+      "exactItMultiset": true,
+      "exactSetupAndScope": true,
+      "files": [
+        "tests/pester/LocalQualityGate.Tests.ps1",
+        "tests/pester/LocalGateTransport.Tests.ps1",
+        "tests/pester/LocalTargetedSelection.Tests.ps1",
+        "tests/pester/LocalShardCache.Tests.ps1"
+      ]
+    },
+    {
+      "source": "tests/pester/CompactRunnerFreshContinuation.Tests.ps1",
+      "sourceSha256": "b0dbfe58f05a4bd4c72939c823a7f077ba2cacfcbdb90197ccbf6311487e8220",
+      "originalDefinitions": 10,
+      "currentDefinitions": 10,
+      "retainedDefinitions": 9,
+      "exactItMultiset": true,
+      "exactSetupAndScope": true,
+      "files": [
+        "tests/pester/CompactRunnerFreshContinuation.Tests.ps1",
+        "tests/pester/CompactRunnerLongContinuation.Tests.ps1"
+      ]
+    }
+  ],
+  "runtimeAcceptance": "Separate; exact source equality does not prove executed scenarios"
+}

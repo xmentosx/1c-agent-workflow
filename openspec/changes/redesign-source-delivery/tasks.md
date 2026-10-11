@@ -291,6 +291,13 @@ Targeted для каждого подпункта: группировать св
 
 ## Журнал выполнения
 
+Следующая связная единица: [Local/Fresh и Develop selection](evidence/local-and-long-selection.md).
+Local 24 definitions и Fresh 11 expanded cases сохраняются при разделении;
+mandatory126 native workload не сокращён. Семь focused catalog checks прошли,
+20 Develop definitions добавлены в индивидуальный review (итого255/2814).
+Штатная регистрация и native concurrency/cost acceptance этой единицы ещё нужны.
+Это не завершение A/B, checkpoint C или разрешение пробной публикации.
+
 | Дата | Этап | Результат и доказательство |
 |---|---|---|
 | 2026-10-10 | Фиксация | Сохранён согласованный план; реализация, gates и публикация не запускались. |
@@ -321,4 +328,5 @@ Targeted для каждого подпункта: группировать св
 | 2026-10-11 | A.1–A.3, принятый Local split | `2a8c2052` зарегистрирован: 206/0/0, 14 executed / 0 reused, check 390564 ms, raw 392909 ms; clean tree `7da66f15`, прежняя очередь и activeOperation=null подтверждены. [Raw proof и оставшаяся стоимость](evidence/local-quality-review.md). Target 300 s превышен: остаток LocalQualityGate 311827 ms, ReleaseReadiness 229278 ms, DevelopE2EQualification 201653 ms. Требуются дальнейшие owner-local dependency изменения; A/B/C и публикация не завершены. |
 | 2026-10-11 | 0.3–0.5 / A.2, readiness owner | Просмотрены все 15 readiness definitions / 19 expanded cases; файл побайтно сохранён. Выделен независимый owner без checker/timings/scheduler, добавлен пропущенный lifecycle route, сохранены loaded и stage fingerprint inputs. [Closure и ledger](evidence/readiness-review.md). Catalog regression 36/2, после исправления двух доказанных ожиданий 2/0; одна штатная регистрация ещё требуется. Общий audit 217/2814, план и общий кандидат не завершены. |
 | 2026-10-11 | A.2, readiness acceptance | Зарегистрирован bd0f06f1: Targeted 88/0/0, check 67083 ms, raw 69092 ms. Точный raw itl/runs/20261011-012652-939-targeted-1b5aecae67d34dc6921c5cd877abd67f.json; официальный Status подтвердил base fa0e3c91/head bd0f06f1, activeOperation null. Это приёмка выделенного owner; план целиком не завершён. |
-| 2026-10-11 | 0.3–0.5 / A.1, Compact audit и worker split | Рассмотрены оставшиеся 18 definitions, полный Compact review 45/45; всего audit 235/2814. 42 неизменных It перенесены в четыре suites, Win32 job/console и wiring остаются serial. Exact It/setup/Describe proof и native Desktop discovery 46→46 совпали. Catalog selection/cache/serial regression 3/0 за 19.45 s. [Источники, closure и ограничения](evidence/compact-runner-review.md). Требуется одна штатная RegisterChange с реальными native workers. |
+| 2026-10-11 | 0.3–0.5 / A.1, Compact audit и worker split | Рассмотрены оставшиеся 18 definitions, полный Compact review 45/45; всего audit 235/2814. 42 неизменных It перенесены в четыре suites, Win32 job/console и wiring остаются serial. Exact It/setup/Describe proof и native Desktop discovery 49→49 совпали. Catalog selection/cache/serial regression 3/0 за 19.45 s. [Источники, closure и ограничения](evidence/compact-runner-review.md). Требуется одна штатная RegisterChange с реальными native workers. |
+| 2026-10-11 | A.1, Compact native acceptance | Зарегистрирован 1af9455b: Targeted 138/0/0, check 313153 ms, raw 315369 ms; цель 300 s пока превышена. Raw itl/runs/20261011-013849-875-targeted-8223405fa56645419ca7fc12f9aa781f.json. Четыре группы реально перекрывались 49.13 s, console начался после завершения всех parallel и занял 6949 ms. Все 49 Compact expanded cases passed; fresh группа 274018 ms остаётся критическим путём. Официальный Status подтвердил исходный base fa0e3c91/head 1af9455b/activeOperation null. Это приёмка split; остальные требования плана остаются открыты. |

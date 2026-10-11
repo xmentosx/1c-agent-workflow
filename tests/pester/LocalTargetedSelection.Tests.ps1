@@ -1,0 +1,265 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot "TestSupport.ps1")
+    $context = Initialize-WorkflowPesterContext
+    $RepoRoot = $context.RepoRoot
+}
+
+Describe "Local quality gate contract" {
+        It "preserves implicit worker provenance through the focused test wrapper" {
+        $outputRoot = Join-Path $TestDrive "implicit focused wrapper"
+        $resultPath = Join-Path $outputRoot "parser-docs.xml"
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\test.ps1") -Arguments @("-Path", "tests/pester/ParserDocsBudgets.Tests.ps1", "-OutputFile", $resultPath)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $summary = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $summary.pesterWorkers.requested | Should -Be 3
+        $summary.pesterWorkers.explicit | Should -BeFalse
+        $summary.pesterWorkers.effective | Should -Be 3
+    }
+
+    It "routes only exact named entrypoint AST changes and falls back for shared or unknown impact" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $entrypoint = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
+
+        $oneAction = $entrypoint.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Update-AuxiliaryContour | Out-Null }')
+        $oneActionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $oneAction -BaselineText $entrypoint
+        $oneActionImpact.fallback | Should -BeFalse
+        @($oneActionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1")
+
+        $twoActions = $oneAction.
+            Replace('"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }', '"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus | Out-Null }')
+        $actionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $twoActions -BaselineText $entrypoint
+        $actionImpact.fallback | Should -BeFalse
+        @($actionImpact.impacts.name) | Should -Be @("update-auxiliary-contour", "vibecoding1c-mcp-status")
+        @($actionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1")
+        @($actionImpact.tests).Count | Should -BeLessThan @($catalog.contracts | Where-Object id -eq "lifecycle").tests.Count
+
+        $parameterText = $entrypoint.Replace('[string]$AuxiliaryDisplayName = ""', '[string]$AuxiliaryDisplayName = "semantic probe"')
+        $parameterImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $parameterText -BaselineText $entrypoint
+        $parameterImpact.fallback | Should -BeTrue
+        $parameterImpact.reason | Should -Be 'unproven-parameter-AuxiliaryDisplayName'
+
+        $functionText = $entrypoint.Replace("function Normalize-Agent1cFullPathText {", "function Normalize-Agent1cFullPathText {`n    # semantic probe")
+        $functionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $functionText -BaselineText $entrypoint
+        $functionImpact.fallback | Should -BeTrue
+        $functionImpact.reason | Should -Be 'unproven-function-Normalize-Agent1cFullPathText'
+
+        $unprovenAction = $entrypoint.Replace('"release-e2e-snapshot" { Save-ReleaseE2EInfobaseSnapshot }', '"release-e2e-snapshot" { Show-Help }')
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $unprovenAction -BaselineText $entrypoint).reason | Should -Be 'unproven-action-release-e2e-snapshot'
+        $unprovenParameter = $entrypoint.Replace('[string]$ConfigLoadMode = "Auto"', '[string]$ConfigLoadMode = "Broken"')
+        $unprovenParameter | Should -Not -Be $entrypoint
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $unprovenParameter -BaselineText $entrypoint).reason | Should -Be 'unproven-parameter-ConfigLoadMode'
+
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseInput($entrypoint, 'reorder-probe.ps1', [ref]$tokens, [ref]$errors)
+        $definitions = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] } | Select-Object -First 2)
+        $first = $definitions[0]; $second = $definitions[1]
+        $between = $entrypoint.Substring($first.Extent.EndOffset, $second.Extent.StartOffset - $first.Extent.EndOffset)
+        $reordered = $entrypoint.Substring(0, $first.Extent.StartOffset) + $second.Extent.Text + $between + $first.Extent.Text + $entrypoint.Substring($second.Extent.EndOffset)
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $reordered -BaselineText $entrypoint).reason | Should -Be "shared-or-top-level-change"
+
+        $unknownParameter = $entrypoint.Replace('[string]$ProjectRoot = (Get-Location).Path', '[string]$ProjectRoot = (Resolve-Path ".").Path')
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $unknownParameter -BaselineText $entrypoint).reason | Should -Be "unknown-parameter-ProjectRoot"
+        $topLevel = $entrypoint.Replace('Set-StrictMode -Version Latest', 'Set-StrictMode -Version 3')
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $topLevel -BaselineText $entrypoint).reason | Should -Be "shared-or-top-level-change"
+        $renamed = $entrypoint.Replace('"help" { Show-Help }', '"help-renamed" { Show-Help }')
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $renamed -BaselineText $entrypoint).reason | Should -Be "actions-inventory-changed"
+        $dynamic = $entrypoint.Replace('"help" { Show-Help }', '$script:DynamicAction { Show-Help }')
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $dynamic -BaselineText $entrypoint).reason | Should -Be "current-dynamic-dispatch-label"
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText "'valid PowerShell without params'" -BaselineText $entrypoint).reason | Should -Be "current-missing-param-block"
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $entrypoint -BaselineText $null).reason | Should -Be "missing-baseline"
+        (Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $null -BaselineText $entrypoint).reason | Should -Be "missing-current-entrypoint"
+    }
+
+    It "writes Targeted selection schema v2 and carries the complete entrypoint as an additional input" {
+        $resolver = Join-Path $RepoRoot "scripts\resolve-targeted-tests.ps1"
+        $entrypoint = ".agents/skills/1c-workflow/scripts/agent-1c.ps1"
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @("-RepositoryRoot", $RepoRoot, "-ChangedPath", $entrypoint)
+        $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+        $selection = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+        [int]$selection.schemaVersion | Should -Be 2
+        @($selection.additionalInputs) | Should -Be @($entrypoint)
+        @($selection.semanticImpacts | ForEach-Object { "$($_.kind):$($_.name)" }) | Should -Be @("fallback:missing-baseline")
+        @($selection.tests) | Should -Contain "tests/pester/DevBranchLifecycle.Tests.ps1"
+        @($selection.tests) | Should -Contain "tests/pester/CompactItlRunner.Tests.ps1"
+
+        $canonicalRun = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @("-RepositoryRoot", $RepoRoot, "-BaseRef", "HEAD", "-ChangedPath", $entrypoint)
+        $canonicalRun.exitCode | Should -Be 0 -Because ((@($canonicalRun.stdout) + @($canonicalRun.stderr)) -join [Environment]::NewLine)
+        $canonicalSelection = ($canonicalRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+        @($canonicalSelection.semanticImpacts.name) | Should -Be @("no-semantic-impact") -Because "CRLF checkout bytes and LF git-show bytes must compare through the canonical Git filter"
+    }
+
+    It "falls back for a deleted or exactly renamed semantic entrypoint without reading a missing file" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl semantic rename путь " + [guid]::NewGuid().ToString("N"))
+        $entrypoint = ".agents/skills/1c-workflow/scripts/agent-1c.ps1"
+        $renamedEntrypoint = ".agents/skills/1c-workflow/scripts/agent-1c-renamed.ps1"
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $root ".agents\skills\1c-workflow\scripts"), (Join-Path $root "tests\pester") | Out-Null
+            & git -C $root init *> $null
+            & git -C $root config user.name "ITL Test"
+            & git -C $root config user.email "itl-test@example.invalid"
+            Set-Content -LiteralPath (Join-Path $root $entrypoint.Replace('/', '\')) -Encoding UTF8 -Value "param()"
+            Set-Content -LiteralPath (Join-Path $root "tests\pester\Fallback.Tests.ps1") -Encoding UTF8 -Value "Describe 'fallback' { It 'passes' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $root "full.txt") -Encoding UTF8 -Value "full"
+            $catalog = [ordered]@{
+                schemaVersion=1
+                pesterWorkers=[ordered]@{targetedImplicitDefault=4}
+                continuationScopes=[ordered]@{deliveryPostGate=@('delivery/*');develop=@('develop/*');gate=@('gate/*');release=@('release/*');static=@('tests/*')}
+                developJourneys=[ordered]@{names=@('upgrade','fresh');fullPaths=@('full.txt');routes=[ordered]@{upgrade=[ordered]@{contracts=@('lifecycle')};fresh=[ordered]@{contracts=@('lifecycle')}}}
+                retiredTests=[ordered]@{}
+                contracts=@([ordered]@{id='lifecycle';owner='fixture';primaryTest='tests/pester/Fallback.Tests.ps1';gate='targeted';budgetSeconds=30;paths=@($entrypoint);tests=@('tests/pester/Fallback.Tests.ps1')})
+                semanticTargeting=[ordered]@{path=$entrypoint;fallbackContract='lifecycle'}
+            }
+            New-Item -ItemType Directory -Force -Path (Join-Path $root "tests") | Out-Null
+            [IO.File]::WriteAllText((Join-Path $root "tests\quality-contracts.json"), ($catalog | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+            & git -C $root add --all
+            & git -C $root commit -m baseline *> $null
+            $base = (& git -C $root rev-parse HEAD).Trim()
+            $resolver = Join-Path $RepoRoot "scripts\resolve-targeted-tests.ps1"
+
+            Remove-Item -LiteralPath (Join-Path $root $entrypoint.Replace('/', '\'))
+            & git -C $root add --all
+            & git -C $root commit -m deleted *> $null
+            $deletedRun = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot', $root, '-BaseRef', $base)
+            $deletedRun.exitCode | Should -Be 0 -Because ((@($deletedRun.stdout) + @($deletedRun.stderr)) -join [Environment]::NewLine)
+            $deleted = ($deletedRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            @($deleted.semanticImpacts.name) | Should -Be @('missing-current-entrypoint')
+            @($deleted.additionalInputs) | Should -BeNullOrEmpty
+            @($deleted.tests) | Should -Be @('tests/pester/Fallback.Tests.ps1')
+
+            & git -C $root switch --quiet -c rename-probe $base
+            & git -C $root mv -- $entrypoint $renamedEntrypoint
+            & git -C $root commit -m renamed *> $null
+            $selectionPath = Join-Path $root 'rename-selection.json'
+            $renamedRun = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot', $root, '-BaseRef', $base, '-OutputPath', $selectionPath)
+            $renamedRun.exitCode | Should -Be 0 -Because ((@($renamedRun.stdout) + @($renamedRun.stderr)) -join [Environment]::NewLine)
+            $renamed = ($renamedRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            @($renamed.semanticImpacts.name) | Should -Be @('missing-current-entrypoint')
+            @($renamed.additionalInputs) | Should -Be @($renamedEntrypoint)
+            @($renamed.tests) | Should -Be @('tests/pester/Fallback.Tests.ps1')
+
+            $runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+            $out1 = Join-Path $root 'rename-out-1'
+            $firstRun = Invoke-TestPowerShellFile -FilePath $runner -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $out1, '-JunitPath', (Join-Path $out1 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', $selectionPath)
+            $firstRun.exitCode | Should -Be 0 -Because ((@($firstRun.stdout) + @($firstRun.stderr)) -join [Environment]::NewLine)
+            $first = ($firstRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            Set-Content -LiteralPath (Join-Path $root $renamedEntrypoint.Replace('/', '\')) -Encoding UTF8 -Value "param()`n# renamed leaf changed"
+            $out2 = Join-Path $root 'rename-out-2'
+            $secondRun = Invoke-TestPowerShellFile -FilePath $runner -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $out2, '-JunitPath', (Join-Path $out2 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', $selectionPath)
+            $secondRun.exitCode | Should -Be 0 -Because ((@($secondRun.stdout) + @($secondRun.stderr)) -join [Environment]::NewLine)
+            $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $first.executedWorkerCount | Should -Be 1
+            $second.executedWorkerCount | Should -Be 1
+            [string]$second.workers[0].inputDigest | Should -Not -Be ([string]$first.workers[0].inputDigest)
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "selects common plus domain tests through the real BaseRef entrypoint route" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl semantic leaf путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            & git clone --quiet --shared --no-hardlinks -- $RepoRoot $root
+            $LASTEXITCODE | Should -Be 0
+            & git -C $root config user.name "ITL Test"
+            & git -C $root config user.email "itl-test@example.invalid"
+            foreach ($relativePath in @(
+                "scripts\quality-contracts.ps1",
+                "scripts\develop-configuration-rejection.ps1",
+                "tests\quality-contracts.json",
+                "tests\pester\DevelopConfigurationRejection.Tests.ps1",
+                "tests\pester\TestSupport.ps1",
+                "tests\pester\Agent1cEntrypoint.Tests.ps1",
+                "tests\pester\AuxiliaryContours.Tests.ps1",
+                "tests\pester\ExecutionGuardCutover.Tests.ps1",
+                "tests\pester\McpConfig.Tests.ps1",
+                "tests\pester\SourceDeliveryRunIndex.Tests.ps1",
+                "tests\pester\SourceDeliveryRefCleanup.Tests.ps1"
+            )) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $relativePath) -Destination (Join-Path $root $relativePath) -Force
+            }
+            & git -C $root add --all
+            & git -C $root commit -m semantic-catalog *> $null
+            $base = (& git -C $root rev-parse HEAD).Trim()
+            $entrypoint = ".agents/skills/1c-workflow/scripts/agent-1c.ps1"
+            $entrypointPath = Join-Path $root $entrypoint.Replace('/', '\')
+            $text = [IO.File]::ReadAllText($entrypointPath, [Text.Encoding]::UTF8)
+            $changed = $text.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Update-AuxiliaryContour | Out-Null }')
+            $changed | Should -Not -Be $text
+            [IO.File]::WriteAllText($entrypointPath, $changed, [Text.UTF8Encoding]::new($false))
+            & git -C $root add -- $entrypoint
+            & git -C $root commit -m leaf *> $null
+
+            $resolver = Join-Path $RepoRoot "scripts\resolve-targeted-tests.ps1"
+            $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot', $root, '-BaseRef', $base)
+            $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
+            $selection = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            @($selection.semanticImpacts | ForEach-Object { "$($_.kind):$($_.name):$($_.owner)" }) | Should -Be @('action:update-auxiliary-contour:auxiliary')
+            @($selection.tests) | Should -Be @('tests/pester/Agent1cEntrypoint.Tests.ps1', 'tests/pester/AuxiliaryContours.Tests.ps1')
+            @($selection.additionalInputs) | Should -Be @($entrypoint)
+
+            $broken = $text.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Show-Help }')
+            $broken | Should -Not -Be $text
+            [IO.File]::WriteAllText($entrypointPath, $broken, [Text.UTF8Encoding]::new($false))
+            & git -C $root add -- $entrypoint
+            & git -C $root commit -m mutation-kill *> $null
+            $selectionPath = Join-Path $root 'mutation-selection.json'
+            $mutationRun = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot', $root, '-BaseRef', $base, '-OutputPath', $selectionPath)
+            $mutationRun.exitCode | Should -Be 0 -Because ((@($mutationRun.stdout) + @($mutationRun.stderr)) -join [Environment]::NewLine)
+            $mutationSelection = ($mutationRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            @($mutationSelection.tests) | Should -Contain 'tests/pester/AuxiliaryContours.Tests.ps1'
+
+            $runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+            $outputRoot = Join-Path $root 'mutation-output'
+            $mutantProof = Invoke-TestPowerShellFile -FilePath $runner -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $outputRoot, '-JunitPath', (Join-Path $outputRoot 'pester.xml'), '-WorkerCount', '3', '-SelectionPath', $selectionPath)
+            $mutantProof.exitCode | Should -Not -Be 0 -Because 'the selected public-entrypoint probe must kill a dispatch mutation'
+            $workerOutput = @(Get-ChildItem -LiteralPath (Join-Path $outputRoot 'pester-shards') -File -Filter 'worker-*.stdout.log' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+            $workerOutput | Should -Match 'blocks configuration mutation for an attached read-only base before starting 1C'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "invalidates every selected shard when a schema v2 additional input changes" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-additional-input путь " + [guid]::NewGuid().ToString("N"))
+        $testRoot = Join-Path $root "tests\pester"
+        try {
+            New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+            & git -C $root init *> $null
+            & git -C $root config user.name "ITL Test"
+            & git -C $root config user.email "itl-test@example.invalid"
+            Set-Content -LiteralPath (Join-Path $testRoot "CacheA.Tests.ps1") -Encoding UTF8 -Value "Describe 'cache A' { It 'passes' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $testRoot "CacheB.Tests.ps1") -Encoding UTF8 -Value "Describe 'cache B' { It 'passes' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $root "entrypoint.ps1") -Encoding UTF8 -Value "entrypoint-v1"
+            $catalog = [ordered]@{ schemaVersion=1; contracts=@(
+                [ordered]@{id='cache-a';owner='fixture';primaryTest='tests/pester/CacheA.Tests.ps1';gate='targeted';budgetSeconds=30;paths=@('fixture/a/*');tests=@('tests/pester/CacheA.Tests.ps1')},
+                [ordered]@{id='cache-b';owner='fixture';primaryTest='tests/pester/CacheB.Tests.ps1';gate='targeted';budgetSeconds=30;paths=@('fixture/b/*');tests=@('tests/pester/CacheB.Tests.ps1')}
+            ) }
+            [IO.File]::WriteAllText((Join-Path $root "tests\quality-contracts.json"), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            $selectionPath = Join-Path $root "selection.json"
+            $selection = [ordered]@{ schemaVersion=2; paths=@('entrypoint.ps1'); contracts=@([ordered]@{id='cache-a';owner='fixture'}, [ordered]@{id='cache-b';owner='fixture'}); tests=@('tests/pester/CacheA.Tests.ps1', 'tests/pester/CacheB.Tests.ps1'); semanticImpacts=@([ordered]@{kind='action';name='probe';owner='fixture'}); additionalInputs=@('entrypoint.ps1') }
+            [IO.File]::WriteAllText($selectionPath, ($selection | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+            & git -C $root add --all
+            & git -C $root commit -m fixture *> $null
+
+            $runner = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
+            $out1 = Join-Path $root "out1"
+            $firstRun = Invoke-TestPowerShellFile -FilePath $runner -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out1, "-JunitPath", (Join-Path $out1 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath)
+            $firstRun.exitCode | Should -Be 0 -Because ((@($firstRun.stdout) + @($firstRun.stderr)) -join [Environment]::NewLine)
+            $first = ($firstRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+
+            Set-Content -LiteralPath (Join-Path $root "entrypoint.ps1") -Encoding UTF8 -Value "entrypoint-v2"
+            $out2 = Join-Path $root "out2"
+            $secondRun = Invoke-TestPowerShellFile -FilePath $runner -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out2, "-JunitPath", (Join-Path $out2 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath)
+            $secondRun.exitCode | Should -Be 0 -Because ((@($secondRun.stdout) + @($secondRun.stderr)) -join [Environment]::NewLine)
+            $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $first.executedWorkerCount | Should -Be 2
+            $second.executedWorkerCount | Should -Be 2
+            foreach ($index in 0..1) {
+                [string]$second.workers[$index].inputDigest | Should -Not -Be ([string]$first.workers[$index].inputDigest)
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

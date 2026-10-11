@@ -26,7 +26,7 @@
     "HostTooling.Tests.ps1": 3.5,
     "KiloVerificationRecovery.Tests.ps1": 1.2,
     "LifecycleOperationLock.Tests.ps1": 27.2,
-    "LocalQualityGate.Tests.ps1": 275.0,
+    "LocalQualityGate.Tests.ps1": 48,
     "McpConfig.Tests.ps1": 28.2,
     "OnDemandMcp.Tests.ps1": 8.8,
     "OpenCodeWorkspace.Tests.ps1": 6.1,
@@ -52,6 +52,11 @@
     "SourceDeliveryPublishReleaseTrain.Tests.ps1": 346.0,
     "SourceDeliveryQueue.Tests.ps1": 352.0,
     "VanessaAuthoring.Tests.ps1": 8.7,
-    "WorkflowUpdateRollback.Tests.ps1": 207.0
+    "WorkflowUpdateRollback.Tests.ps1": 207.0,
+    "LocalGateTransport.Tests.ps1": 20,
+    "LocalTargetedSelection.Tests.ps1": 116,
+    "LocalShardCache.Tests.ps1": 108,
+    "CompactRunnerFreshContinuation.Tests.ps1": 144,
+    "CompactRunnerLongContinuation.Tests.ps1": 139
   }
 }

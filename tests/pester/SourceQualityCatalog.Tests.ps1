@@ -195,7 +195,7 @@ Describe 'Source quality catalog contracts' {
         )
         $expectedTests = @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
-            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1",
             "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
@@ -206,7 +206,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -225,7 +225,7 @@ Describe 'Source quality catalog contracts' {
         $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $updatedOrderingWeights = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
-            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=275
+            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=48
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
             "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
             "SourceDeliveryProcessLifetime.Tests.ps1"=7
@@ -233,6 +233,11 @@ Describe 'Source quality catalog contracts' {
             "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
         }
+        [double]$trackedTimings.files.'LocalGateTransport.Tests.ps1' | Should -Be 20
+        [double]$trackedTimings.files.'LocalTargetedSelection.Tests.ps1' | Should -Be 116
+        [double]$trackedTimings.files.'LocalShardCache.Tests.ps1' | Should -Be 108
+        [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 144
+        [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 139
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
         # Individual case sums plus 5 seconds per file for setup, rounded up.
@@ -300,10 +305,10 @@ Describe 'Source quality catalog contracts' {
         # three extracted Release groups extend its explicit dependency set.
         $splitHostConsumers = @('tests/pester/HostMantis.Tests.ps1')
         $splitReleaseConsumers = @('DevelopManifestContinuation','ReleaseAdmission','ReleaseOrchestration' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
-        $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1')
-        $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+        $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
+        $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 72
+        @($selection.tests).Count | Should -Be 74
         foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
         foreach ($test in $splitHostConsumers) { @($selection.tests) | Should -Contain $test }
         foreach ($test in $splitReleaseConsumers) { @($selection.tests) | Should -Contain $test }
@@ -332,7 +337,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 75
+        @($currentSelection.tests).Count | Should -Be 77
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -554,10 +559,45 @@ Describe 'Shared Release budget projection' {
 }
 
 Describe 'Catalog selection and qualified consumer inputs' {
+    It 'preserves every Local Smoke case while splitting transport selection and cache fixtures into ordinary workers' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $names=@('LocalGateTransport','LocalTargetedSelection','LocalShardCache')
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $assignment=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$serialTestNames'},$true)
+        $serialTestNames=@(& ([scriptblock]::Create($assignment.Right.Extent.Text)))
+        foreach($name in $names) {
+            $test='tests/pester/'+$name+'.Tests.ps1'
+            $serialTestNames | Should -Not -Contain ($name+'.Tests.ps1')
+            @($catalog.smokeTests) | Should -Contain $test
+            @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test) | Select-Object -ExpandProperty tests) | Should -Be @($test)
+            foreach($path in @('scripts/check.ps1','scripts/pester-timings.json','scripts/invoke-pester-shards.ps1')) {
+                @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path) | Select-Object -ExpandProperty tests) | Should -Contain $test
+            }
+        }
+    }
+
+    It 'selects Develop continuation qualification for actual fixture inputs without scheduler-only dependencies' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $test='tests/pester/DevelopE2EQualification.Tests.ps1'
+        foreach($path in @('scripts/pester-timings.json','scripts/resolve-targeted-tests.ps1','scripts/invoke-pester-shards.ps1','scripts/run-pester-shard.ps1','scripts/develop-static-qualification.ps1','scripts/source-delivery-plan.ps1')) {
+            $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)
+            @($selected.unknownPaths) | Should -BeNullOrEmpty
+            @($selected.tests) | Should -Not -Contain $test -Because "$path is not read or executed by the Develop qualification fixture"
+        }
+        foreach($path in @('scripts/check.ps1','scripts/quality-contracts.ps1','scripts/develop-e2e-qualification.ps1','scripts/release-qualification.ps1','scripts/invoke-pester-runtime.ps1','scripts/git-path-list.ps1','scripts/stand-env-identity.ps1','scripts/invoke-release-e2e.ps1','scripts/invoke-develop-e2e.ps1','templates/project.json','.agents/skills/1c-workflow/scripts/agent-1c.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
+            @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path) | Select-Object -ExpandProperty tests) | Should -Contain $test -Because "$path is a retained execution or source-extraction boundary"
+        }
+        @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test) | Select-Object -ExpandProperty tests) | Should -Be @($test)
+    }
+
     It 'keeps real console interruption serial while extracted compact fixtures use ordinary isolated workers' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        $names=@('CompactRunnerFreshContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+        $names=@('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
         $tokens=$null;$errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
         @($errors) | Should -BeNullOrEmpty
@@ -674,12 +714,12 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{pesterVersion='fixture';identitySha256=('a'*64)}}
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
-            $consumers=@('LocalQualityGate','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
+            $consumers=@('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
                 'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
                 'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
             $catalogIndependent=@('PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
@@ -725,7 +765,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
             foreach($name in $consumers) {
                 $path=Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')
                 $changed=Get-ShardInputDigest -Paths @($path)
-                if($name -in @('PesterShardIdentity','ReleaseOrchestration','ReleaseAdmission','ReleaseReadiness','CompactRunnerFreshContinuation','CompactRunnerRouting')) {
+                if($name -in @('PesterShardIdentity','ReleaseOrchestration','ReleaseAdmission','ReleaseReadiness','DevelopE2EQualification','CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerRouting')) {
                     $changed | Should -Not -Be $afterCatalog[$name] -Because "$name declares this helper as a reuse dependency"
                 } else {
                     $changed | Should -BeExactly $afterCatalog[$name] -Because "$name does not consume this helper"
@@ -739,7 +779,15 @@ Describe 'Catalog selection and qualified consumer inputs' {
             }
             [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'scripts/test-release-readiness.ps1'),"`n# changed readiness owner",[Text.UTF8Encoding]::new($false))
             Get-ShardInputDigest -Paths @($readinessPath) | Should -Not -Be $readinessDigest
-            $compactNames=@('CompactRunnerFreshContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+            $developPath=Join-Path $RepositoryRoot 'tests/pester/DevelopE2EQualification.Tests.ps1'
+            $developDigest=Get-ShardInputDigest -Paths @($developPath)
+            foreach($relative in @('scripts/pester-timings.json','scripts/invoke-pester-shards.ps1','scripts/run-pester-shard.ps1','scripts/develop-static-qualification.ps1')) {
+                [IO.File]::AppendAllText((Join-Path $RepositoryRoot $relative),"`n# unrelated Develop fixture input",[Text.UTF8Encoding]::new($false))
+                Get-ShardInputDigest -Paths @($developPath) | Should -BeExactly $developDigest -Because "$relative is not consumed by the Develop continuation fixture"
+            }
+            [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'scripts/check.ps1'),"`n# changed actual check AST",[Text.UTF8Encoding]::new($false))
+            Get-ShardInputDigest -Paths @($developPath) | Should -Not -Be $developDigest
+            $compactNames=@('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
             $compactBefore=@{}
             foreach($name in $compactNames){$compactBefore[$name]=Get-ShardInputDigest -Paths @((Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')))}
             [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'tests/pester/CompactRunnerReports.Tests.ps1'),"`n# changed report scenario",[Text.UTF8Encoding]::new($false))

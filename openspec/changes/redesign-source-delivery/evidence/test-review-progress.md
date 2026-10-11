@@ -3,8 +3,8 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 235 определений имеют явный предметный
-review, 2579 остаются pending. Из рассмотренных: Pester 202, Python 28, Go 5,
+[Summary](review-index-summary.json): 255 определений имеют явный предметный
+review, 2559 остаются pending. Из рассмотренных: Pester 222, Python 28, Go 5,
 Node 0. Это охват исходных определений, не количество запусков или новых тестов.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
@@ -15,6 +15,13 @@ boundaries, 11 host wrappers, семь параметризованных опр
 определению. Review wrapper не означает review вложенных Python/Node cases;
 AST transfer proof сам по себе не считается решением о необходимости.
 Любое определение, отсутствующее в индексе, по-прежнему требует review.
+
+Текущие 20 DevelopE2EQualification разобраны в
+[отдельном ledger](develop-qualification-review.csv), вместе с ограничениями
+синтетических proof и static-wiring. Исходные 22 связаны по именам и body SHA;
+два предыдущих catalog transfers повторно не прибавляются. Новое разделение
+Local/Fresh и зависимости Develop описаны в
+[связной единице](local-and-long-selection.md).
 
 Воспроизведение индекса выполняется явным source-only скриптом:
 
@@ -76,7 +83,11 @@ CompactItlRunner и DevBranchLifecycle, а также не закрытые foll
 source SHA совпал с frozen baseline. Все retained, индивидуальные follow-ups
 сохранены. Necessity review не запускал native suite. 42 It перенесены в четыре
 isolated worker suites; оригинальные Win32 console/job boundaries остаются serial.
-Exact body/setup proof отделён от ещё необходимой native acceptance.
+Exact body/setup proof отделён от native acceptance: регистрация `1af9455b`
+прошла 138/0/0, включая все 49 Compact expanded cases. Четыре выделенные группы
+реально перекрывались, console исполнился после всех parallel workers. Check
+313153 ms; цель 300 s ещё превышена. Это не приёмка произвольных concurrent
+регистраций и не завершение всего плана.
 
 ## ReleaseReadiness
 

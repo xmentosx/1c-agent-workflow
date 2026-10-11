@@ -7,7 +7,7 @@ $originalFile='tests/pester/LocalQualityGate.Tests.ps1'
 $inventory=@(Import-Csv (Join-Path $evidence 'inventory/test-cases.csv')|Where-Object file -CEQ $originalFile)
 if($inventory.Count -ne 56){throw 'Expected the frozen 56-definition LocalQuality inventory'}
 $file=Import-Csv (Join-Path $evidence 'inventory/test-files.csv')|Where-Object file -CEQ $originalFile
-$current=@(foreach($name in @('LocalQualityGate','SourceQualityCatalog','PesterCacheCompatibility','ReleaseProgressObservation','PesterShardIdentity','E2EArtifactCleanup','ForkQualificationInventory')) {
+$current=@(foreach($name in @('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','SourceQualityCatalog','PesterCacheCompatibility','ReleaseProgressObservation','PesterShardIdentity','E2EArtifactCleanup','ForkQualificationInventory')) {
     $relative='tests/pester/'+$name+'.Tests.ps1';$path=Join-Path $root $relative
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)

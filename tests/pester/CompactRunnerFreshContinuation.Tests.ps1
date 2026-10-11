@@ -263,15 +263,4 @@ exit 0
             $fixture.status.errorMessage | Should -Match 'TIMEOUT'
         } finally { Remove-FreshCompactFixture $fixture }
     }
-
-    It 'keeps an actual silent continuation beyond the unchanged 120 second watchdog' {
-        $fixture=Invoke-FreshCompactFixture -SilentSeconds 126 -DefaultStale -OperationSeconds 180
-        try {
-            $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
-            $fixture.elapsed | Should -BeGreaterThan 120
-            $fixture.status.status | Should -Be 'succeeded'
-            $fixture.status.stage | Should -Be 'fixture.actual-terminal'
-            $fixture.status.pid | Should -Be $fixture.lifecycle.pid
-        } finally { Remove-FreshCompactFixture $fixture }
-    }
 }

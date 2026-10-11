@@ -1,0 +1,229 @@
+﻿BeforeAll {
+    . (Join-Path $PSScriptRoot "TestSupport.ps1")
+    $context = Initialize-WorkflowPesterContext
+    $RepoRoot = $context.RepoRoot
+}
+
+Describe "Local quality gate contract" {
+        It "preserves exact Unicode stdout and stderr from a redirected Windows PowerShell Pester shard" {
+        $fixtureRoot = Join-Path $TestDrive "Путь с пробелом"
+        New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+        $testPath = Join-Path $fixtureRoot "UnicodeOutput.Tests.ps1"
+        $planPath = Join-Path $fixtureRoot "worker.plan.json"
+        $junitPath = Join-Path $fixtureRoot "worker.xml"
+        $resultPath = Join-Path $fixtureRoot "worker.result.json"
+        $stdoutMarker = "Стандартный вывод: Путь с пробелом"
+        $stderrMarker = "Стандартная ошибка: Путь с пробелом"
+        $fixture = @"
+BeforeAll {
+    [Console]::Out.WriteLine('$stdoutMarker')
+    [Console]::Error.WriteLine('$stderrMarker')
+}
+Describe 'Unicode redirected output' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+        [IO.File]::WriteAllText($testPath, $fixture, [Text.UTF8Encoding]::new($true))
+        $plan = [ordered]@{ schemaVersion = 1; worker = 1; paths = @($testPath) }
+        [IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @(
+            "-PlanPath", $planPath,
+            "-JunitPath", $junitPath,
+            "-ResultPath", $resultPath
+        )
+
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        ($run.stdout -join [Environment]::NewLine) | Should -Match ([regex]::Escape($stdoutMarker))
+        ($run.stderr -join [Environment]::NewLine) | Should -Match ([regex]::Escape($stderrMarker))
+        (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
+    }
+
+    It "preserves exact UTF-8 when the shared gate child reports a real failed Pester shard" {
+        $fixtureRoot = Join-Path $TestDrive 'Путь с пробелом ОшибкаШарда'
+        $testRoot = Join-Path $fixtureRoot 'tests/pester'
+        $outputRoot = Join-Path $fixtureRoot 'out'
+        New-Item -ItemType Directory -Force -Path $testRoot, $outputRoot | Out-Null
+        $marker = 'Намеренная ошибка: Путь с пробелом'
+        $testPath = Join-Path $testRoot 'UnicodeFailure.Tests.ps1'
+        $fixture = @"
+BeforeAll {
+    [Console]::Out.WriteLine('$marker')
+    [Console]::Error.WriteLine('$marker')
+}
+Describe 'real failing shard' {
+    It 'retains the deliberate failure' { throw '$marker' }
+}
+"@
+        [IO.File]::WriteAllText($testPath, $fixture, [Text.UTF8Encoding]::new($true))
+        $catalog = [ordered]@{
+            schemaVersion = 1; pesterNonReusableTests = @('tests/pester/UnicodeFailure.Tests.ps1')
+            contracts = @([ordered]@{ id = 'unicode-failure'; owner = 'fixture'; primaryTest = 'tests/pester/UnicodeFailure.Tests.ps1'; gate = 'targeted'; budgetSeconds = 30; paths = @('fixture/*'); tests = @('tests/pester/UnicodeFailure.Tests.ps1') })
+        }
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot 'selection.json'), '{"tests":["tests/pester/UnicodeFailure.Tests.ps1"]}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot '.gitignore'), "out/`nprobe.ps1`n", [Text.UTF8Encoding]::new($false))
+        & git -C $fixtureRoot init *> $null
+        & git -C $fixtureRoot config user.name 'ITL Test'
+        & git -C $fixtureRoot config user.email 'itl-test@example.invalid'
+        & git -C $fixtureRoot add --all
+        & git -C $fixtureRoot commit -m fixture *> $null
+        $LASTEXITCODE | Should -Be 0
+
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text
+        }
+        $probePath = Join-Path $fixtureRoot 'probe.ps1'
+        $probe = @'
+param([string]$SourceRoot, [string]$FixtureRoot)
+$ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+'@ + [Environment]::NewLine + ($definitions -join [Environment]::NewLine) + [Environment]::NewLine + @'
+$repoRoot = $FixtureRoot
+$outputRoot = Join-Path $FixtureRoot 'out'
+$modeHardBudgetSeconds = 90
+$overallStopwatch = [Diagnostics.Stopwatch]::StartNew()
+$child = Start-PowerShellChildProcess -ScriptPath (Join-Path $SourceRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot', $FixtureRoot, '-OutputRoot', $outputRoot, '-JunitPath', (Join-Path $outputRoot 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', (Join-Path $FixtureRoot 'selection.json')) -LogName 'pester-selection-shards'
+$failure = ''
+try { Wait-PowerShellChildProcess -Child $child -TimeoutSeconds 90 -NoProgressSeconds 60 }
+catch { $failure = $_.Exception.Message }
+$receipt = [ordered]@{ exitCode = [int]$child.process.ExitCode; failure = $failure }
+[IO.File]::WriteAllText((Join-Path $outputRoot 'child-receipt.json'), ($receipt | ConvertTo-Json), $utf8)
+exit $child.process.ExitCode
+'@
+        [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @('-SourceRoot', $RepoRoot, '-FixtureRoot', $fixtureRoot)
+        $run.exitCode | Should -Be 1 -Because $run.combinedText
+        $childReceipt = Get-Content -LiteralPath (Join-Path $outputRoot 'child-receipt.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $childReceipt.exitCode | Should -Be 1
+        $childReceipt.failure | Should -Match 'pester-selection-shards failed with exit code 1'
+        $summary = Get-Content -LiteralPath (Join-Path $outputRoot 'pester-shards/summary.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $summary.status | Should -Be 'failed'
+        $summary.executedWorkerCount | Should -Be 1
+        $summary.reusedWorkerCount | Should -Be 0
+        $worker = Get-Content -LiteralPath (Join-Path $outputRoot 'pester-shards/worker-1.result.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $worker.status | Should -Be 'failed'
+        $worker.failed | Should -Be 1
+        @($worker.paths) | Should -Be @($testPath)
+        $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+        foreach ($stream in @('stdout', 'stderr')) {
+            $workerText = $strictUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot "pester-shards/worker-1.$stream.log")))
+            $workerText | Should -Match ([regex]::Escape($marker))
+            $gateText = $strictUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot "pester-selection-shards.$stream.log")))
+            if ($stream -eq 'stderr') {
+                $gateText | Should -Match 'Pester shards failed:'
+                $gateText | Should -Match 'worker 1 reported failed:'
+                $gateText | Should -Match 'ОшибкаШарда'
+                $gateText | Should -Match 'worker-1\.stderr\.log'
+            }
+        }
+    }
+
+    It "preserves exact UTF-8 for the successful over-target gate warning through the delivery child" {
+        $fixtureRoot = Join-Path $TestDrive 'Путь с пробелом ПредупреждениеПроверки'
+        $outputRoot = Join-Path $fixtureRoot 'out'
+        New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+        $summaryPath = Join-Path $outputRoot 'check-summary.json'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $firstFunction = $ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] } | Select-Object -First 1
+        $warning = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($budgetStatus -eq "over-target")') })
+        $warning.Count | Should -Be 1
+        $passedMessage = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('Write-Host "ITL $Mode gate passed.') })
+        $passedMessage.Count | Should -Be 1
+        $gatePath = Join-Path $fixtureRoot 'actual-check-warning.ps1'
+        # Execute the original startup and successful over-target emitter; no slow gate or elapsed-time substitute.
+        $gate = $ast.Extent.Text.Substring(0, $firstFunction.Extent.StartOffset) + @'
+$modeTargetBudgetSeconds = 300
+$budgetStatus = 'over-target'
+$summaryPath = $OutputDirectory
+'@ + [Environment]::NewLine + $warning[0].Extent.Text + [Environment]::NewLine + $passedMessage[0].Extent.Text
+        [IO.File]::WriteAllText($gatePath, $gate, [Text.UTF8Encoding]::new($true))
+        $quoteDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertTo-NativeArgument' }, $false)
+        $deliveryAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-process.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions = foreach ($name in @('Test-DeliveryProcessCreationIdentity', 'Get-DeliveryDescendantProcessIdentities', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob')) {
+            $definition = $deliveryAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text
+        }
+        $probePath = Join-Path $fixtureRoot 'probe.ps1'
+        $probe = @'
+param([string]$GatePath, [string]$FixtureRoot, [string]$SummaryPath)
+$ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+'@ + [Environment]::NewLine + $quoteDefinition.Extent.Text + [Environment]::NewLine + ($definitions -join [Environment]::NewLine) + [Environment]::NewLine + @'
+$outputRoot = Join-Path $FixtureRoot 'out'
+$arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (ConvertTo-NativeArgument $GatePath), '-Mode', 'Targeted', '-OutputDirectory', (ConvertTo-NativeArgument $SummaryPath))
+$child = Start-DeliveryProcess -ArgumentList ($arguments -join ' ') -WorkingDirectory $FixtureRoot -StandardOutputPath (Join-Path $outputRoot 'gate-targeted.stdout.log') -StandardErrorPath (Join-Path $outputRoot 'gate-targeted.stderr.log')
+try {
+    if (-not $child.process.WaitForExit(30000)) { throw 'Warning fixture child exceeded 30 seconds' }
+    $child.process.WaitForExit(); $child.process.Refresh()
+    $exitCode = [int]$child.process.ExitCode
+} finally { Close-DeliveryProcessJob -JobHandle $child.jobHandle -Process $child.process }
+[IO.File]::WriteAllText((Join-Path $outputRoot 'child-receipt.json'), (@{ exitCode = $exitCode; summaryPath = $SummaryPath } | ConvertTo-Json), $utf8)
+exit $exitCode
+'@
+        [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @('-GatePath', $gatePath, '-FixtureRoot', $fixtureRoot, '-SummaryPath', $summaryPath)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $childReceipt = Get-Content -LiteralPath (Join-Path $outputRoot 'child-receipt.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $childReceipt.exitCode | Should -Be 0
+        $childReceipt.summaryPath | Should -BeExactly $summaryPath
+        $warningUtf8 = [Text.UTF8Encoding]::new($false, $true)
+        $gateText = $warningUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot 'gate-targeted.stdout.log')))
+        $warningUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot 'gate-targeted.stderr.log'))) | Should -BeNullOrEmpty
+        $gateText | Should -Match '(?m)^\p{L}+: ITL Targeted passed but exceeded its target budget of 300 seconds\.'
+        if ($PSUICulture -like 'ru*') { $gateText | Should -Match '(?m)^ПРЕДУПРЕЖДЕНИЕ: ITL Targeted passed' }
+        $unwrappedText = $gateText.Replace("`r", '').Replace("`n", '')
+        $unwrappedText | Should -Match ([regex]::Escape("Inspect slowestStages in $summaryPath."))
+        $unwrappedText | Should -Match ([regex]::Escape("ITL Targeted gate passed. Summary: $summaryPath"))
+    }
+
+    It "preserves an explicit execution guard root while isolating the Pester worker fallback" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl gate isolation Тест " + [guid]::NewGuid().ToString("N"))
+        $testRoot = Join-Path $root "tests\pester"
+        $poisonRoot = Join-Path $root "Внешний execution guard"
+        $planPath = Join-Path $root "plan.json"
+        $junitPath = Join-Path $root "pester.xml"
+        $resultPath = Join-Path $root "result.json"
+        $testPath = Join-Path $testRoot "Isolation.Tests.ps1"
+        $originalGuardRoot = [Environment]::GetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", "Process")
+        $originalPoisonRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $testRoot, $poisonRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $poisonRoot "sentinel.json"), '{"schemaVersion":2}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($testPath, @'
+Describe "Pester worker execution guard isolation" {
+    It "uses a worker-private fallback without overriding an explicit root" {
+        $env:ITL_EXECUTION_GUARD_ROOT | Should -Be $env:ITL_TEST_POISON_GUARD_ROOT
+        $env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT | Should -Not -Be $env:ITL_TEST_POISON_GUARD_ROOT
+        $env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]execution-guards-v2$'
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($planPath, (([ordered]@{ worker=7; paths=@($testPath) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $poisonHash = (Get-FileHash -LiteralPath (Join-Path $poisonRoot "sentinel.json") -Algorithm SHA256).Hash
+            [Environment]::SetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", $poisonRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", $poisonRoot, "Process")
+
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath)
+
+            $result.exitCode | Should -Be 0 -Because $result.combinedText
+            (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
+            (Get-FileHash -LiteralPath (Join-Path $poisonRoot "sentinel.json") -Algorithm SHA256).Hash | Should -Be $poisonHash
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", $originalGuardRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", $originalPoisonRoot, "Process")
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

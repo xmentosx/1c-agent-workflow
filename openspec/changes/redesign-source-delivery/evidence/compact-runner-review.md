@@ -66,3 +66,15 @@ neighbor test edit не должен инвалидировать остальн
 Actual concurrent isolation и длительность устанавливаются Targeted через
 RegisterChange, а не только source proof. Произвольные concurrent регистрации
 и помехи соседнему чужому процессу этим переносом не объявляются проверенными.
+
+## Native acceptance 1af9455b
+
+Targeted: 138 passed, 0 failed, 0 skipped; восемь executed workers, ноль reuse.
+Все 49 исходных expanded cases прошли. Четыре выделенные группы перекрывались
+49.13 s; console начался после завершения всех parallel workers и занял 6949 ms.
+FreshContinuation: 274018 ms; Reports: 77155; Routing: 92995; Watchdog: 66769.
+Check: 313153 ms, raw: 315369 ms. Цель 300 s ещё не достигнута. Следующий
+обоснованный split должен разнести обязательный 126-second workload и короткие
+signed-continuation cases, сохранив точные fixtures и реальную границу процессов.
+Raw: itl/runs/20261011-013849-875-targeted-8223405fa56645419ca7fc12f9aa781f.json.
+Официальный Status подтвердил head1af9455b/activeOperation null; публикации не было.
