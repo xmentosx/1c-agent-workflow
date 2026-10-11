@@ -605,6 +605,8 @@ Describe 'Delivery v3 immutable selective plan' {
             function Invoke-DeliveryGit { param([string[]]$Arguments); return [pscustomobject]@{ exitCode=0; stdout='' } }
             function Get-GitValue { return ('b' * 40) }
             function Get-QueueEntries { return @([pscustomobject]@{ id='develop'; base=('a' * 40); head=('c' * 40) }) }
+            function Get-SourceRegistrationSnapshot { return [pscustomobject]@{ entries=@(Get-QueueEntries); remoteBefore=('b' * 40) } }
+            function Get-SourceRegistrationStartPoint { param($Snapshot); return $Snapshot.remoteBefore }
             function New-DeliveryWorktree { return [pscustomobject]@{ path='C:\candidate'; branch='itl/plan' } }
             function Add-QueuedRangesToCandidate {}
             function Invoke-WorktreeGit {
@@ -619,11 +621,13 @@ Describe 'Delivery v3 immutable selective plan' {
                 return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability) }
             }
             function Save-DeliveryQualityPlan { return 'C:\plan.json' }
+            function Set-DeliveryPlanQueue { param($Plan, $Entries); $Plan | Add-Member -NotePropertyName queue -NotePropertyValue @($Entries) }
             function Remove-DeliveryWorktree {}
 
             $plan = New-AccumulatedDeliveryPlan
             $plan.requireRelease | Should -BeTrue
             @($plan.releaseCapabilities) | Should -Be @('ondemand-mcp')
+            @($plan.queue.id) | Should -Be @('develop')
             $script:preflightCalled | Should -BeTrue
             $script:resolverCalled | Should -BeTrue
         }

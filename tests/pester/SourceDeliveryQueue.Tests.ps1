@@ -24,7 +24,7 @@ It "keeps the queue after remote push when interrupted recovery finds a missing 
             $script:queueCleared = $false
             $script:checkedCommit = ''
             function Read-DevelopPublicationAttempt {
-                return [pscustomobject]@{ phase='component-finalized'; candidate=$remoteCommit; tree=$remoteTree; startedAt='2026-09-24T00:00:00Z'; requireRelease=$true; componentPublication=$null }
+                return [pscustomobject]@{ phase='component-finalized'; candidate=$remoteCommit; tree=$remoteTree; queue=@($entry); startedAt='2026-09-24T00:00:00Z'; requireRelease=$true; componentPublication=$null }
             }
             function Get-DevelopPublicationPhaseRank { return 3 }
             function Invoke-DeliveryGit { return [pscustomobject]@{ exitCode=0 } }

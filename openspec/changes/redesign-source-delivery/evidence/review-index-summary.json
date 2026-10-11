@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "baselineCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
   "baselineDefinitions": 2814,
-  "reviewedOriginalDefinitions": 261,
-  "pendingOriginalDefinitions": 2553,
+  "reviewedOriginalDefinitions": 276,
+  "pendingOriginalDefinitions": 2538,
   "indexIsComplete": false,
   "familyCoverage": [
     {
@@ -19,7 +19,7 @@
     {
       "family": "pester",
       "baseline": 2142,
-      "reviewed": 228
+      "reviewed": 243
     },
     {
       "family": "python",

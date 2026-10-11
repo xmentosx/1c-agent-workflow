@@ -1,0 +1,7 @@
+"file","name","sha256","unchanged"
+"SourceDeliveryFrozenPublication.Tests.ps1","resumes the original release candidate after an advanced queue and an independent registration","667c5f0e70edeca6a82c290d41f723f6cd3f43ca751246f5a5168877e115d16b","True"
+"SourceDeliveryFrozenPlan.Tests.ps1","keeps the legacy plan identity and includes new frozen membership in new identities","068e656d1026cccbb0d503419564cfe1dd64f7c027f6b52418d6921e84237583","True"
+"SourceDeliveryFrozenPlan.Tests.ps1","publishes a saved plan current without absorbing a later task before the first attempt","33d2c05daa31d4762921de7fca54fd2465fe6cbc2b97b8559837330d3ae96114","True"
+"SourceDeliveryLegacyPlan.Tests.ps1","publishes a saved plan legacy without absorbing a later task before the first attempt","bbc2f054e96ffc51322996e5d90715a22a6315ff889aa0106e17ce23954356e1","True"
+"SourceDeliveryPublicationCleanup.Tests.ps1","retries an actual atomic cleanup collision and preserves the advanced registration","0e03fa1e323ab22a29e86ffa62b141fd88af7a6ed8ad34c8afa6d2385a9b0736","True"
+"SourceDeliveryPublicationCleanup.Tests.ps1","finishes after a real post-push cleanup failure without requalifying or losing a new registration","6fa87b6f9b165b346db00f441cc08dc8fce5b84c221b24ec4ced8241866f64c6","True"

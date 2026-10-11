@@ -337,7 +337,7 @@ function Invoke-DevelopCompatibilityPromotion {
 function Get-DevelopPublicationIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$RemoteBefore,
-        [Parameter(Mandatory = $true)][object[]]$Entries,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Entries,
         [Parameter(Mandatory = $true)][string]$Candidate,
         [Parameter(Mandatory = $true)][string]$Tree
     )
@@ -445,7 +445,7 @@ function New-DevelopPublicationAttempt {
     param(
         [Parameter(Mandatory = $true)][string]$Identity,
         [Parameter(Mandatory = $true)][string]$RemoteBefore,
-        [Parameter(Mandatory = $true)][object[]]$Entries,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Entries,
         [Parameter(Mandatory = $true)][string]$Candidate,
         [Parameter(Mandatory = $true)][string]$Tree,
         [AllowNull()][object]$ComponentPlan
@@ -513,7 +513,7 @@ function Complete-InterruptedDevelopPublication {
     $attempt = Read-DevelopPublicationAttempt
     if (-not $attempt -or (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 3 -or
         [string]$attempt.candidate -ne $RemoteBefore) { return $null }
-    foreach ($entry in @($Entries)) {
+    foreach ($entry in @($attempt.queue)) {
         if ((Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $RemoteBefore) -AllowFailure).exitCode -ne 0) { return $null }
     }
     $remoteTree = Get-GitValue -Arguments @("rev-parse", "$RemoteBefore^{tree}")
@@ -523,7 +523,7 @@ function Complete-InterruptedDevelopPublication {
     if (-not $script:ComponentFinalizerScript) {
         [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $script:Root -CandidateCommit $RemoteBefore)
     }
-    Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
+    Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore -Entries @($attempt.queue)
     Sync-LocalDevelopAfterPublish
     $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
     if (-not $retainAttempt) {
@@ -550,16 +550,36 @@ function Publish-AccumulatedDevelop {
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
     $entries = @(Get-QueueEntries)
-    if ($entries.Count -eq 0) { throw "There are no registered develop changes to publish." }
     $interrupted = Complete-InterruptedDevelopPublication -RemoteBefore $remoteBefore -Entries $entries
     if ($interrupted) { return $interrupted }
+    $frozenAttempt = Read-DevelopPublicationAttempt
+    $frozenPlan = $null
+    if ($ResumePlan) {
+        $frozenPlan = Get-Content -LiteralPath (Join-Path (Get-DeliveryPlanRoot) "$ResumePlan.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ((Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $frozenPlan)) -cne $ResumePlan) { throw "Saved delivery plan identity is invalid. The queue and checkpoint were preserved; inspect source-delivery Status before resuming the original plan." }
+        if ($frozenPlan.PSObject.Properties['queue']) { $entries = @($frozenPlan.queue) }
+        else { $entries = @($entries | Where-Object { (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$_.head,[string]$frozenPlan.candidate.commit) -AllowFailure).exitCode -eq 0 }) }
+        if ($frozenAttempt -and $frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -cne $ResumePlan) {
+            throw "A different publication checkpoint is active. Finish its plan '$([string]$frozenAttempt.planId)' with the same publication action before starting plan '$ResumePlan'; both plans and all registrations were preserved."
+        }
+    } elseif ($frozenAttempt) { $entries = @($frozenAttempt.queue) }
+    if ($entries.Count -eq 0 -and -not $frozenPlan) { throw "There are no registered develop changes to publish." }
 
     $worktree = $null
     $deliverySucceeded = $false
     $deliveryPlan = $null
     $candidateResourceId = ""
     try {
-        $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
+        $startPoint = $remoteBefore
+        if ($frozenAttempt -and [string]$frozenAttempt.remoteBefore -ceq $remoteBefore) {
+            $startPoint = if ($frozenAttempt.PSObject.Properties['queuedCandidate']) { [string]$frozenAttempt.queuedCandidate } elseif ($frozenAttempt.PSObject.Properties['promotionSourceCandidate']) { [string]$frozenAttempt.promotionSourceCandidate } else { [string]$frozenAttempt.candidate }
+        } elseif ($frozenPlan) { $startPoint = [string]$frozenPlan.candidate.commit }
+        elseif (-not $frozenAttempt) {
+            $snapshot = Get-SourceRegistrationSnapshot
+            $entries = @($snapshot.entries)
+            $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
+        }
+        $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $queuedTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $queuedCandidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
@@ -589,6 +609,7 @@ function Publish-AccumulatedDevelop {
         } else {
             $attempt | Add-Member -NotePropertyName componentPlan -NotePropertyValue $componentPlan
         }
+        $attempt | Add-Member -NotePropertyName queuedCandidate -NotePropertyValue $queuedCandidate -Force
         $attempt.candidate = $candidate
         $attempt.tree = $candidateTree
         Write-DevelopPublicationAttempt -Attempt $attempt
@@ -610,6 +631,7 @@ function Publish-AccumulatedDevelop {
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
+        if (-not $frozenPlan -or $frozenPlan.PSObject.Properties['queue']) { Set-DeliveryPlanQueue -Plan $deliveryPlan -Entries $entries }
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
         $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidate }) -State "active"
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
@@ -729,7 +751,7 @@ function Publish-AccumulatedDevelop {
         }
         $remoteAfter = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("ls-remote", $script:Remote, "refs/heads/develop")).stdout.Split([char]9)[0].Trim()
         if ($remoteAfter -ne $candidate) { throw "Published develop verification failed: expected $candidate, remote reports $remoteAfter." }
-        Clear-PublishedQueueEntries -PublishedCommit $candidate
+        Clear-PublishedQueueEntries -PublishedCommit $candidate -Entries @($attempt.queue)
         Sync-LocalDevelopAfterPublish
         $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
         if (-not $retainAttempt) {

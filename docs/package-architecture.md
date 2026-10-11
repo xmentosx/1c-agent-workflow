@@ -27,8 +27,13 @@ the source task, accepted refs, candidate worktree/checkpoint, and existing proo
 the continuation is the same RegisterChange from the source checkout. Legacy
 base/head records remain readable and are integrated on the next registration.
 This protocol checkpoint was approved by the user on 2026-10-11 in
-`openspec/changes/redesign-source-delivery/design.md`; frozen publication and
-full controller rollback acceptance remain separate implementation work there.
+`openspec/changes/redesign-source-delivery/design.md`. The existing publication
+attempt freezes queue membership and its queued candidate; a saved plan also
+binds membership, while legacy plans retain their original identity and authority.
+Publication cleanup compares only frozen queue pairs, preserves later work, and
+retries ref movement without repeating qualification. Post-push recovery uses
+the frozen attempt rather than next-release registrations. Full historical
+controller rollback acceptance remains tracked separately in that change.
 
 The develop authority boundary is channel-local, not candidate-local: the
 supervisor is the tracked published tip before the operation, never the queued

@@ -32,7 +32,17 @@ function Get-DeliveryPlanIdentity {
     if ($Plan.PSObject.Properties['releaseEnclosingOverheadSeconds']) {
         $identity['releaseEnclosingOverheadSeconds'] = [int]$Plan.releaseEnclosingOverheadSeconds
     }
+    if ($Plan.PSObject.Properties['queue']) {
+        $identity['queue'] = @($Plan.queue | ForEach-Object { [ordered]@{ id=[string]$_.id; base=[string]$_.base; head=[string]$_.head } })
+    }
     return $identity
+}
+
+function Set-DeliveryPlanQueue {
+    param([Parameter(Mandatory = $true)][object]$Plan, [AllowEmptyCollection()][object[]]$Entries)
+    $queue = @($Entries | Sort-Object id | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; base=[string]$_.base; head=[string]$_.head } })
+    $Plan | Add-Member -NotePropertyName queue -NotePropertyValue $queue -Force
+    $Plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $Plan)
 }
 
 function Get-DeliveryStageEvidencePath {
@@ -397,11 +407,12 @@ function New-AccumulatedDeliveryPlan {
     Assert-CleanDeliveryWorktree
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
-    $entries = @(Get-QueueEntries)
+    $snapshot = Get-SourceRegistrationSnapshot
+    $entries = @($snapshot.entries)
     if ($entries.Count -eq 0) { throw "There are no registered develop changes to plan." }
     $worktree = $null
     try {
-        $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "plan-develop"
+        $worktree = New-DeliveryWorktree -StartPoint (Get-SourceRegistrationStartPoint -Snapshot $snapshot) -Purpose "plan-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
@@ -409,6 +420,7 @@ function New-AccumulatedDeliveryPlan {
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities)
+        Set-DeliveryPlanQueue -Plan $plan -Entries $entries
         $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         return $plan
     } finally { if ($worktree) { Remove-DeliveryWorktree -Worktree $worktree } }

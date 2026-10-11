@@ -181,16 +181,35 @@ function Get-QueueEntries {
 }
 
 function Clear-PublishedQueueEntries {
-    param([string]$PublishedCommit)
-    $commands = New-Object System.Collections.Generic.List[string]
-    foreach ($entry in @(Get-QueueEntries)) {
-        $reachable = Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $PublishedCommit) -AllowFailure
-        if ($reachable.exitCode -eq 0) {
-            $commands.Add("delete $script:QueueRoot/$($entry.id)/base $($entry.base)") | Out-Null
-            $commands.Add("delete $script:QueueRoot/$($entry.id)/head $($entry.head)") | Out-Null
+    param([string]$PublishedCommit, [AllowEmptyCollection()][object[]]$Entries)
+    $frozen = if ($PSBoundParameters.ContainsKey('Entries')) { @($Entries) } else { @(Get-QueueEntries) }
+    for ($retry = 0; $retry -lt 3; $retry++) {
+        $current = @(Get-QueueEntries)
+        $commands = New-Object System.Collections.Generic.List[string]
+        $selected = @()
+        foreach ($entry in $frozen) {
+            $same = @($current | Where-Object { [string]$_.id -ceq [string]$entry.id -and [string]$_.base -ceq [string]$entry.base -and [string]$_.head -ceq [string]$entry.head })
+            if ($same.Count -ne 1) { continue }
+            $reachable = Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $PublishedCommit) -AllowFailure
+            if ($reachable.exitCode -eq 0) {
+                $selected += $entry
+                $commands.Add("delete $script:QueueRoot/$($entry.id)/base $($entry.base)") | Out-Null
+                $commands.Add("delete $script:QueueRoot/$($entry.id)/head $($entry.head)") | Out-Null
+            }
+        }
+        if ($commands.Count -eq 0) { return }
+        try { Invoke-QueueRefTransaction -Commands @($commands); return }
+        catch {
+            $transactionFailure = $_
+            $after = @(Get-QueueEntries)
+            $moved = @($selected | Where-Object {
+                $old = $_
+                @($after | Where-Object { [string]$_.id -ceq [string]$old.id -and [string]$_.base -ceq [string]$old.base -and [string]$_.head -ceq [string]$old.head }).Count -ne 1
+            })
+            if ($moved.Count -eq 0) { throw $transactionFailure }
         }
     }
-    if ($commands.Count -gt 0) { Invoke-QueueRefTransaction -Commands @($commands) }
+    throw "Published candidate queue cleanup observed repeated concurrent movement. Accepted refs and publication checkpoint were preserved; repeat the same publication command to finish cleanup without requalifying the published candidate."
 }
 
 function Register-SourceChange {
