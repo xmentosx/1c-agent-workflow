@@ -28,9 +28,14 @@ Describe 'Independent host component source verification' {
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1')
         @($selection.unknownPaths) | Should -BeNullOrEmpty
         @($selection.tests | Sort-Object) | Should -Be @(
+            'tests/pester/HostBookStack.Tests.ps1',
+            'tests/pester/HostCodeChecker.Tests.ps1',
             'tests/pester/HostLinux.Tests.ps1',
+            'tests/pester/HostMantis.Tests.ps1',
             'tests/pester/HostNativeTransport.Tests.ps1',
+            'tests/pester/HostSourceRuntime.Tests.ps1',
             'tests/pester/HostSppr.Tests.ps1',
+            'tests/pester/HostTestSelection.Tests.ps1',
             'tests/pester/HostTooling.Tests.ps1'
         )
     }
@@ -51,7 +56,7 @@ Describe 'Independent host component source verification' {
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         $RepositoryRoot=$RepoRoot
-        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr')) {
+        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime')) {
             $path=Join-Path $RepoRoot "tests/pester/$name.Tests.ps1"
             Get-ShardInputDigest -Paths @($path) | Should -BeNullOrEmpty
         }

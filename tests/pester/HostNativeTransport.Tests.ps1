@@ -3,6 +3,8 @@
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $McpHostPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+    . (Join-Path $RepoRoot 'scripts/host-test-runtime.ps1')
+    $SourceTestPython = Get-SourceHostTestPython -RepositoryRoot $RepoRoot -Component 'Native'
 }
 
 Describe 'HostNativeTransport component regressions' {
@@ -18,7 +20,7 @@ Describe 'HostNativeTransport component regressions' {
             $oldEncoding = $env:PYTHONIOENCODING
             try {
                 $env:PYTHONIOENCODING = "utf-8"
-                $result = Invoke-ProcessCapture -FilePath python -Arguments @($scriptPath, $root)
+                $result = Invoke-ProcessCapture -FilePath $SourceTestPython -Arguments @($scriptPath, $root)
                 $result.exitCode | Should -Be 0
                 $result.lines[0] | Should -BeExactly $root
             } finally { $env:PYTHONIOENCODING = $oldEncoding }
@@ -32,7 +34,7 @@ Describe 'HostNativeTransport component regressions' {
         @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $python = Resolve-PythonExecutable -Config @{}
+            $python = $SourceTestPython
             $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X', 'utf8', '-B', (Join-Path $RepoRoot 'tests/python/test_host_index_snapshot.py'), (Join-Path $RepoRoot 'vibecoding1c-mcp-host/index-snapshot.py'), $tempRoot) -TimeoutSec 30 -Description 'SQLite snapshot round trip'
             $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
             ($result.lines -join [Environment]::NewLine) | Should -Match ([regex]::Escape('Снимок: ' + $tempRoot))
@@ -42,8 +44,13 @@ Describe 'HostNativeTransport component regressions' {
     Context 'Original endpoint recovery scope' -Tag DirectEndpointRecovery {
     It 'executes the shared real HTTP identity and Linux ownership regressions' {
         foreach ($test in @('mcp-host/test_endpoint_identity.py', 'mcp-host/linux/test_watchdog.py')) {
-            $output = & python -B -X utf8 (Join-Path $RepoRoot $test) 2>&1
-            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $output = & $SourceTestPython -X utf8 -B (Join-Path $RepoRoot $test) 2>&1
+                $exitCode = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $previousErrorActionPreference }
+            $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
         }
     }
     }

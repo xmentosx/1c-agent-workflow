@@ -3,6 +3,8 @@
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $McpHostPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+    . (Join-Path $RepoRoot 'scripts/host-test-runtime.ps1')
+    $SourceTestPython = Get-SourceHostTestPython -RepositoryRoot $RepoRoot -Component 'BookStack'
 }
 
 Describe 'HostBookStack component regressions' {
@@ -11,7 +13,7 @@ Describe 'HostBookStack component regressions' {
         $previousErrorActionPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = "Continue"
-            $output = & python $testPath 2>&1
+            $output = & $SourceTestPython -X utf8 -B $testPath 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference

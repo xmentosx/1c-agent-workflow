@@ -3,14 +3,13 @@
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $McpHostPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+    . (Join-Path $RepoRoot 'scripts/host-test-runtime.ps1')
+    $SourceTestPython = Get-SourceHostTestPython -RepositoryRoot $RepoRoot -Component 'Sppr'
 }
 
 Describe 'HostSppr component regressions' {
     It "qualifies SPPR corpus and HTTP tools with the selected isolated Python runtime" -Tag Sppr {
-        $python = if ($env:SPPR_TEST_PYTHON) { $env:SPPR_TEST_PYTHON } else { Join-Path $RepoRoot 'build\sppr-venv\Scripts\python.exe' }
-        if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-            throw 'Prepare build/sppr-venv with sppr-mcp/requirements.txt or set SPPR_TEST_PYTHON to that isolated runtime, then repeat the SPPR owner tests.'
-        }
+        $python = $SourceTestPython
         $hostPath = Join-Path $TestDrive 'sppr-transport-host.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
         & {

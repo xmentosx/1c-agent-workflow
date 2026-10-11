@@ -84,6 +84,13 @@ unit is complete; never pre-run it manually or start a broad gate merely because
 a chat is ending. After a failure, diagnose and use focused regressions before
 retrying registration. Keep the required final gates and their assertions intact.
 
+Python source suites `Host*` prepare only their selected component's checkout-local
+venv through `scripts/host-test-runtime.ps1`; tests use its absolute interpreter.
+`ITL_SOURCE_TEST_PYTHON` selects bootstrap explicitly. `SPPR_TEST_PYTHON` is a
+verified read-only isolated override. Owned missing dependencies repair through
+the same component test; unknown runtime identity still disables proof reuse.
+Scope and acceptance: [component environments](../openspec/changes/redesign-source-delivery/evidence/component-python-environments.md).
+
 For a new barrier, include the original task's agent-usable continuation in its
 owned acceptance scenarios. Compare changed frequent paths against the same
 before/after workload using existing timings; record context deltas separately.

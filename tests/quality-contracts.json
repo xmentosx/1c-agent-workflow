@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1"],
+  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1"],
   "budgets": {
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
@@ -846,7 +846,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostNativeTransport.Tests.ps1",
       "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "tests/python/test_host_index_snapshot.py"],
-      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostNativeTransport.Tests.ps1"]
     },
     {
@@ -856,7 +856,7 @@
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/HostLinux.Tests.ps1",
       "paths": ["vibecoding1c-mcp-host/linux-native-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1"],
-      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostLinux.Tests.ps1"]
     },
     {
@@ -866,7 +866,18 @@
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/HostCodeChecker.Tests.ps1",
       "paths": ["vibecoding1c-mcp-host/codechecker-overlay/*", "vibecoding1c-mcp-host/codechecker-beta-overlay/*"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostCodeChecker.Tests.ps1"]
+    },
+    {
+      "id": "host-source-runtime",
+      "owner": "Source-only per-component Python environment preparation",
+      "gate": "targeted",
+      "budgetSeconds": 600,
+      "primaryTest": "tests/pester/HostSourceRuntime.Tests.ps1",
+      "paths": ["scripts/host-test-runtime.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/beta-cutover.ps1", "vibecoding1c-mcp-host/index-snapshot.ps1", "vibecoding1c-mcp-host/sppr-host.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1", "vibecoding1c-mcp-host/sppr-mcp/requirements.txt", "tests/pester/TestSupport.ps1", "scripts/quality-contracts.ps1", "scripts/invoke-pester-shards.ps1", "tests/quality-contracts.json"],
+      "tests": ["tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1"]
     },
     {
       "id": "host-tools-proxy-tests",
@@ -884,6 +895,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostBookStack.Tests.ps1",
       "paths": ["vibecoding1c-mcp-host/bookstack-product-docs-mcp/*"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostBookStack.Tests.ps1"]
     },
     {
@@ -893,6 +905,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostMantis.Tests.ps1",
       "paths": ["vibecoding1c-mcp-host/mantis-ticket-mcp/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostMantis.Tests.ps1"]
     },
     {
@@ -902,7 +915,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostSppr.Tests.ps1",
       "paths": ["vibecoding1c-mcp-host/sppr-mcp/*", "vibecoding1c-mcp-host/sppr-host.ps1", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1"],
-      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostSppr.Tests.ps1"]
     },
     {

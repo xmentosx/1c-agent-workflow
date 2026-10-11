@@ -2,8 +2,8 @@
     "schemaVersion":  1,
     "baselineCommit":  "fa0e3c91694112c1da3ecda7209a8a81ea828264",
     "baselineDefinitions":  2814,
-    "reviewedOriginalDefinitions":  309,
-    "pendingOriginalDefinitions":  2505,
+    "reviewedOriginalDefinitions":  317,
+    "pendingOriginalDefinitions":  2497,
     "indexIsComplete":  false,
     "familyCoverage":  [
                            {
@@ -14,7 +14,7 @@
                            {
                                "family":  "node",
                                "baseline":  8,
-                               "reviewed":  0
+                               "reviewed":  8
                            },
                            {
                                "family":  "pester",

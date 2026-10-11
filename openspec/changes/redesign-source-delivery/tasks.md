@@ -165,13 +165,18 @@ Targeted для каждого подпункта: группировать св
 - [ ] B.1 Разделить причины ошибок кодировки по транспортным границам.
   Свести запись PowerShell-исходников и native-транспорт к их общим владельцам;
   сохранить Windows PowerShell 5.1 и поддерживаемые Windows/terminal sessions.
-- [ ] B.2 Использовать существующий короткий маршрут проверки совместимости
+- [x] B.2 Использовать существующий короткий маршрут проверки совместимости
   до дорогих стадий. Не добавлять дублирующий универсальный барьер.
+  Source encoding и short admission приняты в fe877391 /173/0/0;
+  [контракт](evidence/source-preflight.md). Нового universal gate нет.
 - [ ] B.3 Сохранить точные Unicode round-trip регрессии stdout, stderr,
   сериализации и путей одновременно с пробелами и кириллицей. Не менять
   byte-preserving контракт `src/cf/**` и `src/cfe/**` при нормализации исходников.
-- [ ] B.4 Подготовка выбранного компонента разрешает и проверяет его собственное
+- [x] B.4 Подготовка выбранного компонента разрешает и проверяет его собственное
   Python-окружение и зависимости; исключить случайный интерпретатор из PATH.
+  Source-only владелец и исходные routes проверены;
+  [подготовка и repair](evidence/component-python-environments.md).
+  Штатная регистрация этой связной единицы выполняется после её завершения.
 - [ ] B.5 Определить исходное состояние каждой фазы: workflow package,
   зависимости, конфигурация, база, Designer-baseline, cursor, pending operation
   и ожидаемый результат. Проверять фактическое состояние, а не только Git-исходники.
@@ -228,17 +233,17 @@ Targeted для каждого подпункта: группировать св
   исходного плана описано в [candidate-integrity](evidence/candidate-integrity.md).
   Принято RegisterChange 8ad8a94d: Targeted244/0/0,30 executed/0 reused,
   check1254593ms/raw1256923ms. [Приёмка](evidence/candidate-integrity.md).
-- [ ] C.9 Публикация использует proof соответствующего кандидата; сбой
+- [x] C.9 Публикация использует proof соответствующего кандидата; сбой
   доставки сохраняет применимую квалификацию. Неприменимость или повреждение
   proof сообщается с конкретным входом и причиной, без повторного общего ремонта.
-  Реализовано, focused native passed; окончательный Targeted ожидается.
+  Принято bc8a1dfc: Targeted324/0/0,36 executed/9 reused, check454191ms.
   [Измерения и границы](evidence/candidate-recovery.md).
 - [x] C.10 Сохранить конкурентные регистрации при завершении выпуска;
   очищать только действительно опубликованные и совпадающие записи очереди.
-- [ ] C.11 Проверить переход существующей очереди и планов на новый контракт,
+- [x] C.11 Проверить переход существующей очереди и планов на новый контракт,
   safe resume и откат; не редактировать состояние вручную и не обходить locks.
   Реальные source bodies fa0e3c91, legacy transition и совместимый функциональный
-  rollback проверены; ожидается единая регистрация этой единицы.
+  rollback проверены; приняты той же регистрацией bc8a1dfc.
 
 Приёмка C:
 
@@ -249,9 +254,9 @@ Targeted для каждого подпункта: группировать св
 - [ ] CA.4 Отказ доставки повторяет доставку без повторного запуска 1С,
   если входы доказательства не изменились.
   Native coordinator сохраняет один fake Develop; реальный 1С proof остаётся V.7.
-- [ ] CA.5 Изменение входов, повреждённый proof и remote movement вызывают
+- [x] CA.5 Изменение входов, повреждённый proof и remote movement вызывают
   корректное решение владельца; ложная квалификация и прямой обход публикации исключены.
-  Native recovery scenarios passed; ожидается штатный Targeted.
+  Native recovery scenarios и штатный Targeted bc8a1dfc passed.
 
 ## Проверки, поставка и конечная приёмка
 
@@ -349,3 +354,6 @@ definition benchmark44087→4793ms; native acceptance новой единицы 
 | 2026-10-11 | A.3, короткий admission и audit Plan27 | Все15 SourceQueue It точно перенесены в четыре suites, input closure сохранён. Existing scheduler выполняет short admission до native workers, без второго запуска cached proof. Native sequencing/failure/continuation/cache2/0 за31.26s; short owner/catalog7/0 за4.94s; parser/docs3/0 за3.24s. Plan necessity27:26 тел совпадают, один ранее исправленный fixture598; audit303/2814,2511 pending. [Контракт и границы](evidence/source-preflight.md). Требуется одна штатная RegisterChange этой coherent единицы; A целиком и300s не завершены. |
 | 2026-10-11 | C.8 принят | 8ad8a94d, tree4a1deaad: Targeted244/0/0,30 executed/0 reused, check1254593ms/raw1256923ms, fingerprint8891ms. Raw itl/runs/20261011-115531-973-targeted-04a37f702ccd482e8d334a5f1ed2d778.json; Status queuehead8ad8a94d/indexready/invalid0/activeOperationnull. |
 | 2026-10-11 | C.9/C.11 подготовлены | Native recovery, реальный historical transition и совместимый rollback passed; Git transport3/0, catalog2/0. Измеренный fa0 registration22280→4101ms при тех же18Git calls. [Подробности](evidence/candidate-recovery.md). Ожидается одна RegisterChange; весь audit309/2814,300s и V.7 не закрыты. |
+
+| 2026-10-11 | C.9/C.11/CA.5 приняты | bc8a1dfc,tree3b88d62e:Targeted324/0/0,36 executed/9 reused,check454191ms/raw455607ms. Raw itl/runs/20261011-145432-660-targeted-0870c1aed642405dabecac860c3eabc8.json; Status queueheadbc8a1dfc/indexready/invalid0/activeOperationnull. 300s,CA.4 real1C,V.7 и весь план не завершены. |
+| 2026-10-11 | B.4 и Node necessity подготовлены | Собственные Python среды шести source-компонентов, проверка фактических пакетов и owned repair. Исходные component routes passed; новый repair1/0,82.01s; final focused19/0,46.35s. Все8 frozen Node definitions разобраны, retained; audit317/2814,2497 pending. [Доказательства и ограничения](evidence/component-python-environments.md). Требуется одна штатная RegisterChange этой единицы. |
