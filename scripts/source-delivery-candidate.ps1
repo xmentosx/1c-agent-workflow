@@ -1,4 +1,5 @@
-# Candidate worktrees, qualification recovery, and develop/master delivery orchestration.
+﻿# Candidate worktrees, qualification recovery, and develop/master delivery orchestration.
+. (Join-Path $PSScriptRoot 'source-delivery-integrity.ps1')
 
 function New-DeliveryWorktree {
     param([string]$StartPoint, [string]$Purpose)
@@ -403,17 +404,20 @@ function Register-DevelopPublicationStageFailure {
     param(
         [Parameter(Mandatory = $true)][object]$Attempt,
         [Parameter(Mandatory = $true)][string]$Stage,
-        [Parameter(Mandatory = $true)][string]$Message
+        [Parameter(Mandatory = $true)][string]$Message,
+        [string]$FailureIdentity = ""
     )
     # Candidate worktree names are intentionally random on every retry. Remove
     # that run-local token so the same owning failure opens the circuit breaker.
     $normalizedMessage = $Message.Trim() -replace '(?i)itl-source-publish-develop-[a-f0-9]{32}', 'itl-source-publish-develop-<attempt>'
+    if (-not [string]::IsNullOrWhiteSpace($FailureIdentity)) { $normalizedMessage = $FailureIdentity }
     $signature = Get-DeliveryTextSha256 -Text $normalizedMessage
     $failures = @($Attempt.failures)
     $existing = $failures | Where-Object { [string]$_.stage -eq $Stage -and [string]$_.signature -eq $signature } | Select-Object -First 1
     if ($existing) {
         $existing.count = [int]$existing.count + 1
         $existing.lastFailedAt = [DateTime]::UtcNow.ToString("o")
+        $existing.message = $Message
         if (-not $existing.PSObject.Properties["failureClass"]) { $existing | Add-Member -NotePropertyName failureClass -NotePropertyValue (Get-DeliveryFailureClass -Message $Message -Stage $Stage) }
     } else {
         $failures += [pscustomobject]@{ stage = $Stage; failureClass = (Get-DeliveryFailureClass -Message $Message -Stage $Stage); signature = $signature; count = 1; lastFailedAt = [DateTime]::UtcNow.ToString("o"); message = $Message }
@@ -708,6 +712,7 @@ function Publish-AccumulatedDevelop {
             }
         }
 
+        Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $worktree.path -Attempt $attempt
         $currentFinalizerIdentity = Get-DeliveryComponentFinalizerIdentity
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 3 -and [string]$attempt.componentFinalizerIdentity -ne $currentFinalizerIdentity) {
             $attempt.componentFinalizerIdentity = $currentFinalizerIdentity
@@ -728,20 +733,21 @@ function Publish-AccumulatedDevelop {
             try {
                 $componentPublication = Invoke-ComponentPublicationFinalizer -CandidateRoot $worktree.path -CandidateCommit $candidate
                 $attempt.componentPublication = $componentPublication
-                Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "component-finalizer"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "component-finalized"
             } catch {
                 Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "component-finalizer" -Message $_.Exception.Message
                 throw
             }
         }
+        Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $worktree.path -Attempt $attempt
+        Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "component-finalizer"
         $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         if (-not $script:ComponentFinalizerScript) {
             [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $worktree.path)
         }
         Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "push"
         try {
-            $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure
+            $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "${candidate}:refs/heads/develop") -AllowFailure
             if ($push.exitCode -ne 0) { throw "origin/develop changed or rejected the fast-forward push. The queue is preserved; rebuild the candidate from the new remote head." }
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "push"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "remote-pushed"

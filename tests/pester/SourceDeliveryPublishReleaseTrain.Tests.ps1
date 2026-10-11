@@ -56,7 +56,7 @@ Describe "Source develop queue and delivery" {
 
     It "never uses force push for develop or master" {
             $text = $DeliverySourceText; $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
-            foreach ($marker in @('HEAD:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
+            foreach ($marker in @('${candidate}:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
         }
 
     It "uses a GitHub pull request for protected master and reconciles develop without force" {

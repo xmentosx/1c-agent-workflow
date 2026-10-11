@@ -3,8 +3,8 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 303 определения имеют явный предметный
-review, 2511 остаются pending. Из рассмотренных: Pester 270, Python 28, Go 5,
+[Summary](review-index-summary.json): 309 определений имеют явный предметный
+review, 2505 остаются pending. Из рассмотренных: Pester 276, Python 28, Go 5,
 Node 0. Это охват исходных определений, не количество запусков или новых тестов.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
@@ -12,7 +12,7 @@ boundaries, 11 host wrappers, семь параметризованных опр
 15-case nested review, все56 исходных определений LocalQualityGate, все45
 CompactItlRunner,15 ReleaseReadiness,20 текущих DevelopE2EQualification
 и6 DevelopStaticQualificationCache, а также15 SourceDeliveryQueue
-и27 SourceDeliveryPlan.
+и27 SourceDeliveryPlan, а также6 SourceDeliveryPublish.
 Queue review сохраняет12 исходных тел; два изменены по утверждённому C,
 один fixture дополнен исходной frozen queue. Все15 текущих It перенесены точно.
 Plan review сохраняет26 тел; original598 адаптирован к snapshot boundary.

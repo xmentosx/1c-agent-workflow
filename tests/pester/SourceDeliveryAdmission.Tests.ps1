@@ -1,14 +1,55 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+    It 'blocks repeated candidate corruption despite changing observed SHAs and preserves owner recovery' {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DevelopPublicationCandidateIntegrity','Register-DevelopPublicationStageFailure','Assert-DevelopPublicationStageMayRun','Clear-DevelopPublicationStageFailure','Get-DeliveryTextSha256')) { Invoke-Expression $definition.Extent.Text }
+            $RequireRelease=$false; $RetryBlockedStage=$false
+            $script:observedHead='unexpected-first'
+            $script:writes=0
+            function Invoke-WorktreeGit { param($Root,$Arguments) return [pscustomobject]@{stdout=$(if($Arguments[-1] -eq 'HEAD'){$script:observedHead}else{'expected-tree'})} }
+            function Get-RepositoryGitPathList { return @() }
+            function Get-DevelopPublicationPhaseRank { param($Phase) if($Phase -eq 'component-finalized'){return 3};return 1 }
+            function Set-DevelopPublicationPhase { param($Attempt,$Phase) $Attempt.phase=$Phase }
+            function Get-DeliveryFailureClass { return 'workflow' }
+            function Write-DevelopPublicationAttempt { $script:writes++ }
+            $attempt=[pscustomobject]@{candidate='qualified-sha';tree='expected-tree';phase='component-finalized';componentPublication='obsolete';failures=@()}
+            { Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $TestDrive -Attempt $attempt } | Should -Throw '*observed commit unexpected-first*'
+            $script:observedHead='unexpected-second'
+            { Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $TestDrive -Attempt $attempt } | Should -Throw '*observed commit unexpected-second*'
+            @($attempt.failures).Count | Should -Be 1
+            $attempt.failures[0].count | Should -Be 2
+            $attempt.failures[0].message | Should -Match 'unexpected-second'
+            $attempt.phase | Should -Be 'develop-qualified'
+            $attempt.componentPublication | Should -BeNullOrEmpty
+            $script:writes | Should -Be 2
+            { Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'component-finalizer' } | Should -Throw '*same failure twice*'
+            $RetryBlockedStage=$true
+            Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage 'component-finalizer'
+            @($attempt.failures).Count | Should -Be 0
+            $script:observedHead='qualified-sha'
+            Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $TestDrive -Attempt $attempt
+            $attempt.candidate | Should -Be 'qualified-sha'
+            $script:writes | Should -Be 3
+        }
+    }
 It "checks the Release stand before Develop and all owned URLs before push, including resume" {
         $body = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
         $stand = $body.IndexOf('Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path')
         $develop = $body.IndexOf('Invoke-SourceGate -Mode "Develop"')
         $finalizer = $body.IndexOf('Invoke-ComponentPublicationFinalizer -CandidateRoot $worktree.path')
         $remote = $body.LastIndexOf('Assert-DeliveryOwnedAssetsPublished -CandidateRoot $worktree.path')
-        $push = $body.IndexOf('"push", $script:Remote, "HEAD:refs/heads/develop"')
+        $push = $body.IndexOf('"push", $script:Remote, "${candidate}:refs/heads/develop"')
+        $integrityBeforeFinalizer = $body.IndexOf('Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $worktree.path -Attempt $attempt')
+        $integrityBeforePush = $body.LastIndexOf('Assert-DevelopPublicationCandidateIntegrity -CandidateRoot $worktree.path -Attempt $attempt')
         $stand | Should -BeGreaterThan -1
+        $push | Should -BeGreaterThan -1
+        $finalizer | Should -BeGreaterThan -1
+        $remote | Should -BeGreaterThan -1
+        $integrityBeforeFinalizer | Should -BeGreaterThan -1
+        $integrityBeforeFinalizer | Should -BeLessThan $finalizer
+        $integrityBeforePush | Should -BeGreaterThan $finalizer
+        $integrityBeforePush | Should -BeLessThan $push
         $stand | Should -BeLessThan $develop
         $finalizer | Should -BeLessThan $remote
         $remote | Should -BeLessThan $push

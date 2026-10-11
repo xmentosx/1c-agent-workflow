@@ -43,4 +43,20 @@ weight91 заменяет старую оценку30 для20-case suite. Ис�
 SourceDeliveryPlan всё ещё смешивает короткие seams с Git/planner integration;
 его следующий split и дальнейшее owner narrowing остаются A.3/A.2. Отмена,
 одновременные независимые доработки,300s и весь A не закрыты этим изменением.
-Audit Plan27 включён отдельно: всего303/2814 рассмотрены,2511 pending.
+Audit Plan27 включён отдельно: на этом этапе303/2814 рассмотрены,2511 pending.
+
+## Accepted registration fe877391
+
+Canonical RegisterChange passed173/0/0,18 executed/0 reused. Check329530ms,
+raw331050ms, fingerprint5513ms, worker span312334ms. Raw run:
+`itl/runs/20261011-084631-409-targeted-35c181f1d12744ab86fa8cedef5165e8.json`.
+The accepted tree is2d6c3937fb352cb4febb8602e9f98fb3621ec274.
+Status confirmed queue headfe877391, indexready, invalid0, activeOperationnull;
+the primary worktree was fast-forwarded to that clean accepted commit.
+
+Admission completed at08:46:52.6263397Z; the earliest other worker started
+at08:46:53.2397584Z. Admission itself took2.566s including child setup.
+The300s target remains unmet. The slowest groups were recovery195071ms,
+queue188819ms, shard identity132696ms, Targeted selection117269ms and cache97155ms.
+Different selected workloads prevent treating the reduction from C7 as a measured
+speedup. No gate was rerun to recover these timings.

@@ -53,6 +53,8 @@
     "SourceDeliveryPublishReleaseTrain.Tests.ps1": 346.0,
     "SourceDeliveryQueue.Tests.ps1": 192.0,
     "SourceDeliveryAdmission.Tests.ps1": 7.0,
+    "SourceDeliveryCandidateIntegrity.Tests.ps1": 164.0,
+    "SourceDeliveryFinalizerIntegrity.Tests.ps1": 170.0,
     "SourceDeliveryAuthority.Tests.ps1": 66.0,
     "SourceDeliveryOperationRecovery.Tests.ps1": 198.0,
     "SourceDeliveryCandidateRegistration.Tests.ps1": 279.0,

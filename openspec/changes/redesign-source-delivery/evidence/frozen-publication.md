@@ -82,12 +82,14 @@ Get-SourceRegistrationSnapshot. Оба fixture приведены к новым 
 короткие owner checks должны завершаться до дорогих native групп, без добавления
 новых проверок или ослабления существующих.
 
-C.8 ещё не закрыт: push использует HEAD и проверяет ожидаемый SHA только после
-отправки; нужен owner check неизменности до внешнего finalizer и до push.
-Он должен сопровождаться штатным продолжением исходной задачи при дефекте
-замороженного кандидата. Сначала требуется script-owned restart/replanning,
-с сохранением старого плана/authority/proof и всех queue ranges; ручное удаление
-checkpoint недопустимо. Уже отправленный кандидат нужно завершить через recovery.
+C.8 реализуется в [candidate-integrity.md](candidate-integrity.md): проверка
+неизменности перед finalizer и после него, отправка явного qualified commit.
+Native callback scenarios доказали продолжение того же плана через существующее
+восстановление, без нового reset/replanning и без повторного Develop.
+После выделения helper ещё требуется canonical acceptance. Для исправления
+самого замороженного исходника и исторического controller C.9/C.11 остаются
+открыты; ручное удаление checkpoint недопустимо. Уже отправленный кандидат
+нужно завершить через recovery.
 
 Полный rollback исторического controller и все семейства отказов доставки пока
 не проверены. Native legacy-record совместимость и golden identity уже доказаны;
