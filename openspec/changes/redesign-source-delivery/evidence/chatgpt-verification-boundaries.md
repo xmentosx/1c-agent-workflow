@@ -37,3 +37,11 @@ Docker/SSH/vendor adapters are not live service acceptance. Unchanged suites
 were not rerun just for the audit. Only the three proven plugin-policy
 duplicates are merged. Reviewed original definitions:407/2814;2407 pending.
 This does not close the requested complete necessity audit.
+
+The first registration8e3dbab1 failed two catalog assertions because the new
+installation route included templates/*. The existing dependency-lock-only
+contract and historical74-file cohort correctly detected that expansion.
+Templates remain actual reuse inputs but no longer select this installation
+suite by themselves. Comparing old/new selectors now returns identical74-file
+sets for the original historical paths. Both original catalog cases pass2/0
+in3.14s without changing their assertions or reproducer.

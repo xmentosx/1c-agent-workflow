@@ -856,7 +856,8 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/ChatGptInstall.Tests.ps1",
-      "paths": ["chatgpt/*", ".agents/skills/1c-workflow/chatgpt/*", "install-agent-1c-workflow.ps1", "templates/*", "tests/pester/ChatGptInstall.Tests.ps1"],
+      "paths": ["chatgpt/*", ".agents/skills/1c-workflow/chatgpt/*", "install-agent-1c-workflow.ps1", "tests/pester/ChatGptInstall.Tests.ps1"],
+      "reuseInputPaths": ["templates/*"],
       "tests": ["tests/pester/ChatGptInstall.Tests.ps1"]
     },
     {
