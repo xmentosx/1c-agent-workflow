@@ -359,7 +359,8 @@ function Get-ShardInputDigest {
         [string[]]$AdditionalInputs = @(),
         [hashtable]$ExternalIdentityOverrides,
         [switch]$IncludeLegacyGlobalExternalInputs,
-        [ValidateRange(0, 4)][int]$LegacyWorkerCount = 0
+        [ValidateRange(0, 4)][int]$LegacyWorkerCount = 0,
+        [ref]$PreparedInputs
     )
     $relativeTests = @($Paths | ForEach-Object { Get-ShardRelativeTestPath -Path $_ })
     if (@($relativeTests | Where-Object { -not $_ }).Count -gt 0) { return '' }
@@ -367,15 +368,25 @@ function Get-ShardInputDigest {
     # Unknown external runtime identity cannot qualify a reusable shard. For
     # example, the OneScript probe executes installed engine assemblies.
     if ($nonReusableProperty -and @($relativeTests | Where-Object { $_ -in @($nonReusableProperty.Value) }).Count -gt 0) { return '' }
-    $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
-    foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
-    # Loaded dependencies qualify reuse without widening Targeted selection.
-    $reusePatterns = @($contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ } | Sort-Object -Unique)
-    foreach ($pattern in $reusePatterns) {
-        if (@($trackedPaths | Where-Object { ([string]$_).Replace('\','/') -like $pattern }).Count -eq 0) { return '' }
+    # One local reference per item holds only paths resolved from the same
+    # immutable catalog/tracked inventory snapshot. Runtime/environment variants
+    # below still obtain their own identity lines and verify protected results.
+    $selectionKey = [ordered]@{ tests=@($relativeTests); additionalInputs=@($AdditionalInputs) } | ConvertTo-Json -Compress
+    if ($PreparedInputs -and $PreparedInputs.Value -and $PreparedInputs.Value.selectionKey -ceq $selectionKey) {
+        $inputs = @($PreparedInputs.Value.paths)
+    } else {
+        if ($PreparedInputs) { $PreparedInputs.Value = $null }
+        $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
+        foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
+        # Loaded dependencies qualify reuse without widening Targeted selection.
+        $reusePatterns = @($contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ } | Sort-Object -Unique)
+        foreach ($pattern in $reusePatterns) {
+            if (@($trackedPaths | Where-Object { ([string]$_).Replace('\','/') -like $pattern }).Count -eq 0) { return '' }
+        }
+        $patterns = @(@($contracts | ForEach-Object { @($_.paths) }) + $reusePatterns | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
+        $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
+        if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
-    $patterns = @(@($contracts | ForEach-Object { @($_.paths) }) + $reusePatterns | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
-    $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
     $lines = New-Object System.Collections.Generic.List[string]
     # The selected tests are distinct from their shared owner input set.
     # Deduplicating that set must never make different test files one shard.
@@ -580,7 +591,8 @@ foreach ($item in $items) {
     $stdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $index)
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
-    $digest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs
+    $preparedInputs = $null
+    $digest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -PreparedInputs ([ref]$preparedInputs)
     $legacyDigests = New-Object System.Collections.Generic.List[string]
     if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
@@ -608,21 +620,21 @@ foreach ($item in $items) {
     $reuseReason = "exact owner input fingerprint"
     if (-not $cached) {
         foreach ($legacyWorkerCount in 1..4) {
-            $priorWorkerDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -LegacyWorkerCount $legacyWorkerCount
+            $priorWorkerDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -LegacyWorkerCount $legacyWorkerCount -PreparedInputs ([ref]$preparedInputs)
             if ($priorWorkerDigest) { $legacyDigests.Add($priorWorkerDigest) | Out-Null }
         }
-        $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount
+        $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
         if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
         $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
         $requiredExternalInputs = $(if ($pesterExternalInputsByTest.ContainsKey($relativeItemPath)) { @($pesterExternalInputsByTest[$relativeItemPath]) } else { @() })
         if ("ITL_AI_RULES_SOURCE_PATH" -notin $requiredExternalInputs) {
-            $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -ExternalIdentityOverrides @{
+            $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs) -ExternalIdentityOverrides @{
                 ITL_AI_RULES_SOURCE_PATH = "env:ITL_AI_RULES_SOURCE_PATH=<unset>"
             }
             if ($priorUnsetAiRulesDigest -and $priorUnsetAiRulesDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetAiRulesDigest)) { $legacyDigests.Add($priorUnsetAiRulesDigest) | Out-Null }
         }
         if ("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -notin $requiredExternalInputs) {
-            $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -ExternalIdentityOverrides @{
+            $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs) -ExternalIdentityOverrides @{
                 ITL_AI_RULES_SOURCE_PATH = $(if ("ITL_AI_RULES_SOURCE_PATH" -in $requiredExternalInputs) { Get-ExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" } else { "env:ITL_AI_RULES_SOURCE_PATH=<unset>" })
                 ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = "env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=<unset>"
             }
@@ -635,7 +647,7 @@ foreach ($item in $items) {
                     ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
                     ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
                 }
-                $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount
+                $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
                 if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
             }
         }

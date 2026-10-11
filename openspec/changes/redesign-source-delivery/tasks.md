@@ -295,7 +295,10 @@ Targeted для каждого подпункта: группировать св
 Local 24 definitions и Fresh 11 expanded cases сохраняются при разделении;
 mandatory126 native workload не сокращён. Семь focused catalog checks прошли,
 20 Develop definitions добавлены в индивидуальный review (итого255/2814).
-Штатная регистрация и native concurrency/cost acceptance этой единицы ещё нужны.
+Единица зарегистрирована:3e589904,150/0/0,check438640ms/raw448524ms,
+four-group overlap144.57s; цель300s не достигнута. [Дальнейшая подготовка
+fingerprints и владельцы](evidence/prepared-inputs.md):96 ключей сохранились,
+definition benchmark44087→4793ms; native acceptance новой единицы ещё нужна.
 Это не завершение A/B, checkpoint C или разрешение пробной публикации.
 
 | Дата | Этап | Результат и доказательство |

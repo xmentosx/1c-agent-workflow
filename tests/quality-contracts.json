@@ -344,7 +344,6 @@
       ],
       "tests": [
         "tests/pester/LocalQualityGate.Tests.ps1",
-        "tests/pester/DevelopStaticQualificationCache.Tests.ps1",
         "tests/pester/ReleaseGate.Tests.ps1",
         "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
         "tests/pester/SourceQualityCatalog.Tests.ps1",
@@ -389,6 +388,23 @@
       ],
       "tests": [
         "tests/pester/DevelopE2EQualification.Tests.ps1"
+      ]
+    },
+    {
+      "id": "develop-static-qualification-cache-tests",
+      "owner": "Exact-tree static qualification cache and check orchestration wiring",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DevelopStaticQualificationCache.Tests.ps1",
+      "paths": [
+        "scripts/check.ps1",
+        "scripts/develop-static-qualification.ps1",
+        "scripts/release-qualification.ps1",
+        "scripts/invoke-pester-runtime.ps1",
+        "scripts/git-path-list.ps1"
+      ],
+      "tests": [
+        "tests/pester/DevelopStaticQualificationCache.Tests.ps1"
       ]
     },
     {

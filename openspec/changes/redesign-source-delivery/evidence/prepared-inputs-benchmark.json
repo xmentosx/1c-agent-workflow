@@ -1,0 +1,11 @@
+﻿{
+    "baseline":  "3e589904",
+    "selectedFiles":  12,
+    "variantsPerFile":  8,
+    "keysCompared":  96,
+    "identicalDigests":  true,
+    "beforeMs":  44087,
+    "afterMs":  4793,
+    "speedup":  9.1982057166701434,
+    "evidence":  "Definition-only actual repository input resolution; fixed recent observed runtime identity, no Pester or gate dispatch; both definitions see the same current bytes"
+}

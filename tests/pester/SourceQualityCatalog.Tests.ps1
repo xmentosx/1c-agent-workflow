@@ -5,6 +5,58 @@
 }
 
 Describe 'Source quality catalog contracts' {
+    It 'preserves fingerprint variants and file invalidation when one item prepares its input paths once' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $savedReceipt=Get-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue
+        try {
+            & {
+                $RepositoryRoot=Join-Path $TestDrive 'fingerprint путь с пробелом'
+                New-Item -ItemType Directory -Force -Path $RepositoryRoot | Out-Null
+                $trackedPaths=@('a.Tests.ps1','b.Tests.ps1','unknown.Tests.ps1','excluded.Tests.ps1','a.txt','b.txt','extra.txt')
+                foreach($path in $trackedPaths){[IO.File]::WriteAllText((Join-Path $RepositoryRoot $path),$path,[Text.UTF8Encoding]::new($false))}
+                $catalog=[pscustomobject]@{pesterNonReusableTests=@('excluded.Tests.ps1');contracts=@(
+                    [pscustomobject]@{tests=@('a.Tests.ps1');paths=@('a.txt')}
+                    [pscustomobject]@{tests=@('b.Tests.ps1');paths=@('b.txt')}
+                )}
+                $sharedInputs=@();$pesterExternalInputsByTest=@{'a.Tests.ps1'=@('ITL_AI_RULES_SOURCE_PATH')}
+                $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{pesterVersion='fixture';identitySha256=('a'*64)}}
+                foreach($name in @('Get-ShardRelativeTestPath','Get-TextSha256','Get-ShardInputDigest')) {
+                    $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+                    . ([scriptblock]::Create($definition.Extent.Text))
+                }
+                function Get-ShardTrackedFileIdentity {param($RelativePath,$AbsolutePath) (Get-FileHash -LiteralPath $AbsolutePath).Hash}
+                function Get-ExternalInputIdentity {param($Name) "env:$Name=fixture"}
+                $a=Join-Path $RepositoryRoot 'a.Tests.ps1';$prepared=$null
+                $before=Get-ShardInputDigest -Paths @($a) -PreparedInputs ([ref]$prepared)
+                $before | Should -Not -BeNullOrEmpty
+                $variants=@(@{})+@(1..4|ForEach-Object {@{LegacyWorkerCount=$_}})+@(
+                    @{LegacyWorkerCount=4;IncludeLegacyGlobalExternalInputs=$true}
+                    @{LegacyWorkerCount=4;IncludeLegacyGlobalExternalInputs=$true;ExternalIdentityOverrides=@{ITL_AI_RULES_SOURCE_PATH='env:ITL_AI_RULES_SOURCE_PATH=<unset>'}}
+                )
+                foreach($variant in $variants) {
+                    Get-ShardInputDigest -Paths @($a) -PreparedInputs ([ref]$prepared) @variant | Should -BeExactly (Get-ShardInputDigest -Paths @($a) @variant)
+                }
+                [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'a.txt'),' changed input',[Text.UTF8Encoding]::new($false))
+                $changed=Get-ShardInputDigest -Paths @($a) -PreparedInputs ([ref]$prepared)
+                $changed | Should -Not -Be $before
+                $changed | Should -BeExactly (Get-ShardInputDigest -Paths @($a))
+                $withExtra=Get-ShardInputDigest -Paths @($a) -AdditionalInputs @('extra.txt') -PreparedInputs ([ref]$prepared)
+                $withExtra | Should -Not -Be $changed
+                $withExtra | Should -BeExactly (Get-ShardInputDigest -Paths @($a) -AdditionalInputs @('extra.txt'))
+                $b=Join-Path $RepositoryRoot 'b.Tests.ps1'
+                Get-ShardInputDigest -Paths @($b) -PreparedInputs ([ref]$prepared) | Should -BeExactly (Get-ShardInputDigest -Paths @($b))
+                foreach($name in @('unknown.Tests.ps1','excluded.Tests.ps1')) {
+                    Get-ShardInputDigest -Paths @((Join-Path $RepositoryRoot $name)) -PreparedInputs ([ref]$prepared) | Should -BeNullOrEmpty
+                }
+            }
+        } finally {
+            if($savedReceipt){$script:pesterRuntimeReceipt=$savedReceipt.Value}else{Remove-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue}
+        }
+    }
+
     It 'invalidates whole-gate script inventory when the worker runtime helper changes' {
         $tokens=$null; $errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
@@ -206,7 +258,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -234,10 +286,12 @@ Describe 'Source quality catalog contracts' {
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
         }
         [double]$trackedTimings.files.'LocalGateTransport.Tests.ps1' | Should -Be 20
-        [double]$trackedTimings.files.'LocalTargetedSelection.Tests.ps1' | Should -Be 116
-        [double]$trackedTimings.files.'LocalShardCache.Tests.ps1' | Should -Be 108
-        [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 144
-        [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 139
+        # 3e589904 actual named JUnit sums plus 5 seconds, rounded up.
+        [double]$trackedTimings.files.'LocalTargetedSelection.Tests.ps1' | Should -Be 224
+        [double]$trackedTimings.files.'LocalShardCache.Tests.ps1' | Should -Be 162
+        [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 183
+        [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 145
+        [double]$trackedTimings.files.'SourceQualityCatalog.Tests.ps1' | Should -Be 153
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
         # Individual case sums plus 5 seconds per file for setup, rounded up.
@@ -559,6 +613,21 @@ Describe 'Shared Release budget projection' {
 }
 
 Describe 'Catalog selection and qualified consumer inputs' {
+    It 'keeps static qualification cache independent of unused scheduler and catalog inputs' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $test='tests/pester/DevelopStaticQualificationCache.Tests.ps1'
+        foreach($path in @('scripts/pester-timings.json','scripts/invoke-pester-shards.ps1','scripts/run-pester-shard.ps1','scripts/quality-contracts.ps1','scripts/resolve-targeted-tests.ps1','scripts/develop-e2e-qualification.ps1','scripts/stand-env-identity.ps1','tests/quality-contracts.json')) {
+            $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)
+            @($selected.unknownPaths) | Should -BeNullOrEmpty
+            @($selected.tests) | Should -Not -Contain $test -Because "$path is not consumed by the static qualification cache fixtures"
+        }
+        foreach($path in @('scripts/check.ps1','scripts/develop-static-qualification.ps1','scripts/release-qualification.ps1','scripts/invoke-pester-runtime.ps1','scripts/git-path-list.ps1')) {
+            @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path) | Select-Object -ExpandProperty tests) | Should -Contain $test
+        }
+        @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test) | Select-Object -ExpandProperty tests) | Should -Be @($test)
+    }
+
     It 'preserves every Local Smoke case while splitting transport selection and cache fixtures into ordinary workers' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
@@ -718,7 +787,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
                 'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
                 'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
                 'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
-            $catalogIndependent=@('PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
+            $catalogIndependent=@('DevelopStaticQualificationCache','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
                 'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')

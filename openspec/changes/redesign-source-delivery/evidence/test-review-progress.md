@@ -3,14 +3,16 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 255 определений имеют явный предметный
-review, 2559 остаются pending. Из рассмотренных: Pester 222, Python 28, Go 5,
+[Summary](review-index-summary.json): 261 определение имеет явный предметный
+review, 2553 остаются pending. Из рассмотренных: Pester 228, Python 28, Go 5,
 Node 0. Это охват исходных определений, не количество запусков или новых тестов.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
 boundaries, 11 host wrappers, семь параметризованных определений и новый
-15-case nested review, все 56 исходных определений LocalQualityGate и частичный
-22-definition review CompactItlRunner.
+15-case nested review, все56 исходных определений LocalQualityGate, все45
+CompactItlRunner,15 ReleaseReadiness,20 текущих DevelopE2EQualification
+и6 DevelopStaticQualificationCache. Static cache review сохраняет ограничение
+симулированного retry и отдельный behavior-proof follow-up для source wiring.
 Параметризованные строки deduplicate по исходному
 определению. Review wrapper не означает review вложенных Python/Node cases;
 AST transfer proof сам по себе не считается решением о необходимости.
