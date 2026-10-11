@@ -1,0 +1,6 @@
+"sourceCommit","sourceFile","sourceLine","describe","originalDescribeSha256","destinationFile","originalItDefinitions"
+"11680e140ff788702e6fb6e2bd2b48a6c92328a2","tests/pester/ReleaseGate.Tests.ps1","738","Release E2E orchestration","bf6f55cc0a0f5f01c7f68be6b4b4869c1e5ee6946a1a0eeaabaf730d74882008","tests/pester/ReleaseOrchestration.Tests.ps1","1"
+"11680e140ff788702e6fb6e2bd2b48a6c92328a2","tests/pester/ReleaseGate.Tests.ps1","1474","Develop upgrade manifest continuation","a8fe7d5c53e241585b55be05338269f3602b4512c4b8457759ef550255b87e6b","tests/pester/DevelopManifestContinuation.Tests.ps1","3"
+"11680e140ff788702e6fb6e2bd2b48a6c92328a2","tests/pester/ReleaseGate.Tests.ps1","1657","Unattended E2E client selection","72b15e6ee0efa68db52851d837e05b090208153f5a9acee737661ee63c7689db","tests/pester/E2EClientSelection.Tests.ps1","6"
+"11680e140ff788702e6fb6e2bd2b48a6c92328a2","tests/pester/ReleaseGate.Tests.ps1","1861","Release on-demand application snapshot continuation","45e3c50d270a7a9caa50b3e65ee160ba610da3a0d0045da55e4f468c5c757709","tests/pester/ReleaseSnapshotContinuation.Tests.ps1","1"
+"11680e140ff788702e6fb6e2bd2b48a6c92328a2","tests/pester/ReleaseGate.Tests.ps1","1927","Shared Release admission decisions","9bf42054b7aa000f7d9e3d141342944885826c23786f430a8823108c3cd55336","tests/pester/ReleaseAdmission.Tests.ps1","8"

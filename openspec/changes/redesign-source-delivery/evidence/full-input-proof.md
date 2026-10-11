@@ -87,13 +87,37 @@ Scheduling weight нового файла округлён до 64 s по пос
 
 ## Регистрация и исправление ожидания каталога
 
-Первая регистрация `11680e14` завершилась штатно с failure: 30 завершённых
-workers, 530 passed / 1 failed / 0 skipped; check duration 1078017 ms. Единственное
-падение — прежний exact contract set для `source-delivery-candidate.ps1` в
+Первая регистрация `11680e14` завершилась штатно с failure; check duration
+1078017 ms. Снимок directory содержал 30 worker results и один failure;
+сумма 530/1 из directory не является авторитетным aggregate этого запуска,
+поскольку каталог переиспользуется между запусками. Failed raw proof не
+публикует aggregate passed count. Наблюдённое падение —
+прежний exact contract set для `source-delivery-candidate.ps1` в
 `SourceQualityCatalog.Tests.ps1`: новый owner `pester-full-input-proof` намеренно
 добавляет независимое aggregate-input доказательство этому caller. Ожидание
 обновлено до двух точных owners; требование пустого live journey set сохранено.
 Это исправление недействительного ожидания, не изменение production маршрута
 или ослабление проверяемого поведения. `journey-owner-repair.xml`: 1/0, 10.43 s;
 все исходные assertions того же сценария прошли. Очередь после отказа сохранена
-на `b0c882a2`; требуется повторная регистрация исправленной связной единицы.
+на `b0c882a2` до повторной регистрации исправленной связной единицы.
+
+Повторная RegisterChange `ef20582f5c976313870d76a10d0923e06e5b7e79` прошла:
+авторитетный aggregate 522/0/0, check 714105 ms, raw 716385 ms,
+4 executed workers / 28 reused. Tree `86b0e2fd132e54371bacad4dde5bad054dc7324c`,
+worktreeClean=true. Raw proof в common Git:
+`itl/runs/20261011-001824-976-targeted-98bbf9ae8aad453aaf4469784611e582.json`.
+Full/Develop/Release публикация по-прежнему не выполнялась.
+
+## Наблюдение полного inventory после commit
+
+Commit `11680e140ff788702e6fb6e2bd2b48a6c92328a2`: identity-only путь реально
+прошёл на 132 Pester файлах под Windows PowerShell child, exit 0. Wall 24462 ms,
+fingerprinting + actual worker probe 21134 ms; runtime identity known.
+`reusable=false`, ровно 11 неизвестных file digests соответствуют явному
+nonreusable catalog: четыре Vanessa/OneScript и семь host suites.
+Артефакты в основном worktree:
+`build/redesign-source-delivery/full-input-proof/full-inventory-cost.json` и
+`full-inventory-observation/pester-shards/input-identity.json`.
+Worker tests/JUnit не запускались; это не Full gate. Обычный checker не делает
+этот повторный probe для уже известного `q.reusable=false` из-за short-circuit.
+Измерение относится к возможности whole reuse, не ко времени выпуска.

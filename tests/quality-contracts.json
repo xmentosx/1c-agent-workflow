@@ -165,6 +165,56 @@
       "tests": ["tests/pester/FullInputProof.Tests.ps1"]
     },
     {
+      "id": "release-orchestration-tests",
+      "owner": "Release native failure resume and capability sequence",
+      "gate": "targeted",
+      "budgetSeconds": 600,
+      "primaryTest": "tests/pester/ReleaseOrchestration.Tests.ps1",
+      "paths": ["scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/release-qualification.ps1", "scripts/source-delivery-process.ps1", "scripts/source-proof-json.ps1", "scripts/stand-env-identity.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json", "scripts/vanessa-build-runtime.ps1", "scripts/build-client-mcp-patched.ps1", "scripts/client-mcp-build.ps1", "third-party/client-mcp/*", ".agents/skills/itl-remote-runner/scripts/*", ".agents/skills/1c-workflow/scripts/*", "scripts/Build-ItlOnDemandMcp.ps1", "tools/itl-ondemand-mcp/*", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "templates/project.json", "templates/dependency-lock.json"],
+      "tests": ["tests/pester/ReleaseOrchestration.Tests.ps1"]
+    },
+    {
+      "id": "develop-manifest-continuation-tests",
+      "owner": "Develop managed manifest conflict and preserved refusal",
+      "gate": "targeted",
+      "budgetSeconds": 600,
+      "primaryTest": "tests/pester/DevelopManifestContinuation.Tests.ps1",
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json"],
+      "tests": ["tests/pester/DevelopManifestContinuation.Tests.ps1"]
+    },
+    {
+      "id": "e2e-client-selection-tests",
+      "owner": "Unattended Develop Release client and cache identity",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/E2EClientSelection.Tests.ps1",
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/stand-env-identity.ps1", "scripts/release-e2e/admission.ps1", "scripts/release-e2e/extension-recovery.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json"],
+      "tests": ["tests/pester/E2EClientSelection.Tests.ps1"]
+    },
+    {
+      "id": "release-snapshot-continuation-tests",
+      "owner": "Release preparation application snapshot boundary",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/ReleaseSnapshotContinuation.Tests.ps1",
+      "paths": ["scripts/invoke-release-e2e.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json"],
+      "tests": ["tests/pester/ReleaseSnapshotContinuation.Tests.ps1"]
+    },
+    {
+      "id": "release-admission-tests",
+      "owner": "Release source stage identity and read-only admission",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/ReleaseAdmission.Tests.ps1",
+      "paths": ["scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/release-qualification.ps1", "scripts/stand-env-identity.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1"],
+      "reuseInputPaths": ["tests/quality-contracts.json", ".agents/skills/1c-workflow/scripts/*"],
+      "tests": ["tests/pester/ReleaseAdmission.Tests.ps1"]
+    },
+    {
       "id": "source-quality-gate",
       "owner": "source quality and qualification",
       "gate": "targeted",
@@ -555,7 +605,7 @@
       "refresh": { "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1"] },
       "verification": { "tests": ["tests/pester/VerificationSelection.Tests.ps1"] },
       "ui": { "tests": ["tests/pester/UiTools.Tests.ps1"] },
-      "release": { "tests": ["tests/pester/ReleaseGate.Tests.ps1"] },
+      "release": { "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseOrchestration.Tests.ps1", "tests/pester/DevelopManifestContinuation.Tests.ps1", "tests/pester/E2EClientSelection.Tests.ps1", "tests/pester/ReleaseSnapshotContinuation.Tests.ps1", "tests/pester/ReleaseAdmission.Tests.ps1"] },
       "source-mode": { "tests": ["tests/pester/SourceRepositoryUpdateMode.Tests.ps1"] }
     },
     "actionOwners": {

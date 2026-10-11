@@ -1,0 +1,44 @@
+{
+  "sourceCommit": "11680e140ff788702e6fb6e2bd2b48a6c92328a2",
+  "originalDefinitions": 33,
+  "currentDefinitions": 33,
+  "expandedDiscovery": 46,
+  "reviewedBaselineDefinitions": 33,
+  "reviewedExpandedCases": 46,
+  "exactItCommands": true,
+  "exactDescribeBlocks": true,
+  "exactTopLevelSetup": true,
+  "groups": [
+    {
+      "name": "Release gate scripts",
+      "file": "tests/pester/ReleaseGate.Tests.ps1",
+      "sha256": "3a054acf262d8f6ae1ed0dd04c8697ac2d5585ecb4764dbc5de13e854be565d3"
+    },
+    {
+      "name": "Release E2E orchestration",
+      "file": "tests/pester/ReleaseOrchestration.Tests.ps1",
+      "sha256": "bf6f55cc0a0f5f01c7f68be6b4b4869c1e5ee6946a1a0eeaabaf730d74882008"
+    },
+    {
+      "name": "Develop upgrade manifest continuation",
+      "file": "tests/pester/DevelopManifestContinuation.Tests.ps1",
+      "sha256": "a8fe7d5c53e241585b55be05338269f3602b4512c4b8457759ef550255b87e6b"
+    },
+    {
+      "name": "Unattended E2E client selection",
+      "file": "tests/pester/E2EClientSelection.Tests.ps1",
+      "sha256": "72b15e6ee0efa68db52851d837e05b090208153f5a9acee737661ee63c7689db"
+    },
+    {
+      "name": "Release on-demand application snapshot continuation",
+      "file": "tests/pester/ReleaseSnapshotContinuation.Tests.ps1",
+      "sha256": "45e3c50d270a7a9caa50b3e65ee160ba610da3a0d0045da55e4f468c5c757709"
+    },
+    {
+      "name": "Shared Release admission decisions",
+      "file": "tests/pester/ReleaseAdmission.Tests.ps1",
+      "sha256": "9bf42054b7aa000f7d9e3d141342944885826c23786f430a8823108c3cd55336"
+    }
+  ],
+  "runtimeAcceptance": "isolated-fast.xml covers 21; full original native groups require RegisterChange"
+}
