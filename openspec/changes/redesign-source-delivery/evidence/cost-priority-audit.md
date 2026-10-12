@@ -243,3 +243,10 @@ owner в native route по-прежнему отвергают его; focused1/
 Это owner-local перенос без нового coordinator, схемы или runtime barrier.
 Первый перенос меняет check orchestration и требует новой live-квалификации;
 неподходящий старый fingerprint не переиспользуется ради ускорения.
+Первая регистрацияc691eb67 завершилась failed за129483ms на одном старом
+source-location assertion LocalQualityGate: kind Full искался в check.ps1.
+Фактический producer теперь в прежнем static module, его exact relocation
+и реальные producer/reader/cache сценарии уже подтверждены. Assertion перенесён
+к владельцу с дополнительной проверкой import и function; остальные исходные
+Release/develop/reuse/SHA assertions сохранены. Недоисполненные файлы после
+fail-fast не объявляются отдельной inventory ошибкой или общим case count.

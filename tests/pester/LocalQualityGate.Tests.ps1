@@ -34,7 +34,10 @@ Describe "Local quality gate contract" {
         $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
         $delivery = @("source-delivery.ps1", "source-delivery-supervisor.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1", "source-delivery-resources.ps1", "source-delivery-ref-cleanup.ps1", "source-delivery-cleanup.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
         $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
-        $check | Should -Match 'itl-workflow-full-qualification'
+        $staticProducer = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/develop-static-qualification.ps1') -Raw -Encoding UTF8
+        $staticProducer | Should -Match 'itl-workflow-full-qualification'
+        $staticProducer | Should -Match 'function Write-WorkflowQualification'
+        $check | Should -Match '\. \(Join-Path \$PSScriptRoot "develop-static-qualification\.ps1"\)'
         $check | Should -Match 'source-delivery-ref-cleanup\.ps1' -Because 'ref cleanup code must invalidate reusable gate evidence'
         $check | Should -Match 'itl-workflow-develop-qualification'
         $check | Should -Match 'Test-DevelopQualification'
