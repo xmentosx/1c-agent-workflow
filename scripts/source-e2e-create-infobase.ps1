@@ -9,6 +9,10 @@ $lib=Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/sc
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
 . (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
+# This standalone source child owns no installed lifecycle operation record.
+$script:LifecycleOperationRecord=$null
+$script:LifecycleOperationStatePath=''
+$script:RunStatusPath=''
 
 function New-SourceQualificationInfoBase {
     param([string]$BranchRoot, [string]$BranchName, [string]$PlatformPath)

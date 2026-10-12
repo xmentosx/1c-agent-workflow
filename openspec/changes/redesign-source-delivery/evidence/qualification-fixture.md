@@ -139,3 +139,16 @@ HostSppr отказал в исходном six-request overlap regression. Не
 причину первого отказа; проблема остаётся открытой для аудита ресурсов/flake.
 Timeout/assertion/workload не изменялись. Raw proof сохранён в ignored
 `candidate-protocol/rejected-8d344c50` и `diagnose-sppr-*.log`.
+
+Регистрация b1e6da56 принята:269/0/0, четыре executed / два reused,
+check59458ms/raw61412ms, clean. Live Develop затем дошёл до настоящего
+CREATEINFOBASE, но standalone source child не инициализировал optional
+LifecycleOperationRecord общего native owner. Owner прекратил запущенный
+процесс штатным safety cleanup; попытка сохранена в
+`C:\itlj\q Проект\develop-c2c570fe1ec5-b1e6da56c96d-ce37f965`.
+Source entrypoint явно задаёт отсутствие installed lifecycle record/state path
+и RunStatusPath. Последний пробел найден адресным настоящим native child,
+до следующего live запуска. Тот же Unicode burst/exit23 regression теперь
+параметризован для installed и standalone source входов, исходный вариант
+сохранён. Оба passed; assertions, workload и transport owner не менялись.
+Это проверка entrypoint initialization, а не passing live CREATEINFOBASE.

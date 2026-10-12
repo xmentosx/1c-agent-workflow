@@ -307,7 +307,7 @@ Describe 'Qualification native child transport' {
         (Read-Utf8Text -Path $path)|Should -BeExactly $value
     }
 
-    It 'returns complete Unicode stdout and stderr from the actual shared native owner immediately after a failing child exits' {
+    It 'returns complete Unicode stdout and stderr from the actual shared native owner through <entry> after a failing child exits' -ForEach @(@{entry='installed'},@{entry='source'}) {
         $root=Join-Path $TestDrive ('native owner '+[char]0x041F+' with spaces')
         [void][IO.Directory]::CreateDirectory($root)
         $child=Join-Path $root 'burst child.ps1'
@@ -321,7 +321,14 @@ exit 23
         [IO.File]::WriteAllText($child,$body,[Text.UTF8Encoding]::new($true))
         $helper=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         $observed=& {
-            . $helper -ProjectRoot $root -Action help *> $null
+            if($entry -eq 'installed'){
+                . $helper -ProjectRoot $root -Action help *> $null
+            }else{
+                . (Join-Path $RepoRoot 'scripts/source-e2e-create-infobase.ps1')
+                $script:ProjectRoot=$root
+                $script:OneCSessionLaunchContext=$null
+                $script:OneCNativeOperationJournal=New-OneCNativeOperationJournal -Resources @()
+            }
             $stdout=Join-Path $root 'stdout.txt';$stderr=Join-Path $root 'stderr.txt'
             $result=Invoke-NativeProcessAndWaitResult -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile','-File',$child) -TimeoutSeconds 30 -StdoutPath $stdout -StderrPath $stderr
             [pscustomobject]@{exitCode=$result.exitCode;stdout=(Read-Utf8Text -Path $stdout);stderr=(Read-Utf8Text -Path $stderr)}
