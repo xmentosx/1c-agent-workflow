@@ -97,6 +97,42 @@ before/after workload using existing timings; record context deltas separately.
 Do not add a generic continuation gate or a metrics service. Reuse requirements
 and publication channels below remain authoritative.
 
+### Maintaining selection, cost and reuse
+
+For changes to test suites, selection rules or production/input dependencies,
+acceptance includes selection, measured cost and reuse applicability, alongside
+behavioral correctness. Use the existing selection plan, shard/check summaries
+and relevant regressions; keep the result in the change's validation or existing
+evidence. A new report format, service or broad gate is not required.
+
+- Selection: identify the affected owner and the smallest meaningful test group.
+  Prefer an existing behavioral contract. Keep unrelated components independently
+  runnable; separate fast static checks from process/environment scenarios when
+  they have different inputs. A catalog owner alone does not justify a mixed
+  monolith, broad path wildcard or serial execution. Shared process/console
+  restrictions need a concrete isolation dependency.
+- Cost: inspect actual executed/reused files and the slowest groups from the
+  required run. Compare an existing representative baseline when selection,
+  execution order or frequent-path cost changes. Do not rerun unchanged checks
+  merely to obtain timing. Explain material growth and retain the observation;
+  `over-target` is an unresolved cost observation, not proof of meeting the target.
+- Reuse: distinguish paths selecting tests from loaded dependencies invalidating
+  their results. Keep all real child, fixture, runtime and external inputs bound;
+  narrow unrelated invalidation without omitting dependencies. For changes to
+  identity/cache/continuation, use an existing applicable regression to prove both
+  unchanged-input reuse and changed-input rejection. If the parent/child or default
+  artifact path changed, exercise that actual boundary with ordinary inputs;
+  manually supplied overrides alone do not prove it works.
+
+Cold execution and required invalidation are legitimate. Explain a surprising
+cache miss before repeating an expensive journey; unknown inputs remain unsafe
+for reuse. Unit/fixture proof is not live qualification. A change to this delivery
+mechanism requires its applicable real warm/retry acceptance before claiming the
+improvement is operational; ordinary features do not acquire an extra live gate.
+Do not add duplicate tests or one test per helper just to satisfy this policy.
+Budget and blocking authority remain those of the existing gate and architecture
+policy; this section adds no runtime barrier or automatic performance threshold.
+
 ## Уровни проверки
 
 | Режим | Когда | Цель | Hard limit |
