@@ -78,6 +78,8 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:DeliveryRequestedAiRulesSource = ''
         $script:developAncestorRoutes = @{}
         $script:developJourneyInputs = @{}
+        $script:sourceE2EArtifactBinding = $null
+        $script:sourceE2EArtifactBindingPath = ''
     }
 
     It 'builds a stage DAG from changed owner inputs and reuses matching immutable evidence' {
@@ -183,6 +185,7 @@ Describe 'Delivery v3 immutable selective plan' {
         $binding=[pscustomobject]@{fingerprint=('d'*64);inventory=[pscustomobject]@{external=[pscustomobject]@{standStateSha256=('c'*64)}}}
         Mock Get-DevelopE2EInputIdentity { $binding }
         Mock Get-DevelopE2EAncestorQualification { [pscustomobject]@{reportPath='verified original';inputIdentity=$binding} }
+        Mock Get-DeliveryInputFingerprint { throw 'LEGACY_JOURNEY_FINGERPRINT_DUPLICATED' } -ParameterFilter { $StageId -in @('develop.upgrade','develop.fresh') }
         $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $plan.stages[0].execution | Should -BeExactly 'execute'
         @($plan.stages | Where-Object id -in @('develop.upgrade','develop.fresh') | ForEach-Object execution) | Should -Be @('reuse','reuse')
@@ -191,6 +194,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-DevelopE2EAncestorQualification { $null }
         $missing=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         @($missing.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        Should -Invoke Get-DeliveryInputFingerprint -Times 0 -Exactly -ParameterFilter { $StageId -in @('develop.upgrade','develop.fresh') }
     }
 
     It 'retains the original route execution identity when a legacy supervisor saves current stage evidence' {

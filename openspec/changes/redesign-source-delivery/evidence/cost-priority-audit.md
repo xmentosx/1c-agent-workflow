@@ -280,3 +280,43 @@ writer физически принадлежит уже выделенному q
 Write-DevelopQualification AST из фактического модуля; schema4 и прежние
 routing/identity/continuation assertions сохранены. Focused1/0,925ms. Это
 исправление source-extraction boundary, не изменение runtime expectation.
+## Publication planning runtime and duplicate fingerprints (2026-10-12)
+
+The real Plan for accepted 4b200efb failed before publication: the published
+fa0e3c91 supervisor spent 50 seconds against the existing 30-second planning
+bound. A read-only producer profile retained its exact code and authority:
+Desktop 5.1 took 43.907 seconds and reproduced the bound failure; Core took
+14.372 seconds (planning 14.299 seconds) and passed. The actual ordinary Plan
+then passed under Core in 19.805 seconds, retaining fa0e3c91 develop authority,
+with no required Release capabilities. Its immutable plan is
+5e18c4fbc9732f855b4bcf99f8478fda5a75afbbf6b774783009d51de3837433.
+No push, timeout increase, fake qualification or authority switch occurred.
+
+The current producer's Desktop profile took 32.447 seconds with the legacy
+fallback: both complete input identities were unavailable without source-build
+artifact bindings. This remains an explicit limit of that measurement; Core
+execution does not prove Desktop meets the bound for this accumulated range.
+The profile also exposed duplicate work on the complete-identity path: the
+planner first calculated a legacy fingerprint and then replaced it. That
+calculation now runs only when the complete identity is unavailable. Existing
+legacy exact-tree reuse and unknown-input behavior remain. The existing complete
+binding case failed before the change with LEGACY_JOURNEY_FINGERPRINT_DUPLICATED,
+then passed 1/0 in 2.623 seconds, including both reusable and missing-ancestor
+branches. No new It, shard or barrier was added. This structural proof is not
+a measured reduction in full planning time. A native input pattern check proves
+source-delivery-plan.ps1 is outside both native journeys; static qualification
+still owns it, so this owner-local change need not rerun 1C on matching inputs.
+The running cold Develop remains on clean 4b200efb; final warm continuation must
+prove actual reuse for the eventual registered descendant.
+
+Ignored profiles and logs are candidate-protocol/plan-profile/{old,current,
+old-core}.{json,log}; the real command report is plan-4b200efb-core.log. Temporary
+profiling initialization omits dispatch and never changes accepted source,
+queue, remote or authority. The real native acceptance remains running.
+The first registration caa9e110 rejected two existing checker-extraction cases:
+their isolated context omitted sourceE2EArtifactBinding and its path, which the
+real checker initializes before route dispatch. BeforeEach now mirrors those
+existing null/empty defaults. No production behavior or assertions changed.
+Both original cases pass 2/0 in 3.17 seconds, preserving historical report SHA,
+no-child reuse and equal planner/checker journey-budget assertions. Accepted
+queue head remained 4b200efb; rejected receipts are retained for diagnosis.

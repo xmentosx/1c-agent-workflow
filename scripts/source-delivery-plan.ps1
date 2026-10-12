@@ -334,12 +334,7 @@ function New-DeliveryQualityPlanForCandidate {
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
     $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
     foreach ($journey in @($journeyPlan.journeys)) {
-        $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
-        $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })
         $stageId = "develop.$journey"
-        $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
-        $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint -EvidenceRoot $evidenceRoot
-        $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
         $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
         $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
         $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
@@ -348,6 +343,12 @@ function New-DeliveryQualityPlanForCandidate {
             $fingerprint = [string]$inputs.fingerprint
             $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs
             $reusable = $null -ne $ancestor
+        } else {
+            $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
+            $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })
+            $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
+            $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint -EvidenceRoot $evidenceRoot
+            $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
         }
         $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified ancestor with complete matching journey inputs"}elseif($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
