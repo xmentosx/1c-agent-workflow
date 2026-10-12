@@ -452,3 +452,19 @@ identity and rejection of BOM/1C-byte differences. Legacy raw-byte fingerprints
 are not rewritten; one fresh qualification is required before warm publication
 and push-retry acceptance can be claimed. The legacy cleanup warnings remain a
 separate unresolved cost until their owning cleanup contract is repaired.
+
+### Registration deadline fixture, 2026-10-13
+
+Candidate 46b8c309 passed the actual upgrade journey, including the original
+negative rollback and positive check/export. Static qualification then rejected
+SourceDeliveryCandidateRegistration's deadline fixture: a 550 ms real-time
+budget admitted only one iteration under load. The other three real-process
+registration cases passed. No push was attempted.
+
+The registration owner now exposes its UTC clock through a private getter.
+The same regression advances that clock by 100 ms per gate: it requires six
+gate attempts, five failed CAS attempts, one unchanged deadline and one budget
+read, then retained checkpoint and the original continuation. This removes
+sleep and host-speed dependence without extending the production budget or
+changing real-process concurrency assertions. Live publication and parallel
+acceptance remain pending until their actual receipts exist.

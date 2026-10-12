@@ -42,6 +42,9 @@ Describe 'Shared source candidate registration' {
             }
             $script:Root=$TestDrive; $script:Remote='origin'; $script:GateScript='injected-gate.ps1'
             $script:budgetReads=0; $script:gateDeadlines=@(); $script:casAttempts=0
+            $script:registrationNow=[DateTime]::SpecifyKind([DateTime]'2026-01-01', [DateTimeKind]::Utc)
+            $startedAt=$script:registrationNow
+            function Get-SourceRegistrationUtcNow { return $script:registrationNow }
             $BaseRef=''; $QueueId='bounded-race'; $CoverageContract=@()
             function Assert-CleanDeliveryWorktree { }
             function Get-DevelopPublicationAttemptPath { Join-Path $TestDrive 'no-publication-attempt.json' }
@@ -59,17 +62,16 @@ Describe 'Shared source candidate registration' {
                 $out=if ($Arguments[0] -eq 'rev-parse') { 'b'*40 } else { '' }
                 return [pscustomobject]@{ stdout=$out; exitCode=0 }
             }
-            function Invoke-SourceGate { param($Mode,$WorkingRoot,$TargetBaseRef,$DeadlineUtc); $script:gateDeadlines+=$DeadlineUtc; Start-Sleep -Milliseconds 100 }
+            function Invoke-SourceGate { param($Mode,$WorkingRoot,$TargetBaseRef,$DeadlineUtc); $script:gateDeadlines+=$DeadlineUtc; $script:registrationNow=$script:registrationNow.AddMilliseconds(100) }
             function Save-SourceRegistrationEvidence { param($CandidateRoot,$Candidate,$RunRecordPath); return [pscustomobject]@{ path='fixture-evidence' } }
             function Try-AcceptSourceRegistration { param($Snapshot,$Id,$Base,$Head,$Candidate,$Tree,$Entries); $script:casAttempts++; return $false }
             function Remove-DeliveryWorktree { param($Worktree); throw 'A rejected candidate must survive' }
-            $clock=[Diagnostics.Stopwatch]::StartNew()
             { Register-SourceChange -WarningAction SilentlyContinue } | Should -Throw '*repeat RegisterChange with the same QueueId*'
-            $clock.Elapsed.TotalSeconds | Should -BeLessThan 3
+            ($script:registrationNow-$startedAt).TotalMilliseconds | Should -Be 600
             $script:budgetReads | Should -Be 1
-            $script:gateDeadlines.Count | Should -BeGreaterThan 1
+            $script:gateDeadlines.Count | Should -Be 6
             @($script:gateDeadlines | Select-Object -Unique) | Should -HaveCount 1
-            $script:casAttempts | Should -BeGreaterThan 0
+            $script:casAttempts | Should -Be 5
             $checkpoint=Get-Content -LiteralPath (Join-Path $TestDrive 'build\source-registration\checkpoint.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $checkpoint.id | Should -Be 'bounded-race'
             $checkpoint.taskHead | Should -Be ('b'*40)

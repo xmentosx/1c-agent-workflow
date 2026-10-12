@@ -228,6 +228,12 @@ function Assert-SourceRegistrationTransitionReady {
     throw "DELIVERY_LEGACY_PUBLICATION_ACTIVE: the historical publication checkpoint '$attemptPath' must finish before the first candidate-CAS registration. Continue its original PublishDevelop options under plan '$activePlanId', then repeat this RegisterChange with the same QueueId. No registration, task work or proof was changed."
 }
 
+function Get-SourceRegistrationUtcNow {
+    # One clock boundary lets the deadline regression advance time without
+    # coupling repeated CAS losses to machine speed or real sleeps.
+    return [DateTime]::UtcNow
+}
+
 function Register-SourceChange {
     Assert-CleanDeliveryWorktree
     $head = Get-GitValue -Arguments @("rev-parse", "HEAD")
@@ -235,13 +241,13 @@ function Register-SourceChange {
     $id = ConvertTo-QueueRefName -Value $(if ($QueueId) { $QueueId } else { Get-DefaultQueueId })
     $allowMissingCatalog = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
     $budgetSeconds = Get-SourceGateHardBudgetSeconds -Mode "Targeted" -WorkingRoot $script:Root -AllowMissingCatalog:$allowMissingCatalog
-    $deadline = [DateTime]::UtcNow.AddSeconds($budgetSeconds)
+    $deadline = (Get-SourceRegistrationUtcNow).AddSeconds($budgetSeconds)
     $worktree = $null
     $accepted = $false
     $attempt = 0
     try {
         while ($true) {
-            if ([DateTime]::UtcNow -ge $deadline) {
+            if ((Get-SourceRegistrationUtcNow) -ge $deadline) {
                 throw "Registration exhausted its original $budgetSeconds second budget. Candidate, task and proof are preserved; repeat RegisterChange with the same QueueId '$id' from the unchanged source checkout."
             }
             $attempt++
@@ -290,7 +296,7 @@ function Register-SourceChange {
             Assert-CleanDeliveryWorktree
             if ((Get-GitValue -Arguments @("rev-parse", "HEAD")) -cne $head) { throw "Source HEAD changed during registration. Repeat RegisterChange from the intended committed source task." }
             $evidence = Save-SourceRegistrationEvidence -CandidateRoot $worktree.path -Candidate $candidate -RunRecordPath $runRecordPath
-            if ([DateTime]::UtcNow -ge $deadline) { continue }
+            if ((Get-SourceRegistrationUtcNow) -ge $deadline) { continue }
             if (Try-AcceptSourceRegistration -Snapshot $snapshot -Id $id -Base $queueBase -Head $head -Candidate $candidate -Tree $tree -Entries $entries -Evidence $evidence) {
                 $accepted = $true
                 return [pscustomobject]@{ status="registered"; id=$id; base=$queueBase; head=$head; paths=$changed; candidate=$candidate; tree=$tree; attempts=$attempt }
