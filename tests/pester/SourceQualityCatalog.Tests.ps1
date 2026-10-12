@@ -402,7 +402,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 78
+        @($currentSelection.tests).Count | Should -Be 81
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
