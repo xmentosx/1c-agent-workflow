@@ -113,6 +113,8 @@ while ($true) { Start-Sleep -Seconds 1 }
     It "survives a real Win32 Ctrl+C in the supported entrypoint helper console" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-real-ctrlc-" + [guid]::NewGuid().ToString("N"))
         $runnerProcess = $null
+        $neighborProcess = $null
+        $neighborHelperPid = 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             $runnerPath = Join-Path $scriptRoot "run-itl-command.ps1"
@@ -201,6 +203,34 @@ exit 0
             $helperPid = [int]$status.pid
             $helperPid | Should -BeGreaterThan 0
 
+            $neighborRoot = Join-Path $tempRoot 'neighbor'
+            $neighborScriptRoot = Join-Path $neighborRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $neighborScriptRoot | Out-Null
+            $neighborRunner = Join-Path $neighborScriptRoot 'run-itl-command.ps1'
+            Copy-RunnerFixture -Destination $neighborRunner
+            Copy-Item -LiteralPath $helperPath -Destination (Join-Path $neighborScriptRoot 'agent-1c.ps1')
+            $neighborProcess = Start-Process -FilePath 'powershell' `
+                -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$neighborRunner,'--','-Action','check-dev-branch') `
+                -WorkingDirectory $neighborRoot -WindowStyle Hidden `
+                -RedirectStandardOutput (Join-Path $neighborRoot 'stdout.log') `
+                -RedirectStandardError (Join-Path $neighborRoot 'stderr.log') -PassThru
+            $neighborStatusPath = ''
+            $neighborDeadline = (Get-Date).AddSeconds(20)
+            while ((Get-Date) -lt $neighborDeadline) {
+                $neighborStatusFile = @(Get-ChildItem -LiteralPath (Join-Path $neighborRoot '.agent-1c/runs') -Filter status.json -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
+                if ($neighborStatusFile.Count -eq 1) {
+                    try { $neighborStatus = Get-Content -LiteralPath $neighborStatusFile[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $neighborStatus = $null }
+                    if ($neighborStatus -and $neighborStatus.stage -eq 'vanessa.run') {
+                        $neighborStatusPath = $neighborStatusFile[0].FullName
+                        $neighborHelperPid = [int]$neighborStatus.pid
+                        break
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $neighborStatusPath | Should -Not -BeNullOrEmpty
+            $neighborHelperPid | Should -BeGreaterThan 0
+
             $signaler = Start-Process -FilePath "powershell" `
                 -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $signalerPath, "-HelperPid", $helperPid, "-ResultPath", $signalResultPath) `
                 -WindowStyle Hidden `
@@ -226,7 +256,20 @@ exit 0
             $terminalLifecycle.status | Should -Be "failed"
             $terminalLifecycle.phase | Should -Be "runner.helper-exited"
             Test-Path -LiteralPath (Join-Path $tempRoot "cleanup-marker.json") -PathType Leaf | Should -BeTrue
+            $neighborProcess.Refresh()
+            $neighborProcess.HasExited | Should -BeFalse
+            Get-Process -Id $neighborHelperPid -ErrorAction Stop | Should -Not -BeNullOrEmpty
+            $neighborStatus = Get-Content -LiteralPath $neighborStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $neighborStatus.status | Should -Be 'running'
+            $neighborLifecycle = Get-Content -LiteralPath (Join-Path $neighborRoot '.agent-1c/locks/lifecycle-operation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $neighborLifecycle.status | Should -Be 'running'
+            Test-Path -LiteralPath (Join-Path $neighborRoot 'cleanup-marker.json') | Should -BeFalse
         } finally {
+            if ($neighborHelperPid -gt 0) { Stop-Process -Id $neighborHelperPid -Force -ErrorAction SilentlyContinue }
+            if ($neighborProcess) {
+                if (-not $neighborProcess.WaitForExit(15000)) { $neighborProcess.Kill(); $neighborProcess.WaitForExit() }
+                $neighborProcess.Dispose()
+            }
             if ($null -ne $runnerProcess -and -not $runnerProcess.HasExited) {
                 Stop-Process -Id $runnerProcess.Id -Force -ErrorAction SilentlyContinue
             }

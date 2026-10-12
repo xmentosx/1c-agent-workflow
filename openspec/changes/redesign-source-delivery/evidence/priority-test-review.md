@@ -30,6 +30,17 @@ GenerateConsoleCtrlEvent есть в отдельном сценарии. Воз
 Между независимыми registrations нынешний per-run serial list сам по себе
 не доказывает console isolation.
 
+2026-10-12 исходный реальный Win32 Ctrl+C case дополнен второй одновременно
+работающей операцией через тот же runner и отдельный project root/console.
+После сигнала первой operation сохраняются исходные failed terminal/lifecycle
+и cleanup assertions; у соседней живы runner и helper PID, status/lifecycle
+остаются running, cleanup marker отсутствует. Focused passed1/0,case4.042s.
+Обе операции принадлежат fixture; finally завершает только их exact-owned
+processes. Реальные1C процессы не затрагиваются. Serial restriction сохранён:
+небольшой оставшийся Compact suite не является текущим hotspot. Это native
+доказательство границы отмены, а не live Vanessa или приёмка публикации.
+Штатная регистрация этой test-only единицы ожидается.
+
 ## Host suite wrappers
 
 Все 11 перенесённых wrappers выполняют разные непосредственные boundaries:
