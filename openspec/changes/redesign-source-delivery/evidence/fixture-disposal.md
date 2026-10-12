@@ -82,3 +82,46 @@ historical source/diagnostic copies still consume capacity. Ignored receipts
 live under runtime-proof: negative-terminal-disposal, old-6a65-disposal-1/2,
 and completed-source-compression-stopped. The compression receipt is partial,
 not a completed cleanup claim.
+
+## Fresh seed drift discovered by the next capture
+
+The39afd58f Develop attempt stopped in15424ms at fixture-capture-positive,
+before native qualification. Its overall status remains failed. The original
+positive seed's master/branch commits, semantic pending/cursor state, configs,
+stable env hashes and all five context references still matched the sealed
+capsule. Only1Cv8.1CD changed: ad891345b9faa96ff6dcf1b6b4c1de5bc01b2018bdde1b09922a7f8ef259770f
+became143b145c04cc911461225a9ed5cb6f1936180481f4e5d9bbb89a6fdf4d304882.
+Its modification at19:03:18 Moscow fell inside fresh-close, started19:03:08.
+Fresh provisioning copied master.env from v42, whose SOURCE_INFOBASE_PATH points
+to the original v42-golden database; close uses that configured source. Thus the
+previous passed fresh report did not establish seed isolation. The exact
+comparison is retained in runtime-proof/seed-drift-after-fresh.json.
+
+Fresh now prepares its configured source through the existing Develop capsule
+factory and copies the remapped owned project's env. Its source database lives
+in a claim-matching target and uses the existing guarded native create/restore;
+no seed restoration, installed migration or shared owner is added. The same
+terminal adapter disposes its derived database in finally, including partial
+preparation, while preserving snapshots/source/logs. A busy target records its
+own continuation and never replaces the journey result. After close, ordinary
+Capture without Recapture must validate the original seed before fresh cleanup
+and success; a failure retains the fresh project and prior capsule for diagnosis.
+
+The existing default provision regression failed before the fix (no factory
+call) and passed afterward1/0,945ms. Its existing context roundtrip then exposed
+an actual alias mismatch: generic root remapping retained a nonstandard old
+relative database path, while creation normalized the owned path. A specific
+source-database mapping now precedes root mappings; state and env use one owned
+path. That regression passes1/0,4.63s and retains the original pending/cursor
+assertions and a mutation rejection. Fresh declares the factory owner in its
+journey inputs; the existing route regression now requires both native consumers.
+No new test definitions, broad gate or ordinary-feature check were added.
+
+Native preparation120539ms from the earlier replay is the available cost estimate
+for the additional fresh source materialization, about4.4% of the prior2710787ms
+fresh journey. This is not a new timing measurement. Post-close validation uses
+the existing capsule/hash owner and adds no 1C launch when inputs match. The old
+positive capsule remains retained; explicit Capture -Recapture is the existing
+continuation for the already changed test seed after reviewing this diagnosis.
+The negative seed and original rejection reproducer are unchanged. Actual fixed
+fresh pass, unchanged-seed proof and new runtime cost remain pending live evidence.

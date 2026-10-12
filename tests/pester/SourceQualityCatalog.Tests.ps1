@@ -957,7 +957,7 @@ Describe 'Source catalog Develop journey selection' {
         }
         foreach ($path in @('scripts/source-e2e-fixture.ps1','scripts/lifecycle-qualification-fixture.ps1')) {
             $fixture = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
-            @($fixture.journeys) | Should -Be @('upgrade')
+            @($fixture.journeys) | Should -Be @('upgrade','fresh')
         }
         $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
         @($entrypoint.contracts) | Should -Be @('source-candidate-registration','source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty

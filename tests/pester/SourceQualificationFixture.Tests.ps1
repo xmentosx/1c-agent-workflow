@@ -185,6 +185,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
 
     It 'preserves the negative pending/cursor/baseline and exact source while excluding foreign refs and runtime ownership' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'capsule paths')
+        $seedBase=Join-Path $seed.branch '.agent-1c/infobases/negative'
+        [IO.File]::AppendAllText((Join-Path $seed.project '.dev.env'), ("SOURCE_INFOBASE_PATH=$seedBase`n"), [Text.UTF8Encoding]::new($false))
         $originalState=Read-Utf8Text -Path (Join-Path $seed.branch '.agent-1c/dev-branches/negative.json')
         $originalSource=(Get-FileHash -LiteralPath (Join-Path $seed.branch 'src/cf/invalid.bsl')).Hash
         $fixture=New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot (Join-Path $TestDrive 'stand with spaces')
@@ -213,9 +215,12 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $envText=Read-Utf8Text -Path (Join-Path $fixture.branchRoot '.dev.env')
         $envText|Should -Not -Match 'ROCTUP_MCP_PORT|ITL_ACTIVE_PROJECT_ROOT'
         $envText|Should -Match ([regex]::Escape('INFOBASE_PATH='+$state.devBranchInfoBasePath))
+        (Read-Utf8Text -Path (Join-Path $fixture.projectRoot '.dev.env')) | Should -Match ([regex]::Escape('SOURCE_INFOBASE_PATH='+$state.devBranchInfoBasePath))
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'qualification-create-infobase' -and $Arguments[1] -eq 'negative'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-restore' -and $Arguments -contains '-PreserveReleaseSnapshotApplicationProof'}
+        Write-Utf8Text -Path (Join-Path $seedBase '1Cv8.1CD') -Value 'unexpected seed write during fresh close'
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop} | Should -Throw '*FIXTURE_SEED_CHANGED*'
     }
 
     It 'copies only the exact normalization receipt from a registered historical worktree and remaps its state reference' {

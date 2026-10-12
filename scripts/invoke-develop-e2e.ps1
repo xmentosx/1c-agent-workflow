@@ -565,6 +565,9 @@ $seedProjectRoot = $ProjectRoot
 $qualificationFixture = $null
 $fixturePath = Join-Path $outputRoot 'qualification-fixture.json'
 $fixtureDisposal = $null
+$freshSourceFixturePath = Join-Path $outputRoot 'fresh-source-fixture.json'
+$freshSourceFixture = $null
+$freshSourceFixtureDisposal = $null
 try {
     if ($null -ne $artifactBinding) {
         $env:VANESSA_MCP_CLIENT_CFE_PATH = [string]$artifactBinding.paths.VANESSA_MCP_CLIENT_CFE_PATH
@@ -662,10 +665,18 @@ try {
         $freshStandConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $freshTemplateRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $freshStandConfig
         if (-not $freshTemplateRoot) { $freshTemplateRoot = $ProjectRoot }
+        $freshSeedProjectRoot = $freshTemplateRoot
         $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
         $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "p $cyrillicPathSegment"
         $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "provision-project" -Operation {
+            # Configured init and close both use SOURCE_INFOBASE_PATH. Materialize
+            # its source through the existing factory before copying the env.
+            [void](Invoke-DevelopProcess -Name 'fresh-source-fixture-prepare' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
+                '-Action','Prepare','-Phase','Develop','-ProjectRoot',$freshTemplateRoot,'-CandidateRoot',$CandidateRoot,
+                '-AiRulesSource',$AiRulesSource,'-FreshProjectsRoot',$FreshProjectsRoot,'-AgentTarget',$AgentTarget,'-OutputPath',$freshSourceFixturePath) -TimeoutSeconds 9000)
+            $ownedFreshSource = Get-Content -LiteralPath $freshSourceFixturePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $freshTemplateRoot = [string]$ownedFreshSource.projectRoot
             New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
             if ($freshRoot -notmatch '\s' -or $freshRoot -notmatch '[^\x00-\x7F]') {
                 throw "DEVELOP_E2E_SPECIAL_PATH_REQUIRED: fresh project root must contain both whitespace and non-ASCII text: '$freshRoot'."
@@ -732,6 +743,9 @@ try {
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "close-and-cleanup" -Operation {
             [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
+            [void](Invoke-DevelopProcess -Name 'fresh-source-seed-unchanged' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
+                '-Action','Capture','-Phase','Develop','-ProjectRoot',$freshSeedProjectRoot,'-AgentTarget',$AgentTarget,
+                '-OutputPath',(Join-Path $outputRoot 'fresh-source-seed-confirmation.json')) -TimeoutSeconds 180)
             Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
         })
         $freshBranchRoot = ""
@@ -768,18 +782,25 @@ try {
     }
     $env:ITL_WORKFLOW_SOURCE_PATH = $previousWorkflowSource
     $env:ITL_AI_RULES_SOURCE_PATH = $previousRulesSource
-    if($requestedJourneys -contains 'upgrade' -and (Test-Path -LiteralPath $fixturePath -PathType Leaf)){
+    $disposalEntries = @(
+        @{journey='upgrade';receipt=$fixturePath;step='dispose-upgrade-fixture';output='qualification-fixture-disposal.json'},
+        @{journey='fresh';receipt=$freshSourceFixturePath;step='dispose-fresh-source-fixture';output='fresh-source-fixture-disposal.json'}
+    )
+    foreach($entry in $disposalEntries){
+        if($requestedJourneys -notcontains $entry.journey -or -not (Test-Path -LiteralPath $entry.receipt -PathType Leaf)){continue}
         try {
             # Prepare writes its receipt before native materialization, including failed restores.
-            if(-not $qualificationFixture){$qualificationFixture=Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8|ConvertFrom-Json}
-            $disposalPath=Join-Path $outputRoot 'qualification-fixture-disposal.json'
-            [void](Invoke-DevelopProcess -Name 'dispose-upgrade-fixture' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-create-infobase.ps1') -Arguments @(
-                '-Operation','Dispose','-ProjectRoot',[string]$qualificationFixture.branchRoot,'-ExpectedCandidate',$candidateCommit,'-OutputPath',$disposalPath) -TimeoutSeconds 180)
-            $fixtureDisposal=Get-Content -LiteralPath $disposalPath -Raw -Encoding UTF8|ConvertFrom-Json
+            $ownedFixture=Get-Content -LiteralPath $entry.receipt -Raw -Encoding UTF8|ConvertFrom-Json
+            if($entry.journey -eq 'upgrade'){$qualificationFixture=$ownedFixture}else{$freshSourceFixture=$ownedFixture}
+            $disposalPath=Join-Path $outputRoot $entry.output
+            [void](Invoke-DevelopProcess -Name $entry.step -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-create-infobase.ps1') -Arguments @(
+                '-Operation','Dispose','-ProjectRoot',[string]$ownedFixture.branchRoot,'-ExpectedCandidate',$candidateCommit,'-OutputPath',$disposalPath) -TimeoutSeconds 180)
+            $disposal=Get-Content -LiteralPath $disposalPath -Raw -Encoding UTF8|ConvertFrom-Json
         } catch {
-            $fixtureDisposal=@{status='retained';error=$_.Exception.Message;nextAction='After the base owner exits, repeat the recorded dispose-upgrade-fixture command; preserve snapshots and diagnostics.'}
+            $disposal=@{status='retained';error=$_.Exception.Message;nextAction="After the base owner exits, repeat the recorded $($entry.step) command; preserve snapshots and diagnostics."}
             Write-Warning "Develop fixture database disposal deferred: $($_.Exception.Message)"
         }
+        if($entry.journey -eq 'upgrade'){$fixtureDisposal=$disposal}else{$freshSourceFixtureDisposal=$disposal}
     }
     $payload = [ordered]@{
         schemaVersion = 2
@@ -793,6 +814,8 @@ try {
         seedProjectRoot = $seedProjectRoot
         qualificationFixture = $qualificationFixture
         fixtureDisposal = $fixtureDisposal
+        freshSourceFixture = $freshSourceFixture
+        freshSourceFixtureDisposal = $freshSourceFixtureDisposal
         freshProjectRoot = $freshRoot
         freshBranchRoot = $freshBranchRoot
         staleStandCleanup = $staleStandCleanup

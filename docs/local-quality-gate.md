@@ -526,13 +526,20 @@ Develop состоит из двух независимо квалифициру
   конфигурации в Designer, recovery check, result, `refresh-dev-branch-lite`,
   повторный check и close.
 
-После upgrade Develop освобождает только производные `1Cv8.1CD` своего
+Fresh получает источник настроенного init/close из отдельного qualification
+target; `SOURCE_INFOBASE_PATH` указывает на его восстановленную базу. После close
+тот же владелец Capture подтверждает неизменность исходного seed без Recapture.
+При отказе сохраняются снимок и диагностика; сначала исправляется изоляция или
+выясняется внешнее изменение seed, затем применяется явное продолжение Capture.
+
+После upgrade/fresh Develop освобождает только производные `1Cv8.1CD` своего
 qualification target, в том числе после неудачного первого RestoreIB. Его
 candidate claim, общий Git, точные пути, per-infobase guard и эксклюзивный
 файловый handle обязательны. Исходный seed, capsule/DT, исходники, pending/cursor
 и журналы сохраняются; Release target продолжает жить по своему checkpoint.
 Занятая база сохраняется с предупреждением и записанной командой продолжения
-`dispose-upgrade-fixture`; очистка не подменяет результат исходного journey.
+`dispose-upgrade-fixture` или `dispose-fresh-source-fixture`; очистка не подменяет
+результат исходного journey.
 
 Ошибки прикладной конфигурации не требуется исправлять ради выпуска workflow.
 Если стенд воспроизводит известный отказ Gate6, в его ignored

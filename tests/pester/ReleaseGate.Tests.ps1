@@ -366,6 +366,19 @@ Describe "Release gate scripts" {
         & {
             $ProjectRoot = Join-Path $TestDrive 'Исходный стенд с пробелами'
             $freshTemplateRoot = $ProjectRoot
+            $CandidateRoot = $RepoRoot; $AiRulesSource = $RepoRoot; $AgentTarget = 'kilocode'
+            $outputRoot = Join-Path $TestDrive 'fresh proof'
+            New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+            $freshSourceFixturePath = Join-Path $outputRoot 'fresh-source-fixture.json'
+            $ownedSourceRoot = Join-Path $TestDrive 'owned source fixture'
+            New-Item -ItemType Directory -Force -Path (Join-Path $ownedSourceRoot '.agent-1c') | Out-Null
+            $ownedSourceDatabase = Join-Path $ownedSourceRoot 'owned base'
+            $prepareCalls = New-Object Collections.Generic.List[object]
+            function Invoke-DevelopProcess {
+                param($Name,$WorkingRoot,$ScriptPath,$Arguments,$TimeoutSeconds)
+                $prepareCalls.Add(@{name=$Name;script=$ScriptPath;arguments=$Arguments})
+                [IO.File]::WriteAllText($freshSourceFixturePath, (@{projectRoot=$ownedSourceRoot;branchRoot=(Join-Path $ownedSourceRoot 'branch')}|ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            }
             $FreshProjectsRoot = Join-Path $TestDrive 'Новые проекты с пробелами'
             $freshRoot = Join-Path $FreshProjectsRoot 'p Проект\новый'
             New-Item -ItemType Directory -Path (Join-Path $ProjectRoot '.agent-1c') -Force | Out-Null
@@ -373,6 +386,8 @@ Describe "Release gate scripts" {
             $sourceEnv = Join-Path $ProjectRoot '.dev.env'
             [IO.File]::WriteAllText($sourceConfig, '{}', [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText($sourceEnv, "UI_TESTING=essential`r`nITL_VANESSA_TESTING=off`r`nUSER_SETTING=keep`r`nEXPORT_PATH=old`r`nITL_ACTIVE_CONTEXT_UPDATED_AT=old`r`n", [Text.UTF8Encoding]::new($true))
+            Copy-Item -LiteralPath $sourceConfig -Destination (Join-Path $ownedSourceRoot '.agent-1c/project.json')
+            [IO.File]::WriteAllText((Join-Path $ownedSourceRoot '.dev.env'), ([IO.File]::ReadAllText($sourceEnv)+"SOURCE_INFOBASE_PATH=$ownedSourceDatabase`r`n"), [Text.UTF8Encoding]::new($true))
             $sourceEnvHash = (Get-FileHash -LiteralPath $sourceEnv).Hash
             $sourceConfigHash = (Get-FileHash -LiteralPath $sourceConfig).Hash
             $body = $operation[0].ScriptBlock.Extent.Text
@@ -382,6 +397,11 @@ Describe "Release gate scripts" {
             $seed | Should -Contain 'ITL_VANESSA_TESTING=off'
             $seed | Should -Contain 'USER_SETTING=keep'
             $seed | Should -Contain 'SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed'
+            $prepareCalls.Count | Should -Be 1
+            $prepareCalls[0].script | Should -BeExactly (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1')
+            $prepareCalls[0].arguments | Should -Contain 'Prepare'
+            $prepareCalls[0].arguments | Should -Contain $ProjectRoot
+            $seed | Should -Contain "SOURCE_INFOBASE_PATH=$ownedSourceDatabase"
             @($seed | Where-Object { $_ -match '^(EXPORT_PATH|ITL_ACTIVE_CONTEXT_UPDATED_AT)=' }).Count | Should -Be 0
             (Get-FileHash -LiteralPath $sourceEnv).Hash | Should -BeExactly $sourceEnvHash
             (Get-FileHash -LiteralPath $sourceConfig).Hash | Should -BeExactly $sourceConfigHash

@@ -89,7 +89,7 @@
       },
       "fresh": {
         "hardSeconds": 3600,
-        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "mcp-hosts"]
+        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "mcp-hosts", "source-qualification-fixture"]
       }
     }
   },

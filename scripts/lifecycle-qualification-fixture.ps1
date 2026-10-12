@@ -116,7 +116,8 @@ function Install-QualificationFixtureContext {
     foreach ($property in $sourceState.PSObject.Properties) {
         if ($property.Name -match '^(pendingMerge|pendingRefresh|lifecycleMerge|eventLogPendingCursor)') { $state[$property.Name] = $property.Value }
     }
-    $mappings = @(@{from=[string]$manifest.sourceBranchRoot;to=$branch},@{from=[string]$manifest.sourceProjectRoot;to=$target})
+    $ownedBranchBase=Resolve-QualificationFixtureChild -Root $branch -RelativePath ('.agent-1c/infobases/dev-branches/'+[string]$manifest.branchName)
+    $mappings = @(@{from=[string]$sourceState.devBranchInfoBasePath;to=$ownedBranchBase},@{from=[string]$manifest.sourceBranchRoot;to=$branch},@{from=[string]$manifest.sourceProjectRoot;to=$target})
     foreach($reference in @($manifest.contextFiles)){
         if($reference.PSObject.Properties['sourcePath']){
             $root=if([string]$reference.role -ceq 'master'){$target}elseif([string]$reference.role -ceq 'branch'){$branch}else{throw 'FIXTURE_CONTEXT_ROLE_INVALID'}
@@ -125,7 +126,7 @@ function Install-QualificationFixtureContext {
     }
     $state = ConvertTo-QualificationFixtureContextValue -Value $state -Mappings $mappings
     $state['worktreePath']=$branch; $state['mainWorktreePath']=$target
-    $state['devBranchInfoBasePath']=Resolve-QualificationFixtureChild -Root $branch -RelativePath ('.agent-1c/infobases/dev-branches/'+[string]$manifest.branchName)
+    $state['devBranchInfoBasePath']=$ownedBranchBase
     $state['toolingInfoBaseGeneration']=[guid]::NewGuid().ToString('N')
     foreach ($field in @('vanessaMcpSafeModeProof','yaxunitInstallationProof')) { $state[$field]=$null }
     foreach ($field in @('toolingRecoveryId','toolingMutationId','toolingMutationAt','toolingRecoveredMutationId','toolingRecoveredMutationAt','toolingRecoveredAt','lastVerifiedCommit','verifiedFingerprint')) { $state[$field]='' }
