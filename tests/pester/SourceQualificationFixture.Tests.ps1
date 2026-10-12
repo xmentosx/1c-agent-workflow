@@ -1,6 +1,7 @@
 ﻿BeforeAll {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
+    . (Join-Path $RepoRoot 'scripts/source-e2e-create-infobase.ps1')
     function New-QualificationSeed {
         param([string]$Root)
         $project=Join-Path $Root 'seed';$branch=Join-Path $Root 'seed-branch'
@@ -36,6 +37,51 @@
     }
 }
 
+Describe 'Owned qualification native database creation before restore' {
+    BeforeEach {
+        $parent=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $project=Join-Path $parent 'project';$branch=Join-Path $parent 'branch'
+        [void][IO.Directory]::CreateDirectory($project)
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('init','-b','master')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('config','user.name','Tests')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('config','user.email','tests@example.invalid')|Out-Null
+        Write-Utf8Text -Path (Join-Path $project 'seed.txt') -Value 'seed'
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('add','--all')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('commit','-m','seed')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('worktree','add','--detach',$branch,'HEAD')|Out-Null
+        $script:createBranch=$branch;$script:createBase=Join-Path $branch '.agent-1c/infobases/test base Пример'
+        Write-QualificationFixtureJson -Path (Join-Path $parent 'qualification-fixture.json') -Value @{kind='itl-qualification-fixture-target';status='materializing';projectRoot=$project;branchRoot=$branch}
+        Write-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dev-branches/negative.json') -Value @{infoBaseKind='file';devBranchName='negative';devBranchInfoBasePath=$script:createBase}
+        Mock Invoke-WithOneCSessionAdmissionContext {param($InfoBaseKind,$InfoBasePath,$RequiredSessions,$Purpose,$ScriptBlock) & $ScriptBlock}
+        Mock Invoke-NativeProcessAndWaitResult {param($FilePath,$Arguments,$OneCCreateInfoBaseSyntax,$TimeoutSeconds)
+            Write-Utf8Text -Path (Join-Path $script:createBase '1Cv8.1CD') -Value 'native-result fixture'
+            return [pscustomobject]@{timedOut=$false;exitCode=0}
+        }
+    }
+    It 'admits exactly the owned base and uses native CREATEINFOBASE with the shared connection quoting contract' {
+        $result=New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath 'C:\Platform\1cv8.exe'
+        $result.infoBasePath|Should -BeExactly $script:createBase
+        (Read-Utf8Text -Path (Join-Path $script:createBase '1Cv8.1CD'))|Should -BeExactly 'native-result fixture'
+        Should -Invoke Invoke-WithOneCSessionAdmissionContext -Times 1 -ParameterFilter {$InfoBaseKind -eq 'file' -and $InfoBasePath -ceq $script:createBase -and $RequiredSessions -eq 1 -and $Purpose -eq 'qualification-infobase-create'}
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 1 -ParameterFilter {$Arguments[0] -ceq 'CREATEINFOBASE' -and $Arguments[1] -ceq (New-FileInfoBaseConnectionString -Path $script:createBase) -and $OneCCreateInfoBaseSyntax -and $TimeoutSeconds -eq 300}
+    }
+    It 'retains an existing partial base and refuses another native launch' {
+        Write-Utf8Text -Path (Join-Path $script:createBase 'partial.txt') -Value 'keep original failure'
+        {New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath unused}|Should -Throw '*FIXTURE_CREATE_TARGET_EXISTS*'
+        (Read-Utf8Text -Path (Join-Path $script:createBase 'partial.txt'))|Should -BeExactly 'keep original failure'
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+    }
+    It 'rejects a successful launcher without an actual database file' {
+        Mock Invoke-NativeProcessAndWaitResult {[pscustomobject]@{timedOut=$false;exitCode=0}}
+        {New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath unused}|Should -Throw '*FIXTURE_CREATE_FAILED*'
+    }
+    It 'rejects a foreign state path before guard admission' {
+        Write-QualificationFixtureJson -Path (Join-Path $script:createBranch '.agent-1c/dev-branches/negative.json') -Value @{infoBaseKind='file';devBranchName='negative';devBranchInfoBasePath=(Join-Path $TestDrive 'foreign')}
+        {New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath unused}|Should -Throw '*FIXTURE_CREATE_TARGET_INVALID*'
+        Should -Invoke Invoke-WithOneCSessionAdmissionContext -Times 0
+    }
+}
+
 Describe 'Owned qualification fixture capsule and lifecycle context' {
     BeforeEach {
         Mock Invoke-SourceFixtureInstalledAction {
@@ -43,6 +89,14 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
             if($Action -eq 'release-e2e-snapshot'){
                 $index=[Array]::IndexOf($Arguments,'-ReleaseSnapshotPath')
                 Write-Utf8Text -Path (Join-Path $Root $Arguments[$index+1]) -Value 'synthetic database snapshot; never live acceptance'
+            }
+            if($Action -eq 'qualification-create-infobase'){
+                $state=Read-QualificationFixtureJson -Path (Join-Path $Root ('.agent-1c/dev-branches/'+$Arguments[1]+'.json'))
+                Write-Utf8Text -Path (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD') -Value 'synthetic native create result; never live acceptance'
+            }
+            if($Action -eq 'release-e2e-restore'){
+                $state=Read-QualificationFixtureJson -Path (Join-Path $Root ('.agent-1c/dev-branches/'+$Arguments[1]+'.json'))
+                if(-not (Test-Path -LiteralPath (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD'))){throw 'RestoreIB requires native creation first'}
             }
             return [pscustomobject]@{stdout='mock';stderr='mock';durationMs=12}
         }
@@ -79,6 +133,7 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $envText|Should -Not -Match 'ROCTUP_MCP_PORT|ITL_ACTIVE_PROJECT_ROOT'
         $envText|Should -Match ([regex]::Escape('INFOBASE_PATH='+$state.devBranchInfoBasePath))
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'qualification-create-infobase' -and $Arguments[1] -eq 'negative'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-restore' -and $Arguments -contains '-PreserveReleaseSnapshotApplicationProof'}
     }
 
@@ -193,6 +248,7 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
             param($Root,$Action,$Arguments,$AgentTarget,$LogRoot,$TimeoutSeconds)
             switch($Action){
                 'release-e2e-snapshot'{$i=[Array]::IndexOf($Arguments,'-ReleaseSnapshotPath');Write-Utf8Text -Path (Join-Path $Root $Arguments[$i+1]) -Value 'synthetic release database'}
+                'qualification-create-infobase'{$state=Read-QualificationFixtureJson -Path (Join-Path $Root ('.agent-1c/dev-branches/'+$Arguments[1]+'.json'));Write-Utf8Text -Path (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD') -Value 'synthetic native create result'}
                 'release-e2e-restore'{if($script:failRestore){$script:failRestore=$false;throw 'original restore failure; target retained'}}
                 'update-workflow'{Write-Utf8Text -Path (Join-Path $Root '.agent-1c/dependency-lock.json') -Value ('{"dependencies":{"workflowPackage":{"commit":"'+$script:fixtureCandidateCommit+'"}}}')}
                 'refresh-dev-branch'{

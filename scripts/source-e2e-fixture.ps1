@@ -27,9 +27,11 @@ function Invoke-SourceFixtureInstalledAction {
     $stdout = Join-Path $LogRoot ($token+'.stdout.log'); $stderr = Join-Path $LogRoot ($token+'.stderr.log')
     $client = Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
     $internalAction = $Action -in @('release-e2e-snapshot','release-e2e-restore')
-    $runner = Join-Path $Root $(if($internalAction){'.agents/skills/1c-workflow/scripts/agent-1c.ps1'}else{'.agents/skills/1c-workflow/scripts/run-itl-command.ps1'})
-    $entryArguments = if($internalAction){@('-ProjectRoot',$Root)}else{@('--')}
-    $argv = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$runner)+$entryArguments+@('-Action',$Action,'-AgentTarget',$client)+$Arguments
+    $createFixtureBase = $Action -eq 'qualification-create-infobase'
+    $runner = if($createFixtureBase){Join-Path $PSScriptRoot 'source-e2e-create-infobase.ps1'}else{Join-Path $Root $(if($internalAction){'.agents/skills/1c-workflow/scripts/agent-1c.ps1'}else{'.agents/skills/1c-workflow/scripts/run-itl-command.ps1'})}
+    $entryArguments = if($internalAction -or $createFixtureBase){@('-ProjectRoot',$Root)}else{@('--')}
+    $actionArguments = if($createFixtureBase){@()}else{@('-Action',$Action,'-AgentTarget',$client)}
+    $argv = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$runner)+$entryArguments+$actionArguments+$Arguments
     $line = (@($argv|ForEach-Object { ConvertTo-GitProcessArgument -Value $_ }) -join ' ')
     $job = Start-DeliveryProcess -ArgumentList $line -WorkingDirectory $Root -StandardOutputPath $stdout -StandardErrorPath $stderr
     $process = $job.process; $errorText=''; $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -260,8 +262,8 @@ function New-SourceE2EFixtureProject {
     $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
     $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $snapshot));Copy-Item -LiteralPath (Join-Path $capsule 'infobase.dt') -Destination $snapshot
-    [void][IO.Directory]::CreateDirectory($context.infoBasePath)
     $logs=Join-Path $parent 'preparation-logs'
+    $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'qualification-create-infobase' -Arguments @('-DevBranchName',$context.branchName) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 420
     $restore=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'release-e2e-restore' -Arguments @('-DevBranchName',$context.branchName,'-ReleaseSnapshotPath',$snapshotRelative,'-PreserveReleaseSnapshotApplicationProof') -AgentTarget $AgentTarget -LogRoot $logs
     $config=Read-QualificationFixtureJson -Path (Join-Path $capsule 'release-e2e.json')
     $config.developDevBranchName=$context.branchName;$config.developWorktreePath=$branch

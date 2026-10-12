@@ -55,12 +55,14 @@
     "develop": [
       "scripts/invoke-develop-e2e.ps1",
       "scripts/source-e2e-fixture.ps1",
+      "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/develop-e2e-cleanup.ps1",
       "scripts/develop-configuration-rejection.ps1"
     ],
     "release": [
       "scripts/source-e2e-fixture.ps1",
+      "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/build-client-mcp-patched.ps1",
       "scripts/client-mcp-build.ps1",
@@ -662,7 +664,7 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/SourceQualificationFixture.Tests.ps1",
-      "paths": ["scripts/source-e2e-fixture.ps1", "scripts/lifecycle-qualification-fixture.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
+      "paths": ["scripts/source-e2e-fixture.ps1", "scripts/source-e2e-create-infobase.ps1", "scripts/lifecycle-qualification-fixture.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard*.py", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
       "reuseInputPaths": ["scripts/source-delivery-process.ps1"],
       "tests": ["tests/pester/SourceQualificationFixture.Tests.ps1"]
     },

@@ -111,3 +111,20 @@ Factory теперь разрешает до DumpIB только этот кон
 Адресный Windows PowerShell5.1 proof:14/0/0 за29.16s, включая обе новые границы.
 Тестовый PS1 с новыми буквальными Unicode fixtures сохранён с UTF-8 BOM.
 Live negative/positive и два кандидата ещё не подтверждены.
+
+Live Develop на0a47ff2b прошёл readiness и повторно использовал все три sealed
+capsule, но остановился при первом RestoreIB за106156ms: production helper
+требует существующий1Cv8.1CD и не создаёт пустую базу неявно. Factory пропустила
+это предусловие; snapshot и первоначальные seeds не изменены. Неуспешный owned
+target сохранён для диагностики в `C:\itlj\q Проект\develop-c2c570fe1ec5-0a47ff2bdafa-a1127d0a`.
+
+Source-only `source-e2e-create-infobase.ps1` теперь создаёт настоящую базу через
+CREATEINFOBASE до installed RestoreIB. Target проверяется по materializing claim,
+родительскому owned root, common Git и state; существующий partial target не
+перезаписывается. Запуск использует существующие execution/session guard,
+connection quoting, native owner и300s budget. Отдельный процесс сохраняет
+baseline installed helper и не меняет окружение текущего checker. Результат
+требует exit0 и фактический1Cv8.1CD. Capsule/seed/cursor/Designer proof не меняются.
+Четыре адресных регрессии прошли; старый Release continuation mock дополнен
+новым обязательным шагом без изменения исходных failure/assertions, затем
+этот сценарий прошёл отдельно. Fixture proof не подменяет live приёмку.
