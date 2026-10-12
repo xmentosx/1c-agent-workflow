@@ -5,6 +5,19 @@
 }
 
 Describe "Local quality gate contract" {
+    It "invalidates every extracted lifecycle shard when their shared fixture changes" {
+        . (Join-Path $RepoRoot "scripts/quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $expected = @('DevBranchLifecycle','DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' } | Sort-Object)
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/pester/DevBranchLifecycleSupport.ps1')
+        @($selection.unknownPaths).Count | Should -Be 0
+        @($selection.tests) | Should -Be $expected
+        foreach ($path in @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')) {
+            $production = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)
+            foreach ($test in $expected) { @($production.tests) | Should -Contain $test }
+        }
+    }
+
         It "preserves implicit worker provenance through the focused test wrapper" {
         $outputRoot = Join-Path $TestDrive "implicit focused wrapper"
         $resultPath = Join-Path $outputRoot "parser-docs.xml"

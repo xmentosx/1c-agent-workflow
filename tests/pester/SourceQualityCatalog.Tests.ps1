@@ -369,8 +369,10 @@ Describe 'Source quality catalog contracts' {
         $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -ne $qualificationConsumer }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 75
+        $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 78
+        foreach ($test in $lifecycleConsumers) { @($selection.tests) | Should -Contain $test }
         @($selection.tests) | Should -Contain $qualificationConsumer
         foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
         foreach ($test in $splitHostConsumers) { @($selection.tests) | Should -Contain $test }

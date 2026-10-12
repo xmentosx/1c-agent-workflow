@@ -56,3 +56,30 @@ cases passed:4/0 за1.258 s. Это улучшение диагностики, 
 рискам. Не расширять аудит на сотни новых описаний до завершения текущей live
 приёмки. Отдельно подтвердить малую изолированную доработку и параллельную
 регистрацию после активации нового опубликованного supervisor.
+# Измеренный hotspot DevBranchLifecycle
+
+Protected cache accepted `39b59aa9` содержит 305 passed expanded outcomes:
+793036ms shard, 786.123s сумма cases. Manifest/JUnit SHA проверены; mutable
+worker XML не используется как историческое доказательство.
+
+Набор разделён на четыре process-isolated файла: load/runtime (152.142s
+прежних cases), worktree/provenance (217.334s), fork continuation (153.309s),
+merge/recovery (263.338s). Эти суммы задают округлённые scheduling weights,
+а не обещают новые длительности. Применяется существующий runner без новой
+параллельной authority или увеличения workers.
+
+Все 236 исходных It commands перенесены побайтно по AST extent, включая
+TestCases, bodies и assertions; nested Describe/tags сохранены. Общий BeforeAll
+вынесен в DevBranchLifecycleSupport.ps1 без изменения statements. Исходные
+305 expanded cases должны сохраниться; дополнительный selector regression
+проверяет включение всех четырёх shards при изменении shared fixture/core.
+Каждый прежний production route исходного набора теперь включает все четыре;
+новый fixture route участвует также в вычислении reuse inputs.
+
+Изоляция: TestDrive и GUID repositories принадлежат case; environment/script
+state разделены worker-процессами; launcher, port registry и facade fixtures
+используют собственные roots. Console Ctrl+C workload в этом наборе отсутствует;
+существующий serial tail не изменён. Реальное ускорение и сохранение всех
+305 исходных outcomes принимаются только по единственной RegisterChange этой
+единицы. Raw proof: ignored build/redesign-source-delivery/candidate-protocol/
+lifecycle-split-integrity.json и штатный registration/shards summary.

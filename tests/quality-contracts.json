@@ -684,7 +684,7 @@
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
       "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
+      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
       "id": "dependency-lock",
@@ -712,6 +712,15 @@
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1", "AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "scripts/update-installed-workflow.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
       "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/CavemanPolicyTransition.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
+    },
+    {
+      "id": "lifecycle-test-fixtures",
+      "owner": "development branch lifecycle test fixtures",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
+      "paths": ["tests/pester/DevBranchLifecycleSupport.ps1"],
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"]
     },
     {
       "id": "lifecycle",
@@ -748,7 +757,7 @@
       "tests": [
         "tests/pester/Agent1cEntrypoint.Tests.ps1",
         "tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1",
-        "tests/pester/DevBranchLifecycle.Tests.ps1",
+        "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1",
         "tests/pester/WorktreeInventory.Tests.ps1",
         "tests/pester/WorkflowUpdateRollback.Tests.ps1",
         "tests/pester/PendingMergeWorkflowTransition.Tests.ps1",
@@ -799,7 +808,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/AuxiliaryContours.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.auxiliary.ps1", "tests/pester/AuxiliaryContours.Tests.ps1"],
-      "tests": ["tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"]
+      "tests": ["tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"]
     },
     {
       "id": "roctup-port-lifecycle",
@@ -817,7 +826,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BranchSeedRefreshLite.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.branch*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.result*.ps1"],
-      "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
+      "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
     },
     {
       "id": "yaxunit-verification",
@@ -835,7 +844,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/ToolingReadiness.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.tooling.ps1", ".agents/skills/1c-workflow/tools/tooling-probe/*", ".agents/skills/1c-workflow/references/tooling-recovery.md"],
-      "tests": ["tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"]
+      "tests": ["tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"]
     },
     {
       "id": "vanessa-verification",
@@ -844,7 +853,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/1c-workflow/references/verification-suite-selection.md", ".agents/skills/1c-workflow/references/vanessa-authoring.md", ".agents/skills/1c-workflow/references/vanessa-recipes.md", ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "scripts/vanessa-build-runtime.ps1", "scripts/run-vanessa-build-runtime.ps1", "third-party/vanessa-automation/*", "tests/fixtures/vanessa-nested-selection/*", "tests/fixtures/vanessa-row-criteria/*", "tests/fixtures/vanessa-client-code/*", "tests/fixtures/vanessa-testclient-ports/*", "tests/fixtures/vanessa-html-forms/*"],
-      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VerificationAcceptedMaster.Tests.ps1", "tests/pester/VerificationProofReuse.Tests.ps1", "tests/pester/VerificationAggregateAssessment.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/YAxUnitApplicability.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
+      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VerificationAcceptedMaster.Tests.ps1", "tests/pester/VerificationProofReuse.Tests.ps1", "tests/pester/VerificationAggregateAssessment.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/YAxUnitApplicability.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
     },
     {
       "id": "ondemand-go-source-tests",
@@ -1034,7 +1043,7 @@
     "fallbackContract": "lifecycle",
     "commonTests": ["tests/pester/Agent1cEntrypoint.Tests.ps1"],
     "owners": {
-      "core": { "tests": ["tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"] },
+      "core": { "tests": ["tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"] },
       "bootstrap": { "tests": ["tests/pester/BootstrapUpdate.Tests.ps1"] },
       "openspec": { "tests": ["tests/pester/OpenSpecCliRuntime.Tests.ps1"] },
       "tooling": { "tests": ["tests/pester/ToolingReadiness.Tests.ps1"] },
