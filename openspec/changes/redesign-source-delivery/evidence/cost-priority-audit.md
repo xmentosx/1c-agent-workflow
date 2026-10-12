@@ -186,6 +186,12 @@ selection, actual cost и reuse applicability вместе с функциона
 `Maintaining selection, cost and reuse`; корневой AGENTS.md содержит короткий
 указатель для изменений тестов, выбора и зависимостей. Рост always-on текста:
 1398→1415 whitespace words, +17; детали загружаются по этому trigger.
+Первая регистрация94e9e925 отклонена только budget assertion:39 passed/1 failed,
+check30279ms, owner documentation. Прежний предел1400 оставлял два слова;
+обязательный pointer сохраняется, maxWords явно повышен до1420 с rationale.
+Review2500 и hard2800 approximate-token limits, все safety contracts и исходный
+budget test сохранены. Новый тест не добавляется; меняется явный размер контекста
+по действующей documentation-budget policy.
 
 Это процедурное требование к существующей приёмке, а не новый runtime barrier,
 автоматический порог производительности, формат отчёта или общий gate. Прежние

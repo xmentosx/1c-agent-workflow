@@ -214,7 +214,7 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "source-only maintainer rules now require semantic comparison and an explicit, measured budget change instead of compressing safety contracts" },
+            @{ path = "AGENTS.md"; maxWords = 1420; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "source-only maintainer rules retain semantic comparison; the on-demand selection/cost/reuse acceptance pointer increases 1398 to 1415 words (+17), so maxWords increases 1400 to 1420; review and hard token limits and safety contracts remain" },
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
