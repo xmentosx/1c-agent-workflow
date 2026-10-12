@@ -9,10 +9,12 @@ $lib=Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/sc
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
 . (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
-# This standalone source child owns no installed lifecycle operation record.
-$script:LifecycleOperationRecord=$null
-$script:LifecycleOperationStatePath=''
-$script:RunStatusPath=''
+function Initialize-SourceQualificationNativeContext {
+    param([string]$Root)
+    # Reuse the owner's non-operating entrypoint instead of copying its context.
+    . (Join-Path $lib '../agent-1c.ps1') -ProjectRoot $Root -Action help *> $null
+    $script:RunStatusPath=$RunStatusPath
+}
 
 function New-SourceQualificationInfoBase {
     param([string]$BranchRoot, [string]$BranchName, [string]$PlatformPath)
@@ -51,6 +53,7 @@ if($ProjectRoot){
     $ErrorActionPreference='Stop'
     $utf8=[Text.UTF8Encoding]::new($false);[Console]::InputEncoding=$utf8;[Console]::OutputEncoding=$utf8;$OutputEncoding=$utf8
     $script:ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot)
+    Initialize-SourceQualificationNativeContext -Root $script:ProjectRoot
     $script:ConfigPath=Join-Path $script:ProjectRoot '.agent-1c/project.json'
     Import-DotEnv -Path (Join-Path $script:ProjectRoot '.dev.env')
     Read-ProjectConfig

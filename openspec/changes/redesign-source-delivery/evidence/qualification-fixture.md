@@ -152,3 +152,13 @@ Source entrypoint явно задаёт отсутствие installed lifecycle
 параметризован для installed и standalone source входов, исходный вариант
 сохранён. Оба passed; assertions, workload и transport owner не менялись.
 Это проверка entrypoint initialization, а не passing live CREATEINFOBASE.
+
+f6593a9f зарегистрирован:59/0/0,44790ms. Live выявил оставшийся LastLogPath:
+первый source probe унаследовал его от предшествующего installed-варианта.
+Такая проверка была недостаточной; отдельные переменные больше не копируются.
+Source initializer использует существующий candidate agent entrypoint `help`,
+который задаёт полный native context без lifecycle операции. RunStatusPath
+переносится из его parameter scope. Исходный installed-вариант сохранён, source
+probe теперь стартует отдельный PowerShell5.1 процесс и проверяет те же точные
+stdout/stderr/exit23. Оба прошли. Неуспешные owned проекты сохранены; snapshots,
+seed state и installed RestoreIB не менялись. Дополнительной runtime authority нет.

@@ -324,10 +324,20 @@ exit 23
             if($entry -eq 'installed'){
                 . $helper -ProjectRoot $root -Action help *> $null
             }else{
-                . (Join-Path $RepoRoot 'scripts/source-e2e-create-infobase.ps1')
-                $script:ProjectRoot=$root
-                $script:OneCSessionLaunchContext=$null
-                $script:OneCNativeOperationJournal=New-OneCNativeOperationJournal -Resources @()
+                $probe=Join-Path $root 'source probe.ps1';$receipt=Join-Path $root 'source result.json'
+                $probeBody=@'
+param($RepositoryRoot,$Root,$ChildPath,$ResultPath)
+$ErrorActionPreference='Stop'
+. (Join-Path $RepositoryRoot 'scripts/source-e2e-create-infobase.ps1')
+Initialize-SourceQualificationNativeContext -Root $Root
+$stdout=Join-Path $Root 'stdout.txt';$stderr=Join-Path $Root 'stderr.txt'
+$result=Invoke-NativeProcessAndWaitResult -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile','-File',$ChildPath) -TimeoutSeconds 30 -StdoutPath $stdout -StderrPath $stderr
+Write-QualificationFixtureJson -Path $ResultPath -Value @{exitCode=$result.exitCode;stdout=(Read-Utf8Text -Path $stdout);stderr=(Read-Utf8Text -Path $stderr)}
+'@
+                [IO.File]::WriteAllText($probe,$probeBody,[Text.UTF8Encoding]::new($true))
+                & (Join-Path $PSHOME 'powershell.exe') -NoProfile -File $probe -RepositoryRoot $RepoRoot -Root $root -ChildPath $child -ResultPath $receipt *> $null
+                if($LASTEXITCODE -ne 0){throw 'Standalone source native probe failed'}
+                return (Read-QualificationFixtureJson -Path $receipt)
             }
             $stdout=Join-Path $root 'stdout.txt';$stderr=Join-Path $root 'stderr.txt'
             $result=Invoke-NativeProcessAndWaitResult -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile','-File',$child) -TimeoutSeconds 30 -StdoutPath $stdout -StderrPath $stderr
