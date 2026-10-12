@@ -125,7 +125,49 @@ report допустим exact Targeted descendant с известными qualit
 Новая regression требует actual exact Targeted receipt, принимает независимый
 known component, отвергает unowned path и прекращает reuse, когда component
 добавлен в runtime route. Исходные newer-failure/corruption checks сохранены.
-Так независимая component-правка не заставляет повторять незатронутый1C journey;
-затронутый journey всё равно исполняется. Focused1/0; `d7a4dc52` принят штатной
+Это доказывает правило continuation на native Git fixture; его применимость
+на настоящем стенде ещё требует live-приёмки. Focused1/0; `d7a4dc52` принят штатной
 регистрацией149/0/0 за130488ms (raw132797ms),9 executed/0 reused.
 Общая live-квалификация выполняется отдельно; этот Targeted не выдаётся за неё.
+
+## Разрыв между parent identity и артефактами настоящего запуска
+
+`d7a4dc52` успешно прошёл upgrade за2324386ms, но manifest сохранился как
+schema1 с inputIdentity=null. Повтор на `1c8add7f` начал cold prepare вместо
+ancestor reuse и был остановлен до повторения тяжёлого сценария. Прежний proof
+сохранён; он не мигрируется в schema2 и не дополняется задним числом.
+
+Родитель check формировал identity только из process env для трёх артефактов.
+В обычном запуске exe собирался и устанавливался в env лишь внутри child,
+а client CFE выбирался из lock без ручной переменной. Отсутствие этих parent
+переменных возвращало unknown identity. Физический default-path regression
+также обнаружил потерю пустого списка UI policy при pipeline ConvertTo-Json:
+UTF8.GetBytes получал null. Synthetic ExternalBinding fixtures этих границ
+не исполняли; успешные прежние unit proofs не доказывали live reuse.
+
+Исправление использует существующих source check/build/download owners:
+до journey разрешаются SHA-проверенные archive/CFE/exe и передаются как обычный
+artifact binding в identity и в child. Positive child получает тот же binding.
+Go source build выполняется один раз до journey; child проверяет его exact
+locked bytes вместо повторной сборки. Standalone invocation сохраняет прежнюю
+самостоятельную сборку. Client override остаётся внутри actual E2E child и не
+загрязняет Full Pester host. JSON canonicalization сохраняет empty/singleton
+collection через InputObject. Не добавляются coordinator, cache или новый
+qualification barrier: прежние проверки наличия и SHA выполняются раньше,
+с продолжением тем же вызовом после исправления названного артефакта.
+
+Новый один regression воспроизводит отсутствие всех optional env, сериализацию
+binding через файл с Unicode path, physical SHA verification, default empty UI
+policy, отсутствие host env pollution и отказ после подмены CFE. Focused1/0.
+Полный набор24 cases первоначально23/1: AST fixture реального qualification
+reader не инициализировал новую script variable. После восстановления той же
+инициализации, что в check, исходный roundtrip снова прошёл1/0; все его
+provenance/corruption assertions сохранены. Общая приёмка принадлежит RegisterChange.
+
+Проверка на настоящем sealed stand и positive stand, без1С и без optional env:
+402 tracked inputs, три exact locked SHA, positiveStandBound=true;
+artifactPreparation6627ms, total17611ms. Ignored receipt:
+candidate-protocol/live-input-binding-probe.json. Это доказательство подготовки
+identity, не квалификация journey. Изменённые native input collectors требуют
+первой настоящей schema2 квалификации; последующий warm/retry проверяется
+отдельно. До неё V.4–V.7 и CA.4 не закрываются.

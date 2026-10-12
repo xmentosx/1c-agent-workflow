@@ -73,6 +73,8 @@ function Get-CanonicalTextSha256 {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$script:sourceE2EArtifactBinding = $null
+$script:sourceE2EArtifactBindingPath = ''
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "develop-static-qualification.ps1")
@@ -221,7 +223,7 @@ function Ensure-DevelopE2ERoute {
         return $routePath
     }
 
-    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget
+    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
     $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity
     if ($ancestor) {
         # Preserve the historical report bytes and execution identity. The current
@@ -235,11 +237,12 @@ function Ensure-DevelopE2ERoute {
 
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
-        $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget
+        $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
         $script:developJourneyInputs[$Journey] = $beforeInputs
         $journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $Journey
         $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey, "-FreshProjectsRoot", $FreshProjectsRoot)
         if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $developArguments += @("-AgentTarget", $AgentTarget) }
+        if ($script:sourceE2EArtifactBindingPath) { $developArguments += @('-ArtifactBindingPath', $script:sourceE2EArtifactBindingPath) }
         Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments $developArguments -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
         if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
         $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -252,7 +255,7 @@ function Ensure-DevelopE2ERoute {
         $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $Plan -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -JourneyResult $result
         [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-        $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget
+        $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
         # Binding is cache eligibility, not a barrier to the actual passed run.
         if (-not $beforeInputs -or -not $inputIdentity -or [string]$beforeInputs.fingerprint -cne [string]$inputIdentity.fingerprint) { $inputIdentity = $null }
         [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity)
@@ -701,7 +704,7 @@ function Test-DevelopQualification {
                 $continued = [string]$record.execution -eq "continued"
                 if ($continued -and $record.PSObject.Properties['inputIdentity']) {
                     $rulesRoot = if ($aiRulesRelease -and $aiRulesRelease.PSObject.Properties['sourceRoot']) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
-                    $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $rulesRoot -AgentTarget $AgentTarget
+                    $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $rulesRoot -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
                     if (-not $currentInputs -or [string]$currentInputs.fingerprint -cne [string]$record.inputIdentity.fingerprint -or
                         (Get-DevelopE2ECanonicalJsonSha256 -Value $record.inputIdentity.inventory) -cne [string]$record.inputIdentity.fingerprint -or
                         -not (Test-RecordedWorkflowContinuation -Record $record.continuation -Commit $Commit -Tree $Tree)) { return $null }
@@ -915,6 +918,11 @@ try {
             $archivePath = [string]$script:releaseContext.artifacts.vanessaAutomation.path
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
+            if ($effectiveMode -in @('Develop','Release')) {
+                $script:sourceE2EArtifactBinding = Resolve-SourceE2EArtifactBinding -RepositoryRoot $repoRoot -ArchivePath $archivePath -Offline:$Offline
+                $script:sourceE2EArtifactBindingPath = Join-Path $outputRoot 'source-e2e-artifacts.json'
+                [IO.File]::WriteAllText($script:sourceE2EArtifactBindingPath, ($script:sourceE2EArtifactBinding | ConvertTo-Json -Depth 5), $utf8NoBom)
+            }
         } | Out-Null
     }
 

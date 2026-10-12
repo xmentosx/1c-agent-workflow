@@ -9,7 +9,7 @@ function Get-DevelopE2EInputIdentity {
         [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey,
         [object]$Catalog = $null,
         [string]$ProjectRoot = '', [string]$AiRulesSource = '', [string]$AgentTarget = '',
-        [object]$ExternalBinding = $null
+        [object]$ExternalBinding = $null, [object]$ArtifactBinding = $null
     )
     try {
         if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot }
@@ -53,10 +53,14 @@ function Get-DevelopE2EInputIdentity {
                 }
             }
             $artifacts = [ordered]@{}
-            foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
-                $physical = [Environment]::GetEnvironmentVariable($name,'Process')
-                if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
-                $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($null -ne $ArtifactBinding) {
+                $artifacts = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $RepositoryRoot -Binding $ArtifactBinding
+            } else {
+                foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                    $physical = [Environment]::GetEnvironmentVariable($name,'Process')
+                    if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
+                    $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
             }
             $runtime = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { return $null }
@@ -83,7 +87,7 @@ function Get-DevelopE2EInputIdentity {
             $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
             if ($positiveRoot) {
                 $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey upgrade -Catalog $Catalog `
-                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget
+                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding
                 if ($null -eq $positiveIdentity) { return $null }
                 $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
             }
@@ -91,7 +95,10 @@ function Get-DevelopE2EInputIdentity {
         if (-not $ExternalBinding.complete) { return $null }
         $body = [ordered]@{ schemaVersion=1; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
         return [pscustomobject]@{ schemaVersion=1; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
-    } catch { return $null }
+    } catch {
+        Write-Verbose "Develop E2E input identity unavailable: $($_.Exception.GetType().Name); $($_.FullyQualifiedErrorId)"
+        return $null
+    }
 }
 
 function Test-DevelopE2ENewerJourneyFailure {
@@ -266,7 +273,8 @@ function Resolve-DevelopE2EJourneyPlan {
 function Get-DevelopE2ECanonicalJsonSha256 {
     param([Parameter(Mandatory = $true)][object]$Value)
 
-    $json = $Value | ConvertTo-Json -Depth 16 -Compress
+    # Pipeline enumeration loses an empty collection and unwraps a singleton.
+    $json = ConvertTo-Json -InputObject $Value -Depth 16 -Compress
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
         return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json)))).Replace('-', '').ToLowerInvariant()

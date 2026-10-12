@@ -6,7 +6,8 @@ param(
     [string]$OutputPath = "",
     [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
-    [ValidateSet("upgrade", "fresh", "all")][string]$Journey = "all"
+    [ValidateSet("upgrade", "fresh", "all")][string]$Journey = "all",
+    [string]$ArtifactBindingPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -51,7 +52,15 @@ $freshBranchRoot = ""
 $staleStandCleanup = $null
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
-$onDemandSourceBuild = & (Join-Path $CandidateRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
+$artifactBinding = $null
+if ($ArtifactBindingPath) {
+    $ArtifactBindingPath = [IO.Path]::GetFullPath($ArtifactBindingPath)
+    $artifactBinding = Get-Content -LiteralPath $ArtifactBindingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $artifactHashes = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $artifactBinding
+    $onDemandSourceBuild = [pscustomobject]@{path=[string]$artifactBinding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;sha256=$artifactHashes.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE}
+} else {
+    $onDemandSourceBuild = & (Join-Path $CandidateRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
+}
 $onDemandLock = (
     Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 |
         ConvertFrom-Json
@@ -543,6 +552,8 @@ function Get-BranchWorktree {
 $clientMcpBuildScope = $null
 $previousWorkflowSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
+$previousClientMcpPath = $env:VANESSA_MCP_CLIENT_CFE_PATH
+$previousArchivePath = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
 $projectCleanAtStart = $false
 $projectHeadAtStart = ""
 $standBranchRoot = ""
@@ -553,6 +564,10 @@ $trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
 $seedProjectRoot = $ProjectRoot
 $qualificationFixture = $null
 try {
+    if ($null -ne $artifactBinding) {
+        $env:VANESSA_MCP_CLIENT_CFE_PATH = [string]$artifactBinding.paths.VANESSA_MCP_CLIENT_CFE_PATH
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [string]$artifactBinding.paths.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
+    }
     $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
@@ -609,9 +624,11 @@ try {
             $journeys.upgrade.configurationRejection = Assert-DevelopConfigurationRejection -ProcessResult $refreshResult `
                 -Expected $standConfig.developConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
             $positiveOutput = Join-Path $outputRoot 'upgrade-positive/develop-e2e-summary.json'
+            $positiveArguments = @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
+                '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade')
+            if ($ArtifactBindingPath) { $positiveArguments += @('-ArtifactBindingPath', $ArtifactBindingPath) }
             [void](Invoke-DevelopProcess -Name 'upgrade-positive' -WorkingRoot $positiveStandRoot -ScriptPath $PSCommandPath `
-                -Arguments @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
-                    '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade') -TimeoutSeconds 3600)
+                -Arguments $positiveArguments -TimeoutSeconds 3600)
             $positive = Get-Content -LiteralPath $positiveOutput -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$positive.status -cne 'passed' -or [string]$positive.candidate.commit -cne $candidateCommit -or
                 [string]$positive.candidate.tree -cne $candidateTree -or @($positive.journeys).Count -ne 1 -or
@@ -731,6 +748,8 @@ try {
     }
 } finally {
     Exit-SourceE2EClientMcpBuildScope -Scope $clientMcpBuildScope
+    $env:VANESSA_MCP_CLIENT_CFE_PATH = $previousClientMcpPath
+    $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousArchivePath
     if ($failure -and $projectCleanAtStart) {
         try {
             $trackedStateCleanup.project = Restore-DevelopE2ETrackedState -Root $ProjectRoot -StartHead $projectHeadAtStart -ExpectedBranch "master"

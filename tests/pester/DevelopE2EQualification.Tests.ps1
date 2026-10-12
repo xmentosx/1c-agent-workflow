@@ -2,6 +2,7 @@
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
+    $script:sourceE2EArtifactBinding = $null
     . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
     . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
     . (Join-Path $RepoRoot "scripts\develop-e2e-qualification.ps1")
@@ -246,6 +247,48 @@ Describe "Develop E2E journey qualification router" {
         Write-Utf8Json -Path $developQualificationFullPath -Value $saved
         Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64) | Should -BeNullOrEmpty
         (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+    }
+
+    It 'binds the default native artifact preparation without optional process overrides or Full host pollution' {
+        $f=New-AncestorJourneyFixture
+        $artifact=Join-Path $f.root ('.git/artifact ' + (Get-NonAsciiFixtureSegment) + '.bin')
+        [IO.File]::WriteAllBytes($artifact,[byte[]](0,1,2,3))
+        $sha=(Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-Utf8Json -Path (Join-Path $f.root 'templates/dependency-lock.json') -Value @{dependencies=@{
+            vanessaAutomation=@{sha256=$sha};itlOndemandMcp=@{sha256=$sha}
+            vanessaMcp=@{clientMcp=@{sha256=$sha;assetName='client fixture.cfe';url='https://example.invalid/never-used'}}
+        }}
+        $clientPath=Join-Path $f.root 'build/third-party/client-mcp/client fixture.cfe'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $clientPath))
+        [IO.File]::WriteAllBytes($clientPath,[byte[]](0,1,2,3))
+        $downloadHelper=Join-Path $f.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $downloadHelper))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1') -Destination $downloadHelper
+        $buildText="param([switch]`$SkipTests)`n[pscustomobject]@{path='"+$artifact.Replace("'","''")+"';sha256='$sha'}`n"
+        [IO.File]::WriteAllText((Join-Path $f.root 'scripts/Build-ItlOnDemandMcp.ps1'),$buildText,[Text.UTF8Encoding]::new($true))
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
+        Write-Utf8Json -Path (Join-Path $f.root '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$f.root}
+        [IO.File]::WriteAllText((Join-Path $f.root '.dev.env'),"PLATFORM_PATH=$artifact`r`n",[Text.UTF8Encoding]::new($true))
+        Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        Mock Get-Command {[pscustomobject]@{Source=$artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+        $keys=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $previous=@{}
+        try {
+            foreach($key in $keys){$previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process');[Environment]::SetEnvironmentVariable($key,$null,'Process')}
+            Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode | Should -BeNullOrEmpty
+            $binding=Resolve-SourceE2EArtifactBinding -RepositoryRoot $f.root -ArchivePath $artifact -Offline
+            $bindingPath=Join-Path $f.root '.git/binding.json'
+            Write-Utf8Json -Path $bindingPath -Value $binding
+            $transported=Get-Content -LiteralPath $bindingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported -Verbose
+            $before | Should -Not -BeNullOrEmpty
+            @($before.inventory.external.artifacts.Values | Where-Object {$_ -cne $sha}) | Should -HaveCount 0
+            foreach($key in $keys){[Environment]::GetEnvironmentVariable($key,'Process') | Should -BeNullOrEmpty}
+            [IO.File]::WriteAllBytes($clientPath,[byte[]](9,8,7))
+            Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported | Should -BeNullOrEmpty
+            {Get-SourceE2EArtifactBindingHashes -RepositoryRoot $f.root -Binding $transported} | Should -Throw '*SOURCE_E2E_ARTIFACT_HASH_MISMATCH*'
+            {Resolve-SourceE2EArtifactBinding -RepositoryRoot $f.root -ArchivePath $artifact -Offline} | Should -Throw '*SOURCE_E2E_CLIENT_ARTIFACT_MISSING*'
+        } finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$previous[$key],'Process')}}
     }
 
     It 'invalidates a complete physical binding when only the persisted UI policy alias changes' {

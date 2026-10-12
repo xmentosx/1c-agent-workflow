@@ -13,6 +13,56 @@ function Get-DevelopPositiveStandRoot {
     return $positiveRoot
 }
 
+function Resolve-SourceE2EArtifactBinding {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ArchivePath, [switch]$Offline)
+    $root = [IO.Path]::GetFullPath($RepositoryRoot)
+    $lock = (Get-Content -LiteralPath (Join-Path $root 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
+    . (Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1')
+    $clientLock = $lock.vanessaMcp.clientMcp
+    $clientPath = [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process')
+    if (-not $clientPath) {
+        $clientPath = Join-Path $root ('build/third-party/client-mcp/' + [string]$clientLock.assetName)
+        if (-not (Test-Path -LiteralPath $clientPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $clientPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$clientLock.sha256) {
+            if ($Offline) { throw 'SOURCE_E2E_CLIENT_ARTIFACT_MISSING: provide the locked client CFE in the candidate cache or through VANESSA_MCP_CLIENT_CFE_PATH, then repeat the same qualification.' }
+            [void](Invoke-ItlImmutableFileDownload -Uri ([string]$clientLock.url) -DestinationPath $clientPath -ExpectedSha256 ([string]$clientLock.sha256) -Label 'Source E2E client MCP CFE')
+        }
+    }
+    $build = & (Join-Path $root 'scripts/Build-ItlOnDemandMcp.ps1') -SkipTests
+    $binding = [pscustomobject]@{
+        schemaVersion=1; kind='itl-source-e2e-artifact-binding'
+        paths=[pscustomobject]@{
+            ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=[IO.Path]::GetFullPath($ArchivePath)
+            VANESSA_MCP_CLIENT_CFE_PATH=[IO.Path]::GetFullPath($clientPath)
+            ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=[IO.Path]::GetFullPath([string]$build.path)
+        }
+    }
+    [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $root -Binding $binding)
+    return $binding
+}
+
+function Get-SourceE2EArtifactBindingHashes {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$Binding)
+    if ([int]$Binding.schemaVersion -ne 1 -or [string]$Binding.kind -cne 'itl-source-e2e-artifact-binding') { throw 'SOURCE_E2E_ARTIFACT_BINDING_INVALID' }
+    $lock = (Get-Content -LiteralPath (Join-Path $RepositoryRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
+    $expected = [ordered]@{
+        ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=[string]$lock.vanessaAutomation.sha256
+        VANESSA_MCP_CLIENT_CFE_PATH=[string]$lock.vanessaMcp.clientMcp.sha256
+        ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=[string]$lock.itlOndemandMcp.sha256
+    }
+    $hashes = [ordered]@{}
+    foreach ($name in $expected.Keys) {
+        $path = [string]$Binding.paths.$name
+        if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "SOURCE_E2E_ARTIFACT_MISSING: '$name'; repeat the same qualification to prepare its locked artifact." }
+        $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($sha -cne $expected[$name].ToLowerInvariant()) { throw "SOURCE_E2E_ARTIFACT_HASH_MISMATCH: '$name'; provide the exact locked bytes and repeat the same qualification." }
+        $hashes[$name] = $sha
+    }
+    return $hashes
+}
+
 function Enter-SourceE2EClientMcpBuildScope {
     # Derive before a helper rereads its persisted project paths. This transient
     # source is confined to the actual E2E journey, never the Full Pester host.
