@@ -159,3 +159,21 @@ old-d7-seed-cache-disposal.json and old-seed-cache-disposal-<commit8>.json.
 This proves real terminal cleanup, not a passed overall Develop. Full cold
 native qualification of the combined fixes and unchanged original seed remains
 pending; there is no additional ordinary-feature gate.
+
+The subsequent real4b200efb upgrade passed. Its existing automatic terminal
+cleanup removed one negative fixture database (3295928320 bytes) and three
+positive fixture/cache/Vanessa databases (6608289792 bytes), with receipts
+runtime-proof/develop-4b200efb/qualification-fixture-disposal.json and
+upgrade-positive/qualification-fixture-disposal.json. C had25.39GiB free after
+cleanup without manual intervention during this run. Full then failed one
+compact native exit-code case before fresh started; this is actual upgrade
+cleanup acceptance, not overall Develop or fresh-isolation acceptance.
+
+Actual Develop1ed52283 then passed overall. Fresh used an independently claimed
+source database, completed close, and validated the original66ca0a95 capsule
+through Capture without Recapture or seed edits. Its source fixture terminal
+adapter removed3295797248 bytes, recorded in
+runtime-proof/develop-1ed52283/fresh-source-fixture-disposal.json. Fresh and the
+combined qualification writer passed; the source checkout stayed tracked-clean.
+C had21.93GiB free after the run. This closes the previously unverified isolation
+and terminal-cleanup behavior; native warm/retry reuse remains a separate check.

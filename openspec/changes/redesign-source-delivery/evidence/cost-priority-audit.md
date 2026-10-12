@@ -351,3 +351,83 @@ owner list omitted the newly declared checker-consumer edge. The same observed
 test-file set and budget model remain exact; only this intentional owner id was
 added. Its original case now passes1/0,1.13s. This does not broaden that cohort's
 test selection. Rejected receipts remain under rejected-32bc9a9f.
+
+## Cold continuation and bounded failure diagnosis (2026-10-12)
+
+Accepted registrations:4b200efb passed475/0/0 in346170ms (10 executed,
+0 reused);6ead2142 passed92/0/0 in54187ms (5 executed,6 reused);
+1ed52283 passed98/0/0 in85523ms (2 executed,1 reused). Their original
+check, JUnit, selection and shard summaries are retained under ignored
+candidate-protocol/accepted-<commit8>. These are registrations, not publication.
+
+Cold Develop4b200efb stopped after2878353ms. Its actual negative rollback and
+positive native upgrade passed and were saved before Full. Full stopped with
+2558 passed,1 failed,1 skipped (13 executed,123 reused): the existing compact
+fresh nonzero continuation case expected7 but observed-2146234327 (0x80131029).
+The failed fixture had no retained inner receipts; the failing process boundary
+and cause cannot be established from that exit code alone. There is no confirmed
+out-of-memory diagnosis and no assertion or production change for this failure.
+
+The unchanged original failing case passed1/0 in12.35s. The entire original
+CompactRunnerFreshContinuation suite then passed10/0 in129.23s using its
+existing optional receipt retention, original Unicode paths, actual parent and
+child processes, deadlines, workload and assertions. Ten console/status/lifecycle
+receipts remain under candidate-protocol/fresh-continuation-suite-diagnostic;
+JUnit is fresh-continuation-suite-diagnostic.xml. This bounds the diagnosis:
+the earlier failure was not reproduced, rather than repaired or explained.
+
+The clean registered descendant1ed52283 continues through Develop, with the
+same diagnostic retention enabled. It must reuse only a genuinely matching
+upgrade input identity, execute the corrected planner consumer and complete
+the still-unverified fresh seed isolation, terminal cleanup and combined writer.
+A second identical failure requires diagnosis before another broad retry.
+
+The published fa0e3c91 baseline's retained run
+20261010-183300-709-develop-0d627a092b2e4e9280012f2a0414112b.json records
+6489926ms overall, upgrade2920953ms and fresh3315488ms, all passed. Cold4b's
+actual upgrade stage took2386082ms, but its failed overall47.97-minute run
+cannot be compared to a complete release as a successful end-to-end speedup.
+The next continuation is mixed (warm upgrade, cold fresh); it must be reported
+as such. Do not repeat a valid cold1C journey solely to manufacture a timing
+comparison. Final warm/retry and remote-publication observations remain open.
+
+Within the actual1ed Develop Full, CompactRunnerFreshContinuation executed
+again and passed10/0 (worker22,136356ms). SourceDeliveryPlan also executed
+instead of reusing the obsolete checker-free digest:27/0 (worker35,22407ms).
+Their receipts are runtime-proof/develop-1ed52283/pester-shards/worker-22 and
+worker-35 result/console/JUnit artifacts. These are actual consumer outcomes;
+they do not yet assert the overall Full/Develop result.
+
+The1ed Full subsequently passed2908/0/1:47 executed workers,129 reused,
+workerSpan780748ms and fingerprintPlan49681ms. The qualification worktree's
+tracked state remained clean. Full/static proof is saved as
+runtime-proof/develop-1ed52283/full.json; no separate Full is required for this
+tree. Upgrade was reused from4b; cold fresh and overall Develop are still pending.
+
+## Accepted combined native qualification (2026-10-12)
+
+Develop1ed52283 subsequently passed, exit0, overall3890712ms (64.85min).
+Upgrade reused the SHA-verified matching ancestor input proof; Full passed
+2908/0/1. Fresh actually executed2955607ms (49.26min) and passed the original
+bootstrap, branch, missing-suite recovery, golden check, stale-export recovery,
+export/SHA, refresh, repeated verification and close workload. This is a mixed
+continuation, not a new all-cold benchmark. The largest fresh operation was
+verify-golden-change1774054ms; provisioning128788ms, bootstrap305928ms,
+export57066ms and close-and-cleanup258381ms. The target1500s was exceeded;
+the result does not claim that cold1C qualification is a short ordinary edit.
+
+The actual new project's SOURCE_INFOBASE_PATH referenced the separately claimed
+q-project branch database. After close, the original seed was validated through
+Capture, with no Recapture: capsule66ca0a9597f5965c9dd5b21f58286d8e0bbccb68ea40a5cb8cf7ac0425f73815
+remained unchanged. fresh-source-seed-confirmation.json and the passed
+fresh-source-seed-unchanged step retain that proof. Existing terminal disposal
+removed the owned source database3295797248 bytes. C had21.93GiB free afterward.
+No manual database cleanup or original seed editing occurred during this run.
+
+Both combined full.json and develop.json were produced in the same output
+directory; the previously failing same-path writer boundary therefore passed
+in the actual workflow. The qualification checkout remained tracked-clean.
+Artifacts: runtime-proof/develop-1ed52283/{check-summary.json,full.json,
+develop.json,develop-e2e-fresh-raw.json,fresh-source-fixture-disposal.json}.
+Final evidence registration, warm descendant qualification, live delivery retry
+and published-supervisor parallel registrations remain separate observations.
