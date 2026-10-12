@@ -98,6 +98,27 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
+    It 'reuses workflow PowerShell source across LF and CRLF without normalizing BOM, content or 1C transport' {
+        $f = New-AncestorJourneyFixture
+        $bytes = [IO.File]::ReadAllBytes($f.runtime)
+        $text = [Text.Encoding]::UTF8.GetString($bytes)
+        [IO.File]::WriteAllBytes($f.runtime, [Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n", "`n")))
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -BeExactly $f.inputs.fingerprint
+        $f.catalog.budgets.releaseHardSeconds = 15540
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'different checkout line endings'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        [IO.File]::WriteAllBytes($f.runtime, [Text.Encoding]::UTF8.GetBytes($text.TrimStart([char]0xFEFF)))
+        (Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external).fingerprint | Should -Not -BeExactly $current.fingerprint
+        $transport = Join-Path $f.root 'src/cf/Configuration.xml'
+        [IO.File]::WriteAllText($transport, "<Configuration />`r`n", [Text.UTF8Encoding]::new($false))
+        $before = Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml'
+        [IO.File]::WriteAllText($transport, "<Configuration />`n", [Text.UTF8Encoding]::new($false))
+        Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml' | Should -Not -BeExactly $before
+    }
+
     It 'continues a real Git ancestor after a Release-only budget change and preserves original report bytes' {
         $f = New-AncestorJourneyFixture
         $f.catalog.budgets.releaseHardSeconds = 15540

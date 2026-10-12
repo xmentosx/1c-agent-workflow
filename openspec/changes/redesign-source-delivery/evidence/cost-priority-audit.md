@@ -431,3 +431,24 @@ Artifacts: runtime-proof/develop-1ed52283/{check-summary.json,full.json,
 develop.json,develop-e2e-fresh-raw.json,fresh-source-fixture-disposal.json}.
 Final evidence registration, warm descendant qualification, live delivery retry
 and published-supervisor parallel registrations remain separate observations.
+
+### Publication checkout identity defect, 2026-10-13
+
+The first authorized c2f18147 publication did not reach push. Pre-operation
+cleanup took about 5.5 minutes and reported recurring legacy Release-resource
+ownership warnings. The temporary publication worktree then missed the warm
+journey proof: scripts/source-e2e-fixture.ps1 was LF in the qualification worktree
+and CRLF after Git checkout, with identical normalized UTF-8 content and Git tree.
+Its physical SHA changed from d1f2f5e0789b993a5aad91097a1d2c7fc996b4c3995c0470bf4ba928589a9836
+to a5ec196fb89f061ff3d777cb77bb3d0270721e46d8b95804a61bcd7ca6450e39.
+All three executable artifact hashes matched. The redundant native child was
+stopped through Stop-DeliveryProcessTree; the publication owner retained its
+failed checkpoint and queue. No push rejection was exercised by this attempt.
+
+Journey input schema 2 normalizes CRLF to LF only in workflow-owned PowerShell
+source, retaining BOM and other content. 1C transport, third-party source and
+binary artifacts remain byte-exact. A regression covers the equivalent source
+identity and rejection of BOM/1C-byte differences. Legacy raw-byte fingerprints
+are not rewritten; one fresh qualification is required before warm publication
+and push-retry acceptance can be claimed. The legacy cleanup warnings remain a
+separate unresolved cost until their owning cleanup contract is repaired.

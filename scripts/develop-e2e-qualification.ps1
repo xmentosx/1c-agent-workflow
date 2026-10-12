@@ -3,6 +3,21 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 
+function Get-DevelopE2EInputFileSha256 {
+    param([string]$Path, [string]$RelativePath)
+    # Git may materialize workflow PowerShell source as LF or CRLF in different
+    # clean worktrees. Bind its UTF-8 source, retaining BOM and every other byte.
+    # Native artifacts, 1C transport and third-party source remain byte-exact.
+    if ($RelativePath -notmatch '^(scripts/|\.agents/skills/|templates/).*\.ps1$') {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $text = $encoding.GetString([IO.File]::ReadAllBytes($Path)).Replace("`r`n", "`n")
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($encoding.GetBytes($text)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
 function Get-DevelopE2EInputIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -33,7 +48,7 @@ function Get-DevelopE2EInputIdentity {
             if (-not $matched) { continue }
             $physical = Join-Path $RepositoryRoot $path.Replace('/','\')
             if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { throw 'DEVELOP_INPUT_MISSING' }
-            [ordered]@{ path=$path; sha256=(Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+            [ordered]@{ path=$path; sha256=Get-DevelopE2EInputFileSha256 -Path $physical -RelativePath $path }
         })
         if ($null -eq $ExternalBinding) {
             if (-not $ProjectRoot -or -not $AiRulesSource) { return $null }
@@ -93,8 +108,10 @@ function Get-DevelopE2EInputIdentity {
             }
         }
         if (-not $ExternalBinding.complete) { return $null }
-        $body = [ordered]@{ schemaVersion=1; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
-        return [pscustomobject]@{ schemaVersion=1; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+        # Version the normalization contract; legacy raw-byte identities require
+        # one fresh qualification rather than an unauthenticated cache rewrite.
+        $body = [ordered]@{ schemaVersion=2; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
+        return [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
     } catch {
         Write-Verbose "Develop E2E input identity unavailable: $($_.Exception.GetType().Name); $($_.FullyQualifiedErrorId)"
         return $null
