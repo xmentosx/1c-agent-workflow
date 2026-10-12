@@ -229,6 +229,22 @@ Describe "Develop E2E journey qualification router" {
         } finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$previous[$key],'Process')}}
     }
 
+    It 'invalidates journey proof when a declared reuse-only child dependency changes' {
+        $f=New-AncestorJourneyFixture
+        $path=Join-Path $f.root 'process/child.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)|Out-Null
+        [IO.File]::WriteAllText($path,'original child owner',[Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'child dependency'
+        $f.catalog.contracts[0]|Add-Member -NotePropertyName reuseInputPaths -NotePropertyValue @('process/child.ps1')
+        $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ExternalBinding $f.external
+        $before|Should -Not -BeNullOrEmpty
+        @($before.inventory.inputs.path)|Should -Contain 'process/child.ps1'
+        [IO.File]::WriteAllText($path,'changed child owner',[Text.UTF8Encoding]::new($false))
+        $after=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ExternalBinding $f.external
+        $after|Should -Not -BeNullOrEmpty
+        $after.fingerprint|Should -Not -BeExactly $before.fingerprint
+    }
+
     It 'orders the actual tracked input inventory ordinally across PowerShell host collation rules' {
         $f=New-AncestorJourneyFixture
         $path=Join-Path $f.root '.agents/skills/1c-workflow-fast/SKILL.md'

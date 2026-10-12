@@ -550,10 +550,21 @@ $standBranchName = ""
 $standBranchCleanAtStart = $false
 $standBranchHeadAtStart = ""
 $trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
+$seedProjectRoot = $ProjectRoot
+$qualificationFixture = $null
 try {
     $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
+    if ($requestedJourneys -contains 'upgrade') {
+        $fixturePath = Join-Path $outputRoot 'qualification-fixture.json'
+        [void](Invoke-DevelopProcess -Name 'prepare-upgrade-fixture' -WorkingRoot $CandidateRoot `
+            -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') `
+            -Arguments @('-Action','Prepare','-Phase','Develop','-ProjectRoot',$seedProjectRoot,'-CandidateRoot',$CandidateRoot,
+                '-AiRulesSource',$AiRulesSource,'-FreshProjectsRoot',$FreshProjectsRoot,'-AgentTarget',$AgentTarget,'-OutputPath',$fixturePath) -TimeoutSeconds 9000)
+        $qualificationFixture = Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ProjectRoot = [IO.Path]::GetFullPath([string]$qualificationFixture.projectRoot)
+    }
     Assert-DevelopAiRulesSourceAvailable -StandRoot $ProjectRoot -SourceRoot $AiRulesSource
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
     $projectHeadAtStart = ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()
@@ -745,6 +756,8 @@ try {
         activeJourney = $activeJourney
         candidate = [ordered]@{ commit = $candidateCommit; tree = $candidateTree }
         projectRoot = $ProjectRoot
+        seedProjectRoot = $seedProjectRoot
+        qualificationFixture = $qualificationFixture
         freshProjectRoot = $freshRoot
         freshBranchRoot = $freshBranchRoot
         staleStandCleanup = $staleStandCleanup

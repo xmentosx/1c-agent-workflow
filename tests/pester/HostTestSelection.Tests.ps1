@@ -63,7 +63,7 @@ Describe 'Independent host component source verification' {
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         $RepositoryRoot=$RepoRoot
-        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy','OnDemandGo')) {
+        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy','OnDemandGo','SourceQualificationFixture')) {
             $path=Join-Path $RepoRoot "tests/pester/$name.Tests.ps1"
             Get-ShardInputDigest -Paths @($path) | Should -BeNullOrEmpty
         }

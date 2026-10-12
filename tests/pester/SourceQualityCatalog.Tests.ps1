@@ -167,7 +167,8 @@ Describe 'Source quality catalog contracts' {
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
-        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', "source-delivery-process", "source-candidate-registration")
+        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', "source-delivery-process", "source-candidate-registration", 'qualification-fixture-process-tests')
+        @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualificationFixture.Tests.ps1'
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualityCatalog.Tests.ps1'
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
@@ -367,8 +368,10 @@ Describe 'Source quality catalog contracts' {
         $splitReleaseConsumers = @('DevelopManifestContinuation','ReleaseAdmission','ReleaseOrchestration' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 74
+        $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -ne $qualificationConsumer }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 75
+        @($selection.tests) | Should -Contain $qualificationConsumer
         foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
         foreach ($test in $splitHostConsumers) { @($selection.tests) | Should -Contain $test }
         foreach ($test in $splitReleaseConsumers) { @($selection.tests) | Should -Contain $test }
@@ -397,7 +400,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 77
+        @($currentSelection.tests).Count | Should -Be 78
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -936,10 +939,14 @@ Describe 'Source catalog Develop journey selection' {
             $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
             $plan.reason | Should -Be 'no-develop-journey-route'
             $expectedContracts=@("source-delivery-$leaf")
-            if($leaf -eq 'process') { $expectedContracts = @('release-orchestration-tests','source-candidate-registration') + $expectedContracts + @('source-quality-catalog') }
+            if($leaf -eq 'process') { $expectedContracts = @('qualification-fixture-process-tests','release-orchestration-tests','source-candidate-registration') + $expectedContracts + @('source-quality-catalog') }
             if($leaf -eq 'queue') { $expectedContracts = @('source-candidate-registration') + $expectedContracts }
             @($plan.contracts) | Should -Be $expectedContracts
             @($plan.journeys) | Should -BeNullOrEmpty
+        }
+        foreach ($path in @('scripts/source-e2e-fixture.ps1','scripts/lifecycle-qualification-fixture.ps1')) {
+            $fixture = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
+            @($fixture.journeys) | Should -Be @('upgrade')
         }
         $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
         @($entrypoint.contracts) | Should -Be @('source-candidate-registration','source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty

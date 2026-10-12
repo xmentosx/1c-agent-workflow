@@ -15,6 +15,7 @@ function Get-DevelopE2EInputIdentity {
         if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot }
         $projection = Get-DevelopE2EJourneyContractProjection -Catalog $Catalog -Journey $Journey
         $patterns = @($projection.contracts | ForEach-Object { @($_.paths) })
+        $patterns += @($projection.contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ })
         # Conservative source inventory; this is not an installed managed-copy policy.
         $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
         $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',

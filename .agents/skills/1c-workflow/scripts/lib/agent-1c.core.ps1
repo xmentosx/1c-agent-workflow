@@ -7239,6 +7239,28 @@ function Publish-NativeWaitRunStatus {
     Write-RunStatus -Status 'running'
 }
 
+function Complete-NativeRedirectedOutput {
+    param([string[]]$Paths, [ValidateRange(1,10)][int]$TimeoutSeconds=10)
+    # A timed process wait does not finish Start-Process asynchronous file output.
+    # Return only after its writers release both captures; keep this owner wait bounded.
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        $released=$true
+        foreach($path in $Paths) {
+            try {
+                $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+                $stream.Dispose()
+            } catch [IO.IOException] {
+                if(($_.Exception.HResult -band 0xffff) -notin @(32,33)){throw}
+                $released=$false
+            }
+        }
+        if($released){return}
+        [Threading.Thread]::Sleep(25)
+    } while($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw "NATIVE_PROCESS_OUTPUT_NOT_RELEASED: retain captures $($Paths -join ', '); diagnose the owned writer and repeat the original operation. No output proof was accepted."
+}
+
 function Invoke-NativeProcessAndWaitResult {
     param(
         [string]$FilePath,
@@ -7527,6 +7549,7 @@ function Invoke-NativeProcessAndWaitResult {
             $launcherExitCode = [int]$process.ExitCode
         }
     } catch {}
+    if($launcherExited -and $StdoutPath){Complete-NativeRedirectedOutput -Paths @($StdoutPath,$StderrPath)}
     $nativeResult = [pscustomobject]@{
         processId = $process.Id
         exitCode = $(

@@ -163,7 +163,7 @@ service и always-on клиентского контекста не появля
 resume прежнего плана, incompatible state continuation и transfer retry без
 повторной 1С. Fixture не подменяет финальные реальные qualification journeys.
 
-### B. Checkpoint переноса состояния qualification fixture (ожидает решения)
+### B. Checkpoint переноса состояния qualification fixture (подтверждён)
 
 Исследование 2026-10-12 выявило границу, не разрешённую checkpoint этапа C.
 Обычный `fork-dev-branch` вызывает `Remove-DevBranchForkTransientState` и удаляет
@@ -179,7 +179,7 @@ resume прежнего плана, incompatible state continuation и transfer 
 `release-e2e-snapshot/restore` уже владеет guarded DumpIB/RestoreIB, но не
 доказывает перенос исходного branch state в другой project context.
 
-**Предлагаемый инвариант и владелец.** Qualification работает в новом,
+**Подтверждённый инвариант и владелец.** Qualification работает в новом,
 принадлежащем сценарию проекте, восстановленном из проверенного fixture capsule.
 Lifecycle остаётся единственным владельцем базы и восстановления branch state.
 Source factory выбирает фазу и вызывает этот владелец; не пишет cursor,
@@ -239,8 +239,11 @@ export/SHA. Два последовательных кандидата стар�
 только dependent journey и дают повторяемое owner continuation. Fixture tests
 не заменяют эти live proofs; подготовка и восстановление измеряются отдельно.
 
-Это предложение для checkpoint, не разрешение реализации новой границы и не
-завершённые B.5–B.9/BA. Согласование C остаётся действующим для реализованного C.
+Пользователь подтвердил checkpoint B 2026-10-12 и разрешил реализацию и
+live-приёмку. Source-only adapter находится в `scripts/lifecycle-qualification-fixture.ps1`,
+factory — в `scripts/source-e2e-fixture.ps1`; обычный installed fork не изменён.
+Согласование C остаётся действующим. Реализация не означает завершение BA:
+адресные fixtures и реальная приёмка учитываются отдельно.
 
 ## Risks / Trade-offs
 

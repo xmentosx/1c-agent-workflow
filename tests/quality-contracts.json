@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1"],
+  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
   "budgets": {
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
@@ -54,10 +54,14 @@
     ],
     "develop": [
       "scripts/invoke-develop-e2e.ps1",
+      "scripts/source-e2e-fixture.ps1",
+      "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/develop-e2e-cleanup.ps1",
       "scripts/develop-configuration-rejection.ps1"
     ],
     "release": [
+      "scripts/source-e2e-fixture.ps1",
+      "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/build-client-mcp-patched.ps1",
       "scripts/client-mcp-build.ps1",
       "scripts/invoke-release-e2e.ps1",
@@ -79,7 +83,7 @@
     "routes": {
       "upgrade": {
         "hardSeconds": 5400,
-        "contracts": ["immutable-download", "bootstrap-update", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "clients-rules", "source-qualification-fixture"]
       },
       "fresh": {
         "hardSeconds": 3600,
@@ -651,6 +655,25 @@
       "primaryTest": "tests/pester/ReleaseStandRecovery.Tests.ps1",
       "paths": ["scripts/rebuild-release-e2e-stand.ps1"],
       "tests": ["tests/pester/ReleaseStandRecovery.Tests.ps1"]
+    },
+    {
+      "id": "source-qualification-fixture",
+      "owner": "opt-in lifecycle qualification capsule and source phase factory",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceQualificationFixture.Tests.ps1",
+      "paths": ["scripts/source-e2e-fixture.ps1", "scripts/lifecycle-qualification-fixture.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
+      "reuseInputPaths": ["scripts/source-delivery-process.ps1"],
+      "tests": ["tests/pester/SourceQualificationFixture.Tests.ps1"]
+    },
+    {
+      "id": "qualification-fixture-process-tests",
+      "owner": "qualification factory consumer of the source child-process owner",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceQualificationFixture.Tests.ps1",
+      "paths": ["scripts/source-delivery-process.ps1"],
+      "tests": ["tests/pester/SourceQualificationFixture.Tests.ps1"]
     },
     {
       "id": "release-runtime",

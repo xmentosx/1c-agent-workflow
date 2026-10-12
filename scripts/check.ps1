@@ -9,6 +9,7 @@ param(
     [switch]$Offline,
     [string]$E2EProjectRoot = "",
     [string]$AgentTarget = "",
+    [string]$FreshProjectsRoot = "C:\itlj",
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
     [string]$DevelopQualificationPath = "build\test-results\qualification\develop.json",
@@ -237,7 +238,7 @@ function Ensure-DevelopE2ERoute {
         $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget
         $script:developJourneyInputs[$Journey] = $beforeInputs
         $journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $Journey
-        $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey)
+        $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey, "-FreshProjectsRoot", $FreshProjectsRoot)
         if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $developArguments += @("-AgentTarget", $AgentTarget) }
         Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments $developArguments -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
         if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
@@ -863,6 +864,39 @@ try {
         } | Out-Null
     }
 
+    $releaseFixtureRoot = $E2EProjectRoot
+    if ($effectiveMode -in @('Develop','Release')) {
+        $fixturePlan = if ($effectiveMode -eq 'Develop') { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog } else { $null }
+        if ($effectiveMode -eq 'Release' -or @($fixturePlan.journeys).Count -gt 0) {
+            Invoke-GateStage -Name 'qualification-fixture-inputs' -Reason 'capture immutable phase baselines once through the installed snapshot owner' -Body {
+                $fixtureScript = Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1'
+                # Capture both main phases before Develop identity is established; Release
+                # then reuses the same descriptors without invalidating passed Develop.
+                foreach ($phase in @('Release','Develop')) {
+                    $arguments = @('-Action','Capture','-Phase',$phase,'-ProjectRoot',$E2EProjectRoot,'-AgentTarget',$AgentTarget,
+                        '-OutputPath',(Join-Path $outputRoot ('fixture-'+$phase.ToLowerInvariant()+'-capsule.json')))
+                    Invoke-PowerShellChild -ScriptPath $fixtureScript -Arguments $arguments -TimeoutSeconds 7800 -NoProgressSeconds 900 -LogName ('fixture-capture-'+$phase.ToLowerInvariant())
+                }
+                $config = Get-Content -LiteralPath (Join-Path $E2EProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $E2EProjectRoot -Config $config
+                if ($positiveRoot) {
+                    Invoke-PowerShellChild -ScriptPath $fixtureScript -Arguments @('-Action','Capture','-Phase','Develop','-ProjectRoot',$positiveRoot,
+                        '-AgentTarget',$AgentTarget,'-OutputPath',(Join-Path $outputRoot 'fixture-positive-capsule.json')) -TimeoutSeconds 7800 -NoProgressSeconds 900 -LogName 'fixture-capture-positive'
+                }
+            } | Out-Null
+        }
+        if ($effectiveMode -eq 'Release') {
+            Invoke-GateStage -Name 'qualification-fixture-candidate' -Reason 'prepare the exact installed candidate before Release readiness' -Body {
+                $fixtureRules = if ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+                $fixturePath = Join-Path $outputRoot 'release-fixture.json'
+                Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1') `
+                    -Arguments @('-Action','Prepare','-Phase','Release','-ProjectRoot',$E2EProjectRoot,'-CandidateRoot',$repoRoot,
+                        '-AiRulesSource',$fixtureRules,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-OutputPath',$fixturePath) -TimeoutSeconds 16800 -NoProgressSeconds 900 -LogName 'fixture-prepare-release'
+                $script:releaseFixtureRoot = [string](Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json).projectRoot
+            } | Out-Null
+        }
+    }
+
     if ($effectiveMode -in @("Full", "Develop", "Release")) {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
@@ -871,7 +905,7 @@ try {
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
             if ($AgentTarget) { $readinessArguments += @('-AgentTarget', $AgentTarget) }
             if ($effectiveMode -eq "Release") { $readinessArguments += @("-ResumeMode", $ReleaseResumeMode) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
@@ -1215,11 +1249,11 @@ try {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
             $releaseProgressPaths = @(
                 $outputRoot,
-                (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"),
-                (Get-SourceE2ENativeLogsPath -ProjectRoot $E2EProjectRoot),
-                (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $E2EProjectRoot).worktreePath)
+                (Join-Path ([IO.Path]::GetFullPath($releaseFixtureRoot)) ".agent-1c\locks"),
+                (Get-SourceE2ENativeLogsPath -ProjectRoot $releaseFixtureRoot),
+                (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $releaseFixtureRoot).worktreePath)
             )
-            $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
+            $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
             if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
             if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
             Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds $releaseE2EHardBudgetSeconds -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"

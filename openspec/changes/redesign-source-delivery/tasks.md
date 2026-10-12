@@ -283,16 +283,18 @@ Targeted для каждого подпункта: группировать св
   без соответствующего разрешения. Подтвердить опубликованный SHA/tree,
   installable-зависимости, корректное состояние очереди и отсутствие active operation.
 
-## Следующая архитектурная граница B
+## Подтверждённая архитектурная граница B
 
 Исследование 2026-10-12 установило: обычный fork удаляет обязательный pending
 state отрицательной PM5-регрессии; одного существующего snapshot restore
 недостаточно для доказанного переноса branch context в disposable project.
-В [design.md, checkpoint B](design.md#b-checkpoint-переноса-состояния-qualification-fixture-ожидает-решения)
-сохранено конкретное предложение узкого opt-in lifecycle adapter. Его новая
-граница требует решения по правилу `docs/package-architecture.md`; реализация
-этого adapter ещё не начата. Это не повторное согласование этапа C.
-Аудит тестов и уже разрешённые source исправления от этого решения не зависят.
+В [design.md, checkpoint B](design.md#b-checkpoint-переноса-состояния-qualification-fixture-подтверждён)
+сохранён узкий opt-in lifecycle adapter. Пользователь подтвердил границу
+2026-10-12 и разрешил реализацию, завершение аудита и live-приёмку.
+Source-only adapter и factory реализованы; приёмка описана отдельно в
+[qualification-fixture](evidence/qualification-fixture.md). Исходные PM5 seeds
+сохраняются, qualification работает в принадлежащих сценарию проектах.
+BA и оставшиеся задачи не отмечаются до фактического доказательства.
 
 Текущее состояние source: единица `ed6e1ae1` зарегистрирована — 235 passed,
 0 failed, 0 skipped; check125831ms/raw127470ms, 16 executed/0 reused.

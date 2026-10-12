@@ -67,6 +67,7 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 $repoRoot = $FixtureRoot
 $outputRoot = Join-Path $FixtureRoot 'out'
 $E2EProjectRoot = Join-Path $FixtureRoot 'Основная ветка'
+$releaseFixtureRoot = $E2EProjectRoot
 $modeHardBudgetSeconds = 60
 $childTimeoutSeconds = if ($Scenario -eq 'hard-timeout') { 12 } else { 60 }
 $overallStopwatch = [Diagnostics.Stopwatch]::StartNew()

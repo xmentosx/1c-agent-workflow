@@ -662,6 +662,8 @@ function Invoke-SourceGate {
     if ($contracts.Count -gt 0) { $arguments += @("-CoverageContract", ($contracts -join ",")) }
     if ($AiRulesSource) { $arguments += @("-AiRulesSource", ([System.IO.Path]::GetFullPath($AiRulesSource))) }
     if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+    $freshRootSetting = Get-Variable -Name FreshProjectsRoot -ErrorAction SilentlyContinue
+    if ($Mode -in @('Develop','Release') -and $freshRootSetting -and $freshRootSetting.Value) { $arguments += @('-FreshProjectsRoot', [string]$freshRootSetting.Value) }
     $clientParameter = Get-Variable -Name AgentTarget -ErrorAction SilentlyContinue
     if ($Mode -in @("Develop", "Release") -and $clientParameter -and -not [string]::IsNullOrWhiteSpace([string]$clientParameter.Value)) {
         $arguments += @("-AgentTarget", [string]$clientParameter.Value)

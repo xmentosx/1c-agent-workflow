@@ -249,7 +249,7 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:releaseContext = [pscustomobject]@{}; $script:aiRulesRelease = [pscustomobject]@{}
         $script:developRulesSource = $repo.root; $script:developScript = Join-Path $repo.root 'journey.ps1'
         $repoRoot = $repo.root; $outputRoot = $script:developQualificationRoot; $tree = $repo.tree
-        $E2EProjectRoot = $repo.root; $AgentTarget = 'kilocode'
+        $E2EProjectRoot = $repo.root; $AgentTarget = 'kilocode'; $FreshProjectsRoot = Join-Path $TestDrive 'qualification roots'
         Mock Get-DevelopE2EIdentitySha256 { 'a' * 64 }
         Mock Get-DevelopE2EStandStateSha256 { 'b' * 64 }
         Mock Restore-DevelopE2EQualification { $false }
@@ -703,7 +703,7 @@ Describe 'E2E client delivery inputs' {
             {Invoke-SourceGate -Mode Develop -WorkingRoot $TestDrive}|Should -Throw '*fixture launch boundary*'
             $script:capturedClientArguments|Should -Not -Match 'AgentTarget'
             $check=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
-            $E2EProjectRoot=$TestDrive;$repoRoot=$RepoRoot;$script:developRulesSource=$RepoRoot;$rawPath='raw.json';$Journey='upgrade'
+            $E2EProjectRoot=$TestDrive;$releaseFixtureRoot=$E2EProjectRoot;$FreshProjectsRoot=Join-Path $TestDrive 'qualification roots';$repoRoot=$RepoRoot;$script:developRulesSource=$RepoRoot;$rawPath='raw.json';$Journey='upgrade'
             $releaseRulesSource=$RepoRoot;$releaseHelperPath='helper.ps1';$e2eReportPath='release.json';$AgentTarget='kilocode'
             foreach($variable in @('developArguments','releaseE2EArguments')){
                 $assignment=$check.Find({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -ceq $variable -and $n.Operator -eq 'Equals'},$true)
