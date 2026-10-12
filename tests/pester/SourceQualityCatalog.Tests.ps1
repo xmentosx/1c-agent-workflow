@@ -263,7 +263,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -806,9 +806,9 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $consumers=@('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
                 'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
                 'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan')
             $catalogIndependent=@('DevelopStaticQualificationCache','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
@@ -862,10 +862,20 @@ Describe 'Catalog selection and qualified consumer inputs' {
             }
             $readinessPath=Join-Path $RepositoryRoot 'tests/pester/ReleaseReadiness.Tests.ps1'
             $readinessDigest=Get-ShardInputDigest -Paths @($readinessPath)
+            $plannerPath=Join-Path $RepositoryRoot 'tests/pester/SourceDeliveryPlan.Tests.ps1'
+            $plannerDigest=Get-ShardInputDigest -Paths @($plannerPath)
             foreach($relative in @('scripts/check.ps1','scripts/pester-timings.json','scripts/invoke-pester-shards.ps1')) {
                 [IO.File]::AppendAllText((Join-Path $RepositoryRoot $relative),"`nchanged unrelated checker input",[Text.UTF8Encoding]::new($false))
                 Get-ShardInputDigest -Paths @($readinessPath) | Should -BeExactly $readinessDigest -Because "$relative is outside readiness execution and input closure"
+                $plannerChanged=Get-ShardInputDigest -Paths @($plannerPath)
+                if($relative -eq 'scripts/check.ps1') {
+                    $plannerChanged | Should -Not -Be $plannerDigest -Because 'planner acceptance extracts the actual checker route'
+                } else {
+                    $plannerChanged | Should -BeExactly $plannerDigest -Because 'planner acceptance does not consume scheduler inputs'
+                }
+                $plannerDigest=$plannerChanged
             }
+            @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('scripts/check.ps1') | Select-Object -ExpandProperty tests) | Should -Contain 'tests/pester/SourceDeliveryPlan.Tests.ps1'
             [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'scripts/test-release-readiness.ps1'),"`n# changed readiness owner",[Text.UTF8Encoding]::new($false))
             Get-ShardInputDigest -Paths @($readinessPath) | Should -Not -Be $readinessDigest
             $developPath=Join-Path $RepositoryRoot 'tests/pester/DevelopE2EQualification.Tests.ps1'

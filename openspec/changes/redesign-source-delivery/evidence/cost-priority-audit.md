@@ -320,3 +320,34 @@ existing null/empty defaults. No production behavior or assertions changed.
 Both original cases pass 2/0 in 3.17 seconds, preserving historical report SHA,
 no-child reuse and equal planner/checker journey-budget assertions. Accepted
 queue head remained 4b200efb; rejected receipts are retained for diagnosis.
+
+## Missing checker input in the planner consumer (2026-10-12)
+
+The prior b801 Full reused SourceDeliveryPlan's 27/0 result with digest
+6e63b3fdfc71f789f4d4bebd37d110f8d75e5b9b425775a1f05fb81a866ad061,
+created at 07:21 UTC. Its four owning contracts and shared inputs omitted
+scripts/check.ps1, although BeforeAll extracts Ensure-DevelopE2ERoute and
+Get-DevelopE2EIdentitySha256 from that file. The later actual execution exposed
+the missing fixture defaults above. This is a dependency omission; the old
+reused result does not prove the current checker extraction passed.
+
+A narrow source-delivery-plan-checker catalog edge now binds only the existing
+planner suite to the actual checker and its directly imported qualification,
+quality, Git path and stand-env collaborators. It selects that consumer when
+one of these executable dependencies changes and also includes their bytes in
+reuse identity. It does not attach unrelated planner/publication suites to every
+checker change. No new It or runtime barrier was added. The existing consumer
+mutation regression now includes this suite: checker mutation must invalidate it,
+while scheduler/timing mutations must preserve its fingerprint. Before metadata
+repair it failed with an unchanged digest; afterward it passed 1/0 in 29.56s.
+Existing catalog/readiness/ROCTUP assertions remain. Both native contract
+projections are byte-identical before/after this metadata edge (receipt
+candidate-protocol/planner-checker-native-projection.json), so the final descendant
+must requalify static inputs but may retain genuinely matching native evidence.
+The current 4b200efb run's old static result is not final acceptance of this repair;
+final Full on the registered descendant must execute the corrected consumer.
+Initial registration32bc9a9f stopped97/1: the historical E cohort's explicit
+owner list omitted the newly declared checker-consumer edge. The same observed
+test-file set and budget model remain exact; only this intentional owner id was
+added. Its original case now passes1/0,1.13s. This does not broaden that cohort's
+test selection. Rejected receipts remain under rejected-32bc9a9f.
