@@ -2,6 +2,16 @@
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $script:DeliveryTrackedPathCache = @{}
 
+function Assert-DeliveryPlanningBudget {
+    param([Parameter(Mandatory = $true)][long]$ElapsedMilliseconds)
+    if ($ElapsedMilliseconds -gt 120000) {
+        throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]($ElapsedMilliseconds / 1000))s; hard limit is 120s. Queue and checkpoint were preserved. Diagnose planning cost, then repeat the same Plan or publication command."
+    }
+    if ($ElapsedMilliseconds -gt 30000) {
+        Write-Warning "Delivery planning exceeded its 30s target ($([int]($ElapsedMilliseconds / 1000))s); the valid plan remains usable within the 120s hard limit."
+    }
+}
+
 function Get-DeliveryPlanRoot {
     $root = Join-Path (Get-DeliveryCommonGitDirectory) "itl\plans\v1"
     New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -376,7 +386,7 @@ function New-DeliveryQualityPlanForCandidate {
     }
     }
     $watch.Stop()
-    if ($watch.Elapsed.TotalSeconds -gt 30) { throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]$watch.Elapsed.TotalSeconds)s; hard limit is 30s." }
+    Assert-DeliveryPlanningBudget -ElapsedMilliseconds $watch.ElapsedMilliseconds
     [int64]$executedBudget = 0
     foreach ($stage in @($stages)) { if ([string]$stage.execution -eq "execute") { $executedBudget += [int]$stage.budgetSeconds } }
     $plan = [pscustomobject][ordered]@{

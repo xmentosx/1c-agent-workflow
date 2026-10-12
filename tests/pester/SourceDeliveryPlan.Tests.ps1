@@ -67,6 +67,14 @@
 }
 
 Describe 'Delivery v3 immutable selective plan' {
+    It 'keeps a completed 32-second plan usable and stops only beyond the 120-second planning limit' {
+        Mock Write-Warning {}
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 32000 } | Should -Not -Throw
+        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -like '*30s target*120s hard limit*' }
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 120000 } | Should -Not -Throw
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 120001 } | Should -Throw '*hard limit is 120s*Queue and checkpoint were preserved*'
+    }
+
     BeforeEach {
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
