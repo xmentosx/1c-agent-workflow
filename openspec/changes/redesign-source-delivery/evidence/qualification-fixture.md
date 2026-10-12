@@ -128,3 +128,14 @@ baseline installed helper и не меняет окружение текущег
 Четыре адресных регрессии прошли; старый Release continuation mock дополнен
 новым обязательным шагом без изменения исходных failure/assertions, затем
 этот сценарий прошёл отдельно. Fixture proof не подменяет live приёмку.
+
+Первая регистрация этого исправления8d344c50 не принята:1946 passed/2 failed,
+38 executed/86 reused,474188ms, tracked tree clean; queue сохранена.
+HostTestSelection ожидал старый список consumers общего execution_guard.py;
+добавлен новый source-only fixture consumer, существующие consumers сохранены.
+HostSppr отказал в исходном six-request overlap regression. Неизменённый сценарий
+затем прошёл адресно с trace barrier, весь исходный60-case suite с тем же trace
+прошёл за15.452s. Это исключает постоянный отказ изоляции, но не устанавливает
+причину первого отказа; проблема остаётся открытой для аудита ресурсов/flake.
+Timeout/assertion/workload не изменялись. Raw proof сохранён в ignored
+`candidate-protocol/rejected-8d344c50` и `diagnose-sppr-*.log`.
