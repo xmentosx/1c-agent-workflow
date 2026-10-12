@@ -119,6 +119,7 @@ def embed_pending(settings, credentials, session_check, *, workers=None, batch_s
                  for name in ("fresh", "all")}
         dispatched = 0
         error = None
+        unexpected_cause = None
         writer = None
         try:
             writer = store.vectors.open_writer()
@@ -205,7 +206,8 @@ def embed_pending(settings, credentials, session_check, *, workers=None, batch_s
                                 error = str(exc)
                         except SpprError as exc:
                             error = str(exc)
-                        except Exception:
+                        except Exception as exc:
+                            unexpected_cause = exc
                             error = "Unexpected embedding failure; saved batches remain durable."
             with store.reader(live_vectors=True) as (db, current):
                 if current["generation"] == generation:
@@ -228,7 +230,7 @@ def embed_pending(settings, credentials, session_check, *, workers=None, batch_s
                 progress["message"] = error
             atomic_json(path, progress)
             if error:
-                raise SpprError(error)
+                raise SpprError(error) from unexpected_cause
             return progress
         except BaseException as exc:
             if progress["state"] == "running":

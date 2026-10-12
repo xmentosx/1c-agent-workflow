@@ -1305,6 +1305,30 @@ class SpprTests(unittest.TestCase):
         self.assertTrue(first.isdisjoint(text for batch in self.provider.calls[2:] for text in batch))
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["pending"], 0)
 
+    def test_unexpected_batch_failure_retains_cause_without_exposing_its_message(self):
+        self.publish(embed=False)
+        failure = RuntimeError("private provider diagnostic")
+        count = 0
+        def fail_second():
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise failure
+        self.provider.hook = fail_second
+        with self.assertRaisesRegex(SpprError, "saved batches remain durable") as caught:
+            self.embed(workers=1, batch_size=2)
+        self.assertIs(caught.exception.__cause__, failure)
+        self.assertNotIn(str(failure), str(caught.exception))
+        attempt = json.loads((self.settings.state / "embed_attempt.json").read_text(encoding="utf-8"))
+        self.assertNotIn(str(failure), attempt["message"])
+        with closing(sqlite3.connect(self.store.vectors.path)) as journal:
+            self.assertEqual(journal.execute("SELECT COUNT(*) FROM vectors").fetchone()[0], 2)
+        first = set(self.provider.calls[0])
+        self.provider.hook = None
+        self.embed(workers=1, batch_size=2)
+        self.assertTrue(first.isdisjoint(text for batch in self.provider.calls[2:] for text in batch))
+        self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["pending"], 0)
+
     def test_legacy_snapshot_vectors_migrate_without_provider_request(self):
         legacy = self.publish(embed=False)
         path = self.settings.state / (legacy["generation"] + ".sqlite")
