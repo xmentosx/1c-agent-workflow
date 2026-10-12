@@ -757,6 +757,15 @@ Describe 'Catalog selection and qualified consumer inputs' {
         @($release.tests | Where-Object { $_ -in $groups }) | Should -Be @($groups | Where-Object { $_ -notlike '*DevelopManifestContinuation*' })
         $develop=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('scripts/invoke-develop-e2e.ps1')
         @($develop.tests | Where-Object { $_ -in $groups }) | Should -Be @('tests/pester/DevelopManifestContinuation.Tests.ps1','tests/pester/E2EClientSelection.Tests.ps1')
+        $lifecycle=@('DevBranchLifecycle','DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery'|ForEach-Object {'tests/pester/'+$_+'.Tests.ps1'})
+        @($develop.tests|Where-Object {$_ -in $lifecycle})|Should -BeNullOrEmpty -Because 'Develop orchestration does not own the installed lifecycle test workload'
+        foreach($test in $lifecycle){
+            @($release.tests)|Should -Contain $test
+            @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')|Select-Object -ExpandProperty tests)|Should -Contain $test
+        }
+        foreach($test in @('DevelopConfigurationRejection','ReleaseGate','LocalQualityGate')){
+            @($develop.tests)|Should -Contain ('tests/pester/'+$test+'.Tests.ps1')
+        }
         foreach($helper in @('scripts/source-delivery-process.ps1','scripts/source-proof-json.ps1','scripts/git-path-list.ps1','scripts/quality-contracts.ps1')) {
             @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($helper) | Select-Object -ExpandProperty tests) | Should -Contain 'tests/pester/ReleaseOrchestration.Tests.ps1'
         }

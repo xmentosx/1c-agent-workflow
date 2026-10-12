@@ -683,8 +683,17 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
+      "paths": ["scripts/develop-configuration-rejection.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
       "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
+    },
+    {
+      "id": "develop-runtime",
+      "owner": "Develop journey orchestration",
+      "gate": "develop",
+      "budgetSeconds": 5400,
+      "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
+      "paths": ["scripts/invoke-develop-e2e.ps1"],
+      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
     },
     {
       "id": "dependency-lock",
