@@ -18,13 +18,25 @@ function Get-DevelopE2EJourneyContractProjection {
     $ids = @($route.contracts | ForEach-Object { [string]$_ } | Sort-Object -Unique)
     $owners = @($Catalog.contracts | Where-Object { [string]$_.id -in $ids } | Sort-Object id)
     if ($owners.Count -ne $ids.Count) { throw 'DEVELOP_INPUT_OWNER_MISSING: journey contract has an unknown owner.' }
-    # Project the authoritative route and its owners, not unrelated Release budgets.
+    # Journey execution consumes owner paths, not isolated Pester layout or its
+    # budgets. Unknown owner fields disable reuse until classified explicitly.
+    $runtimeOwners = @(foreach ($owner in $owners) {
+        foreach ($property in $owner.PSObject.Properties) {
+            if ($property.Name -notin @('id','owner','gate','budgetSeconds','primaryTest','paths','tests','reuseInputPaths')) {
+                throw "DEVELOP_INPUT_OWNER_FIELD_UNKNOWN: $($owner.id).$($property.Name)"
+            }
+        }
+        $projected = [ordered]@{ id=[string]$owner.id; paths=@($owner.paths) }
+        $reuseInputs = @(Get-QualityContractReuseInputPaths -Contract $owner)
+        if ($reuseInputs.Count -gt 0) { $projected['reuseInputPaths'] = $reuseInputs }
+        [pscustomobject]$projected
+    })
     return [ordered]@{
-        schemaVersion = 1; journey = $Journey
+        schemaVersion = 2; journey = $Journey
         hardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $Catalog -Journey $Journey
         names = @($Catalog.developJourneys.names)
         fullPaths = @($Catalog.developJourneys.fullPaths)
-        contracts = $owners
+        contracts = $runtimeOwners
     }
 }
 

@@ -61,9 +61,11 @@ Describe "Develop E2E journey qualification router" {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
         function New-AncestorJourneyFixture {
+            param([switch]$IncludePesterOwnerInputs)
             $root = Join-Path $TestDrive ('ancestor ' + (Get-NonAsciiFixtureSegment) + ' ' + [guid]::NewGuid().ToString('N'))
             [void](New-RouterFixture -Root $root)
             $catalog = Get-QualityContractCatalog -RepositoryRoot $root
+            if ($IncludePesterOwnerInputs) { $catalog.contracts[0].paths += 'tests/pester/*' }
             $catalog.continuationScopes.gate += 'tests/quality-contracts.json'
             $catalog | Add-Member -NotePropertyName budgets -NotePropertyValue ([pscustomobject]@{releaseHardSeconds=14940})
             Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
@@ -110,6 +112,24 @@ Describe "Develop E2E journey qualification router" {
         $proof.report.repository.tree | Should -BeExactly $f.tree
         (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
         $proof.continuation.currentTree | Should -BeExactly $tree
+    }
+
+    It 'preserves journey proof across isolated Pester layout changes while rejecting unknown owner inputs' {
+        $f = New-AncestorJourneyFixture -IncludePesterOwnerInputs
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# split static suite', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/control.Tests.ps1'), '# extracted static suite', [Text.UTF8Encoding]::new($false))
+        $f.catalog.contracts[0].tests += 'tests/pester/control.Tests.ps1'
+        $f.catalog.contracts[0].primaryTest = 'tests/pester/control.Tests.ps1'
+        $f.catalog.contracts[0].owner = 'renamed static description'
+        $f.catalog.contracts[0].budgetSeconds = 90
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'split isolated Pester layout'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -BeExactly $f.inputs.fingerprint
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $f.catalog.contracts[0] | Add-Member -NotePropertyName unknownRuntimeInput -NotePropertyValue 'unclassified'
+        Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external | Should -BeNullOrEmpty
     }
 
     It 'requires an actual exact Targeted proof and refuses changed runtime or external bindings' {

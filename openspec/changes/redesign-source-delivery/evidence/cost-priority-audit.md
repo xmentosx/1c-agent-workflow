@@ -83,3 +83,35 @@ state разделены worker-процессами; launcher, port registry и
 305 исходных outcomes принимаются только по единственной RegisterChange этой
 единицы. Raw proof: ignored build/redesign-source-delivery/candidate-protocol/
 lifecycle-split-integrity.json и штатный registration/shards summary.
+
+Фактическая приёмка split: c0b48c89 зарегистрирован446/0/0 за86530ms
+после исправления обоих счётчиков количества выбранных файлов. Все305 исходных
+cases passed: merge67, worktrees30, fork32, load/runtime176. В исходном запуске
+split интервал четырёх групп10:21:27.450–10:26:32.096UTC составил304.646s
+против793.036s прежнего single-file shard. Сумма CPU/elapsed durations групп
+не уменьшилась:283.362+259.572+165.705+178.203s. Выигрыш относится к wall time
+за счёт overlap; фоновая нагрузка двух запусков различалась. Общий выпуск этим
+измерением не квалифицирован. Raw accepted-c0b48c89 и исходные worker results
+сохранены; unchanged группы при исправлении счётчика повторно не исполнялись.
+
+## Runtime identity E2E и layout изолированных тестов
+
+Обнаружена лишняя связь: прежняя journey identity включала целые quality
+contracts, включая tests/primaryTest/owner/budgetSeconds, и Pester test paths из
+owner paths. Split изолированных тестов поэтому инвалидировал реальный1C
+journey, хотя его execution inputs не менялись. Native E2E entrypoints не
+исполняют tests/pester/*.Tests.ps1; полный static proof принимается отдельно.
+
+Проекция owner теперь связывает id, paths и reuseInputPaths; неизвестное поле
+отключает reuse до классификации. Из file inventory исключены только
+tests/pester/*.Tests.ps1. Production scripts, native fixtures/features,
+templates/agents, owner routing/budgets самого journey и complete external
+binding продолжают участвовать. Schema проекции повышена до2: старый cache
+не переинтерпретируется, первая квалификация нового контракта обязательна.
+
+Регрессия изменяет реальный Pester file, tests/primaryTest и статическое описание
+owner, записывает exact Targeted proof и подтверждает reuse ancestor journey.
+Unknown owner field возвращает unknown identity. Исходные regressions изменения
+runtime/external binding, route budget, порчи cache и нового отказа сохранены.
+Это исправление разделяет доказательства static и runtime; конечный Develop
+по-прежнему требует обе части. Приёмка всей единицы принадлежит RegisterChange.

@@ -25,6 +25,9 @@ function Get-DevelopE2EInputIdentity {
         [string[]]$paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('ls-files','-z','--'))
         [Array]::Sort($paths, [StringComparer]::Ordinal)
         $inputs = @(foreach ($path in $paths) {
+            # Isolated Pester execution belongs to the separate static proof.
+            # Journey fixtures/features and all production inputs remain bound.
+            if ($path -like 'tests/pester/*.Tests.ps1') { continue }
             $matched = $false
             foreach ($pattern in $patterns) { if (Test-QualityPathPattern -Path $path -Pattern ([string]$pattern)) { $matched = $true; break } }
             if (-not $matched) { continue }
