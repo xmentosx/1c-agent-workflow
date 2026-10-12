@@ -541,3 +541,31 @@ function Restore-DevelopE2EQualification {
         return $true
     } catch { return $false }
 }
+
+function Write-DevelopQualification {
+    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords, [object]$Plan)
+    if (-not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { throw "Develop qualification requires reusable Full evidence." }
+    $root = Split-Path -Parent $developQualificationFullPath
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $canonicalReport = Join-Path $root "develop-e2e-summary.json"
+    # A caller may already write the combined report in the qualification root.
+    # Preserve those exact bytes instead of asking Copy-Item to replace itself.
+    if (-not [IO.Path]::GetFullPath($ReportPath).Equals([IO.Path]::GetFullPath($canonicalReport), [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $ReportPath -Destination $canonicalReport -Force
+    }
+    $qualification = [ordered]@{
+        schemaVersion = 4
+        kind = "itl-workflow-develop-qualification"
+        status = "passed"
+        reusable = $true
+        repository = [ordered]@{ commit = $Commit; tree = $Tree; evidenceCommit = $Commit; worktreeClean = $true }
+        fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        e2e = [ordered]@{ path = Get-RelativeRepositoryPath -Path $canonicalReport -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $canonicalReport -Algorithm SHA256).Hash.ToLowerInvariant() }
+        identitySha256 = $IdentitySha256
+        plan = $Plan
+        journeys = $JourneyRecords
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    return $qualification
+}

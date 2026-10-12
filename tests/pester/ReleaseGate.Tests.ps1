@@ -415,7 +415,12 @@ Describe "Release gate scripts" {
         $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
         $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
         $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
-        $check | Should -Match 'schemaVersion = 4'
+        $check | Should -Match 'develop-e2e-qualification\.ps1'
+        $tokens=$null; $errors=$null
+        $module=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/develop-e2e-qualification.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $writer=$module.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-DevelopQualification'},$true)
+        $writer.Extent.Text | Should -Match 'schemaVersion = 4'
         $check | Should -Match '\[int\]\$baseline\.schemaVersion -in @\(3, 4\)'
         $check | Should -Match 'execution = "continued"'
         $check | Should -Match 'ExpectedIdentitySha256'

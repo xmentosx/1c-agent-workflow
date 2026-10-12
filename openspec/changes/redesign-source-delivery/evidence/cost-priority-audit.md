@@ -250,3 +250,33 @@ source-location assertion LocalQualityGate: kind Full искался в check.ps
 к владельцу с дополнительной проверкой import и function; остальные исходные
 Release/develop/reuse/SHA assertions сохранены. Недоисполненные файлы после
 fail-fast не объявляются отдельной inventory ошибкой или общим case count.
+
+## Live b801a023: оба native сценария passed, итоговый writer failed
+
+Upgrade2250911ms, fresh2710787ms и Full2905/0/1 passed. Общий Develop failed
+за5966552ms: Write-DevelopQualification копировал develop-e2e-summary.json в
+себя при совпадении OutputDirectory и qualification root. Исправление Full JUnit
+не охватило второго владельца записи; это пробел предыдущего анализа дефекта.
+Исходный layout сохранён. Проверены остальные Copy-Item в checker и двух
+qualification-модулях: cache операции используют отдельные временные файлы,
+ancestor report читается из common Git, Full JUnit уже защищён сравнением paths.
+
+Develop writer перенесён в существующий develop-e2e-qualification.ps1, где уже
+находится запись route proof. Он сохраняет байты при равных абсолютных Windows
+paths и прежнее копирование при разных. SHA, reader, schema и dirty guards не
+меняются. Существующий roundtrip case сохраняет distinct-source шаг, добавляет
+same-path запись/readback и прежний отказ повреждённого continuation. До fix:
+0 passed/1 failed с тем же IOException; после:1/0,2.77s. Новый It не добавлен.
+
+check.ps1 входит в консервативный native input inventory. Его перенос функции
+меняет этот вход, поэтому старые native результаты не объявляются qualification
+нового head. Нужен один новый полный Develop; затем неизменные входы и отдельная
+Markdown continuation должны подтвердить реальное reuse. Для будущих изменений
+writer физически принадлежит уже выделенному qualification owner, а не checker.
+Операторские capacity continuations и ограничения описаны в fixture-disposal.md;
+этот запуск не является unattended или чистым performance benchmark.
+Первая регистрация1b2efa54 отклонена существующим ReleaseGate assertion,
+который искал schema4 literal в прежнем check.ps1. Он теперь извлекает именно
+Write-DevelopQualification AST из фактического модуля; schema4 и прежние
+routing/identity/continuation assertions сохранены. Focused1/0,925ms. Это
+исправление source-extraction boundary, не изменение runtime expectation.

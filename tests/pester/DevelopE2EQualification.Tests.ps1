@@ -235,7 +235,7 @@ Describe "Develop E2E journey qualification router" {
         $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
         $proof | Should -Not -BeNullOrEmpty
         $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$t,[ref]$e)
-        foreach($name in @('Get-RelativeRepositoryPath','Write-DevelopQualification','Test-DevelopQualification')){
+        foreach($name in @('Get-RelativeRepositoryPath','Test-DevelopQualification')){
             $definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
@@ -254,6 +254,11 @@ Describe "Develop E2E journey qualification router" {
         (Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64)).reuseKind | Should -BeExactly 'exact-commit'
         $saved=Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8|ConvertFrom-Json
         (Get-DevelopE2ECanonicalJsonSha256 -Value $saved.journeys.fresh.inputIdentity.inventory) | Should -BeExactly $f.inputs.fingerprint
+        $canonicalReport=Join-Path (Split-Path -Parent $developQualificationFullPath) 'develop-e2e-summary.json'
+        $canonicalSha=(Get-FileHash -LiteralPath $canonicalReport).Hash
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $canonicalReport -IdentitySha256 ('a'*64) -JourneyRecords $records -Plan $plan)
+        (Get-FileHash -LiteralPath $canonicalReport).Hash | Should -BeExactly $canonicalSha
+        (Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64)).reuseKind | Should -BeExactly 'exact-commit'
         $saved.journeys.fresh.continuation.targetedRunSha256='0'*64
         Write-Utf8Json -Path $developQualificationFullPath -Value $saved
         Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64) | Should -BeNullOrEmpty
@@ -812,7 +817,7 @@ Describe "Develop E2E journey qualification router" {
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        foreach ($name in @('Get-RelativeRepositoryPath', 'Write-DevelopQualification', 'Test-DevelopQualification', 'Update-DevelopQualificationFullBinding')) {
+        foreach ($name in @('Get-RelativeRepositoryPath', 'Test-DevelopQualification', 'Update-DevelopQualificationFullBinding')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
             . ([scriptblock]::Create($definition.Extent.Text))
         }

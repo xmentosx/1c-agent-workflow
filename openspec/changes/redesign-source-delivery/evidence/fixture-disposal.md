@@ -53,3 +53,32 @@ positive lifecycle/Release coverage, without a new test definition or shard.
 
 This narrow reproduction does not qualify the new candidate or replace complete
 Develop, warm continuation, concurrent registration or publication acceptance.
+
+## Native b801a023 and capacity interventions
+
+The actual upgrade passed in2250911ms: original negative rejection/rollback,
+positive check/Vanessa/export. Full passed2905/0/1 with40 executed/136 reused
+shards, fingerprint50363ms and workerSpan816438ms. Fresh passed in2710787ms,
+including stale-export warning, recovery check, export, lite refresh, final
+check, close and cleanup. Its first check cost1737493ms; recovery112111ms,
+final check38756ms. This is real native evidence, not an overall Develop pass:
+final combined-report writing failed with the same-directory self-copy error.
+
+The run required explicit capacity continuations. After negative rollback had
+passed and its positive child started, the committed adapter disposed the
+negative target's3295928320-byte database early. Positive terminal disposal ran
+automatically. During fresh, three old completed6a65 Develop databases were
+disposed through the adapter, reclaiming about6.15GiB. A one-time compression
+attempt touched only historical d7 source copies and was stopped after space
+recovery; its partial receipt records a lower bound of876545327 bytes saved.
+Both affected source trees had git diff --quiet -- src exit0. Current candidate,
+fresh project, seeds, snapshots and logs were untouched by those old-target
+operations. Free space recovered from0.22GiB to7.14GiB; after fresh cleanup it
+was14.95GiB. No foreign 1C process was stopped.
+
+This therefore does not establish unattended execution on the constrained disk.
+Terminal database disposal prevents new completed database accumulation; retained
+historical source/diagnostic copies still consume capacity. Ignored receipts
+live under runtime-proof: negative-terminal-disposal, old-6a65-disposal-1/2,
+and completed-source-compression-stopped. The compression receipt is partial,
+not a completed cleanup claim.
