@@ -21,6 +21,11 @@ function Read-QualificationFixtureJson {
     return ConvertFrom-DeliveryProofJson -Json (Read-Utf8Text -Path $Path)
 }
 
+function Remove-QualificationFixtureRuntimeEnvironmentAssignments {
+    param([string]$Text)
+    return [regex]::Replace($Text,'(?m)^(?:ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT=)[^\r\n]*(?:\r?\n|$)','')
+}
+
 function Get-QualificationFixtureClaimPath {
     param([string]$ProjectRoot)
     $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
@@ -135,7 +140,7 @@ function Install-QualificationFixtureContext {
         $root = if ($role -eq 'master') { $target } else { $branch }
         $lines = New-Object Collections.Generic.List[string]
         foreach ($line in @(Read-Utf8Lines -Path (Join-Path $capsuleRoot ($role+'.env')))) {
-            if ($line -match '^(ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT=)') { continue }
+            if ($line -and (Remove-QualificationFixtureRuntimeEnvironmentAssignments -Text $line) -ceq '') { continue }
             if ($line -match '^INFOBASE_PATH=') {
                 $base = if ($role -eq 'branch') { [string]$state.devBranchInfoBasePath } else { Resolve-QualificationFixtureChild -Root $target -RelativePath '.agent-1c/infobases/source' }
                 $lines.Add('INFOBASE_PATH='+$base); continue

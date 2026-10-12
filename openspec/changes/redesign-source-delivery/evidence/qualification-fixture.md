@@ -174,3 +174,15 @@ Factory только на первом восстановлении нового
 Installed RestoreIB, его assertions/guard и исходный seed не меняются. Две
 адресные регрессии успеха/отказа проверяют absence credentials во время restore,
 сохранение остальных настроек и exact byte restoration с BOM/CRLF.
+
+5cf5f674 зарегистрирован за45469ms. Live CREATEINFOBASE и RestoreIB прошли;
+Designer log: «Загрузка информационной базы успешно завершена». Затем env CAS
+отклонил штатный Sync-DevBranchContextToDotEnv. Сравнение ключей без вывода
+credentials доказало: добавлены только ITL_ACTIVE_*, ROCTUP_MCP_*, VANESSA_MCP_*
+и VANESSA_TEST_PORT, уже исключаемые существующей factory policy. Этот predicate
+получил один stateless owner; adapter и initial-restore comparison используют его.
+Любая другая правка по-прежнему сохраняется и блокирует готовность target.
+Три адресных варианта прошли: success/failure с реальными добавлениями runtime
+context и foreign OTHER edit, который не перезаписывается. Исходные байты env
+возвращаются только при неизменности всех значимых полей. Полная live-приёмка
+пока не пройдена; успешный DT restore не выдаётся за negative/positive proof.

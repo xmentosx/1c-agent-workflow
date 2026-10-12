@@ -215,7 +215,6 @@ function Invoke-SourceFixtureInitialRestore {
     $user=[Environment]::GetEnvironmentVariable('IB_USER','Process')
     $password=[Environment]::GetEnvironmentVariable('IB_PASSWORD','Process')
     Write-Utf8Text -Path $envPath -Value $initial
-    $initialHash=(Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash
     try {
         [Environment]::SetEnvironmentVariable('IB_USER',$null,'Process')
         [Environment]::SetEnvironmentVariable('IB_PASSWORD',$null,'Process')
@@ -223,7 +222,9 @@ function Invoke-SourceFixtureInitialRestore {
     } finally {
         [Environment]::SetEnvironmentVariable('IB_USER',$user,'Process')
         [Environment]::SetEnvironmentVariable('IB_PASSWORD',$password,'Process')
-        if((Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash -cne $initialHash){throw 'FIXTURE_INITIAL_ENV_CHANGED: retain owned target for diagnosis; repeat qualification with a new target'}
+        $current=Remove-QualificationFixtureRuntimeEnvironmentAssignments -Text (Read-Utf8Text -Path $envPath)
+        $expected=Remove-QualificationFixtureRuntimeEnvironmentAssignments -Text $initial
+        if($current -cne $expected){throw 'FIXTURE_INITIAL_ENV_CHANGED: retain owned target for diagnosis; repeat qualification with a new target'}
         [IO.File]::WriteAllBytes($envPath,$original)
     }
 }
