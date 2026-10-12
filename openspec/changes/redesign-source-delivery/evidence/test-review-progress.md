@@ -3,9 +3,25 @@
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
 их с уникальными исходными file/line/name и body/file SHA, где они имеются.
-[Summary](review-index-summary.json): 343 определения имеют явный предметный
-review, 2471 остаются pending. Из рассмотренных: Pester 302, Python 28, Go 5,
+[Summary](review-index-summary.json): 800 определений имеют явный предметный
+review, 2014 остаются pending. Из рассмотренных: Pester 311, Python 390, Go 91,
 Node 8. Это охват исходных определений, не количество запусков или новых тестов.
+
+Пакет2026-10-12 добавляет276 индивидуальных решений:101 operation/measurement/
+Vanessa/profile/guard/mapping,36 source capture/reuse,60 SPPR,50 BookStack
+и29 Mantis cache/index/provider boundaries. Прочитаны setup, тела и assertions;
+решения и ограничения сохранены в `nested-boundary-review.csv`. Неизменённые
+Python suites повторно ради аудита не запускались. Первые29 Mantis definitions
+и helpers совпадают с baseline; текущее отличие файла — отдельный добавленный
+StateMigrationTests после исходных тестов, не часть исходного inventory.
+
+Повторение отдельных assertions не означает дублирование целого риска: memory,
+disk и gateway caches имеют разные failure boundaries; input selection, source
+sealing и snapshot reuse тоже различны. Сохранены полезные риски; непроверяемые
+части названий явно ограничены, например missing context/index variants, actual
+process crash и полная неизменность snapshot bytes. Эти ограничения не выдаются
+за пройденную runtime-приёмку. История flake и per-case timing остаётся unknown,
+где её не исследовали; значения не выдумываются.
 
 Индекс объединяет ParserDocs, ReleaseGate, Mantis route-gap, пять Compact
 boundaries, 11 host wrappers, семь параметризованных определений и новый

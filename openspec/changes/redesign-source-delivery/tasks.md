@@ -300,11 +300,18 @@ BA и оставшиеся задачи не отмечаются до факт�
 0 failed, 0 skipped; check125831ms/raw127470ms, 16 executed/0 reused.
 Go wrapper исполнил 107 expanded Go cases без skips. Сохранён полный raw proof
 в ignored `build/redesign-source-delivery/candidate-protocol/accepted-ed6e1ae1`.
-Публикации и live qualification не было. Поэлементный аудит — 524/2814:
-Go91/91, Node8/8, Python114/573, Pester311/2142; ещё2290 требуют разбора.
+Публикации и live qualification не было. Поэлементный аудит — 800/2814:
+Go91/91, Node8/8, Python390/573, Pester311/2142; ещё2014 требуют разбора.
 Последние пять решений сохраняют AST/dispatch/probe completeness, read-only
 user-rule diagnostics и все шесть вариантов реального OneScript port allocator.
 Это не завершение всего плана и не разрешение публикации V.7.
+
+Checkpoint B реализован в39b59aa9 и зарегистрирован:1408/0/0,
+65 executed/13 reused, check1210343ms, clean. Дополнение89c1001e переносит
+только SHA-bound исторический normalization receipt из зарегистрированного
+worktree; Targeted passed за36764ms, два shard’а. Release capsule фактически
+sealed, SHA9c1fce0831001d3d5ff285ea840b87f53f6d815f1d08445e75edbb525cad74ef,
+baselinefa0e3c91. Snapshot/preparation не подменяют live BA/CA/V.
 
 ## Как продолжать и отмечать прогресс
 
