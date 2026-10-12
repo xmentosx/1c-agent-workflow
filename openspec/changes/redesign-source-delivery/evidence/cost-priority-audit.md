@@ -192,6 +192,10 @@ check30279ms, owner documentation. Прежний предел1400 оставл�
 Review2500 и hard2800 approximate-token limits, все safety contracts и исходный
 budget test сохранены. Новый тест не добавляется; меняется явный размер контекста
 по действующей documentation-budget policy.
+Исправленная единицаa3e2705c зарегистрирована:40/0/0, check27859ms,
+1 executed/0 reused, fingerprint925ms/span21086ms. Выбран только ParserDocsBudgets;
+Python/1С не запускались. Правила сохранены в Git, но механизм нового supervisor
+по-прежнему активируется только после публикации.
 
 Это процедурное требование к существующей приёмке, а не новый runtime barrier,
 автоматический порог производительности, формат отчёта или общий gate. Прежние
@@ -203,3 +207,39 @@ helper. Новое правило не доказывает автоматиче
 любого смешанного монолита или неоправданно широкого owner: это остаётся предметом
 review. Неверное утверждение о live reuse предотвращается требованием actual
 default parent/child proof и незакрытыми V.4–V.7/CA.4 до его получения.
+
+## Live ec4074bb: native pass, общий JUnit и статический writer
+
+Develop завершился failed за2840462ms при чистом checkout. Upgrade raw passed:
+12:14:47.436→12:51:58.742 UTC, отрицательный отказ и rollback, положительная
+проверка Vanessa и export сохранены. Native cache впервые содержит schema2
+manifest с полным input fingerprint2805a9dd0cedac6a0be678071d01ed2d87a2e0c858728dff95577b7d9129ae65;
+route-report SHA54dbad54066364b7009bff5f67c85d7db8e6d2ac579cc94665656316c3ebb2c7.
+Schema1 d7 evidence не мигрировалось. Общий Pester passed2900/0/1,
+44 executed/132 reused, fingerprint51070ms, workerSpan480075ms.
+Один skipped не превращается в passed; standalone fresh до отказа не начался.
+
+Причина отказа — Write-WorkflowQualification копировал pester.xml в себя,
+когда OutputDirectory совпадал с каталогом QualificationPath. Исправление
+сохраняет этот исходный layout: равные абсолютные Windows paths используют
+существующий файл; различные пути по-прежнему копируются. Наличие JUnit,
+реальные bytes/SHA, Full input manifest и читатель qualification не ослаблены.
+В существующий known FullInputProof case добавлен shared-directory шаг без
+дополнительного scheduler запуска или нового It. До исправления исходный
+сценарий2/1 с точным IOException на Unicode-path; после guard3/0 за40.98s.
+
+Writer находился в check.ps1, чей полный hash является native input: любое
+изменение статического сохранения сбрасывало native proof. Его исправленное
+определение точно перенесено в существующий develop-static-qualification.ps1,
+уже владеющий Full cache и исключённый из native routes обоих journey.
+Checker сохраняет прежний вызов; Full inventory продолжает учитывать модуль.
+AST relocation equality сохранена в ignored candidate-protocol/full-writer-relocation.json.
+FullInputProof использует теперь реального producer через тот же модуль.
+Все три исходных Full input сценария после переноса прошли3/0 за43.12s,
+включая shared-JUnit boundary, unknown runtime/external и cache transport.
+В существующем known-owner ancestor case добавлено изменение actual static
+module path: exact Targeted допускает reuse, unknown path и последующее включение
+owner в native route по-прежнему отвергают его; focused1/0 за5.86s.
+Это owner-local перенос без нового coordinator, схемы или runtime barrier.
+Первый перенос меняет check orchestration и требует новой live-квалификации;
+неподходящий старый fingerprint не переиспользуется ради ускорения.

@@ -15,7 +15,7 @@ It 'continues Full qualification with <Kind> inputs through actual scheduler pro
         $tokens=$null; $errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $sourceRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        foreach ($name in @('Get-RelativeRepositoryPath','Get-CanonicalTextSha256','New-InventoryEntry','Test-HasExactInventory','Get-WorkflowGateScriptPaths','Test-WorkflowQualification','Write-WorkflowQualification')) {
+        foreach ($name in @('Get-RelativeRepositoryPath','Get-CanonicalTextSha256','New-InventoryEntry','Test-HasExactInventory','Get-WorkflowGateScriptPaths','Test-WorkflowQualification')) {
             $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
@@ -82,6 +82,15 @@ It 'continues Full qualification with <Kind> inputs through actual scheduler pro
         $record=Write-WorkflowQualification -Commit $commit -Tree $tree -EvidenceCommit $commit -ReuseKind executed -Result @{passed=1;failed=0;skipped=0}
         $record.schemaVersion | Should -Be 4
         $record.reusable | Should -Be $ExpectedReusable
+        if ($Kind -eq 'known') {
+            # Preserve the distinct-directory producer above, then reproduce the
+            # real Develop layout where output and qualification share JUnit.
+            $junitPath=Join-Path (Split-Path -Parent $qualificationFullPath) 'pester.xml'
+            $sharedJunitSha=(Get-FileHash -LiteralPath $junitPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $record=Write-WorkflowQualification -Commit $commit -Tree $tree -EvidenceCommit $commit -ReuseKind executed -Result @{passed=1;failed=0;skipped=0}
+            $record.junit.sha256 | Should -BeExactly $sharedJunitSha
+            (Get-FileHash -LiteralPath $junitPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $sharedJunitSha
+        }
         $match=Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
         $match | Should -Not -BeNullOrEmpty
         $match.canReusePester | Should -Be $ExpectedReusable

@@ -138,7 +138,7 @@ Describe "Develop E2E journey qualification router" {
         $component = Join-Path $f.root 'component/worker.py'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $component) | Out-Null
         [IO.File]::WriteAllText($component, '# independent component', [Text.UTF8Encoding]::new($false))
-        $f.catalog.contracts += [pscustomobject]@{id='component';owner='independent component';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/Fixture.Tests.ps1';paths=@('component/*');tests=@('tests/pester/Fixture.Tests.ps1')}
+        $f.catalog.contracts += [pscustomobject]@{id='component';owner='independent component';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/Fixture.Tests.ps1';paths=@('component/*','scripts/develop-static-qualification.ps1');tests=@('tests/pester/Fixture.Tests.ps1')}
         Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'known independent owner'
         $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
@@ -147,6 +147,17 @@ Describe "Develop E2E journey qualification router" {
         $proof = Find-AncestorFixtureProof -Fixture $f -Tree $tree
         $proof | Should -Not -BeNullOrEmpty
         @($proof.continuation.scopes) | Should -Contain 'owner-input-exact'
+        # Static report production is independently owned. Its actual module path
+        # must remain outside native inputs while Full validates its own proof.
+        $writer=Join-Path $f.root 'scripts/develop-static-qualification.ps1'
+        [IO.File]::WriteAllText($writer, '# static qualification writer', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'independent static report writer'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        [IO.File]::AppendAllText($writer, "`n# changed static report layout", [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static writer change'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
         $unknown = Join-Path $f.root 'unknown-input.txt'
         [IO.File]::WriteAllText($unknown, 'unowned', [Text.UTF8Encoding]::new($false))
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown dependency'
