@@ -95,3 +95,19 @@ capsule/clone на настоящем baseline ignore. Artifact `fixture-output.
 Повторный широкий route factory через release-runtime удалён: его собственный
 contract уже выбирает адресные tests и upgrade; production lifecycle routes
 сохранены. Обязательный Targeted для изменённого shared core остаётся широким.
+
+Единица39b59aa9 зарегистрирована:1408 passed/0 failed/0 skipped,
+65 executed/13 reused, check1210343ms; tracked tree clean. Полный raw proof
+сохранён в ignored `candidate-protocol/accepted-39b59aa9`.
+
+Следующий live Capture Release сохранил snapshot, но остановился до sealing:
+`lastEnterpriseAutoUpdateResultPath` у rel-e2e-r8 указывал на исторический
+`itl-workflow-e2e-pm5-release-fixture-r4`, зарегистрированный в том же common Git.
+Factory теперь разрешает до DumpIB только этот конкретный вид receipt из
+зарегистрированного worktree; переносит один файл с SHA в owned branch и
+переписывает его точную ссылку. Исторические branches, state и базы не импортируются.
+Изменение receipt инвалидирует capsule. Остальные ссылки вне seed остаются отказом
+с owner continuation до snapshot. Исходные state/receipt не редактируются.
+Адресный Windows PowerShell5.1 proof:14/0/0 за29.16s, включая обе новые границы.
+Тестовый PS1 с новыми буквальными Unicode fixtures сохранён с UTF-8 BOM.
+Live negative/positive и два кандидата ещё не подтверждены.

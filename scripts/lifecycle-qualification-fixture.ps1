@@ -112,6 +112,12 @@ function Install-QualificationFixtureContext {
         if ($property.Name -match '^(pendingMerge|pendingRefresh|lifecycleMerge|eventLogPendingCursor)') { $state[$property.Name] = $property.Value }
     }
     $mappings = @(@{from=[string]$manifest.sourceBranchRoot;to=$branch},@{from=[string]$manifest.sourceProjectRoot;to=$target})
+    foreach($reference in @($manifest.contextFiles)){
+        if($reference.PSObject.Properties['sourcePath']){
+            $root=if([string]$reference.role -ceq 'master'){$target}elseif([string]$reference.role -ceq 'branch'){$branch}else{throw 'FIXTURE_CONTEXT_ROLE_INVALID'}
+            $mappings+=@{from=[string]$reference.sourcePath;to=(Resolve-QualificationFixtureChild -Root $root -RelativePath ([string]$reference.relativePath))}
+        }
+    }
     $state = ConvertTo-QualificationFixtureContextValue -Value $state -Mappings $mappings
     $state['worktreePath']=$branch; $state['mainWorktreePath']=$target
     $state['devBranchInfoBasePath']=Resolve-QualificationFixtureChild -Root $branch -RelativePath ('.agent-1c/infobases/dev-branches/'+[string]$manifest.branchName)

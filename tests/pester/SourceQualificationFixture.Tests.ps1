@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
     function New-QualificationSeed {
@@ -80,6 +80,43 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $envText|Should -Match ([regex]::Escape('INFOBASE_PATH='+$state.devBranchInfoBasePath))
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-restore' -and $Arguments -contains '-PreserveReleaseSnapshotApplicationProof'}
+    }
+
+    It 'copies only the exact normalization receipt from a registered historical worktree and remaps its state reference' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'historical receipt')
+        $historical=Join-Path $TestDrive 'Старый worktree receipt'
+        Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('worktree','add','-b','itldev/historical',$historical,'master')|Out-Null
+        $receipt=Join-Path $historical '.agent-1c/runs/auto-update/old.result.json'
+        Write-QualificationFixtureJson -Path $receipt -Value @{schemaVersion=1;status='passed';updateResult='НеТребуется'}
+        $statePath=Join-Path $seed.branch '.agent-1c/dev-branches/negative.json'
+        $state=Read-QualificationFixtureJson -Path $statePath
+        $state|Add-Member -NotePropertyName lastEnterpriseAutoUpdateResultPath -NotePropertyValue $receipt
+        Write-QualificationFixtureJson -Path $statePath -Value $state
+        $original=Read-Utf8Text -Path $statePath
+        $originalReceipt=Read-Utf8Text -Path $receipt
+        $fixture=New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot (Join-Path $TestDrive 'receipt owned')
+        $copiedState=Read-QualificationFixtureJson -Path (Join-Path $fixture.branchRoot '.agent-1c/dev-branches/negative.json')
+        $copiedState.lastEnterpriseAutoUpdateResultPath.StartsWith($fixture.branchRoot+'\',[StringComparison]::OrdinalIgnoreCase)|Should -BeTrue
+        (Read-Utf8Text -Path $copiedState.lastEnterpriseAutoUpdateResultPath)|Should -BeExactly $originalReceipt
+        (Read-Utf8Text -Path $statePath)|Should -BeExactly $original
+        (Read-Utf8Text -Path $receipt)|Should -BeExactly $originalReceipt
+        (Invoke-RepositoryGit -RepositoryRoot $fixture.projectRoot -Arguments @('for-each-ref','--format=%(refname)','refs/heads')).stdout|Should -Not -Match '(?m)^refs/heads/itldev/historical$'
+        Write-QualificationFixtureJson -Path $receipt -Value @{schemaVersion=1;status='failed';updateResult='Изменено'}
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw '*FIXTURE_SEED_CHANGED*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
+    }
+
+    It 'rejects a receipt outside registered seed worktrees before taking another database snapshot' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'foreign receipt')
+        $foreign=Join-Path $TestDrive 'Чужой проект/.agent-1c/runs/auto-update/old.result.json'
+        Write-QualificationFixtureJson -Path $foreign -Value @{schemaVersion=1;status='passed'}
+        $statePath=Join-Path $seed.branch '.agent-1c/dev-branches/negative.json'
+        $state=Read-QualificationFixtureJson -Path $statePath
+        $state|Add-Member -NotePropertyName lastEnterpriseAutoUpdateResultPath -NotePropertyValue $foreign
+        Write-QualificationFixtureJson -Path $statePath -Value $state
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw '*FIXTURE_CONTEXT_OUTSIDE_SEED*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
+        Test-Path -LiteralPath $foreign|Should -BeTrue
     }
 
     It 'rejects tampered snapshot before creating a target and gives the preserved capsule to its owner' {

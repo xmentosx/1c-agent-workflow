@@ -65,6 +65,38 @@ function Get-SourceFixtureSemanticState {
     return ConvertTo-DeliveryProofJson -InputObject $result -Depth 32 -Compress
 }
 
+function Get-SourceFixtureContextFiles {
+    param([object]$State, [string]$ProjectRoot, [string]$BranchRoot)
+    $records=New-Object Collections.Generic.List[object]
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $registered=@(Get-RepositoryGitPathList -RepositoryRoot $ProjectRoot -Arguments @('worktree','list','--porcelain','-z')|Where-Object {$_ -like 'worktree *'}|ForEach-Object {[IO.Path]::GetFullPath($_.Substring(9)).TrimEnd('\','/')})
+    foreach($property in $State.PSObject.Properties){
+        if($property.Name -notmatch '^(eventLog.*Path|branchSeedBaselinePath|lastEnterpriseAutoUpdateResultPath)$|^(pendingMerge|pendingRefresh).*Path$'){continue}
+        $path=[string]$property.Value
+        if(-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)){continue}
+        $full=[IO.Path]::GetFullPath($path);$role='';$relative=''
+        foreach($pair in @(@{role='branch';root=$BranchRoot},@{role='master';root=$ProjectRoot})){
+            $prefix=$pair.root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+            if($full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){$role=$pair.role;$relative=$full.Substring($prefix.Length).Replace('\','/');break}
+        }
+        $sha=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+        if(-not $role -and $property.Name -ceq 'lastEnterpriseAutoUpdateResultPath'){
+            foreach($root in $registered){
+                $prefix=$root+[IO.Path]::DirectorySeparatorChar
+                if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){continue}
+                $receiptRelative=$full.Substring($prefix.Length).Replace('\','/')
+                if($receiptRelative -cnotmatch '^\.agent-1c/runs/auto-update/[^/]+\.result\.json$'){continue}
+                $null=Resolve-QualificationFixtureChild -Root $root -RelativePath $receiptRelative
+                $role='branch';$relative='.agent-1c/runs/qualification-context/'+$sha+'.json';break
+            }
+        }
+        if(-not $role){throw "FIXTURE_CONTEXT_OUTSIDE_SEED: $($property.Name); retain the seed and receipt; use its lifecycle owner to establish a registered context before capture"}
+        $null=Resolve-QualificationFixtureChild -Root $(if($role -eq 'master'){$ProjectRoot}else{$BranchRoot}) -RelativePath $relative
+        if($seen.Add($full)){$records.Add([pscustomobject]@{role=$role;relativePath=$relative;artifact=('context/'+$role+'/'+$relative);sourcePath=$full;sourceSha256=$sha})}
+    }
+    return $records.ToArray()
+}
+
 function Export-SourceE2EFixtureCapsule {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='')
     $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
@@ -80,6 +112,10 @@ function Export-SourceE2EFixtureCapsule {
     $before=Read-QualificationFixtureJson -Path $statePath
     if([string]$before.infoBaseKind -cne 'file'){throw 'FIXTURE_SEED_FILE_REQUIRED: server qualification retains its separate declared stand and unverified evidence contract'}
     $semanticBefore=Get-SourceFixtureSemanticState -State $before
+    # Resolve every declared context before the expensive database snapshot.
+    # A historical normalization receipt may live in another registered worktree;
+    # import only that exact SHA-bound leaf, never its worktree/state or database.
+    $context=@(Get-SourceFixtureContextFiles -State $before -ProjectRoot $root -BranchRoot $branch)
     $requiredCommits=@($before.PSObject.Properties|Where-Object {$_.Name -match '^(pendingMerge|pendingRefresh|lifecycleMerge).*(Commit|Head)$' -and [string]$_.Value -cmatch '^[a-f0-9]{40}$'}|ForEach-Object {[string]$_.Value}|Sort-Object -Unique)
     foreach($required in $requiredCommits){
         if((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('cat-file','-t',$required)).stdout.Trim() -cne 'commit'){throw 'FIXTURE_PENDING_COMMIT_INVALID'}
@@ -110,25 +146,16 @@ function Export-SourceE2EFixtureCapsule {
     if((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne $masterCommit -or
         (Invoke-RepositoryGit -RepositoryRoot $branch -Arguments @('rev-parse','HEAD')).stdout.Trim() -cne $branchCommit){throw 'FIXTURE_GIT_MOVED_DURING_CAPTURE'}
     Assert-SourceFixtureGitClean -Root $root;Assert-SourceFixtureGitClean -Root $branch
-    $context=New-Object Collections.Generic.List[object]
-    foreach($property in $after.PSObject.Properties){
-        if($property.Name -notmatch '^(eventLog.*Path|branchSeedBaselinePath|lastEnterpriseAutoUpdateResultPath)$|^(pendingMerge|pendingRefresh).*Path$'){continue}
-        $path=[string]$property.Value
-        if(-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)){continue}
-        $full=[IO.Path]::GetFullPath($path);$role='';$relative=''
-        foreach($pair in @(@{role='branch';root=$branch},@{role='master';root=$root})){
-            $prefix=$pair.root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
-            if($full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){$role=$pair.role;$relative=$full.Substring($prefix.Length).Replace('\','/');break}
-        }
-        if(-not $role){throw "FIXTURE_CONTEXT_OUTSIDE_SEED: $($property.Name)"}
-        $artifact='context/'+$role+'/'+$relative
-        $destination=Resolve-QualificationFixtureChild -Root $capsule -RelativePath $artifact
-        if(-not (Test-Path -LiteralPath $destination)){[void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination));Copy-Item -LiteralPath $full -Destination $destination;$context.Add([pscustomobject]@{role=$role;relativePath=$relative;artifact=$artifact})}
+    foreach($reference in $context){
+        $destination=Resolve-QualificationFixtureChild -Root $capsule -RelativePath $reference.artifact
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+        Copy-Item -LiteralPath $reference.sourcePath -Destination $destination
+        if((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $reference.sourceSha256){throw 'FIXTURE_CONTEXT_MOVED_DURING_CAPTURE: retain the capsule and repeat capture from a stable seed'}
     }
     $files=@(Get-ChildItem -LiteralPath $capsule -Recurse -File|Where-Object {$_.FullName -notlike (Join-Path $capsule 'logs/*')}|ForEach-Object{[ordered]@{path=$_.FullName.Substring($capsule.Length+1).Replace('\','/');sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
     $databasePath=Join-Path ([string]$after.devBranchInfoBasePath) '1Cv8.1CD'
     $databaseSha=(Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $manifest=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';sourceProjectRoot=$root;sourceBranchRoot=$branch;branchName=$name;masterCommit=$masterCommit;branchCommit=$branchCommit;requiredCommits=$requiredCommits;workflowCommit=$workflow;semanticState=$semanticBefore;sourceDatabase=[ordered]@{path=$databasePath;sha256=$databaseSha};files=$files;contextFiles=$context.ToArray();snapshotDurationMs=$snapshotRun.durationMs;createdAt=[DateTime]::UtcNow.ToString('o')}
+    $manifest=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';sourceProjectRoot=$root;sourceBranchRoot=$branch;branchName=$name;masterCommit=$masterCommit;branchCommit=$branchCommit;requiredCommits=$requiredCommits;workflowCommit=$workflow;semanticState=$semanticBefore;sourceDatabase=[ordered]@{path=$databasePath;sha256=$databaseSha};files=$files;contextFiles=$context;snapshotDurationMs=$snapshotRun.durationMs;createdAt=[DateTime]::UtcNow.ToString('o')}
     $manifestPath=Join-Path $capsule 'capsule.json'
     Write-QualificationFixtureJson -Path $manifestPath -Value $manifest
     $sha=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -157,6 +184,11 @@ function Get-SourceE2EFixtureCapsule {
             ((Get-FileHash -LiteralPath ([string]$manifest.sourceDatabase.path) -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.sourceDatabase.sha256) -or
             ((Get-DeliveryStableDotEnvSha256 -Path (Join-Path $ProjectRoot '.dev.env')) -cne (Get-DeliveryStableDotEnvSha256 -Path (Join-Path $capsule 'master.env'))) -or
             ((Get-DeliveryStableDotEnvSha256 -Path (Join-Path ([string]$manifest.sourceBranchRoot) '.dev.env')) -cne (Get-DeliveryStableDotEnvSha256 -Path (Join-Path $capsule 'branch.env')))
+        foreach($reference in @($manifest.contextFiles)){
+            if(-not $reference.PSObject.Properties['sourcePath'] -or -not $reference.PSObject.Properties['sourceSha256'] -or
+                -not (Test-Path -LiteralPath $reference.sourcePath -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $reference.sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$reference.sourceSha256){$changed=$true}
+        }
         if($changed){throw "FIXTURE_SEED_CHANGED: retain the old capsule/checkpoints; review the declared seed, then run scripts/source-e2e-fixture.ps1 -Action Capture -Phase $Phase -ProjectRoot '$ProjectRoot' -Recapture -OutputPath <receipt.json>, and repeat qualification"}
         Assert-SourceFixtureGitClean -Root $ProjectRoot;Assert-SourceFixtureGitClean -Root ([string]$manifest.sourceBranchRoot)
         return $descriptor
