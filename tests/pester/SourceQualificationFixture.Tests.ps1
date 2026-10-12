@@ -81,7 +81,8 @@ Describe 'Owned qualification native database creation before restore' {
         Should -Invoke Invoke-WithOneCSessionAdmissionContext -Times 0
     }
     It 'disposes only derived Develop database bytes with real guard and file ownership: <scenario>' -ForEach @(
-        @{scenario='ready'},@{scenario='materializing'},@{scenario='locked'},@{scenario='foreign-candidate'},@{scenario='release'}
+        @{scenario='ready'},@{scenario='materializing'},@{scenario='locked'},@{scenario='foreign-candidate'},@{scenario='release'},
+        @{scenario='seed-cache'},@{scenario='seed-reader-locked'},@{scenario='seed-cache-foreign'}
     ) {
         $candidate='a'*40
         $claimPath=Join-Path $parent 'qualification-fixture.json'
@@ -98,17 +99,39 @@ Describe 'Owned qualification native database creation before restore' {
         Write-Utf8Text -Path $log -Value 'original restore evidence'
         $foreign=Join-Path $parent 'project/.agent-1c/infobases/user/1Cv8.1CD'
         Write-Utf8Text -Path $foreign -Value 'seed database bytes'
+        $cacheDatabase=$null; $cachePaths=$null
+        if($scenario -like 'seed-*'){
+            $cacheRoot=Join-Path $project ('.agent-1c/branch-seed/'+('c'*64))
+            $cacheDatabase=Join-Path $cacheRoot 'infobase/1Cv8.1CD'
+            Write-Utf8Text -Path $cacheDatabase -Value 'derived branch seed cache bytes'
+            Write-QualificationFixtureJson -Path (Join-Path $cacheRoot 'manifest.json') -Value @{
+                schemaVersion=1;status='ready';sourceKey=('c'*64);artifactKind='file-1cd'
+                artifactPath=$(if($scenario -eq 'seed-cache-foreign'){$foreign}else{$cacheDatabase})
+            }
+            $cachePaths=@{root=$cacheRoot;leasePath=(Join-Path $cacheRoot 'seed.lease');writerIntentPath=(Join-Path $cacheRoot 'seed.writer.lock');rebuildMarkerPath=(Join-Path $cacheRoot 'rebuild.marker.json')}
+        }
         $script:disposalGuardRoot=Join-Path $parent 'custom guard root'
         Mock Get-OneCExecutionGuardSettings {[pscustomobject]@{root=$script:disposalGuardRoot;python='';waitTimeoutSeconds=5}}
         $handle=$null
         try {
+            if($scenario -eq 'seed-reader-locked'){
+                $handle=Open-BranchSeedLease -Paths $cachePaths -Mode read -TimeoutSeconds 1
+                {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate}|Should -Throw '*BRANCH_SEED_LEASE_TIMEOUT*'
+                Test-Path -LiteralPath $database|Should -BeTrue
+                Test-Path -LiteralPath $cacheDatabase|Should -BeTrue
+                $handle.Dispose();$handle=$null
+            }
             if($scenario -eq 'locked'){
                 $handle=[IO.File]::Open($database,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
                 {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate}|Should -Throw
                 (Read-QualificationFixtureJson -Path $claimPath).status|Should -BeExactly 'ready'
                 $handle.Dispose();$handle=$null
             }
-            if($scenario -in @('foreign-candidate','release')){
+            if($scenario -eq 'seed-cache-foreign'){
+                {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate}|Should -Throw '*FIXTURE_SEED_CACHE_OWNERSHIP_INVALID*'
+                Test-Path -LiteralPath $database|Should -BeTrue
+                Test-Path -LiteralPath $cacheDatabase|Should -BeTrue
+            } elseif($scenario -in @('foreign-candidate','release')){
                 $expected=if($scenario -eq 'foreign-candidate'){'b'*40}else{$candidate}
                 {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $expected}|Should -Throw '*FIXTURE_DISPOSE_OWNERSHIP_INVALID*'
                 Test-Path -LiteralPath $database|Should -BeTrue
@@ -116,7 +139,8 @@ Describe 'Owned qualification native database creation before restore' {
             } else {
                 $result=Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate
                 $result.status|Should -BeExactly 'disposed'
-                @($result.removedDatabases).Count|Should -Be 1
+                @($result.removedDatabases).Count|Should -Be $(if($cacheDatabase){2}else{1})
+                if($cacheDatabase){Test-Path -LiteralPath $cacheDatabase|Should -BeFalse; Test-Path -LiteralPath (Join-Path $cachePaths.root 'manifest.json')|Should -BeTrue}
                 Test-Path -LiteralPath $database|Should -BeFalse
                 Test-Path -LiteralPath $script:disposalGuardRoot|Should -BeTrue
                 (Read-QualificationFixtureJson -Path $claimPath).status|Should -BeExactly 'disposed'

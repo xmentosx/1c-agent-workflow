@@ -125,3 +125,37 @@ positive capsule remains retained; explicit Capture -Recapture is the existing
 continuation for the already changed test seed after reviewing this diagnosis.
 The negative seed and original rejection reproducer are unchanged. Actual fixed
 fresh pass, unchanged-seed proof and new runtime cost remain pending live evidence.
+## Derived seed-cache disposal (2026-10-12)
+
+Capacity preparation found the remaining accumulation owner: a completed Develop
+project still retained project/.agent-1c/branch-seed/<sourceKey>/infobase/1Cv8.1CD
+(3295797248 bytes). Earlier terminal cleanup handled branch infobases only.
+An attempted historical-copy archive refused this database before creating an
+archive or deleting a directory. Source compression was stopped: it consumed
+minutes per tree for little space and did not address the database leak. Its
+partial receipts remain ignored evidence, never release qualification.
+
+The same source-only disposal adapter now includes only the claimed project's
+local ready file-1cd cache whose schema, sourceKey and exact artifact path match
+its manifest. Existing cache writer intent and write lease are acquired before
+any database deletion, followed by the existing per-infobase guard and exclusive
+DeleteOnClose handle. The optional Paths argument reuses the seed lock owner;
+ordinary installed callers retain their original path resolution and behavior.
+No new coordinator, installed migration, external cache cleanup or user database
+cleanup was added. Cache manifests, snapshots, pending/cursor, source and logs
+remain. A busy reader or invalid manifest preserves all database bytes and
+reports the existing timeout or FIXTURE_SEED_CACHE_OWNERSHIP_INVALID continuation.
+
+The existing disposal matrix grew from five to eight scenarios without a new
+It definition or shard. All eight passed (JUnit 21.897 seconds, 22 other cases
+not selected), including a real read lease refusal followed by successful retry,
+invalid manifest preservation, native file ownership and existing seed/log/DT
+retention assertions. Native owner acceptance then disposed five old Develop
+cache databases through the actual adapter on exact ancestor claims d7a4dc52,
+ec4074bb, 6a65b159, 977a9674 and b801a023. Receipts record 14000996352 newly
+removed bytes (13.04 GiB); C had 30.35 GiB free afterward. No foreign process was
+stopped and no archive was created. Receipts are candidate-protocol/
+old-d7-seed-cache-disposal.json and old-seed-cache-disposal-<commit8>.json.
+This proves real terminal cleanup, not a passed overall Develop. Full cold
+native qualification of the combined fixes and unchanged original seed remains
+pending; there is no additional ordinary-feature gate.

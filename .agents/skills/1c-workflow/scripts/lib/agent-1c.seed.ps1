@@ -138,10 +138,11 @@ function Open-BranchSeedLease {
     param(
         [ValidateSet("read", "write")]
         [string]$Mode,
-        [int]$TimeoutSeconds = 600
+        [int]$TimeoutSeconds = 600,
+        [object]$Paths = $null
     )
 
-    $paths = Get-BranchSeedPaths
+    if ($null -eq $Paths) { $Paths = Get-BranchSeedPaths }
     New-Item -ItemType Directory -Force -Path $paths.root | Out-Null
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -178,9 +179,9 @@ function Open-BranchSeedLease {
 }
 
 function Open-BranchSeedWriterIntent {
-    param([int]$TimeoutSeconds = 600)
+    param([int]$TimeoutSeconds = 600, [object]$Paths = $null)
 
-    $paths = Get-BranchSeedPaths
+    if ($null -eq $Paths) { $Paths = Get-BranchSeedPaths }
     New-Item -ItemType Directory -Force -Path $paths.root | Out-Null
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {

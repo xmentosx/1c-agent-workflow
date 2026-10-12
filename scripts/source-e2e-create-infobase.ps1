@@ -6,6 +6,7 @@ $lib=Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/sc
 . (Join-Path $lib 'agent-1c.lifecycle.ps1')
 . (Join-Path $lib 'agent-1c.ports.ps1')
 . (Join-Path $lib 'agent-1c.sessions.ps1')
+. (Join-Path $lib 'agent-1c.seed.ps1')
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
 . (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
@@ -51,6 +52,7 @@ function New-SourceQualificationInfoBase {
 
 function Remove-SourceQualificationDatabases {
     param([string]$BranchRoot, [string]$CandidateCommit)
+    . (Join-Path $lib 'agent-1c.seed.ps1')
     $branch=[IO.Path]::GetFullPath($BranchRoot).TrimEnd('\','/')
     $parent=Split-Path -Parent $branch
     $claimPath=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'qualification-fixture.json'
@@ -76,8 +78,32 @@ function Remove-SourceQualificationDatabases {
             elseif($item.Name -ieq '1Cv8.1CD'){$files+=$safe}
         }
     }
+    $seedCaches=@()
+    $seedRoot=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project/.agent-1c/branch-seed'
+    if(Test-Path -LiteralPath $seedRoot -PathType Container){
+        foreach($item in @(Get-ChildItem -LiteralPath $seedRoot -Directory -Force)){
+            $cache=Resolve-QualificationFixtureChild -Root $parent -RelativePath $item.FullName.Substring($parent.Length+1)
+            if($item.Name -cnotmatch '^[0-9a-f]{64}$'){continue}
+            $manifestPath=Resolve-QualificationFixtureChild -Root $cache -RelativePath 'manifest.json'
+            $artifactPath=Resolve-QualificationFixtureChild -Root $cache -RelativePath 'infobase/1Cv8.1CD'
+            if(-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)){continue}
+            $manifest=Read-QualificationFixtureJson -Path $manifestPath
+            if([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.status -cne 'ready' -or
+                [string]$manifest.sourceKey -cne $item.Name -or [string]$manifest.artifactKind -cne 'file-1cd' -or
+                [string]$manifest.artifactPath -ine $artifactPath){throw 'FIXTURE_SEED_CACHE_OWNERSHIP_INVALID: retain the cache and inspect its manifest'}
+            $seedCaches+=@{root=$cache;leasePath=(Resolve-QualificationFixtureChild -Root $cache -RelativePath 'seed.lease');writerIntentPath=(Resolve-QualificationFixtureChild -Root $cache -RelativePath 'seed.writer.lock');rebuildMarkerPath=(Resolve-QualificationFixtureChild -Root $cache -RelativePath 'rebuild.marker.json')}
+            $files+=$artifactPath
+        }
+    }
     if([string]$claim.status -ceq 'disposed' -and $files.Count -eq 0){return $claim.disposal}
     $removed=@()
+    $seedLocks=New-Object Collections.Generic.List[object]
+    try {
+    # Reuse the installed cache's lock order before deleting any fixture bytes.
+    foreach($paths in $seedCaches){
+        $seedLocks.Add((Open-BranchSeedWriterIntent -Paths $paths -TimeoutSeconds 1))
+        $seedLocks.Add((Open-BranchSeedLease -Paths $paths -Mode write -TimeoutSeconds 1))
+    }
     foreach($file in $files){
         $settings=Get-OneCExecutionGuardSettings
         . (Join-Path $lib '../../../itl-remote-runner/scripts/ExecutionGuard.ps1')
@@ -103,6 +129,7 @@ function Remove-SourceQualificationDatabases {
     $claim|Add-Member -NotePropertyName disposal -NotePropertyValue $result -Force
     Write-QualificationFixtureJson -Path $claimPath -Value $claim
     return $result
+    } finally {for($i=$seedLocks.Count-1;$i -ge 0;$i--){$seedLocks[$i].Dispose()}}
 }
 
 if($ProjectRoot){

@@ -533,7 +533,12 @@ target; `SOURCE_INFOBASE_PATH` указывает на его восстанов
 выясняется внешнее изменение seed, затем применяется явное продолжение Capture.
 
 После upgrade/fresh Develop освобождает только производные `1Cv8.1CD` своего
-qualification target, в том числе после неудачного первого RestoreIB. Его
+qualification target, в том числе после неудачного первого RestoreIB. Сюда входит
+только его локальный `project/.agent-1c/branch-seed/<sourceKey>/infobase/1Cv8.1CD`:
+ready-манифест должен точно связывать ключ и путь, а существующие writer intent
+и write lease кэша берутся до удаления любых баз. Чужой/занятый кэш сохраняется
+с диагностикой; внешние cache roots и пользовательские project infobases
+не очищаются. Манифесты кэша сохраняются. Его
 candidate claim, общий Git, точные пути, per-infobase guard и эксклюзивный
 файловый handle обязательны. Исходный seed, capsule/DT, исходники, pending/cursor
 и журналы сохраняются; Release target продолжает жить по своему checkpoint.
