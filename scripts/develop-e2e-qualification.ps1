@@ -120,6 +120,37 @@ function Test-DevelopE2ENewerJourneyFailure {
     return $false
 }
 
+function Get-DevelopE2EOwnerInputContinuation {
+    param([string]$RepositoryRoot, [string]$QualifiedCommit, [string]$CurrentCommit, [string]$CurrentTree)
+    # Called only after exact complete journey input identity and cached report
+    # integrity have matched. Keep this rule local to Develop route proof.
+    $endpoint = Get-WorkflowContinuationEndpoint -RepositoryRoot $RepositoryRoot -QualifiedCommit $QualifiedCommit -CurrentCommit $CurrentCommit -CurrentTree $CurrentTree
+    if (-not $endpoint) { return $null }
+    $paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('diff','--name-only','-z',$QualifiedCommit,$CurrentCommit,'--'))
+    if ($paths.Count -eq 0) { return $null }
+    $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
+    $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $paths
+    foreach ($path in @($selection.unknownPaths)) {
+        $approvedScope = $false
+        foreach ($scope in $catalog.continuationScopes.PSObject.Properties) {
+            foreach ($pattern in @($scope.Value)) {
+                if (Test-WorkflowContinuationPattern -Path $path -Pattern ([string]$pattern)) { $approvedScope = $true; break }
+            }
+            if ($approvedScope) { break }
+        }
+        if (-not $approvedScope) { return $null }
+    }
+    $targeted = Get-ExactTargetedRunProof -RepositoryRoot $RepositoryRoot -Commit ([string]$endpoint.targetedCommit) -Tree ([string]$endpoint.targetedTree)
+    if (-not $targeted) { return $null }
+    return [pscustomobject]@{
+        qualifiedCommit=$QualifiedCommit; currentCommit=$CurrentCommit; currentTree=$CurrentTree
+        proofKind=[string]$endpoint.kind; targetedCommit=[string]$endpoint.targetedCommit; targetedTree=[string]$endpoint.targetedTree
+        sourceDeliveryBase=[string]$endpoint.sourceDeliveryBase; qualifiedQueueHead=[string]$endpoint.qualifiedQueueHead; currentQueueHead=[string]$endpoint.currentQueueHead
+        paths=$paths; scopes=@('owner-input-exact'); targetedRunPath=[string]$targeted.path
+        targetedRunSha256=[string]$targeted.sha256; targetedFinishedAt=[string]$targeted.run.finishedAt
+    }
+}
+
 function Get-DevelopE2EAncestorQualification {
     param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity)
     if ($null -eq $InputIdentity) { return $null }
@@ -142,6 +173,9 @@ function Get-DevelopE2EAncestorQualification {
             $expectedIdentity = if ($IdentitySha256) { $IdentitySha256 } else { [string]$report.identitySha256 }
             if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 $expectedIdentity -StandStateSha256 $StandStateSha256)) { continue }
             $continuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
+            if (-not $continuation -and [int]$InputIdentity.inventory.contract.schemaVersion -eq 2) {
+                $continuation = Get-DevelopE2EOwnerInputContinuation -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
+            }
             if (-not $continuation) { continue }
             if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) { continue }
             return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity }

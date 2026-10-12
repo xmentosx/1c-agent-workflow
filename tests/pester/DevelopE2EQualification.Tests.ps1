@@ -132,6 +132,33 @@ Describe "Develop E2E journey qualification router" {
         Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external | Should -BeNullOrEmpty
     }
 
+    It 'reuses an unaffected journey for a known independent owner while rejecting unknown paths and newly routed inputs' {
+        $f = New-AncestorJourneyFixture
+        $component = Join-Path $f.root 'component/worker.py'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $component) | Out-Null
+        [IO.File]::WriteAllText($component, '# independent component', [Text.UTF8Encoding]::new($false))
+        $f.catalog.contracts += [pscustomobject]@{id='component';owner='independent component';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/Fixture.Tests.ps1';paths=@('component/*');tests=@('tests/pester/Fixture.Tests.ps1')}
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'known independent owner'
+        $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        [void](Publish-AncestorFixtureTargeted -Fixture $f)
+        $proof = Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        @($proof.continuation.scopes) | Should -Contain 'owner-input-exact'
+        $unknown = Join-Path $f.root 'unknown-input.txt'
+        [IO.File]::WriteAllText($unknown, 'unowned', [Text.UTF8Encoding]::new($false))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown dependency'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath $unknown
+        $f.catalog.developJourneys.routes.fresh.contracts += 'component'
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'component becomes a journey input'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
     It 'requires an actual exact Targeted proof and refuses changed runtime or external bindings' {
         $f = New-AncestorJourneyFixture
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/pester/control.Tests.ps1'), '# changed static fixture', [Text.UTF8Encoding]::new($false))

@@ -115,3 +115,15 @@ Unknown owner field возвращает unknown identity. Исходные regr
 runtime/external binding, route budget, порчи cache и нового отказа сохранены.
 Это исправление разделяет доказательства static и runtime; конечный Develop
 по-прежнему требует обе части. Приёмка всей единицы принадлежит RegisterChange.
+
+618186a1 принят штатной регистрацией161/0/0,250166ms, включая все22 journey
+regressions. Дополнен оставшийся путь ancestor reuse: после совпадения complete
+schema2 journey identity и проверки cache/report SHA, дерева и исходного passed
+report допустим exact Targeted descendant с известными quality owners либо уже
+разрешёнными continuation scopes. Неизвестный path блокирует reuse. Это локально
+для Develop route; Release continuation и его границы не расширяются.
+Новая regression требует actual exact Targeted receipt, принимает независимый
+known component, отвергает unowned path и прекращает reuse, когда component
+добавлен в runtime route. Исходные newer-failure/corruption checks сохранены.
+Так независимая component-правка не заставляет повторять незатронутый1C journey;
+затронутый journey всё равно исполняется. Focused1/0, общая регистрация ожидается.
