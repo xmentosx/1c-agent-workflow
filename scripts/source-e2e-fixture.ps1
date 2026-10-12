@@ -204,6 +204,30 @@ function Get-SourceE2EFixtureCapsule {
     return $descriptor
 }
 
+function Invoke-SourceFixtureInitialRestore {
+    param([string]$Root,[string[]]$Arguments,[string]$AgentTarget,[string]$LogRoot)
+    $claim=Read-QualificationFixtureJson -Path (Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json')
+    if([string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.status -cne 'materializing' -or [string]$claim.branchRoot -ine $Root){throw 'FIXTURE_INITIAL_RESTORE_OWNERSHIP_INVALID'}
+    $envPath=Resolve-QualificationFixtureChild -Root $Root -RelativePath '.dev.env'
+    $original=[IO.File]::ReadAllBytes($envPath)
+    $text=Read-Utf8Text -Path $envPath
+    $initial=[regex]::Replace($text,'(?m)^[\t ]*IB_(?:USER|PASSWORD)[\t ]*=.*(?:\r?\n|$)','')
+    $user=[Environment]::GetEnvironmentVariable('IB_USER','Process')
+    $password=[Environment]::GetEnvironmentVariable('IB_PASSWORD','Process')
+    Write-Utf8Text -Path $envPath -Value $initial
+    $initialHash=(Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash
+    try {
+        [Environment]::SetEnvironmentVariable('IB_USER',$null,'Process')
+        [Environment]::SetEnvironmentVariable('IB_PASSWORD',$null,'Process')
+        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'release-e2e-restore' -Arguments $Arguments -AgentTarget $AgentTarget -LogRoot $LogRoot
+    } finally {
+        [Environment]::SetEnvironmentVariable('IB_USER',$user,'Process')
+        [Environment]::SetEnvironmentVariable('IB_PASSWORD',$password,'Process')
+        if((Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash -cne $initialHash){throw 'FIXTURE_INITIAL_ENV_CHANGED: retain owned target for diagnosis; repeat qualification with a new target'}
+        [IO.File]::WriteAllBytes($envPath,$original)
+    }
+}
+
 function New-SourceE2EFixtureProject {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$CandidateRoot, [string]$ProjectsRoot='C:\itlj', [string]$AgentTarget='', [string]$AiRulesSource='', [string]$ReceiptPath='')
     $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
@@ -264,7 +288,7 @@ function New-SourceE2EFixtureProject {
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $snapshot));Copy-Item -LiteralPath (Join-Path $capsule 'infobase.dt') -Destination $snapshot
     $logs=Join-Path $parent 'preparation-logs'
     $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'qualification-create-infobase' -Arguments @('-DevBranchName',$context.branchName) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 420
-    $restore=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'release-e2e-restore' -Arguments @('-DevBranchName',$context.branchName,'-ReleaseSnapshotPath',$snapshotRelative,'-PreserveReleaseSnapshotApplicationProof') -AgentTarget $AgentTarget -LogRoot $logs
+    $restore=Invoke-SourceFixtureInitialRestore -Root $branch -Arguments @('-DevBranchName',$context.branchName,'-ReleaseSnapshotPath',$snapshotRelative,'-PreserveReleaseSnapshotApplicationProof') -AgentTarget $AgentTarget -LogRoot $logs
     $config=Read-QualificationFixtureJson -Path (Join-Path $capsule 'release-e2e.json')
     $config.developDevBranchName=$context.branchName;$config.developWorktreePath=$branch
     $config.devBranchName=$context.branchName;$config.worktreePath=$branch

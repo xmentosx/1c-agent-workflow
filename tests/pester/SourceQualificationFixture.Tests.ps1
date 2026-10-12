@@ -82,6 +82,36 @@ Describe 'Owned qualification native database creation before restore' {
     }
 }
 
+Describe 'Initial restore credentials of a new owned database' {
+    It 'uses no seed credentials only during first RestoreIB and restores exact env bytes after failure=<failure>' -ForEach @(@{failure=$false},@{failure=$true}) {
+        $parent=Join-Path $TestDrive ('initial restore '+$failure);$root=Join-Path $parent 'branch'
+        [void][IO.Directory]::CreateDirectory($root)
+        Write-QualificationFixtureJson -Path (Join-Path $parent 'qualification-fixture.json') -Value @{kind='itl-qualification-fixture-target';status='materializing';branchRoot=$root}
+        $envPath=Join-Path $root '.dev.env'
+        $original=[Text.UTF8Encoding]::new($true).GetPreamble()+[Text.UTF8Encoding]::new($false).GetBytes("# keep`r`nIB_USER=seed user`r`nIB_PASSWORD=fixture secret`r`nOTHER=unchanged`r`n")
+        [IO.File]::WriteAllBytes($envPath,$original)
+        $oldUser=$env:IB_USER;$oldPassword=$env:IB_PASSWORD
+        try {
+            $env:IB_USER='inherited user';$env:IB_PASSWORD='inherited secret'
+            Mock Invoke-SourceFixtureInstalledAction {
+                param($Root,$Action)
+                $Action|Should -BeExactly 'release-e2e-restore'
+                $text=Read-Utf8Text -Path (Join-Path $Root '.dev.env')
+                $text|Should -Not -Match '(?m)^IB_(USER|PASSWORD)='
+                $text|Should -Match 'OTHER=unchanged'
+                $env:IB_USER|Should -BeNullOrEmpty;$env:IB_PASSWORD|Should -BeNullOrEmpty
+                if($failure){throw 'original restore failure'}
+                return [pscustomobject]@{exitCode=0}
+            }
+            if($failure){{Invoke-SourceFixtureInitialRestore -Root $root -Arguments @('-DevBranchName','negative') -AgentTarget kilocode -LogRoot $root}|Should -Throw '*original restore failure*'}
+            else{(Invoke-SourceFixtureInitialRestore -Root $root -Arguments @('-DevBranchName','negative') -AgentTarget kilocode -LogRoot $root).exitCode|Should -Be 0}
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($envPath))|Should -BeExactly ([Convert]::ToBase64String($original))
+            $env:IB_USER|Should -BeExactly 'inherited user';$env:IB_PASSWORD|Should -BeExactly 'inherited secret'
+            Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1
+        }finally{$env:IB_USER=$oldUser;$env:IB_PASSWORD=$oldPassword}
+    }
+}
+
 Describe 'Owned qualification fixture capsule and lifecycle context' {
     BeforeEach {
         Mock Invoke-SourceFixtureInstalledAction {

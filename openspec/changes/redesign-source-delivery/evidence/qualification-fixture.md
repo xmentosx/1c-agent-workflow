@@ -162,3 +162,15 @@ Source initializer использует существующий candidate agent
 probe теперь стартует отдельный PowerShell5.1 процесс и проверяет те же точные
 stdout/stderr/exit23. Оба прошли. Неуспешные owned проекты сохранены; snapshots,
 seed state и installed RestoreIB не менялись. Дополнительной runtime authority нет.
+
+20122216 зарегистрирован за49500ms. Реальный CREATEINFOBASE прошёл, затем
+installed RestoreIB отказал: «Пользователь ИБ не идентифицирован». Созданная
+пустая база ещё не содержит seed user, а original .dev.env передавал его /N.
+Factory только на первом восстановлении нового materializing target временно
+исключает IB_USER/IB_PASSWORD из owned .dev.env и своего дочернего environment.
+После успеха или отказа восстанавливает исходные байты env и inherited credentials;
+неожиданное изменение временного env не перезаписывается. Последующий reproducer
+получает исходные credentials, восстановленные вместе с пользователями из DT.
+Installed RestoreIB, его assertions/guard и исходный seed не меняются. Две
+адресные регрессии успеха/отказа проверяют absence credentials во время restore,
+сохранение остальных настроек и exact byte restoration с BOM/CRLF.
