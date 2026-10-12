@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,7 +40,18 @@ def atomic_json(path, value):
             stream.write(canonical(value))
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        # Windows readers may briefly deny rename/delete sharing. Keep the old
+        # state intact and retry only that native boundary within one second.
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                os.replace(temp, path)
+                break
+            except OSError as exc:
+                remaining = deadline - time.monotonic()
+                if getattr(exc, "winerror", None) not in (5, 32, 33) or remaining <= 0:
+                    raise
+                time.sleep(min(0.05, remaining))
     finally:
         temp.unlink(missing_ok=True)
 

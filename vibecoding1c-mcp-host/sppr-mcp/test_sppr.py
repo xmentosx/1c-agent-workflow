@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -180,6 +181,64 @@ class FakeEmbeddings:
         if self.fail:
             raise SpprError("fixture provider unavailable")
         return [vector([len(text) % 7 + 1, text.count("а") + 1, text.count("п") + 1, 1], self.dimension) for text in texts]
+
+
+class AtomicJsonTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows rename sharing contract")
+    def test_native_reader_contention_preserves_old_state_then_commits_unicode(self):
+        with tempfile.TemporaryDirectory(prefix="СППР с пробелом ") as root:
+            path = Path(root) / "состояние.json"
+            atomic_json(path, {"value": "старое"})
+            probe = Path(root) / "probe.json"
+            probe.write_text("probe", encoding="utf-8")
+            reader = path.open("rb")
+            release = threading.Timer(0.2, reader.close)
+            original_replace = os.replace
+            try:
+                with self.assertRaises(OSError) as blocked:
+                    original_replace(probe, path)
+                self.assertIn(blocked.exception.winerror, (5, 32, 33))
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"value": "старое"})
+                with patch("sppr_core.os.replace", wraps=original_replace) as replacing:
+                    release.start()
+                    atomic_json(path, {"value": "новое Кириллица"})
+                    self.assertGreater(replacing.call_count, 1)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"value": "новое Кириллица"})
+                self.assertEqual(list(Path(root).glob("*.tmp")), [])
+            finally:
+                release.cancel()
+                if release.ident is not None:
+                    release.join()
+                reader.close()
+
+    def test_persistent_windows_denial_is_bounded_and_keeps_committed_state(self):
+        with tempfile.TemporaryDirectory(prefix="SPPR state ") as root:
+            path = Path(root) / "state.json"
+            atomic_json(path, {"value": "old"})
+            denied = PermissionError(13, "denied")
+            denied.winerror = 5
+            with patch("sppr_core.os.replace", side_effect=denied) as replacing, \
+                    patch("sppr_core.time.monotonic", side_effect=[0.0, 0.0, 0.6, 1.1]), \
+                    patch("sppr_core.time.sleep"):
+                with self.assertRaises(PermissionError) as failure:
+                    atomic_json(path, {"value": "new"})
+            self.assertIs(failure.exception, denied)
+            self.assertGreater(replacing.call_count, 1)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"value": "old"})
+            self.assertEqual(list(Path(root).glob("*.tmp")), [])
+
+    def test_unrelated_replace_failure_is_not_retried(self):
+        with tempfile.TemporaryDirectory(prefix="SPPR state ") as root:
+            path = Path(root) / "state.json"
+            atomic_json(path, {"value": "old"})
+            failure = OSError(22, "invalid operation")
+            with patch("sppr_core.os.replace", side_effect=failure) as replacing:
+                with self.assertRaises(OSError) as raised:
+                    atomic_json(path, {"value": "new"})
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(replacing.call_count, 1)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"value": "old"})
+            self.assertEqual(list(Path(root).glob("*.tmp")), [])
 
 
 class SpprTests(unittest.TestCase):

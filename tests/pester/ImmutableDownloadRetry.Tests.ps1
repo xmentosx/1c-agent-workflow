@@ -351,8 +351,11 @@ Describe "Immutable asset download retry policy" {
         $catalog = Get-QualityContractCatalog -RepositoryRoot $script:RepoRoot
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1")
 
-        @($selection.contracts.id) | Should -Be @("immutable-download")
+        # These consumers call the shared immutable download boundary directly.
+        @($selection.contracts.id | Sort-Object) | Should -Be @("immutable-download", "pester-cache-compatibility", "pester-shard-identity", "release-readiness-tests")
         foreach ($testPath in @(
+            "tests/pester/PesterCacheCompatibility.Tests.ps1",
+            "tests/pester/PesterShardIdentity.Tests.ps1",
             "tests/pester/DependencyLocks.Tests.ps1",
             "tests/pester/GitHubDependencyFallback.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
