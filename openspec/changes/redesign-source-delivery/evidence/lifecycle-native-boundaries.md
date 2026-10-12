@@ -38,3 +38,30 @@ receipt проверяется через Status, а не повторным gat
 сохранён с явным ограничением: наличие и порядок строк не доказывают реальную
 последовательность процессов. Ни дешёвый seam, ни этот review не дают основания
 удалить обязательную PM5 negative, rollback, fresh passed или SHA-проверки.
+
+## Обновление пропущенной Vanessa build fixture — 2026-10-12
+
+Общий Develop `d7a4dc52` прошёл native upgrade за2324386ms, затем Pester
+остановился на трёх случаях VanessaBuildRuntime: подставной Start-Process
+не предоставлял Handle. После его добавления focused воспроизвёл следующую
+неполноту того же mock: отсутствовали перенаправленные stdout/stderr файлы.
+Настоящий Start-Process создаёт оба файла и возвращает System.Diagnostics.Process
+с Handle; это необходимые части используемого native API, а не новые условия
+ожидаемого результата. Production owner не менялся.
+
+Фикстура теперь принимает штатные redirect arguments, создаёт пустые stream
+файлы при успешном старте и предоставляет Handle. Исходный отказ запуска
+происходит до создания файлов. Fake PID, inventory чужого клиента и живого
+descendant, exit7, admissions, workload и все исходные assertions сохранены.
+Все15 случаев прошли focused за12.38s. Это исправление контракта mock, не live
+проверка настоящего OneScript/1С launcher.
+
+Failed общий shard plan:47 executed/110 reused, fingerprint54015ms,
+workerSpan553925ms; один worker150 содержит12 passed/3 failed. Остальные14
+pending групп остановлены fail-fast, поэтому общий исход не восстанавливается
+по этим числам. Сообщение omitted/duplicated files сопровождает неполное
+выполнение; самостоятельный дефект inventory этим не доказан.
+Upgrade report SHA256 f011d692ebf9131b055cd156a4899cd8dc24ad6d9fd951f4f7d28604b6ea8255,
+tree ba5fd118dfce73f613fb755cbcd23ebabbc7f04c, shared cache manifest сохранён.
+Повтор должен использовать этот proof при неизменных native inputs. До
+проверки продолжения и отдельной fresh journey общая квалификация не принята.

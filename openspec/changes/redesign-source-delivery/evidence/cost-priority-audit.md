@@ -88,7 +88,7 @@ lifecycle-split-integrity.json и штатный registration/shards summary.
 после исправления обоих счётчиков количества выбранных файлов. Все305 исходных
 cases passed: merge67, worktrees30, fork32, load/runtime176. В исходном запуске
 split интервал четырёх групп10:21:27.450–10:26:32.096UTC составил304.646s
-против793.036s прежнего single-file shard. Сумма CPU/elapsed durations групп
+против793.036s прежнего single-file shard. Сумма elapsed durations групп
 не уменьшилась:283.362+259.572+165.705+178.203s. Выигрыш относится к wall time
 за счёт overlap; фоновая нагрузка двух запусков различалась. Общий выпуск этим
 измерением не квалифицирован. Raw accepted-c0b48c89 и исходные worker results
@@ -126,4 +126,6 @@ report допустим exact Targeted descendant с известными qualit
 known component, отвергает unowned path и прекращает reuse, когда component
 добавлен в runtime route. Исходные newer-failure/corruption checks сохранены.
 Так независимая component-правка не заставляет повторять незатронутый1C journey;
-затронутый journey всё равно исполняется. Focused1/0, общая регистрация ожидается.
+затронутый journey всё равно исполняется. Focused1/0; `d7a4dc52` принят штатной
+регистрацией149/0/0 за130488ms (raw132797ms),9 executed/0 reused.
+Общая live-квалификация выполняется отдельно; этот Targeted не выдаётся за неё.

@@ -32,3 +32,8 @@ consumers. Focused original case passed1/0. No dependency or reproducer is remov
 
 This does not establish that earlier SPPR overlap failures had the same cause.
 Their original workload and exception-cause instrumentation remain intact.
+
+Normal registration `0d337815` passed207/0/0 in53207ms (raw54715ms).
+The native HostSppr wrapper executed all64 Python cases; HostTooling and
+ParserDocs remained static, and the explicitly changed ImmutableDownloadRetry
+suite also passed. No unrelated Python component or1C journey was selected.

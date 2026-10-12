@@ -5,8 +5,33 @@
 не требует последовательного индивидуального review всех 2814 определений.
 Счётчик review отражает исследование, а не удалённые тесты или ускорение.
 Результат оптимизации принимается по реализованному изменению, сохранённому
-покрытию и сравнимому измерению. Сейчас приоритет — повторный отказ SPPR
-в общей регистрации и завершение live-приёмки source qualification.
+покрытию и сравнимому измерению. Реализованные результаты вынесены в
+[cost-priority-audit](cost-priority-audit.md): lifecycle wall interval304.646s
+вместо793.036s с305/305 сохранённых cases, отдельная identity native journey
+и Pester layout, reuse unaffected known owner. Три дублирующих Python policy
+definitions удалены с переносом уникальных требований в Pester SourcePolicy;
+это конкретное устранение дублей, а не массовое сокращение тестов.
+Повторный Windows state replacement отказ SPPR воспроизведён и исправлен в
+[atomic boundary](windows-state-replace.md). Причина более ранних intermittent
+overlap failures не доказана; original workload и cause instrumentation сохранены.
+Финальная live-приёмка общего кандидата продолжается.
+
+Измерения короткого пути: docs-only0a47ff2b check27118ms без Python/1C;
+SPPR0d337815 check53207ms/raw54715ms, выполняются HostSppr и общие static
+HostTooling/ParserDocs плюс явно изменённый ImmutableDownloadRetry. Посторонние
+Python-компоненты не выбраны. Ctrl+C e29e65f1 check36850ms/raw38668ms.
+
+Реальный retry после исправления счётчика:7536aa9b failed на catalog assertion,
+raw359533ms → c0b48c89 passed446/0/0,check86530ms/raw88106ms,
+2 executed/11 reused,fingerprint4141ms,worker span76622ms. Это сравнение
+одного selection с исправлением metadata assertion; failed raw не сохранил
+общий case count, поэтому он не восстанавливается по passed запуску. Все305
+исходных lifecycle cases в первом запуске подтверждены worker results. Эти группы
+сохранены в cache. Оно не выдаётся за unchanged whole-tree benchmark.
+Отдельный same-input native fixture cold6161ms/warm3518ms с1/0→0/1
+executed/reused сохранён в [pester-runtime-proof](pester-runtime-proof.md).
+Raw source run/index SHA зафиксированы в ignored source-registration-comparison.json.
+Полное end-to-end время публикации и доставки остаётся отдельной приёмкой V.6.
 
 Исходный inventory `fa0e3c91` сохраняет 2814 определений. Индивидуальные решения
 находятся в предметных ledgers; [review-index.csv](review-index.csv) связывает
@@ -46,7 +71,9 @@ Static cache review сохраняет ограничение
 Параметризованные строки deduplicate по исходному
 определению. Review wrapper не означает review вложенных Python/Node cases;
 AST transfer proof сам по себе не считается решением о необходимости.
-Любое определение, отсутствующее в индексе, по-прежнему требует review.
+Определения, отсутствующие в индексе, остаются нерассмотренными. Их предметный
+review выполняется при конкретном сигнале стоимости, нестабильности или лишнего
+выбора; завершение текущего плана не требует сплошного чтения остатка.
 
 Текущие 20 DevelopE2EQualification разобраны в
 [отдельном ledger](develop-qualification-review.csv), вместе с ограничениями
@@ -104,9 +131,9 @@ assertion.
 исходных definitions этого файла. 47 retain, девять retain с конкретным follow-up;
 целых тестов не удалено. Пять независимых групп сохраняют все исходные It и
 expanded cases; зарегистрированы в `2a8c2052`: 206/0/0, check 390564 ms.
-Целевой бюджет 300 s ещё превышен. Следующий priority — оставшиеся
-CompactItlRunner и DevBranchLifecycle, а также не закрытые follow-ups уже
-рассмотренных случаев. Остальные pending не объявляются рассмотренными по AST transfer.
+В этом историческом замере целевой бюджет 300 s был превышен. Последующая
+работа с CompactItlRunner и DevBranchLifecycle и её результаты описаны ниже и
+в cost-priority-audit. Остальные pending не объявляются рассмотренными по AST transfer.
 
 ## CompactItlRunner
 

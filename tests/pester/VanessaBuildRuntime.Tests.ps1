@@ -25,9 +25,15 @@
             }
             function Publish-Agent1cLifecycleOperationProcessEvidence {}
             function Start-Process {
+                param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru,
+                    $RedirectStandardOutput, $RedirectStandardError)
                 if ($Failure -eq 'launch') { throw 'native start outcome unknown' }
+                # A completed redirected native launch creates both streams,
+                # even when the launcher writes no output.
+                [IO.File]::WriteAllText($RedirectStandardOutput, '')
+                [IO.File]::WriteAllText($RedirectStandardError, '')
                 $script:BuildMockLaunchBirth = [DateTime]::UtcNow
-                $process = [pscustomobject]@{ Id = 6100; ProcessName = 'oscript'; StartTime = $script:BuildMockLaunchBirth;
+                $process = [pscustomobject]@{ Id = 6100; Handle = [IntPtr]::Zero; ProcessName = 'oscript'; StartTime = $script:BuildMockLaunchBirth;
                     ExitTime = [DateTime]::UtcNow; HasExited = $true; ExitCode = $(if ($Failure -eq 'exit') { 7 } else { 0 }) }
                 $process | Add-Member ScriptMethod Refresh {}
                 $process | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds) $true }
