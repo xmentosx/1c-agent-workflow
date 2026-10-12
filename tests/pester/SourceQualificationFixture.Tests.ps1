@@ -80,6 +80,53 @@ Describe 'Owned qualification native database creation before restore' {
         {New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath unused}|Should -Throw '*FIXTURE_CREATE_TARGET_INVALID*'
         Should -Invoke Invoke-WithOneCSessionAdmissionContext -Times 0
     }
+    It 'disposes only derived Develop database bytes with real guard and file ownership: <scenario>' -ForEach @(
+        @{scenario='ready'},@{scenario='materializing'},@{scenario='locked'},@{scenario='foreign-candidate'},@{scenario='release'}
+    ) {
+        $candidate='a'*40
+        $claimPath=Join-Path $parent 'qualification-fixture.json'
+        $claim=Read-QualificationFixtureJson -Path $claimPath
+        $claim|Add-Member phase $(if($scenario -eq 'release'){'Release'}else{'Develop'})
+        $claim|Add-Member candidateCommit $candidate
+        $claim.status=if($scenario -eq 'materializing'){'materializing'}else{'ready'}
+        Write-QualificationFixtureJson -Path $claimPath -Value $claim
+        $database=Join-Path $script:createBase '1Cv8.1CD'
+        Write-Utf8Text -Path $database -Value 'derived database bytes'
+        $snapshot=Join-Path $branch '.agent-1c/snapshots/seed.dt'
+        Write-Utf8Text -Path $snapshot -Value 'immutable snapshot'
+        $log=Join-Path $parent 'preparation-logs/restore.log'
+        Write-Utf8Text -Path $log -Value 'original restore evidence'
+        $foreign=Join-Path $parent 'project/.agent-1c/infobases/user/1Cv8.1CD'
+        Write-Utf8Text -Path $foreign -Value 'seed database bytes'
+        $script:disposalGuardRoot=Join-Path $parent 'custom guard root'
+        Mock Get-OneCExecutionGuardSettings {[pscustomobject]@{root=$script:disposalGuardRoot;python='';waitTimeoutSeconds=5}}
+        $handle=$null
+        try {
+            if($scenario -eq 'locked'){
+                $handle=[IO.File]::Open($database,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+                {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate}|Should -Throw
+                (Read-QualificationFixtureJson -Path $claimPath).status|Should -BeExactly 'ready'
+                $handle.Dispose();$handle=$null
+            }
+            if($scenario -in @('foreign-candidate','release')){
+                $expected=if($scenario -eq 'foreign-candidate'){'b'*40}else{$candidate}
+                {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $expected}|Should -Throw '*FIXTURE_DISPOSE_OWNERSHIP_INVALID*'
+                Test-Path -LiteralPath $database|Should -BeTrue
+                Test-Path -LiteralPath $script:disposalGuardRoot|Should -BeFalse
+            } else {
+                $result=Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate
+                $result.status|Should -BeExactly 'disposed'
+                @($result.removedDatabases).Count|Should -Be 1
+                Test-Path -LiteralPath $database|Should -BeFalse
+                Test-Path -LiteralPath $script:disposalGuardRoot|Should -BeTrue
+                (Read-QualificationFixtureJson -Path $claimPath).status|Should -BeExactly 'disposed'
+                {Remove-SourceQualificationDatabases -BranchRoot $branch -CandidateCommit $candidate}|Should -Not -Throw
+            }
+            (Read-Utf8Text -Path $snapshot)|Should -BeExactly 'immutable snapshot'
+            (Read-Utf8Text -Path $log)|Should -BeExactly 'original restore evidence'
+            (Read-Utf8Text -Path $foreign)|Should -BeExactly 'seed database bytes'
+        } finally {if($handle){$handle.Dispose()}}
+    }
 }
 
 Describe 'Initial restore credentials of a new owned database' {

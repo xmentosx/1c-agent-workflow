@@ -563,6 +563,8 @@ $standBranchHeadAtStart = ""
 $trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
 $seedProjectRoot = $ProjectRoot
 $qualificationFixture = $null
+$fixturePath = Join-Path $outputRoot 'qualification-fixture.json'
+$fixtureDisposal = $null
 try {
     if ($null -ne $artifactBinding) {
         $env:VANESSA_MCP_CLIENT_CFE_PATH = [string]$artifactBinding.paths.VANESSA_MCP_CLIENT_CFE_PATH
@@ -766,6 +768,19 @@ try {
     }
     $env:ITL_WORKFLOW_SOURCE_PATH = $previousWorkflowSource
     $env:ITL_AI_RULES_SOURCE_PATH = $previousRulesSource
+    if($requestedJourneys -contains 'upgrade' -and (Test-Path -LiteralPath $fixturePath -PathType Leaf)){
+        try {
+            # Prepare writes its receipt before native materialization, including failed restores.
+            if(-not $qualificationFixture){$qualificationFixture=Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8|ConvertFrom-Json}
+            $disposalPath=Join-Path $outputRoot 'qualification-fixture-disposal.json'
+            [void](Invoke-DevelopProcess -Name 'dispose-upgrade-fixture' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-create-infobase.ps1') -Arguments @(
+                '-Operation','Dispose','-ProjectRoot',[string]$qualificationFixture.branchRoot,'-ExpectedCandidate',$candidateCommit,'-OutputPath',$disposalPath) -TimeoutSeconds 180)
+            $fixtureDisposal=Get-Content -LiteralPath $disposalPath -Raw -Encoding UTF8|ConvertFrom-Json
+        } catch {
+            $fixtureDisposal=@{status='retained';error=$_.Exception.Message;nextAction='After the base owner exits, repeat the recorded dispose-upgrade-fixture command; preserve snapshots and diagnostics.'}
+            Write-Warning "Develop fixture database disposal deferred: $($_.Exception.Message)"
+        }
+    }
     $payload = [ordered]@{
         schemaVersion = 2
         kind = "itl-develop-e2e"
@@ -777,6 +792,7 @@ try {
         projectRoot = $ProjectRoot
         seedProjectRoot = $seedProjectRoot
         qualificationFixture = $qualificationFixture
+        fixtureDisposal = $fixtureDisposal
         freshProjectRoot = $freshRoot
         freshBranchRoot = $freshBranchRoot
         staleStandCleanup = $staleStandCleanup

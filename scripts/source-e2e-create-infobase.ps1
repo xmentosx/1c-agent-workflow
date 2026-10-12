@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$ProjectRoot='', [string]$DevBranchName='')
+param([string]$ProjectRoot='', [string]$DevBranchName='', [ValidateSet('Create','Dispose')][string]$Operation='Create', [string]$ExpectedCandidate='', [string]$OutputPath='')
 # Source-only preparation. The installed baseline still owns RestoreIB.
 $lib=Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib'
 . (Join-Path $lib 'agent-1c.core.ps1')
@@ -49,6 +49,62 @@ function New-SourceQualificationInfoBase {
     return [pscustomobject]@{infoBasePath=$base;logPath=$log}
 }
 
+function Remove-SourceQualificationDatabases {
+    param([string]$BranchRoot, [string]$CandidateCommit)
+    $branch=[IO.Path]::GetFullPath($BranchRoot).TrimEnd('\','/')
+    $parent=Split-Path -Parent $branch
+    $claimPath=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'qualification-fixture.json'
+    $claim=Read-QualificationFixtureJson -Path $claimPath
+    if($CandidateCommit -notmatch '^[0-9a-f]{40}$' -or
+        [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
+        [string]$claim.status -notin @('materializing','ready','disposed') -or [string]$claim.candidateCommit -cne $CandidateCommit -or
+        [string]$claim.branchRoot -ine $branch -or [string]$claim.projectRoot -ine (Join-Path $parent 'project') -or
+        $branch -ine (Join-Path $parent 'branch')) {throw 'FIXTURE_DISPOSE_OWNERSHIP_INVALID'}
+    $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $branch
+    if($common -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot ([string]$claim.projectRoot))){throw 'FIXTURE_DISPOSE_GIT_OWNERSHIP_INVALID'}
+    $root=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'branch/.agent-1c/infobases'
+    $directories=[Collections.Generic.Stack[string]]::new()
+    if(Test-Path -LiteralPath $root -PathType Container){$directories.Push($root)}
+    $files=@()
+    while($directories.Count){
+        $directory=$directories.Pop()
+        foreach($item in @(Get-ChildItem -LiteralPath $directory -Force)){
+            # Validate before descending: a reparse directory must never be traversed.
+            $relative=$item.FullName.Substring($parent.Length+1)
+            $safe=Resolve-QualificationFixtureChild -Root $parent -RelativePath $relative
+            if($item.PSIsContainer){$directories.Push($safe)}
+            elseif($item.Name -ieq '1Cv8.1CD'){$files+=$safe}
+        }
+    }
+    if([string]$claim.status -ceq 'disposed' -and $files.Count -eq 0){return $claim.disposal}
+    $removed=@()
+    foreach($file in $files){
+        $settings=Get-OneCExecutionGuardSettings
+        . (Join-Path $lib '../../../itl-remote-runner/scripts/ExecutionGuard.ps1')
+        $owner=$null
+        try {
+            $owner=Start-ItlExecutionGuardHost -Python $settings.python -Request @{
+                schemaVersion=1;root=$settings.root;bases=@(@{kind='file';path=(Split-Path -Parent $file)})
+                operation='source-fixture-database-cleanup';executionId=[guid]::NewGuid().ToString('N');timeout=([math]::Min(30,$settings.waitTimeoutSeconds))
+            }
+            [void](Assert-ItlExecutionGuardHost -Owner $owner)
+            [void](Resolve-QualificationFixtureChild -Root $parent -RelativePath $file.Substring($parent.Length+1))
+            # The guard excludes workflow writers; the exclusive handle also excludes native clients.
+            $stream=[IO.FileStream]::new($file,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::DeleteOnClose)
+            try {$bytes=$stream.Length} finally {$stream.Dispose()}
+            $removed+=@{path=$file;bytes=$bytes}
+            Write-Host "Disposed derived fixture database: $file; bytes=$bytes"
+            [void](Complete-ItlExecutionGuardHost -Owner $owner -Result succeeded -Artifacts @($claimPath))
+            $owner=$null
+        } finally {if($owner){Close-ItlExecutionGuardHost -Owner $owner}}
+    }
+    $result=@{status='disposed';removedDatabases=$removed;candidateCommit=$CandidateCommit;finishedAt=[DateTime]::UtcNow.ToString('o')}
+    $claim.status='disposed'
+    $claim|Add-Member -NotePropertyName disposal -NotePropertyValue $result -Force
+    Write-QualificationFixtureJson -Path $claimPath -Value $claim
+    return $result
+}
+
 if($ProjectRoot){
     $ErrorActionPreference='Stop'
     $utf8=[Text.UTF8Encoding]::new($false);[Console]::InputEncoding=$utf8;[Console]::OutputEncoding=$utf8;$OutputEncoding=$utf8
@@ -57,5 +113,8 @@ if($ProjectRoot){
     $script:ConfigPath=Join-Path $script:ProjectRoot '.agent-1c/project.json'
     Import-DotEnv -Path (Join-Path $script:ProjectRoot '.dev.env')
     Read-ProjectConfig
-    $null=New-SourceQualificationInfoBase -BranchRoot $script:ProjectRoot -BranchName $DevBranchName -PlatformPath (Get-PlatformPath)
+    if($Operation -eq 'Dispose'){
+        $result=Remove-SourceQualificationDatabases -BranchRoot $script:ProjectRoot -CandidateCommit $ExpectedCandidate
+        if($OutputPath){Write-QualificationFixtureJson -Path $OutputPath -Value $result}
+    } else {$null=New-SourceQualificationInfoBase -BranchRoot $script:ProjectRoot -BranchName $DevBranchName -PlatformPath (Get-PlatformPath)}
 }
