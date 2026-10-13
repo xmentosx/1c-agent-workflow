@@ -12,6 +12,31 @@
         $HelperText = $context.HelperText
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
+        function Write-McpFixturePackage {
+            param([string]$Root,[object]$Lock)
+            $folder=Join-Path $Root 'templates'
+            [void][IO.Directory]::CreateDirectory($folder)
+            [IO.File]::WriteAllText((Join-Path $folder 'dependency-lock.json'),($Lock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
+        }
+
+        function New-McpCfeFixturePackage {
+            param([string]$ClientPath,[string]$ExtensionPath,[string]$ExtensionVersion)
+            $lock=Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            foreach($pair in @(@('clientMcp',$ClientPath,'v0.6.5'),@('vaExtension',$ExtensionPath,$ExtensionVersion))) {
+                $entry=$lock.dependencies.vanessaMcp.($pair[0])
+                $entry.version=$pair[2]
+                $entry.assetName=Split-Path -Leaf $pair[1]
+                $entry.sha256=(Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            # The scoped build archive must describe this fixture's paired CFE,
+            # rather than the real package archive inherited from Targeted.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $archivePath=Join-Path (Split-Path -Parent (Split-Path -Parent $ExtensionPath)) 'paired-fixture.zip'
+            [IO.Compression.ZipFile]::CreateFromDirectory((Split-Path -Parent $ExtensionPath),$archivePath)
+            $lock.dependencies.vanessaAutomation.sha256=(Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lock.dependencies.vanessaAutomation.url=([Uri]$archivePath).AbsoluteUri
+            return $lock
+        }
     }
 
     It "discovers SPPR in the host registry and writes a remote client without local provisioning" -Tag Sppr {
@@ -1556,6 +1581,7 @@ enabled = true
             [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('fixture native CFE exact locked bytes'))
             $pin.sha256 = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
             $pin.url = 'https://unpublished.invalid/client-mcp/' + [string]$pin.assetName
+            Write-McpFixturePackage -Root $root -Lock $lock
             [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), ($lock | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
             $oldPath = Join-Path $cache 'vanessa-mcp-clientMcp/v0.6.5/d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f/client_mcp.cfe'
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $oldPath) | Out-Null
@@ -1642,6 +1668,7 @@ enabled = true
         $branchRoot = Join-Path $tempRoot "branch"
         $oldArtifactCacheRoot = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", "Process")
         $oldClientCfePath = [Environment]::GetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", "Process")
+        $oldBuildArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
 
         try {
             [Environment]::SetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", $null, "Process")
@@ -1653,6 +1680,10 @@ enabled = true
             $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.32-itl-r1.cfe"
             Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
             Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
+            $fixturePackage=New-McpCfeFixturePackage -ClientPath $clientSource -ExtensionPath $extensionSource -ExtensionVersion '1.2.043.42'
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', (Join-Path $tempRoot 'paired-fixture.zip'), 'Process')
+            Write-McpFixturePackage -Root $masterRoot -Lock $fixturePackage
+            Write-McpFixturePackage -Root $branchRoot -Lock $fixturePackage
             Set-Content -LiteralPath (Join-Path $masterRoot ".dev.env") -Encoding UTF8 -Value @"
 DEPENDENCY_MODE=fresh
 "@
@@ -1716,6 +1747,7 @@ DEPENDENCY_MODE=fresh
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $oldArtifactCacheRoot, "Process")
             [Environment]::SetEnvironmentVariable("VANESSA_MCP_CLIENT_CFE_PATH", $oldClientCfePath, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $oldBuildArchive, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -1732,6 +1764,7 @@ DEPENDENCY_MODE=fresh
             "VANESSA_MCP_VA_EXTENSION_CFE_PATH",
             "VANESSA_MCP_VA_EXTENSION_CFE_VERSION",
             "VANESSA_MCP_VA_EXTENSION_CFE_SHA256",
+            "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE",
             "ITL_ARTIFACT_CACHE_ROOT"
         )
         $previousEnvironment = @{}
@@ -1749,6 +1782,8 @@ DEPENDENCY_MODE=fresh
             Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
             Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
             $invalidExtensionPath = (Join-Path $tempRoot "legacy\VAExtension.1.29.cfe") + "C:\Users\other\worktree\.agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe"
+            Write-McpFixturePackage -Root $tempRoot -Lock (New-McpCfeFixturePackage -ClientPath $clientSource -ExtensionPath $extensionSource -ExtensionVersion '1.2.043.28')
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', (Join-Path $tempRoot 'paired-fixture.zip'), 'Process')
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value @"
 DEPENDENCY_MODE=fresh
 VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
@@ -3158,6 +3193,10 @@ url = "http://localhost:9999/mcp"
             Set-Content -LiteralPath (Join-Path $projectRoot ".cursor\skills\keep-me.md") -Encoding UTF8 -Value "cursor-skill-marker"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl\SKILL.md") -Encoding UTF8 -Value "codex-skill-marker"
             Set-Content -LiteralPath $ondemandExe -Encoding UTF8 -Value "dummy-ondemand"
+            $fixtureLock=Get-Content -LiteralPath (Join-Path $projectRoot '.agent-1c/dependency-lock.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $fixtureLock.dependencies.itlOndemandMcp.sha256=(Get-FileHash -LiteralPath $ondemandExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText((Join-Path $projectRoot '.agent-1c/dependency-lock.json'),($fixtureLock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
+            Write-McpFixturePackage -Root $projectRoot -Lock $fixtureLock
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $ondemandExe, "Process")
 
             $probe = Invoke-Agent1cEntrypointProbe `

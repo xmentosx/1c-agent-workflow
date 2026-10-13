@@ -3,6 +3,13 @@
     $context = Initialize-WorkflowPesterContext
     $helperPath = $context.HelperPath
 
+    function Copy-PendingMergeFixtureDependencyTemplate {
+        param([string]$Root)
+        $templates=Join-Path $Root 'templates'
+        [void][IO.Directory]::CreateDirectory($templates)
+        Copy-Item -LiteralPath (Join-Path $context.RepoRoot 'templates/dependency-lock.json') -Destination $templates
+    }
+
     function New-MovedWorkflowUpdateFixture {
         param([string]$Root, [string]$RepositoryRoot)
         $main = Join-Path $Root 'Основной проект'
@@ -55,6 +62,7 @@
         & git -C $main worktree move $old $moved
         if ($LASTEXITCODE -ne 0) { throw 'Real Git worktree move failed' }
         [IO.File]::WriteAllText((Join-Path $source 'workflow.txt'), 'new', $utf8)
+        Copy-PendingMergeFixtureDependencyTemplate -Root $source
         return [pscustomobject]@{main=$main;old=$old;moved=$moved;runtimeFields=$runtimeFields;
             statePath=(Join-Path $moved $stateRelative);cursorPath=(Join-Path $moved $cursorRelative);
             recordPath=(Join-Path $moved $recordRelative);
@@ -407,6 +415,7 @@ Describe 'Workflow commit over a stopped development merge' {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                 [IO.File]::WriteAllText($path, $version, [Text.UTF8Encoding]::new($false))
             }
+            Copy-PendingMergeFixtureDependencyTemplate -Root $sourceRoot
             & git -C $sourceRoot init --quiet
             & git -C $sourceRoot config user.email 'workflow-transition@example.invalid'
             & git -C $sourceRoot config user.name 'Workflow Transition Test'
@@ -563,6 +572,7 @@ Describe 'Workflow commit over a stopped development merge' {
         [IO.File]::WriteAllText($statePath, '{"devBranchName":"stopped","devBranchInfoBasePath":""}', [Text.UTF8Encoding]::new($false))
         $sourceCandidate = [pscustomobject]@{
             root=$source;repo='fixture';ref='candidate';commit=('2' * 40);source='path' }
+        Copy-PendingMergeFixtureDependencyTemplate -Root $source
         $interrupted = & {
             . $helperPath -ProjectRoot $branch -Action help *> $null
             $SkipAiRules = $true

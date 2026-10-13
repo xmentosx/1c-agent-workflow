@@ -18,32 +18,32 @@ function Get-ItlOnDemandMcpAssetRoot {
 }
 
 function Get-ItlOnDemandMcpCompatibility {
+    param([AllowNull()][object]$Plan = $null)
     $path = Join-Path (Get-ItlOnDemandMcpAssetRoot) "compatibility.json"
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "ITL on-demand MCP compatibility manifest was not found: $path"
     }
-    return (Read-Utf8Text -Path $path | ConvertFrom-Json)
+    $manifest = ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
+    if ($null -eq $Plan) { $Plan = Get-WorkflowDependencyPlan }
+    $hotfixes = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject $plan.manifest 'hotfixes' $null)
+    foreach ($id in @($hotfixes.Keys)) {
+        if (@($plan.blocked | Where-Object { $_.component -eq $id }).Count -gt 0) { continue }
+        $replacement = Get-ConfigValueFromObject $hotfixes[$id] 'compatibility' $null
+        if ($null -ne $replacement) {
+            $merged = Merge-WorkflowManagedDependencyLockValue -Current $manifest -Template $replacement
+            $manifest = $merged.value
+        }
+    }
+    return [pscustomobject]$manifest
 }
 
 function Sync-ItlOnDemandMcpDependencyLock {
-    if ((Get-DependencyMode) -ne "fresh") {
-        return $false
-    }
-
-    $template = New-DefaultDependencyLockManifest
-    $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.itlOndemandMcp" -Default $null
-    if ($null -eq $entry) {
-        throw "templates/dependency-lock.json has no itlOndemandMcp entry."
-    }
-
+    $entry = Get-WorkflowDependencyEntry -Name itlOndemandMcp
     $compatibility = Get-ItlOnDemandMcpCompatibility
-    $templateVersion = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
-    if (-not $templateVersion -or $templateVersion -cne [string]$compatibility.facadeVersion) {
-        throw "ITL_ONDEMAND_TEMPLATE_COMPATIBILITY_MISMATCH: template='$templateVersion' compatibility='$($compatibility.facadeVersion)'."
+    if ($null -eq $entry -or [string]$entry.version -cne [string]$compatibility.facadeVersion) {
+        throw 'ITL_ONDEMAND_TEMPLATE_COMPATIBILITY_MISMATCH: the selected facade and compatibility manifest disagree. Run update-workflow with a complete compatible selection.'
     }
-
-    Update-DependencyLockEntry -Name "itlOndemandMcp" -Values (ConvertTo-Agent1cHashtable -Object $entry)
-    Write-Host "ITL on-demand MCP fresh lock synchronized to facade $templateVersion."
+    Update-DependencyLockEntry -Name itlOndemandMcp -Values (ConvertTo-Agent1cHashtable -Object $entry)
     return $true
 }
 
@@ -62,14 +62,31 @@ function Get-ItlOnDemandCatalogCanonicalSha256 {
 }
 
 function Get-ItlOnDemandMcpFamilyDefinition {
-    param([ValidateSet("roctup", "vanessa-ui")][string]$Family)
+    param([ValidateSet("roctup", "vanessa-ui")][string]$Family, [AllowNull()][object]$Plan = $null)
 
-    $manifest = Get-ItlOnDemandMcpCompatibility
+    if ($null -eq $Plan) { $Plan = Get-WorkflowDependencyPlan }
+
+    if ($Family -eq 'roctup') {
+        [void](Get-WorkflowDependencyEntry -Name roctupMcpToolkit -Plan $Plan)
+    } else {
+        [void](Get-WorkflowDependencyEntry -Name vanessaAutomation -Plan $Plan)
+        [void](Get-WorkflowDependencyEntry -Name vanessaMcp -Plan $Plan)
+    }
+    $manifest = Get-ItlOnDemandMcpCompatibility -Plan $Plan
     $definition = Get-ConfigValueFromObject -Object $manifest -Path "families.$Family" -Default $null
     if ($null -eq $definition) {
         throw "ITL on-demand MCP family '$Family' is absent from compatibility.json."
     }
-    $catalogPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) ([string]$definition.catalog)
+    $hotfixCatalog = Get-WorkflowHotfixCatalog -Family $Family -Plan $Plan
+    if ($null -ne $hotfixCatalog) {
+        $catalogRoot = Get-ItlSharedArtifactDirectory -Family mcp-catalog -Version $Family -Sha256 ([string]$definition.catalogSha256)
+        $catalogPath = Join-Path $catalogRoot 'catalog.json'
+        if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
+            Write-Utf8TextAtomic -Path $catalogPath -Value $hotfixCatalog.text
+        }
+    } else {
+        $catalogPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) ([string]$definition.catalog)
+    }
     if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
         throw "ITL on-demand MCP catalog was not found: $catalogPath"
     }
@@ -100,7 +117,8 @@ function Get-ItlOnDemandMcpInstallRoot {
 }
 
 function Get-ItlOnDemandMcpFacadeContract {
-    $manifest = Get-ItlOnDemandMcpCompatibility
+    $plan = Get-WorkflowDependencyPlan
+    $manifest = Get-ItlOnDemandMcpCompatibility -Plan $plan
     $facadeVersionText = [string](Get-ConfigValueFromObject -Object $manifest -Path "facadeVersion" -Default "")
     $minimumVersionText = [string](Get-ConfigValueFromObject -Object $manifest -Path "minimumFacadeVersion" -Default "")
     try {
@@ -113,7 +131,7 @@ function Get-ItlOnDemandMcpFacadeContract {
         throw "ITL_ONDEMAND_FACADE_BELOW_MINIMUM: facade='$facadeVersionText' minimum='$minimumVersionText'."
     }
 
-    $entry = Get-DependencyLockEntry -Name "itlOndemandMcp"
+    $entry = Get-WorkflowDependencyEntry -Name "itlOndemandMcp" -Plan $plan
     if ($null -eq $entry) {
         throw "ITL_ONDEMAND_DEPENDENCY_LOCK_MISSING: .agent-1c/dependency-lock.json has no itlOndemandMcp entry."
     }
@@ -142,13 +160,19 @@ function Get-ItlOnDemandMcpFacadeContract {
 function Get-ItlOnDemandMcpExecutablePath {
     param([switch]$AllowMissing)
 
+    $contract = Get-ItlOnDemandMcpFacadeContract
     $override = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE")
     if (-not [string]::IsNullOrWhiteSpace($override)) {
         $resolved = Resolve-Agent1cFullPath -Path $override
-        if ($AllowMissing -or (Test-Path -LiteralPath $resolved -PathType Leaf)) { return $resolved }
+        if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+            if ((Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $contract.sha256) {
+                throw 'ITL_ONDEMAND_FACADE_OVERRIDE_SHA_MISMATCH: the explicit executable does not match the selected workflow/hotfix. Repair it or configure an explicit qualified dependency selection.'
+            }
+            return $resolved
+        }
+        if ($AllowMissing) { return $resolved }
     }
-    $contract = Get-ItlOnDemandMcpFacadeContract
-    $path = Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) $contract.version) $contract.assetName
+    $path = Join-Path (Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) $contract.version) $contract.sha256) $contract.assetName
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $contract.sha256) {
@@ -172,7 +196,7 @@ function Install-ItlOnDemandMcp {
     $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
     $sha256 = $contract.sha256
     $assetName = $contract.assetName
-    $targetDirectory = Join-Path (Get-ItlOnDemandMcpInstallRoot) $version
+    $targetDirectory = Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) $version) ([string]$contract.sha256)
     $targetPath = Join-Path $targetDirectory $assetName
 
     # Source-repository development may use a locally built, SHA-verified artifact.
@@ -199,6 +223,14 @@ function Install-ItlOnDemandMcp {
                 throw "ITL_ONDEMAND_SOURCE_BUILD_SHA256_MISMATCH: expected='$($sha256.ToLowerInvariant())' actual='$sourceHash' path='$sourceBuild'."
             }
             $sourceBuild = ""
+        }
+    }
+    if (-not $ForceDownload -and (-not $sourceBuild -or -not (Test-Path -LiteralPath $sourceBuild -PathType Leaf))) {
+        $legacyPath = Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) $version) $assetName
+        if ((Test-Path -LiteralPath $legacyPath -PathType Leaf) -and
+            (Get-FileHash -LiteralPath $legacyPath -Algorithm SHA256).Hash -ieq $sha256) {
+            $sourceBuild = $legacyPath
+            $sourceHash = $sha256
         }
     }
     if ($sourceBuild -and (Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and (-not $url -or $ForceDownload -eq $false)) {

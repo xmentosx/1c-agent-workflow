@@ -439,7 +439,8 @@
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
-        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1"
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/itl-powershell-environment.ps1"
       ],
       "reuseInputPaths": [
         ".agents/skills/1c-workflow/scripts/*"
@@ -733,7 +734,7 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/DependencyLocks.Tests.ps1",
-      "paths": ["templates/dependency-lock.json"],
+      "paths": ["templates/dependency-lock.json", ".agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1"],
       "tests": ["tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
     },
     {

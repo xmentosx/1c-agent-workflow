@@ -12,6 +12,7 @@
             New-Item -ItemType Directory -Force -Path $libRoot | Out-Null
             Copy-Item -LiteralPath $RunnerSource -Destination $Destination
             Copy-Item -LiteralPath $TimeoutPolicySource -Destination (Join-Path $libRoot "itl-runner-timeout.ps1")
+            Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $TimeoutPolicySource) 'itl-powershell-environment.ps1') -Destination $libRoot
         }
     }
 

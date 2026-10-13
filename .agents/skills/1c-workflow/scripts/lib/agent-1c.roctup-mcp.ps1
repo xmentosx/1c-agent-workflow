@@ -49,7 +49,7 @@ function Get-RoctupMcpInstallRoot {
         return $resolved
     }
 
-    $lock = Get-DependencyLockEntry -Name "roctupMcpToolkit"
+    $lock = Get-WorkflowDependencyEntry -Name "roctupMcpToolkit"
     $version = [string](Get-ConfigValueFromObject -Object $lock -Path "version" -Default "")
     $sha256 = [string](Get-ConfigValueFromObject -Object $lock -Path "sha256" -Default "")
     return (Get-ItlSharedArtifactDirectory -Family "roctup-mcp-toolkit" -Version $version -Sha256 $sha256)
@@ -137,55 +137,28 @@ function Get-RoctupMcpHealthUrl {
 
 function Get-RoctupMcpReleaseAssetInfo {
     $assetName = Get-RoctupMcpAssetName
-    $mode = Get-DependencyMode
-    $locked = Get-DependencyLockEntry -Name "roctupMcpToolkit"
-    if ($mode -eq "locked") {
-        $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-        $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-        $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-        if (-not $version -or -not $lockedAssetName -or -not $url -or -not $sha256) {
-            throw "Dependency mode is locked, but roctupMcpToolkit.version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
-        }
-        if ($lockedAssetName -ne $assetName) {
-            throw "Dependency lock ROCTUP asset '$lockedAssetName' is incompatible with this platform. Expected '$assetName'; provide a platform-specific roctupMcpToolkit lock entry."
-        }
-        $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
-        $requiredVersion = [string]$compatible.backendVersions.roctup
-        if ($version -ne $requiredVersion) {
-            throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: locked ROCTUP version '$version' has no packaged compatibility catalog; required '$requiredVersion'."
-        }
-        return [pscustomobject]@{
-            url = $url
-            name = $lockedAssetName
-            version = $version
-            expectedSha256 = $sha256
-            source = "dependency-lock"
-        }
+    $plan = Get-WorkflowDependencyPlan
+    $entry = Get-WorkflowDependencyEntry -Name 'roctupMcpToolkit' -Plan $plan
+    $version = [string](Get-ConfigValueFromObject $entry 'version' '')
+    $name = [string](Get-ConfigValueFromObject $entry 'assetName' '')
+    $url = [string](Get-ConfigValueFromObject $entry 'url' '')
+    $sha256 = [string](Get-ConfigValueFromObject $entry 'sha256' '')
+    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family roctup -Plan $plan
+    if ($name -ne $assetName -or -not $url -or $sha256 -notmatch '^[a-fA-F0-9]{64}$' -or $version -cne [string]$compatible.backendVersions.roctup) {
+        throw 'ITL_ONDEMAND_BACKEND_UNSUPPORTED: ROCTUP requires the complete selected workflow/hotfix pin and matching catalog. Run update-workflow or provide a platform-specific roctupMcpToolkit lock entry as a qualified -DependencySelectionFile.'
     }
-
-    # A newer upstream release may change tools/list. Fresh therefore means the
-    # newest version admitted by the workflow compatibility manifest, not GitHub latest.
-    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
-    $requiredVersion = [string]$compatible.backendVersions.roctup
-    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-    $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-    $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-    $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-    if ($version -ne $requiredVersion -or $lockedAssetName -ne $assetName -or -not $url -or -not $sha256) {
-        throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: fresh ROCTUP requires compatibility-manifest version '$requiredVersion' and a complete roctupMcpToolkit lock entry for '$assetName'. Actual version: '$version'."
-    }
-    return [pscustomobject]@{
-        url = $url
-        name = $lockedAssetName
-        version = $version
-        expectedSha256 = $sha256
-        source = "compatibility-manifest"
-    }
+    return [pscustomobject]@{url=$url;name=$name;version=$version;expectedSha256=$sha256;source='workflow-selection'}
 }
 
 function Save-RoctupMcpArtifact {
     param([object]$AssetInfo)
+
+    $selected = Get-WorkflowDependencyEntry -Name roctupMcpToolkit
+    foreach ($pair in @(@('version','version'),@('name','assetName'),@('expectedSha256','sha256'))) {
+        if ([string](Get-ConfigValueFromObject $AssetInfo $pair[0] '') -ine [string](Get-ConfigValueFromObject $selected $pair[1] '')) {
+            throw 'DEPENDENCY_ACQUISITION_DRIFT: ROCTUP artifact differs from the selected workflow/hotfix. Apply a qualified selection through update-workflow, then repeat installation.'
+        }
+    }
 
     $installRoot = Get-RoctupMcpInstallRoot
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
@@ -204,10 +177,8 @@ function Save-RoctupMcpArtifact {
     if ($expected) {
         if ($hash -eq $expected) {
             Write-Host "ROCTUP MCP artifact hash matches dependency lock."
-        } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
-            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash."
         } else {
-            Write-Host "[WARN] ROCTUP MCP artifact hash differs from expected metadata. Actual SHA256 is logged above."
+            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash."
         }
     }
 
@@ -218,7 +189,7 @@ function Save-RoctupMcpArtifact {
             url = $source
             sha256 = $hash
         }
-        $locked = Get-DependencyLockEntry -Name 'roctupMcpToolkit'
+        $locked = Get-WorkflowDependencyEntry -Name 'roctupMcpToolkit'
         $samePin = $true
         foreach ($key in $pin.Keys) {
             if ([string](Get-ConfigValueFromObject -Object $locked -Path $key -Default '') -cne $pin[$key]) {

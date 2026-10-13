@@ -39,6 +39,11 @@
 
         $init | Should -Match 'Ensure-YAxUnitForInit'
         $postCopy = [regex]::Match($lifecycle, '(?s)function Invoke-WorkflowPackageFilePostCopy \{(?<body>.*?)(?=\nfunction )').Groups['body'].Value
+        $postCopyCore = [regex]::Match($lifecycle, '(?s)function Invoke-WorkflowPackageFilePostCopyCore \{(?<body>.*?)(?=\nfunction )')
+        if ($postCopyCore.Success) {
+            $postCopy | Should -Match 'Invoke-WorkflowPackageFilePostCopyCore'
+            $postCopy = $postCopyCore.Groups['body'].Value
+        }
         $postCopy | Should -Match 'Sync-WorkflowManagedDependencyLockEntries \| Out-Null\s+Install-YAxUnit \| Out-Null'
     }
 

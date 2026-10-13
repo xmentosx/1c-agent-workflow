@@ -179,6 +179,13 @@ Describe "ITL on-demand MCP facade" {
             Copy-Item -LiteralPath $AssetRoot -Destination (Join-Path $workflowRoot "assets\ondemand-mcp") -Recurse
             Set-Content -LiteralPath (Join-Path $workflowRoot "scripts\agent-1c.ps1") -Encoding UTF8 -Value "param()"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding UTF8 -Value "fixture"
+            $executable = Join-Path $tempRoot "itl-ondemand-mcp.exe"
+            Set-Content -LiteralPath $executable -Encoding ASCII -Value "fixture"
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $mainRoot "templates") -Recurse
+            $fixtureTemplatePath = Join-Path $mainRoot 'templates/dependency-lock.json'
+            $fixtureTemplate = Get-Content -LiteralPath $fixtureTemplatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixtureTemplate.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath $fixtureTemplatePath -Encoding UTF8 -Value ($fixtureTemplate | ConvertTo-Json -Depth 30)
             & git -C $mainRoot init *> $null; & git -C $mainRoot config user.email "test@example.com"; & git -C $mainRoot config user.name "Test User"; & git -C $mainRoot add .
             & git -C $mainRoot commit -m "base" *> $null
             & git -C $mainRoot branch -M master
@@ -280,7 +287,7 @@ Describe "ITL on-demand MCP facade" {
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-DependencyMode { "fresh" }
-                function Get-DependencyLockEntry { param([string]$Name); [pscustomobject]@{ version = "v999"; assetName = "MCP_Toolkit.epf"; url = "https://invalid"; sha256 = "aa" } }
+                function Get-WorkflowDependencyEntry { param([string]$Name); [pscustomobject]@{ version = "v999"; assetName = "MCP_Toolkit.epf"; url = "https://invalid"; sha256 = "aa" } }
                 function Get-GitHubReleaseAssetInfo { throw "must not query latest" }
                 try { Get-RoctupMcpReleaseAssetInfo | Out-Null; "accepted" } catch { $_.Exception.Message }
             }
@@ -289,7 +296,7 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "synchronizes an installed fresh lock to the canonical facade release" {
+    It "requires a decision before replacing a custom legacy facade and then synchronizes the selected release" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-lock-sync-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -302,6 +309,12 @@ Describe "ITL on-demand MCP facade" {
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                { Sync-ItlOnDemandMcpDependencyLock } | Should -Throw '*DEPENDENCY_SELECTION_REQUIRED*'
+                (Read-DependencyLockManifest).dependencies.itlOndemandMcp.version | Should -Be '0.3.1'
+                $selectionPath = Join-Path $tempRoot 'selection.json'
+                $selection = @{schemaVersion=1;worktrees=@(@{worktreePath=$tempRoot;decisions=@{itlOndemandMcp='workflow'}})}
+                Write-Utf8Text -Path $selectionPath -Value ($selection | ConvertTo-Json -Depth 10)
+                $DependencySelectionFile = $selectionPath
                 Sync-ItlOnDemandMcpDependencyLock *> $null
                 Read-DependencyLockManifest
             }
@@ -332,7 +345,7 @@ Describe "ITL on-demand MCP facade" {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 try { Get-ItlOnDemandMcpExecutablePath -AllowMissing } catch { $_.Exception.Message }
             }
-            $mismatch | Should -Match "ITL_ONDEMAND_FACADE_LOCK_MISMATCH"
+            $mismatch | Should -Match "DEPENDENCY_SELECTION_REQUIRED"
 
             $lock.dependencies.itlOndemandMcp.version = "0.4.15"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
@@ -340,7 +353,7 @@ Describe "ITL on-demand MCP facade" {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.15\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.15\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -363,6 +376,7 @@ Describe "ITL on-demand MCP facade" {
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse -Force
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
             $installedHelper = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
@@ -374,12 +388,13 @@ Describe "ITL on-demand MCP facade" {
 
                 $version = "0.4.15"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
+                $cacheBytes = [byte[]](1, 2, 3, 4)
+                $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($cacheBytes)))).Replace('-', '').ToLowerInvariant()
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
                 New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
-                Set-Content -LiteralPath $targetPath -Encoding Byte -Value ([byte[]](1, 2, 3, 4))
-                $sha256 = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
-                function Get-DependencyLockEntry {
+                [IO.File]::WriteAllBytes($targetPath, $cacheBytes)
+                function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
                         version = $version
@@ -392,7 +407,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.15\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.15\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -407,6 +422,7 @@ Describe "ITL on-demand MCP facade" {
             & git -C $tempRoot init *> $null
             if ($LASTEXITCODE -ne 0) { throw "Failed to initialize the stale source-build fixture repository." }
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination $skillRoot -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse -Force
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
 
             $sourceBuild = Join-Path $tempRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
@@ -420,7 +436,7 @@ Describe "ITL on-demand MCP facade" {
                 . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
-                function Get-DependencyLockEntry {
+                function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
                         version = "0.4.15"
@@ -429,7 +445,7 @@ Describe "ITL on-demand MCP facade" {
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.15\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.15\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -448,6 +464,7 @@ Describe "ITL on-demand MCP facade" {
             $skillRoot = Join-Path $tempRoot ".agents\skills\1c-workflow"
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination $skillRoot -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse -Force
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
 
             $sourceBuild = Join-Path $tempRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
@@ -461,7 +478,7 @@ Describe "ITL on-demand MCP facade" {
                 . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
-                function Get-DependencyLockEntry {
+                function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
                         version = "0.4.15"
@@ -497,7 +514,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "shared-ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
                 $entry = Get-DependencyLockEntry -Name "itlOndemandMcp"
-                $targetDirectory = Join-Path $installRoot ([string]$entry.version)
+                $targetDirectory = Join-Path (Join-Path $installRoot ([string]$entry.version)) ([string]$entry.sha256)
                 $targetPath = Join-Path $targetDirectory ([string]$entry.assetName)
                 New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
                 Copy-Item -LiteralPath $sourceBuild -Destination $targetPath
@@ -520,6 +537,11 @@ Describe "ITL on-demand MCP facade" {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             Set-Content -LiteralPath $fakeExe -Encoding Byte -Value ([byte[]](1, 2, 3))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates') -Destination (Join-Path $tempRoot 'templates') -Recurse
+            $fixtureTemplatePath = Join-Path $tempRoot 'templates/dependency-lock.json'
+            $fixtureTemplate = Get-Content -LiteralPath $fixtureTemplatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixtureTemplate.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $fakeExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath $fixtureTemplatePath -Encoding UTF8 -Value ($fixtureTemplate | ConvertTo-Json -Depth 30)
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $fakeExe, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null

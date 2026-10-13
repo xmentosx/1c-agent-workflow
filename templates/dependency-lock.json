@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 1,
-  "mode": "fresh",
+  "schemaVersion": 2,
+  "mode": "workflow",
+  "hotfixes": {},
   "dependencies": {
     "workflowPackage": {
       "repo": "https://github.com/xmentosx/1c-agent-workflow.git",
@@ -54,6 +55,8 @@
     "windowsMcp": {
       "version": "0.8.2",
       "source": "pypi:windows-mcp==0.8.2",
+      "url": "https://files.pythonhosted.org/packages/ce/84/ed4119aa52a7ee77f25d8f32745f58bfa2d3a834581473c598268690409d/windows_mcp-0.8.2-py3-none-any.whl",
+      "sha256": "4689f070795323a25dc4f324057315f4273021b1799c149f6ad8181a54611fd5",
       "projectUrl": "https://pypi.org/project/windows-mcp/",
       "scope": "uvx-cache",
       "minimumPython": "3.13",

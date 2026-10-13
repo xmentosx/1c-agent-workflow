@@ -4,7 +4,9 @@ param(
     [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('update', 'status', 'restore', 'reconcile')][string]$Recovery = 'update',
     [string]$SnapshotId = '',
-    [string]$ReconciliationFile = ''
+    [string]$ReconciliationFile = '',
+    [string]$DependencySelectionFile = '',
+    [switch]$DependencyHotfixOnly
 )
 
 Set-StrictMode -Version Latest
@@ -46,6 +48,8 @@ try {
     if ($Recovery -ne 'update') { $arguments.WorkflowUpdateRecovery = $Recovery }
     if ($SnapshotId) { $arguments.WorkflowUpdateSnapshotId = $SnapshotId }
     if ($ReconciliationFile) { $arguments.WorkflowUpdateReconciliationFile = $ReconciliationFile }
+    if ($DependencySelectionFile) { $arguments.DependencySelectionFile = [IO.Path]::GetFullPath($DependencySelectionFile) }
+    if ($DependencyHotfixOnly) { $arguments.DependencyHotfixOnly = $true }
     & $helper @arguments
     if ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

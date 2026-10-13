@@ -12,13 +12,25 @@
             New-Item -ItemType Directory -Force -Path $libRoot | Out-Null
             Copy-Item -LiteralPath $RunnerSource -Destination $Destination
             Copy-Item -LiteralPath $TimeoutPolicySource -Destination (Join-Path $libRoot "itl-runner-timeout.ps1")
+            Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $TimeoutPolicySource) 'itl-powershell-environment.ps1') -Destination $libRoot
         }
     }
 
     It "removes only the PowerShell Core module root while launching the Windows PowerShell helper" {
         $runnerText = Get-Content -LiteralPath $RunnerSource -Raw -Encoding UTF8
         $runnerText | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
-        $runnerText | Should -Match '\$coreModuleRoot = \[IO\.Path\]::GetFullPath\(\(Join-Path \$PSHOME "Modules"\)\)'
+        $runnerText | Should -Match '\$env:PSModulePath = Get-ItlWindowsPowerShellModulePath -ModulePath \$originalPowerShellModulePath'
+        . (Join-Path (Split-Path -Parent $TimeoutPolicySource) 'itl-powershell-environment.ps1')
+        $parentModulePath=$env:PSModulePath
+        $coreHome=Join-Path $TestDrive 'Core runtime путь'
+        $userModules=Join-Path $TestDrive 'User modules путь'
+        $desktopModules=Join-Path $TestDrive 'Windows PowerShell Modules'
+        $inputModulePath=@($userModules,((Join-Path $coreHome 'Modules').ToUpperInvariant()+'\'),$desktopModules) -join ';'
+        Get-ItlWindowsPowerShellModulePath -ModulePath $inputModulePath -ParentEdition Core -ParentHome $coreHome |
+            Should -BeExactly (@($userModules,$desktopModules) -join ';')
+        Get-ItlWindowsPowerShellModulePath -ModulePath $inputModulePath -ParentEdition Desktop -ParentHome $coreHome |
+            Should -BeExactly $inputModulePath
+        $env:PSModulePath | Should -BeExactly $parentModulePath
         $runnerText | Should -Match 'function Start-CompactHelperProcess'
         $runnerText | Should -Match 'CreateJobObject'
         $runnerText | Should -Match 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'

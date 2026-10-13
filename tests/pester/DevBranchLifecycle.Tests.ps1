@@ -5716,7 +5716,7 @@ try {
         }
     }
 
-    It "leaves master clean after mocked initialization commits managed files" {
+    It "leaves master clean after mocked initialization commits managed files" -Tag WorkflowDependencyRefresh {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-init-clean-" + [guid]::NewGuid().ToString("N"))
         $facadeFixtureRoot = "$tempRoot-facade-fixture"
         $envNames = @(

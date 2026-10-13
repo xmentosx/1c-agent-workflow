@@ -330,7 +330,7 @@
         }
     }
 
-    It "creates a sibling worktree branch without starting branch MCP even when legacy auto-start is true" {
+    It "creates a sibling worktree branch without starting branch MCP even when legacy auto-start is true" -Tag WorkflowDependencyRefresh {
         $tempRoot = New-ShortWorkflowProjectRoot
         $legacyWorktreeRoot = "$tempRoot-worktrees"
         $worktreePath = "$tempRoot-fixture-branch"

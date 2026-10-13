@@ -6,15 +6,22 @@
         return [pscustomobject]@{ isConfigured = $false; reason = "workflow templates are missing" }
     }
 
-    $projectTemplate = Read-Utf8Text -Path $projectTemplatePath | ConvertFrom-Json
-    $lockTemplate = Read-Utf8Text -Path $lockTemplatePath | ConvertFrom-Json
-    $repo = [string](Get-ConfigValueFromObject -Object $projectTemplate -Path "aiRules.repo" -Default "")
-    $ref = [string](Get-ConfigValueFromObject -Object $projectTemplate -Path "aiRules.ref" -Default "")
-    $entry = Get-ConfigValueFromObject -Object $lockTemplate -Path "dependencies.aiRules1c" -Default $null
+    $selection = if ((Get-FullPathNormalized $TemplateRoot) -eq (Get-FullPathNormalized $script:ProjectRoot)) {
+        Get-WorkflowDependencyPlan
+    } else { Get-WorkflowDependencyPlan -SourceRoot $TemplateRoot }
+    $rulesBlocked = @($selection.blocked | Where-Object {
+        ($_.component -eq 'aiRules1c' -and $null -eq $_.PSObject.Properties['components']) -or @(Get-ConfigValueFromObject $_ 'components' @()) -contains 'aiRules1c'
+    })
+    $entry = Get-ConfigValueFromObject -Object $selection.manifest -Path "dependencies.aiRules1c" -Default $null
+    $repo = [string](Get-ConfigValueFromObject $entry 'repo' '')
+    $ref = [string](Get-ConfigValueFromObject $entry 'ref' '')
     $commit = [string](Get-ConfigValueFromObject -Object $entry -Path "commit" -Default "")
     $status = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityStatus" -Default "")
 
-    $configured = (Test-AiRules1cForkRepository -Repo $repo) -and $ref -like "itl-*" -and $commit -and $status -eq "passed"
+    $explicitHotfix = @((ConvertTo-Agent1cHashtable $selection.manifest.hotfixes).Values | Where-Object {
+        $null -ne (Get-ConfigValueFromObject $_ 'dependencies.aiRules1c' $null)
+    }).Count -gt 0
+    $configured = ((Test-AiRules1cForkRepository -Repo $repo) -or $explicitHotfix) -and $ref -like "itl-*" -and $commit -match '^[a-f0-9]{40}$' -and $status -eq "passed"
     return [pscustomobject]@{
         isConfigured = [bool]$configured
         reason = $(if ($configured) { "" } else { "verified fork repo/tag/commit baseline is not configured" })
@@ -28,6 +35,9 @@
         compatibilityStatus = $status
         compatibilityCheckedAt = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityCheckedAt" -Default "")
         lockEntry = $entry
+        dependencyDecisionRequired = ($rulesBlocked.Count -gt 0)
+        explicitWorkflowAdoption = ([string](Get-ConfigValueFromObject $selection 'decisions.aiRules1c' '') -eq 'workflow' -or
+            ([bool](Get-ConfigValueFromObject $selection 'workflowTransition' $false) -and $rulesBlocked.Count -eq 0))
     }
 }
 
@@ -692,7 +702,7 @@ function Get-AiRulesMigrationPlan {
 
     $isLegacyUpstream = $currentIdentity -eq "https://github.com/comol/ai_rules_1c"
     $isControlledFork = $currentIdentity -eq $targetIdentity
-    if (-not $isLegacyUpstream -and -not $isControlledFork) {
+    if (-not $isLegacyUpstream -and -not $isControlledFork -and -not $target.explicitWorkflowAdoption) {
         return [pscustomobject]@{ status = "custom"; eligible = $false; suppressRegularUpdate = $true; reason = "custom aiRules repository is preserved without automatic update"; target = $target }
     }
 
@@ -727,7 +737,7 @@ function Get-AiRulesMigrationPlan {
         if ((Get-AiRules1cRepositoryIdentity -Repo $lockRepo) -ne $targetIdentity) {
             return [pscustomobject]@{ status = "controlled-lock-mismatch"; eligible = $false; suppressRegularUpdate = $true; reason = "controlled fork lock repository does not match project configuration"; target = $target }
         }
-        if ($target.downstreamRevision -le $currentRevision) {
+        if ($target.downstreamRevision -le $currentRevision -and -not $target.explicitWorkflowAdoption) {
             return [pscustomobject]@{ status = "not-newer"; eligible = $false; suppressRegularUpdate = $true; reason = "target downstream revision is not newer than the installed controlled fork"; target = $target }
         }
         $currentUpstreamCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "upstreamCommit" -Default "")
@@ -823,9 +833,11 @@ function Invoke-AiRulesMigrationCandidatePreflight {
     if (-not $target.upstreamCommit) {
         throw "Fork baseline does not record upstreamCommit."
     }
-    & git -C $checkout.root merge-base --is-ancestor $Plan.comparisonCommit $target.upstreamCommit
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installed aiRules upstream provenance is not an ancestor of the target upstream baseline: $($Plan.comparisonCommit)"
+    if (-not $target.explicitWorkflowAdoption) {
+        & git -C $checkout.root merge-base --is-ancestor $Plan.comparisonCommit $target.upstreamCommit
+        if ($LASTEXITCODE -ne 0) {
+            throw "Installed aiRules upstream provenance is not an ancestor of the target upstream baseline: $($Plan.comparisonCommit)"
+        }
     }
 
     @(Get-AiRulesCandidateInstallInventory -Checkout $checkout -Tools @($Plan.tools)) | Out-Null
@@ -1080,6 +1092,8 @@ function Invoke-AiRulesBaselineMigration {
         }
         return [pscustomobject]@{ migrated = $false; suppressRegularUpdate = [bool]$plan.suppressRegularUpdate; status = $plan.status; reason = $plan.reason; recoveryReportPath = $recoveryReportPath }
     }
+
+    [void](Get-WorkflowDependencyEntry -Name aiRules1c)
 
     $preflightOutput = @(Invoke-AiRulesMigrationCandidatePreflight -Plan $plan)
     $candidate = @($preflightOutput | Where-Object { $_ -and $_.PSObject.Properties.Name -contains "root" }) | Select-Object -Last 1

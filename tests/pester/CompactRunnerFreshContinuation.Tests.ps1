@@ -264,3 +264,50 @@ exit 0
         } finally { Remove-FreshCompactFixture $fixture }
     }
 }
+
+
+Describe 'Native Windows PowerShell child environment' -Tag WorkflowDependencyTransport {
+    It 'loads the matching hash cmdlet through the shared capture boundary and round-trips a Unicode whitespace path' {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context=Initialize-WorkflowPesterContext
+        $core=Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if(-not $core){Set-ItResult -Skipped -Because 'PowerShell Core is not installed; the cross-edition boundary is inapplicable';return}
+        $root=Join-Path $TestDrive 'Модули и путь с пробелом'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $payload=Join-Path $root 'Файл для hash.txt'
+        [IO.File]::WriteAllText($payload,'Unicode round trip',[Text.UTF8Encoding]::new($false))
+        $expected=(Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant()
+        $child=Join-Path $root 'Child script.ps1'
+        $childText=@'
+param([string]$Payload)
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$OutputEncoding=[Console]::OutputEncoding
+$hash=Get-FileHash -LiteralPath $Payload -Algorithm SHA256
+[pscustomobject]@{path=$Payload;sha256=$hash.Hash.ToLowerInvariant();edition=$PSVersionTable.PSEdition}|ConvertTo-Json -Compress
+'@
+        [IO.File]::WriteAllText($child,$childText,[Text.UTF8Encoding]::new($true))
+        $parent=Join-Path $root 'Parent script.ps1'
+        $parentText=@'
+param([string]$Helper,[string]$Root,[string]$Child,[string]$Payload)
+$ErrorActionPreference='Stop'
+. $Helper -ProjectRoot $Root -Action help *> $null
+$before=$env:PSModulePath
+$result=Invoke-ItlNativeProcessCapture -FilePath (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') -Arguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$Child,'-Payload',$Payload) -WorkingDirectory $Root -TimeoutSeconds 60
+if($env:PSModulePath -cne $before){throw 'Parent module environment changed'}
+if($result.exitCode -ne 0){throw $result.stderr}
+[pscustomobject]@{parentEdition=$PSVersionTable.PSEdition;child=($result.stdout|ConvertFrom-Json)}|ConvertTo-Json -Compress
+'@
+        [IO.File]::WriteAllText($parent,$parentText,[Text.UTF8Encoding]::new($true))
+        & {
+            . $context.HelperPath -ProjectRoot $root -Action help *> $null
+            $result=Invoke-ItlNativeProcessCapture -FilePath $core.Source -Arguments @('-NoProfile','-File',$parent,'-Helper',$context.HelperPath,'-Root',$root,'-Child',$child,'-Payload',$payload) -WorkingDirectory $root -TimeoutSeconds 90
+            $result.exitCode | Should -Be 0 -Because $result.stderr
+            $data=$result.stdout|ConvertFrom-Json
+            $data.parentEdition | Should -Be Core
+            $data.child.edition | Should -Be Desktop
+            $data.child.path | Should -BeExactly $payload
+            $data.child.sha256 | Should -BeExactly $expected
+        }
+    }
+}

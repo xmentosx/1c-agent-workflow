@@ -307,7 +307,7 @@ function Read-YAxUnitSuiteCatalog {
 }
 
 function Get-YAxUnitPinnedEntry {
-    $entry = Get-DependencyLockEntry -Name "yaxunit"
+    $entry = Get-WorkflowDependencyEntry -Name "yaxunit"
     if ($null -eq $entry) {
         throw "ITL_YAXUNIT_WORKFLOW_PIN_INCOMPLETE: yaxunit is missing from .agent-1c/dependency-lock.json."
     }

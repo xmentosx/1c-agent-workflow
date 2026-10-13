@@ -1753,7 +1753,7 @@
         }
     }
 
-    It "semantically resolves the workflow dependency lock conflict and preserves a branch-only project entry" {
+    It "semantically resolves the workflow dependency lock conflict and preserves a branch-only project entry" -Tag WorkflowDependencyRefresh {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-merge-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -1817,7 +1817,7 @@
         }
     }
 
-    It "commits a workflow-managed dependency lock synchronization during refresh" {
+    It "commits a workflow-managed dependency lock synchronization during refresh" -Tag WorkflowDependencyRefresh {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-sync-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -1847,6 +1847,11 @@
                 try {
                     [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'fresh', 'Process')
                     . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $beforeHash = (Get-FileHash -LiteralPath $lockPath).Hash
+                    { Sync-WorkflowManagedDependencyLockEntries } | Should -Throw '*DEPENDENCY_SELECTION_REQUIRED*'
+                    (Get-FileHash -LiteralPath $lockPath).Hash | Should -BeExactly $beforeHash
+                    $DependencySelectionFile = Join-Path $TestDrive 'Решение refresh с пробелом.json'
+                    Write-Utf8Text -Path $DependencySelectionFile -Value (@{schemaVersion=1;worktrees=@(@{worktreePath=$tempRoot;decisions=@{vanessaMcp='workflow'}})}|ConvertTo-Json -Depth 10)
                     $sync = Sync-WorkflowManagedDependencyLockEntries
                     $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
                     Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
@@ -2181,5 +2186,63 @@
         $result.pendingRefresh | Should -BeNullOrEmpty
         $result.refreshTarget | Should -Be ('a' * 40)
         $result.verification | Should -Be 'failed'
+    }
+}
+
+Describe 'Refresh dependency selection ownership' -Tag WorkflowDependencyRefresh {
+    BeforeAll { . (Join-Path $PSScriptRoot 'DevBranchLifecycleSupport.ps1') }
+
+    It 'uses the branch exception against the merged workflow for <Case>' -ForEach @(
+        @{Case='retained hotfix';Expected='1.5.0';Count=1},
+        @{Case='incorporated hotfix';Expected='1.5.0';Count=0},
+        @{Case='master has its own exception';Expected='1.5.0';Count=1},
+        @{Case='legacy schema migration';Expected='1.2.0';Count=0}
+    ) {
+        $root=Join-Path $TestDrive ('Refresh версии с пробелом '+$Case)
+        $result=& {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Copy-RefreshFixtureManifest { param($Value); ConvertTo-Agent1cHashtable ($Value|ConvertTo-Json -Depth 100|ConvertFrom-Json) }
+            $old=Copy-RefreshFixtureManifest (New-DefaultDependencyLockManifest)
+            $old.dependencies.yaxunit.version='1.0.0'
+            $old.dependencies.yaxunit.sha256='a'*64
+            $base=Copy-RefreshFixtureManifest (New-WorkflowDependencyPlan -Template $old -Manifest $old).manifest
+            $branch=Copy-RefreshFixtureManifest $base
+            $branch.hotfixes=ConvertTo-Agent1cHashtable $branch.hotfixes
+            $hot=ConvertTo-Agent1cHashtable $old.dependencies.yaxunit
+            $hot.version='1.5.0';$hot.sha256='b'*64
+            if($Case -eq 'legacy schema migration') {
+                $base.schemaVersion=1;$base.mode='locked'
+                $branch.schemaVersion=1;$branch.mode='fresh'
+            } else {
+                $branch.dependencies.yaxunit=$hot
+                $branch.hotfixes['branch-yax']=@{reason='branch incident';dependencies=@{yaxunit=$hot}}
+            }
+            $script:refreshFixtureTemplate=Copy-RefreshFixtureManifest $old
+            $script:refreshFixtureTemplate.dependencies.yaxunit.version='1.2.0'
+            $script:refreshFixtureTemplate.dependencies.yaxunit.sha256='c'*64
+            if($Case -eq 'incorporated hotfix') {$script:refreshFixtureTemplate.dependencies.yaxunit=ConvertTo-Agent1cHashtable $hot}
+            function New-DefaultDependencyLockManifest { $script:refreshFixtureTemplate }
+            $target=Copy-RefreshFixtureManifest $base
+            $target.hotfixes=ConvertTo-Agent1cHashtable $target.hotfixes
+            $target.schemaVersion=2;$target.mode='workflow'
+            $target.dependencies.yaxunit=ConvertTo-Agent1cHashtable $script:refreshFixtureTemplate.dependencies.yaxunit
+            $target.dependencies.workflowPackage.commit='target-workflow'
+            if($Case -eq 'master has its own exception') {
+                $masterPin=ConvertTo-Agent1cHashtable $hot
+                $masterPin.version='2.0.0';$masterPin.sha256='d'*64
+                $target.dependencies.yaxunit=$masterPin
+                $target.hotfixes['master-yax']=@{reason='master-only incident';dependencies=@{yaxunit=$masterPin}}
+            }
+            $before=$branch|ConvertTo-Json -Depth 100
+            $merged=Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target -InstalledTemplate $old
+            [pscustomobject]@{merged=$merged;before=$before;after=($branch|ConvertTo-Json -Depth 100)}
+        }
+        $result.merged.dependencies.yaxunit.version | Should -Be $Expected
+        $result.merged.dependencies.workflowPackage.commit | Should -Be 'target-workflow'
+        $result.merged.hotfixes.Count | Should -Be $Count
+        $result.merged.hotfixes.Contains('master-yax') | Should -BeFalse
+        $result.merged.schemaVersion | Should -Be 2
+        $result.merged.mode | Should -Be workflow
+        $result.after | Should -BeExactly $result.before
     }
 }

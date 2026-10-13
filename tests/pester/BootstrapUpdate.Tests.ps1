@@ -509,15 +509,16 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
 
             & {
                 . $HelperPath -ProjectRoot (Join-Path $projectRoot ".") -Action help *> $null
+                $script:strictInstallerPin = (New-DefaultDependencyLockManifest).dependencies.aiRules1c
                 function Sync-AiRules1cCheckout {
                     return [pscustomobject]@{
                         root = (Join-Path $rulesRoot ".")
-                        repo = "fixture"
-                        ref = "fixture"
+                        repo = $script:strictInstallerPin.repo
+                        ref = $script:strictInstallerPin.ref
                     }
                 }
                 function Get-GitOutputAt {
-                    return "fixture-commit"
+                    return $script:strictInstallerPin.commit
                 }
 
                 Invoke-AiRules1cInstaller -Command "update"
@@ -709,9 +710,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $text | Should -Match "immutable"
             $text | Should -Match "controlled fork"
         }
-        $installText | Should -Match 'fresh mode.*does not advance'
-        $initSetupText | Should -Match 'both `fresh` and `locked` checkout that immutable tag'
-        $initSetupText | Should -Match 'legacy/custom repository without `aiRules\.ref`'
+        $installText | Should -Match 'upstream main does not change the bundle'
+        $initSetupText | Should -Match 'Legacy `fresh`/`locked` values are aliases'
+        $initSetupText | Should -Match 'legacy/custom pin requires an explicit decision'
         $installText | Should -Not -Match 'git clone https://github\.com/comol/ai_rules_1c\.git'
         $installText | Should -Not -Match 'git -C \$rulesDir pull --ff-only'
         $initSetupText | Should -Not -Match 'In `fresh`, checkout remote HEAD'
@@ -1878,6 +1879,16 @@ exit 0
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Assert-WorkflowSourceAiRulesInstallable {}
+                # This phase-only fixture stubs source IO. Declare its selected
+                # bundle while retaining the real plan validator and receipt.
+                function Get-WorkflowDependencyPlan {
+                    param([string]$SourceRoot)
+                    $plan = New-WorkflowDependencyPlan -Template (New-DefaultDependencyLockManifest) -Manifest (Read-DependencyLockManifest)
+                    $plan | Add-Member workflowTransition $true
+                    $plan | Add-Member inputLockExists $false
+                    $plan | Add-Member inputLockSha256 ''
+                    return $plan
+                }
                 function Get-AgentTargets { @('kilocode') }
                 function Get-AiRulesBaselineTarget { param([string]$TemplateRoot); [pscustomobject]@{isConfigured=$true;repo='repo';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
                 function Sync-AiRules1cCheckout { [pscustomobject]@{root='C:\fork';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
@@ -2204,7 +2215,7 @@ exit 0
         $HelperText | Should -Match ([regex]::Escape("IFvQtC/QnV0="))
         $HelperText | Should -Not -Match 'function Read-InitDependencyMode'
         $HelperText | Should -Not -Match 'answers\.dependencyMode\s*=\s*Read-InitDependencyMode'
-        $HelperText | Should -Match 'answers\.dependencyMode\s*=\s*"fresh"'
+        $HelperText | Should -Match 'answers\.dependencyMode\s*=\s*"workflow"'
         $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*\$true'
         $HelperText | Should -Not -Match 'answers\.webPublishByDefault\s*=\s*Read-InitYesNo'
         $HelperText | Should -Match 'webPublishByDefault\s*=\s*\$false'
@@ -2557,7 +2568,7 @@ exit 2
         }
     }
 
-    It "uses fixed init defaults while preserving explicit locked configuration" {
+    It "uses fixed init defaults and accepts explicit locked as the workflow alias" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
@@ -2593,8 +2604,8 @@ exit 2
 
         $result.defaulted | Should -BeTrue
         $result.explicit | Should -BeTrue
-        $result.defaultDependencyMode | Should -Be "fresh"
-        $result.explicitDependencyMode | Should -Be "locked"
+        $result.defaultDependencyMode | Should -Be "workflow"
+        $result.explicitDependencyMode | Should -Be "workflow"
         $result.webPublishByDefault | Should -BeFalse
         $result.webPublishAuto | Should -BeFalse
     }

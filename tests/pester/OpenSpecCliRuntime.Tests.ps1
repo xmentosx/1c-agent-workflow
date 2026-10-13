@@ -334,7 +334,8 @@ Describe 'Pinned OpenSpec CLI runtime' {
             $legacyLock.dependencies.PSObject.Properties.Remove('openSpecCli')
             [IO.File]::WriteAllText($peerLockPath, (($legacyLock | ConvertTo-Json -Depth 20) + "`n"), [Text.UTF8Encoding]::new($false))
             $oldPin = & { . $HelperPath -ProjectRoot $peerRoot -Action help *> $null; Get-ItlOpenSpecCliStatus }
-            $oldPin.available | Should -BeFalse
+            $oldPin.available | Should -BeTrue
+            $oldPin.path | Should -Be $peerCli.path
             [IO.File]::WriteAllBytes($peerLockPath, $peerLockBytes)
             $restoredPin = & { . $HelperPath -ProjectRoot $peerRoot -Action help *> $null; Get-ItlOpenSpecCliStatus }
             $restoredPin.available | Should -BeTrue
