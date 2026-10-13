@@ -25,6 +25,25 @@ function Get-YAxUnitTestsExtensionName {
     return [string](Get-Setting -EnvName "YAXUNIT_TESTS_EXTENSION_NAME" -ConfigName "yaxunit.testsExtensionName" -Default "tests")
 }
 
+function Get-YAxUnitProjectTestsSafeModeOptIn {
+    # Permission belongs to this project's JSON, never to a machine/process env.
+    $yaxunit = Get-StateValue -State $script:Config -Name 'yaxunit' -Default $null
+    if ($null -eq $yaxunit) { return $false }
+    $option = $yaxunit.PSObject.Properties['testsDisableSafeMode']
+    if ($null -eq $option) { return $false }
+    if ($option.Value -isnot [bool]) {
+        throw 'ITL_PROJECT_TESTS_OPTION_INVALID: yaxunit.testsDisableSafeMode must be a JSON boolean. Correct the project setting, then repeat the original command.'
+    }
+    return [bool]$option.Value
+}
+
+function Assert-YAxUnitProjectTestsName {
+    param([string]$Name)
+    if ($Name -cnotmatch '^[\p{L}_][\p{L}\p{M}\p{Nd}_]*$' -or $Name -in @('client_mcp','VAExtension','YAXUNIT')) {
+        throw "ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID: '$Name' must be the exact registered test-extension identifier, separate from the three tooling roles. Correct yaxunit.testsExtensionName and Configuration.xml, then repeat the original command."
+    }
+}
+
 function Get-YAxUnitSuiteCatalogPaths {
     return @(
         (Resolve-ProjectPath "tests/yaxunit-suites.shared.json"),
@@ -532,11 +551,37 @@ function Get-YAxUnitJunitSummary {
     }
 }
 
+function New-YAxUnitInstallationProof {
+    param([object]$State, [object]$Identity, [object]$Entry, [object]$Source, [object]$Engine, [object]$Tests,
+        [switch]$TrackProjectSettings, [bool]$RequireProjectSafeModeOff = $false,
+        [bool]$ProjectSettingsPending = $false, [AllowNull()][object]$ProtectionBefore = $null,
+        [AllowNull()][object]$CapabilityEvidence = $null)
+
+    $proof = [ordered]@{
+        schemaVersion=1;generation=[string]$State.toolingInfoBaseGeneration;infoBaseKey=[string]$Identity.key
+        engineName=[string]$Engine.name;testsName=[string]$Tests.name
+        engineSha256=[string]$Entry.sha256;engineRuntimeHash=[string]$Engine.contentHash
+        testsFingerprint=[string]$Source.fingerprint;testsRuntimeHash=[string]$Tests.contentHash;verifiedAt=(Get-Date).ToString('o')
+    }
+    if ($TrackProjectSettings) {
+        $proof['testsSafeModeRequired']=$RequireProjectSafeModeOff
+        $proof['testsSafeMode']=[bool]$Tests.safeMode
+        $proof['testsUnsafeActionProtection']=[bool]$Tests.unsafeActionProtection
+        $proof['projectTestsSettingsPending']=$ProjectSettingsPending
+        $proof['testsUnsafeActionProtectionBefore']=$ProtectionBefore
+        $proof['projectTestsCapabilityEvidence']=$CapabilityEvidence
+        $proof['projectTestsHelperSha256']=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return [pscustomobject]$proof
+}
+
 function Ensure-YAxUnitExtensions {
     param([object]$State)
+    $projectSafeModeOff = Get-YAxUnitProjectTestsSafeModeOptIn
     $State = Ensure-DevBranchToolingGeneration -State $State
     $extensionName = Get-YAxUnitExtensionName
     $testsExtensionName = Get-YAxUnitTestsExtensionName
+    if ($projectSafeModeOff) { Assert-YAxUnitProjectTestsName -Name $testsExtensionName }
     $testsPath = Resolve-ProjectPath (Get-YAxUnitTestsPath)
     [xml]$metadata = Read-Utf8Text -Path (Join-Path $testsPath "Configuration.xml")
     $nameNode = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
@@ -560,11 +605,23 @@ function Ensure-YAxUnitExtensions {
         (Test-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -ExpectedHash ([string](Get-StateValue $proof "engineRuntimeHash" "")) -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled)
     $testsMatch = $scopeMatches -and [string](Get-StateValue $proof "testsFingerprint" "") -ceq [string]$source.fingerprint -and
         (Test-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName -ExpectedHash ([string](Get-StateValue $proof "testsRuntimeHash" "")))
-    if ($engineMatches -and $testsMatch) { return $State }
+    $pending = Get-StateValue $proof 'projectTestsSettingsPending' $false
+    if ($pending -isnot [bool]) { throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: pending settings marker is not a boolean; reconcile it through the tooling/lifecycle owner before the original command.' }
+    if ($pending -and -not $scopeMatches) { throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: pending settings proof belongs to another generation/target; use its lifecycle owner, preserving the unresolved operation.' }
+    $settingsEvidenceComplete = $scopeMatches -and -not $pending -and
+        [bool](Get-StateValue $proof 'testsSafeModeRequired' $false) -and
+        ((Get-StateValue $proof 'testsUnsafeActionProtection' $null) -is [bool])
+    $settingsReady = -not $projectSafeModeOff -or ($testsMatch -and $settingsEvidenceComplete -and
+        $tests.safeMode -is [bool] -and $tests.unsafeActionProtection -is [bool] -and -not $tests.safeMode)
+    if ($engineMatches -and $testsMatch -and $settingsReady -and -not $pending) { return $State }
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "YAxUnit extension synchronization"
-    Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
-    $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
+    $synchronize = {
+    $contentChanged = -not $engineMatches -or -not $testsMatch
+    if ($contentChanged) {
+        Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
+        $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
+    }
     if (-not $engineMatches) {
         Invoke-GuardedCfeExtensionApply -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -CfePath $cfePath -ExtensionName $extensionName `
@@ -584,17 +641,66 @@ function Ensure-YAxUnitExtensions {
     $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
     Assert-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled
     Assert-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName
-    Update-DevBranchState -State $State -Updates @{
-        yaxunitInstallationProof = [pscustomobject]@{
-            schemaVersion = 1; generation = [string]$State.toolingInfoBaseGeneration; infoBaseKey = [string]$identity.key
-            engineName = $extensionName; testsName = $testsExtensionName
-            engineSha256 = [string]$entry.sha256; engineRuntimeHash = [string]$engine.contentHash
-            testsFingerprint = [string]$source.fingerprint; testsRuntimeHash = [string]$tests.contentHash; verifiedAt = (Get-Date).ToString("o")
+    $capabilityEvidence = $null
+    $protectionBefore = $null
+    $settingsChanged = $false
+    if ($projectSafeModeOff -or $pending) {
+        if ($tests.safeMode -isnot [bool] -or $tests.unsafeActionProtection -isnot [bool]) {
+            throw 'ITL_PROJECT_TESTS_SECURITY_PROOF_INVALID: fresh runtime settings are incomplete; restore the tooling probe through its owner, then repeat the original command.'
         }
-        toolingMutationId = [guid]::NewGuid().ToString("N")
-        toolingMutationAt = (Get-Date).ToString("o")
+        $protectionBefore = [bool]$tests.unsafeActionProtection
+        if ($pending -and $testsMatch) {
+            $expectedProtection = Get-StateValue $proof 'testsUnsafeActionProtectionBefore' $null
+            if ($expectedProtection -isnot [bool] -or $expectedProtection -ne $protectionBefore) {
+                throw 'ITL_PROJECT_TESTS_PROTECTION_CHANGED: unresolved settings operation no longer matches its protection baseline; preserve evidence and resolve through the tooling owner before the original command.'
+            }
+        }
+        if ($projectSafeModeOff -and $tests.safeMode) {
+            # Old fields retain their content-only meaning. This additive marker
+            # prevents the new owner from treating an unknown setter as completed.
+            $contentProof = New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
+                -TrackProjectSettings -RequireProjectSafeModeOff $true -ProjectSettingsPending $true -ProtectionBefore $protectionBefore
+            Update-DevBranchState -State $State -Updates @{yaxunitInstallationProof=$contentProof}
+            $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $contentProof -Force
+            $guardContext = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT','Process')
+            if (-not $guardContext) { throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_REQUIRED: synchronization must retain its exact-base guard.' }
+            $beforeHash = [string]$tests.contentHash
+            $contentEvidence = [pscustomobject]@{sourceFingerprint=[string]$source.fingerprint;runtimeContentHash=$beforeHash;unsafeActionProtection=$protectionBefore;executionContextSha256=(Get-StringSha256 $guardContext)}
+            Install-ItlOnDemandMcp | Out-Null
+            $capabilityEvidence = Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
+                -ExtensionName $testsExtensionName -Artifact ([pscustomobject]@{sha256=[string]$source.fingerprint}) `
+                -User ([string](Get-EnvValue -Name 'IB_USER')) -Password ([string](Get-EnvValue -Name 'IB_PASSWORD')) -Scope 'project-tests' -ProjectTestsContentProof $contentEvidence
+            $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName,$testsExtensionName))
+            $engine = @($runtime | Where-Object { $_.name -ceq $extensionName }) | Select-Object -First 1
+            $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+            Assert-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled
+            Assert-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName -RequireUnsafeMode
+            if ([string]$tests.contentHash -cne $beforeHash -or $tests.unsafeActionProtection -isnot [bool] -or [bool]$tests.unsafeActionProtection -ne $protectionBefore) {
+                throw 'ITL_PROJECT_TESTS_CONTENT_OR_PROTECTION_CHANGED: SafeMode reconciliation did not preserve the original content/protection. Keep the failed receipt and native evidence; do not reload it to manufacture a pass.'
+            }
+            $settingsChanged = $true
+        } elseif ($pending -and -not $tests.safeMode) {
+            # The existing drain above proved quiescence. Fresh state resolves
+            # the old result without replaying its modifying command.
+            $settingsChanged = $true
+        }
+        $currentSource = Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)
+        if ([string]$currentSource.fingerprint -cne [string]$source.fingerprint) { throw 'ITL_PROJECT_TESTS_SOURCE_CHANGED: source changed during synchronization; repeat the original owner operation on one stable snapshot.' }
     }
+    $updates = @{ yaxunitInstallationProof = (New-YAxUnitInstallationProof -State $State -Identity $identity -Entry $entry -Source $source -Engine $engine -Tests $tests `
+        -TrackProjectSettings:($projectSafeModeOff -or $pending) -RequireProjectSafeModeOff $projectSafeModeOff -ProtectionBefore $protectionBefore -CapabilityEvidence $capabilityEvidence) }
+    if ($contentChanged -or $settingsChanged) {
+        $updates['toolingMutationId']=[guid]::NewGuid().ToString('N')
+        $updates['toolingMutationAt']=(Get-Date).ToString('o')
+    }
+    Update-DevBranchState -State $State -Updates $updates
     return Read-DevBranchState -Name ([string]$State.devBranchName)
+    }
+    if ($projectSafeModeOff -or $pending) {
+        $admission = [pscustomobject]@{infoBaseKind=[string]$State.infoBaseKind;infoBasePath=[string]$State.devBranchInfoBasePath}
+        return Invoke-WithOneCExecutionGuard -Admissions @($admission) -Purpose 'project-tests-safe-mode' -ScriptBlock $synchronize
+    }
+    return & $synchronize
 }
 
 function Invoke-YAxUnitVerification {

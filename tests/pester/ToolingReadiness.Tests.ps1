@@ -20,6 +20,7 @@ Describe 'Shared verification failure ownership' {
         @{Name='Designer command allowlist'; Message='ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected pinned commands'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
         @{Name='wrapped Designer client'; Message="ITL_DESIGNER_AGENT_CLIENT_FAILED: exitCode=1 error='ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected sequence'"; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
         @{Name='tooling readiness'; Message='ITL_TOOLING_EXTENSION_NOT_READY: expected tests'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
+        @{Name='project tests capability'; Message='ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: expected tests'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
         @{Name='actual product assertion'; Message='Expected 120, actual 100'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
         @{Name='product assertion quoting a diagnostic'; Message='Expected "{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}"'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
         @{Name='diagnostic body compilation'; Message='{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}: Перем ИсходноеЗначение;'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
@@ -251,6 +252,18 @@ Describe "Tooling generation and recovery" {
 
 Describe "YAxUnit selective installation" {
     BeforeEach {
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $false }
+        Mock Invoke-WithOneCExecutionGuard {
+            param($Admissions,$Purpose,$ScriptBlock)
+            $Purpose | Should -Be 'project-tests-safe-mode'
+            $Admissions.Count | Should -Be 1
+            $Admissions[0].infoBasePath | Should -Be $script:toolingState.devBranchInfoBasePath
+            $previous=[Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT','Process')
+            try {
+                [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT','live-parent-context','Process')
+                & $ScriptBlock
+            } finally { [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT',$previous,'Process') }
+        }
         $script:engine=New-ReadyToolingRuntime YAXUNIT engine-hash
         $script:testsRuntime=New-ReadyToolingRuntime ПМ5Тесты tests-hash
         $script:toolingState=[pscustomobject]@{
@@ -338,6 +351,141 @@ Describe "YAxUnit selective installation" {
         { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*ITL_TOOLING_EXTENSION_NOT_READY*'
         Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly
         $script:toolingState.yaxunitInstallationProof | Should -BeNullOrEmpty
+    }
+
+    It 'refreshes a legacy content proof under the exact-base guard without reload or setter when SafeMode is already off' {
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $script:testsRuntime.unsafeActionProtection=$true
+        Ensure-YAxUnitExtensions $script:toolingState | Out-Null
+        Should -Invoke Invoke-WithOneCExecutionGuard -Times 1 -Exactly
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 0 -Exactly
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
+        $proof=$script:toolingState.yaxunitInstallationProof
+        $proof.schemaVersion | Should -Be 1
+        $proof.testsSafeModeRequired | Should -BeTrue
+        $proof.testsUnsafeActionProtection | Should -BeTrue
+        $proof.projectTestsSettingsPending | Should -BeFalse
+        $proof.projectTestsHelperSha256 | Should -Be (Get-FileHash (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
+        Ensure-YAxUnitExtensions $script:toolingState | Out-Null
+        Should -Invoke Invoke-WithOneCExecutionGuard -Times 1 -Exactly
+    }
+
+    It 'changes only project SafeMode, preserves protection/content and records both component and helper identity' {
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $script:testsRuntime.safeMode=$true
+        $script:testsRuntime.unsafeActionProtection=$true
+        Mock Set-VanessaMcpExtensionUnsafeMode {
+            param($ExtensionName,$Scope,$ProjectTestsContentProof,$ReconcileYAxUnitProtections)
+            $ExtensionName | Should -Be 'ПМ5Тесты'
+            $Scope | Should -Be 'project-tests'
+            $ReconcileYAxUnitProtections | Should -BeFalse
+            $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeTrue
+            $ProjectTestsContentProof.runtimeContentHash | Should -Be tests-hash
+            $ProjectTestsContentProof.unsafeActionProtection | Should -BeTrue
+            $ProjectTestsContentProof.executionContextSha256 | Should -Be (Get-StringSha256 'live-parent-context')
+            $script:testsRuntime.safeMode=$false
+            [pscustomobject]@{facadeSha256=('a'*64);safeMode=$false}
+        }
+        Ensure-YAxUnitExtensions $script:toolingState | Out-Null
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+        Should -Invoke Invoke-GuardedCfeExtensionApply -Times 0 -Exactly
+        $script:toolingState.yaxunitInstallationProof.testsUnsafeActionProtection | Should -BeTrue
+        $script:toolingState.yaxunitInstallationProof.testsRuntimeHash | Should -Be tests-hash
+        $script:toolingState.yaxunitInstallationProof.projectTestsCapabilityEvidence.facadeSha256 | Should -Be ('a'*64)
+        $script:toolingState.toolingMutationId | Should -Not -BeNullOrEmpty
+    }
+
+    It 'refuses incomplete runtime security evidence rather than interpreting it as SafeMode off' {
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $script:testsRuntime.safeMode=$null
+        { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*ITL_PROJECT_TESTS_SECURITY_PROOF_INVALID*'
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
+    }
+
+    It 'retains pending evidence if the setter changes <ChangedField> instead of repairing the reproducer' -ForEach @(
+        @{ChangedField='contentHash'}, @{ChangedField='unsafeActionProtection'}
+    ) {
+        param($ChangedField)
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $script:testsRuntime.safeMode=$true
+        $script:testsRuntime.unsafeActionProtection=$true
+        $script:changedField=$ChangedField
+        Mock Set-VanessaMcpExtensionUnsafeMode {
+            $script:testsRuntime.safeMode=$false
+            if ($script:changedField -eq 'contentHash') { $script:testsRuntime.contentHash='different' }
+            else { $script:testsRuntime.unsafeActionProtection=$false }
+        }
+        { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*ITL_PROJECT_TESTS_CONTENT_OR_PROTECTION_CHANGED*'
+        $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeTrue
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+    }
+
+    It 'resolves an unknown setter from fresh state only after guarded drain, without replay or reload' {
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $script:testsRuntime.safeMode=$true
+        $script:testsRuntime.unsafeActionProtection=$true
+        Mock Set-VanessaMcpExtensionUnsafeMode { throw 'connection lost: outcome unknown' }
+        { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw '*outcome unknown*'
+        $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeTrue
+        $script:testsRuntime.safeMode=$false
+        Ensure-YAxUnitExtensions $script:toolingState | Out-Null
+        Should -Invoke Invoke-WithOneCExecutionGuard -Times 2 -Exactly
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 2 -Exactly
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+        $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeFalse
+    }
+
+    It 'preserves an unresolved operation when its protection baseline changes or its target becomes foreign' -ForEach @(
+        @{Foreign=$false}, @{Foreign=$true}
+    ) {
+        param($Foreign)
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $true }
+        $proof=$script:toolingState.yaxunitInstallationProof
+        $proof | Add-Member projectTestsSettingsPending $true
+        $proof | Add-Member testsUnsafeActionProtectionBefore $true
+        if ($Foreign) { $proof.infoBaseKey='foreign' }
+        { Ensure-YAxUnitExtensions $script:toolingState } | Should -Throw $(if ($Foreign) {'*ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID*'} else {'*ITL_PROJECT_TESTS_PROTECTION_CHANGED*'})
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
+        $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeTrue
+    }
+
+    It 'cannot bypass quiescence by opting out while a prior project operation remains pending' {
+        $proof=$script:toolingState.yaxunitInstallationProof
+        $proof | Add-Member projectTestsSettingsPending $true
+        $proof | Add-Member testsUnsafeActionProtectionBefore $false
+        Ensure-YAxUnitExtensions $script:toolingState | Out-Null
+        Should -Invoke Invoke-WithOneCExecutionGuard -Times 1 -Exactly
+        Should -Invoke Set-VanessaMcpExtensionUnsafeMode -Times 0 -Exactly
+        $script:toolingState.yaxunitInstallationProof.projectTestsSettingsPending | Should -BeFalse
+        $script:toolingState.yaxunitInstallationProof.testsSafeModeRequired | Should -BeFalse
+    }
+}
+
+Describe 'Project test SafeMode permission belongs to project JSON' {
+    BeforeEach { $script:savedProjectConfig=$script:Config }
+    AfterEach { $script:Config=$script:savedProjectConfig }
+    It 'defaults to off and accepts only an explicit JSON true or false' {
+        foreach ($json in @('{}','{"yaxunit":{}}','{"yaxunit":{"testsDisableSafeMode":false}}')) {
+            $script:Config=$json | ConvertFrom-Json
+            Get-YAxUnitProjectTestsSafeModeOptIn | Should -BeFalse
+        }
+        $script:Config='{"yaxunit":{"testsDisableSafeMode":true}}' | ConvertFrom-Json
+        Get-YAxUnitProjectTestsSafeModeOptIn | Should -BeTrue
+        foreach ($value in @('"true"','1','null')) {
+            $script:Config=('{"yaxunit":{"testsDisableSafeMode":'+$value+'}}') | ConvertFrom-Json
+            { Get-YAxUnitProjectTestsSafeModeOptIn } | Should -Throw '*ITL_PROJECT_TESTS_OPTION_INVALID*'
+        }
+    }
+    It 'accepts the exact Unicode identifier and rejects reserved roles, whitespace and command syntax' {
+        foreach ($name in @('tests','ТестыPM5Канбан')) { { Assert-YAxUnitProjectTestsName $name } | Should -Not -Throw }
+        foreach ($name in @('YAXUNIT','client_mcp','VAExtension','Тесты*','Тесты --safe-mode no','Два слова')) {
+            { Assert-YAxUnitProjectTestsName $name } | Should -Throw '*ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID*'
+        }
     }
 }
 

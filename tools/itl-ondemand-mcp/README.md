@@ -46,6 +46,16 @@ waiting. The local source build and matching dependency lock
 are preparatory evidence; publishing this component still requires its exact
 source and executable to pass Release E2E for ROCTUP and Vanessa.
 
+The `designer-agent-safe-mode` stdin subcommand also accepts a transient
+`projectTestsCapability` issued by the opted-in project tooling owner. Its UTF-8
+payload and HMAC use the existing live execution context and bind the exact
+registered test extension, content proof, infobase, Designer process, listener
+and SSH key. The facade generates the five fixed connect/set SafeMode/get/
+disconnect/shutdown commands; caller-supplied commands and protection changes
+are refused. The nested guard cannot reacquire or enlarge its parent's resources.
+This is separate from the unchanged fixed tooling-extension sequences. See
+[project test settings](../../.agents/skills/1c-workflow/references/yaxunit-tests.md).
+
 Build the release asset from the repository root:
 
 ```powershell

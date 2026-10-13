@@ -3,6 +3,24 @@
   "protocol": "execution-guards-v2",
   "producers": [
     {
+      "id": "project-tests-settings-owner",
+      "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
+      "function": "Ensure-YAxUnitExtensions",
+      "boundary": "external-or-nested",
+      "resources": "project-tests-safe-mode: exact branch infobase, planned owned drain before content or property mutation",
+      "deadline": "existing execution guard wait and bounded native operation timeouts",
+      "cleanup": "existing lifecycle drain and opened Designer process identity; pending content proof retained on unknown result"
+    },
+    {
+      "id": "project-tests-designer-capability",
+      "file": "tools/itl-ondemand-mcp/designer_project_tests.go",
+      "function": "acquireProjectTestsDesignerGuard",
+      "boundary": "nested",
+      "resources": "project-tests-safe-mode: signed exact-base subset of the live parent execution context",
+      "deadline": "bounded Designer connection timeout and parent execution lifetime",
+      "cleanup": "child closes inherited guard handle only; helper retains original Designer process cleanup authority"
+    },
+    {
       "id": "portable-remote-job",
       "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/execution.py",
       "function": "execute_job",

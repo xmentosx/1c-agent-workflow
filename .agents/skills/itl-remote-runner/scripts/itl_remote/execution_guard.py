@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .common import WorkError, process_identity, stamp, write_json
+from .common import WorkError, process_identity, process_is_alive, stamp, write_json
 
 
 PROTOCOL = "execution-guards-v2"
@@ -233,7 +233,9 @@ def _identity_matches(expected):
 
 def _process_matches(pid, expected):
     try:
-        return process_identity(int(pid)) == expected
+        # Windows retains a terminated process object while another handle is
+        # open. Its creation identity is still queryable but it owns no guard.
+        return process_is_alive(pid) and process_identity(int(pid)) == expected
     except (WorkError, TypeError, ValueError, OSError):
         return False
 

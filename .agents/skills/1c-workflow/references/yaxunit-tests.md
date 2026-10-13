@@ -50,4 +50,26 @@ Use Vanessa instead of YAxUnit when the assertion depends on a form, command vis
 
 Before any normal executable verification starts, `/itl-check` validates both test catalogs. Missing, invalid, ambiguous, or incomplete classification stops before Designer or Enterprise. It then loads the workflow-pinned YAxUnit CFE and the separate test extension, disables safe mode and unsafe-action protection only for the fixed `YAXUNIT` extension through the local Designer Agent allowlist, and runs `1C:Enterprise /C RunUnitTests=<config.json>`. The authoritative result is JUnit under `build/test-results/yaxunit`; a missing report, zero executed tests, failures, or errors fails verification. The exit-code file is supplemental and a disagreement is reported.
 
+The project test extension has a separate opt-in: set the JSON boolean
+`yaxunit.testsDisableSafeMode=true` in this project's configuration when its tests
+need SafeMode off. The default is `false`; environment variables do not grant
+this permission. `yaxunit.testsExtensionName` must match the registered
+`Configuration.xml` identifier exactly, including Cyrillic. Tooling roles,
+wildcards and command syntax are refused. The helper verifies source and runtime
+content, the exact infobase and live Designer PID/start/EXE/listener before issuing
+an execution-context-bound capability to the pinned facade. Only SafeMode is
+changed; the project's unsafe-action protection and content remain unchanged.
+
+An old content-only receipt is rechecked under the existing exact-base guard and
+owned runtime drain. If SafeMode is already off, no extension reload or setter
+is needed. An interrupted setter retains an additive pending marker in the same
+receipt. Continue `repair-dev-branch-tooling` on the same branch, then the original
+check: the owner first proves quiescence, probes fresh content/settings and
+resolves the result. An unidentified live Designer or conflicting target/proof
+blocks that dependent operation with its owner continuation; it is never stopped
+by guessing its PID. Downgrade is permitted only after quiescence and resolution
+of pending work; older helpers retain their content-only receipt semantics and
+do not implement the opt-in. Source tests or a new executable hash alone do not
+qualify the helper/facade pair for native operation.
+
 Do not commit the downloaded CFE, generated JSON, logs, or reports. Do not call a locally installed unpinned YAxUnit build. `ITL_YAXUNIT_TESTING=off` may skip execution, but skipped executable verification is partial evidence and must never be reported as verified or done.

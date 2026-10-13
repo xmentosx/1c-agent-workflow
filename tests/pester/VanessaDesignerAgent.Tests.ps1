@@ -90,6 +90,52 @@
         $result.ownerPids | Should -Be @(9901)
     }
 
+    It 'rejects a reused PID even when its start time differs by only one millisecond' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime=[DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { [pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime.AddMilliseconds(1)} }
+            function Test-TcpPortOpen { throw 'must reject identity before checking the listener' }
+            $process=[pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime;HasExited=$false}
+            $readiness=Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+            $cleanup=Stop-VanessaDesignerAgentOwnedProcess -Process $process -ExpectedStartTime $script:fixtureStartTime
+            [pscustomobject]@{readiness=$readiness;cleanup=$cleanup}
+        }
+        $result.readiness.ready | Should -BeFalse
+        $result.readiness.status | Should -Be identity-changed
+        $result.cleanup.confirmed | Should -BeFalse
+    }
+
+    It 'cleans the original opened native process while preserving a different process returned by PID lookup' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $owned=$null; $foreign=$null
+            try {
+                $exe=Join-Path $PSHOME 'powershell.exe'
+                $owned=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -WindowStyle Hidden -PassThru
+                $foreign=Start-Process -FilePath $exe -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -WindowStyle Hidden -PassThru
+                $null=$owned.Handle
+                $null=$foreign.Handle
+                $started=$owned.StartTime
+                $script:foreignProcessFixture=$foreign
+                function Get-Process { $script:foreignProcessFixture }
+                $cleanup=Stop-VanessaDesignerAgentOwnedProcess -Process $owned -ExpectedStartTime $started
+                $again=Stop-VanessaDesignerAgentOwnedProcess -Process $owned -ExpectedStartTime $started
+                [pscustomobject]@{cleanup=$cleanup;again=$again;ownedExited=$owned.HasExited;foreignAlive=(-not $foreign.HasExited)}
+            } finally {
+                foreach ($item in @($owned,$foreign)) {
+                    if ($null -ne $item) {
+                        try { if (-not $item.HasExited) { $item.Kill(); $item.WaitForExit(10000) | Out-Null } } finally { $item.Dispose() }
+                    }
+                }
+            }
+        }
+        $result.cleanup.confirmed | Should -BeTrue
+        $result.again.confirmed | Should -BeTrue
+        $result.ownedExited | Should -BeTrue
+        $result.foreignAlive | Should -BeTrue
+    }
+
     It "preserves the exit code when Designer Agent dies before readiness" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

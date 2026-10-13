@@ -192,7 +192,7 @@
         $lockTemplate.dependencies.opencodePlugin.compatibilityCheckedAt | Should -Not -BeNullOrEmpty
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
-        $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.15"
+        $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.16"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "29f741db8a379384cd8270398761ec96e7e8e548071a0c180d4ffc6ddd8443b6"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r4.cfe"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"

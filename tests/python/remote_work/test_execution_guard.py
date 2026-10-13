@@ -2,16 +2,19 @@ import json
 import io
 import multiprocessing
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from itl_remote.common import WorkError
+from itl_remote.common import WorkError, process_identity
 from itl_remote.execution_guard import (ExecutionGuard, canonical_base, canonical_resources,
                                         decode_execution_context, resource_key, target_execution,
                                         _OsHandle)
+from itl_remote.execution_guard import encode_execution_context
 from itl_remote.execution_guard_host import read_request
 
 
@@ -181,6 +184,29 @@ class ExecutionGuardTests(unittest.TestCase):
             wrong[0] ^= 1
             with self.assertRaisesRegex(WorkError, "SIGNATURE"):
                 decode_execution_context(context["encoded"], bytes(wrong), self.a)
+
+    @unittest.skipUnless(os.name == "nt", "retained terminated process handles are a Windows boundary")
+    def test_exited_supervisor_cannot_validate_context_while_its_windows_identity_is_still_queryable(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            identity = process_identity(child.pid)
+            payload = {"schemaVersion": 1, "protocol": "execution-guards-v2",
+                       "executionId": "a" * 32, "operation": "original-owner",
+                       "resources": self.a, "supervisor": identity}
+            key = b"k" * 32
+            encoded = encode_execution_context(payload, key)
+            self.assertEqual(identity, decode_execution_context(encoded, key, self.a)["supervisor"])
+            child.terminate()
+            child.wait(timeout=10)
+            # Popen retains its Windows handle: PID/creation identity alone can
+            # still match after exit. The original liveness boundary must reject.
+            self.assertEqual(identity, process_identity(child.pid))
+            with self.assertRaisesRegex(WorkError, "EXECUTION_CONTEXT_INVALID"):
+                decode_execution_context(encoded, key, self.a)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
 
     def test_target_rejects_multi_host_server_configuration(self):
         target = {"workspace": self.temp.name,

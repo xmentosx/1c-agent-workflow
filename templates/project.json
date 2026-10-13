@@ -66,6 +66,7 @@
   "yaxunit": {
     "installRoot": ".agent-1c/tools/yaxunit",
     "testsExtensionName": "tests",
+    "testsDisableSafeMode": false,
     "testsPath": "tests/yaxunit",
     "reportsPath": "build/test-results/yaxunit"
   },

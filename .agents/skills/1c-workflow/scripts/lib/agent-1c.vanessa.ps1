@@ -7890,12 +7890,25 @@ function Stop-VanessaDesignerAgentOwnedProcess {
         [DateTime]$ExpectedStartTime
     )
 
+    # A launch-time opened handle remains bound to that process even after PID
+    # reuse. Never replace it with a new process merely because the PID matches.
+    if ($Process -is [Diagnostics.Process]) {
+        try {
+            if ($Process.HasExited) { return [pscustomobject]@{ confirmed=$true; error='' } }
+            if ($Process.StartTime.ToFileTimeUtc() -ne $ExpectedStartTime.ToFileTimeUtc()) {
+                return [pscustomobject]@{ confirmed=$false; error="PID $($Process.Id) start time changed; refusing to stop a foreign process." }
+            }
+            return (Stop-NativeProcessForSafety -Process $Process -UseOpenedProcess)
+        } catch {
+            return [pscustomobject]@{ confirmed=$false; error="PID $($Process.Id) opened identity could not be verified: $($_.Exception.Message)" }
+        }
+    }
     $current = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
     if ($null -eq $current) {
         return [pscustomobject]@{ confirmed = $true; error = "" }
     }
     try {
-        if ([Math]::Abs(($current.StartTime.ToUniversalTime() - $ExpectedStartTime.ToUniversalTime()).TotalSeconds) -ge 2) {
+        if ($current.StartTime.ToFileTimeUtc() -ne $ExpectedStartTime.ToFileTimeUtc()) {
             return [pscustomobject]@{ confirmed = $false; error = "PID $($Process.Id) start time changed; refusing to stop a foreign process." }
         }
     } catch {
@@ -7947,7 +7960,7 @@ function Wait-VanessaDesignerAgentReady {
         }
 
         try {
-            if ([Math]::Abs(($current.StartTime.ToUniversalTime() - $ExpectedStartTime.ToUniversalTime()).TotalSeconds) -ge 2) {
+            if ($current.StartTime.ToFileTimeUtc() -ne $ExpectedStartTime.ToFileTimeUtc()) {
                 $stopwatch.Stop()
                 return [pscustomobject][ordered]@{
                     ready = $false
@@ -8028,6 +8041,60 @@ function Wait-VanessaDesignerAgentReady {
     }
 }
 
+function New-ProjectTestsDesignerCapability {
+    param([object]$State, [string]$InfoBaseKind, [string]$InfoBasePath, [string]$ExtensionName,
+        [object]$ContentProof, [Diagnostics.Process]$Process, [int]$Port, [string]$HostPublicKey)
+
+    if (-not (Get-YAxUnitProjectTestsSafeModeOptIn)) {
+        throw 'ITL_PROJECT_TESTS_OPT_IN_REQUIRED: enable yaxunit.testsDisableSafeMode explicitly in this project before this operation.'
+    }
+    Assert-YAxUnitProjectTestsName -Name $ExtensionName
+    if ($ExtensionName -cne (Get-YAxUnitTestsExtensionName)) { throw 'ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID: registered project name changed; repeat the original tooling synchronization.' }
+    $context = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT','Process')
+    $contextKey = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT_KEY','Process')
+    if (-not $context -or -not $contextKey -or
+        [string](Get-StateValue $ContentProof 'executionContextSha256' '') -cne (Get-StringSha256 $context)) {
+        throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_REQUIRED: use the existing guarded YAxUnit synchronization owner; do not call Designer directly.'
+    }
+    $target = Get-OneCInfoBaseIdentity -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    $stateTarget = Get-OneCInfoBaseIdentity -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath
+    if ([string]$target.key -cne [string]$stateTarget.key) { throw 'ITL_PROJECT_TESTS_BASE_INVALID: capability target differs from the branch infobase.' }
+    $testsPath = Get-YAxUnitTestsPath
+    [xml]$metadata = Read-Utf8Text -Path (Join-Path (Resolve-ProjectPath $testsPath) 'Configuration.xml')
+    $name = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+    $source = Get-ConfigSourceFingerprint -ExportPath $testsPath
+    if ($null -eq $name -or $name.InnerText -cne $ExtensionName -or
+        [string]$source.fingerprint -cne [string](Get-StateValue $ContentProof 'sourceFingerprint' '') -or
+        -not [string](Get-StateValue $ContentProof 'runtimeContentHash' '') -or
+        (Get-StateValue $ContentProof 'unsafeActionProtection' $null) -isnot [bool]) {
+        throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: registered source/content proof changed; repeat the original guarded tooling synchronization.'
+    }
+    $null = $Process.Handle
+    if ($Process.HasExited) { throw 'ITL_PROJECT_TESTS_DESIGNER_OWNER_CHANGED: the owned Designer exited before capability creation.' }
+    $settings = Get-OneCExecutionGuardSettings
+    $helperRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../../..'))
+    $payload = [ordered]@{
+        schemaVersion=1; operation='project-tests-safe-mode'; projectRoot=[string]$script:ProjectRoot; helperRoot=$helperRoot
+        registeredName=$name.InnerText; extensionName=$ExtensionName; optIn=$true
+        sourceFingerprint=[string]$source.fingerprint; runtimeContentHash=[string]$ContentProof.runtimeContentHash
+        unsafeActionProtection=[bool]$ContentProof.unsafeActionProtection
+        base=@{kind=$InfoBaseKind;path=$InfoBasePath}
+        designer=@{pid=$Process.Id;started=([uint64]$Process.StartTime.ToFileTimeUtc()).ToString('x16');executable=$Process.MainModule.FileName}
+        port=$Port;hostPublicKeySha256=(Get-StringSha256 $HostPublicKey.Trim());executionContextSha256=(Get-StringSha256 $context)
+        guardRoot=$settings.root;guardRuntimeRoot=(Join-Path $helperRoot '.agents/skills/itl-remote-runner/scripts');guardPython=[string]$settings.python
+    }
+    $bytes = (Get-Utf8Encoding).GetBytes(($payload | ConvertTo-Json -Depth 8 -Compress))
+    try { $keyBytes = [Convert]::FromBase64String($contextKey.Replace('-','+').Replace('_','/')) }
+    catch { throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_KEY_INVALID' }
+    if ($keyBytes.Length -ne 32) { throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_KEY_INVALID' }
+    $mac = [Security.Cryptography.HMACSHA256]::new($keyBytes)
+    try {
+        [byte[]]$signedBytes = (Get-Utf8Encoding).GetBytes(('ITL_PROJECT_TESTS_SAFE_MODE_V1'+[char]0)) + $bytes
+        $signature = ([BitConverter]::ToString($mac.ComputeHash($signedBytes))).Replace('-','').ToLowerInvariant()
+        return @{payloadBase64=[Convert]::ToBase64String($bytes);signature=$signature}
+    } finally { $mac.Dispose(); [Array]::Clear($keyBytes,0,$keyBytes.Length) }
+}
+
 function Set-VanessaMcpExtensionUnsafeMode {
     param(
         [object]$State,
@@ -8038,9 +8105,17 @@ function Set-VanessaMcpExtensionUnsafeMode {
         [string]$User = "",
         [string]$Password = "",
         [string]$Scope = "extension",
-        [switch]$ReconcileYAxUnitProtections
+        [switch]$ReconcileYAxUnitProtections,
+        [AllowNull()][object]$ProjectTestsContentProof = $null
     )
 
+    if ($null -ne $ProjectTestsContentProof) {
+        if ($ReconcileYAxUnitProtections) { throw 'ITL_PROJECT_TESTS_PROTECTION_CHANGE_FORBIDDEN' }
+        Assert-YAxUnitProjectTestsName -Name $ExtensionName
+        if (-not (Get-YAxUnitProjectTestsSafeModeOptIn) -or -not $env:ITL_EXECUTION_CONTEXT -or -not $env:ITL_EXECUTION_CONTEXT_KEY) {
+            throw 'ITL_PROJECT_TESTS_EXECUTION_CONTEXT_REQUIRED: use the explicitly opted-in guarded project tooling owner.'
+        }
+    }
     $platformPath = Get-PlatformPath
     $key = Ensure-VanessaDesignerAgentHostKey -State $State
     $range = Get-VanessaDesignerAgentPortRange
@@ -8072,8 +8147,10 @@ function Set-VanessaMcpExtensionUnsafeMode {
             "/AgentBaseDir", $agentRoot
         )
         Write-Host "Starting Designer Agent for Vanessa extension property reconciliation on 127.0.0.1:$($lease.port)."
-        $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Purpose "vanessa-designer-agent-safe-mode-$Scope" -NativeOperationEvidence $nativeOperationEvidence
+        $launchPurpose = if ($null -ne $ProjectTestsContentProof) { 'project-tests-safe-mode' } else { "vanessa-designer-agent-safe-mode-$Scope" }
+        $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Purpose $launchPurpose -NativeOperationEvidence $nativeOperationEvidence
         $nativeRecord = $nativeOperationEvidence.record
+        $null = $process.Handle
         $processStartTime = $process.StartTime
         Set-ItlManagedPortAllocationStatus -Family $portFamily -Key $portKey -Status "running" -ProcessId $process.Id -LeaseToken $leaseToken
         $readiness = Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $processStartTime -Port ([int]$lease.port) -TimeoutSeconds 30
@@ -8114,6 +8191,11 @@ function Set-VanessaMcpExtensionUnsafeMode {
             connectTimeoutSeconds = 30
             commandTimeoutSeconds = 120
         }
+        if ($null -ne $ProjectTestsContentProof) {
+            $request.Remove('commands')
+            $request['projectTestsCapability'] = New-ProjectTestsDesignerCapability -State $State -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath `
+                -ExtensionName $ExtensionName -ContentProof $ProjectTestsContentProof -Process $process -Port ([int]$lease.port) -HostPublicKey ([string]$request.hostPublicKey)
+        }
         $result = Invoke-VanessaDesignerAgentClient -ExecutablePath $clientPath -Request $request
         if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $ExtensionName -RequireYAxUnitProtectionsDisabled:$ReconcileYAxUnitProtections)) {
             throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$ExtensionName' runtime properties were not proven in '$InfoBasePath'."
@@ -8132,6 +8214,7 @@ function Set-VanessaMcpExtensionUnsafeMode {
             artifactSha256 = [string]$Artifact.sha256
             safeMode = $false
             unsafeActionProtection = $(if ($ReconcileYAxUnitProtections) { $false } else { $null })
+            facadeSha256 = $(if ($null -ne $ProjectTestsContentProof) { (Get-FileHash -LiteralPath $clientPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { '' })
         }
     } finally {
         $cleanup = $null

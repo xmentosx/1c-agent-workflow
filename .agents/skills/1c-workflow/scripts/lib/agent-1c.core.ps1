@@ -529,7 +529,7 @@ function Get-WorkflowVerificationFailureContext {
     $fixtureFrame = '\{ВнешняяОбработка\.VanessaAutomation(?:single)?\.Форма\.Тест_ВстроенныйЯзык\.Форма\([0-9]+\)\}:\s*'
     $fixtureCompilation = '^(?:' + $fixtureFrame + 'При выполнении кода возникла ошибка\s*<)?' + $fixtureFrame +
         'Ошибка компиляции при вычислении выражения или выполнении фрагмента кода:\s*\{<Неизвестный модуль>'
-    if ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_)') {
+    if ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_|PROJECT_TESTS_)') {
         $category = 'runner'
         $requiredAction = 'repair-dev-branch-tooling'
     } elseif ($messageText -match '^ITL_YAXUNIT_ZERO_TESTS') {
