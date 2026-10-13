@@ -8805,6 +8805,10 @@ function Assert-UiTestingPolicyUpdateSnapshot {
 }
 
 function Invoke-WorkflowPackageFilePostCopy {
+    Invoke-Vibecoding1cMcpRegistryOperation { Invoke-WorkflowPackageFilePostCopyCore }
+}
+
+function Invoke-WorkflowPackageFilePostCopyCore {
     $previousMcpProtection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
     $previousMcpProtectionValue = if ($null -ne $previousMcpProtection) { $previousMcpProtection.Value } else { $null }
     $previousOpenCodeMode = Get-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
@@ -8875,6 +8879,27 @@ function Invoke-WorkflowPackageFilePostCopy {
             }
         }
         } | Out-Host
+
+        # Capture refreshed client configs in the same post-copy checkpoint.
+        # Ready/committed continuations must keep their already recorded bytes.
+        if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
+            $mcpRegistryRefreshed = $false
+            try {
+                Refresh-Vibecoding1cMcpRegistry
+                $mcpRegistryRefreshed = $true
+            } catch {
+                Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
+            }
+            if ($mcpRegistryRefreshed) {
+                $mcpSelection = Read-Vibecoding1cMcpSelection
+                $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
+                if ($mcpSelectionCompleteness.isComplete) {
+                    Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -IncludeClientSurfaces -PreserveUserChanges
+                } else {
+                    Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
+                }
+            }
+        }
 
         return [pscustomobject]@{
             aiRulesPathsBefore = @($aiRulesPathsBefore)
@@ -9478,26 +9503,6 @@ function Update-WorkflowPackage {
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     if ([string]$pendingPostCopy.receipt.phase -eq 'post-copy-running') {
         $filePostCopy = Invoke-WorkflowPackageFilePostCopy
-        # Capture refreshed client configs in the same post-copy checkpoint.
-        # Ready/committed continuations must keep their already recorded bytes.
-        if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
-            $mcpRegistryRefreshed = $false
-            try {
-                Refresh-Vibecoding1cMcpRegistry
-                $mcpRegistryRefreshed = $true
-            } catch {
-                Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
-            }
-            if ($mcpRegistryRefreshed) {
-                $mcpSelection = Read-Vibecoding1cMcpSelection
-                $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
-                if ($mcpSelectionCompleteness.isComplete) {
-                    Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -IncludeClientSurfaces -PreserveUserChanges
-                } else {
-                    Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
-                }
-            }
-        }
         Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $pendingPostCopy.snapshot -BeforeCommit ([string]$pendingPostCopy.receipt.preUpdateHead) -RequireOriginalIndex
         $aiRulesPathsBefore = @($filePostCopy.aiRulesPathsBefore)
         $clientSurfacePathsBefore = @($filePostCopy.clientSurfacePathsBefore)
@@ -11944,6 +11949,10 @@ function Test-InitAiRulesReady {
 }
 
 function Initialize-Project {
+    Invoke-Vibecoding1cMcpRegistryOperation { Initialize-ProjectCore }
+}
+
+function Initialize-ProjectCore {
     Write-Section "Initialize project"
     Assert-Agent1cInitialProjectRootPathBudget | Out-Null
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null

@@ -945,9 +945,12 @@ try {
             if ($terminalStatusInFlight) {
                 if ($helperProcess.HasExited) { continue }
                 if ($terminalExitDeadlineUtc -eq [DateTime]::MinValue) {
-                    $terminalExitDeadlineUtc = [DateTime]::UtcNow.AddSeconds(60)
+                    # Terminal work uses the existing bounded process-cleanup
+                    # grace, still capped by the global maximum deadline.
+                    $cleanupDeadlineUtc = [DateTime]::UtcNow.AddSeconds(60)
+                    $terminalExitDeadlineUtc = if ($cleanupDeadlineUtc -lt $maximumDeadlineUtc) { $cleanupDeadlineUtc } else { $maximumDeadlineUtc }
                 }
-                if ([DateTime]::UtcNow -ge $terminalExitDeadlineUtc -or [DateTime]::UtcNow -ge $operationDeadlineUtc) {
+                if ([DateTime]::UtcNow -ge $terminalExitDeadlineUtc) {
                     $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) wrote terminal status but did not exit within the bounded grace period."
                     $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
                     if (-not $termination.confirmed) { throw "$runnerFailureMessage Owned process tree termination was not confirmed: $($termination.error)" }

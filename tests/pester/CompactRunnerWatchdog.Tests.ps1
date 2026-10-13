@@ -249,6 +249,51 @@ exit 0
         }
     }
 
+    It 'honors terminal cleanup grace across the action deadline and bounds a stuck terminal helper: <Case>' -ForEach @(
+        @{Case='exits';CleanupSeconds=10;ExpectedExit=0},
+        @{Case='stuck';CleanupSeconds=90;ExpectedExit=1}
+    ) {
+        $caseCleanupSeconds = $CleanupSeconds
+        $caseExpectedExit = $ExpectedExit
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl terminal deadline путь ' + [guid]::NewGuid().ToString('N'))
+        $previousTimeout = $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $fixture = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now=Get-Date
+$payload=[ordered]@{schemaVersion=1;status='succeeded';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='complete';stageDetail='cleanup beyond action deadline';liveness='';exitCode=0;errorMessage=''}
+[IO.File]::WriteAllText($RunStatusPath,($payload|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+Start-Sleep -Seconds __CLEANUP_SECONDS__
+exit 0
+'@
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value $fixture.Replace('__CLEANUP_SECONDS__',[string]$caseCleanupSeconds)
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS='8'
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            $result=Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','check-dev-branch')
+            $watch.Stop()
+            $result.exitCode | Should -Be $caseExpectedExit -Because $result.combinedText
+            $summary=($result.stdout -join "`n")|ConvertFrom-Json
+            if($caseExpectedExit -eq 0){
+                $summary.status|Should -Be succeeded
+                $summary.stage|Should -Be complete
+                $watch.Elapsed.TotalSeconds|Should -BeGreaterThan 8
+            }else{
+                $summary.status|Should -Be failed
+                $summary.stage|Should -Be 'runner.operation-timeout'
+                $summary.error|Should -Match 'terminal status.*bounded grace period'
+                $watch.Elapsed.TotalSeconds|Should -BeLessThan 80
+                $status=Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8|ConvertFrom-Json
+                @(Get-Process -Id ([int]$status.pid) -ErrorAction SilentlyContinue).Count|Should -Be 0
+            }
+        } finally {
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS=$previousTimeout
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "lets the helper own its published Designer stall budget before the runner watchdog fails" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stall-owner-" + [guid]::NewGuid().ToString("N"))
         $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")

@@ -1266,7 +1266,7 @@
                 Set-Vibecoding1cMcpSelection *> $null
                 $selection = Read-Vibecoding1cMcpSelection
                 $selectionEntry = $selection.servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
-                $selectionEntry.hostId | Should -Be ""
+                $selectionEntry.hostId | Should -Be "dead-host"
 
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
                 $complete.isComplete | Should -BeTrue

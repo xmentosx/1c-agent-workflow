@@ -58,3 +58,47 @@ Live Уфа/dev-ermakov не входят в локальное доказате
 Новые записи получают baseline при штатной записи; старые сохраняются без
 принудительной миграции. Rollback через существующий workflow snapshot.
 Публикация/установка и live canary требуют отдельного поручения.
+
+## Acceptance completion
+
+Registry snapshot belongs to the existing vibecoding1c operation invocation.
+Initialize (including selection and setup) and common update post-copy use the
+same in-memory snapshot; nested operations reuse it and finally discard it.
+Refresh failure captures cached data for selection only, never rewrites remote
+connections, and does not turn unavailable dependent verification into a pass.
+Ready/committed update continuation does not enter the post-copy operation again.
+
+HTTP request and cleanup each have an explicit elapsed budget covering DNS,
+connect, headers, redirects and body. An invocation-local cancellable transport
+closes active sockets on expiry; daemon resolver work cannot hold the probe open.
+Identity remains valid after optional health failure. Cleanup has its own bounded
+budget and cannot expand the health method's recorded deadline.
+
+Recovery sequencing and 60-second real-demand retry remain agent-owned, as already
+specified; no service or durable retry state is added. Local acceptance uses real
+loopback MCP endpoints, local Git publication and actual owner config writes.
+An explicitly simulated supported client reconnect proves that branch only;
+absence of a callable owning-client reload channel proves reload-required, not
+attachment. Deployment, actual Ufa init and production reconnect stay excluded
+by the user's server boundary.
+
+## Qualification-discovered terminal cleanup defect
+
+The exact integrated Targeted run exposed a compact-runner defect outside the
+MCP transport: successful terminal status was overwritten when the action
+budget elapsed during process cleanup. The existing 60-second terminal grace
+was incorrectly preempted by that action deadline. The existing runner remains
+the sole owner; no coordinator, persisted state or new blocking check is added.
+Nonterminal operation and stale-heartbeat deadlines remain unchanged. Once a
+terminal result is published, process exit uses the existing 60-second grace,
+capped by the global 86400-second maximum. A helper that does not exit is still
+stopped through the same owned process-tree termination path.
+
+This corrects precedence at the existing terminal boundary. Normal operation
+cost does not change; the edge case can wait up to the existing cleanup grace
+instead of overwriting the result at the action deadline. Native evidence:
+8-second action budget plus 10-second cleanup fails the old runner in 9.58s;
+fixed runner completes in 14.16s. A deliberately stuck terminal helper is stopped
+in 63.53s, below the 80-second regression bound. Original watchdog reproducer
+workload, timeouts and assertions were retained; independent active-operation
+and stale-heartbeat failure tests still pass.

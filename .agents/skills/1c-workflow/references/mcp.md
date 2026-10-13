@@ -135,7 +135,7 @@ Actions:
 Rules:
 
 1. Remote LAN is the default provider. Remote `code` and `graph` are config-specific and require explicit per-server `configId`; selections do not inherit `configId` or `hostId` from each other.
-2. If multiple usable remote hosts publish the same server, require per-server `hostId`.
+2. If multiple remote hosts publish the same server, require per-server `hostId`.
 3. Store per-developer selection in ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
 4. Developers may override each server to local. Local `code` and `graph` require `project` or `branch` scope.
 5. Project/branch vibecoding1c endpoints should not be added to neighboring worktrees.
@@ -158,8 +158,9 @@ published SPPR endpoint is connected by default. For a project with a saved MCP
 selection, `update-workflow` also refreshes the registry and reconciles the
 active client; an incomplete selection leaves existing connections intact and
 requires `vibecoding1c-mcp-setup`. A project that deferred MCP setup still
-needs that action. Explicit `sync-client-mcp` reads the local registry; run
-`vibecoding1c-mcp-refresh-registry` first when newly published servers are needed.
+needs that action. Explicit `sync-client-mcp` refreshes the registry once before reconciling managed
+connections. If refresh fails, existing remote connections are preserved and
+independent local MCP families can still be reconciled.
 Installed projects do not provision the OData collector or store 1C credentials.
 The corpus follows the server's explicit project allowlist, independently of
 the installed project's infobase. Search is top-k; use `list_sppr_relations`
