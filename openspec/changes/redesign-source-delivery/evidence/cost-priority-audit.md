@@ -468,3 +468,15 @@ read, then retained checkpoint and the original continuation. This removes
 sleep and host-speed dependence without extending the production budget or
 changing real-process concurrency assertions. Live publication and parallel
 acceptance remain pending until their actual receipts exist.
+## Итог live-приёмки — 2026-10-13
+
+`fc43a953` опубликован в origin/develop; installable=true, master/tags сохранены.
+Develop2910/0/1 прошёл3487065ms (upgrade reused, native fresh3036715ms).
+После одного контролируемого отказа push обычный ResumePlan доставил тот же
+кандидат без повторной квалификации; SHA develop-proof совпал. Две регистрации
+через опубликованный supervisor прошли54.347s/91.116s с пересечением первых
+Targeted47.912s и готовым общим кандидатом, содержащим обе задачи.
+Приоритетный индивидуальный аудит800/2814 закрыт в согласованном объёме.
+Полные результаты, сопоставимость измерений и остаточный storage/cleanup долг:
+[live-acceptance.md](live-acceptance.md). Более ранние записи выше сохраняют
+историю незавершённых на тот момент запусков.
