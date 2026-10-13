@@ -348,6 +348,7 @@ function Get-GitBlobBytesBatch {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -357,13 +358,13 @@ function Get-GitBlobBytesBatch {
             throw "Cannot start git cat-file --batch."
         }
         $started = $true
-        $request = [System.Text.Encoding]::ASCII.GetBytes(($uniqueObjectIds -join "`n") + "`n")
-        $process.StandardInput.BaseStream.Write($request, 0, $request.Length)
-        $process.StandardInput.BaseStream.Flush()
-        $process.StandardInput.Close()
-
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         $output = $process.StandardOutput.BaseStream
         foreach ($objectId in $uniqueObjectIds) {
+            # Drain each response before writing another request: both pipes are bounded.
+            $request = [System.Text.Encoding]::ASCII.GetBytes($objectId + "`n")
+            $process.StandardInput.BaseStream.Write($request, 0, $request.Length)
+            $process.StandardInput.BaseStream.Flush()
             $headerBytes = [System.Collections.Generic.List[byte]]::new()
             while ($true) {
                 $value = $output.ReadByte()
@@ -396,8 +397,9 @@ function Get-GitBlobBytesBatch {
             $result[$objectId] = $bytes
         }
 
+        $process.StandardInput.Close()
         $process.WaitForExit()
-        $stderr = $process.StandardError.ReadToEnd()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) {
             throw "git cat-file --batch failed with exit code $($process.ExitCode): $stderr"
         }

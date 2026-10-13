@@ -4,6 +4,74 @@
     $RepoRoot=$context.RepoRoot
 }
 Describe 'Repository Git native transport' {
+    It 'reads a pipe-pressure blob batch byte-exactly and terminates the owned Git process' {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $PSScriptRoot 'SourceDelivery.TestSupport.ps1')
+        foreach ($definition in Get-DeliveryFunctionDefinitions @('Start-DeliveryProcess','Stop-DeliveryProcessJobAndWait','Close-DeliveryProcessJob','Stop-DeliveryProcessTree','Test-DeliveryProcessCreationIdentity','ConvertTo-DeliveryNativeArgument')) {
+            Invoke-Expression $definition.Extent.Text
+        }
+        $root = Join-Path $TestDrive 'Git blob пакет с пробелом'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        & git -C $root init --quiet
+        $LASTEXITCODE | Should -Be 0
+        $pattern = [byte[]]((0..255) * 4)
+        $names = @(for ($index = 0; $index -lt 2048; $index++) {
+            $name = 'Данные {0:D4}.bin' -f $index
+            $bytes = if ($index -eq 0) {
+                $large = New-Object byte[] 1048576
+                for ($offset = 0; $offset -lt $large.Length; $offset += $pattern.Length) { $pattern.CopyTo($large, $offset) }
+                $large
+            } else { $pattern.Clone() }
+            [BitConverter]::GetBytes([int]$index).CopyTo($bytes, 0)
+            [IO.File]::WriteAllBytes((Join-Path $root $name), $bytes)
+            $name
+        })
+        $ids = @((Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('hash-object','-w','--stdin-paths') -StandardInput (($names -join "`n") + "`n")).stdout.Trim() -split '\r?\n')
+        $ids.Count | Should -Be 2048
+        [IO.File]::WriteAllText((Join-Path $root 'objects.json'), (@(for ($index = 0; $index -lt $names.Count; $index++) {
+            [pscustomobject]@{ id=$ids[$index]; path=$names[$index] }
+        }) | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $probe = Join-Path $root 'probe.ps1'
+        [IO.File]::WriteAllText($probe, @'
+param([string]$Root,[string]$SourceRoot)
+$ErrorActionPreference='Stop'
+. (Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+. (Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+$objects = Get-Content -LiteralPath (Join-Path $Root 'objects.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$requested = @($objects.id) + @($objects[0].id, '', $objects[1].id)
+$actual = Get-GitBlobBytesBatch -Root $Root -ObjectIds $requested
+if ($actual.Count -ne $objects.Count) { throw 'Duplicate IDs changed batch cardinality' }
+foreach ($object in $objects) {
+    $expected = [IO.File]::ReadAllBytes((Join-Path $Root $object.path))
+    if ([Convert]::ToBase64String($actual[$object.id]) -cne [Convert]::ToBase64String($expected)) {
+        throw "Blob bytes changed: $($object.id)"
+    }
+}
+if ((Get-GitBlobBytesBatch -Root $Root -ObjectIds @()).Count -ne 0) { throw 'Empty batch was not empty' }
+foreach ($bad in @('invalid-id', ('0' * 40))) {
+    $failure = ''
+    try { $null = Get-GitBlobBytesBatch -Root $Root -ObjectIds @($bad) } catch { $failure = $_.Exception.Message }
+    if (-not $failure) { throw "Invalid or missing object silently accepted: $bad" }
+    if ($bad -eq 'invalid-id' -and $failure -notlike '*GIT_BLOB_OBJECT_ID_INVALID*') { throw $failure }
+    if ($bad -ne 'invalid-id' -and $failure -notlike '*Unexpected git cat-file header*missing*') { throw $failure }
+}
+[Console]::Out.Write('passed')
+'@, [Text.UTF8Encoding]::new($true))
+        $out = Join-Path $root 'out.log'; $err = Join-Path $root 'err.log'; $started = $null
+        try {
+            $arguments = (@('-NoProfile','-ExecutionPolicy','Bypass','-File',$probe,'-Root',$root,'-SourceRoot',$RepoRoot) | ForEach-Object { ConvertTo-DeliveryNativeArgument ([string]$_) }) -join ' '
+            $started = Start-DeliveryProcess -ArgumentList $arguments -WorkingDirectory $root -StandardOutputPath $out -StandardErrorPath $err
+            $started.process.WaitForExit(30000) | Should -BeTrue -Because 'the request batch exceeds the stdin pipe while binary responses fill stdout; the owned job bounds a deadlock'
+            $started.process.ExitCode | Should -Be 0 -Because ([IO.File]::ReadAllText($err))
+            [IO.File]::ReadAllText($out) | Should -BeExactly 'passed'
+        } finally {
+            if ($started) {
+                try { [void](Stop-DeliveryProcessJobAndWait -JobHandle $started.jobHandle -Process $started.process -TimeoutMilliseconds 5000) }
+                finally { Close-DeliveryProcessJob -JobHandle $started.jobHandle -Process $started.process; $started.process.Dispose() }
+            }
+        }
+    }
+
 It 'reads exact Unicode Git paths without entering the redirected stdin launcher' {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         $root=Join-Path $TestDrive 'Git путь с пробелом'

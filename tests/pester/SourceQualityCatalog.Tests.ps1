@@ -348,6 +348,7 @@ Describe 'Source quality catalog contracts' {
     It "fits the observed lifecycle cohort and mandatory serial tail without changing runtime watchdogs" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/pester-timings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $historicalPaths = @(
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
@@ -372,8 +373,13 @@ Describe 'Source quality catalog contracts' {
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 78
+        $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 79
+        @($selection.tests) | Should -Contain $gitTransportConsumer
+        $gitTransportOwner = @($catalog.contracts | Where-Object id -eq 'repository-git-transport')[0]
+        @($gitTransportOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        @(Get-QualityContractReuseInputPaths -Contract $gitTransportOwner) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
         foreach ($test in $lifecycleConsumers) { @($selection.tests) | Should -Contain $test }
         @($selection.tests) | Should -Contain $qualificationConsumer
         foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
@@ -393,7 +399,8 @@ Describe 'Source quality catalog contracts' {
         $oldCompactSeconds = 239.771
         $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
         $dependencySeconds = 14.161
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        # Conservatively account for the new blob-pressure consumer without rewriting the historical measurements.
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1'
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -404,7 +411,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 81
+        @($currentSelection.tests).Count | Should -Be 82
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
