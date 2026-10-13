@@ -6583,6 +6583,7 @@ function New-DesignerInvocationProbeState {
         processProbeLastCompletedAtUtc = $null
         processScanProcess = $null
         processScanOutputPath = ""
+        processScanInputPath = ""
         processScanStartedAtUtc = $null
         infoBaseReleaseDatabasePath = ""
         probeLastStatusPublishedAtUtc = [DateTime]::MinValue
@@ -6600,7 +6601,8 @@ function Start-DesignerProcessEnumeration {
     }
 
     $outputPath = Join-Path (Get-Agent1cTempRoot) ("designer-process-probe-{0}-{1}.json" -f $PID, ([guid]::NewGuid().ToString("N")))
-    $inputBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
+    $inputPath = [IO.Path]::ChangeExtension($outputPath, 'input.json')
+    $inputPayload = @{
         outputPath = $outputPath
         operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
         trackedProcessIds = @($ProbeState.trackedProcessIds)
@@ -6610,10 +6612,14 @@ function Start-DesignerProcessEnumeration {
         helperLibraryPath = $script:Agent1cCoreRoot
         logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
         databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
-    } | ConvertTo-Json -Compress -Depth 10)))
+    } | ConvertTo-Json -Compress -Depth 10
+    # Ownership evidence grows with a long native build. Keep the complete
+    # payload in an owned UTF-8 file; only its path enters the bounded command.
+    $inputPathBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($inputPath))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
-`$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
+`$inputPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputPathBase64'))
+`$inputPayload = [IO.File]::ReadAllText(`$inputPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
 `$payload = `$null
 try {
     `$scopes = @(`$inputPayload.ownedProcessScopes)
@@ -6656,17 +6662,24 @@ if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
-    if ($null -eq $process) {
-        throw "Could not start the bounded Designer process enumeration."
+    try {
+        Write-Utf8TextAtomic -Path $inputPath -Value $inputPayload
+        $process = Start-Process `
+            -FilePath "powershell" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+            -WorkingDirectory $script:ProjectRoot `
+            -WindowStyle Hidden `
+            -PassThru
+        if ($null -eq $process) {
+            throw "Could not start the bounded Designer process enumeration."
+        }
+    } catch {
+        Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue
+        throw
     }
     $ProbeState.processScanProcess = $process
     $ProbeState.processScanOutputPath = $outputPath
+    $ProbeState.processScanInputPath = $inputPath
     $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow
     $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
 }
@@ -6687,6 +6700,11 @@ function Stop-DesignerProcessEnumeration {
     }
     if ($ProbeState.processScanOutputPath -and (Test-Path -LiteralPath $ProbeState.processScanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         Remove-Item -LiteralPath $ProbeState.processScanOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    $inputPath = [string](Get-StateValue -State $ProbeState -Name 'processScanInputPath' -Default '')
+    if ($termination.confirmed -and $inputPath) {
+        Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue
+        $ProbeState.processScanInputPath = ''
     }
     $ProbeState.processScanProcess = $null
     $ProbeState.processScanOutputPath = ""

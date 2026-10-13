@@ -6,6 +6,72 @@
         $HelperPath = $context.HelperPath
     }
 
+    It 'transports a large complete ownership inventory through a native probe with Unicode and whitespace paths' {
+        $root = Join-Path $TestDrive 'Большой native probe с пробелом'
+        $library = Join-Path $root 'Библиотека probe с пробелом'
+        $temp = Join-Path $root 'Временные файлы с пробелом'
+        [void][IO.Directory]::CreateDirectory($library)
+        [void][IO.Directory]::CreateDirectory($temp)
+        $fixtureCore = @'
+function Get-DesignerOwnedProcessInventory {
+    param($Inventory, $Identities, $TrackedProcessIds, $LogPath, $InvocationStartedAtUtc, $Scopes)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$Scopes[0].marker)))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [pscustomobject]@{ identityCount=$Identities.Count; lastName=$Identities[900512].name; ids=($TrackedProcessIds -join ','); log=$LogPath; markerSha256=$digest }
+}
+'@
+        [IO.File]::WriteAllText((Join-Path $library 'agent-1c.core.ps1'), $fixtureCore, [Text.UTF8Encoding]::new($true))
+        foreach ($name in @('agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { [IO.File]::WriteAllText((Join-Path $library $name), '', [Text.Encoding]::ASCII) }
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $temp }
+            $script:Agent1cCoreRoot = $library
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            $state.trackedProcessIds = @(900001..900512)
+            $state.trackedProcessIdentities = @{}
+            foreach ($id in $state.trackedProcessIds) {
+                $state.trackedProcessIdentities[$id] = [pscustomobject]@{name=('Процесс с пробелом '+$id);startTimeUtc='2026-10-13T10:00:00Z'}
+            }
+            $marker = ('Полный контекст владельца с пробелом. ' * 2000)
+            $state.ownedProcessScopes = @([pscustomobject]@{marker=$marker})
+            $log = Join-Path $root 'Точный лог с пробелом.log'
+            try {
+                Start-DesignerProcessEnumeration -ProbeState $state -LogPath $log
+                $state.processScanProcess.WaitForExit(30000) | Should -BeTrue
+                $result = Read-Utf8Text -Path $state.processScanOutputPath | ConvertFrom-Json
+                $result.status | Should -Be 'completed'
+                $row = @($result.processes)[0]
+                $row.identityCount | Should -Be 512
+                $row.lastName | Should -Be 'Процесс с пробелом 900512'
+                $row.ids | Should -Be ($state.trackedProcessIds -join ',')
+                $row.log | Should -Be $log
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $expected = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($marker)))).Replace('-','').ToLowerInvariant() }
+                finally { $sha.Dispose() }
+                $row.markerSha256 | Should -Be $expected
+            } finally {
+                $termination = Stop-DesignerProcessEnumeration -ProbeState $state
+                $termination.confirmed | Should -BeTrue
+            }
+            @(Get-ChildItem -LiteralPath $temp -File).Count | Should -Be 0
+        }
+    }
+
+    It 'removes the unpublished probe input when native child startup fails' {
+        $root = Join-Path $TestDrive 'Отказ native probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Start-Process { throw 'forced-probe-start-failure' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw '*forced-probe-start-failure*'
+            $state.processScanProcess | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $root -File).Count | Should -Be 0
+        }
+    }
+
     It 'rejects an old child of a reused launcher PID through <enumerationMode> while retaining valid descendants' -TestCases @(@{enumerationMode='fallback'},@{enumerationMode='worker'}) {
         param($enumerationMode)
         $result = & {
