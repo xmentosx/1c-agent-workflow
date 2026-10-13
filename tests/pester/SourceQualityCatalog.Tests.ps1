@@ -51,6 +51,30 @@ Describe 'Source quality catalog contracts' {
                 foreach($name in @('unknown.Tests.ps1','excluded.Tests.ps1')) {
                     Get-ShardInputDigest -Paths @((Join-Path $RepositoryRoot $name)) -PreparedInputs ([ref]$prepared) | Should -BeNullOrEmpty
                 }
+                # Bind the real classifier owner, so removing an actual cross-file
+                # dependency cannot silently reuse a consumer's previous proof.
+                $actualCatalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+                $classifierOwner = @($actualCatalog.contracts | Where-Object id -eq 'verification-failure-classification')[0]
+                $catalog = [pscustomobject]@{contracts=@($classifierOwner)}
+                $trackedPaths = @($classifierOwner.paths) + @(Get-QualityContractReuseInputPaths -Contract $classifierOwner) + @($classifierOwner.tests)
+                foreach ($path in $trackedPaths) {
+                    $full = Join-Path $RepositoryRoot $path
+                    [IO.Directory]::CreateDirectory((Split-Path -Parent $full)) | Out-Null
+                    [IO.File]::WriteAllText($full, '# classifier fixture input', [Text.UTF8Encoding]::new($false))
+                }
+                $pesterExternalInputsByTest = @{}
+                $consumer = Join-Path $RepositoryRoot 'tests/pester/VanessaRunnerTopology.Tests.ps1'
+                $prepared = $null
+                $prior = Get-ShardInputDigest -Paths @($consumer) -PreparedInputs ([ref]$prepared)
+                $prior | Should -Not -BeNullOrEmpty
+                foreach ($inputPath in @('.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1', '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1', '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1')) {
+                    Get-ShardInputDigest -Paths @($consumer) -PreparedInputs ([ref]$prepared) | Should -BeExactly $prior
+                    [IO.File]::AppendAllText((Join-Path $RepositoryRoot $inputPath), ' changed classifier input', [Text.UTF8Encoding]::new($false))
+                    $fresh = Get-ShardInputDigest -Paths @($consumer) -PreparedInputs ([ref]$prepared)
+                    $fresh | Should -Not -Be $prior -Because "$inputPath must invalidate the shared classifier consumer"
+                    $fresh | Should -BeExactly (Get-ShardInputDigest -Paths @($consumer))
+                    $prior = $fresh
+                }
             }
         } finally {
             if($savedReceipt){$script:pesterRuntimeReceipt=$savedReceipt.Value}else{Remove-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue}
@@ -374,8 +398,14 @@ Describe 'Source quality catalog contracts' {
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 79
+        $classificationConsumer = 'tests/pester/ToolingReadiness.Tests.ps1'
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 80
+        @($selection.tests) | Should -Contain $classificationConsumer
+        $classificationOwner = @($catalog.contracts | Where-Object id -eq 'verification-failure-classification')[0]
+        @($classificationOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
+        @($classificationOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        @($classificationOwner.tests) | Should -Contain 'tests/pester/VanessaRunnerTopology.Tests.ps1'
         @($selection.tests) | Should -Contain $gitTransportConsumer
         $gitTransportOwner = @($catalog.contracts | Where-Object id -eq 'repository-git-transport')[0]
         @($gitTransportOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
@@ -400,7 +430,7 @@ Describe 'Source quality catalog contracts' {
         $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
         $dependencySeconds = 14.161
         # Conservatively account for the new blob-pressure consumer without rewriting the historical measurements.
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1'
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1'
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -411,7 +441,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 82
+        @($currentSelection.tests).Count | Should -Be 83
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",

@@ -4584,7 +4584,16 @@ function Get-VanessaVerificationStatus {
         if (($junit.failures + $junit.errors) -gt 0) {
             $failedCases = @($junit.testCases | Where-Object { $_.failure -or $_.error })
             $diagnostic = if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnostic } else { "" }
-            $failureCategory = if (Test-VanessaTestClientConnectionFailure -Diagnostic $diagnostic) { "runner" } else { "" }
+            $failureContext = Get-WorkflowVerificationFailureContext -Message $diagnostic
+            $failureCategory = [string]$failureContext.category
+            $failureRequiredAction = [string]$failureContext.requiredAction
+            # Empty remains the established JUnit product-failure default for existing readers.
+            if ($failureCategory -eq 'product-assertion') { $failureCategory = '' }
+            if ($failureContext.requiredAction -ne 'repair-dev-branch-tooling' -and $failureCategory -ne 'test-fixture' -and
+                (Test-VanessaTestClientConnectionFailure -Diagnostic $diagnostic)) {
+                $failureCategory = 'runner'
+                $failureRequiredAction = 'inspect-testclient-startup-diagnostics-and-repeat-original-command'
+            }
             $reason = "Vanessa JUnit report contains failures/errors: failures=$($junit.failures), errors=$($junit.errors)."
             if ($diagnostic) {
                 $reason += " First failure: $diagnostic"
@@ -4593,6 +4602,7 @@ function Get-VanessaVerificationStatus {
                 status = "failed"
                 reason = $reason
                 failureCategory = $failureCategory
+                failureRequiredAction = $failureRequiredAction
                 primaryErrorSignature = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSignature } else { "" })
                 primaryErrorSource = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSource } else { "" })
                 secondaryDiagnostics = @($failedCases | ForEach-Object { $_.secondaryDiagnostic } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
@@ -4672,6 +4682,7 @@ function Get-VanessaVerificationFailureRoute {
     $verificationStatus = [string](Get-StateValue -State $Verification -Name "status" -Default "")
     $reason = [string](Get-StateValue -State $Verification -Name "reason" -Default "")
     $failureCategory = [string](Get-StateValue -State $Verification -Name "failureCategory" -Default "")
+    $classification = Get-WorkflowVerificationFailureContext -Message $reason
     $eventLogFailedIndependently = ([string](Get-StateValue -State $EventLogVerification -Name "status" -Default "") -eq "failed" -and
         -not $EventLogConfirmsPrimaryFailure)
 
@@ -4681,19 +4692,22 @@ function Get-VanessaVerificationFailureRoute {
         $category = "runner"
     } elseif ($eventLogFailedIndependently) {
         $category = "event-log"
+    } elseif ($classification.requiredAction -eq 'repair-dev-branch-tooling') {
+        $category = 'runner'
     } elseif ($failureCategory) {
         $category = $failureCategory
-    } elseif ($reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
-        $category = "unsupported-step"
-    } elseif ($reason -match '(?i)(scenario context|scenario-context)') {
-        $category = "scenario-context"
-    } elseif ($reason -match '^ITL_VANESSA_TAG_FILTER_') {
-        $category = "runner"
+    } elseif ($classification.category) {
+        $category = [string]$classification.category
     }
 
     if ($category -eq "runner") {
-        if ($failureCategory -eq "runner") {
-            $requiredAction = "inspect-testclient-startup-diagnostics-and-repeat-original-command"
+        if ($classification.requiredAction -eq 'repair-dev-branch-tooling') {
+            $requiredAction = [string]$classification.requiredAction
+        } elseif ($failureCategory -eq "runner") {
+            # New producer results carry the specific continuation; old runner records
+            # retain their established TestClient startup continuation.
+            $actionProperty = $Verification.PSObject.Properties['failureRequiredAction']
+            $requiredAction = if ($null -ne $actionProperty) { [string]$actionProperty.Value } else { 'inspect-testclient-startup-diagnostics-and-repeat-original-command' }
         }
         elseif (Test-ItlDiagnosticVerificationScope) {
             $requiredAction = "fix-and-repeat-original-check"

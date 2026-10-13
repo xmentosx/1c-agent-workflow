@@ -505,6 +505,43 @@ function Set-RunFailureContext {
     if ($RequiredAction) { $script:RunRequiredAction = $RequiredAction }
 }
 
+function Get-WorkflowVerificationFailureContext {
+    param([AllowEmptyString()][string]$Message)
+
+    $category = ''
+    $requiredAction = ''
+    $messageText = ([string]$Message).TrimStart()
+    $fixtureFrame = '\{ВнешняяОбработка\.VanessaAutomation(?:single)?\.Форма\.Тест_ВстроенныйЯзык\.Форма\([0-9]+\)\}:\s*'
+    $fixtureCompilation = '^(?:' + $fixtureFrame + 'При выполнении кода возникла ошибка\s*<)?' + $fixtureFrame +
+        'Ошибка компиляции при вычислении выражения или выполнении фрагмента кода:\s*\{<Неизвестный модуль>'
+    if ($messageText -match '^ITL_(?:TOOLING_|DESIGNER_AGENT_)') {
+        $category = 'runner'
+        $requiredAction = 'repair-dev-branch-tooling'
+    } elseif ($messageText -match '^ITL_YAXUNIT_ZERO_TESTS') {
+        $category = 'missing-suite'
+    } elseif ($messageText -match '^ITL_YAXUNIT_TESTS_FAILED') {
+        $category = 'product-assertion'
+    } elseif ($messageText -match '^ITL_VANESSA_TEST_FIXTURE_' -or $messageText -match $fixtureCompilation) {
+        # Only compilation at Vanessa's direct dynamic-body call site is fixture-owned.
+        # A nested product module frame or unknown source does not establish that provenance.
+        $category = 'test-fixture'
+    } elseif ($messageText -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+        $category = 'missing-suite'
+    } elseif ($messageText -match '(?i)(undefined step|step.+not found|unsupported-step)') {
+        $category = 'unsupported-step'
+    } elseif ($messageText -match '(?i)(scenario context|scenario-context)') {
+        $category = 'scenario-context'
+    } elseif ($messageText -match '^ITL_VANESSA_TAG_FILTER_') {
+        $category = 'runner'
+    } elseif ($messageText -match '(?i)(event.?log)') {
+        $category = 'event-log'
+    } elseif ($messageText -match '(?i)(\bassert(?:ion)?\b|\bexpected\b|verification failed)') {
+        $category = 'product-assertion'
+    }
+    if ($category -and $category -ne 'runner') { $requiredAction = '/itl-verify-fix' }
+    return [pscustomobject]@{ category=$category; requiredAction=$requiredAction }
+}
+
 function Set-RunFailureContextFromMessage {
     param(
         [string]$Message,
@@ -564,33 +601,10 @@ function Set-RunFailureContextFromMessage {
         return
     }
 
-    if ($Message -match '^ITL_TOOLING_') {
-        $category = "runner"
-        $requiredAction = "repair-dev-branch-tooling"
-    } elseif ($Message -match '^ITL_YAXUNIT_ZERO_TESTS') {
-        $category = "missing-suite"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '^ITL_YAXUNIT_TESTS_FAILED') {
-        $category = "product-assertion"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
-        $category = "missing-suite"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
-        $category = "test-fixture"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step)') {
-        $category = "unsupported-step"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(scenario context|scenario-context)') {
-        $category = "scenario-context"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(event.?log)') {
-        $category = "event-log"
-        $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(\bassert(?:ion)?\b|\bexpected\b|verification failed)') {
-        $category = "product-assertion"
-        $requiredAction = "/itl-verify-fix"
+    $classification = Get-WorkflowVerificationFailureContext -Message $Message
+    if ($classification.category) {
+        $category = [string]$classification.category
+        $requiredAction = [string]$classification.requiredAction
     }
     Set-RunFailureContext -Category $category -RequiredAction $requiredAction
 }
