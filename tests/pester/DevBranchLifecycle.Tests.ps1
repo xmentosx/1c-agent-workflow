@@ -5123,12 +5123,54 @@ try {
         }
     }
 
+    It 'reports an unusable Vanessa errors directory before publishing runner settings' {
+        $root = Join-Path $TestDrive 'ошибка записи с пробелом'
+        $run = Join-Path $root 'run'
+        New-Item -ItemType Directory -Path $run -Force | Out-Null
+        $feature = Join-Path $root 'сценарий.feature'
+        Set-Content -LiteralPath $feature -Encoding UTF8 -Value 'Функционал: Тест'
+        $blockedPath = Join-Path $run 'errors'
+        Set-Content -LiteralPath $blockedPath -Encoding UTF8 -Value 'Сохранённый файл'
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $state = [pscustomobject]@{ infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'база') }
+            { New-VanessaParamsFile -FeaturePath $feature -RunDirectory $run -StatusPath (Join-Path $run 'status.json') -State $state -TestPort 48051 -VanessaVersion '1.2.043.28' } | Should -Throw '*ITL_VANESSA_ERRORS_DIRECTORY_UNWRITABLE*'
+            Read-Utf8Text -Path $blockedPath | Should -Match 'Сохранённый файл'
+            Test-Path -LiteralPath (Join-Path $run 'VAParams.json') | Should -BeFalse
+        }
+    }
+
+    It 'reports denied Vanessa errors directory creation and retains existing evidence' {
+        $root = Join-Path $TestDrive 'нет доступа к записи с пробелом'
+        $run = Join-Path $root 'run'
+        New-Item -ItemType Directory -Path $run -Force | Out-Null
+        $feature = Join-Path $root 'сценарий.feature'
+        Set-Content -LiteralPath $feature -Encoding UTF8 -Value 'Функционал: Тест'
+        $retained = Join-Path $run 'сохранённое доказательство.txt'
+        Set-Content -LiteralPath $retained -Encoding UTF8 -Value 'Не удалять'
+        $originalAcl = Get-Acl -LiteralPath $run
+        $deniedAcl = Get-Acl -LiteralPath $run
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new($identity, [Security.AccessControl.FileSystemRights]::CreateDirectories, [Security.AccessControl.AccessControlType]::Deny)
+        $deniedAcl.AddAccessRule($rule)
+        try {
+            Set-Acl -LiteralPath $run -AclObject $deniedAcl
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $state = [pscustomobject]@{ infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'база') }
+                { New-VanessaParamsFile -FeaturePath $feature -RunDirectory $run -StatusPath (Join-Path $run 'status.json') -State $state -TestPort 48051 -VanessaVersion '1.2.043.28' } | Should -Throw '*ITL_VANESSA_ERRORS_DIRECTORY_UNWRITABLE*'
+                Read-Utf8Text -Path $retained | Should -Match 'Не удалять'
+                Test-Path -LiteralPath (Join-Path $run 'VAParams.json') | Should -BeFalse
+            }
+        } finally { Set-Acl -LiteralPath $run -AclObject $originalAcl }
+    }
+
     It "creates Vanessa TestClient params and keeps VAParams path unquoted" {
         function Decode-TestUtf8([string]$Value) {
             return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
         }
 
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-params-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl va параметры с пробелом " + [guid]::NewGuid().ToString("N"))
         $oldUser = [Environment]::GetEnvironmentVariable("IB_USER", "Process")
         $oldPassword = [Environment]::GetEnvironmentVariable("IB_PASSWORD", "Process")
 
@@ -5183,6 +5225,12 @@ try {
                 $params.fulllog | Should -BeTrue
                 $params.textlogname | Should -Be (Join-Path $runDirectory "vanessa.log")
                 $params.texterrorslogname | Should -Be (Join-Path $runDirectory "errors")
+                Test-Path -LiteralPath $params.texterrorslogname -PathType Container | Should -BeTrue
+                $retainedPath = Join-Path $params.texterrorslogname 'предыдущая ошибка.txt'
+                Write-Utf8Text -Path $retainedPath -Value 'Первичное доказательство'
+                $repeatPath = New-VanessaParamsFile -FeaturePath $featuresPath -RunDirectory $runDirectory -StatusPath $statusPath -State $state -TestPort 48051 -VanessaVersion '1.2.043.28'
+                $repeatPath | Should -Be $paramsPath
+                Read-Utf8Text -Path $retainedPath | Should -BeExactly 'Первичное доказательство'
                 $params.maskpwdinlog | Should -BeTrue
                 $params.outputloginconsole | Should -BeFalse
                 $params.soundnotificationwhenscriptends | Should -BeFalse

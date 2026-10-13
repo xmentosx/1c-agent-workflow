@@ -4022,6 +4022,11 @@ function New-VanessaParamsFile {
     $clientStartupTimeout = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS" -Default 300) -Default 300
     $vanessaTextLogPath = Join-Path $RunDirectory "vanessa.log"
     $vanessaErrorsDirectory = Join-Path $RunDirectory "errors"
+    try {
+        [IO.Directory]::CreateDirectory($vanessaErrorsDirectory) | Out-Null
+    } catch {
+        throw "ITL_VANESSA_ERRORS_DIRECTORY_UNWRITABLE: '$vanessaErrorsDirectory': $($_.Exception.Message) Restore write access to this run directory and repeat the original verification command; existing artifacts were retained."
+    }
 
     $configuredTestClientRun = ($null -ne $TestClientTopology -and
         [int]$TestClientTopology.requiredTestClientSlots -gt 0 -and
