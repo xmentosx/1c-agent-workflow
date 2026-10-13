@@ -499,8 +499,8 @@ function Assert-FreshGlobalIndexTarget {
 }
 
 function Get-HostMcpToolsList {
-    param([string]$Url)
-    $connection = Open-HostMcpConnection -Url $Url
+    param([string]$Url, [switch]$ExactEndpoint)
+    $connection = Open-HostMcpConnection -Url $Url -ExactEndpoint:$ExactEndpoint
     try {
         $tools = @()
         $cursor = ""
@@ -509,7 +509,7 @@ function Get-HostMcpToolsList {
             if ($cursor) { $params["cursor"] = $cursor }
             $payload = [ordered]@{ jsonrpc = "2.0"; id = [int]$connection.nextId; method = "tools/list"; params = $params }
             $connection.nextId = [int]$connection.nextId + 1
-            $response = Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $connection.headers -Body ($payload | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec 60
+            $response = Invoke-HostMcpHttpRequest -Url $connection.url -Method Post -ContentType "application/json" -Headers $connection.headers -Body ($payload | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec 60 -ExactEndpoint:$ExactEndpoint
             $body = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
             if ($null -ne $body.PSObject.Properties["error"]) { throw "MCP tools/list failed: $($body.error | ConvertTo-Json -Depth 10 -Compress)" }
             $result = Get-ObjectValue -Object $body -Name "result" -Default $null
@@ -574,8 +574,8 @@ function Assert-BetaToolsAcceptOldCalls {
 }
 
 function Assert-BetaDocsFunctionalCall {
-    param([string]$Url, [switch]$NativeResponse, [string]$ExpectedGeneration = "")
-    $connection = Open-HostMcpConnection -Url $Url
+    param([string]$Url, [switch]$NativeResponse, [string]$ExpectedGeneration = "", [switch]$ExactEndpoint)
+    $connection = Open-HostMcpConnection -Url $Url -ExactEndpoint:$ExactEndpoint
     try {
         $arguments = if ($NativeResponse) { [ordered]@{ query = "HTTP"; top_k = 1; max_items = 1; max_chars = 4000 } } else { [ordered]@{ query = "String" } }
         $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments $arguments
@@ -659,9 +659,9 @@ function Assert-BetaToolsContract {
 }
 
 function Get-BetaConfigurationIndexActivity {
-    param([string]$ServerId, [string]$Url)
+    param([string]$ServerId, [string]$Url, [switch]$ExactEndpoint)
     if ($ServerId -notin @("code", "graph")) { return $null }
-    $connection = Open-HostMcpConnection -Url $Url
+    $connection = Open-HostMcpConnection -Url $Url -ExactEndpoint:$ExactEndpoint
     try {
         $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
         $result = Invoke-HostMcpTool -Connection $connection -Name $tool
@@ -1065,20 +1065,27 @@ function Invoke-BetaCutover {
                 Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex -Source $source
                 if ($retainedIndex) { Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -AllowNewGeneration:$ForwardOnly }
             }
+            $qualifiedCandidateUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $context.runtime
+            if ([string](Get-ObjectValue -Object $context.runtime -Name 'endpointMode' -Default '') -eq 'direct') {
+                Set-NativeRuntimeEndpoint -Runtime $context.runtime -Url $qualifiedCandidateUrl
+            } else {
+                $context.runtime.url = $qualifiedCandidateUrl
+                $context.runtime | Add-Member -NotePropertyName directUrl -NotePropertyValue $qualifiedCandidateUrl -Force
+            }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
             $nativePublic = [string](Get-ObjectValue -Object $context.runtime -Name "endpointMode" -Default "") -eq "direct"
             if (-not $nativePublic) { $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context }
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
-            $publicTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
+            $publicTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url) -ExactEndpoint)
             $oldPublicTools = if ($nativePublic) { @($preflight.oldTools) } else { @(As-Array (Get-ObjectValue -Object $preflight -Name "oldPublicTools" -Default $preflight.oldTools)) }
             Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $oldPublicTools -BetaTools $publicTools -CheckOutputs
             if ($TargetServerId -eq "graph") {
-                $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url ([string]$context.runtime.url)
+                $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url ([string]$context.runtime.url) -ExactEndpoint
                 if ($publicActivity.running) { throw "Beta Graph public status reports unfinished indexing." }
             }
             if ($TargetServerId -eq "docs") {
-                Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url) -NativeResponse:$nativePublic
+                Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url) -NativeResponse:$nativePublic -ExactEndpoint
             }
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force

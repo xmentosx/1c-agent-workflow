@@ -31,6 +31,18 @@ Before creating a new container the installer checks that the configured Docker 
 If the image is missing, it runs `docker pull <image>` and stops with an explicit Docker daemon/registry
 diagnostic if the pull fails.
 
+Endpoint activation resolves the service's canonical MCP path through the existing
+container-bound identity probe, preserving the configured public origin. The second
+identity observation and safe health call qualify that exact URL without redirects.
+Native state, repeated publication and cutover retain the qualified URL; proxy setup
+retains its path in the Docker bridge upstream. A direct `/mcp` endpoint stays `/mcp`.
+This adds one read-only proof before activation (the existing healthy-host measurement
+was 4–15 seconds per proof); indexing and server recovery remain with their owners.
+HTTP redirect failures include the original URL, status and Location. Resolve the
+reported cause through the original setup/proxy/cutover owner, then repeat qualification;
+an unavailable proof preserves the running deployment and does not authorize a guessed
+registry edit. Ordinary nightly MCP connections keep their existing redirect behavior.
+
 The `bookstack` global server is built locally from `bookstack-product-docs-mcp/`.
 Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_ID` and
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.

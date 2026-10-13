@@ -275,7 +275,7 @@ async function runSingleFlightIntegration() {
   }
 }
 
-async function runIntegration() {
+async function runIntegration(upstreamPath = '/mcp') {
   const sessions = new Set();
   const calls = [];
   let initialized = 0;
@@ -348,7 +348,7 @@ async function runIntegration() {
   });
   const upstreamPort = await listen(upstream);
   const proxyServer = await proxy.startProxy({
-    'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+    'upstream-url': `http://127.0.0.1:${upstreamPort}${upstreamPath}`,
     'listen-port': '0',
     'server-id': 'fixture',
     'readiness-timeout-ms': '200',
@@ -737,7 +737,7 @@ async function runTemplatesOperatorTokenIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaDocsIntegration).then(runBetaSyntaxIntegration).then(runTemplatesOperatorTokenIntegration).then(() => {
+runCliStartupIntegration().then(runSingleFlightIntegration).then(() => runIntegration()).then(() => runIntegration('/mcp/')).then(runBetaCodeCheckerIntegration).then(runBetaDocsIntegration).then(runBetaSyntaxIntegration).then(runTemplatesOperatorTokenIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);

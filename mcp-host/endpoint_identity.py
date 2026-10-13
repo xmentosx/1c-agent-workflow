@@ -29,6 +29,8 @@ class ProbeError(RuntimeError):
         super().__init__(type(error).__name__)
         self.reason, self.method = type(error).__name__, method
         self.timeout, self.elapsed = timeout, elapsed
+        self.endpoint = {field: getattr(error, field) for field in
+                         ('originalUrl', 'httpStatus', 'location') if hasattr(error, field)}
 
 
 def failure(error, stage, started):
@@ -37,11 +39,27 @@ def failure(error, stage, started):
     if isinstance(error, ProbeError):
         result.update(method=error.method, timeoutSeconds=error.timeout,
                       requestElapsedSeconds=round(error.elapsed, 3))
+        result.update(error.endpoint)
     return result
 
 
+class EndpointRedirectError(RuntimeError):
+    def __init__(self, url, status, location):
+        super().__init__('Exact MCP endpoint redirected')
+        self.originalUrl, self.httpStatus, self.location = url, status, location
+
+
 class Redirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, allow_redirects=True):
+        super().__init__()
+        self.allow_redirects = allow_redirects
+
     def redirect_request(self, request, fp, code, msg, headers, url):
+        if not self.allow_redirects:
+            try:
+                fp.close()
+            finally:
+                raise EndpointRedirectError(request.full_url, code, headers.get('Location', ''))
         if (code in (307, 308) and urllib.parse.urlsplit(request.full_url).netloc
                 == urllib.parse.urlsplit(url).netloc):
             return urllib.request.Request(url, data=request.data, headers=dict(request.headers),
@@ -56,7 +74,7 @@ class DeadlineTransport:
     socket, including a socket created after a delayed DNS lookup. Worker threads
     are daemonized so a platform resolver cannot hold the probe process open.
     """
-    def __init__(self):
+    def __init__(self, allow_redirects=True):
         self.cancelled = threading.Event()
         self.connections = []
         self.lock = threading.Lock()
@@ -91,7 +109,8 @@ class DeadlineTransport:
                 return self.do_open(lambda *a, **k: factory(SecureConnection, *a, **k), request,
                                     context=self._context)
 
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTP(), HTTPS(), Redirect())
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTP(), HTTPS(),
+                                                  Redirect(allow_redirects))
 
     def abort(self):
         self.cancelled.set()
@@ -126,8 +145,9 @@ class DeadlineTransport:
 
 
 class Client:
-    def __init__(self, url, timeout):
+    def __init__(self, url, timeout, exact_endpoint=False):
         self.url, self.timeout, self.session, self.sequence = url, timeout, None, 0
+        self.exact_endpoint = exact_endpoint
         self.protocol = '2025-03-26'
         try:
             self.initialized = self.request('initialize', {
@@ -151,7 +171,7 @@ class Client:
         started = time.monotonic()
         budget = self.timeout if timeout is None else timeout
         try:
-            return DeadlineTransport().run(
+            return DeadlineTransport(allow_redirects=not self.exact_endpoint).run(
                 lambda opener: self._request(method, params, notification, budget, opener), budget)
         except Exception as error:
             raise ProbeError(error, method, budget, time.monotonic() - started) from None
@@ -215,7 +235,7 @@ class Client:
                 def cleanup(opener):
                     with opener.open(request, timeout=self.timeout):
                         pass
-                DeadlineTransport().run(cleanup, self.timeout)
+                DeadlineTransport(allow_redirects=not self.exact_endpoint).run(cleanup, self.timeout)
             except Exception:
                 pass
             self.session = None
@@ -260,8 +280,8 @@ def indexing(value):
 
 
 def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expected_signature=None,
-                  health_timeout=HEALTH_TIMEOUT_SECONDS):
-    client = Client(url, timeout)
+                  health_timeout=HEALTH_TIMEOUT_SECONDS, exact_endpoint=False):
+    client = Client(url, timeout, exact_endpoint=exact_endpoint)
     try:
         name = client.initialized.get('serverInfo', {}).get('name', '')
         tools = client.request('tools/list').get('tools', [])
@@ -287,7 +307,7 @@ def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expecte
             except Exception as error:
                 health_error = failure(ProbeError(error, 'tools/call', health_timeout, time.monotonic() - health_started),
                                        'safe health', health_started)
-        return {'signature': digest, 'server_name': name, 'tool_count': len(names),
+        return {'signature': digest, 'server_name': name, 'tool_count': len(names), 'url': client.url,
                 'indexing': busy, 'health_passed': bool(health_tool) and health_error is None,
                 'health_error': health_error}
     finally:
@@ -302,8 +322,18 @@ def command(arguments, timeout=30):
     return result.stdout
 
 
+def canonical_endpoint(original, resolved):
+    """Preserve the configured public origin; only the service supplies its path."""
+    source, target = urllib.parse.urlsplit(original), urllib.parse.urlsplit(resolved)
+    if (source.scheme not in ('http', 'https') or source.scheme != target.scheme
+            or source.netloc != target.netloc or target.username or target.fragment
+            or source.query != target.query):
+        raise ValueError('MCP canonical endpoint changed public origin or query')
+    return resolved
+
+
 def check_endpoint(container, url, host_port, health_tool='', health_arguments=None, timeout=5, run=command,
-                   health_timeout=HEALTH_TIMEOUT_SECONDS):
+                   health_timeout=HEALTH_TIMEOUT_SECONDS, qualify_url=False):
     started = time.monotonic()
     stage = 'container binding'
     try:
@@ -335,16 +365,24 @@ def check_endpoint(container, url, host_port, health_tool='', health_arguments=N
                         elapsedSeconds=round(time.monotonic() - started, 3))
         expected = internal['proof']
         public = []
+        qualified_url = url
         for number in range(2):
             stage = 'public identity ' + str(number + 1)
-            public.append(read_endpoint(url, timeout))
+            public.append(read_endpoint(qualified_url, timeout,
+                                        exact_endpoint=qualify_url and number > 0))
+            if qualify_url and number == 0:
+                # Discovery may follow a supported redirect. Qualification and
+                # the safe call below use its exact same-origin candidate URL.
+                qualified_url = canonical_endpoint(url, public[0]['url'])
         matches = [proof['signature'] == expected['signature'] for proof in public]
         result = {'container_id': identity, 'expected_server': expected['server_name'],
                   'observed_servers': [proof['server_name'] for proof in public]}
+        if qualify_url:
+            result.update(original_url=url, qualified_url=qualified_url)
         if all(matches):
             stage = 'public safe health'
-            health = read_endpoint(url, timeout, health_tool, health_arguments, expected['signature'],
-                                   health_timeout=health_timeout)
+            health = read_endpoint(qualified_url, timeout, health_tool, health_arguments, expected['signature'],
+                                   health_timeout=health_timeout, exact_endpoint=qualify_url)
             if health['signature'] != expected['signature']:
                 return dict(result, status='unverified', reason='identity changed before safe call')
             return dict(result, status='matched', indexing=expected['indexing'] or health['indexing'],
@@ -375,9 +413,13 @@ def main():
     parser.add_argument('--health-arguments-base64')
     parser.add_argument('--timeout', type=int, default=5)
     parser.add_argument('--health-timeout', type=int, default=HEALTH_TIMEOUT_SECONDS)
+    parser.add_argument('--qualify-url', action='store_true',
+                        help='Resolve and qualify the exact same-origin public URL after container binding')
     args = parser.parse_args()
     started = time.monotonic()
     try:
+        if args.local and args.qualify_url:
+            raise ValueError('--qualify-url requires the container-bound public probe')
         health_arguments = json.loads(base64.b64decode(args.health_arguments_base64).decode('utf-8')
                                       if args.health_arguments_base64 else args.health_arguments)
         if args.local:
@@ -385,7 +427,8 @@ def main():
                        args.health_tool, health_arguments, health_timeout=args.health_timeout)}
         else:
             result = check_endpoint(args.container, args.url, args.host_port, args.health_tool,
-                                    health_arguments, args.timeout, health_timeout=args.health_timeout)
+                                    health_arguments, args.timeout, health_timeout=args.health_timeout,
+                                    qualify_url=args.qualify_url)
     except Exception as error:
         result = failure(error, 'safe health' if getattr(error, 'method', '') == 'tools/call' else 'identity', started)
     print(json.dumps(result, ensure_ascii=False))

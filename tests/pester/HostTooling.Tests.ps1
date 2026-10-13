@@ -34,6 +34,11 @@
         @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $config = [pscustomobject]@{ stateRoot = $tempRoot; baseUrl = 'http://localhost' }
             $tokenPath = Join-Path $tempRoot 'beta-proxy-secrets\templates.operator-token'
             $contractPath = Join-Path $tempRoot 'contract.json'
@@ -301,6 +306,11 @@
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $state = @{ servers = @() }
             function Read-HostState { return $state }
             function Get-HostPort { return $directPort }
@@ -795,6 +805,11 @@ services:
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $script:FreshSequence = @()
             $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = @{ configId = "pm4corp" }; freshProjectIndex = $true; old = @{ directUrl = "http://old/mcp"; containerName = "old-code" }; betaServer = @{ id = "code" }; runtime = @{ image = "fixture@sha256:abc" } }
             function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
@@ -2285,6 +2300,11 @@ services:
 
             & {
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
                 $script:DryRun = $false
                 $script:ProxyRollbackDockerCalls = New-Object System.Collections.Generic.List[string]
                 $script:ProxyRollbackPublished = $false
@@ -4342,6 +4362,11 @@ services:
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $script:ForwardCommands = @()
             $script:ForwardTracked = $null
             $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://direct/mcp'; url = 'http://public/mcp'; containerName = 'old'; proxyUrl = 'http://public/mcp'; proxyPort = 1234; proxyContractPath = 'old-contract' }; betaServer = @{ id = 'ssl' }; runtime = @{ id = 'ssl'; name = 'public'; scope = 'global'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; image = 'new@sha256:fixture'; containerName = 'new'; hostPort = 234; url = 'http://direct/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
@@ -4460,8 +4485,13 @@ services:
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # Container/transport is a controlled dependency of this rollback fixture.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $script:RetainedSequence = @()
-            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://old/mcp'; containerName = 'old' }; betaServer = @{ id = 'ssl' }; runtime = @{ image = 'image@sha256:fixture'; containerName = 'new'; url = 'http://new/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://old/mcp'; containerName = 'old' }; betaServer = @{ id = 'ssl' }; runtime = @{ id = 'ssl'; image = 'image@sha256:fixture'; containerName = 'new'; url = 'http://new/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
             function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
             function Exit-McpHostMaintenanceLock { $script:RetainedSequence += 'unlock' }
             function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = $null; oldTools = @() } }
@@ -4554,6 +4584,11 @@ services:
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $fixtureToken = 'TemplatesNativeOperator0123456789ABCDEF'
             function Get-HostSecretValues { return @{ MCP_OPERATOR_TOKEN = $fixtureToken } }
             function Get-HostLocalValues { return @{} }
@@ -4582,6 +4617,11 @@ services:
         @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=[string]$Server.url; health_passed=$true; health_error=$null }
+            }
             $state = @{ servers = @(
                 @{ id = 'code'; scope = 'project'; configId = 'pm4'; endpointMode = 'direct'; hostPort = 22101; url = 'http://original-host:22101/mcp'; containerName = 'code-pm4-native'; composeProject = 'code-pm4-native'; image = 'pinned' },
                 @{ id = 'code'; scope = 'project'; configId = 'pm5'; hostPort = 18100; url = 'http://host:22100/mcp'; containerName = 'code-pm5'; image = 'pinned'; proxyContainerName = 'proxy-pm5' }
@@ -4664,11 +4704,17 @@ services:
         }
     }
 
-    It "stops the old main and proxy before native binding and never copies or restores an index" -Tag NativeEndpoint {
+    It "stops the old main and proxy before native binding and never copies or restores an index" -Tag NativeEndpoint -TestCases @(@{FixtureSlash=''},@{FixtureSlash='/'}) {
+        param($FixtureSlash)
         $configPath = Join-Path $TestDrive 'native-cutover.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            # This fixture controls Docker externally; supply its matching protocol proof.
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                return @{ status='matched'; qualified_url=([string]$Server.url).TrimEnd('/')+$FixtureSlash; health_passed=$true; health_error=$null }
+            }
             $runtime = [pscustomobject]@{ id = 'ssl'; scope = 'global'; name = 'public'; image = 'pinned'; containerName = 'new-native'; hostPort = 22004; channel = 'stable'; health = 'unknown'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json' }
             Set-NativeRuntimeEndpoint -Runtime $runtime -Url 'http://host:22004/mcp'
             $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; nativeEndpoint = $true; configState = $null; freshProjectIndex = $false; retainedIndex = $true; runtime = $runtime; betaServer = @{}; old = @{ containerName = 'old'; directUrl = 'http://host:18004/mcp'; url = 'http://host:22004/mcp'; proxyUrl = 'http://host:22004/mcp'; proxyPort = 22004; proxyContainerName = 'proxy' } }
@@ -4695,9 +4741,73 @@ services:
             function Publish-Registry { $script:NativeSequence += 'publish' }
             Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest $runtime.manifestPath -ForwardOnly -NativeEndpoint
             ($script:NativeSequence -join ',') | Should -Be 'update --restart no old,stop old,update --restart no proxy,stop proxy,start-native,publish,release'
-            $script:NativeSaved.url | Should -Be 'http://host:22004/mcp'
+            $script:NativeSaved.url | Should -Be ('http://host:22004/mcp'+$FixtureSlash)
             $script:NativeSaved.toolsContractStatus | Should -Be 'native'
             $script:NativeSaved.proxyContainerName | Should -BeNullOrEmpty
+        }
+    }
+
+    It "preserves the qualified Graph path through setup and repeated publish: <FixtureMode>" -Tag CanonicalEndpoint -TestCases @(
+        @{ FixtureMode='direct' }, @{ FixtureMode='proxy' }
+    ) {
+        param($FixtureMode)
+        $configPath = Join-Path $TestDrive "canonical $FixtureMode конфигурация.json"
+        $contractPath = Join-Path $TestDrive 'canonical contract.json'
+        '{}' | Set-Content -LiteralPath $contractPath -Encoding UTF8
+        @{ schemaVersion=1; stateRoot=$TestDrive; baseUrl='http://public-host' } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $runtime = [pscustomobject]@{ id='graph'; containerName='graph-own'; hostPort=18006; url='http://public-host:18006/mcp'; endpointMode=$FixtureMode; channel='stable' }
+            $script:CanonicalProxyRunning = $false
+            $script:CanonicalDockerCalls = @()
+            $script:CanonicalProofReady = $false
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server, [switch]$Refresh)
+                $Server.containerName | Should -Be 'graph-own'
+                $Server.hostPort | Should -Be 18006
+                return @{ status='matched'; qualified_url='http://public-host:18006/mcp/'; health_passed=$script:CanonicalProofReady; health_error=$null }
+            }
+            function Test-ToolsListProxyTarget { return $true }
+            function Get-ToolsListProxySettings { return @{ portOffset=4000; contractPath=$contractPath; image='fixture-proxy' } }
+            function Ensure-ToolsListProxyImage {}
+            function Get-TemplatesBetaOperatorToken { return '' }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'graph-own' -or $script:CanonicalProxyRunning) { return 'running' }; return 'missing' }
+            function Invoke-DockerCommand { return 0 }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:CanonicalDockerCalls += ,$Arguments; $script:CanonicalProxyRunning=$true }
+            function Wait-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $true }
+            function Test-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $script:CanonicalProxyRunning }
+            # The original setup continues through the new proof boundary; no guessed URL is saved on failure.
+            { Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime } | Should -Throw '*ITL_HOST_MCP_ENDPOINT_UNVERIFIED*'
+            $runtime.url | Should -Be 'http://public-host:18006/mcp'
+            $script:CanonicalDockerCalls.Count | Should -Be 0
+            $script:CanonicalProofReady = $true
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+            $runtime.directUrl | Should -Be 'http://public-host:18006/mcp/'
+            if ($FixtureMode -eq 'proxy') {
+                $runtime.url | Should -Be 'http://public-host:22006/mcp'
+                $script:CanonicalDockerCalls.Count | Should -Be 1
+                $upstreamOption = [array]::IndexOf($script:CanonicalDockerCalls[0], '--upstream-url')
+                $upstreamOption | Should -BeGreaterOrEqual 0
+                $script:CanonicalDockerCalls[0][$upstreamOption+1] | Should -Be 'http://host.docker.internal:18006/mcp/'
+                (Update-ToolsListProxyPublishEndpoint -Server $runtime).url | Should -Be $runtime.url
+            } else {
+                $runtime.url | Should -Be $runtime.directUrl
+                $script:CanonicalDockerCalls.Count | Should -Be 0
+                # Repair old tracked URL only through the publish owner, then keep it stable.
+                $runtime.url = 'http://public-host:18006/mcp'
+                $runtime.directUrl = $runtime.url
+            }
+            $script:CanonicalState = @{ servers=@($runtime); unrelated='preserve' }
+            $script:CanonicalWrites = 0
+            function Read-HostState { return $script:CanonicalState }
+            function Write-HostState { param($Config, $State) $script:CanonicalState=$State; $script:CanonicalWrites++ }
+            function Test-HostTcpPortOpen { return $true }
+            function Get-HostServerFunctionalHealth { param($Server) $Server.url | Should -Be $(if ($FixtureMode -eq 'proxy') { 'http://public-host:22006/mcp' } else { 'http://public-host:18006/mcp/' }); return @{status='qualified';message='fixture safe call'} }
+            Update-HostStateForPublish -Config $config
+            Update-HostStateForPublish -Config $config
+            $script:CanonicalWrites | Should -Be 1
+            $script:CanonicalState.unrelated | Should -Be 'preserve'
+            $script:CanonicalState.servers[0].directUrl | Should -Be 'http://public-host:18006/mcp/'
         }
     }
 
@@ -4810,7 +4920,7 @@ Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
         foreach ($iteration in 1..40) {
             $tools = @(Get-HostMcpToolsList -Url 'http://fixture.test/mcp')
             ($tools.name -join ',') | Should -BeExactly 'first,second'
-            $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+            $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/effective/mcp' }
             $health.status | Should -Be 'qualified' -Because $health.message
         }
         $script:HostMcpFixture.created | Should -Be 80
@@ -4868,7 +4978,7 @@ Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
 
     It "releases failed functional and beta tool probes without changing their error contracts" {
         $script:HostMcpFixture.toolFailures = 1
-        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/effective/mcp' }
         $health.status | Should -Be 'degraded'
         $health.message | Should -Match 'fixture tool failure'
         $script:HostMcpFixture.sessions.Count | Should -Be 1
@@ -4900,6 +5010,17 @@ Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
         $script:HostMcpFixture.sessions.Count | Should -Be 1
     }
 
+    It "rejects a different response endpoint for functional qualification and retains the original session cleanup" {
+        $health = Get-HostServerFunctionalHealth -Server @{ id = 'syntax'; url = 'http://fixture.test/mcp' }
+        $health.status | Should -Be 'degraded'
+        $health.message | Should -Match 'ITL_MCP_ENDPOINT_CHANGED'
+        $script:HostMcpFixture.created | Should -Be 1
+        $script:HostMcpFixture.deleted.Count | Should -Be 1
+        $script:HostMcpFixture.requests | Should -Not -Contain 'tools/call'
+        $script:HostMcpFixture.sessions.Count | Should -Be 1
+        $script:HostMcpFixture.sessions.ContainsKey('foreign') | Should -BeTrue
+    }
+
     It "releases indexing operation sessions even when its first tool request fails" {
         $script:HostMcpFixture.toolFailures = 1
         { Invoke-CodeIncrementalIndex -Server @{ hostPort = 8000 } -ConfigId fixture -Settings @{ pollSeconds = 0; timeoutMinutes = 1 } } | Should -Throw '*fixture tool failure*'
@@ -4928,17 +5049,19 @@ Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
     BeforeAll {
         $sourcePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
-        $functions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -in @('Get-ObjectValue', 'Open-HostMcpConnection', 'Close-HostMcpConnection') })
+        $functions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -in @('Get-ObjectValue', 'Invoke-HostMcpHttpRequest', 'Open-HostMcpConnection', 'Close-HostMcpConnection') })
         . ([scriptblock]::Create(($functions.Extent.Text -join "`n")))
         $realWebRequestCmdlet = Get-Command Invoke-WebRequest -CommandType Cmdlet
     }
 
-    It "uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>" -TestCases @(
-        @{ Scenario = 'direct'; FailNotify = $false }, @{ Scenario = 'direct'; FailNotify = $true },
-        @{ Scenario = 'redirect'; FailNotify = $false }, @{ Scenario = 'redirect'; FailNotify = $true },
-        @{ Scenario = 'fallback'; FailNotify = $false }, @{ Scenario = 'fallback'; FailNotify = $true }
+    It "uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>, exact=<Exact>" -TestCases @(
+        @{ Scenario = 'direct'; FailNotify = $false; Exact = $false }, @{ Scenario = 'direct'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'redirect'; FailNotify = $false; Exact = $false }, @{ Scenario = 'redirect'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'fallback'; FailNotify = $false; Exact = $false }, @{ Scenario = 'fallback'; FailNotify = $true; Exact = $false },
+        @{ Scenario = 'direct'; FailNotify = $false; Exact = $true }, @{ Scenario = 'direct'; FailNotify = $true; Exact = $true },
+        @{ Scenario = 'redirect'; FailNotify = $false; Exact = $true }
     ) {
-        param($Scenario, $FailNotify)
+        param($Scenario, $FailNotify, $Exact)
         # A private TCP listener exercises Invoke-WebRequest on both Windows PowerShell
         # and pwsh without URL ACLs, external servers, Docker, or production MCP sessions.
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -5016,9 +5139,17 @@ Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
             }
             $path = if ($Scenario -eq 'redirect') { 'start' } else { 'mcp' }
             $failure = $null
-            try { $connection = Open-HostMcpConnection -Url "http://127.0.0.1:$port/$path" -TimeoutSec 10 }
+            try { $connection = Open-HostMcpConnection -Url "http://127.0.0.1:$port/$path" -TimeoutSec 10 -ExactEndpoint:$Exact }
             catch { $failure = $_ }
-            if ($FailNotify) {
+            $redirectRejected = $Exact -and $Scenario -eq 'redirect'
+            if ($redirectRejected) {
+                $failure | Should -Not -BeNullOrEmpty
+                $failure.Exception.Message | Should -Match 'ITL_MCP_ENDPOINT_REDIRECT'
+                $failure.Exception.Message | Should -Match ([regex]::Escape("originalUrl='http://127.0.0.1:$port/start'"))
+                $failure.Exception.Message | Should -Match 'httpStatus=307'
+                $failure.Exception.Message | Should -Match ([regex]::Escape("location='http://127.0.0.1:$port/mcp'"))
+                $state.stop = $true
+            } elseif ($FailNotify) {
                 $failure | Should -Not -BeNullOrEmpty
                 [int]$failure.Exception.Response.StatusCode | Should -Be 500
             } else {
@@ -5029,9 +5160,13 @@ Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
             $async.AsyncWaitHandle.WaitOne(5000) | Should -BeTrue
             $worker.EndInvoke($async)
             $state.error | Should -BeNullOrEmpty
-            $state.deleted | Should -Be 1
+            $state.deleted | Should -Be $(if ($redirectRejected) { 0 } else { 1 })
             $state.active | Should -Be 1
-            @($state.requests | Where-Object { $_.method -eq 'DELETE' -and $_.path -eq '/mcp' -and $_.session -eq 'owned-loopback' }).Count | Should -Be 1
+            @($state.requests | Where-Object { $_.method -eq 'DELETE' -and $_.path -eq '/mcp' -and $_.session -eq 'owned-loopback' }).Count | Should -Be $(if ($redirectRejected) { 0 } else { 1 })
+            if ($redirectRejected) {
+                $state.requests.Count | Should -Be 1
+                $state.requests[0].path | Should -Be '/start'
+            }
         } finally {
             Close-HostMcpConnection -Connection $connection
             $state.stop = $true

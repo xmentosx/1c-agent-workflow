@@ -2917,17 +2917,52 @@ function Set-NativeRuntimeEndpoint {
     }
 }
 
+function Get-HostProxyUpstreamUrl {
+    param([object]$Server)
+    $directUrl = [string](Get-ObjectValue -Object $Server -Name 'directUrl' -Default '')
+    if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $Server -Name 'url' -Default '') }
+    $uri = $(if ($directUrl) { [UriBuilder]::new($directUrl) } else { [UriBuilder]::new('http://host.docker.internal/mcp') })
+    $uri.Host = 'host.docker.internal'
+    $uri.Port = [int](Get-ObjectValue -Object $Server -Name 'hostPort' -Default 0)
+    if ($uri.Port -le 0) { throw 'ITL_HOST_MCP_PORT_INVALID: proxy upstream requires the tracked direct host port.' }
+    return $uri.Uri.AbsoluteUri
+}
+
+function Resolve-HostRuntimeMcpUrl {
+    param([object]$Config, [object]$Runtime)
+    $direct = Convert-ToHash -Object $Runtime
+    $directUrl = [string](Get-ObjectValue -Object $Runtime -Name 'directUrl' -Default '')
+    if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $Runtime -Name 'url' -Default '') }
+    $direct['url'] = $directUrl
+    $proof = Get-HostDirectEndpointProof -Config $Config -Server $direct -Refresh
+    $qualifiedUrl = [string](Get-ObjectValue -Object $proof -Name 'qualified_url' -Default '')
+    $tool = Get-HostServerSafeHealthTool -ServerId ([string]$direct.id)
+    if ([string]$proof.status -ne 'matched' -or -not $qualifiedUrl -or
+        $null -ne (Get-ObjectValue -Object $proof -Name 'health_error' -Default $null) -or
+        ($tool -and -not [bool](Get-ObjectValue -Object $proof -Name 'health_passed' -Default $false))) {
+        $failure = Get-ObjectValue -Object $proof -Name 'health_error' -Default $null
+        if ($null -eq $failure) { $failure = $proof }
+        $details = @('safe endpoint qualification is incomplete')
+        foreach ($field in @('status', 'stage', 'method', 'reason', 'originalUrl', 'httpStatus', 'location', 'timeoutSeconds')) {
+            $value = Get-ObjectValue -Object $failure -Name $field -Default ''
+            if ([string]$value) { $details += "${field}='$value'" }
+        }
+        throw "ITL_HOST_MCP_ENDPOINT_UNVERIFIED: server='$($direct.id)' originalUrl='$directUrl'; $($details -join '; '). Retain the running server and its state. Inspect this exact server through host status, resolve the reported endpoint/health cause, then repeat the original host operation; do not publish a guessed URL or restart it as discovery."
+    }
+    return $qualifiedUrl
+}
+
 function Enable-ToolsListProxyForRuntime {
     param([object]$Config, [object]$Runtime)
     if ([string](Get-ObjectValue -Object $Runtime -Name "endpointMode" -Default "") -eq "direct") {
-        Set-NativeRuntimeEndpoint -Runtime $Runtime -Url ([string]$Runtime.url)
+        Set-NativeRuntimeEndpoint -Runtime $Runtime -Url (Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $Runtime)
         return
     }
     $id = [string](Get-ObjectValue -Object $Runtime -Name "id" -Default "")
     if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $id)) { return }
 
     $settings = Get-ToolsListProxySettings -Config $Config
-    $directUrl = [string]$Runtime.url
+    $directUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $Runtime
     $proxyPort = [int]$Runtime.hostPort + [int]$settings.portOffset
     $proxyContainerName = [string](Get-ObjectValue -Object $Runtime -Name "proxyContainerName" -Default "$($Runtime.containerName)-tools-list-proxy")
     $contractPath = [string](Get-ObjectValue -Object $Runtime -Name "proxyContractPath" -Default $settings.contractPath)
@@ -2971,7 +3006,7 @@ function Enable-ToolsListProxyForRuntime {
         [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
     }
     $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
-    $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
+    $upstreamUrl = Get-HostProxyUpstreamUrl -Server $Runtime
     try {
         $dockerArgs = @(
             "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
@@ -3033,7 +3068,7 @@ function Update-ToolsListProxyPublishEndpoint {
     $proxyPort = [int](Get-ObjectValue -Object $hash -Name "proxyPort" -Default 0)
     $id = [string](Get-ObjectValue -Object $hash -Name "id" -Default "")
     $hostPort = [int](Get-ObjectValue -Object $hash -Name "hostPort" -Default 0)
-    $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
+    $expectedUpstreamUrl = $(if ($hostPort -gt 0) { Get-HostProxyUpstreamUrl -Server $hash } else { "" })
     $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)
     $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
     $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
@@ -3186,8 +3221,8 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 throw "Direct MCP runtime for '$id' is not running on tracked port $hostPort."
             }
 
-            $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "directUrl" -Default "")
-            if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "url" -Default "") }
+            $directUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $serverHash
+            $serverHash['directUrl'] = $directUrl
             $proxyPort = $hostPort + [int]$settings.portOffset
             $proxyContainerName = [string](Get-ObjectValue -Object $serverHash -Name "proxyContainerName" -Default "")
             if (-not $proxyContainerName) { $proxyContainerName = "$containerName-tools-list-proxy" }
@@ -3205,7 +3240,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
             $contractPath = [string](Get-ObjectValue -Object $serverHash -Name "proxyContractPath" -Default $settings.contractPath)
             if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) { throw "Tools-list proxy contract is missing: $contractPath" }
             $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
-            $upstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+            $upstreamUrl = Get-HostProxyUpstreamUrl -Server $serverHash
             Invoke-DockerCommandChecked -Arguments @(
                 "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
                 "--add-host", "host.docker.internal:host-gateway",
@@ -3349,7 +3384,7 @@ function Repair-TrackedMcpHostAndPublish {
                 Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 120 -Description "docker start $proxyContainerName"
             }
         }
-        $expectedUpstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+        $expectedUpstreamUrl = (Get-HostProxyUpstreamUrl -Server $Server)
         if ($proxyState -eq "missing" -or $proxyState -eq "unknown" -or -not (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             if (-not $repairIds.Contains($id)) { [void]$repairIds.Add($id) }
         }
@@ -3840,6 +3875,37 @@ function Get-HostMcpResponseUtf8Text {
     return ([Text.UTF8Encoding]::new($false, $true).GetString($stream.ToArray()))
 }
 
+function Invoke-HostMcpHttpRequest {
+    param([string]$Url, [string]$Method, [object]$Headers, [AllowNull()][object]$Body = $null,
+        [string]$ContentType = 'application/json', [int]$TimeoutSec = 60, [switch]$ExactEndpoint)
+
+    $requestArguments = @{ UseBasicParsing=$true; Uri=$Url; Method=$Method; Headers=$Headers; TimeoutSec=$TimeoutSec; ErrorAction='Stop' }
+    if ($null -ne $Body) { $requestArguments.Body=$Body; $requestArguments.ContentType=$ContentType }
+    if ($ExactEndpoint) { $requestArguments.MaximumRedirection=0 }
+    $response = $null
+    $requestFailure = $null
+    try {
+        $response = Invoke-WebRequest @requestArguments
+    } catch {
+        $requestFailure = $_
+        $response = Get-ObjectValue -Object $_.Exception -Name 'Response' -Default $null
+    }
+    $statusCode = [int](Get-ObjectValue -Object $response -Name 'StatusCode' -Default 0)
+    if ($ExactEndpoint -and $statusCode -ge 300 -and $statusCode -lt 400) {
+        # Keep the raw header object: returning HttpResponseHeaders through the
+        # generic getter enumerates it into key/value pairs in PowerShell.
+        $responseHeaders = $response.Headers
+        # HttpResponseHeaders exposes Location as a property in pwsh; Windows
+        # PowerShell's WebHeaderCollection uses its string indexer instead.
+        $locationProperty = $responseHeaders.PSObject.Properties['Location']
+        $location = $(if ($null -ne $locationProperty) { [string]$locationProperty.Value } else { '' })
+        if (-not $location -and $null -ne $responseHeaders) { $location = [string]$responseHeaders['Location'] }
+        throw "ITL_MCP_ENDPOINT_REDIRECT: originalUrl='$Url' httpStatus=$statusCode location='$location'. Reconcile the canonical endpoint through the original host setup/proxy/cutover owner, then repeat the original qualification; do not edit registry URLs directly."
+    }
+    if ($null -ne $requestFailure) { throw $requestFailure }
+    return $response
+}
+
 function Close-HostMcpConnection {
     param([AllowNull()][object]$Connection)
 
@@ -3852,7 +3918,7 @@ function Close-HostMcpConnection {
         $headers = @{}
         foreach ($key in $Connection.headers.Keys) { $headers[$key] = $Connection.headers[$key] }
         $headers["mcp-session-id"] = $sessionId
-        Invoke-WebRequest -UseBasicParsing -Uri $url -Method Delete -Headers $headers -TimeoutSec 10 -ErrorAction Stop | Out-Null
+        Invoke-HostMcpHttpRequest -Url $url -Method Delete -Headers $headers -TimeoutSec 10 -ExactEndpoint:([bool](Get-ObjectValue -Object $Connection -Name 'exactEndpoint' -Default $false)) | Out-Null
     } catch {
         # Cleanup must not replace a tool/initialization failure or fail a valid result.
         Write-Warning "Could not close the owned MCP session at '$url'; server expiry remains responsible. $($_.Exception.Message)" -WarningAction Continue
@@ -3862,7 +3928,8 @@ function Close-HostMcpConnection {
 function Open-HostMcpConnection {
     param(
         [string]$Url,
-        [int]$TimeoutSec = 60
+        [int]$TimeoutSec = 60,
+        [switch]$ExactEndpoint
     )
     $headers = @{ Accept = "application/json, text/event-stream" }
     $body = [ordered]@{
@@ -3875,10 +3942,10 @@ function Open-HostMcpConnection {
             clientInfo = [ordered]@{ name = "itl-nightly-index"; version = "1" }
         }
     } | ConvertTo-Json -Depth 8 -Compress
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec
+    $response = Invoke-HostMcpHttpRequest -Url $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec -ExactEndpoint:$ExactEndpoint
     $sessionId = [string]$response.Headers["mcp-session-id"]
     if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
-    $connection = [pscustomobject]@{ url = $Url; headers = $headers; nextId = 2; ownedSessionId = $sessionId }
+    $connection = [pscustomobject]@{ url = $Url; headers = $headers; nextId = 2; ownedSessionId = $sessionId; exactEndpoint = [bool]$ExactEndpoint }
     try {
         $baseResponse = Get-ObjectValue -Object $response -Name "BaseResponse" -Default $null
         $responseUri = Get-ObjectValue -Object $baseResponse -Name "ResponseUri" -Default $null
@@ -3890,8 +3957,11 @@ function Open-HostMcpConnection {
         }
         # Windows PowerShell and pwsh expose different effective-URI properties.
         # Keep the known initial URL if neither response shape supplies one.
-        if (-not [string]::IsNullOrWhiteSpace($effectiveUrl)) { $connection.url = $effectiveUrl }
-        Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
+        if (-not [string]::IsNullOrWhiteSpace($effectiveUrl)) {
+            if ($ExactEndpoint -and -not ([Uri]$effectiveUrl).Equals([Uri]$Url)) { throw "ITL_MCP_ENDPOINT_CHANGED: originalUrl='$Url' effectiveUrl='$effectiveUrl'. Reconcile through the host owner before qualification." }
+            $connection.url = $effectiveUrl
+        }
+        Invoke-HostMcpHttpRequest -Url $connection.url -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec -ExactEndpoint:$ExactEndpoint | Out-Null
         return $connection
     } catch {
         Close-HostMcpConnection -Connection $connection
@@ -3937,7 +4007,7 @@ function Invoke-HostMcpTool {
         params = [ordered]@{ name = $Name; arguments = $Arguments }
     }
     $Connection.nextId = [int]$Connection.nextId + 1
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json; charset=utf-8" -Headers $Connection.headers -Body ([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec $TimeoutSec
+    $response = Invoke-HostMcpHttpRequest -Url $Connection.url -Method Post -ContentType "application/json; charset=utf-8" -Headers $Connection.headers -Body ([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec $TimeoutSec -ExactEndpoint:([bool](Get-ObjectValue -Object $Connection -Name 'exactEndpoint' -Default $false))
     $result = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
     if ($null -ne $result.PSObject.Properties["error"]) {
         throw "MCP tool '$Name' returned a JSON-RPC error: $($result.error | ConvertTo-Json -Depth 10 -Compress)"
@@ -4511,7 +4581,7 @@ function Get-HostServerFunctionalHealth {
             if ($activity.running) { return [pscustomobject]@{ status = "indexing"; message = "Docs native index phase: $($activity.phase); serving an older generation is not completed acceptance." } }
             $nativeDocs = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "stable" -and
                 -not [string]::IsNullOrWhiteSpace([string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default ""))
-            Assert-BetaDocsFunctionalCall -Url $direct -NativeResponse:$nativeDocs -ExpectedGeneration ([string](Get-ObjectValue -Object $ready -Name "generation" -Default ""))
+            Assert-BetaDocsFunctionalCall -Url $direct -NativeResponse:$nativeDocs -ExpectedGeneration ([string](Get-ObjectValue -Object $ready -Name "generation" -Default "")) -ExactEndpoint
             return [pscustomobject]@{ status = "qualified"; message = "Docs native index ready and safe MCP lookup passed." }
         } catch { return [pscustomobject]@{ status = "degraded"; message = "Docs functional qualification failed: $($_.Exception.Message)" } }
     }
@@ -4525,7 +4595,7 @@ function Get-HostServerFunctionalHealth {
     }
     $connection = $null
     try {
-        $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10
+        $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10 -ExactEndpoint
         $arguments = Get-HostServerSafeHealthArguments -ServerId $id
         $result = Invoke-HostMcpTool -Connection $connection -Name $toolName -Arguments $arguments -TimeoutSec 15
         if ($id -eq "graph") {
@@ -4557,7 +4627,7 @@ function Get-HostDirectEndpointProof {
         $python = Ensure-PythonRuntime -Config $Config
         $probe = Join-Path $PSScriptRoot "../mcp-host/endpoint_identity.py"
         $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
-        $arguments = @("-B", "-X", "utf8", $probe, "--container", ([string]$Server.containerName), "--url", ([string]$Server.url),
+        $arguments = @("-B", "-X", "utf8", $probe, "--qualify-url", "--container", ([string]$Server.containerName), "--url", ([string]$Server.url),
             "--host-port", ([string]$Server.hostPort), "--timeout", "5")
         $tool = Get-HostServerSafeHealthTool -ServerId $id
         if ($tool) {
@@ -4597,7 +4667,7 @@ function Get-HostServerPublishStatus {
         $proxyPort = [int](Get-ObjectValue -Object $Server -Name "proxyPort" -Default 0)
         $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
         $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
-        $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
+        $expectedUpstreamUrl = $(if ($hostPort -gt 0) { (Get-HostProxyUpstreamUrl -Server $Server) } else { "" })
         $toolsContractStatus = [string](Get-ObjectValue -Object $Server -Name "toolsContractStatus" -Default "")
         if ($toolsContractStatus -eq "qualified" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             return "running"
@@ -4660,6 +4730,14 @@ function Update-HostStateForPublish {
         $directProof = $null
         if ([string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct" -and $publishStatus -in @("running", "unknown")) {
             $directProof = Get-HostDirectEndpointProof -Config $Config -Server $serverHash
+        }
+        if ($null -ne $directProof -and [string]$directProof.status -eq 'matched' -and
+            $null -eq (Get-ObjectValue -Object $directProof -Name 'health_error' -Default $null)) {
+            $qualifiedUrl = [string](Get-ObjectValue -Object $directProof -Name 'qualified_url' -Default '')
+            if ($qualifiedUrl -and [string]$serverHash.url -cne $qualifiedUrl) {
+                Set-NativeRuntimeEndpoint -Runtime $serverHash -Url $qualifiedUrl
+                $changed = $true
+            }
         }
         if ($null -ne $directProof -and $directProof.status -ne "matched") {
             $details = @("Direct MCP qualification is $($directProof.status)")

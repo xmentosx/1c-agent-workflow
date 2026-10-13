@@ -21,6 +21,9 @@ class MCPFixture:
         self.heartbeat = False
         self.header_drip = False
         self.close_delay = 0
+        self.redirect_to_slash = True
+        self.redirect_health = False
+        self.redirects = 0
         self.schema = {'type': 'object', 'properties': {'description': {'type': 'string'}}}
         fixture = self
 
@@ -38,13 +41,21 @@ class MCPFixture:
                 # Drain the POST body before closing the redirect response. An
                 # unread body makes this HTTP/1.0 fixture reset Windows sockets.
                 raw = self.rfile.read(int(self.headers['Content-Length']))
-                if self.path == '/mcp':
+                if self.path == '/mcp' and fixture.redirect_to_slash:
+                    fixture.redirects += 1
                     self.send_response(307)
                     self.send_header('Location', '/mcp/')
                     self.send_header('Content-Length', '0')
                     self.end_headers()
                     return
                 request = json.loads(raw)
+                if fixture.redirect_health and request['method'] == 'tools/call':
+                    fixture.redirects += 1
+                    self.send_response(307)
+                    self.send_header('Location', '/later')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
                 fixture.calls.append(request)
                 method = request['method']
                 if method == 'notifications/initialized':
@@ -154,6 +165,62 @@ class EndpointIdentity(unittest.TestCase):
         self.assertTrue(result['health_passed'])
         self.assertEqual(sum(item['method'] == 'tools/call' for item in self.public.calls), 1)
         self.assertEqual(self.public.closed, 3)
+
+    def test_exact_qualification_reports_redirect_without_following_or_calling_tools(self):
+        started = time.monotonic()
+        with self.assertRaises(identity.ProbeError) as caught:
+            identity.read_endpoint(self.public.url, timeout=1, exact_endpoint=True)
+        error = identity.failure(caught.exception, 'public identity', started)
+        self.assertEqual(error['reason'], 'EndpointRedirectError')
+        self.assertEqual(error['originalUrl'], self.public.url)
+        self.assertEqual(error['httpStatus'], 307)
+        self.assertEqual(error['location'], '/mcp/')
+        self.assertEqual(self.public.redirects, 1)
+        self.assertEqual(self.public.calls, [])
+        self.assertEqual(self.public.closed, 0)
+
+    def test_canonical_candidate_is_qualified_exactly_and_preserves_public_origin(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                        'index_status', timeout=2, run=self.command_run, qualify_url=True)
+        self.assertEqual(result['status'], 'matched', result)
+        self.assertTrue(result['health_passed'])
+        self.assertEqual(result['original_url'], self.public.url)
+        self.assertEqual(result['qualified_url'], self.public.url + '/')
+        self.assertEqual(self.public.redirects, 1)
+        self.assertEqual(sum(item['method'] == 'tools/list' for item in self.public.calls), 3)
+        self.assertEqual(sum(item['method'] == 'tools/call' for item in self.public.calls), 1)
+        self.assertEqual(self.public.closed, 3)
+
+    def test_a_direct_endpoint_keeps_its_unsuffixed_path(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        self.public.redirect_to_slash = False
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                        'index_status', timeout=2, run=self.command_run, qualify_url=True)
+        self.assertEqual(result['status'], 'matched', result)
+        self.assertTrue(result['health_passed'])
+        self.assertEqual(result['qualified_url'], self.public.url)
+        self.assertEqual(self.public.redirects, 0)
+
+    def test_redirect_during_exact_safe_call_remains_a_failed_health_proof(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        self.public.redirect_health = True
+        result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
+                                        'index_status', timeout=2, run=self.command_run, qualify_url=True)
+        self.assertFalse(result['health_passed'])
+        self.assertEqual(result['health_error']['reason'], 'EndpointRedirectError')
+        self.assertEqual(result['health_error']['originalUrl'], self.public.url + '/')
+        self.assertEqual(result['health_error']['httpStatus'], 307)
+        self.assertEqual(result['health_error']['location'], '/later')
+        self.assertFalse(any(item['method'] == 'tools/call' for item in self.public.calls))
+
+    def test_canonical_candidate_cannot_change_public_origin_or_query(self):
+        for candidate in ('https://server:8006/mcp/', 'http://other:8006/mcp/',
+                          'http://server:9006/mcp/', 'http://server:8006/mcp/?token=new',
+                          'http://server:8006/mcp/#ignored'):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(ValueError):
+                    identity.canonical_endpoint('http://server:8006/mcp', candidate)
 
     def test_dripping_headers_cannot_extend_health_deadline(self):
         self.public.header_drip = True
