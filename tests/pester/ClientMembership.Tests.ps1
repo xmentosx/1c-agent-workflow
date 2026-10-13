@@ -102,18 +102,22 @@ Describe 'ITL client membership planning' {
         }
     }
 
-    It 'reports MCP reload per changed client without requiring the invoking client to be attached' {
+    It 'reports MCP reload for changed <FixtureClient> without requiring the invoking client to be attached' -TestCases @(
+        @{FixtureClient='kilocode'; Expected='/reload'}, @{FixtureClient='codex'; Expected='новый чат или fork'}
+    ) {
+        param($FixtureClient, $Expected)
         $root = Join-Path $TestDrive ('Reload clients ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
-        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["kilocode"]}}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), (@{aiRules=@{tools=@($FixtureClient)}} | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
-            Register-ItlClientMcpSemanticChange -Client kilocode -Owner facade -Path '.kilo/mcp.json'
+            Register-ItlClientMcpSemanticChange -Client $FixtureClient -Owner facade -Path $(if($FixtureClient -eq 'codex'){'.codex/config.toml'}else{'.kilo/mcp.json'})
             Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation 'update-workflow' | Out-Null
             [string]$script:RunRequiredAction
         }
-        $result | Should -Match 'kilocode:'
-        $result | Should -Match '/reload'
+        $result | Should -Match ($FixtureClient + ':')
+        $result | Should -Match ([regex]::Escape($Expected))
+        if($FixtureClient -eq 'codex') { $result | Should -Match 'только по явному разрешению'; $result | Should -Match 'mcp\.md' }
         $result | Should -Match 'facade'
     }
 

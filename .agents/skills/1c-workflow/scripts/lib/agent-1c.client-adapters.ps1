@@ -17,8 +17,8 @@
             trackedMcpConfig = $false
             reload = "Start a new Codex task so project rules and skills are reread."
             reloadUserReport = "Откройте новую задачу Codex, чтобы заново прочитать правила и skills проекта."
-            mcpReload = "Restart the Codex app, then start a new task so project MCP configuration is loaded."
-            mcpReloadUserReport = "Перечитайте MCP-подключения Codex из .codex/config.toml штатным механизмом клиента в текущей задаче; при отсутствии такой возможности сообщите ограничение клиента и продолжайте независимую работу. См. .agents/skills/1c-workflow/references/mcp.md."
+            mcpReload = "Reload the owning Codex MCP connection when supported; otherwise follow references/mcp.md for an explicitly authorized new-chat or fork handoff and verify actual tools in the destination."
+            mcpReloadUserReport = "Перечитайте MCP-подключения Codex из .codex/config.toml штатным механизмом клиента в текущей задаче. Если интерфейса reload нет, предложите новый чат или fork с сохранённым контекстом; создавайте его только по явному разрешению и проверьте MCP в новом чате. Продолжайте независимую работу. См. .agents/skills/1c-workflow/references/mcp.md."
         }
         kilocode = [ordered]@{
             id = "kilocode"

@@ -71,14 +71,39 @@ the observation and the agent uses the recovered tool in the same task. No
 background polling or durable offline cache is required. Respect an intentional
 user-disabled server; this is not an outage to repair or re-enable.
 
+Expiry clears only the availability observation. It does not prove completion
+or cancellation of a timed-out request. Preserve its request ID (when supplied),
+input/evidence hashes, observation bounds, raw error and call count; use the
+documented status/recovery route before replaying it. Without such evidence,
+remote completion stays unknown: do not automatically duplicate that operation,
+including from a new chat. Discovery and independent safe calls may continue.
+
 If the client cached a startup failure and still has no tools after the endpoint
 recovers, use its supported MCP reload/reconnect and rediscover in the same task.
 Codex App Server exposes `config/mcpServer/reload` on the **owning** connection;
 use it only when the host provides that capability. Starting a second App Server
 does not reconnect this task. Desktop/CLI exposure is client-specific: if the
-current host supplies no reload interface, state that limitation, continue
-independent work, and retry current discovery on new availability evidence. Do
-not claim automatic attachment or demand an application restart on every refresh.
+current host supplies no reload interface, distinguish the fresh registry/written
+config, a working endpoint and tools actually attached to this chat. When the
+first two are proved but the required tool is still absent, save a compact handoff
+in the existing task artifacts and propose a new chat or fork in the exact project
+on the same host. Check whether the client exposes creation/fork tools. Use them
+only with explicit user authorization for this transition; an existing applicable
+authorization needs no repeated question. If tools or authorization are absent,
+provide the handoff and supported manual next step while independent work continues.
+
+Carry the original goal and next owner command, checkout/branch/infobase, MCP
+versions, source/evidence identities, blocker, permissions and their source,
+repair session ID/history/counters and any active or unknown operation. Reference
+raw artifacts instead of copying secrets. Context transfer does not transfer live
+PID/lease ownership or expand permissions. In the destination, verify actual tool
+discovery and a target-scoped safe call; fork history alone does not prove fresh
+MCP attachment. For manual protocol qualification retain initialize → initialized
+→ tools/list → safe tools/call. Reconcile the existing operation through its owner
+before any continuation; never start a second writer or reset a repair session.
+If the tool is still absent, report whether config, endpoint or client startup
+remains unproved and give that owner's next step. Keep the original task open;
+do not claim automatic attachment or demand an application restart on every refresh.
 
 Local workflow-owned MCP: do not settle for working indefinitely without it.
 Distinguish normal stopped on-demand backends from a failed facade/tool call;
