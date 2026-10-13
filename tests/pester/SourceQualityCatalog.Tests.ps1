@@ -188,6 +188,7 @@ Describe 'Source quality catalog contracts' {
             "scripts/source-delivery-supervisor.ps1",
             "scripts/source-delivery-plan.ps1",
             "scripts/source-delivery-resources.ps1",
+            "scripts/release-artifact-paths.ps1",
             "scripts/source-delivery-ref-cleanup.ps1",
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",

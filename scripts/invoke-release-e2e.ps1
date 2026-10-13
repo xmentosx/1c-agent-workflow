@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$AiRulesSource,
@@ -21,6 +21,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $OutputEncoding = $utf8NoBom
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-process.ps1")
+. (Join-Path $PSScriptRoot 'release-artifact-paths.ps1')
 $clientMcpBuildScope = $null
 try {
     $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
@@ -676,7 +677,7 @@ function Get-E2EFileSha256 {
 $safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
 $preferredReleaseRunRoot = Join-Path $worktreePath ".agent-1c\runs\release-e2e\$safeRunName"
 $legacyReleaseRunRoot = Join-Path $worktreePath ".agent-1c\release-e2e-runs\$safeRunName"
-$capabilityCacheRoot = Join-Path $worktreePath ".agent-1c\runs\release-e2e-capabilities\$safeRunName"
+$capabilityCacheRoot = Get-ReleaseCapabilityCacheRoot -WorktreePath $worktreePath -RunName $safeRunName
 $usingLegacyRunRoot = $false
 
 function Set-E2ERunPaths {

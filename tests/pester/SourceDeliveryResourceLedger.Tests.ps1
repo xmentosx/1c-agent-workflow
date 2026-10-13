@@ -48,7 +48,7 @@
     $pathAssignments = @($releaseAst.FindAll({
         param($node)
         $node -is [Management.Automation.Language.AssignmentStatementAst] -and
-            $node.Left.Extent.Text -in @('$safeRunName', '$preferredReleaseRunRoot', '$legacyReleaseRunRoot')
+            $node.Left.Extent.Text -in @('$safeRunName', '$preferredReleaseRunRoot', '$legacyReleaseRunRoot', '$capabilityCacheRoot')
     }, $false) | Sort-Object { $_.Extent.StartOffset } | ForEach-Object { $_.Extent.Text })
     $pathFunction = $releaseAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-E2ERunPaths' }, $false)
     $script:ReleaseProducerPathSetup = ($pathAssignments + @($pathFunction.Extent.Text)) -join "`n"
@@ -74,6 +74,26 @@
         $identity = [ordered]@{ path = $path; sha256 = (Get-DeliveryFileSha256 -Path $path); worktreePath = $root }
         $id = Register-DeliveryResource -PlanId 'old-plan' -Kind release-snapshot -Owner release-e2e -Identity $identity -State cleanup-pending
         [pscustomobject]@{ root = $root; path = $path; identity = $identity; resourceId = $id }
+    }
+
+    function New-ReleaseCapabilityFixture {
+        param([string]$Kind = 'capability-generation', [string]$Problem = '')
+        $fixture = New-ReleaseSnapshotFixture
+        $cacheRoot = & { param($worktreePath); $devBranchName='workflow-release-e2e'; . ([scriptblock]::Create($script:ReleaseProducerPathSetup)); $capabilityCacheRoot } $fixture.root
+        $generation = [guid]::NewGuid().ToString('N')
+        $directory = Join-Path $cacheRoot $generation
+        $snapshot = Join-Path $directory 'snapshots/postConfig.dt'
+        $evidence = Join-Path $directory 'evidence/config-roundtrip.json'
+        New-Item -ItemType Directory -Path (Split-Path $snapshot), (Split-Path $evidence) -Force | Out-Null
+        [IO.File]::WriteAllText($snapshot,'snapshot',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($evidence,'{}',[Text.UTF8Encoding]::new($false))
+        $manifest = Join-Path $directory 'manifest.json'
+        $manifestValue = @{schemaVersion=1;sourceRunId=$generation;identity=@{worktreePath=$(if($Problem -eq 'foreign-identity'){$TestDrive}else{$fixture.root})};snapshots=@{postConfig=@{path=$snapshot;sha256=(Get-DeliveryFileSha256 -Path $snapshot)}}}
+        [IO.File]::WriteAllText($manifest,($manifestValue|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        $identity = if ($Kind -eq 'capability-generation') { @{path=$directory;manifestPath=$manifest;manifestSha256=(Get-DeliveryFileSha256 -Path $manifest);worktreePath=$fixture.root} }
+                    else { @{path=$snapshot;sha256=(Get-DeliveryFileSha256 -Path $snapshot);worktreePath=$fixture.root} }
+        $id=Register-DeliveryResource -PlanId obsolete-capability -Kind $Kind -Owner release-e2e -Identity $identity -State cleanup-pending -RetainUntil ([DateTime]::UtcNow.AddDays(-1))
+        return [pscustomobject]@{root=$fixture.root;path=$identity.path;directory=$directory;manifest=$manifest;snapshot=$snapshot;evidence=$evidence;resourceId=$id}
     }
 
     function New-DispositionRepository {
@@ -940,8 +960,8 @@ Describe 'Release checkpoint cleanup diagnostics' {
         $checkpointPath = Join-Path (Split-Path (Split-Path $fixture.path)) 'checkpoint.json'
         [IO.File]::WriteAllText($checkpointPath, (@{schemaVersion=2;status=$Status;snapshots=@{baseline=@{path=$fixture.path;sha256=('f'*64)}}}|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
         $result = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root
-        $result.status | Should -Be 'completed-with-warnings'
-        ($result.warnings -join ' ') | Should -Match 'referenced by its Release checkpoint'
+        $result.status | Should -Be 'completed'
+        ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Be retained
         (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
     }
 
@@ -961,6 +981,68 @@ Describe 'Release checkpoint cleanup diagnostics' {
         (Get-DeliveryFileSha256 -Path $fixture.path) | Should -Be $fixture.identity.sha256
         [IO.File]::ReadAllText($checkpointPath) | Should -Be $Value
         ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Be 'cleanup-pending'
+    }
+}
+
+Describe 'Release capability artifact cleanup' {
+    It 'cleans the actual producer <Kind> layout once and leaves the reusable worktree' -TestCases @(
+        @{Kind='capability-generation'}, @{Kind='release-snapshot'}
+    ) {
+        param($Kind)
+        $fixture=New-ReleaseCapabilityFixture -Kind $Kind
+        (Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root).status | Should -Be completed
+        Test-Path -LiteralPath $fixture.path | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $fixture.root 'tracked.txt') | Should -BeTrue
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root | Out-Null
+        $resource=(Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId
+        $resource.state | Should -Be removed
+        $resource.cleanupAttempts | Should -Be 1
+    }
+
+    It 'retains checkpoint-owned <Kind> with status <Status> without retry warnings, then cleans after release' -TestCases @(
+        @{Kind='capability-generation';Status='passed'}, @{Kind='capability-generation';Status='failed'},
+        @{Kind='release-snapshot';Status='passed'}, @{Kind='release-snapshot';Status='failed'}
+    ) {
+        param($Kind,$Status)
+        $fixture=New-ReleaseCapabilityFixture -Kind $Kind
+        $checkpoint=Join-Path $fixture.root '.agent-1c/runs/release-e2e/workflow-release-e2e/checkpoint.json'
+        $value=@{status=$Status;identity=@{inputs=@(@{path='scripts/relative-input.ps1'})};snapshots=@{};stages=@{config=@{evidencePath=$fixture.evidence}}}
+        if($Kind -eq 'release-snapshot' -and $Status -eq 'failed'){$value.snapshots.postConfig=@{path=$fixture.snapshot;sha256=('f'*64)}}
+        [IO.File]::WriteAllText($checkpoint,($value|ConvertTo-Json -Depth 7),[Text.UTF8Encoding]::new($false))
+        $sha=Get-DeliveryFileSha256 -Path $checkpoint
+        foreach($attempt in 1..2){(Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root).status | Should -Be completed}
+        $resource=(Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId
+        $resource.state | Should -Be retained
+        $resource.cleanupAttempts | Should -Be 0
+        Test-Path -LiteralPath $fixture.path | Should -BeTrue
+        Get-DeliveryFileSha256 -Path $checkpoint | Should -Be $sha
+        Remove-Item -LiteralPath $checkpoint -Force
+        (Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root).status | Should -Be completed
+        Test-Path -LiteralPath $fixture.path | Should -BeFalse
+    }
+
+    It 'preserves a generation with <Problem> ownership evidence' -TestCases @(
+        @{Problem='manifest-sha'}, @{Problem='foreign-identity'}, @{Problem='active-ledger'}, @{Problem='junction'},
+        @{Problem='active-ledger';Kind='release-snapshot'}
+    ) {
+        param($Problem,$Kind='capability-generation')
+        $fixture=New-ReleaseCapabilityFixture -Problem $Problem -Kind $Kind
+        $link=''
+        if($Problem -eq 'manifest-sha'){[IO.File]::AppendAllText($fixture.manifest,' ')}
+        if($Problem -eq 'active-ledger'){Register-DeliveryResource -PlanId current-plan -Kind capability-generation -Owner release-e2e -Identity @{path=$fixture.directory;worktreePath=$fixture.root} -State active | Out-Null}
+        if($Problem -eq 'junction'){
+            $foreign=Join-Path $TestDrive 'foreign data'; New-Item -ItemType Directory -Path $foreign -Force|Out-Null
+            [IO.File]::WriteAllText((Join-Path $foreign 'keep.txt'),'keep')
+            $link=Join-Path $fixture.directory 'linked'; New-Item -ItemType Junction -Path $link -Target $foreign|Out-Null
+        }
+        try {
+            $result=Invoke-DeliveryCleanupSweep -FreshProjectsRoot $fixture.root
+            $result.status | Should -Be completed-with-warnings
+            Test-Path -LiteralPath $fixture.directory | Should -BeTrue
+            Test-Path -LiteralPath $fixture.path | Should -BeTrue
+            ((Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $fixture.resourceId).state | Should -Be cleanup-pending
+            if($link){[IO.File]::ReadAllText((Join-Path $foreign 'keep.txt')) | Should -Be keep}
+        } finally {if($link -and (Test-Path -LiteralPath $link)){[IO.Directory]::Delete($link)}}
     }
 }
 

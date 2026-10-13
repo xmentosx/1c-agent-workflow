@@ -1,4 +1,5 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-artifact-paths.ps1')
 
 function Get-DeliveryResourceLedgerPath {
     $root = Join-Path (Get-DeliveryCommonGitDirectory) "itl\resources\v1"
@@ -260,13 +261,29 @@ function Set-DeliveryResourceState {
 function Update-DeliveryFailedPlanRetention {
     $ledger = Read-DeliveryResourceLedger
     $now = [DateTime]::UtcNow
-    $retainedPlans = @($ledger.resources | Where-Object { [string]$_.state -eq "retained" } | Group-Object planId | ForEach-Object {
+    $checkpointHeld = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $changed = $false
+    foreach ($resource in @($ledger.resources | Where-Object { $_.kind -in @('release-snapshot','capability-generation') -and $_.state -in @('retained','cleanup-pending') })) {
+        try {
+            if (Test-DeliveryReleaseResourceReferencedByCheckpoint -Path $resource.identity.path -WorktreePath $resource.identity.worktreePath -Directory:($resource.kind -eq 'capability-generation')) {
+                [void]$checkpointHeld.Add([string]$resource.resourceId)
+                if ($resource.state -ne 'retained' -or $resource.lastError) {
+                    $resource.state='retained'; $resource.lastError=''; $resource.updatedAt=$now.ToString('o'); $changed=$true
+                }
+            }
+        } catch {
+            # Leave ambiguous ownership to the delete adapter's existing warning path.
+            if ($resource.state -eq 'retained') { $resource.state='cleanup-pending'; $changed=$true }
+        }
+    }
+    # Checkpoint-owned proof does not consume the failed-plan retention quota.
+    $retainedPlans = @($ledger.resources | Where-Object { [string]$_.state -eq "retained" -and -not $checkpointHeld.Contains([string]$_.resourceId) } | Group-Object planId | ForEach-Object {
         $latest = @($_.Group | Sort-Object { ConvertFrom-DeliveryUtcTimestamp -Value $_.updatedAt } -Descending | Select-Object -First 1)[0]
         [pscustomobject]@{ planId=$_.Name; updatedAt=(ConvertFrom-DeliveryUtcTimestamp -Value $latest.updatedAt) }
     } | Sort-Object updatedAt -Descending)
     $keepPlans = @($retainedPlans | Select-Object -First 2 | ForEach-Object { [string]$_.planId })
-    $changed = $false
     foreach ($resource in @($ledger.resources | Where-Object { [string]$_.state -eq "retained" })) {
+        if ($checkpointHeld.Contains([string]$resource.resourceId)) { continue }
         if ([string]$resource.kind -eq 'release-snapshot') {
             try {
                 if (Test-DeliverySnapshotReferencedByCheckpoint -Path ([string]$resource.identity.path) -WorktreePath ([string]$resource.identity.worktreePath)) { continue }
@@ -800,6 +817,8 @@ function Test-DeliveryReleaseSnapshotPath {
     $root = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
     if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $root)) { return $false }
     $relative = $path.Substring($root.Length + 1) -replace '\\', '/'
+    $capability = Resolve-ReleaseCapabilityArtifactPath -Path $path -WorktreePath $root
+    if ($capability -and $capability.member -ceq 'snapshots/postConfig.dt') { return $true }
     # Current and resumable legacy layouts are produced by Set-E2ERunPaths.
     if ($relative -match '^\.agent-1c/(runs/release-e2e|release-e2e-runs)/[A-Za-z0-9_.-]+/snapshots/(baseline|post-config)\.dt$') { return $true }
     $legacyRoot = Join-Path $root '.agent-1c\snapshots'
@@ -809,14 +828,31 @@ function Test-DeliveryReleaseSnapshotPath {
 
 function Test-DeliverySnapshotReferencedByCheckpoint {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    return Test-DeliveryReleaseResourceReferencedByCheckpoint -Path $Path -WorktreePath $WorktreePath
+}
+
+function Test-DeliveryReleaseResourceReferencedByCheckpoint {
+    param([string]$Path, [string]$WorktreePath, [switch]$Directory)
     $path = [IO.Path]::GetFullPath($Path)
     $root = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
     if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $root)) { return $false }
     $relative = $path.Substring($root.Length + 1) -replace '\\', '/'
-    # Set-E2ERunPaths places one checkpoint beside the producer's snapshots.
-    # Legacy flat temporary dumps have no such baseline ownership contract.
-    if ($relative -notmatch '^\.agent-1c/(runs/release-e2e|release-e2e-runs)/[A-Za-z0-9_.-]+/snapshots/(baseline|post-config)\.dt$') { return $false }
-    $checkpointPath = Join-Path (Split-Path (Split-Path $path)) 'checkpoint.json'
+    $capability = Resolve-ReleaseCapabilityArtifactPath -Path $path -WorktreePath $root
+    if ($capability) {
+        # A sealed generation owns all its support files as one reusable proof.
+        if ($capability.member -ceq 'snapshots/postConfig.dt') { $path=$capability.root; $Directory=$true }
+        $checkpoints = @()
+        foreach ($layout in @('.agent-1c/runs/release-e2e', '.agent-1c/release-e2e-runs')) {
+            $runRoot = Join-Path $root $layout
+            Assert-DeliveryReleaseArtifactNoLinks -Path $runRoot -WorktreePath $root
+            if (Test-Path -LiteralPath $runRoot -PathType Container) {
+                $checkpoints += @(Get-ChildItem -LiteralPath $runRoot -Directory | ForEach-Object { Join-Path $_.FullName 'checkpoint.json' })
+            }
+        }
+    } elseif ($relative -match '^\.agent-1c/(runs/release-e2e|release-e2e-runs)/[A-Za-z0-9_.-]+/snapshots/(baseline|post-config)\.dt$') {
+        $checkpoints = @(Join-Path (Split-Path (Split-Path $path)) 'checkpoint.json')
+    } else { return $false }
+    foreach ($checkpointPath in $checkpoints) {
     $cursor = $checkpointPath
     while (-not [string]::Equals($cursor.TrimEnd('\', '/'), $root, [StringComparison]::OrdinalIgnoreCase)) {
         if ((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -824,20 +860,53 @@ function Test-DeliverySnapshotReferencedByCheckpoint {
         }
         $cursor = Split-Path -Parent $cursor
     }
-    if (-not (Test-Path -LiteralPath $checkpointPath)) { return $false }
+    if (-not (Test-Path -LiteralPath $checkpointPath)) { continue }
     if (-not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) { throw "snapshot owning checkpoint is not a file: $checkpointPath" }
     try {
         $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         if (-not $checkpoint.PSObject.Properties['snapshots'] -or $checkpoint.snapshots -isnot [pscustomobject]) { throw 'invalid snapshots contract' }
         foreach ($entry in @($checkpoint.snapshots.PSObject.Properties)) {
             if (-not $entry.Value.PSObject.Properties['path'] -or -not [string]$entry.Value.path) { throw 'missing snapshot path' }
-            if (-not [IO.Path]::IsPathRooted([string]$entry.Value.path)) { throw 'snapshot path is not absolute' }
-            if ([string]::Equals($path, [IO.Path]::GetFullPath([string]$entry.Value.path), [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        $references = @($checkpoint.snapshots.PSObject.Properties | ForEach-Object { $_.Value.path })
+        foreach ($spec in @(@{name='stages';fields=@('evidencePath')}, @{name='stateFiles';fields=@('stateCopyPath','envCopyPath')})) {
+            $section = $checkpoint.PSObject.Properties[$spec.name]
+            if (-not $section -or $null -eq $section.Value) { continue }
+            if ($section.Value -isnot [pscustomobject]) { throw "invalid $($spec.name) contract" }
+            foreach ($entry in $section.Value.PSObject.Properties) { foreach ($field in $spec.fields) {
+                $property = $entry.Value.PSObject.Properties[$field]
+                if ($property -and $property.Value) { $references += $property.Value }
+            } }
+        }
+        foreach ($referenceValue in $references) {
+            if ($referenceValue -isnot [string] -or -not [IO.Path]::IsPathRooted($referenceValue)) { throw 'checkpoint path is not absolute' }
+            $reference = [IO.Path]::GetFullPath($referenceValue)
+            if ([string]::Equals($path,$reference,[StringComparison]::OrdinalIgnoreCase) -or
+                ($Directory -and (Test-DeliveryResourcePathWithinRoot -Path $reference -Root $path))) { return $true }
         }
     } catch { throw "snapshot owning checkpoint cannot be interpreted: $checkpointPath. $($_.Exception.Message)" }
+    }
     # Status, schema/candidate version and SHA are not deletion permission:
     # failed/passed baselines and damaged bytes are still needed by Restart.
     return $false
+}
+
+function Assert-DeliveryReleaseArtifactNoLinks {
+    param([string]$Path, [string]$WorktreePath, [switch]$Recurse)
+    $root=[IO.Path]::GetFullPath($WorktreePath).TrimEnd('\','/')
+    $cursor=[IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+    if (-not (Test-DeliveryResourcePathWithinRoot -Path $cursor -Root $root)) { throw 'Release artifact path escapes worktree' }
+    while ($cursor.Length -ge $root.Length) {
+        if ((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release artifact path contains a reparse point: $cursor" }
+        if ($cursor -eq $root) { break }; $cursor=Split-Path -Parent $cursor
+    }
+    if ($Recurse) {
+        $pending=[Collections.Generic.Stack[string]]::new(); $pending.Push($Path)
+        while ($pending.Count) { foreach ($item in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Release artifact contains a reparse point: $($item.FullName)" }
+            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+        } }
+    }
 }
 
 function Assert-DeliverySnapshotOwnership {
@@ -860,10 +929,11 @@ function Assert-DeliverySnapshotOwnership {
     # pending record must not delete bytes still owned by a retained/active one,
     # even if both snapshots happen to have the same SHA.
     foreach ($other in @((Read-DeliveryResourceLedger).resources | Where-Object {
-        [string]$_.kind -eq 'release-snapshot' -and [string]$_.state -in @('active', 'retained')
+        [string]$_.kind -in @('release-snapshot','capability-generation') -and [string]$_.state -in @('active', 'retained')
     })) {
         $otherPath = [IO.Path]::GetFullPath([string]$other.identity.path)
-        if ([string]::Equals([IO.Path]::GetFullPath($Path), $otherPath, [StringComparison]::OrdinalIgnoreCase)) {
+        if ([string]::Equals([IO.Path]::GetFullPath($Path), $otherPath, [StringComparison]::OrdinalIgnoreCase) -or
+            ($other.kind -eq 'capability-generation' -and (Test-DeliveryResourcePathWithinRoot -Path $Path -Root $otherPath))) {
             throw "snapshot path is retained or active in another ledger record: $Path"
         }
     }
@@ -904,9 +974,17 @@ function Remove-DeliveryPendingLedgerResource {
             $manifestPath = [IO.Path]::GetFullPath([string]$identity.manifestPath)
             $worktreePath = [IO.Path]::GetFullPath([string]$identity.worktreePath)
             Assert-DeliveryResourceWorktreeMayBeCleaned -WorktreePath $worktreePath
-            $cacheRoot = Join-Path $worktreePath '.agent-1c\release-capability-cache'
-            if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $cacheRoot) -or -not (Test-DeliveryResourcePathWithinRoot -Path $manifestPath -Root $path)) { throw "capability generation is outside the owned cache root" }
+            $layout = Resolve-ReleaseCapabilityArtifactPath -Path $path -WorktreePath $worktreePath
+            if (-not $layout -or $layout.member -or -not [string]::Equals($manifestPath,$layout.manifestPath,[StringComparison]::OrdinalIgnoreCase)) { throw "capability generation is outside the owned cache root" }
+            Assert-DeliveryReleaseArtifactNoLinks -Path $path -WorktreePath $worktreePath -Recurse
             if ((Get-DeliveryFileSha256 -Path $manifestPath) -ne ([string]$identity.manifestSha256).ToLowerInvariant()) { throw "capability manifest SHA differs from the ledger: $manifestPath" }
+            $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($manifest.schemaVersion -ne 1 -or $manifest.sourceRunId -cne $layout.generation -or
+                -not [string]::Equals([IO.Path]::GetFullPath([string]$manifest.identity.worktreePath),$worktreePath,[StringComparison]::OrdinalIgnoreCase)) { throw 'capability manifest ownership differs from the ledger' }
+            if (Test-DeliveryReleaseResourceReferencedByCheckpoint -Path $path -WorktreePath $worktreePath -Directory) { throw 'capability generation is referenced by its Release checkpoint' }
+            foreach ($other in @((Read-DeliveryResourceLedger).resources | Where-Object { $_.state -in @('active','retained') -and $_.kind -in @('capability-generation','release-snapshot') })) {
+                if ($other.identity.path -and ([string]::Equals([IO.Path]::GetFullPath($other.identity.path),$path,[StringComparison]::OrdinalIgnoreCase) -or (Test-DeliveryResourcePathWithinRoot -Path $other.identity.path -Root $path))) { throw 'capability generation is retained or active in another ledger record' }
+            }
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
             return $true
         }

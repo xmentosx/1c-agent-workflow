@@ -680,6 +680,16 @@ SHA проверяются до удаления. Housekeeping failure не от
 `-Action Cleanup`; явный стабильный канал выбирается только через
 `-Action Cleanup -CleanupChannel Master`. Ref-only cleanup очереди и promotion
 refs остаётся у authority-supervisor и не делегируется канальному executor.
+
+Release-runner и cleanup используют `release-artifact-paths.ps1` для capability
+generations в `.agent-1c/runs/release-e2e-capabilities/<run>/<generation>`;
+ранее принимаемый `.agent-1c/release-capability-cache` также распознаётся.
+Checkpoint-ссылки на snapshots, stage evidence и state files удерживают ресурс
+в существующем `retained`, независимо от статуса checkpoint и TTL плана.
+Такие ресурсы не занимают квоту двух failed plans и не повторяют ложные попытки
+удаления. После снятия ссылки прежняя retention вновь применима. Повреждённый
+checkpoint остаётся диагностируемым отказом. Удаление generation дополнительно
+проверяет manifest SHA/identity, active/retained записи и отсутствие reparse points.
 `Status` показывает count, bytes,
 возраст, последнюю ошибку и следующую попытку. Failed plans сохраняют ресурсы
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
