@@ -281,7 +281,7 @@
             $base = if ($Kind -eq 'file') { Join-Path $TestDrive 'Целевая база с пробелом' } else { 'Srvr="fixture-server";Ref="fork";' }
             $sourceHistory = Join-Path $TestDrive 'Исходная история с пробелом'
             New-Item -ItemType Directory -Force $sourceHistory | Out-Null
-            $sourceState = [pscustomobject]@{ infoBaseKind=$Kind; devBranchInfoBasePath='source base'; lastVerificationStatus='passed' }
+            $sourceState = [pscustomobject]@{ infoBaseKind=$Kind; devBranchInfoBasePath='source base'; lastVerificationStatus='passed'; resultTransferBaseline=@{branch='itldev/source';worktreePath='foreign source root';commit=$fixture.anchor} }
             $original = [pscustomobject]@{ createdAt='2026-10-01T00:00:00Z'; reader='fixture'; errorCount=1; signatureCount=1; signatures=@('original-error'); durationMs=2; logDirectory='source'; reason='source'; cache=[pscustomobject]@{status='hit';path='source';segmentCount=1} }
             [IO.File]::WriteAllText((Join-Path $sourceHistory 'source-state.json'), ($sourceState | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $sourceHistory 'event-log-baseline.json'), ($original | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
@@ -296,6 +296,7 @@
             $history = Join-Path $fixture.root '.agent-1c/fork-history/retained-fork'
             Install-DevBranchForkHistory -Snapshot $snapshot -TargetHistoryRoot $history | Out-Null
             $state = New-ForkedDevBranchState -SourceState $sourceState -Snapshot $snapshot -TargetInfoBasePath $base -TargetHistoryRoot $history -MainProjectRoot $fixture.root
+            $state.Contains('resultTransferBaseline') | Should -BeFalse -Because 'the target must not inherit the source branch lifecycle proof'
             $state.toolingInfoBaseGeneration='target-generation'
             $state.toolingMutationId='target-completed-mutation'
             $state.vanessaMcpSafeModeProof=@{generation='target-generation';fixture='preserved'}
