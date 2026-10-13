@@ -560,7 +560,7 @@ public static class $fixtureTypeName {
             $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $entry = $lock.dependencies.itlOndemandMcp
             $installRoot = Join-Path $TargetRoot "ondemand"
-            $assetPath = Join-Path (Join-Path $installRoot ([string]$entry.version)) ([string]$entry.assetName)
+            $assetPath = Join-Path (Join-Path (Join-Path $installRoot ([string]$entry.version)) ([string]$entry.sha256)) ([string]$entry.assetName)
             $oldGoProxy = $env:GOPROXY
             $oldGoSumDb = $env:GOSUMDB
             $oldGoToolchain = $env:GOTOOLCHAIN

@@ -43,6 +43,8 @@ Describe "Workflow-pinned Vanessa Automation integration" {
             $lock.dependencies.vanessaAutomation.epfSha256 = $script:FixtureEpfSha256
             $lock.dependencies.vanessaMcp.vaExtension.sha256 = $script:FixtureVaExtensionSha256
             [System.IO.File]::WriteAllText((Join-Path $Root ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'templates') -Destination (Join-Path $Root 'templates') -Recurse -Force
+            [IO.File]::WriteAllText((Join-Path $Root 'templates/dependency-lock.json'), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
             return $HelperPath
         }
     }
@@ -179,12 +181,14 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $lock.dependencies.vanessaAutomation.sha256 = ("0" * 64)
         [System.IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath $lockPath -Destination (Join-Path $rollbackProjectPath 'templates/dependency-lock.json') -Force
         $archiveMismatchOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $helperPath -ProjectRoot $rollbackProjectPath -Action install-vanessa-automation 2>&1
         ($archiveMismatchOutput -join [Environment]::NewLine) | Should -Match "archive SHA256 mismatch"
 
         $lock.dependencies.vanessaAutomation.sha256 = $script:FixtureArchiveSha256
         $lock.dependencies.vanessaAutomation.epfSha256 = ("0" * 64)
         [System.IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath $lockPath -Destination (Join-Path $rollbackProjectPath 'templates/dependency-lock.json') -Force
 
         $epfMismatchOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $helperPath -ProjectRoot $rollbackProjectPath -Action install-vanessa-automation 2>&1
         ($epfMismatchOutput -join [Environment]::NewLine) | Should -Match "EPF SHA256 mismatch"

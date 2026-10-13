@@ -4,6 +4,14 @@
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
         $HelperPath = $context.HelperPath
+        function Write-AiRulesFixturePackage {
+            param([string]$Root,[string]$Repo,[string]$Ref,[string]$Commit)
+            $lock=Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $lock.dependencies.aiRules1c=[pscustomobject]@{repo=$Repo;ref=$Ref;commit=$Commit}
+            $folder=Join-Path $Root 'templates'
+            [void][IO.Directory]::CreateDirectory($folder)
+            [IO.File]::WriteAllText((Join-Path $folder 'dependency-lock.json'),($lock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
+        }
     }
 
     It "offers the executing client first as recommended and selects it when the wizard answer is skipped" {
@@ -317,11 +325,12 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
 
             $result = & {
                 . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $script:clientInstallerPin=(New-DefaultDependencyLockManifest).dependencies.aiRules1c
                 function Sync-AiRules1cCheckout {
-                    return [pscustomobject]@{ root = $rulesRoot; repo = "fixture"; ref = "fixture" }
+                    return [pscustomobject]@{ root = $rulesRoot; repo = $script:clientInstallerPin.repo; ref = $script:clientInstallerPin.ref }
                 }
                 function Get-GitOutputAt {
-                    return "fixture-commit"
+                    return $script:clientInstallerPin.commit
                 }
 
                 Invoke-AiRules1cInstaller -Command "update"
@@ -435,7 +444,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         }
     }
 
-    It "pins a configured aiRules tag in fresh mode" {
+    It "pins the workflow aiRules tag with the fresh legacy alias" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-pin-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $sourceRoot = Join-Path $tempRoot "source"
@@ -453,6 +462,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             & git -C $sourceRoot commit -m "tagged" *> $null
             & git -C $sourceRoot tag "v1.0.0"
             $tagCommit = (& git -C $sourceRoot rev-parse "v1.0.0^{commit}").Trim()
+            Write-AiRulesFixturePackage -Root $projectRoot -Repo $sourceRoot -Ref 'v1.0.0' -Commit $tagCommit
 
             $config = [ordered]@{
                 dependencyMode = "fresh"
@@ -503,6 +513,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             & git -C $sourceRoot tag -a "itl-main-test-r1" -m "candidate"
             & git -C $sourceRoot remote add origin "https://github.com/xmentosx/itl_ai_rules_1c.git"
             $tagCommit = (& git -C $sourceRoot rev-parse "itl-main-test-r1^{commit}").Trim()
+            Write-AiRulesFixturePackage -Root $projectRoot -Repo 'https://github.com/xmentosx/itl_ai_rules_1c.git' -Ref 'itl-main-test-r1' -Commit $tagCommit
 
             $config = [ordered]@{
                 dependencyMode = "fresh"
@@ -562,6 +573,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
                 $config = [ordered]@{ dependencyMode="fresh"; aiRules=[ordered]@{ repo=$sourceRoot; ref=$pair[1]; tools=@("kilocode") } }
                 Set-Content -LiteralPath (Join-Path $pair[0] ".agent-1c/project.json") -Encoding UTF8 -Value ($config | ConvertTo-Json -Depth 6)
                 Set-Content -LiteralPath (Join-Path $pair[0] ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+                Write-AiRulesFixturePackage -Root $pair[0] -Repo $sourceRoot -Ref $pair[1] -Commit $(if($pair[1] -eq 'v1.0.0'){$commitA}else{$commitB})
                 & git -C $pair[0] add .
                 & git -C $pair[0] commit -m "owned project baseline" *> $null
             }
@@ -598,6 +610,8 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             [IO.File]::ReadAllText($reuseMarker) | Should -Be "exact existing checkout owner"
             $badLock = [ordered]@{ schemaVersion=1; mode="fresh"; dependencies=[ordered]@{ aiRules1c=[ordered]@{ repo=$sourceRoot; ref="v1.0.0"; commit=$commitB } } }
             Set-Content -LiteralPath (Join-Path $projectA ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value ($badLock | ConvertTo-Json -Depth 6)
+            # Keep the original tag/commit mismatch at the authoritative pin.
+            Write-AiRulesFixturePackage -Root $projectA -Repo $sourceRoot -Ref 'v1.0.0' -Commit $commitB
             { & { . $HelperPath -ProjectRoot $projectA -Action help *> $null; Sync-AiRules1cCheckout } } | Should -Throw "*tag/commit mismatch*"
             (& git -C $first.root rev-parse HEAD).Trim() | Should -Be $commitA
         } finally {
@@ -611,7 +625,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         }
     }
 
-    It "rejects controlled fork main when aiRules.ref is absent" {
+    It "uses the workflow tag without a legacy config ref and rejects an incomplete selected pin before main" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-fork-main-" + [guid]::NewGuid().ToString("N"))
         $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
         try {
@@ -621,9 +635,14 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $script:pinError = ""
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $pin=Get-WorkflowDependencyEntry -Name aiRules1c
+                $pin.ref|Should -Match '^itl-'
+                $pin.ref|Should -Not -Be main
+                $pin.commit|Should -Be (New-DefaultDependencyLockManifest).dependencies.aiRules1c.commit
+                Write-AiRulesFixturePackage -Root $tempRoot -Repo 'https://github.com/xmentosx/itl_ai_rules_1c.git' -Ref '' -Commit $pin.commit
                 try { Sync-AiRules1cCheckout | Out-Null } catch { $script:pinError = $_.Exception.Message }
             }
-            $script:pinError | Should -Match "requires an immutable configured tag"
+            $script:pinError | Should -Match 'DEPENDENCY_RULES_PIN_REQUIRED'
         } finally {
             $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
             Remove-Variable -Name pinError -Scope Script -ErrorAction SilentlyContinue

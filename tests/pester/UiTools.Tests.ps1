@@ -16,7 +16,7 @@
         $module | Should -Match 'transport = "stdio"'
         $module | Should -Match 'AGENT_BROWSER_SESSION'
         $module | Should -Match 'skills", "get", "core", "--full"'
-        $module | Should -Match 'windows-mcp==\$\(\$lock\.windowsMcp\.version\)'
+        $module | Should -Match 'Get-ItlWindowsMcpRequirement -Pin \$lock\.windowsMcp'
         $module | Should -Match 'autostart was not enabled'
         $module | Should -Not -Match 'ITL_PORT_REGISTRY|PORT_RANGE|desktop[- ]lock|telemetry|ScheduledTask|--port'
     }
@@ -160,7 +160,7 @@
             function Get-ItlManagedMcpOwnerKeys { return @() }
             function Get-ItlConfiguredMcpKeys { return @() }
             $pin = (Get-ItlUiToolsLock).agentBrowser
-            $target = Join-Path $root "agent-browser/$($pin.version)"
+            $target = Join-Path $root "agent-browser/$($pin.version)/$(Get-WorkflowDependencyFingerprint $pin)"
             Write-Utf8Text -Path (Join-Path $target 'node_modules/.bin/agent-browser.cmd') -Value '@echo off'
             Write-Utf8Text -Path (Join-Path $target 'node_modules/agent-browser/bin/agent-browser-win32-x64.exe') -Value 'identity fixture, not an executable'
             Write-Utf8Text -Path (Join-Path $target 'node_modules/agent-browser/package.json') -Value ('{"version":"'+$pin.version+'"}')
@@ -229,6 +229,52 @@
         $result.calls | Should -Contain 'AGENT_BROWSER_BROWSER_INSTALL_FAILED'
         $result.calls | Should -Contain 'AGENT_BROWSER_DOCTOR_FAILED'
         $result.calls | Should -Contain 'AGENT_BROWSER_CORE_PROFILE_FAILED'
+    }
+
+    It 'migrates only an identical legacy browser build and keeps fresh installation gates for different bytes' -ForEach @(
+        @{SameBuild=$true}, @{SameBuild=$false}
+    ) {
+        $root = Join-Path $TestDrive ('Старый кеш браузера с пробелом ' + $SameBuild)
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:legacyBrowserRoot=$root
+            $script:legacyBrowserPin=(Get-ItlUiToolsLock -Name agentBrowser).agentBrowser
+            $script:legacyBrowserCalls=@()
+            function Get-ItlUiToolsUserRoot { $script:legacyBrowserRoot }
+            function Write-BrowserFixture {
+                param($Target,$Integrity)
+                Write-Utf8Text -Path (Join-Path $Target 'node_modules/.bin/agent-browser.cmd') -Value '@echo off'
+                Write-Utf8Text -Path (Join-Path $Target 'node_modules/agent-browser/bin/agent-browser-win32-x64.exe') -Value 'fixture'
+                Write-Utf8Text -Path (Join-Path $Target 'node_modules/agent-browser/package.json') -Value ('{"version":"'+$script:legacyBrowserPin.version+'"}')
+                Write-Utf8Text -Path (Join-Path $Target 'package-lock.json') -Value ('{"packages":{"":{},"node_modules/agent-browser":{"version":"'+$script:legacyBrowserPin.version+'","integrity":"'+$Integrity+'"}}}')
+            }
+            function Invoke-ItlUiToolCommand {
+                param($Executable,$Arguments,$FailureCode)
+                $script:legacyBrowserCalls+= $FailureCode
+                if($FailureCode -eq 'AGENT_BROWSER_INSTALL_FAILED') {
+                    $Arguments[-1] | Should -BeExactly $script:legacyBrowserPin.tarball
+                    Write-BrowserFixture -Target $Arguments[2] -Integrity $script:legacyBrowserPin.integrity
+                }
+                return ('agent-browser '+$script:legacyBrowserPin.version)
+            }
+            $legacy=Join-Path $root ('agent-browser/'+$script:legacyBrowserPin.version)
+            Write-BrowserFixture -Target $legacy -Integrity $(if($SameBuild){$script:legacyBrowserPin.integrity}else{'different-integrity'})
+            $legacyHash=(Get-FileHash -LiteralPath (Join-Path $legacy 'package-lock.json')).Hash
+            Install-ItlAgentBrowser *> $null
+            [pscustomobject]@{calls=$script:legacyBrowserCalls;ready=(Test-ItlAgentBrowserReady -Pin $script:legacyBrowserPin -StaticOnly);before=$legacyHash;after=(Get-FileHash -LiteralPath (Join-Path $legacy 'package-lock.json')).Hash}
+        }
+        $result.ready | Should -BeTrue
+        $result.after | Should -BeExactly $result.before
+        if($SameBuild) {
+            $result.calls | Should -Not -Contain 'AGENT_BROWSER_INSTALL_FAILED'
+            $result.calls | Should -Not -Contain 'AGENT_BROWSER_DOCTOR_FAILED'
+            @($result.calls | Where-Object {$_ -eq 'AGENT_BROWSER_VERSION_FAILED'}).Count | Should -Be 2
+        } else {
+            $result.calls | Should -Contain 'AGENT_BROWSER_INSTALL_FAILED'
+            $result.calls | Should -Contain 'AGENT_BROWSER_BROWSER_INSTALL_FAILED'
+            $result.calls | Should -Contain 'AGENT_BROWSER_DOCTOR_FAILED'
+            $result.calls | Should -Contain 'AGENT_BROWSER_CORE_PROFILE_FAILED'
+        }
     }
 
     It "reads the npm root package entry and rejects a mismatched browser integrity before promotion" {

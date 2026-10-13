@@ -1,5 +1,5 @@
 function Get-ItlOpenSpecCliPin {
-    $entry = Get-DependencyLockEntry -Name 'openSpecCli'
+    $entry = Get-WorkflowDependencyEntry -Name 'openSpecCli'
     $version = [string](Get-ConfigValueFromObject -Object $entry -Path 'version' -Default '')
     $expectedLockHash = [string](Get-ConfigValueFromObject -Object $entry -Path 'packageLockSha256' -Default '')
     $expectedIntegrity = [string](Get-ConfigValueFromObject -Object $entry -Path 'integrity' -Default '')
@@ -7,6 +7,18 @@ function Get-ItlOpenSpecCliPin {
         throw 'OPEN_SPEC_CLI_PIN_MISSING: restore the exact openSpecCli dependency-lock entry through update-workflow.'
     }
     $resourceRoot = Join-Path (Split-Path -Parent $script:Agent1cScriptRoot) 'resources\openspec-cli'
+    $resource = Get-WorkflowHotfixResource -Name openSpecCli
+    if ($null -ne $resource) {
+        Assert-WorkflowOpenSpecResource -Entry $entry -Resource $resource
+        $resourceRoot = Join-Path $script:ProjectRoot (".agent-1c/tools/openspec-resources/{0}/{1}" -f $version,$expectedLockHash)
+        foreach ($file in @(@('package.json','packageJson'),@('package-lock.json','packageLockJson'))) {
+            $path = Join-Path $resourceRoot $file[0]
+            $text = [string](Get-ConfigValueFromObject $resource $file[1] '')
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                if ((Read-Utf8Text -Path $path) -cne $text) { throw "OPEN_SPEC_CLI_RESOURCE_DRIFT: preserve '$path' and repair the hotfix resource generation." }
+            } else { Write-Utf8TextAtomic -Path $path -Value $text }
+        }
+    }
     $packagePath = Join-Path $resourceRoot 'package.json'
     $lockPath = Join-Path $resourceRoot 'package-lock.json'
     if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf) -or -not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
@@ -33,6 +45,10 @@ function Get-ItlOpenSpecCliPin {
 
 function Get-ItlOpenSpecCliRuntimeRoot {
     param([Parameter(Mandatory = $true)][string]$Version)
+    if ($null -ne (Get-WorkflowHotfixResource -Name openSpecCli)) {
+        $entry = Get-WorkflowDependencyEntry -Name openSpecCli
+        return (Join-Path $script:ProjectRoot (".agent-1c/tools/openspec-cli/{0}/{1}" -f $Version,$entry.packageLockSha256))
+    }
     return (Join-Path $script:ProjectRoot ".agent-1c\tools\openspec-cli\$Version")
 }
 

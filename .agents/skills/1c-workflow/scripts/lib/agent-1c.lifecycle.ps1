@@ -4981,34 +4981,15 @@ function Sync-AiRules1cCheckout {
         [string]$CommitOverride = ""
     )
 
-    $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/xmentosx/itl_ai_rules_1c.git" })
-    $configuredRef = $(if ($RefOverride) { $RefOverride } else { [string](Get-ConfigValue -Path "aiRules.ref" -Default "") })
-    $dependencyMode = Get-DependencyMode
-    $lockedRef = ""
-    $lockedCommit = ""
-    if ($CommitOverride) {
-        $lockedCommit = $CommitOverride
-    }
-    if ($dependencyMode -eq "locked" -and -not $RepoOverride) {
-        $lockedRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
-        $lockedRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
-        $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
-        if ($lockedRepo) {
-            $repo = $lockedRepo
-        }
-        if (-not $lockedRef -and -not $lockedCommit) {
-            throw "Dependency mode is locked, but aiRules1c.ref and aiRules1c.commit are empty in .agent-1c/dependency-lock.json."
-        }
-    } elseif ($configuredRef -and -not $CommitOverride) {
-        $baselineRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
-        $baselineRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
-        if ((Get-AiRules1cRepositoryIdentity -Repo $baselineRepo) -eq (Get-AiRules1cRepositoryIdentity -Repo $repo) -and $baselineRef -eq $configuredRef) {
-            $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
-        }
-    }
-    if ($RefOverride) {
-        $lockedRef = $RefOverride
+
+    $lockedEntry = Get-WorkflowDependencyEntry -Name aiRules1c
+    $repo = if ($RepoOverride) {$RepoOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'repo' '')}
+    $configuredRef = if ($RefOverride) {$RefOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'ref' '')}
+    $lockedRef = $configuredRef
+    $lockedCommit = if ($CommitOverride) {$CommitOverride} else {[string](Get-ConfigValueFromObject $lockedEntry 'commit' '')}
+    $dependencyMode = 'workflow'
+    if (-not $repo -or -not $configuredRef -or $lockedCommit -notmatch '^[a-f0-9]{40}$') {
+        throw 'DEPENDENCY_RULES_PIN_REQUIRED: the selected rules require repo, immutable ref and exact commit. Complete update-workflow with the dependency decision.'
     }
 
     if ((Test-AiRules1cForkRepository -Repo $repo) -and -not ($configuredRef -or $lockedRef)) {
@@ -5670,6 +5651,12 @@ function Get-WorkflowPackageRepo {
 }
 
 function Get-WorkflowPackageRef {
+    if ($DependencyHotfixOnly) {
+        if (-not $DependencySelectionFile) { throw 'DEPENDENCY_SELECTION_FILE_REQUIRED: use -DependencySelectionFile with -DependencyHotfixOnly.' }
+        $installed = [string](Get-ConfigValueFromObject (Get-DependencyLockEntry -Name 'workflowPackage') 'commit' '')
+        if ($installed -notmatch '^[a-f0-9]{40}$') { throw 'DEPENDENCY_WORKFLOW_IDENTITY_REQUIRED: the installed workflow commit is missing. Complete a normal update-workflow before applying a hotfix.' }
+        return $installed
+    }
     $ref = [string](Get-EnvValue -Name "ITL_WORKFLOW_REF" -Default "")
     if ([string]::IsNullOrWhiteSpace($ref)) {
         return (Get-WorkflowPackageDefaultRef)
@@ -5758,6 +5745,9 @@ function Resolve-WorkflowPackageSource {
     }
 
     Assert-WorkflowPackageSourceRoot -SourceRoot $root
+    if ($DependencyHotfixOnly -and -not (Test-Path -LiteralPath (Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1') -PathType Leaf)) {
+        throw 'DEPENDENCY_WORKFLOW_UPDATE_REQUIRED: the installed workflow cannot consume qualified hotfixes. Complete a normal source-side update-workflow with the new workflow, then repeat the hotfix operation.'
+    }
     $commit = ""
     # A linked worktree stores .git as a file, while a primary checkout uses a directory.
     if (Test-Path -LiteralPath (Join-Path $root ".git") -ErrorAction SilentlyContinue) {
@@ -5767,6 +5757,9 @@ function Resolve-WorkflowPackageSource {
             throw "WORKFLOW_SOURCE_DIRTY: exact source checkout has changed or untracked files: $root. Commit and qualify that package before update-workflow."
         }
         $commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
+    }
+    if ($DependencyHotfixOnly -and $commit -cne $ref) {
+        throw "DEPENDENCY_HOTFIX_SOURCE_MISMATCH: selected source '$commit' differs from installed workflow '$ref'. Use its exact source checkout, or remove -DependencyHotfixOnly for a normal update."
     }
 
     return [pscustomobject]@{
@@ -7112,7 +7105,9 @@ function Assert-WorkflowSourceAiRulesInstallable {
         throw "Workflow source dependency lock is missing before update: $lockPath"
     }
     $lock = Read-Utf8Text -Path $lockPath | ConvertFrom-Json
-    $entry = Get-ConfigValueFromObject -Object $lock -Path "dependencies.aiRules1c" -Default $null
+    $plan = Get-WorkflowDependencyPlan -SourceRoot $SourceRoot
+    Assert-WorkflowDependencyPlan -Plan $plan
+    $entry = Get-ConfigValueFromObject -Object $plan.manifest -Path "dependencies.aiRules1c" -Default $null
     $ref = [string](Get-ConfigValueFromObject -Object $entry -Path "ref" -Default "")
     $commit = [string](Get-ConfigValueFromObject -Object $entry -Path "commit" -Default "")
     $status = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityStatus" -Default "")
@@ -7314,6 +7309,17 @@ function Save-WorkflowUpdateSnapshotReceipt {
         [hashtable]$Details = @{}
     )
 
+    if ($Phase -eq 'prepared' -and $Details.ContainsKey('dependencyPlan')) {
+        $expectedLockExists = Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockExists' $null
+        $actualLockExists = Test-Path -LiteralPath (Get-DependencyLockPath) -PathType Leaf
+        if ($null -ne $expectedLockExists -and [bool]$expectedLockExists -ne [bool]$actualLockExists) {
+            throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock appeared or disappeared after planning. Preserve it and repeat update-workflow.'
+        }
+        $expectedLockHash = [string](Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockSha256' '')
+        if ($expectedLockHash -and (Get-FileHash -LiteralPath (Get-DependencyLockPath) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedLockHash) {
+            throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock changed after planning. Preserve it and repeat update-workflow.'
+        }
+    }
     $pathState = Get-WorkflowUpdateSnapshotPathState -Snapshot $Snapshot
     $receiptPath = Join-Path $Snapshot.root 'transaction.json'
     $prior = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop } else { $null }
@@ -7407,7 +7413,7 @@ function Save-WorkflowUpdateSnapshotReceipt {
         }
         $receipt[[string]$name] = $Details[$name]
     }
-    Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
 }
 
 function Get-WorkflowUpdatePendingSnapshot {
@@ -8998,6 +9004,8 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         if ($conflicts.Count -gt 0) {
             throw "WORKFLOW_UPDATE_BRANCH_WRITE_SET_CONFLICT: '$script:ProjectRoot' has user changes in owned paths: $($conflicts -join ', '). Preserve them and repeat update-workflow after resolving the named paths."
         }
+        $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$Source.root)
+        Assert-WorkflowDependencyPlan -Plan $dependencyPlan
         $candidateRulesPaths = @()
         if (-not $SkipAiRules) {
             $rulesTarget = Get-AiRulesBaselineTarget -TemplateRoot ([string]$Source.root)
@@ -9009,7 +9017,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         $snapshot = New-WorkflowUpdateRollbackSnapshot `
             -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths) `
             -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
-        try { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared }
+        try { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared -Details @{ dependencyPlan=$dependencyPlan } }
         catch {
             Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
             throw
@@ -9086,7 +9094,7 @@ function Assert-WorkflowUpdateRulesRootReady {
     $currentRepo = [string](Get-ConfigValue -Path 'aiRules.repo' -Default 'https://github.com/comol/ai_rules_1c.git')
     $currentIdentity = Get-AiRules1cRepositoryIdentity -Repo $currentRepo
     $targetIdentity = Get-AiRules1cRepositoryIdentity -Repo ([string]$target.repo)
-    if ($currentIdentity -notin @($targetIdentity, 'https://github.com/comol/ai_rules_1c')) { return }
+    if ($currentIdentity -notin @($targetIdentity, 'https://github.com/comol/ai_rules_1c') -and -not $target.explicitWorkflowAdoption) { return }
 
     $manifestPath = Join-Path $script:ProjectRoot '.ai-rules.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return }
@@ -9169,6 +9177,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                 [string]$_.branch -ceq [string]$item.branch -and [string]$_.status -ceq 'completed' } | Select-Object -First 1)
         }
         if ($null -ne $prior -and [string]$prior.sourceCommit -ceq [string]$Source.commit -and
+            $null -eq (Get-WorkflowDependencySelectionInput -Root ([string]$item.root)) -and
             $earlier.Count -eq 1 -and [string]$item.installedWorkflowCommit -ceq [string]$Source.commit -and
             [string]$item.head -ceq [string]$earlier[0].commit -and
             @($(if (Test-Path -LiteralPath (Join-Path ([string]$item.root) '.agent-1c/snapshots/workflow-update') -PathType Container) {
@@ -9296,6 +9305,10 @@ function Update-WorkflowPackage {
     if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {
         throw "update-workflow does not support LifecyclePhase '$LifecyclePhase'."
     }
+    if ($LifecyclePhase -ne 'post-copy' -and $DependencySelectionFile) {
+        $selectionRoots = @(Get-GitWorktrees | Where-Object { $_.branch -eq (Get-MasterBranch) -or $_.branch -like 'itldev/*' } | ForEach-Object { $_.path })
+        Assert-WorkflowDependencySelectionScopes -Roots $selectionRoots
+    }
 
     if ($LifecyclePhase -eq 'post-copy') {
         if (-not $OperationContinuation) {
@@ -9373,6 +9386,7 @@ function Update-WorkflowPackage {
             catch { throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: preserve '$previousRolloutPath' and reconcile its exact update. $($_.Exception.Message)" }
             $installedPin = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
             if ([int]$previousRollout.schemaVersion -eq 1 -and
+                $null -eq (Get-WorkflowDependencySelectionInput) -and
                 [string]$previousRollout.sourceCommit -ceq [string]$source.commit -and
                 [string]$previousRollout.sourceRoot -ceq [string]$source.root -and
                 $installedPin -ceq [string]$source.commit) {
@@ -9396,6 +9410,8 @@ function Update-WorkflowPackage {
             Assert-WorkflowUpdateCommitIdentity
 
             Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
+            $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$source.root)
+            Assert-WorkflowDependencyPlan -Plan $dependencyPlan
             Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
             if (-not $SkipAiRules) { Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$source.root) }
 
@@ -9415,7 +9431,7 @@ function Update-WorkflowPackage {
                 -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root -AiRulesPathsAfter $candidateRulesPaths) `
                 -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
             try {
-                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase prepared
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase prepared -Details @{ dependencyPlan=$dependencyPlan }
             } catch {
                 $prepareError = $_.Exception.Message
                 try { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot }
@@ -12925,16 +12941,30 @@ function Select-DependencyLockThreeWayValue {
     throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: incompatible changes at $Path."
 }
 
+function Get-RefreshDependencyTemplateAtCommit {
+    param([string]$Commit)
+    $spec = "${Commit}:templates/dependency-lock.json"
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & git -C $script:ProjectRoot cat-file -e $spec *> $null
+        $exists = $LASTEXITCODE -eq 0
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($exists) { return ((Get-GitOutput @('show', $spec)) | ConvertFrom-Json -ErrorAction Stop) }
+    return (New-DefaultDependencyLockManifest)
+}
+
 function Merge-RefreshDependencyLockManifests {
     param(
         [System.Collections.IDictionary]$Base,
         [System.Collections.IDictionary]$Branch,
-        [System.Collections.IDictionary]$Target
+        [System.Collections.IDictionary]$Target,
+        [AllowNull()][object]$InstalledTemplate = $null
     )
 
     foreach ($manifest in @($Base, $Branch, $Target)) {
-        if ([int](Get-ConfigValueFromObject -Object $manifest -Path "schemaVersion" -Default 0) -ne 1) {
-            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must use schemaVersion 1."
+        if ([int](Get-ConfigValueFromObject -Object $manifest -Path "schemaVersion" -Default 0) -notin @(1, 2)) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must use supported schemaVersion 1 or 2."
         }
         $dependencies = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
         if ($dependencies -isnot [System.Collections.IDictionary] -and $dependencies -isnot [pscustomobject]) {
@@ -12981,7 +13011,7 @@ function Merge-RefreshDependencyLockManifests {
 
     $topLevelNames = @(
         @($Base.Keys) + @($Branch.Keys) + @($Target.Keys) |
-            Where-Object { [string]$_ -ne "dependencies" } |
+            Where-Object { [string]$_ -notin @('dependencies','schemaVersion','mode','hotfixes','baselineFingerprints') } |
             Sort-Object -Unique
     )
     foreach ($name in $topLevelNames) {
@@ -12998,6 +13028,21 @@ function Merge-RefreshDependencyLockManifests {
         }
     }
 
+    # Exceptions belong to this worktree. A master exception is not inherited
+    # by refresh; the same resolver decides retention/retirement against the
+    # merged installed workflow, using the branch's exact former template.
+    $selectionManifest = ConvertTo-Agent1cHashtable -Object $Branch
+    $selectionManifest['dependencies'] = ConvertTo-Agent1cHashtable -Object $branchDependencies
+    foreach ($name in $foreignNames) {
+        if ($mergedDependencies.Contains($name)) { $selectionManifest.dependencies[$name] = $mergedDependencies[$name] }
+        else { $selectionManifest.dependencies.Remove($name) }
+    }
+    $selectionManifest.dependencies['workflowPackage'] = $targetDependencies.workflowPackage
+    $compatibilityPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) 'compatibility.json'
+    $compatibility = if (Test-Path -LiteralPath $compatibilityPath -PathType Leaf) { Read-Utf8Text -Path $compatibilityPath | ConvertFrom-Json } else { $null }
+    $plan = New-WorkflowDependencyPlan -Template $template -InstalledTemplate $InstalledTemplate -Manifest $selectionManifest -Selection (Get-WorkflowDependencySelectionInput) -Compatibility $compatibility
+    Assert-WorkflowDependencyPlan -Plan $plan
+    foreach ($name in @('dependencies','schemaVersion','mode','hotfixes','baselineFingerprints')) { $merged[$name] = $plan.manifest[$name] }
     return $merged
 }
 
@@ -13012,7 +13057,7 @@ function Resolve-RefreshDependencyLockMergeConflict {
     } catch {
         throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: the base, branch, and target lock files must all be valid JSON. $($_.Exception.Message)"
     }
-    $merged = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target
+    $merged = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit HEAD)
     Write-Utf8Text `
         -Path (Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json") `
         -Value (($merged | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
@@ -13035,7 +13080,7 @@ function Test-RefreshDependencyLockSemanticMergeResult {
         $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${baseCommit}:$repoPath")) | ConvertFrom-Json)
         $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${BranchCommit}:$repoPath")) | ConvertFrom-Json)
         $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${TargetCommit}:$repoPath")) | ConvertFrom-Json)
-        $expected = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target
+        $expected = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit $BranchCommit)
         $current = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
         $expectedComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $expected) -Depth 100 -Compress
         $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $current) -Depth 100 -Compress
@@ -17325,24 +17370,12 @@ function Test-RefreshManagedDependencyLockChange {
         $beforeManifest = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "HEAD:$repoPath")) | ConvertFrom-Json)
         $currentManifest = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
         $templateManifest = New-DefaultDependencyLockManifest
-        $templateDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $templateManifest -Path "dependencies" -Default $null)
-        $managedNames = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $templateManifest)
-        $beforeDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $beforeManifest -Path "dependencies" -Default $null)
-        $currentDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $currentManifest -Path "dependencies" -Default $null)
-
-        foreach ($name in $managedNames) {
-            if (-not $currentDependencies.Contains($name)) { return $false }
-            $merged = Merge-WorkflowManagedDependencyLockValue `
-                -Current $currentDependencies[$name] `
-                -Template $templateDependencies[$name]
-            if ($merged.changed) { return $false }
-            $beforeDependencies.Remove($name)
-            $currentDependencies.Remove($name)
-        }
-
-        $beforeManifest["dependencies"] = $beforeDependencies
-        $currentManifest["dependencies"] = $currentDependencies
-        $beforeComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $beforeManifest) -Depth 100 -Compress
+        $compatibilityPath = Join-Path (Get-ItlOnDemandMcpAssetRoot) 'compatibility.json'
+        $compatibility = if (Test-Path -LiteralPath $compatibilityPath -PathType Leaf) { Read-Utf8Text -Path $compatibilityPath | ConvertFrom-Json } else { $null }
+        $plan = New-WorkflowDependencyPlan -Template $templateManifest -InstalledTemplate (Get-RefreshDependencyTemplateAtCommit -Commit HEAD) -Manifest $beforeManifest -Selection (Get-WorkflowDependencySelectionInput) -Compatibility $compatibility
+        if (@($plan.blocked).Count -gt 0) { return $false }
+        $expected = Get-WorkflowDependencySyncManifest -Plan $plan -Before $beforeManifest
+        $beforeComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $expected) -Depth 100 -Compress
         $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $currentManifest) -Depth 100 -Compress
         return $beforeComparable -ceq $currentComparable
     } catch {
@@ -18891,7 +18924,7 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-prepare-ondemand"
     Assert-DevBranchKind -State $state -Expected "configuration"
 
-    if ((Get-DependencyMode) -ne "fresh") {
+    if ((Get-DependencyMode) -ne "workflow") {
         throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the dedicated stand must use fresh dependency mode."
     }
     $packageRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))

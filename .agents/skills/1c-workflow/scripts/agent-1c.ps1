@@ -79,8 +79,10 @@ param(
     [string]$ResumeRunStatusPath = "",
     [string]$RecoveryReason = "",
     [int]$LauncherPid = 0,
-    [ValidateSet("", "fresh", "locked")]
+    [ValidateSet("", "workflow", "fresh", "locked")]
     [string]$DependencyMode = "",
+    [string]$DependencySelectionFile = "",
+    [switch]$DependencyHotfixOnly,
     [string]$BootstrapWorkflowRepo = "",
     [string]$BootstrapWorkflowRef = "",
     [string]$BootstrapWorkflowCommit = "",
@@ -149,6 +151,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+if ($DependencySelectionFile -and -not [IO.Path]::IsPathRooted($DependencySelectionFile)) {
+    $DependencySelectionFile = [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $DependencySelectionFile))
+}
 $fileHashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
 if ($null -eq $fileHashCommand) {
     # Windows PowerShell can inherit a PowerShell Core module root ahead of its
@@ -310,6 +315,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RecoveryReason" -Value $RecoveryReason
     Add-Agent1cReexecArgument -Arguments $arguments -Name "LauncherPid" -Value $(if ($LauncherPid -gt 0) { $LauncherPid } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencyMode" -Value $DependencyMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencySelectionFile" -Value $DependencySelectionFile
+    if ($DependencyHotfixOnly) { $arguments.Add('-DependencyHotfixOnly') }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentTarget" -Value $AgentTarget
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentModel" -Value $AgentModel
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
@@ -416,6 +423,7 @@ $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
 $script:Agent1cModuleFiles = @(
     "agent-1c.immutable-download.ps1",
     "agent-1c.core.ps1",
+    "agent-1c.dependencies.ps1",
     "agent-1c.package-content.ps1",
     "agent-1c.openspec-cli.ps1",
     "agent-1c.ports.ps1",
@@ -540,7 +548,10 @@ try {
         "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
         "deploy-and-test" { Invoke-ItlDeployAndTestBridge }
-        "status" { Show-WorkflowStatus; Show-ItlArtifactFootprint }
+        "status" {
+            if ($Mode -eq 'dependencies') { Show-WorkflowDependencySelection | ConvertTo-Json -Depth 100 }
+            else { Show-WorkflowStatus; Show-ItlArtifactFootprint }
+        }
         "clean-artifacts" { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun | Out-Null }
         "delete-dev-branch" { Remove-ItlDevBranch -Name $DevBranchName -Confirmed:$ConfirmBranchDeletion }
         "configure-auxiliary-contour" { Configure-AuxiliaryContour }

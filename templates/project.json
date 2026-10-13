@@ -24,7 +24,7 @@
   "sourceInfoBaseName": "",
   "sourceInfoBaseUnsafeActionProtectionMode": "manual-confirm",
   "repositoryPath": "",
-  "dependencyMode": "fresh",
+  "dependencyMode": "workflow",
   "agentModel": "",
   "verificationPolicy": "warn",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",

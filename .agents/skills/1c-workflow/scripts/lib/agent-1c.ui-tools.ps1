@@ -1,13 +1,13 @@
-function Get-ItlUiToolsLock {
-    $lock = Read-DependencyLockManifest
-    $dependencies = Get-StateValue -State $lock -Name "dependencies" -Default $null
-    if ($null -eq $dependencies) { throw "UI_TOOLS_LOCK_MISSING: dependency-lock has no dependencies object." }
-    $agentBrowser = Get-StateValue -State $dependencies -Name "agentBrowser" -Default $null
-    $windowsMcp = Get-StateValue -State $dependencies -Name "windowsMcp" -Default $null
-    if ($null -eq $agentBrowser -or $null -eq $windowsMcp) {
-        throw "UI_TOOLS_LOCK_MISSING: dependency-lock must pin agentBrowser and windowsMcp."
+﻿function Get-ItlUiToolsLock {
+    param([ValidateSet('','agentBrowser','windowsMcp')][string]$Name = '')
+    $plan = Get-WorkflowDependencyPlan
+    $entries = [ordered]@{}
+    foreach ($component in @($(if($Name){$Name}else{@('agentBrowser','windowsMcp')}))) {
+        $entry = Get-WorkflowDependencyEntry -Name $component -Plan $plan
+        if ($null -eq $entry) { throw "UI_TOOLS_LOCK_MISSING: the workflow must pin '$component'. Repair the package or complete update-workflow." }
+        $entries[$component] = $entry
     }
-    return [pscustomobject]@{ agentBrowser = $agentBrowser; windowsMcp = $windowsMcp }
+    return [pscustomobject]$entries
 }
 
 function Get-ItlUiToolsUserRoot {
@@ -19,14 +19,24 @@ function Get-ItlUiToolsUserRoot {
 
 function Get-ItlAgentBrowserExecutablePath {
     param([object]$Pin = $null)
-    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock).agentBrowser }
-    return Join-Path (Get-ItlUiToolsUserRoot) ("agent-browser\{0}\node_modules\.bin\agent-browser.cmd" -f [string]$Pin.version)
+    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock -Name agentBrowser).agentBrowser }
+    $identity = Get-WorkflowDependencyFingerprint $Pin
+    return Join-Path (Get-ItlUiToolsUserRoot) ("agent-browser\{0}\{1}\node_modules\.bin\agent-browser.cmd" -f [string]$Pin.version,$identity)
 }
 
 function Get-ItlWindowsMcpReadyPath {
     param([object]$Pin = $null)
-    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock).windowsMcp }
-    return Join-Path (Get-ItlUiToolsUserRoot) ("windows-mcp\{0}\ready.json" -f [string]$Pin.version)
+    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock -Name windowsMcp).windowsMcp }
+    $identity = Get-WorkflowDependencyFingerprint $Pin
+    return Join-Path (Get-ItlUiToolsUserRoot) ("windows-mcp\{0}\{1}\ready.json" -f [string]$Pin.version,$identity)
+}
+
+function Get-ItlWindowsMcpRequirement {
+    param([object]$Pin)
+    if ([string]$Pin.sha256 -match '^[a-fA-F0-9]{64}$' -and [string]$Pin.url -match '^https://.+\.whl$') {
+        return "windows-mcp @ $($Pin.url)#sha256=$($Pin.sha256)"
+    }
+    return "windows-mcp==$($Pin.version)"
 }
 
 function Get-ItlWindowsMcpUvxPath {
@@ -121,9 +131,9 @@ function Invoke-ItlUiToolCommand {
 }
 
 function Test-ItlAgentBrowserReady {
-    param([object]$Pin = $null, [switch]$StaticOnly)
-    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock).agentBrowser }
-    $executable = Get-ItlAgentBrowserExecutablePath -Pin $Pin
+    param([object]$Pin = $null, [switch]$StaticOnly, [string]$ExecutablePath = '')
+    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock -Name agentBrowser).agentBrowser }
+    $executable = if ($ExecutablePath) { $ExecutablePath } else { Get-ItlAgentBrowserExecutablePath -Pin $Pin }
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { return $false }
     try {
         if ($StaticOnly) {
@@ -143,7 +153,7 @@ function Test-ItlAgentBrowserReady {
 
 function Test-ItlWindowsMcpReady {
     param([object]$Pin = $null)
-    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock).windowsMcp }
+    if ($null -eq $Pin) { $Pin = (Get-ItlUiToolsLock -Name windowsMcp).windowsMcp }
     $readyPath = Get-ItlWindowsMcpReadyPath -Pin $Pin
     $uvx = Get-ItlWindowsMcpUvxPath
     return [bool]($uvx -and (Test-Path -LiteralPath $readyPath -PathType Leaf))
@@ -152,7 +162,7 @@ function Test-ItlWindowsMcpReady {
 function Install-ItlAgentBrowser {
     $policy = Get-ItlUiToolPolicy -Tool agent-browser
     if (-not $policy.valid) { throw "ITL_UI_TOOL_POLICY_INVALID: $($policy.key)='$($policy.raw)'; set auto, off, or required before installing agent-browser." }
-    $pin = (Get-ItlUiToolsLock).agentBrowser
+    $pin = (Get-ItlUiToolsLock -Name agentBrowser).agentBrowser
     if (Test-ItlAgentBrowserReady -Pin $pin) {
         Write-Host "agent-browser $($pin.version) is already installed."
         return
@@ -170,7 +180,19 @@ function Install-ItlAgentBrowser {
     $staging = Join-Path $parent ('.' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $staging | Out-Null
     try {
-        Invoke-ItlUiToolCommand -Executable $npm.Source -Arguments @("install", "--prefix", $staging, "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=true", "agent-browser@$($pin.version)") -FailureCode "AGENT_BROWSER_INSTALL_FAILED" | Out-Null
+        $legacyRoot = Join-Path (Get-ItlUiToolsUserRoot) ("agent-browser/{0}" -f $pin.version)
+        $legacyExecutable = Join-Path $legacyRoot 'node_modules/.bin/agent-browser.cmd'
+        $reuseLegacy = (Test-ItlAgentBrowserReady -Pin $pin -ExecutablePath $legacyExecutable -StaticOnly) -and
+            (Test-ItlAgentBrowserReady -Pin $pin -ExecutablePath $legacyExecutable)
+        if ($reuseLegacy) {
+            foreach ($relative in @('node_modules','package.json','package-lock.json')) {
+                $path = Join-Path $legacyRoot $relative
+                if (Test-Path -LiteralPath $path) { Copy-Item -LiteralPath $path -Destination (Join-Path $staging $relative) -Recurse -Force }
+            }
+        } else {
+            $packageSource = [string](Get-ConfigValueFromObject $pin 'tarball' ("agent-browser@{0}" -f $pin.version))
+            Invoke-ItlUiToolCommand -Executable $npm.Source -Arguments @("install", "--prefix", $staging, "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=true", $packageSource) -FailureCode "AGENT_BROWSER_INSTALL_FAILED" | Out-Null
+        }
         $packageLockPath = Join-Path $staging "package-lock.json"
         # npm lockfile v3 includes packages[""]. Windows PowerShell 5 cannot
         # represent that empty property name; rename it only in the parsed view.
@@ -182,9 +204,11 @@ function Install-ItlAgentBrowser {
         }
         $stagedExecutable = Join-Path $staging "node_modules\.bin\agent-browser.cmd"
         Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("--version") -FailureCode "AGENT_BROWSER_VERSION_FAILED" -TimeoutSeconds 30 | Out-Null
-        Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("install") -FailureCode "AGENT_BROWSER_BROWSER_INSTALL_FAILED" -TimeoutSeconds 600 | Out-Null
-        Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("doctor") -FailureCode "AGENT_BROWSER_DOCTOR_FAILED" -TimeoutSeconds 90 | Out-Null
-        Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("skills", "get", "core", "--full") -FailureCode "AGENT_BROWSER_CORE_PROFILE_FAILED" -TimeoutSeconds 30 | Out-Null
+        if (-not $reuseLegacy) {
+            Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("install") -FailureCode "AGENT_BROWSER_BROWSER_INSTALL_FAILED" -TimeoutSeconds 600 | Out-Null
+            Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("doctor") -FailureCode "AGENT_BROWSER_DOCTOR_FAILED" -TimeoutSeconds 90 | Out-Null
+            Invoke-ItlUiToolCommand -Executable $stagedExecutable -Arguments @("skills", "get", "core", "--full") -FailureCode "AGENT_BROWSER_CORE_PROFILE_FAILED" -TimeoutSeconds 30 | Out-Null
+        }
         if (Test-Path -LiteralPath $target) {
             $backup = "$target.invalid-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
             Move-Item -LiteralPath $target -Destination $backup
@@ -202,14 +226,14 @@ function Install-ItlAgentBrowser {
 function Install-ItlWindowsMcp {
     $policy = Get-ItlUiToolPolicy -Tool windows-mcp
     if (-not $policy.valid) { throw "ITL_UI_TOOL_POLICY_INVALID: $($policy.key)='$($policy.raw)'; set auto, off, or required before installing windows-mcp." }
-    $pin = (Get-ItlUiToolsLock).windowsMcp
+    $pin = (Get-ItlUiToolsLock -Name windowsMcp).windowsMcp
     if (Test-ItlWindowsMcpReady -Pin $pin) {
         Write-Host "Windows-MCP $($pin.version) is already prepared."
         return
     }
     $uvx = Get-ItlWindowsMcpUvxPath
     if (-not $uvx) { throw "WINDOWS_MCP_UVX_REQUIRED: uv/uvx is required." }
-    Invoke-ItlUiToolCommand -Executable $uvx -Arguments @("--from", "windows-mcp==$($pin.version)", "windows-mcp", "--help") -FailureCode "WINDOWS_MCP_PRELOAD_FAILED" | Out-Null
+    Invoke-ItlUiToolCommand -Executable $uvx -Arguments @("--from", (Get-ItlWindowsMcpRequirement -Pin $pin), "windows-mcp", "--help") -FailureCode "WINDOWS_MCP_PRELOAD_FAILED" | Out-Null
     $readyPath = Get-ItlWindowsMcpReadyPath -Pin $pin
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $readyPath) | Out-Null
     Write-Utf8Text -Path $readyPath -Value (([ordered]@{ version = [string]$pin.version; preparedAt = [DateTime]::UtcNow.ToString("o"); transport = "stdio" } | ConvertTo-Json) + [Environment]::NewLine)
@@ -267,8 +291,8 @@ function Get-ItlUiToolStatus {
         [string]$Client = ""
     )
     if (-not $Client) { $Client = Get-ItlActiveClient }
-    $lock = Get-ItlUiToolsLock
-    $pin = if ($Tool -eq "agent-browser") { $lock.agentBrowser } else { $lock.windowsMcp }
+    $component = if ($Tool -eq 'agent-browser') { 'agentBrowser' } else { 'windowsMcp' }
+    $pin = Get-WorkflowDependencyEntry -Name $component
     $key = ConvertTo-ItlClientMcpKey -Name $Tool -Client $Client
     $owned = @(Get-ItlManagedMcpOwnerKeys -Owner "ui-tools" -Client $Client)
     $configured = @(Get-ItlConfiguredMcpKeys -Client $Client)
@@ -320,7 +344,7 @@ function Sync-ItlUiToolsMcp {
         if (-not ($configured -contains $windowsKey) -or $owned -contains $windowsKey) {
             $uvx = Get-ItlWindowsMcpUvxPath
             if ($uvx) {
-                $endpoints += [pscustomobject]@{ name = "windows-mcp"; transport = "stdio"; command = $uvx; args = @("--from", "windows-mcp==$($lock.windowsMcp.version)", "windows-mcp", "serve"); env = [ordered]@{}; startupTimeoutSeconds = 45; toolTimeoutSeconds = 120 }
+                $endpoints += [pscustomobject]@{ name = "windows-mcp"; transport = "stdio"; command = $uvx; args = @("--from", (Get-ItlWindowsMcpRequirement -Pin $lock.windowsMcp), "windows-mcp", "serve"); env = [ordered]@{}; startupTimeoutSeconds = 45; toolTimeoutSeconds = 120 }
             }
         }
     } elseif ($owned -contains $windowsKey) { $preserve += $windowsKey }

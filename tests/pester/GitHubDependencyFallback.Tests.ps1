@@ -1,4 +1,4 @@
-Describe "GitHub dependency rate-limit fallback" {
+﻿Describe "GitHub dependency rate-limit fallback" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -16,9 +16,16 @@ Describe "GitHub dependency rate-limit fallback" {
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1")
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1")
 
+        . $context.HelperPath -ProjectRoot $script:ProjectRoot -Action help *> $null
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'templates') -Destination (Join-Path $script:ProjectRoot 'templates') -Recurse
+
         $script:SavedGitHubToken = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Process")
         $script:SavedGhToken = [Environment]::GetEnvironmentVariable("GH_TOKEN", "Process")
         $script:SavedVanessaSourceBuild = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+    }
+
+    BeforeEach {
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'templates/dependency-lock.json') -Destination (Join-Path $script:ProjectRoot 'templates/dependency-lock.json') -Force
     }
 
     AfterEach {
@@ -47,7 +54,7 @@ Describe "GitHub dependency rate-limit fallback" {
         (Get-GitHubRateLimitRecoveryMessage -Operation "test operation" -FailureInfo ([pscustomobject]@{ reset = "" })) | Should -Not -Match "primary-secret|secondary-secret"
     }
 
-    It "uses complete dependency-lock entries after a confirmed GitHub API rate limit" {
+    It "uses the exact installed baseline even when GitHub API discovery is unavailable" {
         Mock Invoke-RestMethod {
             $exception = [System.Exception]::new("API rate limit exceeded")
             $exception.Data["StatusCode"] = 403
@@ -69,11 +76,13 @@ Describe "GitHub dependency rate-limit fallback" {
         }
         try {
             [IO.File]::WriteAllText($lockPath, ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            # This installed legacy package owns that legacy asset, rather than borrowing another build.
+            [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
             $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
             $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
             $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
             @($roctup, $client, $extension) | ForEach-Object {
-                $_.source | Should -Be "dependency-lock rate-limit fallback"
+                $_.source | Should -Be "workflow-selection"
                 $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
             }
             $roctup.name | Should -Be "MCP_Toolkit.epf"
@@ -103,8 +112,8 @@ Describe "GitHub dependency rate-limit fallback" {
 
         {
             Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
-        } | Should -Throw '*GitHub API rate limit reached while resolving GitHub release asset 1c-neurofish/onec-client-mcp-devkit/client_mcp.cfe*complete compatible dependency lock*'
-        Assert-MockCalled Invoke-RestMethod -Times 1 -Exactly
+        } | Should -Throw '*DEPENDENCY_EXACT_RELEASE_REQUIRED*'
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $before
     }
 
@@ -146,16 +155,11 @@ Describe "GitHub dependency rate-limit fallback" {
         { Assert-VanessaSourceBuildArchiveMatchesActivePin } | Should -Not -Throw
     }
 
-    It "does not use the lock for a non-rate-limit API failure" {
-        Mock Invoke-RestMethod {
-            $exception = [System.Exception]::new("Not Found")
-            $exception.Data["StatusCode"] = 404
-            throw $exception
-        }
-
-        {
-            Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
-        } | Should -Throw "*Could not resolve GitHub release asset*"
+    It "uses the selected pin without querying even a failing upstream discovery API" {
+        Mock Invoke-RestMethod { throw 'Not Found' }
+        $asset = Get-GitHubReleaseAssetInfo -Repository 'ROCTUP/1c-mcp-toolkit' -AssetNameLike 'MCP_Toolkit.epf' -OverrideEnvName '' -DefaultFileName 'MCP_Toolkit.epf'
+        $asset.expectedSha256 | Should -Be (Read-DependencyLockManifest).dependencies.roctupMcpToolkit.sha256
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
     }
 
     It "keeps the baseline lock unchanged after a fallback artifact download" {
@@ -172,6 +176,7 @@ Describe "GitHub dependency rate-limit fallback" {
             source = "dependency-lock rate-limit fallback"
         }
 
+        Mock Get-WorkflowDependencyEntry { [pscustomobject]@{version=$asset.version;assetName=$asset.name;sha256=$asset.expectedSha256} }
         Save-RoctupMcpArtifact -AssetInfo $asset | Out-Null
 
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
@@ -188,6 +193,7 @@ Describe "GitHub dependency rate-limit fallback" {
             source = "dependency-lock rate-limit fallback"
         }
 
+        Mock Get-WorkflowDependencyEntry { [pscustomobject]@{version=$asset.version;assetName=$asset.name;sha256=$asset.expectedSha256} }
         { Save-RoctupMcpArtifact -AssetInfo $asset } | Should -Throw "*SHA256 mismatch*"
     }
 
@@ -211,6 +217,7 @@ Describe "GitHub dependency rate-limit fallback" {
             source=$priorSource; updatedAt='original qualification time'
         }
         [IO.File]::WriteAllText($lockPath, (($manifest | ConvertTo-Json -Depth 20) + "`r`n"), [Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
         Mock Get-RoctupMcpInstallRoot { $installRoot }
         try {
@@ -224,7 +231,7 @@ Describe "GitHub dependency rate-limit fallback" {
         }
     }
 
-    It "records a materially changed verified ROCTUP artifact pin" {
+    It "refuses a materially changed artifact before acquisition until its qualified selection is applied" {
         $lockPath = Join-Path $script:ProjectRoot '.agent-1c\dependency-lock.json'
         $savedLock = [IO.File]::ReadAllBytes($lockPath)
         $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
@@ -237,6 +244,13 @@ Describe "GitHub dependency rate-limit fallback" {
         Mock Get-RoctupMcpInstallRoot { $installRoot }
         try {
             $asset = [pscustomobject]@{url=$sourcePath; name='MCP_Toolkit.epf'; version='test-new-pin'; expectedSha256=$sha256; source='explicit new pin'}
+            { Save-RoctupMcpArtifact -AssetInfo $asset } | Should -Throw '*DEPENDENCY_ACQUISITION_DRIFT*'
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly ([Convert]::ToBase64String($savedLock))
+            # Model the already admitted complete workflow/hotfix in the owning package fixture.
+            $manifest = Read-DependencyLockManifest
+            $manifest.dependencies.roctupMcpToolkit = [pscustomobject]@{version=$asset.version;assetName=$asset.name;url=$asset.url;sha256=$asset.expectedSha256;source=$asset.source;updatedAt='qualification'}
+            [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'templates/dependency-lock.json'), ($manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+            Write-DependencyLockManifest -Manifest $manifest
             $result = Save-RoctupMcpArtifact -AssetInfo $asset
             $actual = (Read-DependencyLockManifest).dependencies.roctupMcpToolkit
             $actual.version | Should -BeExactly 'test-new-pin'

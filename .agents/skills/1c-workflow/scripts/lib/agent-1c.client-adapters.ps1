@@ -1875,7 +1875,7 @@ function Assert-ItlClientRequirements {
 
     $adapter = Get-ItlClientAdapter -Client $Client
     if ($adapter.PSObject.Properties.Name -notcontains "requiredPackage" -or -not $adapter.requiredPackage) { return }
-    $locked = Get-DependencyLockEntry -Name "piMcpExtension"
+    $locked = Get-WorkflowDependencyEntry -Name "piMcpExtension"
     if ([string]$locked.source -ne [string]$adapter.requiredPackage -or [string]$locked.integrity -ne [string]$adapter.requiredPackageIntegrity) {
         throw "PI_MCP_EXTENSION_LOCK_MISMATCH: workflow registry and dependency-lock.json disagree about the required Pi MCP extension."
     }
@@ -1939,7 +1939,7 @@ function Get-ItlOpenCodePluginRuntimeContract {
 
     $adapter = Get-ItlClientAdapter -Client $Client
     if (-not $adapter.workspacePluginPackageLockKey) { return $null }
-    $locked = Get-DependencyLockEntry -Name ([string]$adapter.workspacePluginPackageLockKey)
+    $locked = Get-WorkflowDependencyEntry -Name ([string]$adapter.workspacePluginPackageLockKey)
     $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
     $source = [string](Get-ConfigValueFromObject -Object $locked -Path "source" -Default "")
     $integrity = [string](Get-ConfigValueFromObject -Object $locked -Path "integrity" -Default "")
@@ -2487,6 +2487,8 @@ function Show-ItlDoctor {
         }
     }
     try {
+        # Diagnose the observed installation; a selected default is not an
+        # installation record in a sparse legacy lock.
         $facadeLock = Get-DependencyLockEntry -Name "itlOndemandMcp"
         $facadeVersion = [string](Get-ConfigValueFromObject -Object $facadeLock -Path "version" -Default "")
         if (-not $facadeVersion) {

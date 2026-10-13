@@ -61,6 +61,7 @@ Describe 'Durable update snapshot continuation' {
         $project = Join-Path $TestDrive 'Завершённый fresh child в обычном update'
         $sourceRoot = Join-Path $TestDrive 'Источник обычного update'
         New-Item -ItemType Directory -Force -Path $project, $sourceRoot | Out-Null
+        Copy-Item -LiteralPath $verifiedTemplates -Destination (Join-Path $sourceRoot 'templates') -Recurse
         [IO.File]::WriteAllText((Join-Path $project 'managed.txt'), 'before', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $sourceRoot 'managed.txt'), 'candidate', [Text.UTF8Encoding]::new($false))
         $childPath = Join-Path $TestDrive 'successful post-copy child.ps1'

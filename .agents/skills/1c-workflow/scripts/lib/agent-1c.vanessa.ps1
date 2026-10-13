@@ -6,7 +6,7 @@
         return $resolved
     }
 
-    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $entry = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
     $version = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default (Get-ConfigValueFromObject -Object $entry -Path "version" -Default ""))
     $downstreamRevision = [string](Get-ConfigValueFromObject -Object $entry -Path "downstreamRevision" -Default "")
     $epfSha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "epfSha256" -Default "")
@@ -105,7 +105,7 @@ function Get-VanessaAutomationEpfPath {
 
 function Get-VanessaAutomationState {
     $epfPath = Get-VanessaAutomationEpfPath
-    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $entry = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
     $version = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default (Get-ConfigValueFromObject -Object $entry -Path "version" -Default ""))
     $downstreamRevision = [string](Get-ConfigValueFromObject -Object $entry -Path "downstreamRevision" -Default "")
     $archiveSha256 = ([string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")).ToLowerInvariant()
@@ -149,7 +149,7 @@ function Get-VanessaAutomationState {
 }
 
 function Get-VanessaAutomationPinnedEntry {
-    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $entry = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
     if ($null -eq $entry) {
         throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation is missing from .agent-1c/dependency-lock.json."
     }
@@ -210,16 +210,9 @@ function Assert-VanessaSourceBuildArchiveMatchesActivePin {
 }
 
 function Sync-VanessaAutomationDependencyLock {
-    if ((Get-DependencyMode) -ne "fresh") {
-        return $false
-    }
-    $template = New-DefaultDependencyLockManifest
-    $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.vanessaAutomation" -Default $null
-    if ($null -eq $entry) {
-        throw "templates/dependency-lock.json has no vanessaAutomation entry."
-    }
-    Update-DependencyLockEntry -Name "vanessaAutomation" -Values (ConvertTo-Agent1cHashtable -Object $entry)
-    Write-Host "Vanessa Automation fresh lock synchronized to workflow pin $($entry.compatibilityVersion)-$($entry.downstreamRevision)."
+    $entry = Get-WorkflowDependencyEntry -Name vanessaAutomation
+    if ($null -eq $entry) { throw 'ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: selected vanessaAutomation is absent.' }
+    Update-DependencyLockEntry -Name vanessaAutomation -Values (ConvertTo-Agent1cHashtable -Object $entry)
     return $true
 }
 
@@ -6739,6 +6732,11 @@ function Invoke-ItlNativeProcessCapture {
     $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
     $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
 
+    if ([IO.Path]::GetFileName($FilePath) -ieq 'powershell.exe' -and [string]$PSVersionTable.PSEdition -eq 'Core') {
+        . (Join-Path $script:Agent1cCoreRoot 'itl-powershell-environment.ps1')
+        $startInfo.EnvironmentVariables['PSModulePath'] = Get-ItlWindowsPowerShellModulePath
+    }
+
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     try {
@@ -7245,71 +7243,23 @@ function Read-CurrentDevBranchStateForVanessaMcp {
 }
 
 function Get-GitHubReleaseAssetInfo {
-    param(
-        [string]$Repository,
-        [string]$AssetNameLike,
-        [string]$OverrideEnvName,
-        [string]$DefaultFileName,
-        [int]$RetryCount = 3
-    )
-
-    $override = Get-EnvValue -Name $OverrideEnvName -Default ""
-    if ($override) {
-        $localOrUrl = [string]$override
-        $fileName = Split-Path -Leaf (ConvertFrom-FileUri -Value $localOrUrl)
-        if (-not $fileName) {
-            $fileName = $DefaultFileName
-        }
-        return [pscustomobject]@{
-            url = $localOrUrl
-            name = $fileName
-            version = ""
-            source = $OverrideEnvName
-        }
+    param([string]$Repository, [string]$AssetNameLike, [string]$OverrideEnvName,
+        [string]$DefaultFileName, [int]$RetryCount = 3)
+    # Compatibility entrypoint: release discovery no longer advances a
+    # component independently of its workflow. Authentication helpers remain
+    # available for exact-tag source/skill requests.
+    $pin = Get-GitHubReleaseRateLimitFallbackInfo -Repository $Repository -AssetNameLike $AssetNameLike -DefaultFileName $DefaultFileName
+    if ($null -eq $pin) {
+        throw "DEPENDENCY_EXACT_RELEASE_REQUIRED: '$Repository/$AssetNameLike' has no complete workflow/hotfix pin. Configure the exact component through update-workflow -DependencySelectionFile."
     }
-
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch {
+    $override = [string](Get-EnvValue -Name $OverrideEnvName -Default '')
+    return [pscustomobject]@{
+        url=$(if($override){$override}else{[string]$pin.url})
+        name=[string]$pin.name
+        version=[string]$pin.version
+        expectedSha256=[string]$pin.expectedSha256
+        source='workflow-selection'
     }
-
-    $lastError = $null
-    for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
-        try {
-            $release = Invoke-GitHubApiRestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest"
-            $asset = @($release.assets | Where-Object { $_.name -like $AssetNameLike } | Select-Object -First 1)
-            if ($asset.Count -eq 0) {
-                throw "GitHub release $Repository/$($release.tag_name) does not contain asset matching '$AssetNameLike'."
-            }
-
-            return [pscustomobject]@{
-                url = [string]$asset[0].browser_download_url
-                name = [string]$asset[0].name
-                version = [string]$release.tag_name
-                source = "GitHub releases $Repository"
-            }
-        } catch {
-            $lastError = $_.Exception.Message
-            $failure = Get-GitHubApiFailureInfo -ErrorRecord $_
-            if ($failure.rateLimited) {
-                $fallback = Get-GitHubReleaseRateLimitFallbackInfo `
-                    -Repository $Repository `
-                    -AssetNameLike $AssetNameLike `
-                    -DefaultFileName $DefaultFileName
-                if ($fallback) {
-                    Write-Warning "GitHub API rate limit reached; using the dependency-lock fallback for $Repository/$AssetNameLike."
-                    return $fallback
-                }
-                throw (Get-GitHubRateLimitRecoveryMessage -Operation "resolving GitHub release asset $Repository/$AssetNameLike" -FailureInfo $failure)
-            }
-            if ($attempt -lt $RetryCount) {
-                Write-Warning "Could not resolve GitHub release asset $Repository/$AssetNameLike (attempt $attempt of $RetryCount): $lastError"
-                Start-Sleep -Seconds $attempt
-            }
-        }
-    }
-
-    throw "Could not resolve GitHub release asset $Repository/$AssetNameLike after $RetryCount attempts. $lastError"
 }
 
 function Get-VanessaMcpArtifactDefinitions {
@@ -7357,7 +7307,7 @@ function Resolve-VanessaMcpArtifactPath {
 function Get-VanessaMcpArtifactLockEntry {
     param([object]$Definition)
 
-    $lock = Get-DependencyLockEntry -Name "vanessaMcp"
+    $lock = Get-WorkflowDependencyEntry -Name "vanessaMcp"
     return Get-ConfigValueFromObject -Object $lock -Path ([string]$Definition.lockKey) -Default $null
 }
 
@@ -7426,10 +7376,8 @@ function Get-VanessaMcpCachedArtifactInfo {
     $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default (Split-Path -Leaf $Path))
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 
-    if ((Get-DependencyMode) -eq "locked") {
-        if (-not $version -or -not $assetName -or -not $url -or -not $expectedSha256) {
-            throw "Dependency mode is locked, but vanessaMcp.$($Definition.lockKey).version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
-        }
+    if (-not $version -or -not $assetName -or -not $url -or -not $expectedSha256) {
+        throw "Vanessa MCP requires the complete selected pin for vanessaMcp.$($Definition.lockKey). Run update-workflow with a compatible dependency selection."
     }
     if ($expectedSha256 -and $hash -ne $expectedSha256.ToLowerInvariant()) {
         throw "Vanessa UI MCP cached artifact SHA256 mismatch for $($Definition.lockKey). Expected $expectedSha256, got $hash. Artifact: $Path"
@@ -7448,51 +7396,19 @@ function Get-VanessaMcpCachedArtifactInfo {
 
 function Get-VanessaMcpReleaseAssetInfo {
     param([object]$Definition)
-
-    $mode = Get-DependencyMode
-    $locked = Get-VanessaMcpArtifactLockEntry -Definition $Definition
-    if ($mode -eq "locked") {
-        $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-        $assetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-        $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-        if (-not $version -or -not $assetName -or -not $url -or -not $sha256) {
-            throw "Dependency mode is locked, but vanessaMcp.$($Definition.lockKey).version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
-        }
-        $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
-        $requiredVersion = $(if ([string]$Definition.lockKey -eq "clientMcp") { [string]$compatible.backendVersions.clientMcp } else { [string]$compatible.backendVersions.vaExtension })
-        if ($version -ne $requiredVersion) {
-            throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: locked Vanessa UI $($Definition.lockKey) version '$version' has no packaged compatibility catalog; required '$requiredVersion'."
-        }
-        return [pscustomobject]@{
-            url = $url
-            name = $assetName
-            version = $version
-            expectedSha256 = $sha256
-            source = "dependency-lock"
-        }
+    $plan = Get-WorkflowDependencyPlan
+    $pair = Get-WorkflowDependencyEntry -Name vanessaMcp -Plan $plan
+    $entry = Get-ConfigValueFromObject $pair ([string]$Definition.lockKey) $null
+    $version = [string](Get-ConfigValueFromObject $entry 'version' '')
+    $name = [string](Get-ConfigValueFromObject $entry 'assetName' '')
+    $url = [string](Get-ConfigValueFromObject $entry 'url' '')
+    $sha256 = [string](Get-ConfigValueFromObject $entry 'sha256' '')
+    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family vanessa-ui -Plan $plan
+    $required = if ([string]$Definition.lockKey -eq 'clientMcp') {[string]$compatible.backendVersions.clientMcp} else {[string]$compatible.backendVersions.vaExtension}
+    if (-not $name -or -not $url -or $sha256 -notmatch '^[a-fA-F0-9]{64}$' -or $version -cne $required) {
+        throw 'ITL_ONDEMAND_BACKEND_UNSUPPORTED: Vanessa UI requires the complete selected workflow/hotfix pin and matching catalog. Run update-workflow or supply a compatible -DependencySelectionFile.'
     }
-
-    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
-    $requiredVersion = if ([string]$Definition.lockKey -eq "clientMcp") {
-        [string]$compatible.backendVersions.clientMcp
-    } else {
-        [string]$compatible.backendVersions.vaExtension
-    }
-    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-    $assetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
-    $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-    $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-    if ($version -ne $requiredVersion -or -not $assetName -or -not $url -or -not $sha256) {
-        throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: fresh Vanessa UI requires compatibility-manifest version '$requiredVersion' and a complete vanessaMcp.$($Definition.lockKey) lock entry. Actual version: '$version'."
-    }
-    return [pscustomobject]@{
-        url = $url
-        name = $assetName
-        version = $version
-        expectedSha256 = $sha256
-        source = "compatibility-manifest"
-    }
+    return [pscustomobject]@{url=$url;name=$name;version=$version;expectedSha256=$sha256;source='workflow-selection'}
 }
 
 function Save-VanessaMcpPairedSourceBuildArtifact {
@@ -7529,7 +7445,7 @@ function Save-VanessaMcpPairedSourceBuildArtifact {
         throw "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE does not exist: $archivePath"
     }
 
-    $vanessaLock = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $vanessaLock = Get-WorkflowDependencyEntry -Name "vanessaAutomation"
     $expectedArchiveSha256 = ([string](Get-ConfigValueFromObject -Object $vanessaLock -Path "sha256" -Default "")).ToLowerInvariant()
     $actualArchiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     if ($expectedArchiveSha256 -notmatch '^[a-f0-9]{64}$' -or $actualArchiveSha256 -cne $expectedArchiveSha256) {

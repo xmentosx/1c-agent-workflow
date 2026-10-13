@@ -712,6 +712,8 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         ".agent-1c/execution-checkpoints/",
         ".agent-1c/execution-guard-generation.json",
         ".agent-1c/tools/openspec-cli/",
+        ".agent-1c/snapshots/dependency-selection.json",
+        ".agent-1c/snapshots/dependency-selection.json.*",
         ".agent-1c/execution-guard-generation.json.*"
     )
     $existingLines = @()
@@ -1797,18 +1799,12 @@ function ConvertTo-DependencyMode {
     param([AllowNull()][object]$Value)
 
     if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
-        return "fresh"
+        return "workflow"
     }
 
     $text = ([string]$Value).Trim().ToLowerInvariant()
-    if ($text -eq "fresh" -or $text -eq "latest") {
-        return "fresh"
-    }
-    if ($text -eq "locked" -or $text -eq "pinned") {
-        return "locked"
-    }
-
-    throw "Invalid dependency mode: $Value. Use fresh or locked."
+    if ($text -in @('workflow','fresh','latest','locked','pinned')) { return 'workflow' }
+    throw "Invalid dependency policy: $Value. Use workflow; legacy fresh/locked inputs are migration aliases."
 }
 
 function ConvertTo-BaseConfigurationVersion {
@@ -3718,7 +3714,7 @@ function Read-DependencyLockManifest {
 function Write-DependencyLockManifest {
     param([object]$Manifest)
 
-    Write-Utf8Text -Path (Get-DependencyLockPath) -Value (($Manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path (Get-DependencyLockPath) -Value (($Manifest | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
 }
 
 function Ensure-DependencyLockManifest {
@@ -3729,20 +3725,7 @@ function Ensure-DependencyLockManifest {
 }
 
 function Get-DependencyMode {
-    if ($DependencyMode) {
-        return ConvertTo-DependencyMode -Value $DependencyMode
-    }
-
-    $value = Get-EnvValue -Name "DEPENDENCY_MODE"
-    if (-not $value) {
-        $value = Get-ConfigValue -Path "dependencyMode" -Default ""
-    }
-    if (-not $value) {
-        $lock = Read-DependencyLockManifest
-        $value = [string](Get-ConfigValueFromObject -Object $lock -Path "mode" -Default "fresh")
-    }
-
-    return ConvertTo-DependencyMode -Value $value
+    return 'workflow'
 }
 
 function Get-BaseConfigurationVersion {
@@ -3912,8 +3895,9 @@ function Get-DependencyLockRateLimitFallbackInfo {
         [string]$DefaultFileName = ""
     )
 
-    $manifest = Read-DependencyLockManifest
-    $entry = Get-ConfigValueFromObject -Object $manifest -Path "dependencies.$LockPath" -Default $null
+    $parts = $LockPath -split '\.', 2
+    $entry = Get-WorkflowDependencyEntry -Name $parts[0]
+    if ($parts.Count -eq 2) { $entry = Get-ConfigValueFromObject $entry $parts[1] $null }
     $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
     $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
     $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
@@ -4017,7 +4001,7 @@ function Get-WorkflowManagedDependencyLockEntryNames {
         throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no dependencies object."
     }
     $templateDependencies = ConvertTo-Agent1cHashtable -Object $templateDependenciesValue
-    $names = @($templateDependencies.Keys | Where-Object { [string]$_ -notin @("workflowPackage", "aiRules1c") } | Sort-Object)
+    $names = @($templateDependencies.Keys | Where-Object { [string]$_ -ne "workflowPackage" } | Sort-Object)
     if ($names.Count -eq 0) {
         throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no workflow-managed dependency entries."
     }
@@ -4101,74 +4085,36 @@ function Merge-WorkflowManagedDependencyLockValue {
 }
 
 function Sync-WorkflowManagedDependencyLockEntries {
-    $template = New-DefaultDependencyLockManifest
-    $templateDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $template -Path "dependencies" -Default $null)
-    $managedNames = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
-    $mode = Get-DependencyMode
-    $lockPath = Get-DependencyLockPath
-
-    if ($mode -eq "locked" -and -not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked, but .agent-1c/dependency-lock.json is missing."
+    $plan = Get-WorkflowDependencyPlan
+    Assert-WorkflowDependencyPlan -Plan $plan
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -ne $pending -and $null -eq (Get-ConfigValueFromObject $pending.receipt 'dependencyPlan' $null)) {
+        $source = [pscustomobject]@{root=[string]$pending.receipt.sourceRoot;commit=[string]$pending.receipt.sourceCommit}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase ([string]$pending.receipt.phase) -Details @{dependencyPlan=$plan}
     }
-    if ($mode -eq "fresh") {
-        Ensure-DependencyLockManifest
-    }
-
-    $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
-    $dependenciesValue = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
-    $dependencies = if ($null -eq $dependenciesValue) { [ordered]@{} } else { ConvertTo-Agent1cHashtable -Object $dependenciesValue }
-
-    if ($mode -eq "locked") {
-        $missing = [System.Collections.Generic.List[string]]::new()
-        $addOpenSpecCli = -not $dependencies.Contains('openSpecCli') -and $templateDependencies.Contains('openSpecCli')
-        foreach ($name in $managedNames) {
-            if (-not $dependencies.Contains($name)) {
-                if ($name -eq 'openSpecCli' -and $addOpenSpecCli) { continue }
-                $missing.Add("dependencies.$name") | Out-Null
-                continue
-            }
-            foreach ($path in @(Get-MissingDependencyLockValuePaths -Current $dependencies[$name] -Template $templateDependencies[$name] -Prefix "dependencies.$name")) {
-                $missing.Add([string]$path) | Out-Null
-            }
-        }
-        if ($missing.Count -gt 0) {
-            throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked and the workflow dependency lock is incomplete. Missing: $($missing -join ', ')."
-        }
-        if ($addOpenSpecCli) {
-            # The new CLI is a versioned workflow component. Add only its exact
-            # template pin; never flip a locked project's dependency mode or
-            # refresh any of its existing dependency choices.
-            $dependencies['openSpecCli'] = ConvertTo-Agent1cHashtable -Object $templateDependencies['openSpecCli']
-            $manifest['dependencies'] = $dependencies
-            Write-DependencyLockManifest -Manifest $manifest
-            Write-Host 'Added the pinned OpenSpec CLI component to the existing locked dependency manifest.'
-        }
-        return [pscustomobject]@{ mode = "locked"; changed = [bool]$addOpenSpecCli; entries = $(if ($addOpenSpecCli) { @('openSpecCli') } else { @() }) }
-    }
-
-    $changedEntries = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in $managedNames) {
-        $hasCurrent = $dependencies.Contains($name)
-        $merged = Merge-WorkflowManagedDependencyLockValue `
-            -Current $(if ($hasCurrent) { $dependencies[$name] } else { $null }) `
-            -Template $templateDependencies[$name]
-        if ($merged.changed -or -not $hasCurrent) {
-            $dependencies[$name] = $merged.value
-            $changedEntries.Add([string]$name) | Out-Null
-        }
-    }
-
-    if ($changedEntries.Count -gt 0) {
-        $manifest["dependencies"] = $dependencies
-        $manifest["mode"] = "fresh"
+    $before = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
+    $manifest = Get-WorkflowDependencySyncManifest -Plan $plan -Before $before
+    $changed = (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $before) -Depth 100 -Compress) -cne
+        (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $manifest) -Depth 100 -Compress)
+    if ($changed) {
         Write-DependencyLockManifest -Manifest $manifest
-        Write-Host "Workflow-managed dependency lock synchronized: $($changedEntries -join ', ')."
+        Write-Host 'Dependency selection synchronized to the installed workflow and explicit hotfixes.'
     }
-    return [pscustomobject]@{
-        mode = "fresh"
-        changed = ($changedEntries.Count -gt 0)
-        entries = @($changedEntries)
+    $config = Get-Variable -Name ConfigPath -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $config -and $config.Value -and (Test-Path -LiteralPath ([string]$config.Value))) {
+        $project = Read-Utf8Text -Path ([string]$config.Value) | ConvertFrom-Json
+        if ([string](Get-ConfigValueFromObject $project 'dependencyMode' '') -ne 'workflow') {
+            $project | Add-Member -NotePropertyName dependencyMode -NotePropertyValue workflow -Force
+            Write-Utf8TextAtomic -Path ([string]$config.Value) -Value (($project | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+            Read-ProjectConfig
+        }
     }
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.dev.env')) {
+        if ([string](Get-EnvValue -Name DEPENDENCY_MODE -Default '') -ne 'workflow') {
+            Set-DotEnvValues -Values @{ DEPENDENCY_MODE = 'workflow' }
+        }
+    }
+    return [pscustomobject]@{ mode='workflow'; changed=$changed; entries=@(Get-WorkflowManagedDependencyLockEntryNames) }
 }
 
 function Update-DependencyLockEntry {
@@ -4177,14 +4123,17 @@ function Update-DependencyLockEntry {
         [hashtable]$Values
     )
 
-    if ((Get-DependencyMode) -ne "fresh") {
-        return
-    }
-
     Ensure-DependencyLockManifest
     $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $dependencies = ConvertTo-Agent1cHashtable -Object $manifest["dependencies"]
     $entry = ConvertTo-Agent1cHashtable -Object $dependencies[$Name]
+    $selected = if (@(Get-WorkflowManagedDependencyLockEntryNames) -contains $Name) { Get-WorkflowDependencyEntry -Name $Name } else { $null }
+    if ($null -ne $selected) {
+        $observed = Merge-WorkflowManagedDependencyLockValue -Current $selected -Template $Values
+        if ((Get-WorkflowDependencyFingerprint $observed.value) -cne (Get-WorkflowDependencyFingerprint $selected)) {
+            throw "DEPENDENCY_ACQUISITION_DRIFT: '$Name' returned bytes or identity outside the selected workflow/hotfix. Repair the selected artifact or use update-workflow -DependencySelectionFile."
+        }
+    }
     $changed = $false
     foreach ($key in @($Values.Keys)) {
         if (-not $entry.Contains($key)) {
@@ -4200,7 +4149,7 @@ function Update-DependencyLockEntry {
     $entry["updatedAt"] = (Get-Date).ToString("o")
     $dependencies[$Name] = $entry
     $manifest["dependencies"] = $dependencies
-    $manifest["mode"] = "fresh"
+    $manifest["mode"] = "workflow"
     Write-DependencyLockManifest -Manifest $manifest
 }
 
@@ -4886,7 +4835,7 @@ function Read-InitWizardAnswersOnce {
         }
     }
 
-    $answers.dependencyMode = "fresh"
+    $answers.dependencyMode = "workflow"
     $answers.vibecoding1cMcpSetupDuringInit = $true
 
     return [pscustomobject]$answers

@@ -1146,3 +1146,106 @@ Describe 'OpenCode project inputs stay rollback-owned and Git-foreign' -Tag 'Ope
         @($snapshot.records | ForEach-Object relativePath) | Should -Not -Contain '.opencode/opencode.jsonc'
     }
 }
+
+Describe 'Workflow dependency transition snapshot' -Tag WorkflowDependencyTransaction {
+    It 'captures one selection, ignores edited input after arm, and restores a retired hotfix at <phase>' -ForEach @(@{phase='post-copy-failed'},@{phase='post-copy-complete'}) {
+        $root=Join-Path $TestDrive ('Dependency rollback project '+$phase)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'templates') -Destination (Join-Path $root 'templates') -Recurse
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"dependencyMode":"locked","aiRules":{"tools":["codex"]}}',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.dev.env'),"DEPENDENCY_MODE=locked`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'),".dev.env`n.agent-1c/snapshots/`nselection.json`n",[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $baseline=New-DefaultDependencyLockManifest
+            $pin=ConvertTo-Agent1cHashtable $baseline.dependencies.yaxunit
+            $pin.version='26.1'; $pin.releaseTag='26.1'; $pin.sha256=('b'*64)
+            $fix=@{reason='incident';dependencies=@{yaxunit=$pin}}
+            $installed=New-WorkflowDependencyPlan -Template $baseline -Manifest $baseline -Selection @{hotfixes=@{incident=$fix}}
+            Write-DependencyLockManifest $installed.manifest
+            $before=[IO.File]::ReadAllBytes((Get-DependencyLockPath))
+            & git -C $root init -q -b master
+            & git -C $root config user.name 'Dependency Test'
+            & git -C $root config user.email 'dependency@example.invalid'
+            & git -C $root add --all
+            & git -C $root commit -qm baseline
+            $LASTEXITCODE | Should -Be 0
+            $candidate=Join-Path $TestDrive 'Dependency target package'
+            $compatRelative='.agents/skills/1c-workflow/assets/ondemand-mcp'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidate 'templates'),(Join-Path $candidate $compatRelative) | Out-Null
+            $target=ConvertTo-Agent1cHashtable $baseline
+            $target.dependencies.yaxunit=$pin
+            Write-Utf8Text -Path (Join-Path $candidate 'templates/dependency-lock.json') -Value ($target|ConvertTo-Json -Depth 100)
+            Copy-Item (Join-Path $repoRoot "$compatRelative/compatibility.json") (Join-Path $candidate "$compatRelative/compatibility.json")
+            $DependencySelectionFile=Join-Path $root 'selection.json'
+            Write-Utf8Text -Path $DependencySelectionFile -Value (@{schemaVersion=1;worktrees=@(@{worktreePath=$root})}|ConvertTo-Json -Depth 10)
+            $plan=Get-WorkflowDependencyPlan -SourceRoot $candidate
+            @($plan.blocked).Count | Should -Be 0
+            $plan.manifest.hotfixes.Count | Should -Be 0
+            $source=[pscustomobject]@{root=$candidate;commit=('b'*40);ref='master';repo='fixture';source='path'}
+            $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('templates','.agent-1c/dependency-lock.json','.agent-1c/project.json','.dev.env') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}
+            $lateFix=ConvertTo-Agent1cHashtable $fix
+            $lateFix.dependencies.yaxunit.version='27.1'
+            Write-Utf8Text -Path $DependencySelectionFile -Value (@{schemaVersion=1;worktrees=@(@{worktreePath=$root;hotfixes=@{other=$lateFix}})}|ConvertTo-Json -Depth 30)
+            Copy-Item (Join-Path $candidate 'templates/dependency-lock.json') (Join-Path $root 'templates/dependency-lock.json') -Force
+            Update-WorkflowPackageLockEntry -Source $source | Out-Null
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase copy-complete
+            (ConvertTo-Agent1cHashtable (Get-WorkflowDependencyPlan).manifest.hotfixes).Count | Should -Be 0
+            Sync-WorkflowManagedDependencyLockEntries | Out-Null
+            (Read-DependencyLockManifest).dependencies.workflowPackage.commit | Should -Be ('b'*40)
+            (Read-DependencyLockManifest).dependencies.yaxunit.version | Should -Be '26.1'
+            (ConvertTo-Agent1cHashtable (Read-DependencyLockManifest).hotfixes).Keys | Should -Not -Contain other
+            Write-Utf8Text -Path (Join-Path $root 'unrelated.txt') -Value 'late user content'
+            if ($phase -eq 'post-copy-complete') {
+                & git -C $root add -- templates .agent-1c/dependency-lock.json .agent-1c/project.json
+                & git -C $root commit -qm 'install new dependency selection'
+                $LASTEXITCODE | Should -Be 0
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
+                $snapshotId=(Split-Path -Leaf $snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+                Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot | Out-Null
+                Set-RollbackSourceFixture
+                Restore-CompletedWorkflowUpdate -SnapshotId $snapshotId
+            } else {
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-failed
+                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            }
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes((Get-DependencyLockPath))) | Should -BeExactly ([Convert]::ToBase64String($before))
+            (Read-DependencyLockManifest).hotfixes.incident.reason | Should -Be incident
+            Read-Utf8Text -Path (Join-Path $root '.dev.env') | Should -BeExactly "DEPENDENCY_MODE=locked`n"
+            Read-Utf8Text -Path (Join-Path $root 'unrelated.txt') | Should -BeExactly 'late user content'
+        }
+    }
+}
+
+Describe 'Dependency preflight drift' -Tag WorkflowDependencyTransaction {
+    It 'preserves a changed input with initiallyExists=<exists> and prepares the original operation after replanning' -ForEach @(@{exists=$false},@{exists=$true}) {
+        $root=Join-Path $TestDrive ('Preflight drift '+$exists)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'templates') -Destination (Join-Path $root 'templates') -Recurse
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'),".agent-1c/snapshots/`n",[Text.UTF8Encoding]::new($false))
+        & git -C $root init -q -b master
+        & git -C $root config user.name 'Dependency Drift Test'
+        & git -C $root config user.email 'dependency@example.invalid'
+        & git -C $root add --all
+        & git -C $root commit -qm baseline
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            if($exists){Ensure-DependencyLockManifest}
+            $plan=Get-WorkflowDependencyPlan -SourceRoot $repoRoot
+            $source=[pscustomobject]@{root=$repoRoot;commit=('b'*40);source='path'}
+            $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.agent-1c/dependency-lock.json') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            if(-not $exists){Ensure-DependencyLockManifest}
+            [IO.File]::AppendAllText((Get-DependencyLockPath)," `n",[Text.UTF8Encoding]::new($false))
+            $edited=[IO.File]::ReadAllBytes((Get-DependencyLockPath))
+            {Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}} | Should -Throw '*DEPENDENCY_PREFLIGHT_DRIFT*'
+            Test-Path -LiteralPath (Join-Path $snapshot.root 'transaction.json') | Should -BeFalse
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes((Get-DependencyLockPath))) | Should -BeExactly ([Convert]::ToBase64String($edited))
+            Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            $plan=Get-WorkflowDependencyPlan -SourceRoot $repoRoot
+            $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.agent-1c/dependency-lock.json') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            {Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}} | Should -Not -Throw
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes((Get-DependencyLockPath))) | Should -BeExactly ([Convert]::ToBase64String($edited))
+        }
+    }
+}

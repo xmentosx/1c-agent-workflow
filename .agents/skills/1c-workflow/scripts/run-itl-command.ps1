@@ -910,13 +910,8 @@ try {
         # runtime module root before launching Windows PowerShell so its
         # built-in modules (including Get-FileHash) can autoload.
         if ($resetModulePathForWindowsPowerShell) {
-            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
-            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
-                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
-                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
-                catch { return $true }
-            })
-            $env:PSModulePath = $compatibleModuleRoots -join ';'
+            . (Join-Path $PSScriptRoot 'lib/itl-powershell-environment.ps1')
+            $env:PSModulePath = Get-ItlWindowsPowerShellModulePath -ModulePath $originalPowerShellModulePath
         }
         $startedHelper = Start-CompactHelperProcess -EncodedCommand $encodedCommand -WorkingDirectory $projectRoot
         $helperProcess = $startedHelper.process

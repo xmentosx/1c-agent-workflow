@@ -4,6 +4,12 @@ Describe "Immutable workflow artifact cache isolation" {
         $context = Initialize-WorkflowPesterContext
         $script:RepoRoot = $context.RepoRoot
         $script:HelperPath = $context.HelperPath
+        function Write-ArtifactFixturePackage {
+            param([string]$Root,[object]$Lock)
+            $folder=Join-Path $Root 'templates'
+            [void][IO.Directory]::CreateDirectory($folder)
+            [IO.File]::WriteAllText((Join-Path $folder 'dependency-lock.json'),($Lock|ConvertTo-Json -Depth 100),[Text.UTF8Encoding]::new($false))
+        }
         $script:SavedArtifactCacheEnvironment = @{}
         foreach ($name in @("ITL_ARTIFACT_CACHE_ROOT", "DEPENDENCY_MODE", "ROCTUP_MCP_TOOLKIT_EPF", "ROCTUP_MCP_VERSION", "ROCTUP_MCP_SHA256",
                 "ROCTUP_MCP_INSTALL_ROOT", "VANESSA_AUTOMATION_ROOT", "VANESSA_AUTOMATION_EPF", "VANESSA_MCP_CLIENT_CFE_PATH", "VANESSA_MCP_VA_EXTENSION_CFE_PATH")) {
@@ -72,6 +78,7 @@ Describe "Immutable workflow artifact cache isolation" {
         $expectedSha256 = (Get-FileHash -LiteralPath $legacyEpf -Algorithm SHA256).Hash.ToLowerInvariant()
         $lock.dependencies.roctupMcpToolkit.sha256 = $expectedSha256
         $lock.dependencies.roctupMcpToolkit.url = ([System.Uri]$legacyEpf).AbsoluteUri
+        Write-ArtifactFixturePackage -Root $projectRoot -Lock $lock
         [System.IO.File]::WriteAllText((Join-Path $projectRoot ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::WriteAllText((Join-Path $projectRoot ".dev.env"), "DEPENDENCY_MODE=locked`r`nROCTUP_MCP_TOOLKIT_EPF=$legacyEpf`r`n", [System.Text.UTF8Encoding]::new($false))
         [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $cacheRoot, "Process")
@@ -109,6 +116,7 @@ Describe "Immutable workflow artifact cache isolation" {
         $expectedSha256 = (Get-FileHash -LiteralPath $sourceEpf -Algorithm SHA256).Hash.ToLowerInvariant()
         $lock.dependencies.roctupMcpToolkit.sha256 = $expectedSha256
         $lock.dependencies.roctupMcpToolkit.url = ([System.Uri]$sourceEpf).AbsoluteUri
+        Write-ArtifactFixturePackage -Root $projectRoot -Lock $lock
         [System.IO.File]::WriteAllText((Join-Path $projectRoot ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
         $lockPath = Join-Path $projectRoot '.agent-1c\dependency-lock.json'
         $lockBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
