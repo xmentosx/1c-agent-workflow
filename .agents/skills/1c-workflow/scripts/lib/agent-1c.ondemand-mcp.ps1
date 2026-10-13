@@ -392,6 +392,7 @@ function New-ItlOnDemandVanessaParamsFile {
     $params = [ordered]@{
         Version = $VanessaVersion
         Lang = "ru"
+        projectpath = (Get-FullPathNormalized $script:ProjectRoot)
         UseEditor = $true
         usevanessaeditor = $true
         useaddin = $true

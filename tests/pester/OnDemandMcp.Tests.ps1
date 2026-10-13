@@ -692,6 +692,24 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It 'binds on-demand Vanessa projectpath to each actual normalized checkout across repeated setup' {
+        foreach ($suffix in @('первый checkout', 'второй checkout')) {
+            $root = Join-Path $TestDrive $suffix
+            New-Item -ItemType Directory -Path (Join-Path $root '.agent-1c') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            & {
+                . $HelperPath -ProjectRoot (Join-Path $root '.') -Action help *> $null
+                $state = [pscustomobject]@{ infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'база'); stateProjectRoot = 'C:\unrelated'; worktreePath = 'C:\unrelated' }
+                foreach ($iteration in 1..2) {
+                    $path = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId ('b' * 32) -TestClientPort 48177 -VanessaVersion '1.2.043.28' -User '' -Password ''
+                    $params = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $params.projectpath | Should -Be (Get-FullPathNormalized $root)
+                    $params.projectpath | Should -Not -Match 'unrelated'
+                }
+            }
+        }
+    }
+
     It "creates a private Vanessa profile with a separately leased TestClient port and silent VanessaExt setup" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-vanessa-profile-" + [guid]::NewGuid().ToString("N"))
         try {
