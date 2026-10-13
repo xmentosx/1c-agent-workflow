@@ -888,9 +888,8 @@ if ($windowed) {
 `$OutputEncoding = `$utf8
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class ItlHelperConsole { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'
+Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Threading; using System.Runtime.InteropServices; public static class ItlHelperConsole { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); } public static class ItlRunnerParentWatch { public static void Start(int runnerPid, int helperPid) { Thread watcher = new Thread(() => { try { using (Process runner = Process.GetProcessById(runnerPid)) { runner.WaitForExit(); } } catch { } try { ProcessStartInfo psi = new ProcessStartInfo("taskkill.exe", "/PID " + helperPid + " /T /F"); psi.UseShellExecute = false; psi.CreateNoWindow = true; using (Process killer = Process.Start(psi)) { if (killer != null) killer.WaitForExit(10000); } } catch { try { Process.GetCurrentProcess().Kill(); } catch { } } }); watcher.IsBackground = true; watcher.Start(); } }'
 [ItlHelperConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
-Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Threading; public static class ItlRunnerParentWatch { public static void Start(int runnerPid, int helperPid) { Thread watcher = new Thread(() => { try { using (Process runner = Process.GetProcessById(runnerPid)) { runner.WaitForExit(); } } catch { } try { ProcessStartInfo psi = new ProcessStartInfo("taskkill.exe", "/PID " + helperPid + " /T /F"); psi.UseShellExecute = false; psi.CreateNoWindow = true; using (Process killer = Process.Start(psi)) { if (killer != null) killer.WaitForExit(10000); } } catch { try { Process.GetCurrentProcess().Kill(); } catch { } } }); watcher.IsBackground = true; watcher.Start(); } }'
 [ItlRunnerParentWatch]::Start($PID, `$PID)
 `$helperExitCode = 1
 `$global:LASTEXITCODE = `$null
