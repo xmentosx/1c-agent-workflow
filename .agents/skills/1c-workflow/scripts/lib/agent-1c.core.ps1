@@ -474,6 +474,21 @@ function Invoke-WithRunStatusHeartbeat {
             Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
         }
         Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
+        # Publish main-file liveness before removing its temporary sidecar. Keep
+        # the original status/exit/error evidence, including terminal failures.
+        try {
+            if (Test-Path -LiteralPath (Resolve-RunFilePath -Path $RunStatusPath) -PathType Leaf) {
+                $statusPath = Resolve-RunFilePath -Path $RunStatusPath
+                $record = Read-Utf8Text -Path $statusPath | ConvertFrom-Json
+                $owner = $record.PSObject.Properties['pid']
+                if ($null -ne $owner -and [string]$owner.Value -ceq [string]$PID) {
+                    $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
+                    Write-Utf8TextAtomic -Path $statusPath -Value (($record | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+                }
+            }
+        } catch {
+            Write-Warning "Run-status heartbeat handoff could not be published: $($_.Exception.Message)" -WarningAction Continue
+        }
         Remove-Item -LiteralPath $heartbeatPath -Force -ErrorAction SilentlyContinue
     }
 }

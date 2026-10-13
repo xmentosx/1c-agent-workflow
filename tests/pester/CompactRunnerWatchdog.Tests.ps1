@@ -146,6 +146,69 @@ while ($true) {
         }
     }
 
+    It 'rechecks the owned handoff after reading stale status and preserves the actual terminal failure' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl runner передача с пробелом ' + [guid]::NewGuid().ToString('N'))
+        $oldWarning = $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS
+        $oldStale = $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            $runnerPath = Join-Path $scriptRoot 'run-itl-command.ps1'
+            Copy-RunnerFixture -Destination $runnerPath
+            # Control the file-read interleaving, leaving watchdog decisions and
+            # the helper's terminal result in the actual runner implementation.
+            $readHook = @'
+$script:HandoffInjected = $false
+function Read-JsonFile {
+    param([string]$Path)
+    $observed = Read-JsonFileActual -Path $Path
+    if ($null -ne $observed -and [string](Get-ObjectValue -Object $observed -Name 'stage' -Default '') -eq 'controlled-handoff' -and -not $script:HandoffInjected) {
+        $script:HandoffInjected = $true
+        $published = Read-JsonFileActual -Path $Path
+        $published.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        Write-JsonFileAtomic -Path $Path -Value $published
+        [IO.File]::Delete($Path + '.heartbeat')
+        [IO.File]::WriteAllText($Path + '.handoff', 'published')
+    }
+    return $observed
+}
+'@
+            $runnerText = [IO.File]::ReadAllText($runnerPath).Replace('function Read-JsonFile {', 'function Read-JsonFileActual {')
+            $runnerText = $runnerText.Replace('function Write-JsonFileAtomic {', ($readHook + "`nfunction Write-JsonFileAtomic {"))
+            [IO.File]::WriteAllText($runnerPath, $runnerText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt='2000-01-01T00:00:00Z'; stage='controlled-handoff'; stageDetail='journal scan complete'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText(($RunStatusPath + '.heartbeat'), [string]$PID)
+[IO.File]::SetLastWriteTimeUtc(($RunStatusPath + '.heartbeat'), [datetime]'2000-01-01')
+$deadline = [DateTime]::UtcNow.AddSeconds(8)
+while (-not (Test-Path -LiteralPath ($RunStatusPath + '.handoff'))) {
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'CONTROLLED_HANDOFF_NOT_REACHED' }
+    Start-Sleep -Milliseconds 50
+}
+Start-Sleep -Milliseconds 700
+$payload.status='failed'; $payload.stage='fixture.actual-terminal'; $payload.updatedAt=(Get-Date).ToString('o'); $payload.exitCode=7; $payload.errorMessage='Настоящий отказ после журнала'
+[IO.File]::WriteAllText($RunStatusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+exit 7
+'@
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = '2'
+            $result = Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('--', '-Action', 'check-dev-branch')
+            $result.exitCode | Should -Be 7 -Because $result.combinedText
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            Test-Path -LiteralPath ($summary.statusPath + '.handoff') | Should -BeTrue
+            $summary.stage | Should -Be 'fixture.actual-terminal'
+            $summary.error | Should -Be 'Настоящий отказ после журнала'
+            $summary.status | Should -Be 'failed'
+            $result.combinedText | Should -Not -Match 'RUNNER_STATUS_STALE'
+        } finally {
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = $oldWarning
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = $oldStale
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "accepts an owned heartbeat during a long silent helper phase" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl runner heartbeat путь " + [guid]::NewGuid().ToString("N"))
         $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
@@ -467,5 +530,53 @@ exit 0
             [int]$status.exitCode | Should -Be 1
             $status.finishedAt | Should -Not -BeNullOrEmpty
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'compact runner heartbeat handoff snapshot' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'), [ref]$tokens, [ref]$errors)
+        foreach ($name in @('Get-ObjectValue', 'Read-JsonFile', 'Get-RunnerHeartbeatAgeSeconds', 'Get-RunStatusFreshness', 'Get-RunnerLivenessSnapshot')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            if ($null -eq $definition) { throw "Missing runner function: $name" }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+    }
+
+    It 'reads the new main status when publication and sidecar removal finish before heartbeat sampling' {
+        $path = Join-Path $TestDrive 'передача статуса с пробелом.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"status":"running","stage":"check.event-log","updatedAt":"2000-01-01T00:00:00Z"}'))
+        Mock Get-RunnerHeartbeatAgeSeconds {
+            $record = [IO.File]::ReadAllText($StatusPath) | ConvertFrom-Json
+            $record.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+            [IO.File]::WriteAllText($StatusPath, ($record | ConvertTo-Json))
+            return [double]::PositiveInfinity
+        }
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        $snapshot.ownedStatus | Should -BeTrue
+        $snapshot.livenessAgeSeconds | Should -BeLessThan 2
+        $snapshot.freshness.source | Should -Be 'updatedAt'
+    }
+
+    It 'keeps the previously sampled heartbeat when the main read precedes publication' {
+        $script:snapshotReads = [Collections.Generic.List[string]]::new()
+        Mock Get-RunnerHeartbeatAgeSeconds { $script:snapshotReads.Add('heartbeat'); return 0 }
+        Mock Read-JsonFile { $script:snapshotReads.Add('status'); return [pscustomobject]@{ pid = $PID; updatedAt = '2000-01-01T00:00:00Z'; status = 'running' } }
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath 'unused.json' -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow)
+        ($script:snapshotReads -join ',') | Should -Be 'heartbeat,status'
+        $snapshot.statusAgeSeconds | Should -BeGreaterThan 120
+        $snapshot.livenessAgeSeconds | Should -Be 0
+    }
+
+    It 'rejects a fresh foreign sidecar as proof that a stale helper is live' {
+        $path = Join-Path $TestDrive 'чужой heartbeat.json'
+        [IO.File]::WriteAllText($path, ('{"pid":' + $PID + ',"updatedAt":"2000-01-01T00:00:00Z"}'))
+        [IO.File]::WriteAllText(($path + '.heartbeat'), '99999999')
+        $snapshot = Get-RunnerLivenessSnapshot -StatusPath $path -HelperProcessId $PID -NotBeforeUtc ([DateTime]::UtcNow.AddMinutes(-1))
+        $snapshot.livenessAgeSeconds | Should -BeGreaterThan 120
+        [double]::IsPositiveInfinity($snapshot.heartbeatAgeSeconds) | Should -BeTrue
     }
 }

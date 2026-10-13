@@ -2040,6 +2040,20 @@ function Read-OneCEventLogDirect {
         [object[]]$SegmentSelections = @()
     )
 
+    $scanArguments = @{} + $PSBoundParameters
+    Invoke-WithRunStatusHeartbeat -Body { Read-OneCEventLogDirectCore @scanArguments }
+}
+
+function Read-OneCEventLogDirectCore {
+    param(
+        [object]$State,
+        [Nullable[datetime]]$StartTime = $null,
+        [Nullable[datetime]]$EndTime = $null,
+        [string[]]$Levels = (Get-VanessaEventLogLevels),
+        [string[]]$SegmentPaths = @(),
+        [object[]]$SegmentSelections = @()
+    )
+
     $logDirectory = Get-DevBranchEventLogDirectory -State $State
     if (-not (Test-Path -LiteralPath $logDirectory -PathType Container -ErrorAction SilentlyContinue)) {
         throw "1C event log directory was not found: $logDirectory"

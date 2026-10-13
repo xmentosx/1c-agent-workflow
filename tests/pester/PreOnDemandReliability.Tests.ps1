@@ -6,6 +6,7 @@
         . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/itl-runner-timeout.ps1')
         . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
         . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1')
+        . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
     }
 
     It "selects a bounded action timeout and respects a Cyrillic project env override" {
@@ -67,6 +68,54 @@
         } finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'publishes owned status before removing the heartbeat without changing terminal failure fields' {
+        $root = Join-Path $TestDrive 'передача heartbeat с пробелом'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $script:ProjectRoot = $root
+        $script:RunStatusPath = Join-Path $root 'status.json'
+        $original = [ordered]@{ pid = $PID; updatedAt = '2000-01-01T00:00:00Z'; status = 'failed'; exitCode = 7; errorMessage = 'Первичный отказ'; stage = 'check.event-log'; evidence = @{ hash = 'unchanged' } }
+        [IO.File]::WriteAllText($script:RunStatusPath, ($original | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        Mock Remove-Item -ParameterFilter { $LiteralPath -eq ($script:RunStatusPath + '.heartbeat') } {
+                $record = [IO.File]::ReadAllText($script:RunStatusPath) | ConvertFrom-Json
+                [datetime]$record.updatedAt | Should -BeGreaterThan ([datetime]'2000-01-01')
+                $record.status | Should -Be 'failed'
+                $record.exitCode | Should -Be 7
+                $record.errorMessage | Should -Be 'Первичный отказ'
+                $record.stage | Should -Be 'check.event-log'
+                $record.evidence.hash | Should -Be 'unchanged'
+            [IO.File]::Delete($LiteralPath)
+        }
+        { Invoke-WithRunStatusHeartbeat -Action { throw 'Первичный отказ' } } | Should -Throw '*Первичный отказ*'
+        Should -Invoke Remove-Item -Times 1 -ParameterFilter { $LiteralPath -eq ($script:RunStatusPath + '.heartbeat') }
+        Test-Path -LiteralPath ($script:RunStatusPath + '.heartbeat') | Should -BeFalse
+    }
+
+    It 'does not refresh a status owned by another process' {
+        $script:RunStatusPath = Join-Path $TestDrive 'чужой status.json'
+        $original = '{"pid":99999999,"updatedAt":"2000-01-01T00:00:00Z","status":"running"}'
+        [IO.File]::WriteAllText($script:RunStatusPath, $original, [Text.UTF8Encoding]::new($false))
+        Invoke-WithRunStatusHeartbeat -Action { 'result' } | Should -Be 'result'
+        [IO.File]::ReadAllText($script:RunStatusPath) | Should -BeExactly $original
+    }
+
+    It 'runs the journal scan through the existing heartbeat owner and preserves its arguments and result' {
+        $script:RunStatusPath = Join-Path $TestDrive 'чтение журнала.json'
+        $state = [pscustomobject]@{ id = 'same target' }
+        $start = [datetime]'2026-07-03T12:00:00'
+        $end = $start.AddMinutes(30)
+        Mock Read-OneCEventLogDirectCore {
+            Test-Path -LiteralPath ($script:RunStatusPath + '.heartbeat') | Should -BeTrue
+            $script:RunStatusHeartbeatDepth | Should -Be 1
+            [pscustomobject]@{ signature = 'exact event'; comment = 'Ошибка с кириллицей' }
+        }
+        $events = @(Read-OneCEventLogDirect -State $state -StartTime $start -EndTime $end -Levels @('Error') -SegmentPaths @('журнал с пробелом.lgp') -SegmentSelections @(@{ file = 'same selection' }))
+        $events.Count | Should -Be 1
+        $events[0].signature | Should -Be 'exact event'
+        $events[0].comment | Should -Be 'Ошибка с кириллицей'
+        Should -Invoke Read-OneCEventLogDirectCore -Times 1 -ParameterFilter { $State.id -eq 'same target' -and $StartTime -eq $start -and $EndTime -eq $end -and $Levels[0] -eq 'Error' -and $SegmentPaths[0] -eq 'журнал с пробелом.lgp' -and $SegmentSelections[0].file -eq 'same selection' }
+        Test-Path -LiteralPath ($script:RunStatusPath + '.heartbeat') | Should -BeFalse
     }
 
     It "keeps completed phase timing after a later phase fails" {

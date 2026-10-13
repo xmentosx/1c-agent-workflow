@@ -490,6 +490,27 @@ function Get-RunStatusFreshness {
     return [pscustomobject]@{ ageSeconds = 0; source = "unavailable"; updatedAt = $updatedAtText }
 }
 
+function Get-RunnerLivenessSnapshot {
+    param([string]$StatusPath, [int]$HelperProcessId, [DateTime]$NotBeforeUtc)
+
+    # The writer publishes main status before deleting its sidecar. Sample the
+    # sidecar first: either it is fresh, or the following main read sees handoff.
+    $heartbeatAge = Get-RunnerHeartbeatAgeSeconds -StatusPath $StatusPath -HelperProcessId $HelperProcessId -NotBeforeUtc $NotBeforeUtc
+    $status = Read-JsonFile -Path $StatusPath
+    $ownedStatus = [int](Get-ObjectValue -Object $status -Name 'pid' -Default 0) -eq $HelperProcessId
+    if (-not $ownedStatus) { $heartbeatAge = [double]::PositiveInfinity }
+    $freshness = Get-RunStatusFreshness -Status $status -Path $StatusPath -NotBeforeUtc $NotBeforeUtc.AddSeconds(-5)
+    $statusAge = [int][Math]::Floor([double]$freshness.ageSeconds)
+    return [pscustomobject]@{
+        status = $status
+        ownedStatus = $ownedStatus
+        freshness = $freshness
+        statusAgeSeconds = $statusAge
+        heartbeatAgeSeconds = $heartbeatAge
+        livenessAgeSeconds = [Math]::Min([double]$statusAge, $heartbeatAge)
+    }
+}
+
 function Stop-RunnerOwnedProcessTree {
     param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
 
@@ -940,7 +961,8 @@ try {
     $terminalExitDeadlineUtc = [DateTime]::MinValue
     try {
         while (-not $helperProcess.HasExited) {
-            $currentStatus = Read-JsonFile -Path $statusPath
+            $snapshot = Get-RunnerLivenessSnapshot -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
+            $currentStatus = $snapshot.status
             $terminalStatusInFlight = [string](Get-ObjectValue -Object $currentStatus -Name "status" -Default "") -in @("succeeded", "failed", "cancelled")
             if ($terminalStatusInFlight) {
                 if ($helperProcess.HasExited) { continue }
@@ -958,13 +980,10 @@ try {
             }
             $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
             $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
-            $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
-            $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
-            $heartbeatAgeSeconds = [double]::PositiveInfinity
-            if ([int](Get-ObjectValue -Object $currentStatus -Name "pid" -Default 0) -eq $helperProcess.Id) {
-                $heartbeatAgeSeconds = Get-RunnerHeartbeatAgeSeconds -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
-            }
-            $livenessAgeSeconds = [Math]::Min([double]$statusAgeSeconds, $heartbeatAgeSeconds)
+            $freshness = $snapshot.freshness
+            $statusAgeSeconds = $snapshot.statusAgeSeconds
+            $heartbeatAgeSeconds = $snapshot.heartbeatAgeSeconds
+            $livenessAgeSeconds = $snapshot.livenessAgeSeconds
             $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
             $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
             $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
@@ -1017,6 +1036,21 @@ try {
                 break
             }
             if ($currentStage -and $livenessAgeSeconds -ge $effectiveStaleTimeoutSeconds -and -not $helperProcess.HasExited) {
+                # Work may have completed since the progress snapshot. Recheck
+                # the same owned helper before making the stale-stop decision.
+                $latest = Get-RunnerLivenessSnapshot -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
+                if ($helperProcess.HasExited) { continue }
+                if ($latest.ownedStatus) {
+                    $latestTerminal = [string](Get-ObjectValue -Object $latest.status -Name 'status' -Default '') -in @('succeeded', 'failed', 'cancelled')
+                    $latestStall = [int](Get-ObjectValue -Object $latest.status -Name 'stallTimeoutRemainingSeconds' -Default 0)
+                    $latestStaleLimit = if ($latestStall -gt 0) { [Math]::Max($staleTimeoutSeconds, $latestStall + $staleWarningSeconds) } else { $staleTimeoutSeconds }
+                    if ($latestTerminal -or $latest.livenessAgeSeconds -lt $latestStaleLimit) { continue }
+                    $currentStatus = $latest.status
+                    $freshness = $latest.freshness
+                    $statusAgeSeconds = $latest.statusAgeSeconds
+                    $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name 'stage' -Default '')
+                    $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name 'liveness' -Default '')
+                }
                 $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
                 $updatedAt = [string]$freshness.updatedAt
                 $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."

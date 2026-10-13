@@ -84,6 +84,8 @@
     "CompactRunnerFreshContinuation.Tests.ps1": 183,
     "CompactRunnerLongContinuation.Tests.ps1": 145,
     "ToolingReadiness.Tests.ps1": 14.0,
-    "VanessaRunnerTopology.Tests.ps1": 20.0
+    "VanessaRunnerTopology.Tests.ps1": 20.0,
+    "CompactRunnerWatchdog.Tests.ps1": 80,
+    "PreOnDemandReliability.Tests.ps1": 10
   }
 }
