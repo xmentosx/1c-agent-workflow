@@ -42,6 +42,7 @@ openspec-archive-change
 install-ui-tools
 ui-tools-status
 begin-verification-repair
+extend-verification-repair
 begin-one-off-proof
 complete-one-off-proof
 vibecoding1c-mcp-setup

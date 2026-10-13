@@ -325,6 +325,73 @@ function Start-ItlVerificationRepairSession {
     Set-RunUserReport -Report "Repair session: $($record.sessionId). Repair attempts: 0/$maximumAttempts."
 }
 
+function Extend-ItlVerificationRepairSession {
+    $source = ([string]$VerificationRepairGrantSource).Trim()
+    if (-not $source -or $source.Length -gt 1024) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_GRANT_REQUIRED: provide the source reference of an explicit user grant for this session; preserve the session and resume this operation after obtaining that grant.'
+    }
+    if (-not $RepairSessionId -or $VerificationRepairMaxAttempts -lt 1 -or $VerificationRepairMaxAttempts -gt 100) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_ARGUMENTS_INVALID: pass the existing RepairSessionId and an authorized maximum between 1 and 100; do not replace the session to bypass its limit.'
+    }
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'extend-verification-repair'
+    $path = Get-ItlVerificationRepairStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_STATE_MISSING: restore the original session through its owner; extension does not create a new session.'
+    }
+    $record = Read-Utf8Text -Path $path | ConvertFrom-Json
+    $recordRoot = [string](Get-StateValue $record 'projectRoot' '')
+    if ([string](Get-StateValue $record 'sessionId' '') -cne $RepairSessionId -or
+        [string](Get-StateValue $record 'branch' '') -cne (Get-CurrentBranch) -or
+        -not $recordRoot -or
+        -not [string]::Equals((Get-FullPathNormalized $recordRoot), (Get-FullPathNormalized $script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_SCOPE_MISMATCH: run the explicit extension in the original session branch/worktree with its exact RepairSessionId; the record was retained.'
+    }
+    $kind = [string](Get-StateValue $record 'kind' 'canonical-repair')
+    if (($VerificationRepairKind -and $VerificationRepairKind -cne $kind) -or
+        ($VanessaFeaturePath -and (Resolve-ProjectPath $VanessaFeaturePath) -cne [string](Get-StateValue $record 'scenarioFeature' '')) -or
+        ($VanessaFilterTags -and $VanessaFilterTags.Trim() -cne [string](Get-StateValue $record 'scenarioTags' ''))) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_SCOPE_CHANGED: preserve the original kind/feature/tags; extension changes only the existing session limit.'
+    }
+    $status = [string](Get-StateValue $record 'status' '')
+    if ($status -notin @('active', 'exhausted')) {
+        throw "ITL_VERIFICATION_REPAIR_EXTENSION_TERMINAL: session '$RepairSessionId' has status '$status'; resume the original task, do not revive a completed session."
+    }
+    $maximum = Get-ItlVerificationRepairRecordMaximumAttempts -Record $record
+    [int]$attempts = 0
+    if (-not [int]::TryParse([string](Get-StateValue $record 'attempts' ''), [ref]$attempts) -or
+        $attempts -lt 0 -or $attempts -gt $maximum -or ($status -eq 'exhausted' -and $attempts -lt $maximum)) {
+        throw 'ITL_VERIFICATION_REPAIR_EXTENSION_STATE_INVALID: attempts/status contradict the existing limit; retain the record and diagnose it through the repair-session owner.'
+    }
+    if ($VerificationRepairMaxAttempts -lt $maximum) {
+        throw "ITL_VERIFICATION_REPAIR_EXTENSION_NOT_MONOTONIC: current maximum is $maximum; pass the authorized greater maximum without resetting attempts."
+    }
+    if ($VerificationRepairMaxAttempts -eq $maximum) {
+        Set-RunUserReport -Report "Repair limit unchanged: $RepairSessionId; attempts=$attempts/$maximum; status=$status. An exhausted session still requires an authorized greater maximum."
+        return
+    }
+    $historyProperty = $record.PSObject.Properties['limitExtensions']
+    $history = @()
+    if ($null -ne $historyProperty -and $null -ne $historyProperty.Value) {
+        if ($historyProperty.Value -isnot [Array]) {
+            throw 'ITL_VERIFICATION_REPAIR_EXTENSION_HISTORY_INVALID: retain the existing extension history and diagnose its format; do not discard or replace it.'
+        }
+        $history = @($historyProperty.Value)
+    }
+    $now = (Get-Date).ToString('o')
+    $event = [pscustomobject]@{
+        id = [guid]::NewGuid().ToString('N'); at = $now; source = $source
+        previousMaximum = $maximum; maximum = $VerificationRepairMaxAttempts
+        attempts = $attempts; previousStatus = $status
+    }
+    $record.maximumAttempts = $VerificationRepairMaxAttempts
+    $record.status = 'active'
+    $record.updatedAt = $now
+    $record | Add-Member -NotePropertyName limitExtensions -NotePropertyValue (@($history) + @($event)) -Force
+    Write-Utf8TextAtomic -Path $path -Value (($record | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+    Set-RunUserReport -Report "Repair session extended: $RepairSessionId; attempts=$attempts/$VerificationRepairMaxAttempts; previous maximum=$maximum. Continue the original repair command with this RepairSessionId; prior failures and evidence were retained."
+}
+
 function Get-ItlMatchingVerificationRepairSession {
     if ([string]::IsNullOrWhiteSpace([string]$RepairSessionId)) {
         throw "VerificationTrigger=repair requires RepairSessionId from begin-verification-repair."

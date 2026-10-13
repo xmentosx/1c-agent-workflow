@@ -743,15 +743,38 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         ".agent-1c/tools/openspec-cli/",
         ".agent-1c/execution-guard-generation.json.*"
     )
-    $existingLines = @()
-    if (Test-Path -LiteralPath $excludePath -PathType Leaf -ErrorAction SilentlyContinue) {
-        $existingLines = @(Read-Utf8Lines -Path $excludePath | ForEach-Object { ([string]$_).Trim() })
-    }
-    foreach ($ignoreLine in $ignoreLines) {
-        if ($existingLines -contains $ignoreLine) {
-            continue
+    # Admission prepares this shared file before acquiring the lifecycle lock.
+    # Hold its writer handle across read/append so concurrent helpers neither
+    # fail on a sharing race nor append duplicate entries from a stale read.
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $excludePath))
+    $stream = $null
+    try {
+        for ($attempt = 1; $attempt -le 40; $attempt++) {
+            try {
+                $stream = [IO.File]::Open($excludePath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+                break
+            } catch [IO.IOException] {
+                $cause = $_.Exception
+                while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+                if (($cause.HResult -band 0xffff) -notin @(32, 33) -or $attempt -eq 40) { throw }
+                Start-Sleep -Milliseconds 50
+            }
         }
-        Add-Utf8Text -Path $excludePath -Value ($ignoreLine + [Environment]::NewLine)
+        $reader = [IO.StreamReader]::new($stream, (Get-Utf8Encoding), $true, 1024, $true)
+        try { $existingText = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        $existingLines = @($existingText -split '\r?\n' | ForEach-Object { $_.Trim() })
+        $missing = @($ignoreLines | Where-Object { $existingLines -notcontains $_ })
+        if ($missing.Count -gt 0) {
+            $prefix = if ($existingText.Length -gt 0 -and -not $existingText.EndsWith("`n")) { [Environment]::NewLine } else { "" }
+            $bytes = (Get-Utf8Encoding).GetBytes($prefix + ($missing -join [Environment]::NewLine) + [Environment]::NewLine)
+            [void]$stream.Seek(0, [IO.SeekOrigin]::End)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+        }
+    } catch {
+        throw "ITL_LIFECYCLE_IGNORE_WRITE_FAILED path='$excludePath': $($_.Exception.Message) Release the writer or restore access to this Git exclude file, then repeat the original ITL command."
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
     }
 }
 

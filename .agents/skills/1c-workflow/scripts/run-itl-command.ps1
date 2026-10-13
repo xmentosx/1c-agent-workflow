@@ -813,7 +813,7 @@ function Find-LauncherRunDirectory {
 
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
-    "begin-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "validate-test-classification", "repair-dev-branch-tooling", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
+    "begin-verification-repair", "extend-verification-repair", "begin-one-off-proof", "complete-one-off-proof", "validate-test-classification", "repair-dev-branch-tooling", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
     "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "sync-master", "export-dev-branch-result", "update-workflow",
     "itl-switch-client", "clean-artifacts", "delete-dev-branch"
 )
