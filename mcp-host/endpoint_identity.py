@@ -85,10 +85,38 @@ class Client:
             body['params'] = params
         request = urllib.request.Request(self.url, json.dumps(body, ensure_ascii=False).encode('utf-8'),
                                          self.headers())
+        deadline = time.monotonic() + timeout
         with self.opener.open(request, timeout=timeout) as response:
             self.url = response.url
             self.session = response.headers.get('Mcp-Session-Id', self.session)
-            text = response.read().decode('utf-8')
+            chunks = bytearray()
+            while True:
+                if response.fp is None:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+                # HTTPResponse.read() waits for EOF; SSE heartbeats can extend a
+                # socket timeout forever. read1 returns available bytes so the
+                # elapsed budget is re-applied, including heartbeat-only streams.
+                response.fp.raw._sock.settimeout(remaining)
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+                if len(chunks) > 8 * 1024 * 1024:
+                    raise RuntimeError('MCP response exceeds probe budget')
+                if not notification:
+                    text = chunks.decode('utf-8', errors='replace').replace('\r\n', '\n')
+                    for block in text.split('\n\n')[:-1]:
+                        data = '\n'.join(line[5:].strip() for line in block.splitlines() if line.startswith('data:'))
+                        if data:
+                            value = json.loads(data)
+                            if value.get('id') == self.sequence:
+                                if value.get('error') or 'result' not in value:
+                                    raise RuntimeError('MCP request failed: ' + method)
+                                return value['result']
+            text = chunks.decode('utf-8')
         if notification:
             return {}
         if text.lstrip().startswith('{'):
@@ -162,21 +190,24 @@ def read_endpoint(url, timeout=5, health_tool='', health_arguments=None, expecte
         digest = hashlib.sha256(json.dumps(document, sort_keys=True, ensure_ascii=False,
                                           separators=(',', ':')).encode('utf-8')).hexdigest()
         busy = False
+        health_error = None
         if expected_signature and digest != expected_signature:
             raise RuntimeError('Public identity changed before safe call')
         if health_tool:
-            if health_tool not in SAFE_TOOLS or health_tool not in names:
-                raise RuntimeError('Required safe health tool is missing')
             health_started = time.monotonic()
             try:
+                if health_tool not in SAFE_TOOLS or health_tool not in names:
+                    raise RuntimeError('Required safe health tool is missing')
                 busy = indexing(payload(client.request('tools/call', {
                     'name': health_tool, 'arguments': health_arguments or {}}, timeout=health_timeout)))
-            except ProbeError:
-                raise
+            except ProbeError as error:
+                health_error = failure(error, 'safe health', health_started)
             except Exception as error:
-                raise ProbeError(error, 'tools/call', health_timeout, time.monotonic() - health_started) from None
+                health_error = failure(ProbeError(error, 'tools/call', health_timeout, time.monotonic() - health_started),
+                                       'safe health', health_started)
         return {'signature': digest, 'server_name': name, 'tool_count': len(names),
-                'indexing': busy, 'health_passed': bool(health_tool)}
+                'indexing': busy, 'health_passed': bool(health_tool) and health_error is None,
+                'health_error': health_error}
     finally:
         client.close()
 
@@ -235,13 +266,16 @@ def check_endpoint(container, url, host_port, health_tool='', health_arguments=N
             if health['signature'] != expected['signature']:
                 return dict(result, status='unverified', reason='identity changed before safe call')
             return dict(result, status='matched', indexing=expected['indexing'] or health['indexing'],
-                        health_passed=health['health_passed'], elapsedSeconds=round(time.monotonic() - started, 3))
+                        health_passed=expected['health_passed'] and health['health_passed'],
+                        health_error=expected.get('health_error') or health.get('health_error'),
+                        elapsedSeconds=round(time.monotonic() - started, 3))
         if any(matches):
             return dict(result, status='unverified', reason='public identity is unstable')
         if expected['indexing']:
             return dict(result, status='indexing', reason='foreign endpoint; internal indexing is active')
         if not expected['health_passed']:
-            return dict(result, status='unverified', reason='foreign endpoint; no safe internal health proof')
+            return dict(result, status='unverified', health_error=expected.get('health_error'),
+                        reason='foreign endpoint; no safe internal health proof')
         return dict(result, status='mismatch', reason='foreign public identity confirmed twice')
     except Exception as error:
         # Never persist response bodies, environment, credentials or child command lines.

@@ -47,8 +47,16 @@ recording server, checked-at time and failed stage without secrets. Prefer the
 client's authenticated transport; never export credentials into a probe. An
 external probe proves the endpoint only, not its attachment to this task.
 
-Remote outage: correct an obvious local client/config mismatch through its owner
-or perform one supported reconnect. If that gives no useful remedy, continue the
+On connection/initialize failure or missing expected tools, before local fallback
+run one `sync-client-mcp -Client <current-client>`: it refreshes the registry once
+and writes the same selection through the existing configuration owner, preserving
+overrides and disablement. A failed refresh retains current connections and does
+not prove freshness. Do not run this on successful calls, business/argument errors,
+or intentional disablement. Do not blindly replay an uncertain mutation.
+Then use supported reconnect and discovery; when useful, perform the bounded
+targeted protocol diagnostic above against the resolved address. Distinguish
+fresh registry, identity/tools, safe-call result, written config and tools actually
+attached to this task. If that gives no useful remedy, continue the
 original work without just that remote server. Do not SSH to the dedicated host,
 restart its services/containers, deploy, rotate keys, change provider or install a
 local replacement unless a separate user request authorizes that work. Do not

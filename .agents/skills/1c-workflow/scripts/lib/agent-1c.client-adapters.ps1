@@ -806,15 +806,19 @@ function Get-ItlManagedMcpOwnerKeys {
     if ($Client -eq 'opencode') {
         return @(Get-ItlOpenCodeMcpBindings -State $state -OwnerKey "$Client/$Owner" | ForEach-Object { $_.name } | Select-Object -Unique)
     }
-    if (-not $state.Contains("owners")) {
-        return @()
-    }
-    $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
+    $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $state -Name 'owners' -Default @{})
     $stateKey = "$Client/$Owner"
-    if (-not $owners.Contains($stateKey)) {
-        return @()
-    }
-    return @($owners[$stateKey] | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+    $legacy = @(Get-ItlLegacyMcpOwnerKeys -Client $Client -Owner $Owner -Entries (Read-ItlClientMcpEntries -Client $Client))
+    return @(@($owners[$stateKey]) + $legacy | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Get-ItlLegacyMcpOwnerKeys {
+    param([string]$Client, [string]$Owner, [System.Collections.IDictionary]$Entries)
+    if ($Owner -ne 'vibecoding1c' -or (Get-ItlClientAdapter -Client $Client).mcpFormat -eq 'toml') { return @() }
+    return @($Entries.Keys | Where-Object {
+        (Get-Vibecoding1cMcpObjectValue -Object $Entries[$_] -Name 'managedBy' -Default '') -eq 'vibecoding1c-mcp' -and
+        (Get-Vibecoding1cMcpObjectValue -Object $Entries[$_] -Name 'family' -Default '') -eq 'vibecoding1c'
+    })
 }
 
 function ConvertTo-ItlMcpSemanticCanonicalValue {
@@ -1194,7 +1198,7 @@ function Write-ItlClientMcpEndpoints {
     $containerName = [string]$adapter.mcpContainer
     $container = Get-ItlClientMcpContainer -Config $config -Path $containerName
     $beforeContainer = ConvertTo-Vibecoding1cMcpHashtable -Object $container
-    $legacyNames = @($container.Keys | Where-Object { $Owner -eq "vibecoding1c" -and (Get-Vibecoding1cMcpObjectValue -Object $container[$_] -Name "managedBy" -Default "") -eq "vibecoding1c-mcp" -and (Get-Vibecoding1cMcpObjectValue -Object $container[$_] -Name "family" -Default "") -eq "vibecoding1c" })
+    $legacyNames = @(Get-ItlLegacyMcpOwnerKeys -Client $Client -Owner $Owner -Entries $container)
     if ($Owner -eq 'vibecoding1c' -and $Client -eq 'kilocode') {
         $replacementKeys = @($ReplaceAiRulesServerIds | ForEach-Object { ConvertTo-ItlClientMcpKey -Name $_ -Client $Client })
         $legacyNames += @($container.Keys | Where-Object {
@@ -1309,9 +1313,57 @@ function Write-ItlClientMcpEndpoints {
 }
 
 function Write-ItlClientMcpEndpointSet {
-    param([Parameter(Mandatory = $true)][object[]]$Requests, [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly)
+    param([Parameter(Mandatory = $true)][object[]]$Requests, [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$PreserveUserChanges)
 
     if ($Requests.Count -eq 0) { return }
+    $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+    $protectLegacy = $PreserveUserChanges -or ($null -ne $protection -and $protection.Value)
+    $protectionInputs = [ordered]@{}
+    $protectionOwnerState = Get-ItlMcpFileState -Path (Get-ItlManagedMcpStatePath)
+    foreach ($client in @($Requests.client | Select-Object -Unique)) {
+        foreach ($path in @(Get-ItlClientMcpConfigPaths -Client $client)) {
+            $protectionInputs[$path] = Get-ItlMcpFileState -Path $path
+        }
+    }
+    $stateBefore = Read-ItlManagedMcpState
+    $baselines = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $stateBefore -Name 'lastWritten' -Default @{})
+    $requestsToWrite = @()
+    foreach ($request in $Requests) {
+        $request = ConvertTo-Vibecoding1cMcpHashtable -Object $request
+        $ownerKey = "$($request.client)/$($request.owner)"
+        $owned = @(Get-ItlManagedMcpOwnerKeys -Client $request.client -Owner $request.owner)
+        $entries = Read-ItlClientMcpEntries -Client $request.client
+        $adapter = Get-ItlClientAdapter -Client $request.client
+        if ($adapter.mcpFormat -eq 'toml') {
+            $path = Join-Path $script:ProjectRoot $adapter.mcpPath
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $text = Read-Utf8Text -Path $path
+                $pattern = '(?ms)^# >>> vibecoding1c-mcp ' + [regex]::Escape($request.owner) + '\r?\n(?<body>.*?)^# <<< vibecoding1c-mcp ' + [regex]::Escape($request.owner) + '(?:\r?\n|$)'
+                foreach ($block in [regex]::Matches($text, $pattern)) {
+                    foreach ($section in [regex]::Matches($block.Groups['body'].Value, '(?m)^\s*\[mcp_servers\.(?<name>"(?:\\.|[^"\\])*"|''[^'']*''|[A-Za-z0-9_-]+)\]\s*(?:#.*)?$')) {
+                        $owned += [string](ConvertFrom-ItlMcpTomlValue -Text $section.Groups['name'].Value)
+                    }
+                }
+            }
+        }
+        $baseline = ConvertTo-Vibecoding1cMcpHashtable -Object $baselines[$ownerKey]
+        $preserve = @(Get-Vibecoding1cMcpObjectValue -Object $request -Name 'preserveOwnedKeys' -Default @())
+        $protected = @()
+        foreach ($name in @(@($owned) + @($request.endpoints | ForEach-Object { ConvertTo-ItlClientMcpKey -Name $_.name -Client $request.client }) | Select-Object -Unique)) {
+            $signature = Get-StringSha256 -Value (Get-ItlMcpOwnedSemanticSignature -Container $entries -Names @($name))
+            if ($protectLegacy -and (($baseline.Contains($name) -and $baseline[$name] -cne $signature) -or
+                ($entries.Contains($name) -and -not $baseline.Contains($name)))) {
+                $protected += $name
+                $protected += ConvertTo-ItlClientMcpKey -Name $name -Client $request.client
+                if ($name -in $owned) { $preserve += $name }
+                if (-not $PlanOnly) { Write-Warning "MCP setting preserved: $($request.client)/$name differs from its last write or has no proven baseline. Review the managed settings; for approved vibecoding1c defaults use vibecoding1c-mcp-write-client-config -Client $($request.client). Other families require their explicit owner sync. Automatic update will keep this override." }
+            }
+        }
+        $request['endpoints'] = @($request.endpoints | Where-Object { (ConvertTo-ItlClientMcpKey -Name $_.name -Client $request.client) -notin $protected })
+        $request['preserveOwnedKeys'] = @($preserve | Select-Object -Unique)
+        $requestsToWrite += [pscustomobject]$request
+    }
+    $Requests = $requestsToWrite
     $ownerKeys = @()
     foreach ($request in $Requests) {
         $key = "$( [string]$request.client )/$( [string]$request.owner )"
@@ -1324,6 +1376,7 @@ function Write-ItlClientMcpEndpointSet {
     $fileStates = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
     $ownerPath = Get-ItlManagedMcpStatePath
     $ownerState = Get-ItlMcpFileState -Path $ownerPath
+    if ($ownerState -cne $protectionOwnerState) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: ownership changed while classifying user overrides; repeat the original reconciliation.' }
     foreach ($path in @($AdditionalInputPaths | Where-Object { $_ -and $_ -ine $ownerPath } | Select-Object -Unique)) {
         $fileStates[$path] = Get-ItlMcpFileState -Path $path
     }
@@ -1337,6 +1390,7 @@ function Write-ItlClientMcpEndpointSet {
         }
         $planInputs = if ($plan.PSObject.Properties.Name -contains 'inputStates') { $plan.inputStates } else { $single = [ordered]@{}; $single[$plan.path] = $plan.beforeFileState; $single }
         foreach ($path in $planInputs.Keys) {
+            if ($protectionInputs.Contains($path) -and $protectionInputs[$path] -cne $planInputs[$path]) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: a client file changed while classifying user overrides; preserve it and repeat the original reconciliation.' }
             if ($fileStates.ContainsKey($path) -and $fileStates[$path] -cne $planInputs[$path]) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: a project layer changed during preflight; preserve it and rebuild the final set.' }
             $fileStates[$path] = $planInputs[$path]
         }
@@ -1386,6 +1440,22 @@ function Write-ItlClientMcpEndpointSet {
             }
         }
         $ownerState = [string]$receipt.ownerState
+        # Record only entries actually generated by this owner. Preserved overrides
+        # and missing entries must never become a new authoritative baseline.
+        $state = Read-ItlManagedMcpState
+        if ((Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: ownership changed before baseline recording; preserve it and repeat the original reconciliation.' }
+        $lastWritten = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $state -Name 'lastWritten' -Default @{})
+        $ownerKey = "$($arguments.Client)/$($arguments.Owner)"
+        $baseline = ConvertTo-Vibecoding1cMcpHashtable -Object $lastWritten[$ownerKey]
+        $entries = Read-ItlClientMcpEntries -Client $arguments.Client
+        foreach ($endpoint in @($arguments.Endpoints)) {
+            $name = ConvertTo-ItlClientMcpKey -Name $endpoint.name -Client $arguments.Client
+            $baseline[$name] = Get-StringSha256 -Value (Get-ItlMcpOwnedSemanticSignature -Container $entries -Names @($name))
+        }
+        $lastWritten[$ownerKey] = $baseline
+        $state['lastWritten'] = $lastWritten
+        Write-ItlManagedMcpState -State $state
+        $ownerState = Get-ItlMcpFileState -Path $ownerPath
         if ($receipt.PSObject.Properties.Name -contains 'deferredOwnerRelease' -and $receipt.deferredOwnerRelease) {
             if ($plan.releaseCleanup) { throw 'CLIENT_MCP_OWNER_CONFLICT: final-set handoff was not confirmed; preserve the physical ownership and repeat the original reconciliation.' }
             # Retain the releasing owner's physical proof through an interruption.
@@ -2205,7 +2275,30 @@ function Sync-ItlClientMcpConfig {
     $adapter = Get-ItlClientAdapter -Client $target
 
     Write-Section "Sync ITL MCP config for $target"
-    Write-Vibecoding1cMcpClientConfig -Client $target -IncludeClientSurfaces
+    $selection = Read-Vibecoding1cMcpSelection
+    $needsRegistry = @(Select-Vibecoding1cMcpManifestServers | Where-Object {
+        (Test-Vibecoding1cMcpServerEnabled -Server $_ -Selection $selection) -and
+        (Get-Vibecoding1cMcpSelectedProvider -Server $_ -Selection $selection) -eq 'remote'
+    }).Count -gt 0
+    if ($needsRegistry) {
+        try {
+            Refresh-Vibecoding1cMcpRegistry
+        } catch {
+            Write-Warning "MCP registry refresh failed; current provider connections are preserved and freshness is unverified. $($_.Exception.Message)"
+            $localRequests = @()
+            $facade = Write-ItlOnDemandMcpClientConfig -Client $target -PlanOnly
+            if ($null -ne $facade) { $localRequests += $facade }
+            $ui = Sync-ItlUiToolsMcp -Client $target -PlanOnly
+            if ($null -ne $ui) { $localRequests += $ui }
+            $localRequests = @($localRequests | Where-Object {
+                @($_.endpoints | Where-Object { $null -ne $_ }).Count -gt 0 -or
+                @(Get-ItlManagedMcpOwnerKeys -Client $_.client -Owner $_.owner).Count -gt 0
+            })
+            if ($localRequests.Count -gt 0) { Write-ItlClientMcpEndpointSet -Requests $localRequests -PreserveUserChanges | Out-Null }
+            return
+        }
+    }
+    Write-Vibecoding1cMcpClientConfig -Client $target -IncludeClientSurfaces -PreserveUserChanges
 
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     Write-Host "Synced managed ITL MCP families (vibecoding1c, on-demand facades, UI tools) for $target : $path"

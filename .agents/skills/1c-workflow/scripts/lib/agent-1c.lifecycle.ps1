@@ -5609,8 +5609,13 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     try {
         $clients = @(Get-AgentTargets)
         Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -IncludeClientSurfaces
-        $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
-        $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
+        $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+        $removed = @()
+        $pruned = @()
+        if ($null -eq $protection -or -not $protection.Value) {
+            $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
+            $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
+        }
         Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames
         Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
         return [pscustomobject]@{
@@ -8802,9 +8807,12 @@ function Assert-UiTestingPolicyUpdateSnapshot {
 }
 
 function Invoke-WorkflowPackageFilePostCopy {
+    $previousMcpProtection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+    $previousMcpProtectionValue = if ($null -ne $previousMcpProtection) { $previousMcpProtection.Value } else { $null }
     $previousOpenCodeMode = Get-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue
     $previousOpenCodeModeValue = if ($null -ne $previousOpenCodeMode) { $previousOpenCodeMode.Value } else { $null }
     try {
+        $script:ItlMcpPreserveUserChanges = $true
         $policyPending = Get-WorkflowUpdatePendingSnapshot
         $script:ItlOpenCodeOperationConfigPathsMode = if ($null -eq $policyPending -or (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$policyPending.receipt.sourceRoot))) { 'layered' } else { 'legacy-root' }
         Assert-WorkflowUpdateMcpConfigSnapshot -Pending $policyPending
@@ -8875,6 +8883,11 @@ function Invoke-WorkflowPackageFilePostCopy {
             clientSurfacePathsBefore = @($clientSurfacePathsBefore)
         }
     } finally {
+        if ($null -ne $previousMcpProtection) {
+            $script:ItlMcpPreserveUserChanges = $previousMcpProtectionValue
+        } else {
+            Remove-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
+        }
         if ($null -ne $previousOpenCodeMode) {
             Set-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -Value $previousOpenCodeModeValue
         } else {
@@ -9481,7 +9494,7 @@ function Update-WorkflowPackage {
                 $mcpSelection = Read-Vibecoding1cMcpSelection
                 $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
                 if ($mcpSelectionCompleteness.isComplete) {
-                    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "update-workflow MCP reconcile" | Out-Null
+                    Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -IncludeClientSurfaces -PreserveUserChanges
                 } else {
                     Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
                 }

@@ -1531,6 +1531,7 @@
                 $script:uiClient = $null
                 function Set-ProjectAiRulesClient { param([string]$Client) $script:aiRulesClient = $Client }
                 function Sync-ItlClientSurface { $script:surfaceSynced = $true }
+                function Refresh-Vibecoding1cMcpRegistry {}
                 function Write-Vibecoding1cMcpClientConfig { param([string]$Client,[switch]$IncludeClientSurfaces) $script:vibeClient = $Client; $script:includedClientSurfaces = $IncludeClientSurfaces.IsPresent }
                 function Write-ItlOnDemandMcpClientConfig { param([string]$Client) $script:ondemandClient = $Client; return "x" }
                 function Sync-ItlUiToolsMcp { param([string]$Client) $script:uiClient = $Client }

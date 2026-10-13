@@ -88,6 +88,44 @@
         }
     }
 
+    It "recovers a managed stale URL from a fresh registry and reports the client attachment boundary" {
+        $root = Join-Path $TestDrive 'Восстановление адреса MCP'
+        $publisher = Join-Path $TestDrive 'Новый реестр с пробелом'
+        $registryRoot = Join-Path $TestDrive 'Локальный реестр с пробелом'
+        New-Item -ItemType Directory -Force -Path $publisher, (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        & git init --quiet $publisher
+        & git -C $publisher config user.email test@example.com
+        & git -C $publisher config user.name Test
+        $endpoint = @{id='docs';scope='global';family='vibecoding1c';provider='remote';name='1C-docs-mcp';hostId='chosen';url='https://old.invalid/mcp';status='running'}
+        @{schemaVersion=1;host=@{hostId='chosen'};servers=@($endpoint);configurations=@()} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $publisher 'registry.json') -Encoding UTF8
+        & git -C $publisher add registry.json
+        & git -C $publisher commit --quiet -m old
+        & git clone --quiet $publisher $registryRoot
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Vibecoding1cMcpRegistryRoot { $registryRoot }
+            function Test-Vibecoding1cMcpRegistryPathOverride { $false }
+            function Get-Vibecoding1cMcpRegistryRepo { $publisher }
+            function Read-Vibecoding1cMcpManifest { @{servers=@(@{id='docs';scope='global';name='1C-docs-mcp'})} }
+            function Get-Vibecoding1cMcpTargetScopes { @('global') }
+            function Get-Vibecoding1cMcpCurrentEndpoints { @() }
+            function Write-ItlOnDemandMcpClientConfig { return $null }
+            function Sync-ItlUiToolsMcp { return $null }
+            Write-Vibecoding1cMcpSelection -Selection @{defaultProvider='remote';servers=@(@{id='docs';provider='remote';enabled=$true;hostId='chosen'})}
+            Write-Vibecoding1cMcpClientConfig -Client claude-code *> $null
+            (Read-ItlClientMcpEntries -Client claude-code).'1C-docs-mcp'.url | Should -Be 'https://old.invalid/mcp'
+            $endpoint.url = 'https://new.invalid/mcp'
+            @{schemaVersion=1;host=@{hostId='chosen'};servers=@($endpoint);configurations=@()} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $publisher 'registry.json') -Encoding UTF8
+            & git -C $publisher add registry.json
+            & git -C $publisher commit --quiet -m new
+            $report = @(Sync-ItlClientMcpConfig -Client claude-code 6>&1) -join [Environment]::NewLine
+            (Read-ItlClientMcpEntries -Client claude-code).'1C-docs-mcp'.url | Should -Be 'https://new.invalid/mcp'
+            (Read-Vibecoding1cMcpSelection).servers[0].hostId | Should -Be chosen
+            $report | Should -Match 'does not attach servers to an already open chat'
+        }
+    }
+
     It "treats remote endpoints without branch fingerprints as shared rather than stale" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1196,7 +1234,7 @@
         }
     }
 
-    It "marks a single unusable global remote endpoint as incomplete and skips runtime connection" {
+    It "keeps a single unavailable remote choice complete without claiming runtime readiness" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-global-unusable-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $registryRoot = Join-Path $tempRoot "registry"
@@ -1231,12 +1269,17 @@
                 $selectionEntry.hostId | Should -Be ""
 
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
-                $complete.isComplete | Should -Be $false
-                ($complete.reasons -join [Environment]::NewLine) | Should -Match "docs/global remote provider has no usable endpoint"
+                $complete.isComplete | Should -BeTrue
+                $complete.reasons | Should -BeNullOrEmpty
 
                 $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
                 $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
                 $runtime | Should -BeNullOrEmpty
+                $configured = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -ForClientConfig
+                $configured.url | Should -Not -BeNullOrEmpty
+                Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $configured | Should -BeFalse
+                function Set-Vibecoding1cMcpSelection { throw 'A unique unavailable choice must not require reselection.' }
+                { Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:$false *> $null } | Should -Not -Throw
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")

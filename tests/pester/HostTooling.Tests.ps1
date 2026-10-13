@@ -1985,6 +1985,27 @@ services:
         }
     }
 
+    It "retains running identity and reports a failed optional capability separately" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'matched-health-error.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = @{stateRoot=$TestDrive}
+            $script:HealthErrorState = @{servers=@(@{id='codechecker';scope='global';name='checker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'})}
+            function Get-HostContainerPublishState { 'running' }
+            function Test-HostTcpPortOpen { $true }
+            function Get-HostDirectEndpointProof { @{status='matched';health_passed=$false;health_error=@{method='tools/call';reason='TimeoutError';timeoutSeconds=30}} }
+            function Read-HostState { $script:HealthErrorState }
+            function Write-HostState { param($Config,$State) $script:HealthErrorState=$State }
+            function Get-HostServerFunctionalHealth { throw 'Do not repeat an already failed safe call.' }
+            Update-HostStateForPublish -Config $config
+            $record = @(ConvertTo-RegistryServers -State $script:HealthErrorState -HostId fixture -PublishedAt fixture)[0]
+            $record.status | Should -Be running
+            $record.functionalStatus | Should -Be degraded
+            $record.functionalMessage | Should -Match 'identity matched.*method=tools/call.*TimeoutError'
+        }
+    }
+
     It "publishes a functional timeout with its cause and records watchdog failure" -Tag DirectHealthBudget {
         $configPath = Join-Path $TestDrive 'proof-timeout.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8

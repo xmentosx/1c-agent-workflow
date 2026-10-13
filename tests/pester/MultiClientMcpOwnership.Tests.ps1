@@ -4,6 +4,123 @@
         $helperPath = Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
     }
 
+    It 'updates proven default URLs and adds SPPR while preserving overrides for <Client>' -ForEach @(
+        @{Client='claude-code'}, @{Client='codex'}, @{Client='opencode'}
+    ) {
+        $caseClient = $Client
+        $root = Join-Path $TestDrive "Обновление MCP $Client с пробелом"
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), ('{"aiRules":{"tools":["' + $Client + '"]}}'), [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $requests = @([pscustomobject]@{client=$caseClient;owner='vibecoding1c';endpoints=@(
+                [pscustomobject]@{name='default';url='https://old.invalid'},
+                [pscustomobject]@{name='custom';url='https://initial.invalid'}
+            )})
+            Write-ItlClientMcpEndpointSet -Requests $requests *> $null
+            $path = Join-Path $root (Get-ItlClientAdapter -Client $caseClient).mcpPath
+            $text = Read-Utf8Text -Path $path
+            Write-Utf8Text -Path $path -Value ($text.Replace('https://initial.invalid','https://override.invalid'))
+            $requests[0].endpoints = @(
+                [pscustomobject]@{name='default';url='https://new.invalid'},
+                [pscustomobject]@{name='custom';url='https://replace.invalid'},
+                [pscustomobject]@{name='sppr-knowledge';url='https://sppr.invalid'}
+            )
+            Write-ItlClientMcpEndpointSet -Requests $requests -PreserveUserChanges *> $null
+            $actual = Read-Utf8Text -Path $path
+            $actual | Should -Match 'https://new.invalid'
+            $actual | Should -Match 'https://override.invalid'
+            $actual | Should -Match 'https://sppr.invalid'
+            $actual | Should -Not -Match 'https://replace.invalid'
+            Write-ItlClientMcpEndpointSet -Requests $requests -PreserveUserChanges *> $null
+            (Read-Utf8Text -Path $path) | Should -Match 'https://override.invalid'
+        }
+    }
+
+    It 'preserves legacy and external entries without adopting a same-name collision during update' {
+        $root = Join-Path $TestDrive 'Старый MCP без отпечатка'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.mcp.json'), '{"mcpServers":{"custom":{"url":"https://override.invalid","disabled":true,"headers":{"secret":"fixture"}},"legacy":{"url":"https://legacy.invalid","managedBy":"vibecoding1c-mcp","family":"vibecoding1c"},"external":{"command":"keep"}}}', [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $requests = @([pscustomobject]@{client='claude-code';owner='vibecoding1c';endpoints=@(
+                [pscustomobject]@{name='custom';url='https://default.invalid'},
+                [pscustomobject]@{name='legacy';url='https://replace-legacy.invalid'},
+                [pscustomobject]@{name='sppr-knowledge';url='https://sppr.invalid'}
+            )})
+            Write-ItlClientMcpEndpointSet -Requests $requests -PreserveUserChanges *> $null
+            $entries = Read-ItlClientMcpEntries -Client claude-code
+            $entries.custom.url | Should -Be 'https://override.invalid'
+            $entries.custom.disabled | Should -BeTrue
+            $entries.custom.headers.secret | Should -Be fixture
+            $entries.external.command | Should -Be keep
+            $entries.legacy.url | Should -Be 'https://legacy.invalid'
+            @(Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner vibecoding1c) | Should -Not -Contain custom
+            ((Read-ItlManagedMcpState | ConvertTo-Json -Depth 20)) | Should -Not -Match 'fixture'
+        }
+    }
+
+    It 'preserves a legacy TOML section with an inline comment and no ownership receipt' {
+        $root = Join-Path $TestDrive 'Старая секция TOML с комментарием'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.codex') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
+        $path = Join-Path $root '.codex/config.toml'
+        [IO.File]::WriteAllText($path, "# >>> vibecoding1c-mcp vibecoding1c`n[mcp_servers.'legacy'] # user comment`nurl = 'https://override.invalid'`n# <<< vibecoding1c-mcp vibecoding1c`n", [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Write-ItlClientMcpEndpointSet -Requests @([pscustomobject]@{client='codex';owner='vibecoding1c';endpoints=@(
+                [pscustomobject]@{name='legacy';url='https://default.invalid'},
+                [pscustomobject]@{name='sppr-knowledge';url='https://sppr.invalid'}
+            )}) -PreserveUserChanges *> $null
+            $text = Read-Utf8Text -Path $path
+            $text | Should -Match 'https://override.invalid'
+            $text | Should -Match '# user comment'
+            $text | Should -Match 'https://sppr.invalid'
+            $text | Should -Not -Match 'https://default.invalid'
+        }
+    }
+
+    It 'retains current config without owner writes when recovery cannot refresh the registry' {
+        $root = Join-Path $TestDrive 'Реестр временно недоступен'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        $path = Join-Path $root '.mcp.json'
+        [IO.File]::WriteAllText($path, '{"mcpServers":{"existing":{"url":"https://working.invalid"}}}', [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Refresh-Vibecoding1cMcpRegistry { throw 'fixture registry offline' }
+            function Write-Vibecoding1cMcpClientConfig { throw 'A failed refresh must not write config.' }
+            function Write-ItlOnDemandMcpClientConfig { return $null }
+            function Sync-ItlUiToolsMcp { return $null }
+            $before = Get-ItlMcpFileState -Path $path
+            Sync-ItlClientMcpConfig -Client claude-code *> $null
+            Get-ItlMcpFileState -Path $path | Should -Be $before
+            Test-Path -LiteralPath (Get-ItlManagedMcpStatePath) | Should -BeFalse
+        }
+    }
+
+    It 'can repair a local facade while registry failure preserves remote provider settings' {
+        $root = Join-Path $TestDrive 'Локальный MCP при отказе реестра'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.mcp.json'), '{"mcpServers":{"existing":{"url":"https://working.invalid","disabled":true}}}', [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Refresh-Vibecoding1cMcpRegistry { throw 'fixture registry offline' }
+            function Write-ItlOnDemandMcpClientConfig {
+                param($Client,[switch]$PlanOnly)
+                [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@([pscustomobject]@{name='local';transport='stdio';command='fixture.exe'})}
+            }
+            function Sync-ItlUiToolsMcp { return $null }
+            Sync-ItlClientMcpConfig -Client claude-code *> $null
+            $entries = Read-ItlClientMcpEntries -Client claude-code
+            $entries.existing.url | Should -Be 'https://working.invalid'
+            $entries.existing.disabled | Should -BeTrue
+            $entries.local.command | Should -Be fixture.exe
+        }
+    }
+
     It 'rejects a foreign Codex TOML section before writing an earlier client' {
         $root = Join-Path $TestDrive 'Чужая секция Codex MCP'
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.codex') | Out-Null
@@ -205,7 +322,7 @@
         }
     }
 
-    It 'checks facade and provider families together before an explicit client sync writes either' {
+    It 'syncs independent families while retaining a user collision without adopting it' {
         $root = Join-Path $TestDrive 'Конфликт разных семейств MCP'
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
@@ -220,11 +337,12 @@
                 [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@([pscustomobject]@{name='reserved';url='https://facade.invalid'})}
             }
             function Sync-ItlUiToolsMcp { return $null }
-            $before = (Get-FileHash -LiteralPath $path).Hash
-            { Sync-ItlClientMcpConfig -Client claude-code *> $null } | Should -Throw '*CLIENT_MCP_USER_COLLISION*'
-            (Get-FileHash -LiteralPath $path).Hash | Should -Be $before
-            Test-Path -LiteralPath (Get-ItlManagedMcpStatePath) | Should -BeFalse
-            Test-Path -LiteralPath (Join-Path $root '.gitignore') | Should -BeFalse
+            function Refresh-Vibecoding1cMcpRegistry {}
+            Sync-ItlClientMcpConfig -Client claude-code *> $null
+            $entries = Read-ItlClientMcpEntries -Client claude-code
+            $entries.reserved.url | Should -Be 'https://user.invalid'
+            $entries.'1C-docs-mcp'.url | Should -Be 'https://itl.invalid'
+            @(Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner ondemand-facade) | Should -Not -Contain reserved
         }
     }
 

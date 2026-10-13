@@ -42,13 +42,21 @@ After BookStack, gather minimum sufficient non-duplicative evidence only for unr
 
 For 1C objects, code, forms, dependencies, graph relationships, and source locations, follow the hard delta-aware routing contract from `mcp-first-search.md`. Before the first project-source search in an ITL development branch, build or reuse one path-only delta against local `master`, covering committed, staged, unstaged, and untracked source paths through NUL-delimited Git output. Do not fetch, calculate a fingerprint, persist new state, or repeat the delta while branch state is unchanged. Search and read branch-delta targets from the current worktree first; do not ask a remote project index to establish their existence, absence, path, or current contents.
 
-For untouched baseline source, use the single best-fitting `1c-code-metadata-mcp` or available code/graph MCP tool before native discovery. Allow at most one substantively changed retry for the same search intent, then fall back locally; an MCP miss is not proof that code or metadata is absent. A targeted read complements discovery and is not a second search. Do not run `rg`, glob, scan modules, or repeat a lookup after sufficient MCP evidence answered the baseline gap. If the applicable MCP tool is unavailable or its substantive call fails, continue locally without discovery, health, restart, or reindex loops; state the reason briefly.
+For untouched baseline source, use the single best-fitting `1c-code-metadata-mcp` or available code/graph MCP tool before native discovery. Allow at most one substantively changed retry for the same search intent, then fall back locally; an MCP miss is not proof that code or metadata is absent. A targeted read complements discovery and is not a second search. Do not run `rg`, glob, scan modules, or repeat a lookup after sufficient MCP evidence answered the baseline gap. For transport/discovery failure use the bounded recovery below before local fallback; a substantive search error permits local continuation without discovery, health, restart, or reindex loops. State the reason briefly.
 
 Use tests or runtime evidence only to establish behavior, resolve a conflict, or validate a change. They are not mandatory for every explanation, research task, plan, or proposal.
 
 For platform APIs and standard 1C mechanisms, use `1C-docs-mcp`, `1c-syntax-checker-mcp`, `1c-ssl-mcp`, and other relevant MCP tools when connected.
 
-If relevant MCP tools are unavailable, continue with files and tests when safe, and explicitly mention that MCP verification was not performed. For `Session not found`, tell the user to run `/reload` before retrying the MCP call; do not imply that a repeated call on the same stale session restored verification.
+For connection/initialize failures, missing expected tools or `Session not found`,
+first follow the bounded registry/config recovery in
+[MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work):
+one immediate same-selection sync, supported reconnect and discovery; subsequent
+attempts only on demand after 60 seconds. Business/search errors do not trigger
+this recovery. If tools remain unavailable, continue with files/tests when safe
+and explicitly report omitted MCP verification. If the current client exposes
+no reconnect channel, report reload-required; never claim that a repeated call
+on the same stale session restored verification.
 
 ## Conflict Handling
 
