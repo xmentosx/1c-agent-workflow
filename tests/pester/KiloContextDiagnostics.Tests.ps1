@@ -144,6 +144,12 @@
         foreach ($functionName in @("Initialize-Project", "New-DevBranch", "New-ExtensionDevBranch", "Show-WorkflowStatus")) {
             $block = [regex]::Match($text, "(?s)function $functionName \{.*?(?=\r?\nfunction )").Value
             $block | Should -Not -BeNullOrEmpty
+            if ($functionName -eq 'Initialize-Project') {
+                ([regex]::Matches($block, 'Initialize-ProjectCore')).Count | Should -Be 1
+                ([regex]::Matches($block, 'Write-KiloBrowserAutomationSummary')).Count | Should -Be 0
+                $block = [regex]::Match($text, '(?s)function Initialize-ProjectCore \{.*?(?=\r?\nfunction )').Value
+                $block | Should -Not -BeNullOrEmpty
+            }
             ([regex]::Matches($block, 'Write-KiloBrowserAutomationSummary')).Count | Should -Be 1 -Because $functionName
         }
     }

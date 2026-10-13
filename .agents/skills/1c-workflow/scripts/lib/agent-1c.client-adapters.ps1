@@ -2264,6 +2264,11 @@ function Sync-ItlClientUserEnvironment {
 
 function Sync-ItlClientMcpConfig {
     param([string]$Client)
+    Invoke-Vibecoding1cMcpRegistryOperation { Sync-ItlClientMcpConfigCore -Client $Client }
+}
+
+function Sync-ItlClientMcpConfigCore {
+    param([string]$Client)
 
     $normalized = @(ConvertTo-AgentToolList -Value $Client)
     if ($normalized.Count -ne 1 -or $normalized[0] -notin (Get-SupportedAgentTargets)) {

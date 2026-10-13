@@ -7,6 +7,10 @@ restart. This module has no recovery, lock, configuration or persistent state.
 import argparse
 import base64
 import hashlib
+import http.client
+import queue
+import socket
+import threading
 import json
 from pathlib import Path
 import re
@@ -45,11 +49,86 @@ class Redirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError('MCP redirect changed origin or POST semantics')
 
 
+class DeadlineTransport:
+    """Invocation-local transport; bound DNS, headers, redirects and body alike.
+
+    The caller never waits beyond its budget. A cancelled connection closes its
+    socket, including a socket created after a delayed DNS lookup. Worker threads
+    are daemonized so a platform resolver cannot hold the probe process open.
+    """
+    def __init__(self):
+        self.cancelled = threading.Event()
+        self.connections = []
+        self.lock = threading.Lock()
+        owner = self
+
+        class Connection(http.client.HTTPConnection):
+            def connect(self):
+                super().connect()
+                if owner.cancelled.is_set():
+                    self.close()
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+
+        class SecureConnection(http.client.HTTPSConnection):
+            def connect(self):
+                super().connect()
+                if owner.cancelled.is_set():
+                    self.close()
+                    raise TimeoutError('MCP elapsed deadline exceeded')
+
+        def factory(kind, *args, **kwargs):
+            connection = kind(*args, **kwargs)
+            with owner.lock:
+                owner.connections.append(connection)
+            return connection
+
+        class HTTP(urllib.request.HTTPHandler):
+            def http_open(self, request):
+                return self.do_open(lambda *a, **k: factory(Connection, *a, **k), request)
+
+        class HTTPS(urllib.request.HTTPSHandler):
+            def https_open(self, request):
+                return self.do_open(lambda *a, **k: factory(SecureConnection, *a, **k), request,
+                                    context=self._context)
+
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTP(), HTTPS(), Redirect())
+
+    def abort(self):
+        self.cancelled.set()
+        with self.lock:
+            for connection in self.connections:
+                if connection.sock:
+                    try:
+                        connection.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    connection.close()
+
+    def run(self, operation, timeout):
+        results = queue.Queue(maxsize=1)
+
+        def worker():
+            try:
+                results.put((True, operation(self.opener)))
+            except Exception as error:
+                results.put((False, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        try:
+            success, value = results.get(timeout=max(0, timeout))
+            if not success:
+                raise value
+            return value
+        except queue.Empty:
+            raise TimeoutError('MCP elapsed deadline exceeded') from None
+        finally:
+            self.abort()
+
+
 class Client:
     def __init__(self, url, timeout):
         self.url, self.timeout, self.session, self.sequence = url, timeout, None, 0
         self.protocol = '2025-03-26'
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), Redirect())
         try:
             self.initialized = self.request('initialize', {
                 'protocolVersion': self.protocol, 'capabilities': {},
@@ -72,11 +151,12 @@ class Client:
         started = time.monotonic()
         budget = self.timeout if timeout is None else timeout
         try:
-            return self._request(method, params, notification, budget)
+            return DeadlineTransport().run(
+                lambda opener: self._request(method, params, notification, budget, opener), budget)
         except Exception as error:
             raise ProbeError(error, method, budget, time.monotonic() - started) from None
 
-    def _request(self, method, params, notification, timeout):
+    def _request(self, method, params, notification, timeout, opener):
         self.sequence += 1
         body = {'jsonrpc': '2.0', 'method': method}
         if not notification:
@@ -86,7 +166,7 @@ class Client:
         request = urllib.request.Request(self.url, json.dumps(body, ensure_ascii=False).encode('utf-8'),
                                          self.headers())
         deadline = time.monotonic() + timeout
-        with self.opener.open(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             self.url = response.url
             self.session = response.headers.get('Mcp-Session-Id', self.session)
             chunks = bytearray()
@@ -131,9 +211,11 @@ class Client:
     def close(self):
         if self.session:
             try:
-                with self.opener.open(urllib.request.Request(self.url, headers=self.headers(), method='DELETE'),
-                                      timeout=self.timeout):
-                    pass
+                request = urllib.request.Request(self.url, headers=self.headers(), method='DELETE')
+                def cleanup(opener):
+                    with opener.open(request, timeout=self.timeout):
+                        pass
+                DeadlineTransport().run(cleanup, self.timeout)
             except Exception:
                 pass
             self.session = None

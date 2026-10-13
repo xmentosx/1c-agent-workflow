@@ -1,4 +1,5 @@
 import json
+import shutil
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +19,8 @@ class MCPFixture:
         self.calls, self.closed = [], 0
         self.health_delay = 0
         self.heartbeat = False
+        self.header_drip = False
+        self.close_delay = 0
         self.schema = {'type': 'object', 'properties': {'description': {'type': 'string'}}}
         fixture = self
 
@@ -27,6 +30,7 @@ class MCPFixture:
 
             def do_DELETE(self):
                 fixture.closed += 1
+                time.sleep(fixture.close_delay)
                 self.send_response(204)
                 self.end_headers()
 
@@ -54,6 +58,17 @@ class MCPFixture:
                 elif method == 'tools/call':
                     if request['params']['name'] != fixture.tool:
                         raise AssertionError('A foreign MCP received a safe call')
+                    if fixture.header_drip:
+                        try:
+                            self.wfile.write(b'HTTP/1.0 200 OK\r\n')
+                            for _ in range(40):
+                                self.wfile.write(b'X-Heartbeat: yes\r\n')
+                                self.wfile.flush()
+                                time.sleep(0.05)
+                            self.wfile.write(b'\r\n')
+                        except ConnectionError:
+                            pass
+                        return
                     if fixture.heartbeat:
                         self.send_response(200)
                         self.send_header('Content-Type', 'text/event-stream')
@@ -139,6 +154,132 @@ class EndpointIdentity(unittest.TestCase):
         self.assertTrue(result['health_passed'])
         self.assertEqual(sum(item['method'] == 'tools/call' for item in self.public.calls), 1)
         self.assertEqual(self.public.closed, 3)
+
+    def test_dripping_headers_cannot_extend_health_deadline(self):
+        self.public.header_drip = True
+        started = time.monotonic()
+        result = identity.read_endpoint(self.public.url, timeout=0.3,
+                                        health_tool=self.public.tool, health_timeout=0.2)
+        self.assertTrue(result['signature'])
+        self.assertFalse(result['health_passed'])
+        self.assertEqual(result['health_error']['method'], 'tools/call')
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_session_delete_has_its_own_absolute_cleanup_budget(self):
+        self.public.close_delay = 1.5
+        started = time.monotonic()
+        result = identity.read_endpoint(self.public.url, timeout=0.2)
+        self.assertTrue(result['signature'])
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(self.public.closed, 1)
+
+    @unittest.skipUnless(shutil.which('powershell.exe') and shutil.which('git'),
+                         'Windows owner integration requires PowerShell and Git')
+    def test_stale_publication_recovers_through_git_owner_sync_and_original_read(self):
+        # This is a real loopback MCP client reconnect, not a claim that Codex
+        # exposes its owning App Server connection to an external process.
+        with tempfile.TemporaryDirectory(prefix='itl MCP ') as temporary:
+            root = Path(temporary) / '\u0423\u0444\u0430 PM5'
+            root.mkdir()
+            project = root / 'project'
+            (project / '.agent-1c').mkdir(parents=True)
+            (project / '.agent-1c' / 'project.json').write_text(
+                json.dumps({'aiRules': {'tools': ['codex', 'claude-code']}}), encoding='utf-8')
+            publisher, registry = root / 'published registry', root / 'cached registry'
+            publisher.mkdir()
+
+            def git(*arguments):
+                return subprocess.check_output(['git', *map(str, arguments)], stderr=subprocess.STDOUT,
+                                               encoding='utf-8').strip()
+
+            git('init', '--quiet', publisher)
+            git('-C', publisher, 'config', 'user.email', 'fixture@example.com')
+            git('-C', publisher, 'config', 'user.name', 'Fixture')
+            self.internal.name = self.public.name = '1C-docs-mcp'
+            self.internal.tool = self.public.tool = 'health'
+            previous_proof = identity.read_endpoint(self.internal.url, health_tool='health', timeout=1)
+            self.assertTrue(previous_proof['health_passed'])
+            endpoint = {'id': 'docs', 'scope': 'global', 'family': 'vibecoding1c',
+                        'provider': 'remote', 'name': '1C-docs-mcp', 'hostId': 'chosen',
+                        'url': self.internal.url, 'status': 'running'}
+
+            def publish(message):
+                (publisher / 'registry.json').write_text(json.dumps({
+                    'schemaVersion': 1, 'host': {'hostId': 'chosen'},
+                    'servers': [endpoint], 'configurations': []}), encoding='utf-8')
+                git('-C', publisher, 'add', 'registry.json')
+                git('-C', publisher, 'commit', '--quiet', '-m', message)
+
+            publish('old')
+            git('clone', '--quiet', publisher, registry)
+            helper = Path(__file__).resolve().parents[1] / '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            script = root / 'owner integration.ps1'
+            script.write_text(r"""param($Helper,$Project,$Registry,$Publisher,$Mode)
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$OutputEncoding=[Console]::OutputEncoding
+$caseMode=$Mode
+. $Helper -ProjectRoot $Project -Action help *> $null
+function Get-Vibecoding1cMcpRegistryRoot { $Registry }
+function Test-Vibecoding1cMcpRegistryPathOverride { $false }
+function Get-Vibecoding1cMcpRegistryRepo { $Publisher }
+function Read-Vibecoding1cMcpManifest { @{servers=@(@{id='docs';scope='global';name='1C-docs-mcp'})} }
+function Get-Vibecoding1cMcpTargetScopes { @('global') }
+function Get-Vibecoding1cMcpCurrentEndpoints { @() }
+function Write-ItlOnDemandMcpClientConfig { $null }
+function Sync-ItlUiToolsMcp { $null }
+if($caseMode -eq 'seed'){
+ Write-Vibecoding1cMcpSelection -Selection @{defaultProvider='remote';servers=@(@{id='docs';provider='remote';enabled=$true;hostId='chosen'})}
+ Write-Vibecoding1cMcpClientConfig -Client claude-code
+}else{ Sync-ItlClientMcpConfig -Client claude-code }
+""", encoding='utf-8-sig')
+
+            def owner(mode):
+                return subprocess.check_output(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                    '-File', str(script), str(helper), str(project), str(registry), str(publisher), mode],
+                    stderr=subprocess.STDOUT, timeout=60).decode('utf-8')
+
+            owner('seed')
+            self.internal.close()
+            with self.assertRaises(identity.ProbeError):
+                identity.Client(endpoint['url'], 0.3)
+            endpoint['url'] = self.public.url
+            publish('recovered')
+            # Verify the new publication before touching the client config.
+            proof = identity.read_endpoint(endpoint['url'], health_tool=self.public.tool, timeout=1,
+                                           expected_signature=previous_proof['signature'])
+            self.assertTrue(proof['health_passed'])
+            report = owner('sync')
+            self.assertEqual(git('-C', registry, 'rev-parse', 'HEAD'), git('-C', publisher, 'rev-parse', 'HEAD'))
+            config = json.loads((project / '.mcp.json').read_text(encoding='utf-8-sig'))
+            configured = config['mcpServers']['1C-docs-mcp']['url']
+            self.assertEqual(configured, self.public.url)
+            self.assertIn('does not attach servers to an already open chat', report)
+            # Supported reconnect of this test's owning client, then original read.
+            client = identity.Client(configured, 1)
+            try:
+                self.assertEqual(client.request('tools/list')['tools'][0]['name'], self.public.tool)
+                result = client.request('tools/call', {'name': self.public.tool, 'arguments': {}})
+                self.assertTrue(identity.payload(result)['ok'])
+            finally:
+                client.close()
+            selection = json.loads((project / '.agent-1c/mcp/vibecoding1c-selection.json').read_text(encoding='utf-8-sig'))
+            self.assertEqual(selection['servers'][0]['hostId'], 'chosen')
+
+    def test_fetch_its_timeout_keeps_identity_and_recovery_resumes_without_init(self):
+        self.public.name, self.public.tool = 'codechecker', 'fetch_its'
+        self.public.health_delay = 0.6
+        proof = identity.read_endpoint(self.public.url, timeout=1,
+                                       health_tool='fetch_its', health_arguments={'topic': 'root'},
+                                       health_timeout=0.1)
+        self.assertTrue(proof['signature'])
+        self.assertFalse(proof['health_passed'])
+        self.assertEqual(proof['health_error']['method'], 'tools/call')
+        self.public.health_delay = 0
+        resumed = identity.read_endpoint(self.public.url, timeout=1, health_tool='fetch_its',
+                                         expected_signature=proof['signature'])
+        self.assertTrue(resumed['health_passed'])
+        self.assertEqual(proof['signature'], resumed['signature'])
 
     def test_active_internal_index_never_authorizes_restart(self):
         self.internal.busy = True

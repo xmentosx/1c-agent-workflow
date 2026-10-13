@@ -13,3 +13,11 @@
 ## 3. Acceptance
 
 - [x] 3.1 Validate OpenSpec and run directly owned regressions; record local evidence and live limitations.
+
+- [x] 3.2 Prove one operation snapshot across post-copy and init/setup; preserve remote bytes on failed refresh.
+- [x] 3.3 Execute local failure -> publication -> fresh registry -> protocol proof -> owner sync -> discovery/or verified reload boundary -> original read.
+- [x] 3.4 Reconcile every original and incoming requirement against evidence, distinguishing local acceptance from excluded server deployment.
+
+## 4. Qualification-discovered owner defect
+
+- [x] 4.1 Repair terminal cleanup deadline precedence; prove the unchanged old runner fails the native reproducer, fixed cleanup succeeds, and a stuck terminal helper is still bounded.
