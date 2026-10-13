@@ -11,7 +11,8 @@ function Resolve-WorkflowPatchPath {
     if ([string]::IsNullOrWhiteSpace($RelativePath) -or $RelativePath -match '[\\:]|(^|/)\.\.?(/|$)|//|[\x00-\x1f]' -or [IO.Path]::IsPathRooted($RelativePath)) {
         throw "WORKFLOW_PATCH_PATH_INVALID: $RelativePath"
     }
-    if (-not $Receipt -and $RelativePath -notmatch '^\.agents/skills/(1c-workflow|1c-workflow-fast|itl-performance|itl-remote-runner|itl-remote-agent|itl-roctup-1c-data|itl-vanessa-ui-mcp|product-docs)/.+\.(ps1|md|py|json)$') {
+    $helperOwnedBsl = $RelativePath -ceq '.agents/skills/1c-workflow/tools/tooling-probe/ToolingProbe/Forms/Форма/Ext/Form/Module.bsl'
+    if (-not $Receipt -and -not $helperOwnedBsl -and $RelativePath -notmatch '^\.agents/skills/(1c-workflow|1c-workflow-fast|itl-performance|itl-remote-runner|itl-remote-agent|itl-roctup-1c-data|itl-vanessa-ui-mcp|product-docs)/.+\.(ps1|md|py|json)$') {
         throw "WORKFLOW_PATCH_NOT_ITL_OWNED: $RelativePath"
     }
     $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')

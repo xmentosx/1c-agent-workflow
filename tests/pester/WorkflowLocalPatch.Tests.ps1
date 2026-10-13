@@ -109,6 +109,63 @@
         Invoke-Git @('commit', '-qm', 'fixture baseline')
     }
 
+    It 'extends a receipt with the exact helper BSL and retires it through the executing runtime' {
+        $bslPath = '.agents/skills/1c-workflow/tools/tooling-probe/ToolingProbe/Forms/Форма/Ext/Form/Module.bsl'
+        $bslFull = Join-Path $script:ProjectRoot $bslPath
+        $branchResolverPath = '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1'
+        Set-FixtureText $bslFull "Процедура Исходная() Экспорт`r`nКонецПроцедуры`r`n"
+        Set-FixtureText (Join-Path $script:ProjectRoot $branchResolverPath) "throw 'BRANCH_RESOLVER_MUST_NOT_EXECUTE'"
+        Invoke-Git @('add','--',$bslPath,$branchResolverPath)
+        Invoke-Git @('commit','-qm','helper BSL baseline')
+        $original = New-SealedFixturePatch
+        $extended = New-WorkflowPatchReceipt -Paths @($bslPath) -ReportPath $script:report
+        $extended.id | Should -BeExactly $original.id
+        @($extended.files).Count | Should -Be 2
+        $extended.files[0].beforeSha256 | Should -BeExactly $original.files[0].beforeSha256
+        Set-FixtureText $bslFull "Процедура Исправленная() Экспорт`r`nКонецПроцедуры`r`n"
+        Set-WorkflowPatchSealed | Out-Null
+        Set-FixtureText (Join-Path $script:ProjectRoot 'product.txt') 'independent staged product work'
+        Invoke-Git @('add','--','product.txt')
+        $plan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation refresh-dev-branch
+        Invoke-WorkflowLocalPatchStep -Step Retire -Operation refresh-dev-branch -Plan $plan
+        Read-Utf8Text $bslFull | Should -BeExactly "Процедура Исходная() Экспорт`r`nКонецПроцедуры`r`n"
+        Invoke-WorkflowLocalPatchStep -Step Undo -Operation refresh-dev-branch -Plan $plan
+        Read-Utf8Text $bslFull | Should -BeExactly "Процедура Исправленная() Экспорт`r`nКонецПроцедуры`r`n"
+        (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+        Invoke-WorkflowLocalPatchStep -Step Retire -Operation refresh-dev-branch -Plan $plan
+        Invoke-WorkflowLocalPatchStep -Step Complete -Operation refresh-dev-branch -Plan $plan
+        (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
+        Read-Utf8Text $script:target | Should -BeExactly "original: Кириллица`r`n"
+        @(Get-GitPathList -Arguments @('diff','--cached','--name-only','-z')) | Should -Be @('product.txt')
+        Read-Utf8Text (Join-Path $script:ProjectRoot $branchResolverPath) | Should -BeExactly "throw 'BRANCH_RESOLVER_MUST_NOT_EXECUTE'"
+    }
+
+    It 'rejects helper BSL lookalikes without broadening the managed allowlist' {
+        $allowed = '.agents/skills/1c-workflow/tools/tooling-probe/ToolingProbe/Forms/Форма/Ext/Form/Module.bsl'
+        foreach ($path in @(
+            $allowed.Replace('Module.bsl','Other.bsl'),
+            $allowed.Replace('Module.bsl','module.bsl'),
+            $allowed.Replace('ToolingProbe','toolingprobe'),
+            $allowed.Replace('tooling-probe','other-probe'),
+            'src/cf/CommonModules/ToolingProbe/Ext/Module.bsl',
+            'src/cfe/ToolingProbe/Forms/Форма/Ext/Form/Module.bsl'
+        )) {
+            { Resolve-WorkflowPatchPath $path } | Should -Throw '*WORKFLOW_PATCH_NOT_ITL_OWNED*'
+        }
+        foreach ($path in @($allowed.Replace('/','\'), $allowed.Replace('/Forms/','/../Forms/'), ('C:/' + $allowed))) {
+            { Resolve-WorkflowPatchPath $path } | Should -Throw '*WORKFLOW_PATCH_PATH_INVALID*'
+        }
+    }
+
+    It 'rejects a junction even for the exact helper BSL exception' {
+        $parent = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/tools/tooling-probe/ToolingProbe'
+        $foreign = Join-Path $TestDrive 'Чужие формы с пробелом'
+        [IO.Directory]::CreateDirectory($parent) | Out-Null
+        [IO.Directory]::CreateDirectory($foreign) | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $parent 'Forms') -Target $foreign | Out-Null
+        { Resolve-WorkflowPatchPath '.agents/skills/1c-workflow/tools/tooling-probe/ToolingProbe/Forms/Форма/Ext/Form/Module.bsl' } | Should -Throw '*WORKFLOW_PATCH_REPARSE_POINT*'
+    }
+
     It 'captures exact Unicode bytes and retires an unstaged patch without changing product edits' {
         $r = New-SealedFixturePatch
         Set-FixtureText (Join-Path $script:ProjectRoot 'product.txt') 'user additional work'
