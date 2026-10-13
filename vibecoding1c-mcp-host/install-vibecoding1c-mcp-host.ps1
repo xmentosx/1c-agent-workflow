@@ -4668,6 +4668,9 @@ function Update-HostStateForPublish {
                 if ([string]$value) { $details += "${field}=$value" }
             }
             $functionalHealth = [pscustomobject]@{ status = "degraded"; message = ($details -join "; ") }
+        } elseif ($null -ne $directProof -and $null -ne (Get-ObjectValue -Object $directProof -Name "health_error" -Default $null)) {
+            $healthError = Get-ObjectValue -Object $directProof -Name "health_error" -Default $null
+            $functionalHealth = [pscustomobject]@{ status = "degraded"; message = "MCP identity matched; safe tool health failed; method=$($healthError.method); reason=$($healthError.reason); timeoutSeconds=$($healthError.timeoutSeconds)." }
         } elseif ($null -ne $directProof -and $id -eq "codechecker" -and (Get-ObjectValue -Object $directProof -Name "health_passed" -Default $false)) {
             $functionalHealth = [pscustomobject]@{ status = "qualified"; message = "Internal and public MCP identity and safe health tool 'fetch_its' passed." }
         } else {

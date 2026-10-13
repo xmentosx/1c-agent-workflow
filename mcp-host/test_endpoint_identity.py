@@ -17,6 +17,7 @@ class MCPFixture:
         self.name, self.tool, self.busy, self.error = name, tool, False, False
         self.calls, self.closed = [], 0
         self.health_delay = 0
+        self.heartbeat = False
         self.schema = {'type': 'object', 'properties': {'description': {'type': 'string'}}}
         fixture = self
 
@@ -53,6 +54,18 @@ class MCPFixture:
                 elif method == 'tools/call':
                     if request['params']['name'] != fixture.tool:
                         raise AssertionError('A foreign MCP received a safe call')
+                    if fixture.heartbeat:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/event-stream')
+                        self.end_headers()
+                        try:
+                            for _ in range(40):
+                                self.wfile.write(b': heartbeat\n\n')
+                                self.wfile.flush()
+                                time.sleep(0.05)
+                        except ConnectionError:
+                            pass
+                        return
                     result = {'structuredContent': {'ok': not fixture.error,
                                                    'index_in_progress': fixture.busy}}
                     time.sleep(fixture.health_delay)
@@ -149,11 +162,12 @@ class EndpointIdentity(unittest.TestCase):
         result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
                                          'index_status', timeout=1, health_timeout=1, run=self.command_run)
         self.assertEqual(result['status'], 'unverified')
-        self.assertEqual(result['stage'], 'internal safe health')
-        self.assertEqual(result['method'], 'tools/call')
-        self.assertEqual(result['timeoutSeconds'], 1)
-        self.assertGreaterEqual(result['requestElapsedSeconds'], 1)
-        self.assertFalse(self.public.calls)
+        self.assertEqual(result['health_error']['stage'], 'safe health')
+        self.assertEqual(result['health_error']['method'], 'tools/call')
+        self.assertEqual(result['health_error']['timeoutSeconds'], 1)
+        self.assertGreaterEqual(result['health_error']['requestElapsedSeconds'], 1)
+        self.assertEqual(sum(item['method'] == 'tools/list' for item in self.public.calls), 2)
+        self.assertFalse(any(item['method'] == 'tools/call' for item in self.public.calls))
         self.assertNotIn('structuredContent', json.dumps(result))
 
     def test_public_health_timeout_keeps_identity_checks_and_never_becomes_a_restart_signal(self):
@@ -161,11 +175,30 @@ class EndpointIdentity(unittest.TestCase):
         self.public.health_delay = 1.2
         result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
                                          'index_status', timeout=1, health_timeout=1, run=self.command_run)
-        self.assertEqual(result['status'], 'unverified')
-        self.assertEqual(result['stage'], 'public safe health')
-        self.assertEqual(result['method'], 'tools/call')
-        self.assertEqual(result['timeoutSeconds'], 1)
+        self.assertEqual(result['status'], 'matched')
+        self.assertFalse(result['health_passed'])
+        self.assertEqual(result['health_error']['stage'], 'safe health')
+        self.assertEqual(result['health_error']['method'], 'tools/call')
+        self.assertEqual(result['health_error']['timeoutSeconds'], 1)
         self.assertEqual(sum(call['method'] == 'tools/list' for call in self.public.calls), 3)
+
+    def test_matched_identity_survives_internal_optional_health_error(self):
+        self.public.name, self.public.tool = self.internal.name, self.internal.tool
+        self.internal.error = True
+        result = self.check()
+        self.assertEqual(result['status'], 'matched')
+        self.assertFalse(result['health_passed'])
+        self.assertEqual(result['health_error']['method'], 'tools/call')
+
+    def test_sse_heartbeat_cannot_extend_elapsed_health_budget(self):
+        self.public.heartbeat = True
+        started = time.monotonic()
+        proof = identity.read_endpoint(self.public.url, timeout=1, health_tool=self.public.tool,
+                                       health_timeout=0.3)
+        self.assertLess(time.monotonic() - started, 1.2)
+        self.assertFalse(proof['health_passed'])
+        self.assertEqual(proof['health_error']['method'], 'tools/call')
+        self.assertEqual(proof['health_error']['timeoutSeconds'], 0.3)
 
     def test_real_connection_refusal_is_unverified_with_initialize_diagnostics(self):
         unused = ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler)

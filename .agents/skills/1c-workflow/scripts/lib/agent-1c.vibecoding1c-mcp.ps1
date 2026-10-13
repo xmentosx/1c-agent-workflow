@@ -832,13 +832,14 @@ function Get-Vibecoding1cMcpRemoteEndpointCandidates {
         [object]$Server,
         [object]$Selection,
         [string]$ConfigId,
-        [switch]$IgnoreSelectedHost
+        [switch]$IgnoreSelectedHost,
+        [AllowNull()][object]$Registry = $null
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
     $scope = Get-Vibecoding1cMcpServerScope -Server $Server
     $hostId = if ($IgnoreSelectedHost) { "" } else { Get-Vibecoding1cMcpSelectedHostId -Server $Server -Selection $Selection }
-    $registry = Read-Vibecoding1cMcpRegistry
+    if ($null -eq $Registry) { $Registry = Read-Vibecoding1cMcpRegistry }
     $candidates = @()
     foreach ($endpoint in Get-Vibecoding1cMcpRegistryServers -Registry $registry) {
         if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "family" -Default "") -ne "vibecoding1c") {
@@ -868,7 +869,13 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
     )
 
     if ($RefreshRegistry) {
-        Ensure-Vibecoding1cMcpRegistry | Out-Null
+        try {
+            Ensure-Vibecoding1cMcpRegistry | Out-Null
+        } catch {
+            $cachedPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+            if (-not (Test-Path -LiteralPath $cachedPath -PathType Leaf)) { throw }
+            Write-Warning "MCP registry refresh failed; saved selection uses the cached registry. Freshness and readiness are unverified. $($_.Exception.Message)"
+        }
     }
 
     $reasons = @()
@@ -879,6 +886,7 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
 
     $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
     $canValidateRegistryEndpoints = $RefreshRegistry -or (Test-Path -LiteralPath $registryPath -PathType Leaf -ErrorAction SilentlyContinue)
+    $registrySnapshot = if ($canValidateRegistryEndpoints) { Read-Vibecoding1cMcpRegistry } else { $null }
     foreach ($server in Select-Vibecoding1cMcpManifestServers) {
         $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
         if (-not $id) {
@@ -916,20 +924,16 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
         if (-not $canValidateRegistryEndpoints) {
             continue
         }
-        $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $Selection -ConfigId $configId)
+        $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $Selection -ConfigId $configId -Registry $registrySnapshot)
         if ($candidates.Count -eq 0) {
             $hostSuffix = if ($hostId) { " for hostId '$hostId'" } else { "" }
             $reasons += "$id/$scope remote provider has no registry endpoint$hostSuffix"
             continue
         }
 
-        $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
-        if ($usableCandidates.Count -eq 0) {
-            $unavailable = (($candidates | ForEach-Object { Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $_ }) -join " | ")
-            $reasons += "$id/$scope remote provider has no usable endpoint: $unavailable"
-            continue
-        }
-        if (-not $hostId -and $usableCandidates.Count -gt 1) {
+        # Selection is a configuration contract. Current health cannot select a
+        # host or invalidate an otherwise unique saved choice.
+        if ($candidates.Count -gt 1) {
             $reasons += "$id/$scope remote provider has multiple matching hosts and no hostId"
         }
     }
@@ -1410,7 +1414,9 @@ function New-Vibecoding1cMcpRemoteRuntime {
     param(
         [object]$Server,
         [object]$Selection,
-        [switch]$AllowPrompt
+        [switch]$AllowPrompt,
+        [switch]$ForClientConfig,
+        [AllowNull()][object]$Registry = $null
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
@@ -1423,11 +1429,9 @@ function New-Vibecoding1cMcpRemoteRuntime {
         }
     }
 
-    $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $Server -Selection $Selection -ConfigId $configId)
+    $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $Server -Selection $Selection -ConfigId $configId -Registry $Registry)
     $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
-    if ($usableCandidates.Count -gt 0) {
-        $candidates = $usableCandidates
-    } elseif ($candidates.Count -gt 0) {
+    if (-not $ForClientConfig -and $usableCandidates.Count -eq 0 -and $candidates.Count -gt 0) {
         $candidateText = (($candidates | ForEach-Object { Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $_ }) -join " | ")
         Write-Host "Skipping remote vibecoding1c MCP server '$id': endpoint is not usable for client config. Candidates: $candidateText"
         return $null
@@ -1461,6 +1465,7 @@ function New-Vibecoding1cMcpRemoteRuntime {
             image = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "image" -Default "")
             family = "vibecoding1c"
             provider = "remote"
+            configurationIntent = $ForClientConfig.IsPresent
             clientNames = (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "clientNames" -Default (Get-Vibecoding1cMcpClientNames -ServerId $id))
             hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostId" -Default "")
             hostPublishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostPublishedAt" -Default (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "publishedAt" -Default ""))
@@ -3162,6 +3167,10 @@ function Prepare-Vibecoding1cMcpSelectionForInit {
         $reasonText = @($selectionCompleteness.reasons) -join "; "
         throw "VIBECODING1C_INIT_SELECTION_INCOMPLETE: vibecoding1c MCP selection must be completed before unattended initialization starts. $reasonText"
     }
+    $readyNames = @(Get-Vibecoding1cMcpReadyClientConfigNames)
+    foreach ($name in @(Get-Vibecoding1cMcpSelectedClientConfigNames | Where-Object { $_ -notin $readyNames })) {
+        Write-Warning "MCP '$name' is selected but readiness is unavailable. Initialization continues; dependent verification is not passed. Restore via registry refresh and sync-client-mcp, then client discovery."
+    }
 
     Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0L7RgCB2aWJlY29kaW5nMWMgTUNQINC30LDQstC10YDRiNGR0L0uINCj0YHRgtCw0L3QvtCy0LrQsCDRgdGA0LXQtNGLINC4INC60L7QvdGE0LjQs9GD0YDQsNGG0LjRjyDQutC70LjQtdC90YLQsCDQv9GA0L7QtNC+0LvQttCw0YLRgdGPINCw0LLRgtC+0LzQsNGC0LjRh9C10YHQutC4INC/0L7Qt9C20LUu")
 }
@@ -3602,6 +3611,7 @@ function Get-Vibecoding1cMcpKiloConfigPath {
 }
 
 function Get-Vibecoding1cMcpClientConfigEndpointSet {
+    $registrySnapshot = Read-Vibecoding1cMcpRegistry
     $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
     $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
     $selection = Read-Vibecoding1cMcpSelection
@@ -3614,11 +3624,11 @@ function Get-Vibecoding1cMcpClientConfigEndpointSet {
             continue
         }
         try {
-            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -ForClientConfig -Registry $registrySnapshot
         } catch {
             continue
         }
-        if ($null -ne $runtime -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $runtime)) {
+        if ($null -ne $runtime) {
             $resolvedRemoteEndpoints += $runtime
         }
     }
@@ -3656,7 +3666,7 @@ function Get-Vibecoding1cMcpClientConfigClientNames {
 
 function Get-Vibecoding1cMcpReadyClientConfigNames {
     $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
-    return @(Get-Vibecoding1cMcpClientConfigClientNames -Endpoints $endpointSet.allEndpoints)
+    return @(Get-Vibecoding1cMcpClientConfigClientNames -Endpoints @($endpointSet.allEndpoints | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ }))
 }
 
 function Get-Vibecoding1cMcpSelectedClientConfigNames {
@@ -3678,7 +3688,8 @@ function Select-Vibecoding1cMcpClientConfigEndpoints {
     param([object[]]$Endpoints)
 
     $selection = Read-Vibecoding1cMcpSelection
-    $selected = @($Endpoints | Where-Object { (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $_) -and (Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection) -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_) })
+    # Configuration records intent; readiness is reported and checked separately.
+    $selected = @($Endpoints | Where-Object { (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $_) -and (Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection) -and ((Get-Vibecoding1cMcpObjectValue -Object $_ -Name 'configurationIntent' -Default $false) -or (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_)) })
     $byClientName = [ordered]@{}
     foreach ($endpoint in @($selected | Sort-Object @{ Expression = { Get-Vibecoding1cMcpEndpointClientName -Endpoint $_ } }, @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
         $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
@@ -3884,7 +3895,7 @@ function Write-Vibecoding1cMcpKiloConfig {
 }
 
 function Write-Vibecoding1cMcpClientConfig {
-    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces)
+    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces, [switch]$PreserveUserChanges)
 
     if (-not $PlanOnly) { Write-Section "Write vibecoding1c MCP client config" }
 
@@ -3905,7 +3916,7 @@ function Write-Vibecoding1cMcpClientConfig {
             if ($null -ne $ui) { $requests += $ui }
         }
     }
-    $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly)
+    $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly -PreserveUserChanges:$PreserveUserChanges)
     if (-not $PlanOnly) {
         Ensure-GitIgnore
         Write-Host "Project MCP configs for $($selectedClients -join ', '): $($paths -join ', ')"
