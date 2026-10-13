@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pesterNonReusableTests": ["tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
+  "pesterNonReusableTests": ["tests/pester/SourceE2EStorage.Tests.ps1", "tests/pester/SourceE2EDiskMonitor.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
   "budgets": {
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
@@ -55,6 +55,7 @@
     "develop": [
       "scripts/invoke-develop-e2e.ps1",
       "scripts/source-e2e-fixture.ps1",
+      "scripts/source-e2e-storage.ps1",
       "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/develop-e2e-cleanup.ps1",
@@ -62,6 +63,7 @@
     ],
     "release": [
       "scripts/source-e2e-fixture.ps1",
+      "scripts/source-e2e-storage.ps1",
       "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/build-client-mcp-patched.ps1",
@@ -78,6 +80,7 @@
     "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
+      "scripts/source-e2e-storage.ps1",
       "scripts/develop-configuration-rejection.ps1",
       "scripts/stand-env-identity.ps1",
       "scripts/git-path-list.ps1"
@@ -300,7 +303,7 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/E2EClientSelection.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/stand-env-identity.ps1", "scripts/release-e2e/admission.ps1", "scripts/release-e2e/extension-recovery.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/stand-env-identity.ps1", "scripts/source-delivery-process.ps1", "scripts/source-e2e-storage.ps1", "scripts/release-e2e/admission.ps1", "scripts/release-e2e/extension-recovery.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"],
       "reuseInputPaths": ["tests/quality-contracts.json"],
       "tests": ["tests/pester/E2EClientSelection.Tests.ps1"]
     },
@@ -666,6 +669,24 @@
       "primaryTest": "tests/pester/ReleaseStandRecovery.Tests.ps1",
       "paths": ["scripts/rebuild-release-e2e-stand.ps1"],
       "tests": ["tests/pester/ReleaseStandRecovery.Tests.ps1"]
+    },
+    {
+      "id": "source-e2e-storage",
+      "owner": "disposable Develop copy ownership, diagnostic retention and allocation capacity",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/SourceE2EStorage.Tests.ps1",
+      "paths": ["scripts/source-e2e-storage.ps1", "scripts/source-e2e-fixture.ps1", "scripts/lifecycle-qualification-fixture.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "tests/pester/SourceE2EStorage.Tests.ps1"],
+      "tests": ["tests/pester/SourceE2EStorage.Tests.ps1"]
+    },
+    {
+      "id": "source-e2e-disk-monitor",
+      "owner": "source native child disk diagnostics and owned process cancellation",
+      "gate": "targeted",
+      "budgetSeconds": 90,
+      "primaryTest": "tests/pester/SourceE2EDiskMonitor.Tests.ps1",
+      "paths": ["scripts/source-e2e-storage.ps1", "scripts/source-e2e-fixture.ps1", "scripts/invoke-develop-e2e.ps1", "scripts/source-delivery-process.ps1", "tests/pester/SourceE2EDiskMonitor.Tests.ps1"],
+      "tests": ["tests/pester/SourceE2EDiskMonitor.Tests.ps1"]
     },
     {
       "id": "source-qualification-fixture",

@@ -1,6 +1,6 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [ValidateSet('','Capture','Prepare')][string]$Action='',
+    [ValidateSet('','Capture','Prepare','DisposeCopy')][string]$Action='',
     [string]$ProjectRoot='',
     [ValidateSet('Develop','Release')][string]$Phase='Develop',
     [string]$CandidateRoot='',
@@ -8,7 +8,10 @@ param(
     [string]$FreshProjectsRoot='C:\itlj',
     [string]$AgentTarget='',
     [switch]$Recapture,
-    [string]$OutputPath=''
+    [string]$OutputPath='',
+    [string]$FixtureReceiptPath='',
+    [string]$TerminalReportPath='',
+    [string]$DiagnosticRoot=''
 )
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
@@ -19,6 +22,7 @@ $fixtureLib = Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-wo
 . (Join-Path $fixtureLib 'agent-1c.core.ps1')
 . (Join-Path $fixtureLib 'agent-1c.lifecycle.ps1')
 . (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-storage.ps1')
 
 function Invoke-SourceFixtureInstalledAction {
     param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200)
@@ -40,10 +44,14 @@ function Invoke-SourceFixtureInstalledAction {
         while (-not $process.WaitForExit(1000)) {
             $length=0L; foreach($path in @($stdout,$stderr)){if(Test-Path -LiteralPath $path){$length+=(Get-Item -LiteralPath $path).Length}}
             if($length -ne $lastLength){$lastLength=$length;$lastProgress=[DateTime]::UtcNow}
+            if(([DateTime]::UtcNow-$lastNotice).TotalSeconds -ge 30){
+                Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $LogRoot ($token+'.disk-full.json')) -VolumePaths @($Root,[IO.Path]::GetTempPath()) -InspectWindows
+            }
             if($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds -or ([DateTime]::UtcNow-$lastProgress).TotalMinutes -ge 15){throw "FIXTURE_ACTION_TIMEOUT: $Action; retained logs=$LogRoot; repeat the same qualification after diagnosis"}
             if(([DateTime]::UtcNow-$lastNotice).TotalSeconds -ge 30){Write-Host "Fixture ${Action}: $([int]$watch.Elapsed.TotalSeconds)s; logs=$LogRoot";$lastNotice=[DateTime]::UtcNow}
         }
         $process.WaitForExit();$process.Refresh()
+        Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $LogRoot ($token+'.disk-full.json')) -VolumePaths @($Root,[IO.Path]::GetTempPath())
         if([int]$process.ExitCode -ne 0){throw "FIXTURE_ACTION_FAILED: $Action exit=$($process.ExitCode); see $stdout and $stderr; repeat the same qualification after diagnosis"}
         return [pscustomobject]@{stdout=$stdout;stderr=$stderr;durationMs=[int64]$watch.ElapsedMilliseconds}
     } catch {$errorText=$_.Exception.Message;throw}
@@ -231,10 +239,21 @@ function Invoke-SourceFixtureInitialRestore {
 
 function New-SourceE2EFixtureProject {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$CandidateRoot, [string]$ProjectsRoot='C:\itlj', [string]$AgentTarget='', [string]$AiRulesSource='', [string]$ReceiptPath='')
+    if($Phase -eq 'Develop'){
+        $retentionRoot=if($ReceiptPath){Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ReceiptPath))) 'fixture-retention'}else{Join-Path $CandidateRoot 'build/test-results/fixture-retention'}
+        [void](Remove-CompletedSourceE2ECopies -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $retentionRoot)
+    }
     $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
     $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
     if((Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('merge-base','--is-ancestor',[string]$manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED: use the capsule captured from a published workflow baseline; preserve the rejected capsule'}
     $capsule=Split-Path -Parent ([string]$descriptor.path)
+    $databaseBytes=0L
+    if($Phase -eq 'Develop'){
+        $databaseBytes=[int64](Get-Item -LiteralPath ([string]$manifest.sourceDatabase.path)).Length
+        Assert-SourceE2ESpace -Operation 'prepare qualification copy' -Allocations @(
+            @{path=$ProjectsRoot;bytes=($databaseBytes+(Get-Item -LiteralPath (Join-Path $capsule 'infobase.dt')).Length)},
+            @{path=[IO.Path]::GetTempPath();bytes=$databaseBytes})
+    }
     $commit=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
     # Develop repeats from the seed; Release resumes its existing checkpoint.
     $segment='q '+([string][char]0x041F)+([string][char]0x0440)+([string][char]0x043E)+([string][char]0x0435)+([string][char]0x043A)+([string][char]0x0442)
@@ -280,7 +299,7 @@ function New-SourceE2EFixtureProject {
     }
     # Origin is the immutable local bundle, never the seed or a publishing remote.
     foreach($item in @($target,$branch)){Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.name','ITL qualification')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.email','qualification@example.invalid')|Out-Null}
-    $claim=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;candidateCommit=$commit;phase=$Phase}
+    $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
     Write-QualificationFixtureJson -Path $claimPath -Value $claim
     if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
     $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
@@ -325,7 +344,14 @@ if($Action){
     $utf8=[Text.UTF8Encoding]::new($false);[Console]::InputEncoding=$utf8;[Console]::OutputEncoding=$utf8;$OutputEncoding=$utf8
     if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
     if($Recapture -and $Action -ne 'Capture'){throw 'Recapture is an explicit Capture operation, not a target repair'}
-    if($Action -eq 'Capture'){$result=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget -Recapture:$Recapture}
+    if($Action -eq 'DisposeCopy'){
+        $fixture=Read-QualificationFixtureJson -Path $FixtureReceiptPath
+        if([IO.Path]::GetFullPath($ProjectRoot) -ine [IO.Path]::GetFullPath([string]$fixture.projectRoot)){throw 'FIXTURE_COPY_RECEIPT_TARGET_MISMATCH'}
+        $copyPrefix=(Split-Path -Parent ([IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')))+[IO.Path]::DirectorySeparatorChar
+        if([IO.Path]::GetFullPath($OutputPath).StartsWith($copyPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
+        $result=Remove-SourceE2EFixtureCopy -Fixture $fixture -CandidateRoot $CandidateRoot -ReportPath $TerminalReportPath -DiagnosticRoot $DiagnosticRoot
+    }
+    elseif($Action -eq 'Capture'){$result=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget -Recapture:$Recapture}
     else{$result=New-SourceE2EFixtureProject -ProjectRoot $ProjectRoot -Phase $Phase -CandidateRoot $CandidateRoot -ProjectsRoot $FreshProjectsRoot -AgentTarget $AgentTarget -AiRulesSource $AiRulesSource -ReceiptPath $OutputPath}
     Write-QualificationFixtureJson -Path $OutputPath -Value $result
 }

@@ -956,3 +956,7 @@ existing snapshot helper. It records recovery, never a passed stage. Read-only
 Plan/Status/readiness do not restore anything. A lost restore acknowledgement may
 replay only that same validated DT after owned writer stop. Legacy residue without
 prior ownership requires explicit bounded adoption, not prefix-based cleanup.
+# Qualification copy storage
+
+Source-only Develop copy disposal, capacity checks and owned disk112 recovery:
+[source-qualification-storage.md](source-qualification-storage.md).

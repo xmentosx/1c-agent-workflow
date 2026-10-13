@@ -167,7 +167,8 @@ Describe 'Source quality catalog contracts' {
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
         @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
         $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
-        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', "source-delivery-process", "source-candidate-registration", 'qualification-fixture-process-tests')
+        @($processOnly.contracts.id) | Should -Be @("source-quality-catalog",'release-orchestration-tests', 'e2e-client-selection-tests', "source-delivery-process", "source-candidate-registration", 'source-e2e-disk-monitor', 'qualification-fixture-process-tests')
+        @($processOnly.tests) | Should -Contain 'tests/pester/SourceE2EDiskMonitor.Tests.ps1'
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualificationFixture.Tests.ps1'
         @($processOnly.tests) | Should -Contain 'tests/pester/SourceQualityCatalog.Tests.ps1'
         @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
@@ -960,12 +961,12 @@ Describe 'Source catalog Develop journey selection' {
             $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
             $plan.reason | Should -Be 'no-develop-journey-route'
             $expectedContracts=@("source-delivery-$leaf")
-            if($leaf -eq 'process') { $expectedContracts = @('qualification-fixture-process-tests','release-orchestration-tests','source-candidate-registration') + $expectedContracts + @('source-quality-catalog') }
+            if($leaf -eq 'process') { $expectedContracts = @('e2e-client-selection-tests','qualification-fixture-process-tests','release-orchestration-tests','source-candidate-registration') + $expectedContracts + @('source-e2e-disk-monitor','source-quality-catalog') }
             if($leaf -eq 'queue') { $expectedContracts = @('source-candidate-registration') + $expectedContracts }
             @($plan.contracts) | Should -Be $expectedContracts
             @($plan.journeys) | Should -BeNullOrEmpty
         }
-        foreach ($path in @('scripts/source-e2e-fixture.ps1','scripts/lifecycle-qualification-fixture.ps1')) {
+        foreach ($path in @('scripts/source-e2e-fixture.ps1','scripts/lifecycle-qualification-fixture.ps1','scripts/source-e2e-storage.ps1')) {
             $fixture = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
             @($fixture.journeys) | Should -Be @('upgrade','fresh')
         }

@@ -364,6 +364,17 @@ Describe "Release gate scripts" {
         $operation = @($provision[0].CommandElements | Where-Object { $_ -is [Management.Automation.Language.ScriptBlockExpressionAst] })
         $operation.Count | Should -Be 1
         & {
+            # Execute the real entrypoint's imports as well as its extracted body.
+            # This catches missing production wiring instead of supplying test-only helpers.
+            $workflowScriptsRoot = Join-Path $RepoRoot 'scripts'
+            foreach ($statement in $ast.EndBlock.Statements) {
+                if ($statement -is [Management.Automation.Language.PipelineAst] -and
+                    $statement.PipelineElements.Count -eq 1 -and
+                    $statement.PipelineElements[0] -is [Management.Automation.Language.CommandAst] -and
+                    $statement.PipelineElements[0].InvocationOperator -eq [Management.Automation.Language.TokenKind]::Dot) {
+                    . ([scriptblock]::Create($statement.Extent.Text.Replace('$PSScriptRoot', '$workflowScriptsRoot')))
+                }
+            }
             $ProjectRoot = Join-Path $TestDrive 'Исходный стенд с пробелами'
             $freshTemplateRoot = $ProjectRoot
             $CandidateRoot = $RepoRoot; $AiRulesSource = $RepoRoot; $AgentTarget = 'kilocode'
@@ -391,7 +402,9 @@ Describe "Release gate scripts" {
             $sourceEnvHash = (Get-FileHash -LiteralPath $sourceEnv).Hash
             $sourceConfigHash = (Get-FileHash -LiteralPath $sourceConfig).Hash
             $body = $operation[0].ScriptBlock.Extent.Text
-            & ([scriptblock]::Create($body.Substring(1, $body.Length - 2)))
+            $script:freshFixtureUse = $null
+            try { & ([scriptblock]::Create($body.Substring(1, $body.Length - 2))) }
+            finally { if ($script:freshFixtureUse) { $script:freshFixtureUse.Dispose(); $script:freshFixtureUse = $null } }
             $seed = [IO.File]::ReadAllLines((Join-Path $freshRoot '.dev.env'), [Text.Encoding]::UTF8)
             @($seed | Where-Object { $_ -match '^UI_TESTING=' }).Count | Should -Be 0
             $seed | Should -Contain 'ITL_VANESSA_TESTING=off'

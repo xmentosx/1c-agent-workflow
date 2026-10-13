@@ -307,6 +307,20 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -ParameterFilter {$Action -eq 'release-e2e-restore'}
     }
 
+    It 'rejects insufficient storage before materialization, then completes the original Prepare after capacity recovers' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'space recovery Пример')
+        $script:fixtureAvailable=0L
+        Mock Get-SourceE2EVolumeSpace {param($Path) [pscustomobject]@{volume='fixture-volume';availableBytes=$script:fixtureAvailable}}
+        {New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot (Join-Path $TestDrive 'space target Пример') -AgentTarget kilocode}|Should -Throw '*SOURCE_E2E_SPACE_INSUFFICIENT*ResumePlan*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'qualification-create-infobase' -or $Action -eq 'release-e2e-restore'}
+        $script:fixtureAvailable=1GB
+        $fixture=New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot (Join-Path $TestDrive 'space target Пример') -AgentTarget kilocode
+        $fixture.claim.status|Should -BeExactly 'ready'
+        $fixture.claim.schemaVersion|Should -Be 2
+        $fixture.claim.workflowCommonGit|Should -BeExactly (Get-RepositoryCommonGitDirectory -RepositoryRoot $RepoRoot)
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'qualification-create-infobase'}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-restore'}
+    }
     It 'rejects an unpublished baseline before the installed snapshot or database owner runs' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'unpublished baseline')
         foreach($root in @($seed.project,$seed.branch)) {

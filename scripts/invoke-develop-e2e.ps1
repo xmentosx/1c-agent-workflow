@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$CandidateRoot,
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
@@ -16,6 +16,11 @@ $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "develop-configuration-rejection.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
+. (Join-Path $PSScriptRoot 'source-delivery-process.ps1')
+. (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-storage.ps1')
 $utf8 = [Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
@@ -124,10 +129,7 @@ function Assert-DevelopAiRulesSourceAvailable {
 
 function Stop-DevelopProcessTree {
     param([object]$Process)
-    if (-not $Process -or $Process.HasExited) { return }
-    $processId = [int]$Process.Id
-    if ($env:OS -eq "Windows_NT") { & taskkill.exe /PID $processId /T /F *> $null } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
-    try { $Process.WaitForExit() } catch {}
+    Stop-DeliveryProcessTree -Process $Process
 }
 
 function Invoke-DevelopTimedOperation {
@@ -178,29 +180,36 @@ function Invoke-DevelopProcess {
     $argumentLine = @($parts | ForEach-Object { ConvertTo-DevelopProcessArgument -Value ([string]$_) }) -join " "
     $started = [DateTime]::UtcNow
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentLine -WorkingDirectory $WorkingRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $job = Start-DeliveryProcess -ArgumentList $argumentLine -WorkingDirectory $WorkingRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+    $process = $job.process
     [void]$process.Handle
     $lastLength = -1L
     $lastProgress = [DateTime]::UtcNow
     $lastHeartbeat = [DateTime]::UtcNow
+    $errorText=''
     try {
         while (-not $process.WaitForExit(5000)) {
             $length = 0L
             foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
             if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
-            if (([DateTime]::UtcNow - $lastHeartbeat).TotalSeconds -ge 30) { [Console]::Out.WriteLine("ITL develop E2E step '$Name': elapsed=$([int]$watch.Elapsed.TotalSeconds)s; noProgress=$([int]([DateTime]::UtcNow - $lastProgress).TotalSeconds)s."); $lastHeartbeat = [DateTime]::UtcNow }
+            if (([DateTime]::UtcNow - $lastHeartbeat).TotalSeconds -ge 30) {
+                Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $outputRoot ($Name+'.disk-full.json')) -VolumePaths @($WorkingRoot,[IO.Path]::GetTempPath()) -InspectWindows
+                [Console]::Out.WriteLine("ITL develop E2E step '$Name': elapsed=$([int]$watch.Elapsed.TotalSeconds)s; noProgress=$([int]([DateTime]::UtcNow - $lastProgress).TotalSeconds)s."); $lastHeartbeat = [DateTime]::UtcNow
+            }
             if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
-                Stop-DevelopProcessTree -Process $process
                 throw "$Name exceeded its bounded runtime or made no progress for 15 minutes."
             }
         }
         $process.WaitForExit(); $process.Refresh()
+        Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $outputRoot ($Name+'.disk-full.json')) -VolumePaths @($WorkingRoot,[IO.Path]::GetTempPath())
         $status = if ([int]$process.ExitCode -eq 0) { "passed" } else { "failed" }
         $steps.Add([ordered]@{ name = $Name; status = $status; startedAt = $started.ToString("o"); durationMs = [int64]$watch.ElapsedMilliseconds; command = $argumentLine; stdout = $stdout; stderr = $stderr }) | Out-Null
         if ([int]$process.ExitCode -ne 0 -and -not $AllowFailure) { throw "$Name failed with exit code $($process.ExitCode). See $stdout and $stderr" }
         return [pscustomobject]@{ exitCode = [int]$process.ExitCode; stdout = $stdout; stderr = $stderr }
-    } finally {
-        $watch.Stop()
+    } catch {$errorText=$_.Exception.Message;throw}
+    finally {
+        try {Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $process -PriorErrorMessage $errorText}
+        finally {$process.Dispose();$watch.Stop()}
     }
 }
 
@@ -568,6 +577,9 @@ $fixtureDisposal = $null
 $freshSourceFixturePath = Join-Path $outputRoot 'fresh-source-fixture.json'
 $freshSourceFixture = $null
 $freshSourceFixtureDisposal = $null
+$fixtureUse = $null
+$freshFixtureUse = $null
+$ownedFreshSource = $null
 try {
     if ($null -ne $artifactBinding) {
         $env:VANESSA_MCP_CLIENT_CFE_PATH = [string]$artifactBinding.paths.VANESSA_MCP_CLIENT_CFE_PATH
@@ -583,6 +595,7 @@ try {
             -Arguments @('-Action','Prepare','-Phase','Develop','-ProjectRoot',$seedProjectRoot,'-CandidateRoot',$CandidateRoot,
                 '-AiRulesSource',$AiRulesSource,'-FreshProjectsRoot',$FreshProjectsRoot,'-AgentTarget',$AgentTarget,'-OutputPath',$fixturePath) -TimeoutSeconds 9000)
         $qualificationFixture = Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $fixtureUse = Open-SourceE2EFixtureUse -ProjectRoot $qualificationFixture.projectRoot
         $ProjectRoot = [IO.Path]::GetFullPath([string]$qualificationFixture.projectRoot)
     }
     Assert-DevelopAiRulesSourceAvailable -StandRoot $ProjectRoot -SourceRoot $AiRulesSource
@@ -675,7 +688,8 @@ try {
             [void](Invoke-DevelopProcess -Name 'fresh-source-fixture-prepare' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
                 '-Action','Prepare','-Phase','Develop','-ProjectRoot',$freshTemplateRoot,'-CandidateRoot',$CandidateRoot,
                 '-AiRulesSource',$AiRulesSource,'-FreshProjectsRoot',$FreshProjectsRoot,'-AgentTarget',$AgentTarget,'-OutputPath',$freshSourceFixturePath) -TimeoutSeconds 9000)
-            $ownedFreshSource = Get-Content -LiteralPath $freshSourceFixturePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $script:ownedFreshSource = Get-Content -LiteralPath $freshSourceFixturePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $script:freshFixtureUse = Open-SourceE2EFixtureUse -ProjectRoot $ownedFreshSource.projectRoot
             $freshTemplateRoot = [string]$ownedFreshSource.projectRoot
             New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
             if ($freshRoot -notmatch '\s' -or $freshRoot -notmatch '[^\x00-\x7F]') {
@@ -697,6 +711,9 @@ try {
         })
         $branchName = "develop-golden"
         $freshBranchRoot = Invoke-DevelopTimedOperation -Timings $freshTimings -Name "create-dev-branch" -Operation {
+            Assert-SourceE2ESpace -Operation 'new-dev-branch and Enterprise normalization' -Allocations @(
+                @{path=$freshRoot;bytes=[int64]$ownedFreshSource.claim.databaseBytes},
+                @{path=[IO.Path]::GetTempPath();bytes=[int64]$ownedFreshSource.claim.databaseBytes})
             [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
             Get-BranchWorktree -Root $freshRoot -Name $branchName
         }
@@ -826,6 +843,34 @@ try {
         error = $failure
     }
     [IO.File]::WriteAllText($OutputPath, (($payload | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    foreach($entry in $disposalEntries){
+        if($requestedJourneys -notcontains $entry.journey -or -not (Test-Path -LiteralPath $entry.receipt -PathType Leaf)){continue}
+        try {
+            $receipt=Read-QualificationFixtureJson -Path $entry.receipt
+            $use=if($entry.journey -eq 'upgrade'){$fixtureUse}else{$freshFixtureUse}
+            Write-SourceE2EFixtureTerminal -Fixture $receipt -CandidateRoot $CandidateRoot -ReportPath $OutputPath -UseLease $use
+        } catch {Write-Warning "Fixture terminal marker deferred: $($_.Exception.Message)"}
+    }
+    foreach($use in @($fixtureUse,$freshFixtureUse)){if($use){$use.Dispose()}}
+    $copyCleanup=[ordered]@{}
+    foreach($entry in $disposalEntries){
+        if($requestedJourneys -notcontains $entry.journey -or -not (Test-Path -LiteralPath $entry.receipt -PathType Leaf)){continue}
+        $ownedFixture=$null
+        try {
+            $ownedFixture=Read-QualificationFixtureJson -Path $entry.receipt
+            $diagnostics=Join-Path $outputRoot ('fixture-diagnostics/'+$entry.journey)
+            $copyCleanup[$entry.journey]=Remove-SourceE2EFixtureCopy -Fixture $ownedFixture -CandidateRoot $CandidateRoot -ReportPath $OutputPath -DiagnosticRoot $diagnostics
+        } catch {
+            $copyError=$_.Exception.Message;$continuation=$null
+            if($ownedFixture -and $ownedFixture.PSObject.Properties['projectRoot']){$continuation=@{
+                program='powershell.exe';arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','DisposeCopy','-ProjectRoot',[string]$ownedFixture.projectRoot,'-CandidateRoot',$CandidateRoot,'-FixtureReceiptPath',[string]$entry.receipt,'-TerminalReportPath',$OutputPath,'-DiagnosticRoot',(Join-Path $outputRoot ('fixture-diagnostics/'+$entry.journey)),'-OutputPath',(Join-Path $outputRoot ($entry.journey+'-copy-cleanup.json')))
+            }}
+            $copyCleanup[$entry.journey]=@{status='retained';error=$copyError;nextAction='Complete the recorded fixture database-owner disposal if needed; close the copy owner, then run continuation.program with continuation.arguments. Missing/legacy/Release receipts require their original owner.';continuation=$continuation}
+            Write-Warning "Develop fixture copy retained: $copyError"
+        }
+    }
+    $payload['fixtureCopyCleanup']=$copyCleanup
+    Write-QualificationFixtureJson -Path $OutputPath -Value $payload
 }
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }
