@@ -4081,7 +4081,91 @@ function ConvertTo-ConfigRepositoryTransferPath {
     }
 }
 
-function Get-DevBranchResultTransferBaseCommit {
+function New-DevBranchResultTransferBaseline {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][ValidateSet('reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite', 'fork-dev-branch')][string]$Operation,
+        [Parameter(Mandatory = $true)][string]$BaseCommit,
+        [string]$CompletedHead = (Get-CurrentCommit),
+        [string]$CompletedAt = (Get-Date).ToString('o')
+    )
+    $stateObject = if ($State -is [Collections.IDictionary]) { [pscustomobject]$State } else { $State }
+    $root = [string](Get-StateValue -State $stateObject -Name 'worktreePath' -Default $script:ProjectRoot)
+    if (-not $root) { $root = $script:ProjectRoot }
+    return [ordered]@{
+        schemaVersion = 1
+        status = 'complete'
+        operation = $Operation
+        commit = $BaseCommit
+        completedHead = $CompletedHead
+        completedAt = $CompletedAt
+        branch = [string](Get-StateValue -State $stateObject -Name 'devBranch' -Default '')
+        worktreePath = Get-FullPathNormalized $root
+    }
+}
+
+function Get-DevBranchResultTransferBaseline {
+    param([AllowNull()][object]$State = $null)
+
+    if ($null -ne $State) {
+        $stateObject = if ($State -is [Collections.IDictionary]) { [pscustomobject]$State } else { $State }
+        Assert-DevelopmentBranchWorktreeContext -State $stateObject -Operation 'configuration repository transfer baseline'
+        $stateValues = ConvertTo-Agent1cHashtable -Object $State
+        if ($stateValues.Contains('resultTransferBaseline')) {
+            $continuation = 'Repeat the original /itl-refresh or /itl-reset-branch recovery command in its owning worktree; for a fork, resume the original /itl-fork request. Then retry the original transfer operation. Do not edit the proof or substitute merge-base.'
+            try {
+                $proof = $stateValues['resultTransferBaseline']
+                $values = ConvertTo-Agent1cHashtable -Object $proof
+                if ($null -eq $proof -or $values.schemaVersion -ne 1 -or $values.status -cne 'complete' -or
+                    $values.operation -cnotin @('reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite', 'fork-dev-branch')) {
+                    throw 'missing, unsupported or incomplete lifecycle proof'
+                }
+                $branch = Get-CurrentBranch
+                $root = Get-FullPathNormalized $script:ProjectRoot
+                if ([string]$values.branch -cne $branch -or [string]$values.branch -cne [string]$stateValues.devBranch -or
+                    -not $values.worktreePath -or (Get-FullPathNormalized ([string]$values.worktreePath)) -ine $root) {
+                    throw 'foreign lifecycle branch/worktree proof'
+                }
+                if ([string]$stateValues['initializationStatus'] -and [string]$stateValues['initializationStatus'] -cne 'ready') {
+                    throw 'lifecycle transition is not complete'
+                }
+                $at = [DateTimeOffset]::MinValue
+                if (-not [DateTimeOffset]::TryParse([string]$values.completedAt, [ref]$at)) { throw 'invalid completion time' }
+                foreach ($commit in @([string]$values.commit, [string]$values.completedHead)) {
+                    if ($commit -cnotmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $commit)) { throw "missing or invalid commit '$commit'" }
+                }
+                $head = Get-CurrentCommit
+                if (-not (Test-GitCommitIsAncestor -Ancestor ([string]$values.completedHead) -Descendant $head)) {
+                    throw 'completed lifecycle head is not in the current branch history'
+                }
+                if ($values.operation -ceq 'reset-dev-branch') {
+                    if ([string]$stateValues.resetStatus -cne 'complete' -or
+                        [string]$stateValues.resetMasterCommit -cne [string]$values.commit -or
+                        [string]$stateValues.resetNewHead -cne [string]$values.completedHead -or
+                        [string]$stateValues.resetCompletedAt -cne [string]$values.completedAt -or
+                        (Get-GitOutput @('rev-parse', "$($values.commit)^{tree}")).Trim() -cne (Get-GitOutput @('rev-parse', "$($values.completedHead)^{tree}")).Trim()) {
+                        throw 'reset completion/target/tree contradicts its proof'
+                    }
+                } else {
+                    if (-not (Test-GitCommitIsAncestor -Ancestor ([string]$values.commit) -Descendant ([string]$values.completedHead))) {
+                        throw 'lifecycle target is not in the completed head history'
+                    }
+                    if ($values.operation -ceq 'fork-dev-branch') {
+                        if (-not $stateValues.forkId -or [string]$stateValues.forkedFromCommit -cne [string]$values.commit) { throw 'fork source contradicts its proof' }
+                    } elseif ([string]$stateValues.lastRefreshMasterCommit -cne [string]$values.commit -or
+                        [string]$stateValues.lastRefreshAt -cne [string]$values.completedAt) {
+                        throw 'refresh completion/target contradicts its proof'
+                    }
+                }
+                return [pscustomobject]@{ commit = [string]$values.commit; provenance = ('lifecycle:' + [string]$values.operation); completedAt = [string]$values.completedAt }
+            } catch {
+                throw "DEV_BRANCH_TRANSFER_BASELINE_INVALID: $($_.Exception.Message). $continuation"
+            }
+        }
+    }
+
+    # No completed lifecycle proof was recorded by an older helper. Do not
+    # infer one from load commits or partially published refresh/reset fields.
     $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
     if (-not $masterCommit) {
         throw "export-dev-branch-result could not resolve the local master commit for configuration repository transfer reporting."
@@ -4090,13 +4174,19 @@ function Get-DevBranchResultTransferBaseCommit {
     if (-not $baseCommit) {
         throw "export-dev-branch-result could not resolve merge-base between HEAD and local master for configuration repository transfer reporting."
     }
-    return $baseCommit
+    return [pscustomobject]@{ commit = $baseCommit; provenance = 'legacy:merge-base-master-no-lifecycle-proof'; completedAt = '' }
+}
+
+function Get-DevBranchResultTransferBaseCommit {
+    param([AllowNull()][object]$State = $null)
+    return [string](Get-DevBranchResultTransferBaseline -State $State).commit
 }
 
 function Get-ConfigRepositoryTransferPlan {
     param(
         [string]$ExportPath,
         [string]$BaseCommit = "",
+        [AllowNull()][object]$State = $null,
         [switch]$ForRepositoryLock
     )
 
@@ -4104,8 +4194,11 @@ function Get-ConfigRepositoryTransferPlan {
     if (-not $normalizedExportPath) {
         throw "export-dev-branch-result cannot build a configuration repository transfer plan without an export path."
     }
+    $baseProvenance = 'explicit-base'
     if (-not $BaseCommit) {
-        $BaseCommit = Get-DevBranchResultTransferBaseCommit
+        $baseline = Get-DevBranchResultTransferBaseline -State $State
+        $BaseCommit = [string]$baseline.commit
+        $baseProvenance = [string]$baseline.provenance
     }
 
     $tracked = @(Get-GitPathList -Arguments @(
@@ -4159,6 +4252,7 @@ function Get-ConfigRepositoryTransferPlan {
     )
     $plan = [pscustomobject]@{
         baseCommit = $BaseCommit
+        baseProvenance = $baseProvenance
         exportPath = $normalizedExportPath
         items = $items
         unresolvedPaths = @($unresolved | Sort-Object -Unique)
@@ -4287,7 +4381,8 @@ function Add-ConfigRepositoryTransferPlanRunUserReportLines {
     $unresolved = @($Plan.unresolvedPaths)
     $Lines.Add("")
     $Lines.Add("## Перенос в хранилище конфигурации")
-    Add-RunUserReportLine -Lines $Lines -Label "База сравнения (merge-base master)" -Value ([string]$Plan.baseCommit)
+    Add-RunUserReportLine -Lines $Lines -Label "База сравнения" -Value ([string]$Plan.baseCommit)
+    Add-RunUserReportLine -Lines $Lines -Label "Происхождение базы" -Value ([string](Get-StateValue -State $Plan -Name 'baseProvenance' -Default 'legacy:merge-base-master-no-lifecycle-proof'))
     if (($full.Count + $partial.Count + $unresolved.Count) -eq 0) {
         Add-RunUserReportLine -Lines $Lines -Label "Объекты для переноса" -Value "<нет>"
         return
@@ -13489,6 +13584,7 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
         lastRefreshRecoveryOperation = $RecoveryOperation
         lastRefreshRecoveredHead = $head
     }
+    $updates['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $State -Operation $transaction.operation -BaseCommit $transaction.targetCommit -CompletedHead $head -CompletedAt $updates.lastRefreshAt
     Add-PendingDevBranchMergeClearUpdates -Updates $updates
     Update-DevBranchState -State $State -Updates $updates
     Write-Host "Completed pending $($transaction.operation) after fresh complete verification at descendant HEAD: $head"
@@ -14428,7 +14524,7 @@ function Remove-DevBranchForkTransientState {
 
     foreach ($key in @($State.Keys)) {
         $name = [string]$key
-        if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath") -or
+        if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath", "resultTransferBaseline") -or
             $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|vanessaServiceInfoBase|dataMcp|vibecoding1c)' -or
             $name -match '^(?:reset|pendingMerge|pendingRefresh|lifecycleMerge|lastResult|finalResult|close|eventLogPendingCursor)' -or
             $name -match '(?i)(?:pid|pids|port|ports|leasetoken|lockpath|locked)$') {
@@ -15324,6 +15420,7 @@ function Initialize-ForkedDevBranchRuntime {
             $finalHash["lastVerificationStaleAt"] = (Get-Date).ToString("o")
             $finalHash["lastVerificationStaleReason"] = [string]$verificationDecision.reason
         }
+        $finalHash['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $finalHash -Operation 'fork-dev-branch' -BaseCommit ([string]$Snapshot.sourceCommit)
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $finalHash -Status "ready"
         $state = Read-DevBranchStateFile -Path $statePath
         Ensure-DevBranchEventLogPendingCursor -State $state -Reason "fork-dev-branch" | Out-Null
@@ -17721,7 +17818,7 @@ function Lock-ConfigRepositoryObjects {
     }
 
     Repair-OneCSourceLineEndings | Out-Null
-    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -ForRepositoryLock
+    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -State $state -ForRepositoryLock
     $unresolved = @($plan.unresolvedPaths)
     if ($unresolved.Count -gt 0) {
         throw "LOCK_CONFIG_REPOSITORY_UNRESOLVED_PATHS: $($unresolved -join ', ')"
@@ -17730,6 +17827,7 @@ function Lock-ConfigRepositoryObjects {
     $report = [System.Collections.Generic.List[string]]::new()
     $report.Add("## Захват объектов в хранилище")
     Add-RunUserReportLine -Lines $report -Label "База сравнения" -Value ([string]$plan.baseCommit)
+    Add-RunUserReportLine -Lines $report -Label "Происхождение базы" -Value ([string](Get-StateValue -State $plan -Name 'baseProvenance' -Default 'legacy:merge-base-master-no-lifecycle-proof'))
     if ($items.Count -eq 0) {
         Add-RunUserReportLine -Lines $report -Label "Результат" -Value "изменённых объектов нет; захват не выполнялся"
         Write-AndSetRunUserReport -Lines $report
@@ -17882,7 +17980,7 @@ function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
                 -DesignerArgs ((New-RepositoryConnectionArgs) + @("/ConfigurationRepositoryCreate")) | Out-Null
         }
 
-        $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
+        $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -State $state
         if (@($plan.unresolvedPaths).Count -gt 0) {
             throw "RELEASE_E2E_CONFIG_REPOSITORY_UNRESOLVED: $(@($plan.unresolvedPaths) -join ', ')"
         }
@@ -18470,6 +18568,7 @@ function Reset-DevBranch {
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
             $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
             Add-PendingDevBranchMergeClearUpdates -Updates $completion
             Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates $completion
         }
@@ -18621,6 +18720,7 @@ function Invoke-RefreshDevBranchCore {
         $updates["lastRefreshAt"] = (Get-Date).ToString("o")
         $updates["lastRefreshMasterCommit"] = $targetMasterCommit
         $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
+        $updates['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation $OperationName -BaseCommit $targetMasterCommit -CompletedAt $updates.lastRefreshAt
         $updates["verificationClassificationStatus"] = $(if ($verificationClassificationInventory.classificationComplete) { "ready" } else { "required" })
         $updates["verificationClassificationIssues"] = @($verificationClassificationInventory.classificationIssues)
         $updates["verificationClassificationInventoryPath"] = Get-VerificationClassificationInventoryPath
@@ -19773,7 +19873,7 @@ function Export-DevBranchResult {
 
     $kind = Get-DevBranchKind -State $state
     $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
-    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath
+    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath -State $state
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $loadExportPath)
     try {
     if ($kind -eq "extension") {

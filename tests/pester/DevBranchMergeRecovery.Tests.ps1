@@ -1274,6 +1274,7 @@
                     pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
                     pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
                     lastVerificationStatus = "failed"; lastVerificationEvidenceKind = $EvidenceKind
+                    resultTransferBaseline = @{ schemaVersion = 0; status = 'damaged-prior-proof' }
                     lastVerifiedCommit = $Fixture.head; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
                     configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
                     enterpriseNormalizationStatus = "passed"
@@ -1316,7 +1317,9 @@
                     lastVerifiedLoadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $script:MergeState
                 }
                 $freshBeforeCompletion = (Get-VerificationState -State $script:MergeState).isFreshPassed
+                { Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $script:MergeState } | Should -Throw '*DEV_BRANCH_TRANSFER_BASELINE_INVALID*'
                 $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
+                $continuedTransfer = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $script:MergeState
                 [pscustomobject]@{
                     failureStatus = $failureStatus
                     postMergeTarget = $postMerge.targetCommit
@@ -1332,6 +1335,8 @@
                     refreshMode = Get-StateValue -State $script:MergeState -Name 'lastRefreshMode' -Default $null
                     recoveryOperation = Get-StateValue -State $script:MergeState -Name 'lastRefreshRecoveryOperation' -Default $null
                     recoveredHead = Get-StateValue -State $script:MergeState -Name 'lastRefreshRecoveredHead' -Default $null
+                    transferBaseline = Get-StateValue -State $script:MergeState -Name 'resultTransferBaseline' -Default $null
+                    continuedTransferBase = $continuedTransfer.baseCommit
                     currentHead = Get-CurrentCommit
                 }
             } $fixture $Checkpoint $Operation $EvidenceKind
@@ -1353,6 +1358,11 @@
             $result.refreshMode | Should -Be $(if ($Operation -eq 'refresh-dev-branch') { 'full' } else { 'lite' })
             $result.recoveryOperation | Should -Be "check-dev-branch"
             $result.recoveredHead | Should -Be $fixture.head
+            $result.transferBaseline.commit | Should -Be $fixture.targetCommit
+            $result.transferBaseline.completedHead | Should -Be $fixture.head
+            $result.transferBaseline.operation | Should -Be $Operation
+            $result.transferBaseline.status | Should -Be 'complete'
+            $result.continuedTransferBase | Should -Be $fixture.targetCommit -Because 'the original transfer continues after lifecycle-owned recovery replaces the damaged proof'
             $result.currentHead | Should -Be $fixture.head
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue

@@ -6836,3 +6836,205 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 }
+
+Describe 'Completed lifecycle transfer baseline' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'DevBranchLifecycleSupport.ps1')
+        function New-TransferBaselineRepository {
+            param($Root)
+            [void][IO.Directory]::CreateDirectory($Root)
+            [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".agent-1c/`n", [Text.Encoding]::ASCII)
+            foreach ($name in @('Первый модуль', 'Второй модуль')) {
+                $directory = Join-Path $Root "src/cf/CommonModules/$name/Ext"
+                [void][IO.Directory]::CreateDirectory($directory)
+                [IO.File]::WriteAllText((Join-Path $directory 'Module.bsl'), 'initial', [Text.Encoding]::UTF8)
+            }
+            & git -C $Root init --quiet
+            & git -C $Root config user.email test@example.com
+            & git -C $Root config user.name Fixture
+            & git -C $Root config core.autocrlf false
+            & git -C $Root add .
+            & git -C $Root commit --quiet -m initial
+            & git -C $Root branch -M master
+            $old = (& git -C $Root rev-parse HEAD).Trim()
+            & git -C $Root checkout --quiet -b itldev/transfer-baseline
+            [IO.File]::WriteAllText((Join-Path $Root 'src/cf/CommonModules/Первый модуль/Ext/Module.bsl'), 'discarded old task')
+            & git -C $Root add .
+            & git -C $Root commit --quiet -m old-task
+            & git -C $Root checkout --quiet master
+            [IO.File]::WriteAllText((Join-Path $Root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'new master')
+            & git -C $Root add .
+            & git -C $Root commit --quiet -m master-update
+            $master = (& git -C $Root rev-parse HEAD).Trim()
+            & git -C $Root checkout --quiet itldev/transfer-baseline
+            return [pscustomobject]@{ root=$Root; old=$old; master=$master }
+        }
+        function New-TransferResetState {
+            param($Fixture, $Head)
+            return [pscustomobject]@{
+                devBranch='itldev/transfer-baseline'; createdWithWorktree=$true; worktreePath=$Fixture.root
+                initializationStatus='ready'; resetStatus='complete'; resetMasterCommit=$Fixture.master
+                resetNewHead=$Head; resetCompletedAt='2026-10-13T10:00:00Z'; resultTransferBaseline=$null
+            }
+        }
+    }
+
+    It 'uses the completed reset tree for both consumers and retains two partial modules after own commits and master movement' {
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive 'Два модуля после reset с пробелом')
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            function Get-MasterBranch { 'master' }
+            $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $fixture.master
+            $state = New-TransferResetState $fixture $resetHead
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation reset-dev-branch -BaseCommit $fixture.master -CompletedHead $resetHead -CompletedAt $state.resetCompletedAt
+            (Get-GitOutput @('merge-base','HEAD','master')).Trim() | Should -Be $fixture.old
+            $empty = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state
+            @($empty.items).Count | Should -Be 0
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Первый модуль/Ext/Module.bsl'), 'own committed change')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','own-change')
+            $state | Add-Member lastConfigBaseUpdatedCommit (Get-CurrentCommit)
+            Invoke-Git @('update-ref','refs/heads/master',(Get-CurrentCommit))
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'own staged change')
+            Invoke-Git @('add','src/cf')
+            $result = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state
+            $locking = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state -ForRepositoryLock
+            $result.baseCommit | Should -Be $fixture.master
+            $locking.baseCommit | Should -Be $result.baseCommit
+            $result.baseProvenance | Should -Be 'lifecycle:reset-dev-branch'
+            @($result.items).Count | Should -Be 2
+            @($result.items | Where-Object scope -ne partial).Count | Should -Be 0
+            @($locking.items.name) | Should -Be @($result.items.name)
+            $report = [Collections.Generic.List[string]]::new()
+            Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $report -Plan $result
+            ($report -join "`n") | Should -Match 'lifecycle:reset-dev-branch'
+        }
+    }
+
+    It 'advances on a second completed reset and retains that baseline while the next merge is conflicted' {
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive 'Второй reset и refresh с пробелом')
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            function Get-MasterBranch { 'master' }
+            $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $fixture.master
+            $state = New-TransferResetState $fixture $resetHead
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation reset-dev-branch -BaseCommit $fixture.master -CompletedHead $resetHead -CompletedAt $state.resetCompletedAt
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Первый модуль/Ext/Module.bsl'), 'own retained')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','retained')
+            Invoke-Git @('checkout','--quiet','master')
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'second master')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','master-2')
+            $nextMaster = Get-CurrentCommit
+            Invoke-Git @('checkout','--quiet','itldev/transfer-baseline')
+            (Get-DevBranchResultTransferBaseline -State $state).commit | Should -Be $fixture.master
+            $secondHead = Set-DevBranchTreeToMasterCommit -MasterCommit $nextMaster
+            $state.resetMasterCommit=$nextMaster; $state.resetNewHead=$secondHead; $state.resetCompletedAt='2026-10-13T11:00:00Z'
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation reset-dev-branch -BaseCommit $nextMaster -CompletedHead $secondHead -CompletedAt $state.resetCompletedAt
+            (Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state).items.Count | Should -Be 0
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Первый модуль/Ext/Module.bsl'), 'own after second reset')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','own-after-second-reset')
+            Invoke-Git @('checkout','--quiet','master')
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'refresh imported')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','refresh-target')
+            $refreshTarget = Get-CurrentCommit
+            Invoke-Git @('checkout','--quiet','itldev/transfer-baseline')
+            # Tree-only resets intentionally do not create master ancestry.
+            # Retain this observed conflict; it is not a completed refresh.
+            & git -C $fixture.root merge --quiet --no-edit master *> $null
+            $LASTEXITCODE | Should -Be 1
+            (Get-GitOutput @('rev-parse','MERGE_HEAD')).Trim() | Should -Be $refreshTarget
+            @((Get-GitPathList -Arguments @('diff','--name-only','--diff-filter=U','-z'))) | Should -Be @('src/cf/CommonModules/Второй модуль/Ext/Module.bsl')
+            (Get-DevBranchResultTransferBaseline -State $state).commit | Should -Be $nextMaster
+        }
+    }
+
+    It 'excludes imported changes from a completed refresh while retaining the branch-owned module' {
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive 'Завершённый refresh с пробелом')
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            function Get-MasterBranch { 'master' }
+            # This branch has an own A edit and master has an independent B edit.
+            Invoke-Git @('merge','--quiet','--no-edit','master')
+            $state = [pscustomobject]@{
+                devBranch='itldev/transfer-baseline'; createdWithWorktree=$true; worktreePath=$fixture.root
+                initializationStatus='ready'; lastRefreshMasterCommit=$fixture.master; lastRefreshAt='2026-10-13T12:00:00Z'
+                resultTransferBaseline=$null
+            }
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation refresh-dev-branch -BaseCommit $fixture.master -CompletedAt $state.lastRefreshAt
+            $plan = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state
+            $plan.baseCommit | Should -Be $fixture.master
+            $plan.items.Count | Should -Be 1
+            $plan.items[0].name | Should -Be 'ОбщийМодуль.Первый модуль'
+        }
+    }
+
+    It 'rejects <Defect> proof without silently substituting merge-base' -TestCases @(
+        @{Defect='null'}, @{Defect='schema'}, @{Defect='incomplete'}, @{Defect='foreign branch'}, @{Defect='foreign root'},
+        @{Defect='missing commit'}, @{Defect='invalid time'}, @{Defect='wrong reset target'}, @{Defect='wrong reset head'}, @{Defect='wrong reset time'},
+        @{Defect='unrelated completed head'}, @{Defect='wrong reset tree'}
+    ) {
+        param($Defect)
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive ('Некорректный proof с пробелом '+$Defect))
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $fixture.master
+            $state = New-TransferResetState $fixture $resetHead
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation reset-dev-branch -BaseCommit $fixture.master -CompletedHead $resetHead -CompletedAt $state.resetCompletedAt
+            switch ($Defect) {
+                'null' { $state.resultTransferBaseline=$null }
+                'schema' { $state.resultTransferBaseline.schemaVersion=2 }
+                'incomplete' { $state.resultTransferBaseline.status='pending' }
+                'foreign branch' { $state.resultTransferBaseline.branch='itldev/foreign' }
+                'foreign root' { $state.resultTransferBaseline.worktreePath=Join-Path $TestDrive 'Другой root с пробелом' }
+                'missing commit' { $state.resultTransferBaseline.commit=('f'*40) }
+                'invalid time' { $state.resultTransferBaseline.completedAt='bad' }
+                'wrong reset target' { $state.resetMasterCommit=$fixture.old }
+                'wrong reset head' { $state.resetNewHead=$fixture.old }
+                'wrong reset time' { $state.resetCompletedAt='2026-10-13T13:00:00Z' }
+                'unrelated completed head' { $state.resultTransferBaseline.completedHead=$fixture.master }
+                'wrong reset tree' { $state.resultTransferBaseline.commit=$fixture.old; $state.resetMasterCommit=$fixture.old }
+            }
+            { Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state } | Should -Throw '*DEV_BRANCH_TRANSFER_BASELINE_INVALID*retry the original transfer operation*'
+        }
+    }
+
+    It 'excludes inherited changes at a completed fork and keeps its baseline after new target commits' {
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive 'Основа fork с пробелом')
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            $sourceCommit = Get-CurrentCommit
+            $state = [pscustomobject]@{
+                devBranch='itldev/transfer-baseline'; createdWithWorktree=$true; worktreePath=$fixture.root
+                initializationStatus='ready'; forkId='owned-fork'; forkedFromCommit=$sourceCommit; resultTransferBaseline=$null
+            }
+            $state.resultTransferBaseline = New-DevBranchResultTransferBaseline -State $state -Operation fork-dev-branch -BaseCommit $sourceCommit
+            (Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state).items.Count | Should -Be 0
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'target owned change')
+            Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','target-change')
+            $plan = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state
+            $plan.baseCommit | Should -Be $sourceCommit
+            $plan.baseProvenance | Should -Be 'lifecycle:fork-dev-branch'
+            $plan.items.Count | Should -Be 1
+            $plan.items[0].name | Should -Be 'ОбщийМодуль.Второй модуль'
+        }
+    }
+
+    It 'retains explicit legacy provenance without adopting load fields and allows verification of a pending refresh on the last completed proof' {
+        $fixture = New-TransferBaselineRepository (Join-Path $TestDrive 'Legacy и pending refresh с пробелом')
+        & {
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            function Get-MasterBranch { 'master' }
+            $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $fixture.master
+            $state = New-TransferResetState $fixture $resetHead
+            $state.PSObject.Properties.Remove('resultTransferBaseline')
+            $state | Add-Member lastConfigBaseUpdatedCommit $resetHead
+            $legacy = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state
+            $legacy.baseCommit | Should -Be $fixture.old
+            $legacy.baseProvenance | Should -Be 'legacy:merge-base-master-no-lifecycle-proof'
+            $state | Add-Member resultTransferBaseline (New-DevBranchResultTransferBaseline -State $state -Operation reset-dev-branch -BaseCommit $fixture.master -CompletedHead $resetHead -CompletedAt $state.resetCompletedAt)
+            $state | Add-Member pendingMergePhase merged
+            (Get-DevBranchResultTransferBaseline -State $state).commit | Should -Be $fixture.master
+            $state.resetStatus='resetting'
+            { Get-DevBranchResultTransferBaseline -State $state } | Should -Throw '*DEV_BRANCH_RESET_IN_PROGRESS*/itl-reset-branch*'
+        }
+    }
+}
