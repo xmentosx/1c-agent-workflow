@@ -25,6 +25,47 @@
 
     AfterAll { $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS = $originalLockTimeout }
 
+    It 'waits for the existing Git exclude writer and preserves Unicode rules without duplicate additions' {
+        $root = Join-Path $TestDrive 'exclude конкурентный с пробелом'
+        Initialize-LifecycleLockTestRepository -Path $root
+        $excludePath = Join-Path $root '.git/info/exclude'
+        $original = '# Пользовательское исключение без перевода строки'
+        [IO.File]::WriteAllText($excludePath, $original, [Text.UTF8Encoding]::new($false))
+        $held = [IO.File]::Open($excludePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $worker = [PowerShell]::Create()
+        $started = [Threading.ManualResetEvent]::new($false)
+        try {
+            $null = $worker.AddScript({ param($Helper, $Root, $Started)
+                $ErrorActionPreference = 'Stop'
+                . $Helper -ProjectRoot $Root -Action help *> $null
+                [void]$Started.Set()
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $Root
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $Root
+            }).AddArgument($HelperPath).AddArgument($root).AddArgument($started)
+            $async = $worker.BeginInvoke()
+            $started.WaitOne(10000) | Should -BeTrue
+            Start-Sleep -Milliseconds 150
+            $held.Dispose(); $held = $null
+            $async.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue
+            $null = $worker.EndInvoke($async)
+            @($worker.Streams.Error).Count | Should -Be 0 -Because ($worker.Streams.Error -join "`n")
+            $text = [IO.File]::ReadAllText($excludePath, [Text.Encoding]::UTF8)
+            $text.StartsWith($original + [Environment]::NewLine) | Should -BeTrue
+            @([regex]::Matches($text, '(?m)^\.agent-1c/locks/\r?$')).Count | Should -Be 1
+            @([regex]::Matches($text, '(?m)^\.agent-1c/runtime/\r?$')).Count | Should -Be 1
+            $before = [IO.File]::ReadAllBytes($excludePath)
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $root
+            }
+            [IO.File]::ReadAllBytes($excludePath) | Should -Be $before
+        } finally {
+            if ($null -ne $held) { $held.Dispose() }
+            $worker.Dispose()
+            $started.Dispose()
+        }
+    }
+
     It 'keeps the same lifecycle generation readable while its continuation publishes phases' {
         . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
         $tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('itl lifecycle состояние с пробелом '+[guid]::NewGuid().ToString('N'))

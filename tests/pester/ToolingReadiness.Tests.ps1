@@ -701,3 +701,206 @@ Describe "Named scenario repair round" {
         Should -Invoke Complete-ItlVerificationRepairSession -Times 1 -Exactly
     }
 }
+
+Describe 'repair session explicit extension' {
+    BeforeEach {
+        $script:ProjectRoot = Join-Path $TestDrive 'продолжение с пробелом'
+        New-Item -ItemType Directory -Path $script:ProjectRoot -Force | Out-Null
+        $script:extensionPath = Join-Path $script:ProjectRoot 'current.json'
+        $RepairSessionId = 'same-session'
+        $VerificationRepairMaxAttempts = 10
+        $VerificationRepairGrantSource = 'fixture: explicit user numeric grant to 10 for same-session'
+        $VerificationRepairKind = ''
+        $VanessaFeaturePath = ''
+        $VanessaFilterTags = ''
+        $VerificationTrigger = 'repair'
+        $script:extensionRecord = [pscustomobject]@{
+            schemaVersion = 1; sessionId = 'same-session'; projectRoot = $script:ProjectRoot; branch = 'itldev/branch'
+            kind = 'canonical-repair'; status = 'active'; attempts = 3; maximumAttempts = 5
+            startedAt = '2026-10-01T10:00:00Z'; updatedAt = '2026-10-02T10:00:00Z'
+            failures = @(@{ message = 'Исходная ошибка'; run = 'old-run'; hash = 'exact raw' })
+            limitExtensions = @(@{ previousMaximum = 3; maximum = 5; source = 'prior grant' })
+        }
+        Write-Utf8Text -Path $script:extensionPath -Value ($script:extensionRecord | ConvertTo-Json -Depth 10)
+        Mock Get-ItlVerificationRepairStatePath { $script:extensionPath }
+        Mock Read-DevBranchState { [pscustomobject]@{ devBranch = 'itldev/branch'; worktreePath = $script:ProjectRoot } }
+        Mock Get-CurrentBranch { 'itldev/branch' }
+        Mock Assert-DevelopmentBranchWorktreeContext {}
+        Mock Set-RunUserReport {}
+    }
+
+    It 'extends the same <Status> session and retains all existing evidence' -TestCases @(@{Status='active'}, @{Status='exhausted'}) {
+        param($Status)
+        $script:extensionRecord.status = $Status
+        if ($Status -eq 'exhausted') { $script:extensionRecord.attempts = 5 }
+        Write-Utf8Text -Path $script:extensionPath -Value ($script:extensionRecord | ConvertTo-Json -Depth 10)
+        Extend-ItlVerificationRepairSession
+        $actual = Read-Utf8Text -Path $script:extensionPath | ConvertFrom-Json
+        $actual.sessionId | Should -Be 'same-session'
+        $actual.projectRoot | Should -Be $script:ProjectRoot
+        $actual.branch | Should -Be 'itldev/branch'
+        $actual.kind | Should -Be 'canonical-repair'
+        $actual.startedAt | Should -Be '2026-10-01T10:00:00Z'
+        $actual.attempts | Should -Be $script:extensionRecord.attempts
+        $actual.maximumAttempts | Should -Be 10
+        $actual.status | Should -Be 'active'
+        $actual.failures[0].hash | Should -Be 'exact raw'
+        $actual.failures[0].message | Should -Be 'Исходная ошибка'
+        $actual.limitExtensions.Count | Should -Be 2
+        $actual.limitExtensions[0].source | Should -Be 'prior grant'
+        $actual.limitExtensions[1].source | Should -Be $VerificationRepairGrantSource
+        $actual.limitExtensions[1].previousMaximum | Should -Be 5
+        $actual.limitExtensions[1].maximum | Should -Be 10
+        Use-ItlVerificationRepairAttempt
+        $afterAttempt = Read-Utf8Text -Path $script:extensionPath | ConvertFrom-Json
+        $afterAttempt.attempts | Should -Be ($script:extensionRecord.attempts + 1)
+        $afterAttempt.failures[0].hash | Should -Be 'exact raw'
+    }
+
+    It 'does not create a second audit event or rewrite bytes for the same maximum' {
+        Extend-ItlVerificationRepairSession
+        $before = [IO.File]::ReadAllBytes($script:extensionPath)
+        Extend-ItlVerificationRepairSession
+        [IO.File]::ReadAllBytes($script:extensionPath) | Should -Be $before
+    }
+
+    It 'rejects <Case> and leaves the previous record byte-exact' -TestCases @(
+        @{Case='missing grant'; Code='GRANT_REQUIRED'}, @{Case='lower maximum'; Code='NOT_MONOTONIC'},
+        @{Case='invalid maximum'; Code='ARGUMENTS_INVALID'}, @{Case='foreign session'; Code='SCOPE_MISMATCH'},
+        @{Case='foreign branch'; Code='SCOPE_MISMATCH'}, @{Case='foreign project'; Code='SCOPE_MISMATCH'},
+        @{Case='passed'; Code='TERMINAL'}, @{Case='cancelled'; Code='TERMINAL'}, @{Case='corrupt attempts'; Code='STATE_INVALID'},
+        @{Case='contradictory exhausted'; Code='STATE_INVALID'}, @{Case='changed kind'; Code='SCOPE_CHANGED'},
+        @{Case='changed tags'; Code='SCOPE_CHANGED'}, @{Case='malformed history'; Code='HISTORY_INVALID'}
+    ) {
+        param($Case, $Code)
+        switch ($Case) {
+            'missing grant' { $VerificationRepairGrantSource = '' }
+            'lower maximum' { $VerificationRepairMaxAttempts = 4 }
+            'invalid maximum' { $VerificationRepairMaxAttempts = 101 }
+            'foreign session' { $RepairSessionId = 'another-session' }
+            'foreign branch' { $script:extensionRecord.branch = 'itldev/other' }
+            'foreign project' { $script:extensionRecord.projectRoot = Join-Path $TestDrive 'other target' }
+            'passed' { $script:extensionRecord.status = 'passed' }
+            'cancelled' { $script:extensionRecord.status = 'cancelled' }
+            'corrupt attempts' { $script:extensionRecord.attempts = 6 }
+            'contradictory exhausted' { $script:extensionRecord.status = 'exhausted' }
+            'changed kind' { $VerificationRepairKind = 'scenario-loop' }
+            'changed tags' { $VanessaFilterTags = '@other-scope' }
+            'malformed history' { $script:extensionRecord.limitExtensions = 'retained malformed evidence' }
+        }
+        Write-Utf8Text -Path $script:extensionPath -Value ($script:extensionRecord | ConvertTo-Json -Depth 10)
+        $before = [IO.File]::ReadAllBytes($script:extensionPath)
+        { Extend-ItlVerificationRepairSession } | Should -Throw ("*ITL_VERIFICATION_REPAIR_EXTENSION_${Code}*")
+        [IO.File]::ReadAllBytes($script:extensionPath) | Should -Be $before
+    }
+
+    It 'keeps the prior state if atomic persistence fails' {
+        $before = [IO.File]::ReadAllBytes($script:extensionPath)
+        Mock Write-Utf8TextAtomic { throw 'Primary write failure' }
+        { Extend-ItlVerificationRepairSession } | Should -Throw '*Primary write failure*'
+        [IO.File]::ReadAllBytes($script:extensionPath) | Should -Be $before
+    }
+
+    It 'uses the existing lifecycle lock for the explicit mutation action' {
+        Test-Agent1cActionRequiresLifecycleLock -RequestedAction 'extend-verification-repair' | Should -BeTrue
+    }
+
+    It 'preserves the same explicit grant and session in fresh-helper arguments' {
+        $Action = 'extend-verification-repair'
+        $VerificationRepairGrantSource = 'fixture: разрешено 10 попыток для той же сессии'
+        $arguments = @(Get-Agent1cReexecArguments)
+        $sourceIndex = [Array]::IndexOf($arguments, '-VerificationRepairGrantSource')
+        $sourceIndex | Should -BeGreaterOrEqual 0
+        $arguments[$sourceIndex + 1] | Should -BeExactly $VerificationRepairGrantSource
+        $arguments[[Array]::IndexOf($arguments, '-RepairSessionId') + 1] | Should -BeExactly 'same-session'
+        $arguments[[Array]::IndexOf($arguments, '-VerificationRepairMaxAttempts') + 1] | Should -Be 10
+    }
+
+    It 'extends a legacy session without history and keeps the technical maximum at 100' {
+        $script:extensionRecord.PSObject.Properties.Remove('limitExtensions')
+        $VerificationRepairMaxAttempts = 100
+        Write-Utf8Text -Path $script:extensionPath -Value ($script:extensionRecord | ConvertTo-Json -Depth 10)
+        Extend-ItlVerificationRepairSession
+        $actual = Read-Utf8Text -Path $script:extensionPath | ConvertFrom-Json
+        $actual.maximumAttempts | Should -Be 100
+        $actual.limitExtensions.Count | Should -Be 1
+        $actual.attempts | Should -Be 3
+        $actual.failures[0].hash | Should -Be 'exact raw'
+    }
+
+    It 'does not reactivate exhausted state for an unchanged maximum' {
+        $script:extensionRecord.status = 'exhausted'
+        $script:extensionRecord.attempts = 5
+        $VerificationRepairMaxAttempts = 5
+        Write-Utf8Text -Path $script:extensionPath -Value ($script:extensionRecord | ConvertTo-Json -Depth 10)
+        $before = [IO.File]::ReadAllBytes($script:extensionPath)
+        Extend-ItlVerificationRepairSession
+        [IO.File]::ReadAllBytes($script:extensionPath) | Should -Be $before
+        { Get-ItlMatchingVerificationRepairSession } | Should -Throw '*terminal*'
+    }
+}
+
+Describe 'repair extension normal wrapper integration' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'SourceDelivery.TestSupport.ps1')
+        foreach ($definition in Get-DeliveryFunctionDefinitions @('Start-DeliveryProcess','Stop-DeliveryProcessJobAndWait','Close-DeliveryProcessJob','Stop-DeliveryProcessTree','Test-DeliveryProcessCreationIdentity','ConvertTo-DeliveryNativeArgument')) {
+            Invoke-Expression $definition.Extent.Text
+        }
+    }
+
+    It 'serializes two explicit extensions through the actual wrapper and preserves the same session into its next attempt' {
+        $root = Join-Path $TestDrive 'native продолжение с пробелом'
+        $repairPath = Join-Path $root '.agent-1c/verification-repair/current.json'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $repairPath), (Join-Path $root '.agent-1c/dev-branches') -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/`n", [Text.Encoding]::ASCII)
+        & git -C $root init *> $null
+        & git -C $root config user.email fixture@example.com
+        & git -C $root config user.name Fixture
+        & git -C $root add .gitignore
+        & git -C $root commit -m fixture *> $null
+        & git -C $root branch -M itldev/branch
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
+        $state = @{ devBranchName='branch'; safeDevBranchName='branch'; devBranch='itldev/branch'; worktreePath=$root; stateProjectRoot=$root; createdWithWorktree=$true; status='ready' }
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dev-branches/branch.json'), ($state | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $record = @{ schemaVersion=1; sessionId='native-session'; projectRoot=$root; branch='itldev/branch'; kind='canonical-repair'; status='exhausted'; attempts=5; maximumAttempts=5; startedAt='2026-10-01T10:00:00Z'; updatedAt='2026-10-02T10:00:00Z'; failures=@(@{ message='Исходный отказ'; hash='original raw' }) }
+        [IO.File]::WriteAllText($repairPath, ($record | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $runner = Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'
+        $grant = 'fixture: пользователь разрешил 10 попыток для native-session'
+        $argv = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$runner,'--','-Action','extend-verification-repair','-RepairSessionId','native-session','-VerificationRepairMaxAttempts','10','-VerificationRepairGrantSource',$grant)
+        $arguments = ($argv | ForEach-Object { ConvertTo-DeliveryNativeArgument ([string]$_) }) -join ' '
+        $started = @()
+        try {
+            foreach ($index in 1..2) {
+                $out = Join-Path $TestDrive "extension-$index.out"
+                $err = Join-Path $TestDrive "extension-$index.err"
+                $child = Start-DeliveryProcess -ArgumentList $arguments -WorkingDirectory $root -StandardOutputPath $out -StandardErrorPath $err
+                $started += [pscustomobject]@{ child=$child; out=$out; err=$err }
+            }
+            foreach ($item in $started) {
+                $item.child.process.WaitForExit(60000) | Should -BeTrue
+                $item.child.process.ExitCode | Should -Be 0 -Because ([IO.File]::ReadAllText($item.err, [Text.Encoding]::UTF8) + [IO.File]::ReadAllText($item.out, [Text.Encoding]::UTF8))
+            }
+            $actual = [IO.File]::ReadAllText($repairPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $actual.sessionId | Should -Be 'native-session'
+            $actual.maximumAttempts | Should -Be 10
+            $actual.attempts | Should -Be 5
+            $actual.limitExtensions.Count | Should -Be 1
+            $actual.limitExtensions[0].source | Should -Be $grant
+            $actual.failures[0].hash | Should -Be 'original raw'
+            & {
+                . $context.HelperPath -ProjectRoot $root -Action help *> $null
+                $VerificationTrigger = 'repair'; $RepairSessionId = 'native-session'
+                Use-ItlVerificationRepairAttempt
+            }
+            $continued = [IO.File]::ReadAllText($repairPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $continued.attempts | Should -Be 6
+            $continued.sessionId | Should -Be 'native-session'
+            $continued.failures[0].message | Should -Be 'Исходный отказ'
+        } finally {
+            foreach ($item in $started) {
+                try { [void](Stop-DeliveryProcessJobAndWait -JobHandle $item.child.jobHandle -Process $item.child.process -TimeoutMilliseconds 5000) }
+                finally { Close-DeliveryProcessJob -JobHandle $item.child.jobHandle -Process $item.child.process; $item.child.process.Dispose() }
+            }
+        }
+    }
+}

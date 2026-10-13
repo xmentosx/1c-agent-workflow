@@ -406,6 +406,12 @@ Describe 'Source quality catalog contracts' {
         @($classificationOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
         @($classificationOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
         @($classificationOwner.tests) | Should -Contain 'tests/pester/VanessaRunnerTopology.Tests.ps1'
+        $repairOwner = @($catalog.contracts | Where-Object id -eq 'verification-repair-session')[0]
+        @($repairOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1'
+        @($repairOwner.tests) | Should -Contain 'tests/pester/ToolingReadiness.Tests.ps1'
+        @($repairOwner.tests) | Should -Contain 'tests/pester/LifecycleOperationLock.Tests.ps1'
+        @(Get-QualityContractReuseInputPaths -Contract $repairOwner) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
+        @(Get-QualityContractReuseInputPaths -Contract $repairOwner) | Should -Contain 'scripts/source-delivery-process.ps1'
         @($selection.tests) | Should -Contain $gitTransportConsumer
         $gitTransportOwner = @($catalog.contracts | Where-Object id -eq 'repository-git-transport')[0]
         @($gitTransportOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
