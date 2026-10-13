@@ -9,6 +9,71 @@
     }
 }
 
+Describe 'Shared verification failure ownership' {
+    BeforeEach {
+        $script:RunErrorCategory = ''
+        $script:RunRequiredAction = ''
+        Mock Test-ItlDiagnosticVerificationScope { $false }
+    }
+
+    It 'keeps the same known owner in core and Vanessa for <Name>' -ForEach @(
+        @{Name='Designer command allowlist'; Message='ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected pinned commands'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
+        @{Name='wrapped Designer client'; Message="ITL_DESIGNER_AGENT_CLIENT_FAILED: exitCode=1 error='ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected sequence'"; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
+        @{Name='tooling readiness'; Message='ITL_TOOLING_EXTENSION_NOT_READY: expected tests'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
+        @{Name='actual product assertion'; Message='Expected 120, actual 100'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
+        @{Name='product assertion quoting a diagnostic'; Message='Expected "{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}"'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
+        @{Name='diagnostic body compilation'; Message='{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}: Перем ИсходноеЗначение;'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
+        @{Name='unsupported step'; Message='undefined step'; Category='unsupported-step'; RequiredAction='/itl-verify-fix'}
+        @{Name='specific YAxUnit failure before generic missing suite'; Message='ITL_YAXUNIT_TESTS_FAILED: expected missing-suite'; Category='product-assertion'; RequiredAction='/itl-verify-fix'},
+        @{Name='explicit fixture before generic assertion'; Message='ITL_VANESSA_TEST_FIXTURE_UNRESOLVED_PROFILE: expected test context'; Category='test-fixture'; RequiredAction='/itl-verify-fix'}
+    ) {
+        param($Message,$Category,$RequiredAction)
+        Set-RunFailureContextFromMessage -Message $Message -RequestedAction check-dev-branch
+        $script:RunErrorCategory | Should -Be $Category
+        $script:RunRequiredAction | Should -Be $RequiredAction
+        $route = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{status='failed';reason=$Message}) -EventLogVerification ([pscustomobject]@{status='passed'})
+        $route.category | Should -Be $Category
+        $route.requiredAction | Should -Be $RequiredAction
+    }
+
+    It 'does not attribute a product module or unknown compilation to the diagnostic body' -ForEach @(
+        @{Message='{ОбщийМодуль.Продукт.Модуль(10)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}'},
+        @{Message='{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: {ОбщийМодуль.Продукт.Модуль(10)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода'},
+        @{Message='Ошибка компиляции: source unknown'}
+    ) {
+        param($Message)
+        $route = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{status='failed';reason=$Message}) -EventLogVerification ([pscustomobject]@{status='passed'})
+        $route.category | Should -Be product-assertion
+        Set-RunFailureContextFromMessage -Message ('ITL_CONFIG_LOAD_FAILED: ' + $Message) -RequestedAction check-dev-branch
+        $script:RunErrorCategory | Should -Be config-load-failed
+    }
+
+    It 'preserves a structured fixture category and independent event log failure' {
+        $verification = [pscustomobject]@{status='failed';reason='Expected diagnostics';failureCategory='test-fixture'}
+        (Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification ([pscustomobject]@{status='passed'})).category | Should -Be test-fixture
+        (Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification ([pscustomobject]@{status='failed'})).category | Should -Be event-log
+    }
+
+    It 'carries the primary owner and continuation through JUnit for <Name>' -ForEach @(
+        @{Name='tooling before connection heuristic'; Message='ITL_DESIGNER_AGENT_CLIENT_FAILED: failed to connect TestClient; connection timeout'; Category='runner'; RequiredAction='repair-dev-branch-tooling'},
+        @{Name='diagnostic compilation'; Message='{ВнешняяОбработка.VanessaAutomationsingle.Форма.Тест_ВстроенныйЯзык.Форма(613)}: Ошибка компиляции при вычислении выражения или выполнении фрагмента кода: {<Неизвестный модуль>(1,1)}: Перем ИсходноеЗначение;'; Category='test-fixture'; RequiredAction='/itl-verify-fix'},
+        @{Name='existing tag filter route'; Message='ITL_VANESSA_TAG_FILTER_EMPTY: diagnostic'; Category='runner'; RequiredAction=''}
+    ) {
+        param($Message,$Category,$RequiredAction)
+        $root = Join-Path $TestDrive 'Результат с пробелом'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        $escaped = [Security.SecurityElement]::Escape($Message)
+        [IO.File]::WriteAllText((Join-Path $root 'junit.xml'), ('<testsuite tests="1" failures="1" errors="0"><testcase name="original"><failure>' + $escaped + '</failure></testcase></testsuite>'), [Text.UTF8Encoding]::new($false))
+        $verification = Get-VanessaVerificationStatus -RunDirectory $root -StatusPath (Join-Path $root 'missing.json')
+        $verification.status | Should -Be failed
+        $verification.failureCategory | Should -Be $Category
+        $route = Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification ([pscustomobject]@{status='passed'})
+        $route.category | Should -Be $Category
+        $route.requiredAction | Should -Be $RequiredAction
+        $verification.reason | Should -Match ([regex]::Escape($Message))
+    }
+}
+
 Describe "Tooling runtime Git isolation" {
     It "keeps actual probe artifacts ignored after rollback to the pre-probe Git baseline" {
         $savedRoot=$script:ProjectRoot
