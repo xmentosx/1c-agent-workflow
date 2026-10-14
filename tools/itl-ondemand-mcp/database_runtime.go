@@ -67,8 +67,15 @@ func (r *runtime) lockDatabaseCalls(ctx context.Context) (func(), error) {
 }
 
 // One MCP tool call is one database execution. Backend lifetime is independent:
-// an idle warmed backend never retains this guard between calls.
+// an idle warmed backend never retains this guard between calls. Unconfirmed
+// native cleanup remains part of the original execution until owned stop.
 func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context.Context, func(string, string) error, error) {
+	return r.beginDatabaseExecution(ctx, meta, false)
+}
+
+// Only the existing owned-stop path may continue an execution whose native
+// cleanup is unconfirmed. A new tool call never inherits that pending owner.
+func (r *runtime) beginDatabaseExecution(ctx context.Context, meta mcp.Meta, ownedCleanup bool) (context.Context, func(string, string) error, error) {
 	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return ctx, nil, err
@@ -76,6 +83,17 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 	planner, coordinated := r.broker.(executionPlanningBroker)
 	if !coordinated {
 		return ctx, func(string, string) error { unlock(); return nil }, nil
+	}
+	r.mu.Lock()
+	retainedOwner, retainedPlan, pending := r.executionOwner, r.executionPlan, r.cleanupUnconfirmed
+	r.mu.Unlock()
+	if retainedOwner != nil {
+		if !ownedCleanup || !pending || retainedPlan == nil {
+			unlock()
+			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; request its explicit stop/shutdown, preserve the unknown result, then retry only after owned cleanup is proven")
+		}
+		ctx = withExecutionInvocation(ctx, retainedOwner.Proof, retainedPlan)
+		return ctx, r.finishDatabaseExecution(retainedOwner, unlock), nil
 	}
 	plan, err := planner.ExecutionPlan(ctx)
 	if err != nil {
@@ -124,8 +142,18 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 	r.mu.Lock()
 	r.executionOwner, r.executionPlan = owner, plan
 	r.mu.Unlock()
-	return ctx, func(result, message string) error {
+	return ctx, r.finishDatabaseExecution(owner, unlock), nil
+}
+
+func (r *runtime) finishDatabaseExecution(owner *executionGuardOwner, unlock func()) func(string, string) error {
+	return func(result, message string) error {
 		defer unlock()
+		r.mu.Lock()
+		pending := r.cleanupUnconfirmed
+		r.mu.Unlock()
+		if pending {
+			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; use its explicit stop/shutdown before another tool call; no uncertain call was replayed")
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		if result == "" {
@@ -138,7 +166,7 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 		}
 		r.mu.Unlock()
 		return err
-	}, nil
+	}
 }
 
 func sameExecutionPlan(first, second *facadeExecutionPlan) bool {
@@ -208,8 +236,9 @@ func (r *runtime) restoreDatabaseRuntimeMode(context.Context) error   { return n
 // Called under the per-runtime gate and r.mu. Guard release belongs to the
 // outer call, never to backend idle cleanup.
 func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
-	if r.backend != nil {
+	if r.backend != nil || r.cleanupUnconfirmed {
 		if err := r.broker.Stop(ctx); err != nil {
+			r.cleanupUnconfirmed = true
 			return err
 		}
 	}
@@ -219,6 +248,7 @@ func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
 		r.session = nil
 	}
 	r.backend = nil
+	r.cleanupUnconfirmed = false
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
@@ -229,9 +259,7 @@ func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
 func (r *runtime) stopBrokerAfterFailure(ctx context.Context) {
 	cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := r.broker.Stop(preserveExecutionInvocation(ctx, cleanup)); err == nil {
-		r.backend = nil
-	}
+	_ = r.stopDatabaseBackendLocked(preserveExecutionInvocation(ctx, cleanup), true)
 }
 
 // A transport error or deadline leaves the inner side effect uncertain. Stop

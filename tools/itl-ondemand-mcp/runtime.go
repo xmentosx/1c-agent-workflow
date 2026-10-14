@@ -40,6 +40,7 @@ type runtime struct {
 	databaseGate       chan struct{}
 	executionOwner     *executionGuardOwner
 	executionPlan      *facadeExecutionPlan
+	cleanupUnconfirmed bool
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -110,7 +111,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
 		code := "EXECUTION_GUARD_ADMISSION_FAILED"
-		return toolError(code, err.Error(), nil), nil
+		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false}), nil
 	}
 	defer func() {
 		terminal, message := "succeeded", ""
@@ -120,6 +121,21 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 			terminal, message = "failed", resultText(callResult)
 		}
 		if err := finishDatabaseCall(terminal, message); err != nil {
+			if callResult != nil && callResult.IsError {
+				// Keep the original failure and dispatch outcome. Cleanup failure
+				// adds its owner continuation, never erases the primary evidence.
+				if structured, ok := callResult.StructuredContent.(map[string]any); ok {
+					details, _ := structured["details"].(map[string]any)
+					if details == nil {
+						details = map[string]any{}
+						structured["details"] = details
+					}
+					details["cleanupUnconfirmed"], details["automaticRetryPerformed"] = true, false
+					details["action"], details["cleanupError"] = "request-owned-stop-before-retry", err.Error()
+				}
+				callResult.Content = append(callResult.Content, &mcp.TextContent{Text: err.Error()})
+				return
+			}
 			callResult, callError = toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
 		}
 	}()
@@ -139,13 +155,22 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
 			if r.executionOwner != nil {
-				r.mu.Unlock()
-				return toolError("ITL_ONDEMAND_RUNTIME_STATE_MISSING", "registered native runtime state disappeared during the current call", nil), nil
+				previous := r.instanceID
+				if r.active != 0 || r.cleanupUnconfirmed {
+					r.mu.Unlock()
+					return recoveryAction(toolName, previous, previous, false, "not-started", fmt.Errorf("ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: an active or unconfirmed native call remains; complete owned cleanup before retrying the original operation; no call was replayed")), nil
+				}
+				if _, err := r.recoverLocked(ctx, r.session, previous, r.backend); err != nil {
+					current := r.instanceID
+					r.mu.Unlock()
+					return recoveryAction(toolName, previous, current, false, "not-started", err), nil
+				}
+			} else {
+				_ = r.session.Close()
+				r.clearProgress(r.session)
+				r.session = nil
+				r.backend = nil
 			}
-			_ = r.session.Close()
-			r.clearProgress(r.session)
-			r.session = nil
-			r.backend = nil
 		}
 	}
 	if err := r.ensureLocked(ctx); err != nil {
@@ -217,12 +242,12 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 			currentInstanceID := r.instanceID
 			r.completeCallLocked()
 			r.mu.Unlock()
-			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, recoveryErr), nil
+			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, "unknown", recoveryErr), nil
 		}
 		if !isIdempotentTool(r.family, tool) {
 			r.completeCallLocked()
 			r.mu.Unlock()
-			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, nil), nil
+			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, "unknown", nil), nil
 		}
 		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName, arguments); preflight != nil {
 			r.attachVanessaTestClientMetaLocked(preflight)
@@ -381,6 +406,9 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	}
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
+		// No confirmed cleanup receipt was returned. Preserve the existing
+		// resource owner until its explicit stop proves old/candidate cleanup.
+		r.cleanupUnconfirmed = true
 		return nil, err
 	}
 	if r.session != nil {
@@ -400,17 +428,20 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	return &recoveryResult{PreviousInstanceID: previousInstanceID, InstanceID: replacementInstanceID}, nil
 }
 
-func recoveryAction(toolName, previousInstanceID, instanceID string, backendRecovered bool, reason error) *mcp.CallToolResult {
+func recoveryAction(toolName, previousInstanceID, instanceID string, backendRecovered bool, callOutcome string, reason error) *mcp.CallToolResult {
 	details := map[string]any{
 		"action": "review-and-retry-tool-call", "automaticRetryPerformed": false,
 		"tool": toolName, "previousInstanceId": previousInstanceID, "instanceId": instanceID,
-		"backendRecovered": backendRecovered, "callOutcome": "unknown",
+		"backendRecovered": backendRecovered, "callOutcome": callOutcome,
 	}
 	message := "backend connection was lost; automatic replay is not allowed for this tool"
 	if reason != nil {
 		details["reason"] = reason.Error()
 		details["action"] = "retry-after-backend-recovery"
 		message = "backend connection was lost and automatic recovery could not be completed"
+	}
+	if callOutcome == "not-started" {
+		message = "runtime registration disappeared; owned recovery could not be completed before tool dispatch; the original call was not sent"
 	}
 	return toolError("ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", message, details)
 }
@@ -558,11 +589,11 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 }
 
 func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
+	r.backend = info
 	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
 		r.stopBrokerAfterFailure(ctx)
 		return err
 	}
-	r.backend = info
 	if r.family == "vanessa-ui" {
 		r.testClientState = testClientNotStarted
 		r.testClientPID = info.TestClientPID
@@ -824,7 +855,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 }
 
 func (r *runtime) stop(ctx context.Context) error {
-	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
+	ctx, finish, err := r.beginDatabaseExecution(ctx, nil, true)
 	if err != nil {
 		return err
 	}
@@ -1019,6 +1050,9 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 }
 
 func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName string) {
+	if r.backend != nil && info != nil && len(info.NativeLaunchProof) > 0 {
+		r.backend.NativeLaunchProof = append(json.RawMessage(nil), info.NativeLaunchProof...)
+	}
 	if info == nil {
 		return
 	}

@@ -440,7 +440,7 @@ function New-ItlOnDemandVanessaParamsFile {
 }
 
 function Get-ItlOnDemandOwnedTestClientProcesses {
-    param([object]$RuntimeState)
+    param([object]$RuntimeState, [switch]$ExactStart, [switch]$RegisteredOnly)
     $port = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $RuntimeState -Path "testClientPort" -Default 0) -Default 0
     $infoBase = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "infoBasePath" -Default "")
     if ($port -le 0 -or -not $infoBase) { return @() }
@@ -448,10 +448,13 @@ function Get-ItlOnDemandOwnedTestClientProcesses {
     if ($ownedPid -gt 0) {
         try {
             $process = Get-Process -Id $ownedPid -ErrorAction Stop
+            if ($ExactStart -and $process -is [Diagnostics.Process]) { $null=$process.Handle }
             $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ownedPid" -ErrorAction Stop
             $expected = [DateTimeOffset]::Parse([string]$RuntimeState.testClientProcessStartTime).UtcDateTime
             $expectedExecutable = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "testClientExecutablePath" -Default "")
-            if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -ge 2) { return @() }
+            if ($ExactStart) {
+                if ($process.StartTime.ToFileTimeUtc() -ne $expected.ToFileTimeUtc()) { return @() }
+            } elseif ([Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -ge 2) { return @() }
             if (-not $expectedExecutable -or -not [string]::Equals([string]$native.ExecutablePath, $expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase)) { return @() }
             $commandLine = [string]$native.CommandLine
             foreach ($marker in @($RuntimeState.testClientOwnershipMarkers)) {
@@ -462,6 +465,7 @@ function Get-ItlOnDemandOwnedTestClientProcesses {
             return @()
         }
     }
+    if ($RegisteredOnly) { return @() }
     try { $startedAt = [DateTimeOffset]::Parse([string]$RuntimeState.processStartTime).UtcDateTime } catch { return @() }
     $expectedExecutable = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "executablePath" -Default "")
     $result = @()
@@ -534,7 +538,7 @@ function Write-ItlOnDemandRuntimeState {
 }
 
 function Get-ItlOnDemandProcessOwnershipProof {
-    param([object]$RuntimeState)
+    param([object]$RuntimeState, [switch]$ExactStart)
     $processId = ConvertTo-IntOrDefault -Value $RuntimeState.pid -Default 0
     if ($processId -le 0) { return [pscustomobject]@{ owned = $false; failedPredicate = "pid"; expected = ">0"; actual = $processId } }
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
@@ -547,7 +551,8 @@ function Get-ItlOnDemandProcessOwnershipProof {
             [DateTimeOffset]::Parse([string]$recordedStart, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
         }
         $actualStart = $process.StartTime.ToUniversalTime()
-        if ([Math]::Abs(($actualStart - $expected).TotalSeconds) -ge 2) {
+        if (($ExactStart -and $actualStart.ToFileTimeUtc() -ne $expected.ToFileTimeUtc()) -or
+            (-not $ExactStart -and [Math]::Abs(($actualStart - $expected).TotalSeconds) -ge 2)) {
             return [pscustomobject]@{ owned = $false; failedPredicate = "processStartTime"; expected = $expected.ToString("o"); actual = $actualStart.ToString("o") }
         }
         $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
@@ -594,7 +599,8 @@ function Get-ItlOnDemandManagedPortLeaseMatches {
     param(
         [string]$Family,
         [string]$Key,
-        [string]$LeaseToken = ""
+        [string]$LeaseToken = "",
+        [switch]$AnyLeaseToken
     )
     return @(Invoke-ItlPortRegistryLock -ScriptBlock {
         $registry = Read-ItlPortRegistry
@@ -604,7 +610,7 @@ function Get-ItlOnDemandManagedPortLeaseMatches {
             $allocationKey = [string](Get-ItlPortObjectValue -Object $_ -Name "key" -Default "")
             $allocationToken = [string](Get-ItlPortObjectValue -Object $_ -Name "leaseToken" -Default "")
             $allocationFamily -eq $Family -and $allocationKey -eq $Key -and
-                $(if ($LeaseToken) { $allocationToken -eq $LeaseToken } else { -not $allocationToken })
+                ($AnyLeaseToken -or $(if ($LeaseToken) { $allocationToken -eq $LeaseToken } else { -not $allocationToken }))
         })
     })
 }
@@ -698,31 +704,41 @@ function Stop-ItlOnDemandBackendInstance {
     param(
         [string]$Family,
         [string]$InstanceId,
-        [switch]$StrictOwnership = $true
+        [switch]$StrictOwnership = $true,
+        [AllowNull()][object]$RetainedRuntimeState = $null
     )
     $path = Get-ItlOnDemandRuntimePath -Family $Family -InstanceId $InstanceId
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $retained = $null -ne $RetainedRuntimeState
+    if ($retained -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw 'ITL_ONDEMAND_RECOVERY_STATE_REAPPEARED: runtime registration changed during recovery; preserve the launch proof and retry through the same owner.'
+    }
+    if (-not $retained -and -not (Test-Path -LiteralPath $path -PathType Leaf)) {
         return [pscustomobject]@{ status = "stopped"; family = $Family; instanceId = $InstanceId }
     }
-    $claimedPath = "$path.removing-$([guid]::NewGuid().ToString('N'))"
-    try {
+    $claimedPath = ''
+    if (-not $retained) {
+      $claimedPath = "$path.removing-$([guid]::NewGuid().ToString('N'))"
+      try {
         Move-Item -LiteralPath $path -Destination $claimedPath
-    } catch {
+      } catch {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             return [pscustomobject]@{ status = "stopped"; family = $Family; instanceId = $InstanceId }
         }
         throw
+      }
     }
     try {
-        try { $runtimeState = Read-Utf8Text -Path $claimedPath | ConvertFrom-Json } catch {
+        if ($retained) { $runtimeState = $RetainedRuntimeState }
+        else { try { $runtimeState = Read-Utf8Text -Path $claimedPath | ConvertFrom-Json } catch {
             throw "ITL_ONDEMAND_RUNTIME_STATE_INVALID path='$path': $($_.Exception.Message)"
-        }
-        $ownedChildren = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState)
+        } }
+        $ownedChildren = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState -ExactStart:$retained -RegisteredOnly:$retained)
         $managerPid = ConvertTo-IntOrDefault -Value $runtimeState.pid -Default 0
         $managerProcess = $(if ($managerPid -gt 0) { Get-Process -Id $managerPid -ErrorAction SilentlyContinue } else { $null })
+        if ($retained -and $managerProcess -is [Diagnostics.Process]) { $null=$managerProcess.Handle }
         $testClientPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
         $testClientProcess = $(if ($testClientPid -gt 0) { Get-Process -Id $testClientPid -ErrorAction SilentlyContinue } else { $null })
-        $managerOwnership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState
+        $managerOwnership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState -ExactStart:$retained
         $ownedManager = [bool]$managerOwnership.owned
         if ($null -ne $managerProcess -and -not $ownedManager) {
             throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=$($managerOwnership.failedPredicate) expected='$($managerOwnership.expected)' actual='$($managerOwnership.actual)' pid=$managerPid family=$Family instanceId=$InstanceId."
@@ -730,11 +746,43 @@ function Stop-ItlOnDemandBackendInstance {
         if ($null -ne $testClientProcess -and $ownedChildren.Count -eq 0) {
             throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership expected='registered exact child' actual='unverified' pid=$testClientPid family=$Family instanceId=$InstanceId."
         }
+        if ($retained) {
+            $backendPort=[int](Get-StateValue $runtimeState 'port' 0)
+            if ((Test-TcpPortOpen -Port $backendPort) -and
+                -not (Test-ItlOnDemandPortOwnedByProcess -Port $backendPort -ProcessId $managerPid)) {
+                throw 'ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original backend listener is not owned by the proven process; preserve it and continue through its lifecycle owner.'
+            }
+            $clientPort=[int](Get-StateValue $runtimeState 'testClientPort' 0)
+            if ($testClientPid -gt 0 -and $clientPort -gt 0 -and (Test-TcpPortOpen -Port $clientPort) -and
+                -not (Test-ItlOnDemandPortOwnedByProcess -Port $clientPort -ProcessId $testClientPid)) {
+                throw 'ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original TestClient listener has an unproven owner; no process was stopped.'
+            }
+            if ($testClientPid -le 0 -and [int](Get-StateValue $runtimeState 'testClientPort' 0) -gt 0 -and
+                (Test-TcpPortOpen -Port ([int]$runtimeState.testClientPort))) {
+                throw 'ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: an unregistered TestClient listener remains; preserve it and establish exact ownership through its lifecycle owner.'
+            }
+            $ownedPids=@($managerPid)+@($ownedChildren | ForEach-Object { [int]$_.process.Id })
+            $bases=@(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtimeState -Family $Family -FallbackTarget ([pscustomobject]@{kind=$runtimeState.infoBaseKind;path=$runtimeState.infoBasePath}))
+            foreach ($base in $bases) {
+                $foreign=@(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $base.kind -InfoBasePath $base.path | Where-Object { [int]$_.pid -notin $ownedPids })
+                if ($foreign.Count -gt 0) { throw 'ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: unidentified exact-base 1C sessions remain; wait for their owner to finish, then retry the original operation. No foreign process was stopped.' }
+            }
+        }
         foreach ($child in $ownedChildren) {
-            Stop-Process -Id $child.process.Id -Force -ErrorAction SilentlyContinue
+            if ($retained -and $child.process -is [Diagnostics.Process]) {
+                $null=$child.process.Handle
+                $cleanup=Stop-NativeProcessForSafety -Process $child.process -UseOpenedProcess
+                if (-not $cleanup.confirmed) { throw "ITL_ONDEMAND_STOP_FAILED: owned TestClient cleanup is unconfirmed: $($cleanup.error)" }
+            } else { Stop-Process -Id $child.process.Id -Force -ErrorAction SilentlyContinue }
         }
         if ($ownedManager) {
-            Stop-Process -Id ([int]$runtimeState.pid) -Force -ErrorAction SilentlyContinue
+            if ($retained -and $managerProcess -is [Diagnostics.Process]) {
+                $null=$managerProcess.Handle
+                $recordedStart=[DateTimeOffset]::Parse([string]$runtimeState.processStartTime).UtcDateTime
+                if ($managerProcess.StartTime.ToFileTimeUtc() -ne $recordedStart.ToFileTimeUtc()) { throw 'ITL_ONDEMAND_OWNERSHIP_MISMATCH: opened manager identity changed before cleanup.' }
+                $cleanup=Stop-NativeProcessForSafety -Process $managerProcess -UseOpenedProcess
+                if (-not $cleanup.confirmed) { throw "ITL_ONDEMAND_STOP_FAILED: owned backend cleanup is unconfirmed: $($cleanup.error)" }
+            } else { Stop-Process -Id ([int]$runtimeState.pid) -Force -ErrorAction SilentlyContinue }
         }
         foreach ($child in $ownedChildren) {
             if (-not (Wait-ItlOnDemandProcessExit -ProcessId $child.process.Id -TimeoutSeconds 15)) {
@@ -767,10 +815,10 @@ function Stop-ItlOnDemandBackendInstance {
         }
         $paramsPath = [string](Get-ConfigValueFromObject -Object $runtimeState -Path "vanessaParamsPath" -Default "")
         if ($paramsPath -and (Test-Path -LiteralPath $paramsPath -PathType Leaf)) { Remove-Item -LiteralPath $paramsPath -Force }
-        Remove-Item -LiteralPath $claimedPath -Force
+        if ($claimedPath) { Remove-Item -LiteralPath $claimedPath -Force }
         return [pscustomobject]@{ schemaVersion = 2; status = "stopped"; family = $Family; instanceId = $InstanceId; pid = 0; port = 0; testClientPort = 0; url = "" }
     } catch {
-        if ((Test-Path -LiteralPath $claimedPath -PathType Leaf) -and -not (Test-Path -LiteralPath $path)) {
+        if ($claimedPath -and (Test-Path -LiteralPath $claimedPath -PathType Leaf) -and -not (Test-Path -LiteralPath $path)) {
             Move-Item -LiteralPath $claimedPath -Destination $path
         }
         throw
@@ -818,6 +866,84 @@ function Get-ItlOnDemandBackendRuntimeHealth {
     return [pscustomobject]@{ stale = $false; status = "healthy"; pidAlive = $true; portOpen = $true; owned = $true }
 }
 
+function Get-ItlOnDemandRetainedLaunchState {
+    param([object]$Invocation, [object]$ExpectedBackend, [string]$Family, [string]$InstanceId,
+        [int]$ExpectedPid, [int]$ExpectedPort, [string]$CatalogSha256)
+
+    $proof = Get-StateValue $ExpectedBackend 'nativeLaunchProof' $null
+    $plan = Get-StateValue $Invocation 'plan' $null
+    if ($null -eq $Invocation -or $null -eq $proof -or $null -eq $plan -or
+        [int](Get-StateValue $proof 'schemaVersion' 0) -ne 4 -or
+        [string](Get-StateValue $plan 'family' '') -cne $Family -or
+        [string](Get-StateValue $plan 'projectRoot' '') -ine [string]$script:ProjectRoot -or
+        [string](Get-StateValue $proof 'family' '') -cne $Family -or
+        [string](Get-StateValue $proof 'instanceId' '') -cne $InstanceId -or
+        [int](Get-StateValue $proof 'pid' 0) -ne $ExpectedPid -or $ExpectedPid -le 0 -or
+        [int](Get-StateValue $proof 'port' 0) -ne $ExpectedPort -or $ExpectedPort -le 0 -or
+        [string](Get-StateValue $proof 'catalogSha256' '') -cne $CatalogSha256 -or
+        [string](Get-StateValue $ExpectedBackend 'instanceId' '') -cne $InstanceId -or
+        [string](Get-StateValue $ExpectedBackend 'processStartTime' '') -cne [string](Get-StateValue $proof 'processStartTime' '')) {
+        throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: missing or conflicting original launch proof; preserve this facade and use the lifecycle owner to establish exact owned cleanup before retrying the original operation.'
+    }
+    foreach ($field in @('processStartTime','executablePath','infoBaseKind','infoBasePath','managerInfoBaseKind','managerInfoBasePath','portFamily','portKey','portLeaseToken')) {
+        if (-not [string](Get-StateValue $proof $field '')) { throw "ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original '$field' is missing; restore exact ownership through its lifecycle owner before the original operation." }
+    }
+    try { $null=[DateTimeOffset]::Parse([string]$proof.processStartTime,[Globalization.CultureInfo]::InvariantCulture) }
+    catch { throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original process start time is invalid.' }
+    if (-not [IO.Path]::IsPathRooted([string]$proof.executablePath) -or @($proof.ownershipMarkers).Count -lt 2 -or
+        @($proof.ownershipMarkers | Where-Object { -not [string]$_ }).Count -gt 0) {
+        throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original EXE or command markers are incomplete.'
+    }
+    if ([string]$proof.infoBaseKind -cne [string]$plan.targetBase.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string]$proof.infoBasePath) -Second ([string]$plan.targetBase.path))) {
+        throw 'ITL_ONDEMAND_RECOVERY_TARGET_CHANGED: launch proof belongs to another infobase; continue through its lifecycle owner without stopping it.'
+    }
+    if ([string](Get-StateValue $proof 'auxiliaryContour' '') -cne [string](Get-StateValue $plan 'auxiliaryContour' '')) {
+        throw 'ITL_ONDEMAND_RECOVERY_TARGET_CHANGED: original auxiliary contour differs from the guarded call.'
+    }
+    $paramsPath=[string](Get-StateValue $proof 'vanessaParamsPath' '')
+    if ($paramsPath) {
+        $expectedParamsPath=Join-Path (Split-Path -Parent (Get-ItlOnDemandRuntimePath -Family $Family -InstanceId $InstanceId)) "$InstanceId.VAParams.json"
+        if (-not [string]::Equals([IO.Path]::GetFullPath($paramsPath),[IO.Path]::GetFullPath($expectedParamsPath),[StringComparison]::OrdinalIgnoreCase)) {
+            throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: parameters file differs from the original instance-owned path.'
+        }
+    }
+    $bases=@(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $proof -Family $Family -FallbackTarget $plan.targetBase)
+    $admissions=@($bases | ForEach-Object { [pscustomobject]@{infoBaseKind=$_.kind;infoBasePath=$_.path} })
+    if (-not $env:ITL_EXECUTION_CONTEXT -or -not $env:ITL_EXECUTION_CONTEXT_KEY) { throw 'ITL_ONDEMAND_RECOVERY_EXECUTION_CONTEXT_REQUIRED' }
+    # Existing guard validates the live inherited subset, never a new admission.
+    Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$Family-recover" -ScriptBlock { $true } | Out-Null
+    $leaseSpecs=@([pscustomobject]@{family=$proof.portFamily;key=$proof.portKey;token=$proof.portLeaseToken;port=$proof.port;pid=$proof.pid})
+    if ($Family -eq 'vanessa-ui') {
+        foreach ($field in @('testClientPortFamily','testClientPortKey','testClientPortLeaseToken')) {
+            if (-not [string](Get-StateValue $proof $field '')) { throw "ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original '$field' is missing." }
+        }
+        if ([int]$proof.testClientPort -le 0) { throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original TestClient port is missing.' }
+        if ([int](Get-StateValue $proof 'testClientPid' 0) -gt 0 -and
+            (-not [string]$proof.testClientProcessStartTime -or -not [string]$proof.testClientExecutablePath -or @($proof.testClientOwnershipMarkers).Count -lt 3)) {
+            throw 'ITL_ONDEMAND_RECOVERY_LAUNCH_PROOF_REQUIRED: original TestClient identity is incomplete.'
+        }
+        $leaseSpecs += [pscustomobject]@{family=$proof.testClientPortFamily;key=$proof.testClientPortKey;token=$proof.testClientPortLeaseToken;port=$proof.testClientPort;pid=[int](Get-StateValue $proof 'testClientPid' 0)}
+    }
+    foreach ($spec in $leaseSpecs) {
+        $matches=@(Get-ItlOnDemandManagedPortLeaseMatches -Family ([string]$spec.family) -Key ([string]$spec.key) -LeaseToken ([string]$spec.token))
+        if ($matches.Count -eq 0) {
+            $replacement=@(Get-ItlOnDemandManagedPortLeaseMatches -Family ([string]$spec.family) -Key ([string]$spec.key) -AnyLeaseToken)
+            $live=@(@([int]$proof.pid,[int](Get-StateValue $proof 'testClientPid' 0)) | Where-Object { $_ -gt 0 } | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $null -ne $_ })
+            $open=@(@([int]$proof.port,[int](Get-StateValue $proof 'testClientPort' 0)) | Where-Object { $_ -gt 0 -and (Test-TcpPortOpen -Port $_) })
+            # A previous owned stop may already have released one or both
+            # leases. Only confirmed absence of every original process/port
+            # and replacement token makes that cleanup idempotently complete.
+            if ($replacement.Count -eq 0 -and $live.Count -eq 0 -and $open.Count -eq 0) { continue }
+        }
+        if ($matches.Count -ne 1 -or [int](Get-ItlPortObjectValue -Object $matches[0] -Name port -Default 0) -ne [int]$spec.port -or
+            ([int]$spec.pid -gt 0 -and [int](Get-ItlPortObjectValue -Object $matches[0] -Name pid -Default 0) -ne [int]$spec.pid)) {
+            throw 'ITL_ONDEMAND_RECOVERY_LEASE_CHANGED: original exact port lease is missing or replaced; preserve all processes and continue through the managed port/lifecycle owner.'
+        }
+    }
+    return $proof
+}
+
 function Recover-ItlOnDemandBackendInstance {
     param(
         [string]$Family,
@@ -827,12 +953,16 @@ function Recover-ItlOnDemandBackendInstance {
         [int]$ExpectedPort,
         [string]$CatalogSha256,
         [string]$AuxiliaryContour = "",
-        [object]$ServiceAdmissionPlan = $null
+        [object]$ServiceAdmissionPlan = $null,
+        [AllowNull()][object]$Invocation = $null,
+        [AllowNull()][object]$ExpectedBackend = $null
     )
 
     $runtimeState = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
     if ($null -eq $runtimeState) {
-        throw "ITL_ONDEMAND_RECOVERY_STATE_MISSING: no registered runtime for $Family/$InstanceId."
+        $retained=Get-ItlOnDemandRetainedLaunchState -Invocation $Invocation -ExpectedBackend $ExpectedBackend -Family $Family -InstanceId $InstanceId -ExpectedPid $ExpectedPid -ExpectedPort $ExpectedPort -CatalogSha256 $CatalogSha256
+        Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership -RetainedRuntimeState $retained | Out-Null
+        return (Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $ReplacementInstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour -ServiceAdmissionPlan $ServiceAdmissionPlan)
     }
     if ([int]$runtimeState.pid -ne $ExpectedPid -or [int]$runtimeState.port -ne $ExpectedPort) {
         throw "ITL_ONDEMAND_RECOVERY_IDENTITY_CHANGED: registered PID/port no longer match $Family/$InstanceId."
@@ -1517,12 +1647,18 @@ function Invoke-ItlOnDemandBackendBroker {
             -ExpectedPort $ExpectedPort `
             -CatalogSha256 $CatalogSha256 `
             -AuxiliaryContour $AuxiliaryContour `
-            -ServiceAdmissionPlan $serviceAdmissionPlan
+            -ServiceAdmissionPlan $serviceAdmissionPlan `
+            -Invocation $invocation -ExpectedBackend (Get-StateValue $invocation 'expectedBackend' $null)
     } else {
         $registered = $null
+        $result = $null
         if ($null -ne $invocation) {
             $registered = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
-            if ($null -eq $registered -or [int](Get-StateValue $registered 'pid' 0) -le 0) {
+            if ($null -eq $registered) {
+                $retained=Get-ItlOnDemandRetainedLaunchState -Invocation $invocation -ExpectedBackend (Get-StateValue $invocation 'expectedBackend' $null) `
+                    -Family $Family -InstanceId $InstanceId -ExpectedPid $ExpectedPid -ExpectedPort $ExpectedPort -CatalogSha256 $CatalogSha256
+                $result=Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership -RetainedRuntimeState $retained
+            } elseif ([int](Get-StateValue $registered 'pid' 0) -le 0) {
                 throw 'ITL_ONDEMAND_STOP_UNCONFIRMED: native launch or cleanup cannot be proven from missing/incomplete runtime state.'
             }
             if ($null -ne $registered -and $ExpectedPid -gt 0 -and ([int]$registered.pid -ne $ExpectedPid -or [int]$registered.port -ne $ExpectedPort)) {
@@ -1537,10 +1673,16 @@ function Invoke-ItlOnDemandBackendBroker {
                 }
             }
         }
-        $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
+        if ($null -eq $result) { $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership }
     }
     } finally {
         if ($null -ne $startHandle) { $startHandle.Dispose() }
+    }
+    if ($Operation -in @('ensure','ensure-test-client','mark-running','recover')) {
+        # Transient return evidence only: no new durable registry or restoration
+        # of the disappeared JSON. The facade retains this exact owner snapshot.
+        $launchProof=($result | ConvertTo-Json -Depth 20) | ConvertFrom-Json
+        $result | Add-Member -NotePropertyName nativeLaunchProof -NotePropertyValue $launchProof -Force
     }
     $json = $result | ConvertTo-Json -Compress -Depth 20
     Write-Output "ITL_ONDEMAND_RESULT=$json"

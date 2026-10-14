@@ -28,7 +28,24 @@ Unchanged, proven runtime skips loading; changed test sources load only tests;
 a changed engine pin loads only the engine. A replaced database invalidates both.
 The configured test extension name must match `Configuration.xml` before loading.
 
-An exhausted verification session remains terminal. After an actual successful
+On-demand MCP can recover a disappeared runtime record in the same external
+connection only when the owning facade retains its original launch evidence.
+The existing guard and cleanup owner prove quiescence, exact process and target
+identity, related TestClient and immutable leases before replacement. Retry the
+original `manage_test_client(connect)` through that same facade; a proven recovery
+forwards it once and a following safe call confirms the replacement. Do not edit
+or recreate the missing JSON, stop a guessed PID, or repeat an unknown modifying
+call. If the owner reports an active call, wait for that operation to complete or
+use its cancellation path. If ownership/cleanup is unconfirmed, retain the same
+facade and its evidence for lifecycle-owner investigation; run
+`repair-dev-branch-tooling` only after exact owned cleanup has been established.
+Then resume the original check. A fresh chat does not prove same-connection
+recovery. Legacy records remain readable; downgrade requires quiescent, resolved
+work, and an older facade cannot inherit a live in-memory launch snapshot.
+
+An exhausted verification session stops new attempts; an explicitly authorized
+extension preserves that same session through the owner operation described in
+[verification results](verification-result.md). After an actual successful
 tooling mutation newer than exhaustion and a fresh recovery receipt, `begin-verification-repair` may
 archive that terminal record and start a new bounded session. Repeating recovery
 against already-ready tooling does not grant another budget. Never change triggers

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ type executionFixtureBroker struct {
 	changePlan  bool
 	planCalls   int
 	stops       int
+	stopError   error
 }
 
 func (b *executionFixtureBroker) ExecutionPlan(context.Context) (*facadeExecutionPlan, error) {
@@ -44,7 +46,7 @@ func (b *executionFixtureBroker) Recover(context.Context, *backendInfo, string) 
 func (b *executionFixtureBroker) MarkRunning(context.Context, *backendInfo) (*backendInfo, error) {
 	return nil, fmt.Errorf("not used")
 }
-func (b *executionFixtureBroker) Stop(context.Context) error { b.stops++; return nil }
+func (b *executionFixtureBroker) Stop(context.Context) error { b.stops++; return b.stopError }
 
 func newExecutionRuntimeFixture(t *testing.T) (*runtime, *executionFixtureBroker) {
 	t.Helper()
@@ -119,6 +121,52 @@ func TestFailedCallStopsOwnedBackendBeforeGuardRelease(t *testing.T) {
 	if broker.stops != 1 || rt.backend != nil {
 		t.Fatalf("owned backend was not drained before release: stops=%d backend=%+v", broker.stops, rt.backend)
 	}
+}
+
+func TestUnconfirmedNativeCleanupRetainsTheOriginalGuardUntilExplicitOwnedStop(t *testing.T) {
+	rt, broker := newExecutionRuntimeFixture(t)
+	ctx, finish, err := rt.beginDatabaseCall(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.close(context.Background())
+	owner := rt.executionOwner
+	rt.backend = &backendInfo{Status: "running", PID: os.Getpid(), URL: "http://fixture"}
+	broker.stopError = fmt.Errorf("original process stop unconfirmed")
+	rt.mu.Lock()
+	callErr := rt.cleanupFailedDatabaseCallLocked(ctx, context.DeadlineExceeded)
+	rt.mu.Unlock()
+	if !errors.Is(callErr, context.DeadlineExceeded) {
+		t.Fatalf("lost original unknown outcome: %v", callErr)
+	}
+	if err := finish("failed", callErr.Error()); err == nil || !strings.Contains(err.Error(), "CLEANUP_UNCONFIRMED") {
+		t.Fatalf("unconfirmed cleanup was released: %v", err)
+	}
+	if rt.executionOwner != owner {
+		t.Fatal("the original resource owner was replaced")
+	}
+	contender := executionGuardRequest{SchemaVersion: 1, Root: broker.plan.GuardRoot, Bases: broker.plan.Bases, Operation: "different-writer", ExecutionID: strings.Repeat("c", 32), Timeout: 0.1}
+	if unexpected, err := acquireExecutionGuard(context.Background(), broker.plan.Python, broker.runtimeRoot, contender, nil); err == nil {
+		_ = unexpected.Close()
+		t.Fatal("another writer was admitted before native cleanup")
+	}
+	if _, _, err := rt.beginDatabaseCall(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "CLEANUP_UNCONFIRMED") {
+		t.Fatalf("a new tool call inherited the pending execution: %v", err)
+	}
+	broker.stopError = nil
+	if err := rt.stop(context.Background()); err != nil {
+		t.Fatalf("explicit owned cleanup could not continue its original guard: %v", err)
+	}
+	if rt.executionOwner != nil || rt.cleanupUnconfirmed || rt.backend != nil {
+		t.Fatal("confirmed stop did not finalize its original owner")
+	}
+	contender.Timeout = 2
+	contender.ExecutionID = strings.Repeat("d", 32)
+	next, err := acquireExecutionGuard(context.Background(), broker.plan.Python, broker.runtimeRoot, contender, nil)
+	if err != nil {
+		t.Fatalf("confirmed cleanup did not admit the next writer: %v", err)
+	}
+	_ = next.Close()
 }
 
 func TestNestedOnDemandCallUsesSignedParentContextWithoutReacquisition(t *testing.T) {

@@ -3,6 +3,15 @@
   "protocol": "execution-guards-v2",
   "producers": [
     {
+      "id": "ondemand-retained-launch-recovery",
+      "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+      "function": "Get-ItlOnDemandRetainedLaunchState",
+      "boundary": "nested",
+      "resources": "ondemand-$Family-recover: retained target and manager exact-base subset of the live call owner",
+      "deadline": "parent call lifetime and existing bounded native cleanup timeouts",
+      "cleanup": "existing Stop-ItlOnDemandBackendInstance with original launch proof; exit and closed ports before exact lease release and new instance"
+    },
+    {
       "id": "project-tests-settings-owner",
       "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
       "function": "Ensure-YAxUnitExtensions",

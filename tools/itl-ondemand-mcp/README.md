@@ -8,6 +8,27 @@ For Vanessa, the broker leases separate MCP-manager and TestClient ports, create
 
 Every forwarded call appends schema-v3 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
 
+If its runtime JSON disappears between completed calls, the same facade may
+recover its backend without replacing the external MCP connection. The broker
+returns an original launch snapshot in memory; it is carried only inside the
+existing execution invocation. Recovery first checks quiescence and the exact
+PID/start/EXE/base/manager/port/TestClient/lease proofs under the inherited guard.
+The existing cleanup owner stops only those processes, proves exit and closed
+ports, releases their immutable leases, then starts a new instance. Missing or
+conflicting proof, an unconfirmed native call, a foreign exact-base session or a
+reappeared registration returns an owner continuation without restart. Missing
+JSON is never reconstructed as evidence. A modifying call with unknown outcome
+is never automatically replayed. Existing registered-state recovery keeps its
+own contract; legacy callers without the retained snapshot cannot use this new
+missing-state authority.
+
+If native cleanup is unconfirmed, the original execution keeps its guard; new
+calls cannot acquire or inherit it. The existing explicit owned-stop/shutdown
+path continues that same owner and releases it only after confirmed cleanup.
+The primary tool failure and its dispatch outcome remain in the returned result.
+An already completed stop can be confirmed from the original launch proof only
+when all original processes and ports are gone and no replacement lease exists.
+
 Successfully forwarded progress notifications append separate events to
 `<instance>.progress.jsonl`, correlated by `progressEvidenceId`. The completion
 record's `progressNotificationsForwarded` is a snapshot at that moment, not a

@@ -16,6 +16,7 @@ import (
 const brokerMarker = "ITL_ONDEMAND_RESULT="
 
 type backendInfo struct {
+	NativeLaunchProof       json.RawMessage      `json:"nativeLaunchProof,omitempty"`
 	ExecutionGuard          *facadeExecutionPlan `json:"executionGuard,omitempty"`
 	SchemaVersion           int                  `json:"schemaVersion"`
 	Status                  string               `json:"status"`
@@ -169,6 +170,11 @@ func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, r
 	}
 	b.cleanupConfirmed = false
 	b.recoveryCandidate = replacementInstanceID
+	if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
+		copy := *invocation
+		copy.ExpectedBackend = previous
+		ctx = context.WithValue(ctx, executionInvocationKey{}, &copy)
+	}
 	info, err := b.invoke(ctx, "recover", []string{
 		"-InternalOnDemandReplacementInstanceId", replacementInstanceID,
 		"-InternalOnDemandExpectedPid", fmt.Sprint(previous.PID),

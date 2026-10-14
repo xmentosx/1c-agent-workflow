@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class ExecutionProducerContractTests(unittest.TestCase):
+    def test_retained_recovery_uses_existing_broker_operation_and_inherited_guard(self):
+        registry = json.loads((ROOT / "tests" / "execution-guard-producers.json").read_text(encoding="utf-8"))
+        producer = next(item for item in registry["producers"] if item["id"] == "ondemand-retained-launch-recovery")
+        self.assertEqual("nested", producer["boundary"])
+        helper = (ROOT / producer["file"]).read_text(encoding="utf-8-sig")
+        broker = (ROOT / "tools/itl-ondemand-mcp/broker.go").read_text(encoding="utf-8")
+        self.assertIn('-Purpose "ondemand-$Family-recover"', helper)
+        self.assertIn('} elseif ($Operation -eq "recover") {', helper)
+        self.assertIn('b.invoke(ctx, "recover",', broker)
+        self.assertIn('copy.ExpectedBackend = previous', broker)
+
     def test_project_tests_operation_is_complete_and_nested_capability_cannot_expand_guard(self):
         registry = json.loads((ROOT / "tests" / "execution-guard-producers.json").read_text(encoding="utf-8"))
         producers = {item["id"]: item for item in registry["producers"]}

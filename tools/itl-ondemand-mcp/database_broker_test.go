@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,36 @@ import (
 func writeBrokerFixture(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "broker fixture.ps1")
-	content := append([]byte{0xef, 0xbb, 0xbf}, []byte("param([string]$ProjectRoot,[string]$InternalOnDemandOperation,[string]$InternalOnDemandFamily,[string]$InternalOnDemandInstanceId,[string]$InternalOnDemandCatalogSha256,[int]$InternalOnDemandExpectedPid,[int]$InternalOnDemandExpectedPort)\n"+body)...)
+	content := append([]byte{0xef, 0xbb, 0xbf}, []byte("param([string]$ProjectRoot,[string]$InternalOnDemandOperation,[string]$InternalOnDemandFamily,[string]$InternalOnDemandInstanceId,[string]$InternalOnDemandCatalogSha256,[int]$InternalOnDemandExpectedPid,[int]$InternalOnDemandExpectedPort,[string]$InternalOnDemandReplacementInstanceId)\n"+body)...)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestPowerShellBrokerRecoveryPassesRetainedUnicodeLaunchProofInsideTheExistingInvocation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Проект с пробелом")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldID, newID := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	script := writeBrokerFixture(t, `$value=$env:ITL_EXECUTION_INVOCATION | ConvertFrom-Json
+if ($InternalOnDemandOperation -ne 'recover' -or $value.context.executionContext -ne 'signed-parent' -or $env:ITL_EXECUTION_CONTEXT_KEY -ne 'parent-key') { throw 'lost existing execution context' }
+$old=$value.expectedBackend
+if ($old.instanceId -ne $InternalOnDemandInstanceId -or $old.pid -ne $InternalOnDemandExpectedPid -or $old.port -ne $InternalOnDemandExpectedPort -or $old.nativeLaunchProof.executablePath -cne 'C:\Платформа с пробелом\1cv8.exe') { throw 'retained launch proof changed' }
+$result=@{family=$InternalOnDemandFamily;instanceId=$InternalOnDemandReplacementInstanceId;status='readiness';pid=103;port=41003;url='http://127.0.0.1:41003/mcp'} | ConvertTo-Json -Compress
+Write-Output ('ITL_ONDEMAND_RESULT='+$result)
+`)
+	broker := &powershellBroker{HelperPath: script, ProjectRoot: root, Family: "roctup", InstanceID: oldID}
+	previous := &backendInfo{InstanceID: oldID, PID: 101, Port: 41001, NativeLaunchProof: json.RawMessage(`{"executablePath":"C:\\Платформа с пробелом\\1cv8.exe"}`)}
+	ctx := withExecutionInvocation(context.Background(), executionContextProof{Encoded: "signed-parent", Key: "parent-key"}, &facadeExecutionPlan{SchemaVersion: 2})
+	info, err := broker.Recover(ctx, previous, newID)
+	if err != nil || info.InstanceID != newID || broker.InstanceID != newID {
+		t.Fatalf("recovery handoff failed: %+v %v", info, err)
+	}
+	if invocation := ctx.Value(executionInvocationKey{}).(*executionInvocation); invocation.ExpectedBackend != nil {
+		t.Fatal("recovery mutated its parent's invocation")
+	}
 }
 
 func TestPowerShellBrokerReadsExecutionPlanV2(t *testing.T) {

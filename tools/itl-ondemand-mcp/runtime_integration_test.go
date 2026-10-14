@@ -582,6 +582,9 @@ func TestRuntimeRecoversButNeverReplaysNonIdempotentCall(t *testing.T) {
 	if details["backendRecovered"] != true || details["action"] != "review-and-retry-tool-call" || details["instanceId"] == instanceID {
 		t.Fatalf("unexpected structured recovery action: %#v", structured)
 	}
+	if details["callOutcome"] != "unknown" || details["automaticRetryPerformed"] != false {
+		t.Fatalf("unknown modifying call result was misrepresented or replayed: %#v", details)
+	}
 }
 
 func TestRuntimeConcurrentStaleCallsShareOneRecovery(t *testing.T) {
