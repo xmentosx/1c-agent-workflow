@@ -174,7 +174,9 @@ Describe "Release gate scripts" {
         $probeText | Should -Match 'item.count != gatewayPublicToolCount'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 6'
         $e2eText | Should -Match '"-verify-missing-state-recovery"'
-        $probeText | Should -Match 'verifyMissingStateRecovery\(ctx, runtimeRoot, \*item.state'
+        $probeText | Should -Match 'verifySessionMissingStateRecovery\(ctx, runtimeRoot, \*item.state'
+        $recoveryProbeText = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\missing_state.go') -Raw -Encoding UTF8
+        $recoveryProbeText | Should -Match 'return verifyMissingStateRecovery\(ctx, root, current, call, exited\)'
         foreach ($predicate in @('passed', 'sameConnection', 'originalProcessesGone')) {
             $e2eText | Should -Match ([regex]::Escape('-not [bool]$familyEvidence.missingStateRecovery.' + $predicate))
         }
