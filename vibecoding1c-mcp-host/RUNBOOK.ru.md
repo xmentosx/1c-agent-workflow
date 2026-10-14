@@ -321,6 +321,10 @@ BookStack и Mantis MCP работают в stateless HTTP mode. После пе
 он не работает. Существующий proxy остаётся на публичном порту во время замены.
 Для CodeChecker host собирает локальный beta overlay поверх закреплённого digest
 поставщика: он сохраняет инструмент `check_1c_logic`, отсутствующий в новом образе.
+Logic overlay ограничивает поле `code` через существующий `InputBounder` до сборки
+prompt и возвращает `AnswerResult` с `truncation` и `sources`, как другие modern
+инструменты. Собранный prompt не проходит повторно через лимит `ask_1c_ai`;
+закрывающий fence сохраняется, а обрезка кода остаётся явно видимой клиенту.
 Публичный proxy CodeChecker сохраняет прежние текстовые ответы и поле
 `structuredContent.result`, оставляя доступными новые типизированные поля beta.
 Публичный proxy Docs сохраняет прежнюю `outputSchema` с обязательным строковым
