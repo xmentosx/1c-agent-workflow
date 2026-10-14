@@ -173,8 +173,31 @@ docker logs --timestamps --since 2h itl-1c-codechecker 2>&1 |
 `upstream_attempt_end` и `tool_end`. Поле `elapsedMs` в `tool_end` — полное время MCP-инструмента;
 в `stage_end` — время direct syntax или prompt-анализа; повторные `upstream_attempt_end` показывают,
 что задержка выросла из-за транспортного retry. `tool_start` без соответствующего `tool_end` позволяет
-увидеть ещё выполняющийся или отменённый запрос. Для корреляции с задачей агента сравнивайте Docker
+увидеть запрос без зафиксированного завершения; это само по себе не доказывает отмену. Для корреляции с задачей агента сравнивайте Docker
 timestamp с `mcp_tool_call_end.duration` в локальном журнале Codex.
+
+Modern overlay (включая stable с `manifestPath`) использует тот же общий модуль телеметрии.
+Каждый MCP tool получает `requestId`, `tool_start` и один `tool_end` при штатном возврате,
+ошибке или отмене. `inputSha256` — SHA-256 канонического JSON аргументов с defaults
+(`ensure_ascii=False`, сортировка ключей, разделители `,`/`:`); `snapshotSha256` — точный
+UTF-8 `code` или `question` до plugin/input policy. При `code` с `files` snapshot отсутствует:
+hash аргументов с путями не удостоверяет прочитанные байты файлов. `upstreamInputSha256`
+хеширует фактически переданный collector prompt или direct arguments после ограничений.
+Сами аргументы, пути, код, prompt, ответы и сообщения исключений не логируются.
+
+Modern `upstream_attempt_start/end` обрамляют существующие `collect_prompt` и
+`call_capability`, включая штатный retry/fallback, с общим `requestId` и последовательным
+`attempt`. `tool_end.attempts` считает эти вызовы, а не внутренние HTTP/poll запросы;
+отказ до collector даёт ноль. Фактический путь указан в `stage` попытки; телеметрия
+не читает конфигурацию для определения режима и не меняет retry, session или budget.
+Terminal `outcome` принимает `returned`, `error`, `refused`, `cancelled`;
+`returned` означает возврат результата инструмента, а не положительную оценку кода.
+Отсутствующий `tool_end` при остановке процесса остаётся неизвестным исходом.
+
+Modern Docker build использует контекст `vibecoding1c-mcp-host` и
+`-f codechecker-beta-overlay/Dockerfile`. Корневой `.dockerignore` разрешает только
+Dockerfile, patcher и общий `codechecker-overlay/observability.py`; локальные конфиги
+и runtime в контекст не входят. Legacy build сохраняет свой прежний контекст.
 
 `snapshotSha256` связывает проверки точного неизменившегося кода. Доступные FastMCP request/session/
 client/task значения и `user-agent` записываются только как SHA-256; поля отсутствуют, если транспорт

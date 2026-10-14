@@ -159,18 +159,24 @@ class BetaLogicToolTests(unittest.TestCase):
 
     def test_layout_drift_fails_closed(self):
         helpers = ("_bounder", "_scope_owner", "_send_prompt", "_answer", "_evidence",
-                   "_error_result", "_condition_text", "_capacity_refusal", "main")
+                   "_error_result", "_condition_text", "_capacity_refusal", "_call_capability", "main")
         fixture = "\n".join(f"def {name}():\n    pass\n" for name in helpers)
+        fixture = fixture.replace('def _send_prompt():\n    pass',
+                                  'async def _send_prompt():\n    return await client.collect_prompt(entry, sent)')
+        fixture = fixture.replace('def _call_capability():\n    pass',
+                                  'async def _call_capability():\n    return await client.call_capability(entry, capability, sent)')
         fixture += '\n\nif __name__ == "__main__":\n    main()\n'
         result = patch_source(fixture)
         functions = [node.name for node in ast.parse(result).body if isinstance(node, ast.AsyncFunctionDef)]
-        self.assertEqual(functions, ["check_1c_logic"])
+        self.assertEqual(functions, ["_send_prompt", "_call_capability", "check_1c_logic"])
         with self.assertRaisesRegex(RuntimeError, "already provides"):
             patch_source(result)
         with self.assertRaisesRegex(RuntimeError, "layout changed"):
             patch_source(fixture.replace("_bounder", "missing_bounder"))
         with self.assertRaisesRegex(RuntimeError, "entrypoint changed"):
             patch_source(fixture.replace('if __name__', 'if  __name__'))
+        with self.assertRaisesRegex(RuntimeError, "attempt boundary changed"):
+            patch_source(fixture.replace('client.collect_prompt', 'client.other_prompt'))
 
 
 if __name__ == "__main__":

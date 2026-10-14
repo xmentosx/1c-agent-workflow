@@ -944,7 +944,8 @@ function Ensure-ServerDockerImageAvailable {
         }
         Ensure-DockerImageAvailable -Image $baseImage
         Write-Host "Building beta CodeChecker compatibility image: $Image"
-        Invoke-DockerCommandChecked -Arguments @("build", "--build-arg", "BASE_IMAGE=$baseImage", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build beta CodeChecker compatibility image"
+        # The host-root context allowlists only this patch and the shared telemetry owner.
+        Invoke-DockerCommandChecked -Arguments @("build", "--build-arg", "BASE_IMAGE=$baseImage", "-f", (Join-Path $sourceRoot "Dockerfile"), "-t", $Image, $PSScriptRoot) -TimeoutSec 900 -Description "docker build beta CodeChecker compatibility image"
         return
     }
     if (Test-CodeCheckerServer -Server $Server) {

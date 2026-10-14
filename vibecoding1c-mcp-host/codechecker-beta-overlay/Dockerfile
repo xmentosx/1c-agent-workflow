@@ -2,6 +2,7 @@ ARG BASE_IMAGE=comol/1c-code-checker@sha256:d0e14e177e6918f61795c1a46910dbf58d1a
 FROM ${BASE_IMAGE}
 
 USER root
-COPY patch_mcp_server.py /tmp/patch_beta_mcp_server.py
+COPY codechecker-beta-overlay/patch_mcp_server.py /tmp/patch_beta_mcp_server.py
+COPY codechecker-overlay/observability.py /app/MCP_1copilot/observability.py
 RUN python /tmp/patch_beta_mcp_server.py && rm /tmp/patch_beta_mcp_server.py
 USER appuser

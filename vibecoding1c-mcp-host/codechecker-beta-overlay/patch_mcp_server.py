@@ -1,4 +1,4 @@
-"""Restore the stable check_1c_logic MCP tool in the pinned beta image."""
+"""Restore logic checks and shared content-safe telemetry in the modern image."""
 
 import argparse
 import ast
@@ -44,6 +44,74 @@ async def check_1c_logic(code: str) -> AnswerResult:
 '''
 
 MAIN_ANCHOR = '\n\nif __name__ == "__main__":\n    main()\n'
+TELEMETRY_IMPORT = (
+    "from MCP_1copilot.observability import (observe_tool as _itl_observe_tool, "
+    "observe_condition as _itl_observe_condition, "
+    "observe_upstream_call as _itl_observe_upstream_call)\n"
+)
+
+
+def _instrument_source(source: str) -> str:
+    """Observe the existing adapter boundaries without replacing its retry flow."""
+    tree = ast.parse(source)
+    lines = source.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    def offset(line: int, column: int) -> int:
+        return offsets[line - 1] + len(lines[line - 1].encode("utf-8")[:column].decode("utf-8"))
+
+    edits = []
+    attempts = {"_send_prompt": ("collect_prompt", "prompt"),
+                "_call_capability": ("call_capability", "direct")}
+    found = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        is_tool = any(
+            isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+            and isinstance(d.func.value, ast.Name) and d.func.value.id == "mcp"
+            and d.func.attr == "tool" for d in node.decorator_list
+        )
+        if is_tool:
+            parameters = {arg.arg for arg in node.args.args + node.args.kwonlyargs}
+            snapshot = "code" if "code" in parameters else "question" if "question" in parameters else None
+            decorator = (f'@_itl_observe_tool({node.name!r}, snapshot_argument={snapshot!r}, '
+                         'modern=True)\n')
+            edits.append((offset(node.lineno, 0), offset(node.lineno, 0), decorator))
+        if node.name in {"_error_result", "_capacity_refusal"}:
+            outcome = "error" if node.name == "_error_result" else "refused"
+            edits.append((offset(node.lineno, 0), offset(node.lineno, 0),
+                          f'@_itl_observe_condition({outcome!r})\n'))
+        if node.name in attempts:
+            method, route = attempts[node.name]
+            matches = [n for n in ast.walk(node) if isinstance(n, ast.Await)
+                       and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Attribute)
+                       and isinstance(n.value.func.value, ast.Name) and n.value.func.value.id == "client"
+                       and n.value.func.attr == method]
+            if len(matches) != 1:
+                raise RuntimeError(f"Pinned beta {route} attempt boundary changed.")
+            call = matches[0].value
+            wrapped = ast.Call(func=ast.Name(id="_itl_observe_upstream_call", ctx=ast.Load()),
+                               args=[ast.Constant(route), call.func, *call.args], keywords=call.keywords)
+            edits.append((offset(call.lineno, call.col_offset), offset(call.end_lineno, call.end_col_offset),
+                          ast.unparse(wrapped)))
+            found.add(node.name)
+    if found != set(attempts):
+        raise RuntimeError("Pinned beta attempt functions changed.")
+    import_after = 0
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            import_after = offsets[node.end_lineno]
+        elif (import_after == 0 and isinstance(node, ast.Expr)
+              and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            import_after = offsets[node.end_lineno]
+    edits.append((import_after, import_after, TELEMETRY_IMPORT))
+    for start, end, replacement in sorted(edits, key=lambda edit: edit[0], reverse=True):
+        source = source[:start] + replacement + source[end:]
+    ast.parse(source)
+    return source
 
 
 def patch_source(source: str) -> str:
@@ -53,15 +121,14 @@ def patch_source(source: str) -> str:
         raise RuntimeError("Beta image already provides check_1c_logic; review its contract before patching.")
     required_functions = {
         "_bounder", "_scope_owner", "_send_prompt", "_answer", "_evidence",
-        "_error_result", "_condition_text", "_capacity_refusal", "main",
+        "_error_result", "_condition_text", "_capacity_refusal", "_call_capability", "main",
     }
     if not required_functions.issubset(functions):
         raise RuntimeError("Pinned beta CodeChecker layout changed.")
     if source.count(MAIN_ANCHOR) != 1:
         raise RuntimeError("Pinned beta CodeChecker entrypoint changed.")
     result = source.replace(MAIN_ANCHOR, "\n\n" + LOGIC_TOOL + MAIN_ANCHOR)
-    ast.parse(result)
-    return result
+    return _instrument_source(result)
 
 
 def main() -> None:
