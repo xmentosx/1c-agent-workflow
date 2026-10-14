@@ -362,6 +362,14 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
 
     It 'continues a failed Release preparation in a new owned target and resumes the completed candidate without another restore' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'release continuation')
+        $longRelative='src/cf/DataProcessors/РегистрацияИзмененийДляОбменаДанными/Forms/УзлыРегистрацииОбъекта/Ext/Form/Items/ДеревоУзловОбменаКонтекстноеМенюИнвертироватьПометкуВсемУзлам/Picture.png'
+        $longSeedPath=Join-Path $seed.project $longRelative
+        $longSeedPath.Length|Should -BeGreaterThan 260
+        [void][IO.Directory]::CreateDirectory(('\\?\'+(Split-Path -Parent $longSeedPath)))
+        [IO.File]::WriteAllBytes(('\\?\'+$longSeedPath),[byte[]]@(0,127,255))
+        Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('config','core.longpaths','true')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('add','--',$longRelative)|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('commit','-m','retain exact long Unicode workload')|Out-Null
         $configPath=Join-Path $seed.project '.agent-1c/release-e2e.json'
         $config=Read-QualificationFixtureJson -Path $configPath
         $config.devBranchName='negative';$config.worktreePath=$seed.branch
@@ -375,7 +383,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
                 'qualification-create-infobase'{$state=Read-QualificationFixtureJson -Path (Join-Path $Root ('.agent-1c/dev-branches/'+$Arguments[1]+'.json'));Write-Utf8Text -Path (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD') -Value 'synthetic native create result'}
                 'release-e2e-restore'{if($script:failRestore){$script:failRestore=$false;throw 'original restore failure; target retained'}}
                 'update-workflow'{Write-Utf8Text -Path (Join-Path $Root '.agent-1c/dependency-lock.json') -Value ('{"dependencies":{"workflowPackage":{"commit":"'+$script:fixtureCandidateCommit+'"}}}')}
-                'refresh-dev-branch'{
+                'refresh-dev-branch'{throw 'Full refresh requires a source database absent from this sealed fixture; preserve the native reproducer.'}
+                'refresh-dev-branch-lite'{
                     $i=[Array]::IndexOf($Arguments,'-ExpectedMasterCommit')
                     Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('merge','--ff-only',$Arguments[$i+1])|Out-Null
                 }
@@ -393,6 +402,10 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $ready.projectRoot|Should -Not -Be $failed.projectRoot
         Test-Path -LiteralPath $failed.projectRoot -PathType Container|Should -BeTrue
         $ready.claim.status|Should -BeExactly 'ready'
+        (Invoke-RepositoryGit -RepositoryRoot $ready.projectRoot -Arguments @('config','--local','--get','core.longpaths')).stdout.Trim()|Should -BeExactly 'true'
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes(('\\?\'+(Join-Path $ready.branchRoot $longRelative))))|Should -BeExactly 'AH//'
+        (Invoke-RepositoryGit -RepositoryRoot $ready.branchRoot -Arguments @('show','HEAD:src/cf/invalid.bsl')).stdout.Trim()|Should -BeExactly 'original negative source'
+        Test-Path -LiteralPath (Join-Path $ready.projectRoot '.agent-1c/infobases/source-snapshot')|Should -BeFalse
         $installed=Read-QualificationFixtureJson -Path (Join-Path $ready.branchRoot '.agent-1c/dependency-lock.json')
         $installed.dependencies.workflowPackage.commit|Should -BeExactly $script:fixtureCandidateCommit
         $continued=New-SourceE2EFixtureProject @options
@@ -401,7 +414,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -ParameterFilter {$Action -eq 'release-e2e-restore'}
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'update-workflow'}
-        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'refresh-dev-branch'}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'refresh-dev-branch'}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'refresh-dev-branch-lite' -and '-ExpectedMasterCommit' -in $Arguments}
     }
 
     It 'rejects path escape and writes no state into an unclaimed target' {

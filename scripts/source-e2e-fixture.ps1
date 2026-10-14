@@ -290,6 +290,9 @@ function New-SourceE2EFixtureProject {
     [void][IO.Directory]::CreateDirectory($parent)
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Invoke-RepositoryGit -RepositoryRoot $parent -Arguments @('clone','--no-checkout','--no-hardlinks','--no-tags','--branch','master',(Join-Path $capsule 'source.bundle'),$target)|Out-Null
+    # Only this new disposable repository owns the setting; inherited machine
+    # defaults must not make a sealed Unicode/long-path workload uncheckoutable.
+    Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('config','core.longpaths','true')|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','--detach',[string]$manifest.masterCommit)|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','-B','master',[string]$manifest.masterCommit)|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('worktree','add','-b',('itldev/'+[string]$manifest.branchName),$branch,[string]$manifest.branchCommit)|Out-Null
@@ -329,7 +332,12 @@ function New-SourceE2EFixtureProject {
             Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('add','--all')|Out-Null
             if((Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('diff','--cached','--quiet') -AllowFailure).exitCode -ne 0){Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('commit','-m','test: prepare exact release candidate')|Out-Null}
             $masterHead=(Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('rev-parse','HEAD')).stdout.Trim()
-            $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'refresh-dev-branch' -Arguments @('-DevBranchName',$context.branchName,'-ExpectedMasterCommit',$masterHead) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 5400
+            # The capsule owns a frozen master tree and one restored branch DB,
+            # not a live source/master DB. Merge that exact prepared master via
+            # the ordinary lite owner, including its native branch load. A full
+            # refresh would resynchronize the immutable workload from a missing
+            # source DB instead of preparing this candidate.
+            $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'refresh-dev-branch-lite' -Arguments @('-DevBranchName',$context.branchName,'-ExpectedMasterCommit',$masterHead) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 5400
             $installed=Read-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dependency-lock.json')
             if([string]$installed.dependencies.workflowPackage.commit -cne $commit){throw 'FIXTURE_REFRESHED_CANDIDATE_MISMATCH'}
         }finally{$env:ITL_WORKFLOW_SOURCE_PATH=$previousSource;$env:ITL_AI_RULES_SOURCE_PATH=$previousRules}
