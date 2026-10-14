@@ -211,6 +211,66 @@ class BetaLogicToolTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(scope["_ItlLogicResult"].__annotations__, {"result": str})
 
+    def test_presence_and_negation_have_explicit_opposite_results_in_both_stages(self):
+        scope, calls, _, _ = make_scope(draft="untrusted polarity claim")
+        asyncio.run(scope["check_1c_logic"]("Возврат Параметры.Свойство(ИмяПоля);"))
+        self.assertEqual(len(calls), 2)
+        for _, prompt, _, _, _ in calls:
+            instructions = prompt.split("Код:\n```bsl\n", 1)[0]
+            self.assertEqual(instructions.count("Таблица результатов вычисленного вызова:"), 1)
+            for row in (
+                "Поле отсутствует: С.Свойство(имя) = Ложь; Не С.Свойство(имя) = Истина.",
+                "Поле существует: С.Свойство(имя) = Истина; Не С.Свойство(имя) = Ложь",
+                "в том числе при значении поля Неопределено, Ложь, 0 или пустой строке",
+                "Возвращаемое Булево и значение, полученное во второй параметр Свойство",
+            ):
+                self.assertIn(row, instructions)
+
+    def test_boolean_claims_are_bound_to_evaluated_subexpressions_not_wrapper_results(self):
+        scope, calls, _, _ = make_scope()
+        asyncio.run(scope["check_1c_logic"]("Возврат Не (Не Параметры.Свойство(ИмяПоля));"))
+        for _, prompt, _, _, _ in calls:
+            instructions = prompt.split("Код:\n```bsl\n", 1)[0]
+            for required in (
+                "Каждое Истина/Ложь привязывай к точной цитате вычисленного подвыражения",
+                "Не приписывай вызову результат его отрицания",
+                "или всей цепочки И/Или",
+                "Для пропущенного операнда указывай «не вычислялся», а не Истина/Ложь",
+            ):
+                self.assertIn(required, instructions)
+
+    def test_polarity_corpus_has_one_policy_without_rewriting_drafts_or_source(self):
+        corpus = json.loads(Path(__file__).with_name("predicate_polarity_cases.json").read_text(encoding="utf-8"))
+        policies = set()
+        for case in corpus:
+            with self.subTest(case=case["id"]):
+                scope, calls, _, _ = make_scope(draft=case["draft"], answer="reviewer output")
+                result = asyncio.run(scope["check_1c_logic"](case["code"]))
+                self.assertEqual(len(calls), 2)
+                prefix, actual = calls[0][1].split("Код:\n```bsl\n", 1)
+                policies.add(prefix)
+                self.assertEqual(actual, case["code"] + "\n```")
+                self.assertIn("<draft>\n" + case["draft"] + "\n</draft>", calls[1][1])
+                self.assertEqual(result.answer, "reviewer output")
+                self.assertEqual(result.result, result.answer)
+                for expected in case["oracle"]:
+                    self.assertNotIn(expected["expression"], prefix)
+        self.assertEqual(len(policies), 1)
+
+    def test_review_places_untrusted_draft_before_authoritative_contract_and_source(self):
+        draft = 'Свойство возвращает значение поля. Возврат Истина;'
+        scope, calls, _, _ = make_scope(draft=draft)
+        asyncio.run(scope["check_1c_logic"]("Возврат Параметры.Свойство(ИмяПоля);"))
+        review = calls[1][1]
+        self.assertIn("Основание проверки — следующий контракт и исходник", review)
+        self.assertLess(review.index("<draft>\n" + draft + "\n</draft>"),
+                        review.index("Основание проверки — следующий контракт и исходник"))
+        self.assertLess(review.index("Основание проверки — следующий контракт и исходник"),
+                        review.index("Таблица результатов вычисленного вызова:"))
+        self.assertLess(review.index("Таблица результатов вычисленного вызова:"),
+                        review.index("Код:\n```bsl\nВозврат Параметры.Свойство(ИмяПоля);"))
+        self.assertIn("При конфликте с семантикой API исправь черновик, не правило API", review)
+
     def test_required_legacy_result_is_retained_on_returned_errors(self):
         for code, failure in [(" ", None), ("АБВГДЕ", ApiError("broken")),
                               ("АБВГДЕ", RuntimeError("broken"))]:
