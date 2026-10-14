@@ -16,10 +16,14 @@ class ToolRegistry:
 
 
 class AnswerResult:
-    def __init__(self, answer, truncation=None, sources=None):
+    def __init__(self, answer, truncation=None, sources=None, **fields):
         self.answer = answer
         self.truncation = truncation or []
         self.sources = sources or []
+        self.__dict__.update(fields)
+
+    def model_dump(self):
+        return dict(self.__dict__)
 
 
 class ApiError(Exception):
@@ -84,6 +88,24 @@ def make_scope(limit=100000, answer="Найдена ошибка логики", 
 
 
 class BetaLogicToolTests(unittest.TestCase):
+    def test_required_legacy_result_retains_answer_and_truncation(self):
+        scope, calls, _, _ = make_scope(limit=5, answer="unsupported API response")
+        result = asyncio.run(scope["check_1c_logic"]("АБВГДЕ"))
+        self.assertEqual(result.result, "unsupported API response")
+        self.assertEqual(result.result, result.answer)
+        self.assertTrue(result.truncation[0]["truncated"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(scope["_ItlLogicResult"].__annotations__, {"result": str})
+
+    def test_required_legacy_result_is_retained_on_returned_errors(self):
+        for code, failure in [(" ", None), ("АБВГДЕ", ApiError("broken")),
+                              ("АБВГДЕ", RuntimeError("broken"))]:
+            with self.subTest(failure=type(failure).__name__):
+                scope, _, _, _ = make_scope(limit=5, failure=failure)
+                result = asyncio.run(scope["check_1c_logic"](code))
+                self.assertEqual(result.result, result.answer)
+                self.assertIn("result", result.model_dump())
+
     def test_empty_code_keeps_stable_message_without_upstream_call(self):
         scope, calls, _, _ = make_scope()
         result = asyncio.run(scope["check_1c_logic"]("  "))

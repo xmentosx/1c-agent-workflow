@@ -177,6 +177,10 @@ docker logs --timestamps --since 2h itl-1c-codechecker 2>&1 |
 timestamp с `mcp_tool_call_end.duration` в локальном журнале Codex.
 
 Modern overlay (включая stable с `manifestPath`) использует тот же общий модуль телеметрии.
+`check_1c_logic` сохраняет обязательное прежнее строковое поле `result` в
+structured output, равное `answer`, вместе с `truncation` и `sources`; это
+аддитивное расширение прежней схемы, включая ответы об ошибке. Typed capacity
+refusal сохраняет MCP `isError` и не превращается в обычный ответ.
 Каждый MCP tool получает `requestId`, `tool_start` и один `tool_end` при штатном возврате,
 ошибке или отмене. `inputSha256` — SHA-256 канонического JSON аргументов с defaults
 (`ensure_ascii=False`, сортировка ключей, разделители `,`/`:`); `snapshotSha256` — точный

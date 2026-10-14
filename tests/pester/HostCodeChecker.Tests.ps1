@@ -17,7 +17,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 9 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 11 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {

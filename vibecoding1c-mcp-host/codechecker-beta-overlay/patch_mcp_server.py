@@ -5,11 +5,22 @@ import ast
 from pathlib import Path
 
 
-LOGIC_TOOL = '''@mcp.tool()
-async def check_1c_logic(code: str) -> AnswerResult:
+LOGIC_TOOL = '''class _ItlLogicResult(AnswerResult):
+    # Keep the required FastMCP string-wrapper field for existing consumers.
+    result: str
+
+
+def _itl_logic_result(value: AnswerResult) -> _ItlLogicResult:
+    payload = value.model_dump()
+    payload["result"] = value.answer
+    return _ItlLogicResult(**payload)
+
+
+@mcp.tool()
+async def check_1c_logic(code: str) -> _ItlLogicResult:
     """Check 1C code for logic, bugs, and performance without checking syntax or style."""
     if not code.strip():
-        return _error_result("Ошибка: код не может быть пустым")
+        return _itl_logic_result(_error_result("Ошибка: код не может быть пустым"))
 
     bounder = _bounder()
     call = plugin_runtime.begin("check_1c_logic", {"code": code})
@@ -26,19 +37,19 @@ async def check_1c_logic(code: str) -> AnswerResult:
         outcome = await _send_prompt(
             _scope_owner("check_1c_logic"), prompt, context=call,
         )
-        return AnswerResult(
+        return _itl_logic_result(AnswerResult(
             answer=_answer(call, outcome.text, mode="prompt", bounder=bounder),
             truncation=_evidence(bounder),
             sources=[],
-        )
+        ))
     except ConversationCapacityError as e:
         return _capacity_refusal(e)
     except ApiError as e:
-        return _error_result(_condition_text(e), bounder, call)
+        return _itl_logic_result(_error_result(_condition_text(e), bounder, call))
     except Exception as e:
-        return _error_result(
+        return _itl_logic_result(_error_result(
             f"Произошла неожиданная ошибка: {str(e)}", bounder, call,
-        )
+        ))
 
 
 '''
