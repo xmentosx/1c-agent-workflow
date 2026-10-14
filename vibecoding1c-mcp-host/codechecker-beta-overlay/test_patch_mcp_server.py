@@ -88,6 +88,49 @@ def make_scope(limit=100000, answer="Найдена ошибка логики", 
 
 
 class BetaLogicToolTests(unittest.TestCase):
+    def test_r05_guard_pair_keeps_exact_source_and_does_not_invent_a_verdict(self):
+        guarded = (
+            'Если КлючРаботы.ВидРаботы = "Задание" Тогда\n'
+            '\tЕсли Не КлючРаботы.Свойство("Задание")\n'
+            '\t\tИли ТипЗнч(КлючРаботы.Задание) <> Тип("СправочникСсылка.упо_Задания")\n'
+            '\t\tИли Не ЗначениеЗаполнено(КлючРаботы.Задание) Тогда\n'
+            '\t\tВызватьИсключение "Некорректная ссылка задания.";\n'
+            '\tКонецЕсли;\nКонецЕсли;'
+        )
+        missing = guarded.replace('Если Не КлючРаботы.Свойство("Задание")\n\t\tИли ', 'Если ', 1)
+        prefixes = []
+        for code in (guarded, missing):
+            scope, calls, _, _ = make_scope(answer="unsupported or contradictory provider answer")
+            result = asyncio.run(scope["check_1c_logic"](code))
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(calls[0][2])
+            prefix, actual = calls[0][1].split("Код:\n```bsl\n", 1)
+            self.assertEqual(actual, code + "\n```")
+            self.assertNotIn("КлючРаботы", prefix)  # No fixture-specific diagnosis in the instructions.
+            prefixes.append(prefix)
+            self.assertEqual(result.answer, "unsupported or contradictory provider answer")
+            self.assertEqual(result.result, result.answer)
+            self.assertFalse(result.truncation[0]["truncated"])
+        self.assertEqual(prefixes[0], prefixes[1])
+        self.assertIn('Свойство("Задание")', guarded)
+        self.assertNotIn('Свойство("Задание")', missing)
+
+    def test_logic_review_requires_correct_platform_paths_before_findings(self):
+        scope, calls, _, _ = make_scope()
+        asyncio.run(scope["check_1c_logic"]("Возврат Истина;"))
+        instructions = calls[0][1].split("Код:\n```bsl\n", 1)[0]
+        self.assertLess(instructions.index("Сначала составь краткую карту защит"),
+                        instructions.index("Затем перечисли только подтверждённые"))
+        for required in (
+            "В A Или B при A=Истина B НЕ вычисляется",
+            "в A И B при A=Ложь B НЕ вычисляется",
+            "«Поле объекта не обнаружено», а не возвращает Неопределено",
+            "Существующее поле со значением Неопределено и отсутствующее поле — разные случаи",
+            "дословная цитата", "конкретный вход/путь выполнения",
+            "это не найденные ошибки", "это не доказательство полной корректности",
+        ):
+            self.assertIn(required, instructions)
+
     def test_required_legacy_result_retains_answer_and_truncation(self):
         scope, calls, _, _ = make_scope(limit=5, answer="unsupported API response")
         result = asyncio.run(scope["check_1c_logic"]("АБВГДЕ"))

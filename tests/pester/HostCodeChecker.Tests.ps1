@@ -8,7 +8,7 @@
 }
 
 Describe 'HostCodeChecker component regressions' {
-    It "preserves logic-only prompts and truncation evidence in the beta image" -Tag BetaCutover {
+    It "grounds logic review in platform guard semantics while preserving exact bounded inputs and evidence" -Tag BetaCutover {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-beta-overlay\test_patch_mcp_server.py"
         $previousErrorActionPreference = $ErrorActionPreference
         try {
@@ -17,7 +17,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 11 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 13 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
