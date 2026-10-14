@@ -22,6 +22,13 @@ is never automatically replayed. Existing registered-state recovery keeps its
 own contract; legacy callers without the retained snapshot cannot use this new
 missing-state authority.
 
+Every MCP tool request owns one phase deadline, including the existing default
+ten-minute phase when metadata is absent. Nested broker calls inherit its
+remaining time without restarting it or extending a shorter parent deadline.
+The five-minute fallback still applies to broker calls outside a request phase;
+cleanup retains its separate bounded owner budget. Unknown modifying outcomes
+are never replayed merely because a deadline expired.
+
 If native cleanup is unconfirmed, the original execution keeps its guard; new
 calls cannot acquire or inherit it. The existing explicit owned-stop/shutdown
 path continues that same owner and releases it only after confirmed cleanup.

@@ -54,6 +54,29 @@ func TestPhaseBudgetCannotExtendParentAndRejectsInvalidMetadata(t *testing.T) {
 	}
 }
 
+func TestDefaultPhaseBudgetIsInheritedByBrokerWithoutRestart(t *testing.T) {
+	ctx, cancel, err := phaseRequestContext(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("default request phase has no deadline")
+	}
+	first := brokerCallTimeout(ctx, 0)
+	if first < 9*time.Minute || first > time.Until(deadline)+time.Second {
+		t.Fatalf("broker truncated the existing default phase: remaining=%s broker=%s", time.Until(deadline), first)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if second := brokerCallTimeout(ctx, 0); second >= first {
+		t.Fatalf("broker restarted the default phase: %s -> %s", first, second)
+	}
+	if got := brokerCallTimeout(context.Background(), 0); got != 5*time.Minute {
+		t.Fatalf("unscoped legacy broker timeout changed: %s", got)
+	}
+}
+
 func TestRuntimePhaseDeadlineBoundsHTTPCallAndDoesNotReplay(t *testing.T) {
 	tools := integrationTools()
 	var calls atomic.Int32

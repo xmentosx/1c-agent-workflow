@@ -24,8 +24,10 @@ func phaseRequestContext(parent context.Context, meta mcp.Meta) (context.Context
 			return nil, nil, fmt.Errorf("invalid itlPhaseRemainingMs; expected a positive number up to 86400000")
 		}
 		budget = time.Duration(milliseconds * float64(time.Millisecond))
-		parent = context.WithValue(parent, phaseBudgetKey{}, true)
 	}
+	// The default request phase owns a budget too. Only broker calls outside
+	// a request phase use the legacy fallback; nested calls cannot restart it.
+	parent = context.WithValue(parent, phaseBudgetKey{}, true)
 	ctx, cancel := context.WithTimeout(parent, budget)
 	return ctx, cancel, nil
 }
