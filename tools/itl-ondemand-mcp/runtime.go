@@ -22,25 +22,26 @@ import (
 )
 
 type runtime struct {
-	mu                 sync.Mutex
-	catalog            *loadedCatalog
-	broker             backendBroker
-	projectRoot        string
-	family             string
-	instanceID         string
-	idle               time.Duration
-	catalogWait        time.Duration
-	vanessaConnectWait time.Duration
-	logger             *slog.Logger
-	progressMu         sync.Mutex
-	progress           map[string]*progressRoute
-	progressSerial     atomic.Uint64
-	progressWriteMu    sync.Mutex
-	databaseGateOnce   sync.Once
-	databaseGate       chan struct{}
-	executionOwner     *executionGuardOwner
-	executionPlan      *facadeExecutionPlan
-	cleanupUnconfirmed bool
+	mu                     sync.Mutex
+	catalog                *loadedCatalog
+	broker                 backendBroker
+	projectRoot            string
+	family                 string
+	instanceID             string
+	idle                   time.Duration
+	catalogWait            time.Duration
+	vanessaConnectWait     time.Duration
+	logger                 *slog.Logger
+	progressMu             sync.Mutex
+	progress               map[string]*progressRoute
+	progressSerial         atomic.Uint64
+	progressWriteMu        sync.Mutex
+	databaseGateOnce       sync.Once
+	databaseGate           chan struct{}
+	executionOwner         *executionGuardOwner
+	executionPlan          *facadeExecutionPlan
+	cleanupUnconfirmed     bool
+	idleActivityUnresolved bool
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -223,6 +224,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.progressMu.Unlock()
 	}
 	r.active++
+	r.noteIdleActivityLocked(toolName, arguments)
 	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route))
 	r.mu.Unlock()
 	result, err := r.callUpstream(ctx, session, params)
@@ -492,6 +494,13 @@ func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, 
 			return result, err
 		}
 		result = r.validateVanessaResult(ctx, params.Name, params.Arguments, result, session)
+		if params.Name == "close_test_client" && result != nil && !result.IsError {
+			if owner, ok := r.broker.(testClientCloseBroker); ok {
+				if err := owner.CompleteTestClientClose(ctx, r.backend); err != nil {
+					return nil, fmt.Errorf("complete owned TestClient close: %w", err)
+				}
+			}
+		}
 		code := toolResultCode(result)
 		retryConnect := code == "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED" || code == "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED"
 		if r.family != "vanessa-ui" || classifyVanessaTool(params.Name, params.Arguments) != vanessaToolConnect || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
@@ -590,6 +599,7 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 
 func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	r.backend = info
+	r.idleActivityUnresolved = false
 	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
 		r.stopBrokerAfterFailure(ctx)
 		return err
@@ -828,17 +838,40 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	if superseded {
 		return nil
 	}
-	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
+	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
+		r.mu.Lock()
+		obsolete := r.closed || r.generation != generation
+		r.mu.Unlock()
+		if obsolete {
+			return nil
+		}
 		return err
 	}
 	r.mu.Lock()
 	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
 		r.mu.Unlock()
-		return finish("succeeded", "")
+		unlock()
+		return nil
 	}
 	if time.Now().Before(r.idleDeadline) {
 		r.armIdleLocked()
+		r.mu.Unlock()
+		unlock()
+		return nil
+	}
+	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
+		r.mu.Unlock()
+		unlock()
+		return err
+	}
+	r.mu.Unlock()
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, false, unlock)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
 		r.mu.Unlock()
 		return finish("succeeded", "")
 	}
@@ -864,7 +897,18 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 }
 
 func (r *runtime) stop(ctx context.Context) error {
-	ctx, finish, err := r.beginDatabaseExecution(ctx, nil, true)
+	unlock, err := r.lockDatabaseCalls(ctx)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
+		r.mu.Unlock()
+		unlock()
+		return err
+	}
+	r.mu.Unlock()
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, true, unlock)
 	if err != nil {
 		return err
 	}

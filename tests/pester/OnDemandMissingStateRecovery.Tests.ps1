@@ -5,6 +5,118 @@
     $actualOwnershipProof=(Get-Command Get-ItlOnDemandProcessOwnershipProof).ScriptBlock
 }
 
+Describe 'Private TestClient close and runtime mutation owner' {
+    BeforeEach {
+        $script:savedRoot=$script:ProjectRoot
+        $script:savedContext=$env:ITL_EXECUTION_CONTEXT
+        $script:savedKey=$env:ITL_EXECUTION_CONTEXT_KEY
+        $script:ProjectRoot=Join-Path $TestDrive ('Закрытие своего клиента '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
+        $env:ITL_EXECUTION_CONTEXT='original-owner';$env:ITL_EXECUTION_CONTEXT_KEY='original-key'
+        $script:nativeStops=[Collections.Generic.List[int]]::new()
+        $script:childAlive=$false
+        $script:record=[pscustomobject]@{
+            schemaVersion=4;family='vanessa-ui';instanceId=('a'*32);pid=101;port=9874;catalogSha256=('c'*64)
+            processStartTime='2026-10-14T01:00:00.0000000Z';executablePath='C:\Платформа теста\1cv8.exe'
+            ownershipMarkers=@('C:\База менеджера','port=9874');infoBaseKind='file';infoBasePath='C:\Целевая база'
+            managerInfoBaseKind='file';managerInfoBasePath='C:\База менеджера';portFamily='vanessa';portKey='manager';portLeaseToken='manager-token'
+            testClientPid=102;testClientPort=48151;testClientProcessStartTime='2026-10-14T01:01:00.0000000Z'
+            testClientExecutablePath='C:\Платформа теста\1cv8c.exe';testClientOwnershipMarkers=@('C:\Целевая база','/TESTCLIENT','-TPort 48151')
+            testClientPortFamily='vanessa-test';testClientPortKey='child';testClientPortLeaseToken='child-token';vanessaParamsPath=''
+        }
+        Invoke-WithItlOnDemandRuntimeMutation -Family vanessa-ui -InstanceIds @('a'*32) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$script:record} | Out-Null
+        Mock Get-ItlOnDemandManagedPortLeaseMatches { param($Family,$Key,$LeaseToken) if($Key -eq 'manager'){[pscustomobject]@{port=9874;pid=101}}else{[pscustomobject]@{port=48151;pid=102}} }
+        Mock Get-Process { param($Id) if($Id -eq 101 -or ($Id -eq 102 -and $script:childAlive)){[pscustomobject]@{Id=$Id}} }
+        Mock Get-ItlOnDemandOwnedTestClientProcesses { if($script:childAlive){[pscustomobject]@{process=[pscustomobject]@{Id=102}}} }
+        Mock Test-TcpPortOpen { $false }
+        Mock Invoke-WithOneCExecutionGuard { param($Admissions,$Purpose,$ScriptBlock) if(-not $env:ITL_EXECUTION_CONTEXT){throw 'unsigned'}; & $ScriptBlock }
+        Mock Stop-Process { param($Id) $script:nativeStops.Add([int](@($Id)[0]));if($Id -eq 102){$script:childAlive=$false} }
+        Mock Wait-ItlOnDemandProcessExit { param($ProcessId) return (-not $script:childAlive) }
+        Mock Release-ItlOnDemandManagedPortLease { throw 'child close must retain reservations' }
+    }
+    AfterEach { $script:ProjectRoot=$script:savedRoot;$env:ITL_EXECUTION_CONTEXT=$script:savedContext;$env:ITL_EXECUTION_CONTEXT_KEY=$script:savedKey }
+
+    It 'confirms an exited child while retaining manager and last registered recovery identity' {
+        $result=Complete-ItlOnDemandTestClientClose -InstanceId ('a'*32) -ExpectedRuntimeState $script:record
+        $result.status | Should -Be 'test-client-closed'
+        $saved=Read-ItlOnDemandRuntimeState vanessa-ui ('a'*32)
+        $saved.pid | Should -Be 101
+        $saved.testClientPid | Should -Be 102
+        $saved.testClientState | Should -Be 'exited'
+        $script:nativeStops.Count | Should -Be 0
+        Should -Invoke Invoke-WithOneCExecutionGuard -Times 1 -Exactly
+    }
+    It 'finishes a falsely successful backend close only for the original child under its inherited guard' {
+        $script:childAlive=$true
+        $result=Complete-ItlOnDemandTestClientClose -InstanceId ('a'*32) -ExpectedRuntimeState $script:record
+        $result.testClientExitConfirmed | Should -BeTrue
+        @($script:nativeStops.ToArray()) | Should -Be @(102)
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+    }
+    It 'preserves a replacement child before any native stop' {
+        $changed=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $changed.testClientPid=999
+        {Complete-ItlOnDemandTestClientClose -InstanceId ('a'*32) -ExpectedRuntimeState $changed} | Should -Throw '*STOP_IDENTITY_CHANGED*'
+        $script:nativeStops.Count | Should -Be 0
+    }
+    It 'refuses foreign unregistered children and unsigned close' {
+        $script:childAlive=$true
+        Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
+        {Complete-ItlOnDemandTestClientClose -InstanceId ('a'*32) -ExpectedRuntimeState $script:record} | Should -Throw '*OWNERSHIP_MISMATCH*'
+        $env:ITL_EXECUTION_CONTEXT=$null
+        {Complete-ItlOnDemandTestClientClose -InstanceId ('a'*32) -ExpectedRuntimeState $script:record} | Should -Throw '*EXECUTION_CONTEXT_REQUIRED*'
+        $script:nativeStops.Count | Should -Be 0
+    }
+    It 'refuses stale writes outside the whole mutation instead of recreating a stopped registration' {
+        {Write-ItlOnDemandRuntimeState $script:record} | Should -Throw '*MUTATION_OWNER_REQUIRED*'
+    }
+    It 'keeps the canonical record visible to drain until exact native cleanup completes' {
+        Mock Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$true} }
+        Mock Release-ItlOnDemandManagedPortLease { }
+        Mock Stop-Process {
+            param($Id)
+            (Test-Path -LiteralPath (Get-ItlOnDemandRuntimePath vanessa-ui ('a'*32))) | Should -BeTrue
+            @(Get-ItlOnDemandRuntimeInstances -Strict).Count | Should -Be 1
+            $script:nativeStops.Add([int](@($Id)[0]))
+        }
+        $result=Stop-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ExpectedRuntimeState $script:record
+        $result.status | Should -Be 'stopped'
+        @($script:nativeStops.ToArray()) | Should -Be @(101)
+        @(Get-ItlOnDemandRuntimeInstances -Strict).Count | Should -Be 0
+    }
+    It 'revalidates the full stop snapshot after a replacement was registered' {
+        $replacement=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $replacement.pid=202
+        Invoke-WithItlOnDemandRuntimeMutation -Family vanessa-ui -InstanceIds @('a'*32) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$replacement} | Out-Null
+        {Stop-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ExpectedRuntimeState $script:record} | Should -Throw '*STOP_IDENTITY_CHANGED*'
+        $script:nativeStops.Count | Should -Be 0
+        (Read-ItlOnDemandRuntimeState vanessa-ui ('a'*32)).pid | Should -Be 202
+    }
+    It 'limits the process-only payload to stop and rejects inherited database authority' {
+        $saved=$env:ITL_EXECUTION_INVOCATION
+        try {
+            $env:ITL_EXECUTION_CONTEXT=$null;$env:ITL_EXECUTION_CONTEXT_KEY=$null
+            $env:ITL_EXECUTION_INVOCATION=@{schemaVersion=3;kind='owned-idle-stop';projectRoot=$script:ProjectRoot;family='vanessa-ui';expectedBackend=@{pid=101}}|ConvertTo-Json -Compress
+            foreach($operation in @('ensure','ensure-test-client','mark-running','recover','execution-plan','complete-test-client-close','stop-all')) {
+                {Read-ItlOnDemandExecutionInvocation -Family vanessa-ui -AuxiliaryContour '' -Operation $operation} | Should -Throw '*EXECUTION_CONTEXT_INVALID*'
+            }
+            (Read-ItlOnDemandExecutionInvocation -Family vanessa-ui -AuxiliaryContour '' -Operation stop).kind | Should -Be 'owned-idle-stop'
+            $env:ITL_EXECUTION_CONTEXT='foreign'
+            {Read-ItlOnDemandExecutionInvocation -Family vanessa-ui -AuxiliaryContour '' -Operation stop} | Should -Throw '*EXECUTION_CONTEXT_INVALID*'
+        } finally { $env:ITL_EXECUTION_INVOCATION=$saved }
+    }
+    It 'rejects mutation resource expansion instead of recursively acquiring an unsorted replacement' {
+        function Invoke-ExpansionFixture { Invoke-WithItlOnDemandRuntimeMutation -Family vanessa-ui -InstanceIds @('b'*32) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$script:record} }
+        {Invoke-WithItlOnDemandRuntimeMutation -Family vanessa-ui -InstanceIds @('a'*32) -OwnerFunction Invoke-ExpansionFixture -OwnerArguments @{}} | Should -Throw '*MUTATION_RESOURCE_EXPANSION*'
+    }
+    It 'does not interpret missing expected registration or legacy claim as a clean drain' {
+        $path=Get-ItlOnDemandRuntimePath vanessa-ui ('a'*32)
+        Move-Item -LiteralPath $path -Destination ($path+'.removing-original')
+        {Stop-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ExpectedRuntimeState $script:record} | Should -Throw '*STOP_UNCONFIRMED*'
+        {Get-ItlOnDemandRuntimeInstances -Strict} | Should -Throw '*CLEANUP_CLAIM_INCOMPLETE*'
+    }
+}
+
 Describe 'Retained on-demand launch evidence recovery' {
     BeforeEach {
         $script:savedRoot=$script:ProjectRoot

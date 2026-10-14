@@ -66,6 +66,24 @@ call/process tree; historical failure state does not block a later call. Shared
 server-base execution requires one configured execution host and rejects an
 ambiguous multi-host plan before launch.
 
+Private stdio runtimes may stop a proven idle backend without a new database
+admission. The local call gate excludes preparation, calls and recovery; the
+native owner validates the retained launch identity under a per-instance file
+lease. Vanessa uses this path only after the registered TestClient process and
+listener are gone. A live child falls back to guarded cleanup; interactive
+profiles and unresolved persistent/arbitrary activity keep their guarded path.
+The process-only schema cannot authorize launch, recovery, bulk stop or a
+database context, and old helpers reject it rather than silently downgrading.
+
+`close_test_client` confirms the original child's physical exit before returning
+success and releasing its call guard. Its nested `complete-test-client-close`
+operation can finish only that exact owned child; manager, port reservations and
+last registered recovery identity remain. Logical disconnect is unchanged.
+Every runtime mutation reserves its sorted instance set before reading state.
+The canonical record remains visible until confirmed cleanup, and stale writes,
+replacement identity and unfinished legacy removal claims cannot report clean
+completion. There is no database-wide or startup lock on idle manager cleanup.
+
 Interactive profiles use a persistent owner bound to their caller identity.
 A failed stop retains ownership for an explicit retry. Terminal facade shutdown
 closes its own MCP transport after bounded owned cleanup and records the failure

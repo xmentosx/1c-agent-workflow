@@ -691,6 +691,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "internal-ondemand-ensure-test-client",
         "internal-ondemand-mark-running",
         "internal-ondemand-recover",
+        "internal-ondemand-complete-test-client-close",
         "internal-ondemand-stop"
     )
     if ($readOnlyActions -contains $RequestedAction) { return $false }

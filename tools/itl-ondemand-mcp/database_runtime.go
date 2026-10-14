@@ -80,6 +80,12 @@ func (r *runtime) beginDatabaseExecution(ctx context.Context, meta mcp.Meta, own
 	if err != nil {
 		return ctx, nil, err
 	}
+	return r.beginDatabaseExecutionWithLocalGate(ctx, meta, ownedCleanup, unlock)
+}
+
+// The caller already owns the local gate. Native stop may first establish that
+// a private runtime is idle without waiting for unrelated database execution.
+func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta mcp.Meta, ownedCleanup bool, unlock func()) (context.Context, func(string, string) error, error) {
 	planner, coordinated := r.broker.(executionPlanningBroker)
 	if !coordinated {
 		return ctx, func(string, string) error { unlock(); return nil }, nil
@@ -132,7 +138,7 @@ func (r *runtime) beginDatabaseExecution(ctx context.Context, meta mcp.Meta, own
 		releaseErr := owner.Release(cleanupCtx, "failed", "ITL_ONDEMAND_EXECUTION_PLAN_CHANGED")
 		unlock()
 		if err != nil {
-			return ctx, nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_CHANGED: %w", err)
+			return ctx, nil, errors.Join(fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_REVALIDATION_FAILED: %w", err), releaseErr)
 		}
 		if releaseErr != nil {
 			return ctx, nil, releaseErr

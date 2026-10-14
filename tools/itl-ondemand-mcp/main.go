@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.20"
+const version = "0.4.21"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -89,7 +89,8 @@ func run(args []string) error {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	broker := &powershellBroker{
-		HelperPath: *helperPath, ProjectRoot: root, Family: *family,
+		privateRuntime: true,
+		HelperPath:     *helperPath, ProjectRoot: root, Family: *family,
 		InstanceID: instanceID, CatalogHash: catalog.SHA256,
 	}
 	rt := &runtime{

@@ -92,6 +92,11 @@ func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 			"ITL_EXECUTION_CONTEXT="+value.Context.Encoded,
 			"ITL_EXECUTION_CONTEXT_KEY="+value.Context.Key)
 	}
+	if raw, err := ownedIdleEnvironment(ctx); err != nil {
+		return nil, err
+	} else if raw != "" {
+		result = append(result, "ITL_EXECUTION_INVOCATION="+raw)
+	}
 	return result, nil
 }
 
@@ -104,6 +109,7 @@ type backendBroker interface {
 }
 
 type powershellBroker struct {
+	privateRuntime    bool
 	PowerShell        string
 	HelperPath        string
 	ProjectRoot       string
