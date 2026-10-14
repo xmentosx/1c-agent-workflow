@@ -107,6 +107,8 @@ one read-only call on the original session and binds its current runtime record.
 Instance and artifact identity must remain unchanged; the injection still checks
 the exact freshly bound PID/port values and refuses contradictory records.
 
-A previously armed idle callback becomes a no-op after terminal close. It must
-not wait for a successor's database guard or discard pending cleanup evidence;
-the explicit owned-stop path still owns native cleanup and its confirmation.
+A previously armed idle callback becomes a no-op after terminal close or a newer
+call supersedes its generation. It must not request database admission with an
+expired context after waiting for recovery, or discard pending cleanup evidence.
+The explicit owned-stop path still owns native cleanup and its confirmation;
+valid idle cleanup retains admission and its post-admission generation check.

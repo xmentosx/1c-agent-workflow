@@ -132,6 +132,40 @@ func TestClosedRuntimeIdleCleanupDoesNotWaitForAnotherFacadeGuard(t *testing.T) 
 	}
 }
 
+func TestSupersededIdleCleanupDoesNotWaitForAnotherFacadeGuard(t *testing.T) {
+	rt, broker := newExecutionRuntimeFixture(t)
+	foreignPlan := *broker.plan
+	foreignPlan.InstanceID = "fedcba9876543210fedcba9876543210"
+	foreignBroker := &executionFixtureBroker{plan: &foreignPlan, runtimeRoot: broker.runtimeRoot}
+	foreign := &runtime{broker: foreignBroker, projectRoot: rt.projectRoot, family: rt.family,
+		instanceID: foreignPlan.InstanceID, logger: rt.logger}
+	_, finish, err := foreign.beginDatabaseCall(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := finish("succeeded", ""); err != nil {
+			t.Error(err)
+		}
+	}()
+	// A timer may already be waiting for the runtime mutex when a new call
+	// cancels it and performs recovery. Once it gets the mutex, that timer's
+	// generation has no cleanup authority, even if its context has expired.
+	rt.backend = &backendInfo{Status: "running", PID: os.Getpid(), URL: "http://fixture"}
+	rt.generation = 2
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := rt.stopIdle(ctx, 1); err != nil {
+		t.Fatalf("superseded idle callback attempted admission with expired context: %v", err)
+	}
+	if broker.planCalls != 0 || broker.stops != 0 || rt.executionOwner != nil {
+		t.Fatal("superseded idle callback attempted database admission or native stop")
+	}
+	if rt.backend == nil || rt.closed || rt.generation != 2 {
+		t.Fatal("idle no-op changed the replacement runtime or discarded cleanup evidence")
+	}
+}
+
 func TestOnDemandRevalidatesPlanAfterAdmission(t *testing.T) {
 	rt, broker := newExecutionRuntimeFixture(t)
 	broker.changePlan = true

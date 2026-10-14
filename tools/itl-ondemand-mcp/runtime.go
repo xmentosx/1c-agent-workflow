@@ -819,12 +819,13 @@ func (r *runtime) armIdleLocked() {
 }
 
 func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
-	// Terminal close owns its explicit cleanup. Its previously armed idle
-	// callback must not wait for a successor facade's database admission.
+	// Terminal close and newer calls supersede an armed idle callback. Check
+	// that before admission: recovery may have held the mutex past this
+	// callback's deadline, and it has no work to admit in the new generation.
 	r.mu.Lock()
-	closed := r.closed
+	superseded := r.closed || r.generation != generation
 	r.mu.Unlock()
-	if closed {
+	if superseded {
 		return nil
 	}
 	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
