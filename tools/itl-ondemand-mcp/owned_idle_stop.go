@@ -5,10 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 var errIdleChildActive = errors.New("ITL_ONDEMAND_IDLE_CHILD_ACTIVE")
+
+// Retiring only the local transport prevents the SDK's Close HTTP DELETE from
+// reaching a replacement listener after native cleanup releases its port.
+// The SDK then cancels and joins its own receive loop before native cleanup.
+type backendHTTPTransport struct{ retired atomic.Bool }
+
+func (t *backendHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.retired.Load() {
+		return nil, context.Canceled
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
 
 type privateRuntimeBroker interface {
 	PrivateRuntime() bool
@@ -99,17 +113,20 @@ func (r *runtime) tryOwnedIdleStopLocked(ctx context.Context) (bool, error) {
 	if r.backend == nil {
 		return true, nil
 	}
+	if r.session != nil {
+		if r.sessionTransport != nil {
+			r.sessionTransport.retired.Store(true)
+		}
+		_ = r.session.Close()
+		r.clearProgress(r.session)
+		r.session = nil
+	}
 	if err := broker.StopOwnedIdle(ctx, r.backend); err != nil {
 		if errors.Is(err, errIdleChildActive) {
 			return false, nil
 		}
 		r.cleanupUnconfirmed = true
 		return true, err
-	}
-	if r.session != nil {
-		_ = r.session.Close()
-		r.clearProgress(r.session)
-		r.session = nil
 	}
 	r.backend = nil
 	if r.timer != nil {

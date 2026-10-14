@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.21"
+const version = "0.4.22"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

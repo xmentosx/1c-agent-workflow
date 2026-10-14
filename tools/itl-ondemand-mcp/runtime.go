@@ -45,6 +45,7 @@ type runtime struct {
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
+	sessionTransport  *backendHTTPTransport
 	timer             *time.Timer
 	active            int
 	generation        uint64
@@ -629,11 +630,12 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 			}()
 		},
 	})
+	r.sessionTransport = &backendHTTPTransport{}
 	transport := &mcp.StreamableClientTransport{
 		Endpoint: info.URL,
 		// RPC contexts own phase deadlines; a fixed transport timeout would
 		// truncate explicitly budgeted long 1C calculations.
-		HTTPClient: &http.Client{},
+		HTTPClient: &http.Client{Transport: r.sessionTransport},
 		MaxRetries: 2,
 	}
 	session, err := client.Connect(ctx, transport, nil)

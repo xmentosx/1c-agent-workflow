@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +19,79 @@ import (
 type privateIdleFixture struct {
 	*executionFixtureBroker
 	idleStops int
+}
+
+type privateSessionFixture struct {
+	*fakeBroker
+	released *atomic.Bool
+	stopErr  error
+}
+
+func (b *privateSessionFixture) PrivateRuntime() bool { return true }
+func (b *privateSessionFixture) StopOwnedIdle(context.Context, *backendInfo) error {
+	b.released.Store(true)
+	return b.stopErr
+}
+
+func TestPrivateCleanupDetachesTransportBeforePortCanBeReassigned(t *testing.T) {
+	tools := []*mcp.Tool{{Name: "get_metadata", InputSchema: map[string]any{"type": "object"}}}
+	_, original := newBackend(t, tools, false)
+	var released atomic.Bool
+	var afterRelease atomic.Int32
+	var deletes atomic.Int32
+	listener := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodDelete {
+			deletes.Add(1)
+		}
+		if released.Load() {
+			afterRelease.Add(1)
+		}
+		original.Config.Handler.ServeHTTP(w, req)
+	}))
+	defer listener.Close()
+	rt, _ := newExecutionRuntimeFixture(t)
+	rt.catalog = &loadedCatalog{Data: catalogFile{Family: "roctup", Tools: tools}}
+	rt.catalogWait = time.Second
+	broker := &privateSessionFixture{fakeBroker: &fakeBroker{}, released: &released}
+	rt.broker = broker
+	if err := rt.connectLocked(context.Background(), &backendInfo{PID: 101, URL: listener.URL, BackendVersion: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := rt.tryOwnedIdleStopLocked(context.Background()); !handled || err != nil {
+		t.Fatalf("cleanup: handled=%v err=%v", handled, err)
+	}
+	if afterRelease.Load() != 0 {
+		t.Fatalf("old HTTP session sent %d requests after native port release", afterRelease.Load())
+	}
+	if deletes.Load() != 0 {
+		t.Fatal("local cleanup sent a network DELETE instead of detaching its own transport")
+	}
+}
+
+func TestPrivateCleanupKeepsNativeOwnerWhenChildRequiresGuard(t *testing.T) {
+	tools := []*mcp.Tool{{Name: "get_metadata", InputSchema: map[string]any{"type": "object"}}}
+	_, listener := newBackend(t, tools, false)
+	rt, _ := newExecutionRuntimeFixture(t)
+	rt.catalog = &loadedCatalog{Data: catalogFile{Family: "roctup", Tools: tools}}
+	rt.catalogWait = time.Second
+	var checked atomic.Bool
+	broker := &privateSessionFixture{fakeBroker: &fakeBroker{}, released: &checked, stopErr: errIdleChildActive}
+	rt.broker = broker
+	if err := rt.connectLocked(context.Background(), &backendInfo{PID: 101, URL: listener.URL, BackendVersion: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := rt.tryOwnedIdleStopLocked(context.Background()); handled || err != nil {
+		t.Fatalf("live child bypassed guarded fallback: handled=%v err=%v", handled, err)
+	}
+	if rt.session != nil || rt.backend == nil || rt.cleanupUnconfirmed {
+		t.Fatal("transport detachment lost native owner or changed guarded fallback authority")
+	}
+	if err := rt.stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if broker.fakeBroker.stops != 1 || rt.backend != nil {
+		t.Fatal("existing guarded cleanup did not finish retained native runtime")
+	}
 }
 
 func TestPrivateIdleEnvironmentCannotInheritOrExpandDatabaseAuthority(t *testing.T) {

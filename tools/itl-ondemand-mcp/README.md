@@ -74,6 +74,10 @@ listener are gone. A live child falls back to guarded cleanup; interactive
 profiles and unresolved persistent/arbitrary activity keep their guarded path.
 The process-only schema cannot authorize launch, recovery, bulk stop or a
 database context, and old helpers reject it rather than silently downgrading.
+Before this stop attempt, the facade retires its local HTTP transport and closes
+the SDK session without a network DELETE. Its receive loop ends while native
+ports remain reserved; no late close request can reach a replacement listener.
+The live-child fallback retains the native owner and its guarded continuation.
 
 `close_test_client` confirms the original child's physical exit before returning
 success and releasing its call guard. Its nested `complete-test-client-close`
@@ -86,7 +90,7 @@ completion. There is no database-wide or startup lock on idle manager cleanup.
 
 Interactive profiles use a persistent owner bound to their caller identity.
 A failed stop retains ownership for an explicit retry. Terminal facade shutdown
-closes its own MCP transport after bounded owned cleanup and records the failure
+confirms bounded owned cleanup, closes its MCP transport and records the failure
 result. A caller must not reuse another execution's signed context to bypass
 waiting. The local source build and matching dependency lock
 are preparatory evidence; publishing this component still requires its exact
@@ -129,4 +133,4 @@ A previously armed idle callback becomes a no-op after terminal close or a newer
 call supersedes its generation. It must not request database admission with an
 expired context after waiting for recovery, or discard pending cleanup evidence.
 The explicit owned-stop path still owns native cleanup and its confirmation;
-valid idle cleanup retains admission and its post-admission generation check.
+guarded idle cleanup retains admission and its post-admission generation check.
