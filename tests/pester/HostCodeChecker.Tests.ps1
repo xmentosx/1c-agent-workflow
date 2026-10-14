@@ -8,7 +8,7 @@
 }
 
 Describe 'HostCodeChecker component regressions' {
-    It "grounds logic review in platform guard semantics while preserving exact bounded inputs and evidence" -Tag BetaCutover {
+    It "grounds every logic-review claim in consistent paths and cost evidence while preserving bounded inputs" -Tag BetaCutover {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-beta-overlay\test_patch_mcp_server.py"
         $previousErrorActionPreference = $ErrorActionPreference
         try {
@@ -17,7 +17,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 13 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 18 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
@@ -43,7 +43,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 12 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 14 tests"
     }
 
     It "packages the shared telemetry owner through a restricted modern build context" {

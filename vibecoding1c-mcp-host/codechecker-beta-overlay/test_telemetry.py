@@ -17,6 +17,8 @@ import observability
 
 
 FIXTURE = '''from __future__ import annotations
+def _get_client():
+    return test_client
 def _bounder():
     return bounder_factory()
 def _scope_owner(tool):
@@ -91,11 +93,12 @@ if __name__ == "__main__":
 
 
 class Client:
-    def __init__(self, outcomes=None, retries=0, acquisition_error=None, block=False):
+    def __init__(self, outcomes=None, retries=0, acquisition_error=None, block=False, block_at=1):
         self.outcomes = list(outcomes or ["unsupported-response-secret"])
         self.retries = retries
         self.acquisition_error = acquisition_error
         self.block = block
+        self.block_at = block_at
         self.calls = []
         self.budgets = []
         self.entered = asyncio.Event()
@@ -117,8 +120,9 @@ class Client:
     async def collect(self, route, sent, budget):
         self.calls.append((route, sent))
         self.budgets.append(budget)
-        self.entered.set()
-        if self.block:
+        if len(self.calls) == self.block_at:
+            self.entered.set()
+        if self.block and len(self.calls) == self.block_at:
             await asyncio.Event().wait()
         await asyncio.sleep(0)
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
@@ -134,7 +138,7 @@ def scope_for(client):
     scope, _, _, refusal = make_scope()
     scope.update(bounder_factory=scope["_bounder"], error_callback=scope["_error_result"],
                  refusal_callback=scope["_capacity_refusal"], _get_client=lambda: client,
-                 SimpleNamespace=SimpleNamespace, __name__="fixture")
+                 test_client=client, SimpleNamespace=SimpleNamespace, __name__="fixture")
     package = ModuleType("MCP_1copilot")
     package.observability = observability
     with patch.dict(sys.modules, {"MCP_1copilot": package,
@@ -155,13 +159,16 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
             result = await scope["check_1c_logic"](code)
         events = self.events(captured)
         self.assertEqual([e["event"] for e in events],
-                         ["tool_start", "upstream_attempt_start", "upstream_attempt_end", "tool_end"])
+                         ["tool_start", "upstream_attempt_start", "upstream_attempt_end",
+                          "upstream_attempt_start", "upstream_attempt_end", "tool_end"])
         self.assertEqual(len({e["requestId"] for e in events}), 1)
         self.assertEqual(events[0]["snapshotSha256"], hashlib.sha256(code.encode()).hexdigest())
         self.assertEqual(events[0]["inputSha256"], hashlib.sha256(
             json.dumps({"code": code}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
         self.assertEqual(events[1]["upstreamInputSha256"], hashlib.sha256(client.calls[0][1].encode()).hexdigest())
-        self.assertEqual(events[-1]["attempts"], 1)
+        self.assertEqual(events[-1]["attempts"], 2)
+        self.assertIs(client.budgets[0], client.budgets[1])
+        self.assertEqual(events[3]["upstreamInputSha256"], hashlib.sha256(client.calls[1][1].encode()).hexdigest())
         self.assertEqual(events[-1]["outcome"], "returned")
         self.assertEqual(result.answer, "unsupported-response-secret")
         self.assertFalse(result.truncation[0]["truncated"])
@@ -176,11 +183,12 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
             result = await scope["check_1c_logic"]("code-secret")
         events = self.events(captured)
         ends = [e for e in events if e["event"] == "upstream_attempt_end"]
-        self.assertEqual([e["attempt"] for e in ends], [1, 2])
-        self.assertEqual([e["outcome"] for e in ends], ["error", "returned"])
-        self.assertEqual(events[-1]["attempts"], 2)
+        self.assertEqual([e["attempt"] for e in ends], [1, 2, 3])
+        self.assertEqual([e["outcome"] for e in ends], ["error", "returned", "returned"])
+        self.assertEqual(events[-1]["attempts"], 3)
         self.assertEqual(events[-1]["outcome"], "returned")
         self.assertIs(client.budgets[0], client.budgets[1])
+        self.assertIs(client.budgets[1], client.budgets[2])
         self.assertEqual(result.answer, "answer-secret")
         self.assertNotIn("upstream-token-secret", "\n".join(captured.output))
 
@@ -207,6 +215,35 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["outcome"], "error")
         self.assertEqual(events[-1]["attempts"], 1)
         self.assertNotIn("private-exception-message", "\n".join(captured.output))
+
+    async def test_review_error_is_terminal_error_without_returning_the_draft(self):
+        client = Client(["draft-private", ApiError("review-private")])
+        scope, _ = scope_for(client)
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            result = await scope["check_1c_logic"]("code-private")
+        events = self.events(captured)
+        self.assertEqual([e["outcome"] for e in events if e["event"] == "upstream_attempt_end"],
+                         ["returned", "error"])
+        self.assertEqual(events[-1]["attempts"], 2)
+        self.assertEqual(events[-1]["outcome"], "error")
+        self.assertNotIn("draft-private", result.answer)
+        for secret in ("draft-private", "review-private", "code-private"):
+            self.assertNotIn(secret, "\n".join(captured.output))
+
+    async def test_cancellation_during_review_has_one_terminal_and_shared_budget(self):
+        client = Client(block=True, block_at=2)
+        scope, _ = scope_for(client)
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            task = asyncio.create_task(scope["check_1c_logic"]("code-private"))
+            await client.entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        events = self.events(captured)
+        self.assertEqual(len([e for e in events if e["event"] == "tool_end"]), 1)
+        self.assertEqual(events[-1]["outcome"], "cancelled")
+        self.assertEqual(events[-1]["attempts"], 2)
+        self.assertIs(client.budgets[0], client.budgets[1])
 
     async def test_refusal_before_collector_has_zero_attempts(self):
         client = Client(acquisition_error=ConversationCapacityError("private refusal"))
@@ -247,7 +284,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(groups), 2)
         self.assertEqual({g[0]["snapshotSha256"] for g in groups.values()},
                          {hashlib.sha256(s.encode()).hexdigest() for s in ["first-secret", "second-secret"]})
-        self.assertTrue(all(g[-1]["attempts"] == 1 and g[-1]["outcome"] == "returned" for g in groups.values()))
+        self.assertTrue(all(g[-1]["attempts"] == 2 and g[-1]["outcome"] == "returned" for g in groups.values()))
 
     async def test_file_reference_is_not_logged_as_loaded_code(self):
         scope, _ = scope_for(Client())
