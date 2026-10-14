@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -23,6 +24,51 @@ type missingStateRecoveryEvidence struct {
 	SameConnection        bool         `json:"sameConnection"`
 	OriginalProcessesGone bool         `json:"originalProcessesGone"`
 	Calls                 []string     `json:"calls"`
+}
+
+func verifySessionMissingStateRecovery(ctx context.Context, root string, bound runtimeState,
+	call func(string, any) (*mcp.CallToolResult, error), exited func(context.Context, []int) error,
+) (*missingStateRecoveryEvidence, error) {
+	// Smoke can legitimately outlive an idle generation. Bind the same
+	// session's current native processes immediately before injection, without
+	// accepting changed instance/artifact identity or relaxing the injection's
+	// exact PID/port check below.
+	if _, err := currentSessionRecoveryRuntime(root, bound); err != nil {
+		return nil, err
+	}
+	result, err := call("get_vanessa_automation_state", map[string]any{})
+	if err != nil {
+		return nil, fmt.Errorf("bind original session runtime: %w", err)
+	}
+	if result == nil || result.IsError {
+		return nil, fmt.Errorf("bind original session runtime returned no successful result")
+	}
+	current, err := currentSessionRecoveryRuntime(root, bound)
+	if err != nil {
+		return nil, err
+	}
+	return verifyMissingStateRecovery(ctx, root, current, call, exited)
+}
+
+func currentSessionRecoveryRuntime(root string, bound runtimeState) (runtimeState, error) {
+	id, err := hex.DecodeString(bound.InstanceID)
+	if err != nil || len(id) != 16 || len(bound.InstanceID) != 32 {
+		return runtimeState{}, fmt.Errorf("invalid bound runtime instance ID")
+	}
+	states, err := readStates(root)
+	if err != nil || len(states) != 1 {
+		return runtimeState{}, fmt.Errorf("phase binding requires exactly the original session runtime record")
+	}
+	current := states[0]
+	expected := bound
+	expected.PID, expected.Port = current.PID, current.Port
+	expected.TestClientPID, expected.TestClientPort = current.TestClientPID, current.TestClientPort
+	if !reflect.DeepEqual(current, expected) || current.PID <= 0 || current.Port <= 0 ||
+		current.TestClientPID <= 0 || current.TestClientPort <= 0 || current.PID == current.TestClientPID ||
+		current.TestClientProfile != "itl-ondemand" {
+		return runtimeState{}, fmt.Errorf("phase runtime does not match the original session/artifact identity")
+	}
+	return current, nil
 }
 
 // Only the existing session's bound record may be removed. Its full bytes stay

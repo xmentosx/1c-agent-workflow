@@ -322,7 +322,7 @@ func run() error {
 	var missingStateEvidence *missingStateRecoveryEvidence
 	if *verifyMissingState {
 		item := connected[len(connected)-1]
-		missingStateEvidence, err = verifyMissingStateRecovery(ctx, runtimeRoot, *item.state,
+		missingStateEvidence, err = verifySessionMissingStateRecovery(ctx, runtimeRoot, *item.state,
 			func(name string, args any) (*mcp.CallToolResult, error) {
 				return callInnerTool(ctx, item.session, name, args)
 			}, proveRecoveryProcessesExited)

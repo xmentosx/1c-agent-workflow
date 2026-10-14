@@ -101,3 +101,12 @@ stops processes or restores runtime JSON itself. Missing proof fails acceptance;
 the normal facade owner retains responsibility for cleanup and continuation.
 The report includes the original record's SHA256 and safe instance fields,
 without lease tokens. Probe unit tests do not qualify real 1C recovery.
+
+Smoke may include a normal idle restart. Before fault injection, the probe makes
+one read-only call on the original session and binds its current runtime record.
+Instance and artifact identity must remain unchanged; the injection still checks
+the exact freshly bound PID/port values and refuses contradictory records.
+
+A previously armed idle callback becomes a no-op after terminal close. It must
+not wait for a successor's database guard or discard pending cleanup evidence;
+the explicit owned-stop path still owns native cleanup and its confirmation.

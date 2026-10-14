@@ -98,6 +98,40 @@ func TestOnDemandGuardIsCallScopedAndIdleBackendDoesNotRetainIt(t *testing.T) {
 	}
 }
 
+func TestClosedRuntimeIdleCleanupDoesNotWaitForAnotherFacadeGuard(t *testing.T) {
+	rt, broker := newExecutionRuntimeFixture(t)
+	foreignPlan := *broker.plan
+	foreignPlan.InstanceID = "fedcba9876543210fedcba9876543210"
+	foreignBroker := &executionFixtureBroker{plan: &foreignPlan, runtimeRoot: broker.runtimeRoot}
+	foreign := &runtime{broker: foreignBroker, projectRoot: rt.projectRoot, family: rt.family,
+		instanceID: foreignPlan.InstanceID, logger: rt.logger}
+	_, finish, err := foreign.beginDatabaseCall(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := finish("succeeded", ""); err != nil {
+			t.Error(err)
+		}
+	}()
+	// EOF marks the runtime closed before its owned-stop admission completes.
+	// A previously armed idle callback must be a no-op even while the successor
+	// facade owns the same database; it has no work to admit or cancel there.
+	rt.closed = true
+	rt.backend = &backendInfo{Status: "running", PID: os.Getpid(), URL: "http://fixture"}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := rt.stopIdle(ctx, rt.generation); err != nil {
+		t.Fatalf("closed idle callback waited for foreign admission: %v", err)
+	}
+	if broker.planCalls != 0 || broker.stops != 0 || rt.executionOwner != nil {
+		t.Fatal("closed idle callback attempted database admission or native stop")
+	}
+	if rt.backend == nil || !rt.closed {
+		t.Fatal("idle no-op discarded terminal cleanup evidence")
+	}
+}
+
 func TestOnDemandRevalidatesPlanAfterAdmission(t *testing.T) {
 	rt, broker := newExecutionRuntimeFixture(t)
 	broker.changePlan = true

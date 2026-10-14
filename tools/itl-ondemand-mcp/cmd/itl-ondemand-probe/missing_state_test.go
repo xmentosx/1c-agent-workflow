@@ -35,6 +35,96 @@ func recoveryRecords() (runtimeState, runtimeState) {
 			TestClientPort: 40102, TestClientProfile: "itl-ondemand"}
 }
 
+func TestRecoveryProbeBindsCurrentSessionRuntimeAfterIdleRestart(t *testing.T) {
+	root := t.TempDir()
+	initial, next := recoveryRecords()
+	current := initial
+	current.PID, current.Port = 201, 40201
+	current.TestClientPID, current.TestClientPort = 202, 40202
+	path := writeRecoveryRecord(t, root, current)
+	var calls []string
+	proof, err := verifySessionMissingStateRecovery(context.Background(), root, initial,
+		func(name string, _ any) (*mcp.CallToolResult, error) {
+			calls = append(calls, name)
+			if name == "get_vanessa_automation_state" {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatal("safe phase binding removed a runtime record")
+				}
+			} else if name == "manage_test_client" {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("fault injection did not remove the current bound record")
+				}
+				writeRecoveryRecord(t, root, next)
+			}
+			return &mcp.CallToolResult{}, nil
+		}, func(_ context.Context, ids []int) error {
+			if !reflect.DeepEqual(ids, []int{current.PID, current.TestClientPID}) {
+				t.Fatalf("exit witness used stale pre-smoke PIDs: %v", ids)
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proof.Passed || proof.Original.PID != current.PID ||
+		!reflect.DeepEqual(calls, []string{"get_vanessa_automation_state", "manage_test_client", "get_window_list_testclient"}) {
+		t.Fatalf("phase binding did not preserve the original recovery: %+v calls=%v", proof, calls)
+	}
+}
+
+func TestRecoveryPhaseBindingRejectsContradictoryIdentityWithoutInjection(t *testing.T) {
+	for _, condition := range []string{"path-traversal", "different-instance", "different-artifact", "different-profile", "no-testclient", "additional-instance", "safe-call-error", "safe-call-nil", "safe-call-tool-error", "instance-changed-in-safe-call"} {
+		t.Run(condition, func(t *testing.T) {
+			root := t.TempDir()
+			bound, other := recoveryRecords()
+			current := bound
+			switch condition {
+			case "path-traversal":
+				bound.InstanceID = "../" + bound.InstanceID
+			case "different-instance":
+				current.InstanceID = other.InstanceID
+			case "different-artifact":
+				current.VanessaAutomationArchiveSHA256 = strings.Repeat("c", 64)
+			case "different-profile":
+				current.TestClientProfile = "foreign"
+			case "no-testclient":
+				current.TestClientPID = 0
+			}
+			path := writeRecoveryRecord(t, root, current)
+			if condition == "additional-instance" {
+				writeRecoveryRecord(t, root, other)
+			}
+			before, _ := os.ReadFile(path)
+			calls := 0
+			_, err := verifySessionMissingStateRecovery(context.Background(), root, bound,
+				func(name string, _ any) (*mcp.CallToolResult, error) {
+					calls++
+					if name != "get_vanessa_automation_state" {
+						t.Fatal("contradictory phase binding reached fault injection/connect")
+					}
+					switch condition {
+					case "safe-call-error":
+						return nil, errors.New("unknown read outcome")
+					case "safe-call-nil":
+						return nil, nil
+					case "safe-call-tool-error":
+						return &mcp.CallToolResult{IsError: true}, nil
+					case "instance-changed-in-safe-call":
+						writeRecoveryRecord(t, root, other)
+					}
+					return &mcp.CallToolResult{}, nil
+				}, func(context.Context, []int) error { t.Fatal("unexpected exit witness"); return nil })
+			if err == nil || calls > 1 {
+				t.Fatalf("contradictory phase binding accepted or read repeated: err=%v calls=%d", err, calls)
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil || string(before) != string(after) {
+				t.Fatal("binding refusal changed or removed the original record")
+			}
+		})
+	}
+}
+
 func TestRecoveryProbeInjectsOnlyBoundRecordAndUsesOriginalCallOnce(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "стенд с пробелом")
 	if err := os.Mkdir(root, 0700); err != nil {

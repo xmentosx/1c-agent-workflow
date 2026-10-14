@@ -819,6 +819,14 @@ func (r *runtime) armIdleLocked() {
 }
 
 func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
+	// Terminal close owns its explicit cleanup. Its previously armed idle
+	// callback must not wait for a successor facade's database admission.
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil
+	}
 	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
 	if err != nil {
 		return err
