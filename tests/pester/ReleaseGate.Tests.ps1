@@ -172,7 +172,12 @@ Describe "Release gate scripts" {
         $probeText = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
         $probeText | Should -Match 'gatewayPublicToolCount = 2'
         $probeText | Should -Match 'item.count != gatewayPublicToolCount'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 5'
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 6'
+        $e2eText | Should -Match '"-verify-missing-state-recovery"'
+        $probeText | Should -Match 'verifyMissingStateRecovery\(ctx, runtimeRoot, \*item.state'
+        foreach ($predicate in @('passed', 'sameConnection', 'originalProcessesGone')) {
+            $e2eText | Should -Match ([regex]::Escape('-not [bool]$familyEvidence.missingStateRecovery.' + $predicate))
+        }
         $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
         $e2eText | Should -Match "vaExtensionSafeMode"

@@ -84,3 +84,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Build-ItlOnDemandMcp.ps1
 ```
 
 The resulting SHA256 must be copied into `templates/dependency-lock.json` in the same workflow release that publishes the asset. Compatibility catalogs must be generated from a real backend `tools/list` response with `scripts/New-ItlOnDemandCatalog.ps1`; hand-authored catalogs are not release-qualified.
+
+The existing `ondemand-mcp` E2E stage also requires the Vanessa probe's
+`-verify-missing-state-recovery` evidence. On the isolated stand it removes only
+its bound runtime record, calls the original `manage_test_client(connect)` on
+the same external session, checks the replacement through a window-list call,
+and independently observes that both original native PIDs have exited. It never
+stops processes or restores runtime JSON itself. Missing proof fails acceptance;
+the normal facade owner retains responsibility for cleanup and continuation.
+The report includes the original record's SHA256 and safe instance fields,
+without lease tokens. Probe unit tests do not qualify real 1C recovery.

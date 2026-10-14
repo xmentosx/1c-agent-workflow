@@ -2680,7 +2680,7 @@ try {
                             "-verify-idle",
                             "-output", $familyEvidencePath
                         )
-                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature, "-vanessa-secondary-feature", $vanessaSecondarySmokeFeature) }
+                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature, "-vanessa-secondary-feature", $vanessaSecondarySmokeFeature, "-verify-missing-state-recovery") }
                         & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
                     } finally {
@@ -2703,6 +2703,12 @@ try {
                     }
                     if ([bool]$spec.vanessaSmoke -and -not [bool]$familyEvidence.vanessaUiSmokePassed) {
                         throw "VanessaExt/TestClient/UI/screenshot smoke was not proven."
+                    }
+                    if ([bool]$spec.vanessaSmoke -and ($null -eq $familyEvidence.missingStateRecovery -or
+                        -not [bool]$familyEvidence.missingStateRecovery.passed -or
+                        -not [bool]$familyEvidence.missingStateRecovery.sameConnection -or
+                        -not [bool]$familyEvidence.missingStateRecovery.originalProcessesGone)) {
+                        throw "Same-connection missing-state recovery with original process exit was not proven."
                     }
                     if ([bool]$spec.vanessaSmoke) {
                         $authoringOutcome = [string]$familyEvidence.vanessaFileAuthoringOutcome

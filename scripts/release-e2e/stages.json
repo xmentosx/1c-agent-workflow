@@ -79,7 +79,7 @@
     },
     {
       "id": "ondemand-mcp",
-      "version": 5,
+      "version": 6,
       "budgetSeconds": 1500,
       "dependsOn": [],
       "paths": [

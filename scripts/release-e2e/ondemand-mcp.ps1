@@ -1,4 +1,4 @@
-Register-ReleaseE2EStageDefinition -Name "ondemand-mcp" -Version 5 -Paths @(
+Register-ReleaseE2EStageDefinition -Name "ondemand-mcp" -Version 6 -Paths @(
     "scripts/Build-ItlOnDemandMcp.ps1",
     "tools/itl-ondemand-mcp/**/*.go",
     "tools/itl-ondemand-mcp/go.mod",

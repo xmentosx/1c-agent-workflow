@@ -158,6 +158,7 @@ func run() error {
 	idleTimeout := flag.Duration("idle-timeout", 10*time.Minute, "facade backend idle timeout")
 	verifyIdle := flag.Bool("verify-idle", false, "keep stdio open and prove idle cleanup")
 	vanessaSmoke := flag.Bool("vanessa-ui-smoke", false, "connect the managed TestClient and call UI/OS screenshot tools")
+	verifyMissingState := flag.Bool("verify-missing-state-recovery", false, "remove this probe's Vanessa runtime record and prove same-connection recovery")
 	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
 	vanessaSecondaryFeature := flag.String("vanessa-secondary-feature", "", "second release feature file for Vanessa cold reloadAndRun smoke")
 	flag.Parse()
@@ -169,6 +170,9 @@ func run() error {
 	}
 	if *instances < 1 || *instances > 2 {
 		return fmt.Errorf("--instances must be 1 or 2")
+	}
+	if *verifyMissingState && (!*vanessaSmoke || *family != "vanessa-ui" || *sequencePath != "") {
+		return fmt.Errorf("--verify-missing-state-recovery requires the isolated Vanessa UI smoke")
 	}
 	var sequence []probeCall
 	if *sequencePath != "" {
@@ -315,6 +319,18 @@ func run() error {
 	if err := validateInstanceHistory(*family, initial, serializedFacadeHandoffPassed); err != nil {
 		return err
 	}
+	var missingStateEvidence *missingStateRecoveryEvidence
+	if *verifyMissingState {
+		item := connected[len(connected)-1]
+		missingStateEvidence, err = verifyMissingStateRecovery(ctx, runtimeRoot, *item.state,
+			func(name string, args any) (*mcp.CallToolResult, error) {
+				return callInnerTool(ctx, item.session, name, args)
+			}, proveRecoveryProcessesExited)
+		if err != nil {
+			return fmt.Errorf("same-connection missing-state recovery: %w", err)
+		}
+		item.state = &missingStateEvidence.Replacement
+	}
 
 	if *instances == 2 && !secondSurvived {
 		if err := closeObserved(connected[0]); err != nil {
@@ -362,6 +378,9 @@ func run() error {
 		"maxConcurrentSessions": maxConcurrentSessions, "ownedProcessExitWaitMs": ownedProcessExitWait.Milliseconds(),
 		"executionGuardWaitMs": maximumGuardWait.Milliseconds(), "facadeCloseWaitMs": maximumFacadeCloseWait.Milliseconds(),
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if missingStateEvidence != nil {
+		evidence["missingStateRecovery"] = missingStateEvidence
 	}
 	if *vanessaSmoke {
 		evidence["vanessaFileAuthoringOutcome"] = vanessaFileAuthoringOutcome
