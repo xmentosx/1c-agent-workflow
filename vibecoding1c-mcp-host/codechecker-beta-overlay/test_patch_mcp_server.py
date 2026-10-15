@@ -53,22 +53,7 @@ class BounderStub:
         return transmitted
 
 
-def review_payload(marker):
-    return json.dumps({"rows": [{"status": "не подтверждено", "method": "",
-        "quote": "", "input": {"bindings": [], "path": ""}, "actual": marker,
-        "required": "", "basis": "", "explanation": "provider evidence",
-        "proof_kind": "", "requirement_quote": "", "required_value": ""}]}, ensure_ascii=False)
-
-
-def rendered_answer(marker):
-    return ("| Статус | Метод | Цитата | Вход | Фактический результат | Требуемый результат | Основание | Объяснение |\n"
-            "|---|---|---|---|---|---|---|---|\n"
-            f"| не подтверждено | — | — | — | {marker} | — | — | provider evidence |\n\n"
-            "Подтверждённых ошибок логики и проблем производительности не обнаружено.")
-
-
-def make_scope(limit=100000, answer="provider actual result", failure=None, rewrite=None,
-               draft=None, failure_at=1, review_text=None):
+def make_scope(limit=100000, answer="provider actual result", failure=None, rewrite=None):
     calls = []
     errors = []
     bounder = BounderStub(limit)
@@ -81,12 +66,8 @@ def make_scope(limit=100000, answer="provider actual result", failure=None, rewr
 
     async def send(owner, question, create_new=True, budget=None, *, context):
         calls.append((owner, question, create_new, context, budget))
-        if failure is not None and len(calls) == failure_at:
+        if failure is not None:
             raise failure
-        if len(calls) == 1 and draft is not None:
-            return SimpleNamespace(text=draft)
-        if len(calls) == 2:
-            return SimpleNamespace(text=review_payload(answer) if review_text is None else review_text)
         return SimpleNamespace(text=answer)
 
     def error_result(message, evidence=None, context=None):
@@ -123,20 +104,20 @@ class BetaLogicToolTests(unittest.TestCase):
         for code in (guarded, missing):
             scope, calls, _, _ = make_scope(answer="unsupported or contradictory provider answer")
             result = asyncio.run(scope["check_1c_logic"](code))
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 1)
             self.assertTrue(calls[0][2])
             prefix, actual = calls[0][1].split("Код:\n```bsl\n", 1)
             self.assertEqual(actual, code + "\n```")
             self.assertNotIn("КлючРаботы", prefix)  # No fixture-specific diagnosis in the instructions.
             prefixes.append(prefix)
-            self.assertEqual(result.answer, rendered_answer("unsupported or contradictory provider answer"))
+            self.assertEqual(result.answer, "unsupported or contradictory provider answer")
             self.assertEqual(result.result, result.answer)
             self.assertFalse(result.truncation[0]["truncated"])
         self.assertEqual(prefixes[0], prefixes[1])
         self.assertIn('Свойство("Задание")', guarded)
         self.assertNotIn('Свойство("Задание")', missing)
 
-    def test_logic_review_requires_correct_platform_paths_before_findings(self):
+    def test_logic_prompt_requires_correct_platform_paths_before_findings(self):
         scope, calls, _, _ = make_scope()
         asyncio.run(scope["check_1c_logic"]("Возврат Истина;"))
         instructions = calls[0][1].split("Код:\n```bsl\n", 1)[0]
@@ -193,9 +174,9 @@ class BetaLogicToolTests(unittest.TestCase):
             "Не дополняй список ошибками ради количества",
         ):
             self.assertIn(required, instructions)
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(result.answer, rendered_answer(answer))
-        self.assertEqual(result.result, rendered_answer(answer))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.answer, answer)
+        self.assertEqual(result.result, answer)
 
     def test_regressions_and_holdouts_receive_identical_policy_and_exact_source(self):
         corpus = json.loads(Path(__file__).with_name("logic_review_cases.json").read_text(encoding="utf-8"))
@@ -205,13 +186,13 @@ class BetaLogicToolTests(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 scope, calls, _, _ = make_scope(answer="provider verdict")
                 result = asyncio.run(scope["check_1c_logic"](case["code"]))
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 1)
                 prefix, actual = calls[0][1].split("Код:\n```bsl\n", 1)
                 self.assertEqual(actual, case["code"] + "\n```")
                 instructions.add(prefix)
                 self.assertNotIn(case["id"], prefix)
                 self.assertNotIn(case["expected"], prefix)
-                self.assertEqual(result.answer, rendered_answer("provider verdict"))
+                self.assertEqual(result.answer, "provider verdict")
                 self.assertFalse(result.truncation[0]["truncated"])
         self.assertEqual(len(instructions), 1)
         prefix = instructions.pop()
@@ -219,9 +200,9 @@ class BetaLogicToolTests(unittest.TestCase):
             self.assertNotIn(fixture_field, prefix)
 
     def test_logic_findings_require_observed_required_result_and_requirement_evidence(self):
-        scope, calls, _, _ = make_scope(draft="Недостижимость доказывает ошибку.")
+        scope, calls, _, _ = make_scope(answer="Недостижимость доказывает ошибку.")
         asyncio.run(scope["check_1c_logic"]("Возврат 0; Возврат 1;"))
-        for prompt in [calls[0][1], calls[1][1].split("Основание проверки", 1)[1]]:
+        for prompt in [calls[0][1]]:
             for required in (
                 "фактический наблюдаемый результат, требуемый результат и основание требования",
                 "контракт языка/API, проверяемое условие кода или явно данное требование",
@@ -236,7 +217,7 @@ class BetaLogicToolTests(unittest.TestCase):
     def test_unreachable_required_behavior_must_keep_a_reachable_failure_witness(self):
         scope, calls, _, _ = make_scope()
         asyncio.run(scope["check_1c_logic"]("Возврат 0;"))
-        for prompt in [calls[0][1], calls[1][1].split("Основание проверки", 1)[1]]:
+        for prompt in [calls[0][1]]:
             self.assertIn("Если обязательное действие недостижимо, покажи достижимый путь", prompt)
             self.assertIn("его отсутствие нарушает доказанное требование; сохрани такую ошибку", prompt)
             self.assertIn("Без доказанного расхождения фактического и требуемого результата", prompt)
@@ -248,17 +229,13 @@ class BetaLogicToolTests(unittest.TestCase):
         policies = set()
         for case in corpus:
             with self.subTest(case=case["id"]):
-                scope, calls, _, _ = make_scope(draft=case["draft"], answer="unaltered provider verdict")
+                scope, calls, _, _ = make_scope(answer=case["draft"])
                 result = asyncio.run(scope["check_1c_logic"](case["code"]))
                 prefix, body = calls[0][1].split("Код:\n```bsl\n", 1)
                 policies.add(prefix)
                 self.assertEqual(body, case["code"] + "\n```")
-                self.assertIn("<draft>\n" + case["draft"] + "\n</draft>", calls[1][1])
-                self.assertIn("Код:\n```bsl\n" + case["code"] + "\n```", calls[1][1])
-                self.assertNotIn(case["oracle"], calls[1][1])
-                self.assertIs(calls[0][4], calls[1][4])
-                self.assertEqual(result.answer, rendered_answer("unaltered provider verdict"))
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(result.answer, case["draft"])
+                self.assertEqual(len(calls), 1)
         self.assertEqual(len(policies), 1)
         policy = policies.pop()
         for field in ("Редакция", "Переключатель", "ДатаОкончания", "Объем", "Признак", "Разрешено"):
@@ -269,322 +246,22 @@ class BetaLogicToolTests(unittest.TestCase):
                        "Ложное замечание о недостижимой ветке от провайдера."):
             scope, calls, _, _ = make_scope(answer=answer)
             result = asyncio.run(scope["check_1c_logic"]("Возврат 0;"))
-            self.assertEqual(result.answer, rendered_answer(answer))
-            self.assertEqual(result.result, rendered_answer(answer))
-
-    def test_review_rebuilds_verdict_from_accepted_findings_instead_of_copying_draft(self):
-        draft = "Таблица: не подтверждено. Итог: одна подтвержденная ошибка."
-        scope, calls, _, _ = make_scope(draft=draft)
-        asyncio.run(scope["check_1c_logic"]("Возврат 0; Возврат 1;"))
-        review = calls[1][1]
-        self.assertIn("<draft>\n" + draft + "\n</draft>", review)
-        for required in (
-            "не редактируй черновик с сохранением его вердикта",
-            "Не добавляй итог, число ошибок, Markdown или другие поля",
-            "итог сформирует сервер по status",
-            "Формат ответа этого этапа — только JSON-объект",
-        ):
-            self.assertIn(required, review)
-
-    def test_structured_findings_have_one_server_owned_count_without_dropping_real_bugs(self):
-        scope, calls, _, _ = make_scope()
-        row = json.loads(review_payload("неподтверждённый факт"))["rows"][0]
-        logic = dict(row, status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"}, actual="Возврат 0", required="Возврат 1",
-                     basis="Явный контракт функции", explanation="Обязательное присваивание недостижимо",
-                     proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
-        performance = dict(logic, status="проблема производительности", actual="N запросов", required="", proof_kind="",
-                           basis="Один Запрос.Выполнить на каждой из N итераций")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row, logic, performance]}, ensure_ascii=False),
-                                                   "// Результат должен быть 1.\nВозврат 0;\nЗапрос.Выполнить();")
-        self.assertIn("неподтверждённый факт", answer)
-        self.assertIn("Обязательное присваивание недостижимо", answer)
-        self.assertIn("N запросов", answer)
-        self.assertTrue(answer.endswith("Подтверждено ошибок логики: 1; проблем производительности: 1."))
-        self.assertEqual(answer.count("Подтверждено ошибок логики:"), 1)
-
-    def test_empty_and_unconfirmed_rows_cannot_generate_a_confirmed_summary(self):
-        scope, _, _, _ = make_scope()
-        for raw in ('{"rows":[]}', review_payload("Недостижимая ветка")):
-            answer = scope["_itl_logic_render_review"](raw)
-            self.assertTrue(answer.endswith("Подтверждённых ошибок логики и проблем производительности не обнаружено."))
-            self.assertNotIn("Подтверждено ошибок логики:", answer)
-
-    def test_invalid_review_and_unproved_outcome_mismatch_are_not_successful_analysis(self):
-        row = json.loads(review_payload("0"))["rows"][0]
-        invalid = ["plain copied summary", '{"rows":[],"summary":"one bug"}', '{"rows":{}}',
-                   json.dumps({"rows": [dict(row, status="unknown")]}),
-                   json.dumps({"rows": [dict(row, actual=1)]}),
-                   json.dumps({"rows": [dict(row, extra="copied verdict")]})]
-        for raw in invalid:
-            with self.subTest(raw=raw):
-                scope, calls, errors, _ = make_scope(limit=4, draft="unsafe draft", review_text=raw)
-                result = asyncio.run(scope["check_1c_logic"]("Ж🙂АБВ"))
-                self.assertIn("Проверка логики не завершена", result.answer)
-                self.assertIn("Повторите check_1c_logic с тем же кодом", result.answer)
-                self.assertNotIn("unsafe draft", result.answer)
-                self.assertEqual(result.result, result.answer)
-                self.assertEqual(result.truncation[0]["transmitted_length"], 4)
-                self.assertEqual(len(calls), 2)
-                self.assertEqual(len(errors), 1)
-
-    def test_well_formed_but_unproved_findings_stay_visible_without_becoming_errors(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("0"))["rows"][0]
-        unsupported = [dict(row, status="ошибка логики", required="0", basis="contract", proof_kind="explicit_requirement"),
-                       dict(row, status="ошибка логики", required="1", basis="", proof_kind="explicit_requirement"),
-                       dict(row, status="проблема производительности", basis=""),
-                       dict(row, status="ошибка логики", required="1", basis="contract", proof_kind="explicit_requirement")]
-        for claim in unsupported:
-            result = scope["_itl_logic_render_review"](json.dumps({"rows": [claim]}))
-            self.assertIn("не подтверждено", result)
-            self.assertIn("0", result)
-            self.assertNotIn("Подтверждено ошибок логики:", result)
-            self.assertIn("Подтверждённых ошибок логики и проблем производительности не обнаружено.", result)
-
-    def test_review_format_error_can_continue_original_task_without_reusing_bad_draft(self):
-        code = "Возврат 0; Возврат 1;"
-        first, first_calls, _, _ = make_scope(review_text="invalid review", draft="bad draft")
-        failed = asyncio.run(first["check_1c_logic"](code))
-        self.assertIn("Проверка логики не завершена", failed.answer)
-        second, second_calls, _, _ = make_scope(review_text='{"rows":[]}', draft="fresh draft")
-        continued = asyncio.run(second["check_1c_logic"](code))
-        self.assertEqual(continued.answer, "Подтверждённых ошибок логики и проблем производительности не обнаружено.")
-        self.assertEqual(first_calls[0][1], second_calls[0][1])
-        self.assertNotIn("bad draft", second_calls[1][1])
-        self.assertIsNot(first_calls[0][4], second_calls[0][4])
-        self.assertEqual(len(first_calls) + len(second_calls), 4)
-
-    def test_json_fence_and_multiline_pipe_cells_keep_one_markdown_row(self):
-        scope, _, _, _ = make_scope()
-        raw = review_payload("Кириллица | 🙂\nвторая строка")
-        answer = scope["_itl_logic_render_review"]("```json\n" + raw + "\n```")
-        self.assertIn("Кириллица \\| 🙂<br>вторая строка", answer)
-        self.assertEqual(len([line for line in answer.splitlines() if line.startswith("| ")]), 2)
-
-    def test_explicit_requirement_must_be_a_source_comment_with_the_required_value(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("Возврат 0"))["rows"][0]
-        row.update(status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"}, required="Возврат 1", basis="Контракт функции",
-                   proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
-        code = '    // Результат должен быть 1.\nВозврат 0;\nВозврат 2;'
-        for quote in ("Результат должен быть 1.", "// Результат должен быть 1."):
-            answer = scope["_itl_logic_render_review"](json.dumps({"rows": [dict(row, requirement_quote=quote)]}), code)
-            self.assertIn("Подтверждено ошибок логики: 1", answer)
-        for bad in (dict(row, requirement_quote="Возврат 2;", required_value="2"),
-                    dict(row, required_value="2"), dict(row, requirement_quote="Несуществующее требование 1"),
-                    dict(row, proof_kind="")):
-            answer = scope["_itl_logic_render_review"](json.dumps({"rows": [bad]}), code)
-            self.assertIn("не подтверждено", answer)
-            self.assertIn("Требуемый результат не привязан", answer)
-            self.assertNotIn("Подтверждено ошибок логики:", answer)
-            self.assertIn("Возврат 0", answer)
-
-    def test_runtime_precondition_needs_no_invented_business_comment(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("Системное исключение"))["rows"][0]
-        row.update(status="ошибка логики", method="fixture", quote="ВызовОперации();", input={"bindings": [], "path": "ВызовОперации();"}, required="", basis="Контракт API",
-                   proof_kind="runtime_precondition")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), "ВызовОперации();")
-        self.assertIn("Подтверждено ошибок логики: 1", answer)
-
-    def test_last_json_block_is_authoritative_and_omitted_optional_explanation_is_allowed(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("Проверенный факт"))["rows"][0]
-        del row["explanation"]
-        raw = 'Черновое обсуждение\n```json\n{"rows":[]}\n```\nИсправленный результат\n```json\n' + json.dumps({"rows": [row]}) + '\n```'
-        answer = scope["_itl_logic_render_review"](raw)
-        self.assertIn("Проверенный факт", answer)
-        self.assertEqual(answer.count("Подтверждённых ошибок"), 1)
-        with self.assertRaises(ValueError):
-            scope["_itl_logic_render_review"]('```json\n{"rows":[]}')
-        # An incomplete unconfirmed observation must not discard a separate real finding.
-        incomplete = dict(row, actual="", explanation="Не является отдельной ошибкой")
-        real = dict(row, status="ошибка логики", method="fixture", quote="ВызовОперации();", input={"bindings": [], "path": "ВызовОперации();"}, actual="Исключение", required="",
-                    basis="Предусловие API", proof_kind="runtime_precondition", explanation="")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [real, incomplete]}), "ВызовОперации();")
-        self.assertIn("Подтверждено ошибок логики: 1", answer)
-        self.assertIn("Не является отдельной ошибкой", answer)
+            self.assertEqual(result.answer, answer)
+            self.assertEqual(result.result, answer)
 
     def test_required_legacy_result_retains_answer_and_truncation(self):
         scope, calls, _, _ = make_scope(limit=5, answer="unsupported API response")
         result = asyncio.run(scope["check_1c_logic"]("АБВГДЕ"))
-        self.assertEqual(result.result, rendered_answer("unsupported API response"))
+        self.assertEqual(result.result, "unsupported API response")
         self.assertEqual(result.result, result.answer)
         self.assertTrue(result.truncation[0]["truncated"])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         self.assertEqual(scope["_ItlLogicResult"].__annotations__, {"result": str})
 
-    def test_quotes_are_exact_source_fragments_not_reconstructions_or_comments(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("факт"))["rows"][0]
-        code = '// Нельзя цитировать как исполнение: Возврат Подмена;\r\nВозврат\r\n    Параметры.Остаток;'
-        render = lambda r: scope["_itl_logic_render_review"](json.dumps({"rows": [r]}), code)
-        self.assertIn("Возврат<br>    Параметры.Остаток;", render(dict(row, quote="Возврат\r\n    Параметры.Остаток;")))
-        for quote in ('Возврат Параметры.Остаток;', 'Параметры.Остаток в строке 3',
-                      'Параметры.Остат...', 'Возврат Подмена;'):
-            with self.subTest(quote=quote), self.assertRaises(ValueError):
-                render(dict(row, quote=quote))
-        with self.assertRaises(ValueError):
-            scope["_itl_logic_render_review"](json.dumps({"rows": [dict(row, quote="Возврат \n0;")]}), "Возврат // пояснение\n0;")
-        row["input"] = {"bindings": [], "path": "Возврат\r\n    Параметры.Остаток;"}
-        self.assertIn("Ветка исходника:", render(row))
-
-    def test_unknown_field_paths_are_rejected_in_every_narrative_cell(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("Параметры.Остаток"))["rows"][0]
-        code = 'Возврат Параметры.Остаток;'
-        for key in ("actual", "required", "basis", "explanation"):
-            with self.subTest(cell=key), self.assertRaises(ValueError):
-                scope["_itl_logic_render_review"](json.dumps({"rows": [dict(row, **{key: "Параметры.Остатко"})]}), code)
-        # Prose sentence punctuation is not a member access; literal data is not a target name.
-        row.update(actual="Правило API. Предусловие нарушено.", input={"bindings": [
-            {"target": "Параметры.Остаток", "state": "value", "value": "Параметры.Остатко"}], "path": ""})
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        self.assertIn('"Параметры.Остатко" (JSON-значение)', answer)
-
-    def test_typed_witness_names_are_grounded_in_accesses_and_property_literals(self):
-        scope, _, _, _ = make_scope()
-        for owner, field in (("Параметры", "Артикул"), ("Options", "Enabled"), ("Данные", "СтавкаНДС")):
-            code = f'Функция Проверить({owner})\nЕсли Не {owner}.Свойство("{field}") Тогда Возврат Ложь; КонецЕсли;\nКонецФункции'
-            row = json.loads(review_payload("факт"))["rows"][0]
-            row.update(method="Проверить", quote=f'{owner}.Свойство("{field}")', input={"bindings": [
-                {"target": owner.lower()+"."+field.lower(), "state": "absent", "value": None}], "path": ""})
-            answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-            self.assertIn(owner+"."+field+": поле отсутствует", answer)
-            for target in (owner+"."+field+"Опечатка", owner+"Опечатка", owner+" = Новый Структура"):
-                row["input"]["bindings"][0]["target"] = target
-                with self.subTest(target=target), self.assertRaises(ValueError):
-                    scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-            row["input"] = {"bindings": [], "path": ""}
-            row["method"] = "ПроверитьОпечатка"
-            with self.assertRaises(ValueError):
-                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-
-    def test_witness_rejects_ambiguous_states_but_keeps_type_and_cardinality(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("N обращений"))["rows"][0]
-        code = 'Для Каждого Элемент Из Коллекция Цикл Обработать(Элемент); КонецЦикла;'
-        binding = {"target": "Коллекция", "state": "size", "value": 12}
-        row["input"] = {"bindings": [binding, dict(binding, state="type", value="Массив")], "path": ""}
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        self.assertIn("число элементов 12", answer)
-        self.assertIn('тип "Массив"', answer)
-        invalid = [dict(binding, value=True), dict(binding, value=-1), dict(binding, state="absent", value=None),
-                   dict(binding, state="value", value={"freeform": "code"}), dict(binding, state="code"),
-                   dict(binding, state="type", value=""), dict(binding, state="value", value=float('nan'))]
-        for bad in invalid:
-            row["input"] = {"bindings": [bad], "path": ""}
-            with self.subTest(binding=bad), self.assertRaises(ValueError):
-                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        for witness in ("произвольный вход", {"bindings": [binding, binding], "path": ""},
-                        {"bindings": [], "path": "ПодменённаяВетка()"}):
-            row["input"] = witness
-            with self.assertRaises(ValueError):
-                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-
-    def test_invalid_optimization_advice_cannot_become_a_confirmed_required_result(self):
-        code = 'Для Каждого Элемент Из Коллекция Цикл Запрос.Выполнить(); КонецЦикла;'
-        row = json.loads(review_payload("N обращений к БД"))["rows"][0]
-        row.update(status="проблема производительности", method="fixture", quote="Запрос.Выполнить();",
-                   input={"bindings": [{"target": "Коллекция", "state": "size", "value": 10}], "path": ""},
-                   basis="Один запрос на каждой итерации", required="Один запрос с НеверныйОператор()")
-        first, calls, errors, _ = make_scope(review_text=json.dumps({"rows": [row]}), draft="unsafe remediation")
-        failed = asyncio.run(first["check_1c_logic"](code))
-        self.assertIn("Проверка логики не завершена", failed.answer)
-        self.assertIn("Повторите check_1c_logic с тем же кодом", failed.answer)
-        self.assertNotIn("НеверныйОператор", failed.answer)
-        self.assertNotIn("unsafe remediation", failed.answer)
-        self.assertEqual(len(calls), 2)
-        row["required"] = ""
-        second, resumed, _, _ = make_scope(review_text=json.dumps({"rows": [row]}), draft="fresh analysis")
-        accepted = asyncio.run(second["check_1c_logic"](code))
-        self.assertIn("N обращений к БД", accepted.answer)
-        self.assertIn("Подтверждено ошибок логики: 0; проблем производительности: 1.", accepted.answer)
-        self.assertEqual(accepted.result, accepted.answer)
-        self.assertEqual(calls[0][1], resumed[0][1])
-        self.assertEqual(len(resumed), 2)
-        self.assertIs(resumed[0][4], resumed[1][4])
-        self.assertIsNot(calls[0][4], resumed[0][4])
-        self.assertFalse(accepted.truncation[0]["truncated"])
-
-    def test_required_result_is_source_owned_not_model_authored_repair_code(self):
-        scope, _, _, _ = make_scope()
-        row = json.loads(review_payload("0"))["rows"][0]
-        row.update(status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"},
-                   required="Заменить реализацию на НепроверенныйСпособ()", basis="Явное требование",
-                   proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), '// Результат должен быть 1.\nВозврат 0;')
-        self.assertIn("Подтверждено ошибок логики: 1", answer)
-        self.assertIn("| 0 | 1 |", answer)
-        self.assertNotIn("НепроверенныйСпособ", answer)
-        row.update(proof_kind="runtime_precondition", required="", actual="Системное исключение", basis="Предусловие API")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), 'Возврат 0;')
-        self.assertIn("Соблюдение предусловия операции или отклонение входа до неё.", answer)
-        self.assertIn("Подтверждено ошибок логики: 1", answer)
-
-    def test_unseen_identifiers_and_layouts_use_the_same_grounding_and_prompt_policy(self):
-        policies = set()
-        for index, field in enumerate(("МаркерДоступа", "Quantity", "_Признак7", "ЧислоЁмкостей")):
-            owner = f"Вход{index}"
-            for op in ("И", "Или"):
-                code = f'Если {owner}.Свойство("{field}") {op} Проверить({owner} . {field}) Тогда\nВозврат Истина; КонецЕсли;'
-                row = json.loads(review_payload(f"{owner}.{field}"))["rows"][0]
-                row.update(quote=f'{owner} . {field}', input={"bindings": [
-                    {"target": owner+"."+field, "state": "value", "value": False}], "path": ""})
-                scope, calls, _, _ = make_scope(review_text=json.dumps({"rows": [row]}))
-                accepted = asyncio.run(scope["check_1c_logic"](code))
-                self.assertNotIn("Проверка логики не завершена", accepted.answer)
-                policies.add(calls[1][1].split("Код:\n```bsl\n", 1)[0])
-                row["explanation"] = f"{owner}.{field}Подмена"
-                with self.assertRaises(ValueError):
-                    scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        self.assertEqual(len(policies), 1)
-
-    def test_original_e50_field_typos_and_sql_advice_fail_before_becoming_evidence(self):
-        source = ('Функция ПроверитьКлючРаботы(КлючРаботы)\n'
-                  'Если КлючРаботы.ВидРаботы = "Задание" Тогда\n'
-                  'Если Не КлючРаботы.Свойство("Задание") Или ТипЗнч(КлючРаботы.Задание) <> Тип("Строка") Тогда\n'
-                  'ВызватьИсключение "Некорректная ссылка задания.";\nКонецЕсли;\nКонецЕсли;\nКонецФункции')
-        row = json.loads(review_payload("Чтение отсутствующего поля не происходит"))["rows"][0]
-        row.update(status="защищено", method="ПроверитьКлючРаботы", quote='КлючРаботы.Свойство("Задание")',
-                   input={"bindings": [{"target": "КлючРаботы.ВидРаботы", "state": "value", "value": "Задание"},
-                                       {"target": "КлючРаботы.Задание", "state": "absent", "value": None}], "path": ""})
-        unknown_access = dict(row, actual="Операнд ТипЗнч(КлючРаботы.Задано) не вычисляется")
-        unknown_input = dict(row, input={"bindings": [{"target": "КлючРаботы.ВидРаботты", "state": "value", "value": "Задание"}], "path": ""})
-        for bad in (unknown_access, unknown_input):
-            scope, calls, errors, _ = make_scope(review_text=json.dumps({"rows": [bad]}))
-            result = asyncio.run(scope["check_1c_logic"](source))
-            self.assertIn("Проверка логики не завершена", result.answer)
-            self.assertEqual(len(calls), 2)
-            self.assertEqual(len(errors), 1)
-        row.update(status="проблема производительности", required="Один запрос с условием В ИД() для всех ссылок", basis="N запросов")
-        scope, _, _, _ = make_scope()
-        with self.assertRaises(ValueError):
-            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), source)
-
-    def test_large_source_and_quoted_comments_keep_grounding_at_the_bounded_boundary(self):
-        scope, _, _, _ = make_scope()
-        # A token boundary prevents a failed dotted-path search from retrying at
-        # every suffix of a 100k identifier (the original R08 workload).
-        code = "Ж" * 100000
-        row = json.loads(review_payload("факт"))["rows"][0]
-        result = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        self.assertNotIn("Проверка логики не завершена", result)
-        code = 'Текст = "строка // не комментарий ""данные"""; // Чужой.Объект\nВозврат Данные.Поле;'
-        row.update(quote='Текст = "строка // не комментарий ""данные""";', actual="Данные.Поле")
-        self.assertIn("Данные.Поле", scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code))
-        row["actual"] = "Чужой.Объект"
-        with self.assertRaises(ValueError):
-            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-        code = 'Функция Основная()\nТекст = "Функция Подмена()";\nВозврат 0;\nКонецФункции'
-        row.update(method="Подмена", quote="Возврат 0;", actual="0")
-        with self.assertRaises(ValueError):
-            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
-
-    def test_presence_and_negation_have_explicit_opposite_results_in_both_stages(self):
-        scope, calls, _, _ = make_scope(draft="untrusted polarity claim")
+    def test_presence_and_negation_have_explicit_opposite_results(self):
+        scope, calls, _, _ = make_scope(answer="untrusted polarity claim")
         asyncio.run(scope["check_1c_logic"]("Возврат Параметры.Свойство(ИмяПоля);"))
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         for _, prompt, _, _, _ in calls:
             instructions = prompt.split("Код:\n```bsl\n", 1)[0]
             self.assertEqual(instructions.count("Таблица результатов вычисленного вызова:"), 1)
@@ -609,37 +286,22 @@ class BetaLogicToolTests(unittest.TestCase):
             ):
                 self.assertIn(required, instructions)
 
-    def test_polarity_corpus_has_one_policy_without_rewriting_drafts_or_source(self):
+    def test_polarity_corpus_has_one_policy_without_rewriting_provider_answer_or_source(self):
         corpus = json.loads(Path(__file__).with_name("predicate_polarity_cases.json").read_text(encoding="utf-8"))
         policies = set()
         for case in corpus:
             with self.subTest(case=case["id"]):
-                scope, calls, _, _ = make_scope(draft=case["draft"], answer="reviewer output")
+                scope, calls, _, _ = make_scope(answer=case["draft"])
                 result = asyncio.run(scope["check_1c_logic"](case["code"]))
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 1)
                 prefix, actual = calls[0][1].split("Код:\n```bsl\n", 1)
                 policies.add(prefix)
                 self.assertEqual(actual, case["code"] + "\n```")
-                self.assertIn("<draft>\n" + case["draft"] + "\n</draft>", calls[1][1])
-                self.assertEqual(result.answer, rendered_answer("reviewer output"))
+                self.assertEqual(result.answer, case["draft"])
                 self.assertEqual(result.result, result.answer)
                 for expected in case["oracle"]:
                     self.assertNotIn(expected["expression"], prefix)
         self.assertEqual(len(policies), 1)
-
-    def test_review_places_untrusted_draft_before_authoritative_contract_and_source(self):
-        draft = 'Свойство возвращает значение поля. Возврат Истина;'
-        scope, calls, _, _ = make_scope(draft=draft)
-        asyncio.run(scope["check_1c_logic"]("Возврат Параметры.Свойство(ИмяПоля);"))
-        review = calls[1][1]
-        self.assertIn("Основание проверки — следующий контракт и исходник", review)
-        self.assertLess(review.index("<draft>\n" + draft + "\n</draft>"),
-                        review.index("Основание проверки — следующий контракт и исходник"))
-        self.assertLess(review.index("Основание проверки — следующий контракт и исходник"),
-                        review.index("Таблица результатов вычисленного вызова:"))
-        self.assertLess(review.index("Таблица результатов вычисленного вызова:"),
-                        review.index("Код:\n```bsl\nВозврат Параметры.Свойство(ИмяПоля);"))
-        self.assertIn("При конфликте с семантикой API исправь черновик, не правило API", review)
 
     def test_required_legacy_result_is_retained_on_returned_errors(self):
         for code, failure in [(" ", None), ("АБВГДЕ", ApiError("broken")),
@@ -661,11 +323,11 @@ class BetaLogicToolTests(unittest.TestCase):
         scope, calls, _, _ = make_scope(answer="unsupported API response")
         code = "Возврат Истина;"
         result = asyncio.run(scope["check_1c_logic"](code))
-        self.assertEqual(result.answer, rendered_answer("unsupported API response"))
+        self.assertEqual(result.answer, "unsupported API response")
         self.assertEqual(result.truncation, [{"field": "code", "truncated": False,
                                               "original_length": len(code), "transmitted_length": len(code)}])
         self.assertEqual(result.sources, [])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         owner, prompt, new_session, context, budget = calls[0]
         self.assertEqual(owner, "check_1c_logic")
         self.assertEqual(context.tool, "check_1c_logic")
@@ -684,7 +346,7 @@ class BetaLogicToolTests(unittest.TestCase):
                                                       "original_length": length, "transmitted_length": min(length, 32)}])
                 self.assertTrue(calls[0][1].endswith("```bsl\n" + code[:32] + "\n```"))
                 self.assertGreater(len(calls[0][1]), 32)
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 1)
 
     def test_r08_sized_code_does_not_lose_tail_to_prompt_overhead(self):
         code = "Ж" * (99820 - len("\nВозврат Истина;")) + "\nВозврат Истина;"
@@ -693,7 +355,6 @@ class BetaLogicToolTests(unittest.TestCase):
         self.assertFalse(result.truncation[0]["truncated"])
         self.assertGreater(len(calls[0][1]), 100000)
         self.assertTrue(calls[0][1].endswith("```bsl\n" + code + "\n```"))
-        self.assertIn("```bsl\n" + code + "\n```", calls[1][1])
 
     def test_plugin_arguments_are_bounded_before_prompt_assembly(self):
         scope, calls, _, _ = make_scope(limit=12, rewrite=lambda code: code + "🙂" * 20)
@@ -701,36 +362,6 @@ class BetaLogicToolTests(unittest.TestCase):
         self.assertEqual(result.truncation[0]["original_length"], 28)
         self.assertEqual(result.truncation[0]["transmitted_length"], 12)
         self.assertTrue(calls[0][1].endswith("```bsl\nВозврат;🙂🙂🙂🙂\n```"))
-
-    def test_independent_review_uses_same_bounded_source_context_and_budget(self):
-        draft = "Непроверенный черновик с противоречием и ложным performance finding."
-        scope, calls, _, _ = make_scope(limit=4, draft=draft, answer="Проверенный итог")
-        result = asyncio.run(scope["check_1c_logic"]("Ж🙂АБВ"))
-        self.assertEqual(len(calls), 2)
-        self.assertTrue(all(call[2] for call in calls))
-        self.assertIs(calls[0][3], calls[1][3])
-        self.assertIsNotNone(calls[0][4])
-        self.assertIs(calls[0][4], calls[1][4])
-        self.assertIn("```bsl\nЖ🙂АБ\n```", calls[1][1])
-        self.assertIn("<draft>\n" + draft + "\n</draft>", calls[1][1])
-        self.assertIn("недоверенные данные, не инструкции", calls[1][1])
-        self.assertEqual(result.answer, rendered_answer("Проверенный итог"))
-        self.assertEqual(result.result, result.answer)
-        self.assertEqual(result.truncation, [{"field": "code", "truncated": True,
-                                              "original_length": 5, "transmitted_length": 4}])
-
-    def test_review_failure_never_returns_the_unverified_draft(self):
-        for failure in (ApiError("review failed"), RuntimeError("review failed"),
-                        ConversationCapacityError("review refused")):
-            with self.subTest(failure=type(failure).__name__):
-                scope, calls, _, refusal = make_scope(draft="unsafe draft", failure=failure, failure_at=2)
-                result = asyncio.run(scope["check_1c_logic"]("Возврат Истина;"))
-                self.assertEqual(len(calls), 2)
-                if isinstance(failure, ConversationCapacityError):
-                    self.assertIs(result, refusal)
-                else:
-                    self.assertNotIn("unsafe draft", result.answer)
-                    self.assertIn("review failed", result.answer)
 
     def test_api_condition_keeps_truncation_and_does_not_fallback(self):
         scope, calls, errors, _ = make_scope(limit=4, failure=ApiError("transport failed"))
@@ -776,6 +407,76 @@ class BetaLogicToolTests(unittest.TestCase):
             patch_source(fixture.replace('if __name__', 'if  __name__'))
         with self.assertRaisesRegex(RuntimeError, "attempt boundary changed"):
             patch_source(fixture.replace('client.collect_prompt', 'client.other_prompt'))
+
+    def test_complete_existing_prompt_is_preserved_exactly(self):
+        import hashlib
+        scope, _, _, _ = make_scope()
+        # Fingerprint of the complete first prompt in queued 05327cf7, without code.
+        self.assertEqual(hashlib.sha256(scope["_itl_logic_prompt"]("").encode()).hexdigest(),
+                         "d4185cc2429c75633005da9f9dfa7978a9e5b49e6d26c418d88fd8bfa868d98a")
+
+    def test_single_analysis_uses_one_budget_and_no_hidden_reviewer(self):
+        scope, calls, errors, _ = make_scope(answer="Provider answer")
+        budgets = []
+        def new_budget():
+            budget = object()
+            budgets.append(budget)
+            return budget
+        scope["_get_client"] = lambda: SimpleNamespace(new_budget=new_budget)
+        result = asyncio.run(scope["check_1c_logic"]("Возврат Истина;"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(budgets), 1)
+        self.assertIs(calls[0][4], budgets[0])
+        self.assertEqual(result.answer, "Provider answer")
+        self.assertEqual(result.result, result.answer)
+        self.assertEqual(errors, [])
+
+    def test_recorded_findings_survive_without_lexical_or_semantic_requalification(self):
+        import hashlib
+        cases = json.loads(Path(__file__).with_name("single_pass_cases.json").read_text(encoding="utf-8"))
+        self.assertEqual({case["id"] for case in cases},
+                         {"r05-protected-first-analysis", "nonnegative-requirement", "zero-argument-requirement"})
+        for case in cases:
+            with self.subTest(case=case["id"]):
+                self.assertEqual(hashlib.sha256(case["code"].encode()).hexdigest(), case["code_sha256"])
+                scope, calls, errors, _ = make_scope(answer=case["answer"])
+                result = asyncio.run(scope["check_1c_logic"](case["code"]))
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(result.answer, case["answer"])
+                self.assertEqual(result.result, result.answer)
+                self.assertEqual(errors, [])
+                self.assertTrue(calls[0][1].endswith("```bsl\n" + case["code"] + "\n```"))
+                self.assertFalse(result.truncation[0]["truncated"])
+                self.assertEqual(result.sources, [])
+
+    def test_text_json_typos_and_empty_witness_are_not_local_error_conditions(self):
+        answers = ["Обычный текст без JSON", '{"rows":[]}', '{"rows":',
+                   "Параметры.Остатко; неотрицательное / неотрицательным",
+                   '{"rows":[{"input":{"bindings":[],"path":""},"status":"ошибка логики"}]}']
+        for answer in answers:
+            with self.subTest(answer=answer):
+                scope, calls, errors, _ = make_scope(answer=answer)
+                result = asyncio.run(scope["check_1c_logic"]("Возврат Параметры.Остаток;"))
+                self.assertEqual(result.answer, answer)
+                self.assertEqual(result.result, answer)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(errors, [])
+
+    def test_answer_hook_runs_once_and_owns_the_returned_text_and_legacy_alias(self):
+        scope, calls, _, _ = make_scope(limit=4, answer="provider output")
+        hooks = []
+        def answer_hook(context, text, **kwargs):
+            hooks.append((context, text, kwargs))
+            return "hook output"
+        scope["_answer"] = answer_hook
+        result = asyncio.run(scope["check_1c_logic"]("Ж🙂АБВ"))
+        self.assertEqual(len(hooks), 1)
+        self.assertIs(hooks[0][0], calls[0][3])
+        self.assertEqual(hooks[0][1], "provider output")
+        self.assertEqual(hooks[0][2]["mode"], "prompt")
+        self.assertEqual(result.answer, "hook output")
+        self.assertEqual(result.result, "hook output")
+        self.assertTrue(result.truncation[0]["truncated"])
 
 
 if __name__ == "__main__":

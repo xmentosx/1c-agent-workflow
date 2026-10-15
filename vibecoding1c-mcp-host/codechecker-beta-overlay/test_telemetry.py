@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from patch_mcp_server import patch_source
-from test_patch_mcp_server import ApiError, ConversationCapacityError, make_scope, review_payload, rendered_answer
+from test_patch_mcp_server import ApiError, ConversationCapacityError, make_scope
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codechecker-overlay"))
 import observability
 
@@ -128,8 +128,6 @@ class Client:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
         if isinstance(outcome, BaseException):
             raise outcome
-        if route == "prompt" and "Формат ответа этого этапа" in sent:
-            return review_payload(outcome)
         return outcome
 
     async def retry_transport(self, attempts, budget):
@@ -153,68 +151,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
     def events(self, captured):
         return [json.loads(record.getMessage()) for record in captured.records]
 
-    async def test_ungrounded_evidence_is_terminal_error_with_content_safe_continuation(self):
-        class UngroundedReviewClient(Client):
-            malformed = True
 
-            async def collect_prompt(self, entry, sent, *, budget):
-                value = await super().collect_prompt(entry, sent, budget=budget)
-                if self.malformed and "Формат ответа этого этапа" in sent:
-                    payload = json.loads(value)
-                    payload["rows"][0]["actual"] = "Данные.Порго"
-                    return json.dumps(payload)
-                return value
-
-        client = UngroundedReviewClient()
-        scope, _ = scope_for(client)
-        code = "Возврат Данные.Порог;"
-        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
-            failed = await scope["check_1c_logic"](code)
-            client.malformed = False
-            accepted = await scope["check_1c_logic"](code)
-        events = self.events(captured)
-        terminal = [e for e in events if e["event"] == "tool_end"]
-        self.assertEqual([e["outcome"] for e in terminal], ["error", "returned"])
-        self.assertEqual([e["attempts"] for e in terminal], [2, 2])
-        self.assertEqual(len({e["requestId"] for e in terminal}), 2)
-        self.assertEqual(len({e["inputSha256"] for e in terminal}), 1)
-        self.assertEqual(len({e["snapshotSha256"] for e in terminal}), 1)
-        self.assertIn("Повторите check_1c_logic с тем же кодом", failed.answer)
-        self.assertEqual(accepted.answer, rendered_answer("unsupported-response-secret"))
-        self.assertEqual(accepted.result, accepted.answer)
-        self.assertEqual(failed.truncation, accepted.truncation)
-        self.assertEqual(len(client.calls), 4)
-        for secret in (code, "Данные.Порго", "unsupported-response-secret"):
-            self.assertNotIn(secret, json.dumps(events, ensure_ascii=False))
-
-    async def test_invalid_review_is_terminal_error_and_original_task_can_continue(self):
-        class MalformedReviewClient(Client):
-            malformed = True
-
-            async def collect_prompt(self, entry, sent, *, budget):
-                value = await self.collect("prompt", sent, budget)
-                if self.malformed and "Формат ответа этого этапа" in sent:
-                    return "bad review format"
-                return value
-
-        client = MalformedReviewClient()
-        scope, _ = scope_for(client)
-        code = "Возврат 0;"
-        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
-            first = await scope["check_1c_logic"](code)
-            client.malformed = False
-            second = await scope["check_1c_logic"](code)
-        events = self.events(captured)
-        terminal = [e for e in events if e["event"] == "tool_end"]
-        self.assertEqual([e["outcome"] for e in terminal], ["error", "returned"])
-        self.assertEqual([e["attempts"] for e in terminal], [2, 2])
-        self.assertEqual(len({e["requestId"] for e in terminal}), 2)
-        self.assertIn("Повторите check_1c_logic с тем же кодом", first.answer)
-        self.assertEqual(second.answer, rendered_answer("unsupported-response-secret"))
-        self.assertEqual(client.calls[0][1], client.calls[2][1])
-        self.assertIs(client.budgets[0], client.budgets[1])
-        self.assertIs(client.budgets[2], client.budgets[3])
-        self.assertIsNot(client.budgets[0], client.budgets[2])
 
     async def test_request_hash_attempt_and_terminal_are_content_safe(self):
         code = 'СекретныйКод("credential-secret");\r\n'
@@ -224,18 +161,16 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
             result = await scope["check_1c_logic"](code)
         events = self.events(captured)
         self.assertEqual([e["event"] for e in events],
-                         ["tool_start", "upstream_attempt_start", "upstream_attempt_end",
-                          "upstream_attempt_start", "upstream_attempt_end", "tool_end"])
+                         ["tool_start", "upstream_attempt_start", "upstream_attempt_end", "tool_end"])
         self.assertEqual(len({e["requestId"] for e in events}), 1)
         self.assertEqual(events[0]["snapshotSha256"], hashlib.sha256(code.encode()).hexdigest())
         self.assertEqual(events[0]["inputSha256"], hashlib.sha256(
             json.dumps({"code": code}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
         self.assertEqual(events[1]["upstreamInputSha256"], hashlib.sha256(client.calls[0][1].encode()).hexdigest())
-        self.assertEqual(events[-1]["attempts"], 2)
-        self.assertIs(client.budgets[0], client.budgets[1])
-        self.assertEqual(events[3]["upstreamInputSha256"], hashlib.sha256(client.calls[1][1].encode()).hexdigest())
+        self.assertEqual(events[-1]["attempts"], 1)
+        self.assertEqual(len(client.calls), 1)
         self.assertEqual(events[-1]["outcome"], "returned")
-        self.assertEqual(result.answer, rendered_answer("unsupported-response-secret"))
+        self.assertEqual(result.answer, "unsupported-response-secret")
         self.assertFalse(result.truncation[0]["truncated"])
         text = "\n".join(captured.output)
         for secret in [code, "credential-secret", "conversation-token-secret", result.answer, client.calls[0][1]]:
@@ -248,13 +183,13 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
             result = await scope["check_1c_logic"]("code-secret")
         events = self.events(captured)
         ends = [e for e in events if e["event"] == "upstream_attempt_end"]
-        self.assertEqual([e["attempt"] for e in ends], [1, 2, 3])
-        self.assertEqual([e["outcome"] for e in ends], ["error", "returned", "returned"])
-        self.assertEqual(events[-1]["attempts"], 3)
+        self.assertEqual([e["attempt"] for e in ends], [1, 2])
+        self.assertEqual([e["outcome"] for e in ends], ["error", "returned"])
+        self.assertEqual(events[-1]["attempts"], 2)
         self.assertEqual(events[-1]["outcome"], "returned")
         self.assertIs(client.budgets[0], client.budgets[1])
-        self.assertIs(client.budgets[1], client.budgets[2])
-        self.assertEqual(result.answer, rendered_answer("answer-secret"))
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(result.answer, "answer-secret")
         self.assertNotIn("upstream-token-secret", "\n".join(captured.output))
 
     async def test_direct_retry_and_fallback_share_parent_request(self):
@@ -281,34 +216,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["attempts"], 1)
         self.assertNotIn("private-exception-message", "\n".join(captured.output))
 
-    async def test_review_error_is_terminal_error_without_returning_the_draft(self):
-        client = Client(["draft-private", ApiError("review-private")])
-        scope, _ = scope_for(client)
-        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
-            result = await scope["check_1c_logic"]("code-private")
-        events = self.events(captured)
-        self.assertEqual([e["outcome"] for e in events if e["event"] == "upstream_attempt_end"],
-                         ["returned", "error"])
-        self.assertEqual(events[-1]["attempts"], 2)
-        self.assertEqual(events[-1]["outcome"], "error")
-        self.assertNotIn("draft-private", result.answer)
-        for secret in ("draft-private", "review-private", "code-private"):
-            self.assertNotIn(secret, "\n".join(captured.output))
 
-    async def test_cancellation_during_review_has_one_terminal_and_shared_budget(self):
-        client = Client(block=True, block_at=2)
-        scope, _ = scope_for(client)
-        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
-            task = asyncio.create_task(scope["check_1c_logic"]("code-private"))
-            await client.entered.wait()
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-        events = self.events(captured)
-        self.assertEqual(len([e for e in events if e["event"] == "tool_end"]), 1)
-        self.assertEqual(events[-1]["outcome"], "cancelled")
-        self.assertEqual(events[-1]["attempts"], 2)
-        self.assertIs(client.budgets[0], client.budgets[1])
 
     async def test_refusal_before_collector_has_zero_attempts(self):
         client = Client(acquisition_error=ConversationCapacityError("private refusal"))
@@ -349,7 +257,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(groups), 2)
         self.assertEqual({g[0]["snapshotSha256"] for g in groups.values()},
                          {hashlib.sha256(s.encode()).hexdigest() for s in ["first-secret", "second-secret"]})
-        self.assertTrue(all(g[-1]["attempts"] == 2 and g[-1]["outcome"] == "returned" for g in groups.values()))
+        self.assertTrue(all(g[-1]["attempts"] == 1 and g[-1]["outcome"] == "returned" for g in groups.values()))
 
     async def test_file_reference_is_not_logged_as_loaded_code(self):
         scope, _ = scope_for(Client())
@@ -398,6 +306,40 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.answer, "unsupported-response-secret")
         self.assertNotIn("mode", events[0])
         self.assertEqual(events[1]["stage"], "direct")
+
+
+    async def test_provider_findings_do_not_become_local_errors_or_spawn_review_attempts(self):
+        answer = 'Ошибка логики: Параметры.Остатко; неотрицательное; {"input":{"bindings":[],"path":""}}'
+        client = Client([answer, ApiError("review-must-never-be-issued")])
+        scope, _ = scope_for(client)
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            result = await scope["check_1c_logic"]("Возврат Параметры.Остаток;")
+        events = self.events(captured)
+        self.assertEqual(result.answer, answer)
+        self.assertEqual(result.result, answer)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual([e["event"] for e in events],
+                         ["tool_start", "upstream_attempt_start", "upstream_attempt_end", "tool_end"])
+        self.assertEqual(events[-1]["outcome"], "returned")
+        self.assertEqual(events[-1]["attempts"], 1)
+        self.assertNotIn(answer, "\n".join(captured.output))
+
+    async def test_exhausted_stock_retries_keep_error_metadata_and_one_terminal(self):
+        client = Client([ApiError("private-upstream-error")], retries=1)
+        scope, _ = scope_for(client)
+        code = "Кириллица🙂" * 12000
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            result = await scope["check_1c_logic"](code)
+        events = self.events(captured)
+        self.assertIn("private-upstream-error", result.answer)
+        self.assertEqual(result.result, result.answer)
+        self.assertTrue(result.truncation[0]["truncated"])
+        self.assertEqual([e["attempt"] for e in events if e["event"] == "upstream_attempt_end"], [1, 2])
+        self.assertEqual(len([e for e in events if e["event"] == "tool_end"]), 1)
+        self.assertEqual(events[-1]["outcome"], "error")
+        self.assertEqual(events[-1]["attempts"], 2)
+        self.assertIs(client.budgets[0], client.budgets[1])
+        self.assertNotIn("private-upstream-error", "\n".join(captured.output))
 
 
 if __name__ == "__main__":
