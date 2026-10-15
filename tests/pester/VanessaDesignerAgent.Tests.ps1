@@ -551,10 +551,16 @@ param([string]$OutputPath, [string]$Value)
         }
         $onDemandStart = [regex]::Match(
             $OnDemandText,
-            'function Start-ItlOnDemandBackendInstance[\s\S]*?^}',
+            'function Start-ItlOnDemandBackendInstance\s*\{[\s\S]*?^}',
             [Text.RegularExpressions.RegexOptions]::Multiline
         ).Value
-        $onDemandStart | Should -Match '\$serviceInfoBase\.user'
+        $onDemandStart | Should -Match ([regex]::Escape("-OwnerFunction 'Start-ItlOnDemandBackendInstanceCore' -OwnerArguments `$PSBoundParameters"))
+        $onDemandStartCore = [regex]::Match(
+            $OnDemandText,
+            'function Start-ItlOnDemandBackendInstanceCore\s*\{[\s\S]*?^}',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+        ).Value
+        $onDemandStartCore | Should -Match '\$serviceInfoBase\.user'
         ($VanessaText + $OnDemandText) | Should -Not -Match 'conf\.cfg|DisableUnsafeActionProtection|UnsafeActionProtectionBypass'
     }
 

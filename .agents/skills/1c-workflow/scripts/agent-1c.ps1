@@ -12,6 +12,7 @@ param(
     [switch]$OpenSpecArchiveSkipSpecs,
     [string]$ConfigPath,
     [string]$DevBranchName,
+    [switch]$DisableProjectTestsSafeMode,
     [switch]$CleanupDryRun,
     [switch]$ConfirmBranchDeletion,
     [string]$PeerDevBranchName,
@@ -270,6 +271,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecArchiveSkipSpecs" -Value $OpenSpecArchiveSkipSpecs
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value (Resolve-Agent1cFullPath -Path $ConfigPath)
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchName" -Value $DevBranchName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DisableProjectTestsSafeMode" -Value $DisableProjectTestsSafeMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PeerDevBranchName" -Value $PeerDevBranchName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "BranchSyncRequestPath" -Value $BranchSyncRequestPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
@@ -399,6 +401,7 @@ $script:RunSourceIntegrityReportPath = ""
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null
+$script:ProjectTestsSafeModeRequested = [bool]$DisableProjectTestsSafeMode
 $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
 $script:InitVibecoding1cMcpSetupRequested = $false

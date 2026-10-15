@@ -921,3 +921,83 @@ Describe 'Designer Gate 6 batch verdict' {
         @($result.secondCalls[5]) | Should -Contain '/UpdateDBCfg'
     }
 }
+
+
+Describe 'Project-test installation uses its own execution prerequisites' {
+    It 'retains global findings and applies registered tests; rejects <Problem> through the existing owner' -ForEach @(
+        @{Problem='environment'; Expected=''},
+        @{Problem='applicability'; Expected='GATE6_CHECK_PROCESS_FAILED'},
+        @{Problem='result-missing'; Expected='GATE6_CHECK_FAILED'},
+        @{Problem='result-invalid'; Expected='GATE6_CHECK_FAILED'},
+        @{Problem='log-invalid'; Expected='GATE6_CHECK_FAILED'},
+        @{Problem='transport'; Expected='GATE6_CHECK_PROCESS_FAILED'},
+        @{Problem='apply'; Expected='apply failed'},
+        @{Problem='runtime'; Expected='runtime not ready'},
+        @{Problem='wrong-name'; Expected='GATE6_PROJECT_TESTS_CONTEXT_INVALID'},
+        @{Problem='wrong-source'; Expected='GATE6_PROJECT_TESTS_CONTEXT_INVALID'}
+    ) {
+        $root=Join-Path $TestDrive ('Проект тестов '+[guid]::NewGuid().ToString('N'))
+        $source=Join-Path $root 'tests/yaxunit'
+        New-Item -ItemType Directory -Force -Path $source | Out-Null
+        [IO.File]::WriteAllText((Join-Path $source 'Configuration.xml'),'<MetaDataObject><Configuration><Properties><Name>ТестыWorkflowПриёмка</Name></Properties></Configuration></MetaDataObject>',[Text.UTF8Encoding]::new($false))
+        $actual=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:Config=[pscustomobject]@{yaxunit=[pscustomobject]@{testsPath='tests/yaxunit';testsExtensionName='ТестыWorkflowПриёмка'}}
+            $script:fixtureCalls=[Collections.Generic.List[object]]::new()
+            $script:runtimeReads=0
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{fingerprint='v2|git-tree-sha256|'+('a'*64)} }
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $op=$DesignerArgs[0]
+                $script:fixtureCalls.Add([pscustomobject]@{operation=$op;args=@($DesignerArgs);contract=$NativeEffectContract;duty=$RestorationDuty})
+                if($op -eq '/DumpIB'){[IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3))}
+                $script:LastLogPath=Join-Path $root ('test-'+$script:fixtureCalls.Count+'.log')
+                $failed=$op -in @('/CheckModules','/CheckConfig') -or ($Problem -eq 'applicability' -and $op -eq '/CheckCanApplyConfigurationExtensions')
+                $code=if($failed){101}else{0}
+                $text=if($failed){'Расширение3: Ошибка компиляции старого модуля.'}else{'Ошибок: 0; предупреждений: 0'}
+                [IO.File]::WriteAllText($script:LastLogPath,$text,[Text.UTF8Encoding]::new($false))
+                $index=[Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if($index -ge 0){[IO.File]::WriteAllText($DesignerArgs[$index+1],[string]$code,[Text.UTF8Encoding]::new($false))}
+                if($op -eq '/CheckModules') {
+                    if($Problem -eq 'result-missing'){Remove-Item -LiteralPath $DesignerArgs[$index+1]}
+                    if($Problem -eq 'result-invalid'){[IO.File]::WriteAllText($DesignerArgs[$index+1],'unknown')}
+                    if($Problem -eq 'log-invalid'){[IO.File]::WriteAllBytes($script:LastLogPath,[byte[]](0xff,0xfe,0xff))}
+                    if($Problem -eq 'transport'){throw 'transport failed without native completion'}
+                }
+                if($op -eq '/UpdateDBCfg' -and $Problem -eq 'apply'){throw 'apply failed'}
+                if($failed){
+                    $error=[Exception]::new('native check exit 101')
+                    $error.Data['ItlDesignerBatchResult']=[pscustomobject]@{operation=$op;ownedProcessesReleased=$true;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;exitCode=101}
+                    throw $error
+                }
+            }
+            $name=if($Problem -eq 'wrong-name'){'ЧужоеРасширение'}else{'ТестыWorkflowПриёмка'}
+            $path=if($Problem -eq 'wrong-source'){$root}else{$source}
+            $failure='';$evidence=$null
+            try {
+                $evidence=Invoke-ConfigLoadDesignerAttempt -InfoBasePath (Join-Path $root 'База 1С') -InfoBaseKind file `
+                    -ExtensionName $name -SourceFingerprint ('v2|git-tree-sha256|'+('a'*64)) -ValidationPurpose project-tests `
+                    -DesignerArgs @('/LoadConfigFromFiles',$path,'-Extension',$name,'-Format','Hierarchical','/UpdateDBCfg') `
+                    -AfterApply { $script:runtimeReads++; if($Problem -eq 'runtime'){throw 'runtime not ready'} }
+            } catch {$failure=$_.Exception.Message}
+            [pscustomobject]@{failure=$failure;evidence=$evidence;calls=@($script:fixtureCalls.ToArray());runtimeReads=$script:runtimeReads}
+        }
+        if($Expected){
+            $actual.failure | Should -Match $Expected
+            if($Problem -in @('wrong-name','wrong-source')){$actual.calls | Should -HaveCount 0}
+            else{@($actual.calls | Where-Object operation -eq '/RestoreIB') | Should -HaveCount 1}
+            if($Problem -notin @('apply','runtime')){@($actual.calls | Where-Object operation -eq '/UpdateDBCfg') | Should -HaveCount 0}
+        }else{
+            $actual.failure | Should -Be ''
+            $actual.evidence.validationPurpose | Should -Be 'project-tests'
+            $actual.evidence.cleanPassed | Should -BeFalse
+            @($actual.evidence.steps | Where-Object { -not $_.nativePassed -and $_.diagnosticOnly }) | Should -HaveCount 2
+            @($actual.evidence.steps | Where-Object step -eq 'applicability')[0].nativePassed | Should -BeTrue
+            @($actual.calls | Where-Object operation -in @('/CheckModules','/CheckConfig') | Where-Object { $_.args -contains '-AllExtensions' }) | Should -HaveCount 2
+            @($actual.calls | Where-Object operation -eq '/UpdateDBCfg') | Should -HaveCount 1
+            @($actual.calls | Where-Object operation -eq '/RestoreIB') | Should -HaveCount 0
+            $actual.runtimeReads | Should -Be 1
+        }
+    }
+}
