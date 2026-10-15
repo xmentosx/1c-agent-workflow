@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pesterNonReusableTests": ["tests/pester/SourceE2EStorage.Tests.ps1", "tests/pester/SourceE2EDiskMonitor.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
+  "pesterNonReusableTests": ["tests/pester/SourceE2EStorage.Tests.ps1", "tests/pester/SourceE2EDiskMonitor.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostAnswerAcceptance.Tests.ps1", "tests/pester/HostToolsProxy.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/ChatGptInstall.Tests.ps1", "tests/pester/ChatGptSourcePolicy.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
   "budgets": {
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
@@ -998,6 +998,16 @@
       "tests": ["tests/pester/HostCodeChecker.Tests.ps1"]
     },
     {
+      "id": "host-answer-acceptance",
+      "owner": "source-side whole CodeChecker answer qualification and evidence",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/HostAnswerAcceptance.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/answer-acceptance/*", "tests/pester/HostAnswerAcceptance.Tests.ps1"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
+      "tests": ["tests/pester/HostAnswerAcceptance.Tests.ps1"]
+    },
+    {
       "id": "host-source-runtime",
       "owner": "Source-only per-component Python environment preparation",
       "gate": "targeted",
@@ -1005,7 +1015,7 @@
       "primaryTest": "tests/pester/HostSourceRuntime.Tests.ps1",
       "paths": ["scripts/host-test-runtime.ps1", "tests/pester/HostSourceRuntime.Tests.ps1", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/beta-cutover.ps1", "vibecoding1c-mcp-host/index-snapshot.ps1", "vibecoding1c-mcp-host/sppr-host.ps1"],
       "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1", "vibecoding1c-mcp-host/sppr-mcp/requirements.txt", "tests/pester/TestSupport.ps1", "scripts/quality-contracts.ps1", "scripts/invoke-pester-shards.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1"]
+      "tests": ["tests/pester/HostSourceRuntime.Tests.ps1", "tests/pester/HostNativeTransport.Tests.ps1", "tests/pester/HostLinux.Tests.ps1", "tests/pester/HostCodeChecker.Tests.ps1", "tests/pester/HostAnswerAcceptance.Tests.ps1", "tests/pester/HostBookStack.Tests.ps1", "tests/pester/HostMantis.Tests.ps1", "tests/pester/HostSppr.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/ChatGptBridge.Tests.ps1", "tests/pester/OnDemandGo.Tests.ps1"]
     },
     {
       "id": "host-tools-proxy-tests",

@@ -10,6 +10,7 @@ Describe 'Independent host component source verification' {
         @{ Component='BookStack'; Path='vibecoding1c-mcp-host/bookstack-product-docs-mcp/server.py'; Test='HostBookStack' }
         @{ Component='CodeChecker'; Path='vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py'; Test='HostCodeChecker' }
         @{ Component='CodeChecker beta'; Path='vibecoding1c-mcp-host/codechecker-beta-overlay/patch_mcp_server.py'; Test='HostCodeChecker' }
+        @{ Component='CodeChecker answer acceptance'; Path='vibecoding1c-mcp-host/answer-acceptance/assess.py'; Test='HostAnswerAcceptance' }
         @{ Component='SPPR'; Path='vibecoding1c-mcp-host/sppr-mcp/sppr_service.py'; Test='HostSppr' }
         @{ Component='Node proxy'; Path='vibecoding1c-mcp-host/tools-list-proxy/tools-list-proxy.js'; Test='HostToolsProxy' }
         @{ Component='Linux host'; Path='vibecoding1c-mcp-host/linux-native-host/watchdog.py'; Test='HostLinux' }
@@ -34,6 +35,7 @@ Describe 'Independent host component source verification' {
         @($selection.unknownPaths) | Should -BeNullOrEmpty
         @($selection.tests | Sort-Object) | Should -Be @(
             'tests/pester/ChatGptBridge.Tests.ps1',
+            'tests/pester/HostAnswerAcceptance.Tests.ps1',
             'tests/pester/HostBookStack.Tests.ps1',
             'tests/pester/HostCodeChecker.Tests.ps1',
             'tests/pester/HostLinux.Tests.ps1',
@@ -63,7 +65,7 @@ Describe 'Independent host component source verification' {
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         $RepositoryRoot=$RepoRoot
-        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy','OnDemandGo','SourceQualificationFixture')) {
+        foreach($name in @('HostNativeTransport','HostLinux','HostCodeChecker','HostAnswerAcceptance','HostToolsProxy','HostBookStack','HostMantis','HostSppr','HostSourceRuntime','ChatGptBridge','ChatGptInstall','ChatGptSourcePolicy','OnDemandGo','SourceQualificationFixture')) {
             $path=Join-Path $RepoRoot "tests/pester/$name.Tests.ps1"
             Get-ShardInputDigest -Paths @($path) | Should -BeNullOrEmpty
         }
