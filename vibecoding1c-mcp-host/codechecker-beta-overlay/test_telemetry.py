@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from patch_mcp_server import patch_source
-from test_patch_mcp_server import ApiError, ConversationCapacityError, make_scope
+from test_patch_mcp_server import ApiError, ConversationCapacityError, make_scope, review_payload, rendered_answer
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codechecker-overlay"))
 import observability
 
@@ -128,6 +128,8 @@ class Client:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
         if isinstance(outcome, BaseException):
             raise outcome
+        if route == "prompt" and "Формат ответа этого этапа" in sent:
+            return review_payload(outcome)
         return outcome
 
     async def retry_transport(self, attempts, budget):
@@ -151,6 +153,35 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
     def events(self, captured):
         return [json.loads(record.getMessage()) for record in captured.records]
 
+    async def test_invalid_review_is_terminal_error_and_original_task_can_continue(self):
+        class MalformedReviewClient(Client):
+            malformed = True
+
+            async def collect_prompt(self, entry, sent, *, budget):
+                value = await self.collect("prompt", sent, budget)
+                if self.malformed and "Формат ответа этого этапа" in sent:
+                    return "bad review format"
+                return value
+
+        client = MalformedReviewClient()
+        scope, _ = scope_for(client)
+        code = "Возврат 0;"
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            first = await scope["check_1c_logic"](code)
+            client.malformed = False
+            second = await scope["check_1c_logic"](code)
+        events = self.events(captured)
+        terminal = [e for e in events if e["event"] == "tool_end"]
+        self.assertEqual([e["outcome"] for e in terminal], ["error", "returned"])
+        self.assertEqual([e["attempts"] for e in terminal], [2, 2])
+        self.assertEqual(len({e["requestId"] for e in terminal}), 2)
+        self.assertIn("Повторите check_1c_logic с тем же кодом", first.answer)
+        self.assertEqual(second.answer, rendered_answer("unsupported-response-secret"))
+        self.assertEqual(client.calls[0][1], client.calls[2][1])
+        self.assertIs(client.budgets[0], client.budgets[1])
+        self.assertIs(client.budgets[2], client.budgets[3])
+        self.assertIsNot(client.budgets[0], client.budgets[2])
+
     async def test_request_hash_attempt_and_terminal_are_content_safe(self):
         code = 'СекретныйКод("credential-secret");\r\n'
         client = Client()
@@ -170,7 +201,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(client.budgets[0], client.budgets[1])
         self.assertEqual(events[3]["upstreamInputSha256"], hashlib.sha256(client.calls[1][1].encode()).hexdigest())
         self.assertEqual(events[-1]["outcome"], "returned")
-        self.assertEqual(result.answer, "unsupported-response-secret")
+        self.assertEqual(result.answer, rendered_answer("unsupported-response-secret"))
         self.assertFalse(result.truncation[0]["truncated"])
         text = "\n".join(captured.output)
         for secret in [code, "credential-secret", "conversation-token-secret", result.answer, client.calls[0][1]]:
@@ -189,7 +220,7 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["outcome"], "returned")
         self.assertIs(client.budgets[0], client.budgets[1])
         self.assertIs(client.budgets[1], client.budgets[2])
-        self.assertEqual(result.answer, "answer-secret")
+        self.assertEqual(result.answer, rendered_answer("answer-secret"))
         self.assertNotIn("upstream-token-secret", "\n".join(captured.output))
 
     async def test_direct_retry_and_fallback_share_parent_request(self):

@@ -17,7 +17,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 22 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 36 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
@@ -43,7 +43,7 @@ Describe 'HostCodeChecker component regressions' {
             $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousErrorActionPreference }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 14 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
     }
 
     It "packages the shared telemetry owner through a restricted modern build context" {
