@@ -415,6 +415,86 @@ Describe 'VAExtension configuration-independent report and system forms' {
     }
 }
 
+Describe 'Current-window expression failure attribution in controlled Vanessa r6' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r6'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patch = [IO.File]::ReadAllText((Join-Path $assetRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $expressionPath = 'features/Libraries/VAExtension/VAExtension/Forms/Форма/Ext/Form/Module.bsl'
+        $sections = @{}
+        foreach ($section in @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) { $sections[($section -split "`n")[0]] = $section }
+        $expressionSection = $sections['diff --git a/'+$expressionPath+' b/'+$expressionPath]
+        $rethrowHunks = @($expressionSection -split '(?m)(?=^@@ )' | Where-Object { $_ -match 'ЗаписатьЛогВЖРИнформация\("ЯВыполняюВыражениеВТекущемОкнеРасширение"' -and $_ -match '(?m)^\+\s+ВызватьИсключение;' })
+    }
+
+    It 'applies only an outer rethrow while preserving success, waiting and optional helper cleanup' {
+        $rethrowHunks | Should -HaveCount 1
+        $hunk = $rethrowHunks[0]
+        @($hunk -split "`n" | Where-Object { $_ -match '^\+' }) | Should -HaveCount 1
+        @($hunk -split "`n" | Where-Object { $_ -match '^-' }) | Should -HaveCount 0
+        $fixture = Join-Path $repoRoot 'tests/fixtures/vanessa-current-window-expression'
+        $provenance = Get-Content -LiteralPath (Join-Path $fixture 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $upstream = [IO.File]::ReadAllText((Join-Path $fixture 'function.upstream.bsl'),[Text.Encoding]::UTF8)
+        (Get-FileHash -LiteralPath (Join-Path $fixture 'function.upstream.bsl')).Hash.ToLowerInvariant() | Should -Be $provenance.sha256
+        $manifest.upstream.commit | Should -Be $provenance.commit
+        $provenance.path | Should -Be $expressionPath
+        $root = Join-Path $TestDrive 'Выражение в окне'
+        $target = Join-Path $root $expressionPath
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+        [IO.File]::WriteAllText($target,$upstream,[Text.UTF8Encoding]::new($false))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('config','core.autocrlf','false'))
+        $hunkPath = Join-Path $TestDrive 'outer-rethrow.patch'
+        $diff = 'diff --git a/'+$expressionPath+' b/'+$expressionPath+"`n--- a/"+$expressionPath+"`n+++ b/"+$expressionPath+"`n"+$hunk
+        [IO.File]::WriteAllText($hunkPath,$diff,[Text.UTF8Encoding]::new($false))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--check','--whitespace=error-all',$hunkPath))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--whitespace=error-all',$hunkPath))
+        $logger = "`t`tВанесса.ЗаписатьЛогВЖРИнформация(`"ЯВыполняюВыражениеВТекущемОкнеРасширение`", ОписаниеОшибки());"
+        [IO.File]::ReadAllText($target,[Text.Encoding]::UTF8) | Should -BeExactly ($upstream.Replace($logger,$logger+"`n`t`tВызватьИсключение;"))
+    }
+
+    It 'retains all r4 fixes and the primary assertion attachment protection' {
+        $previous = [IO.File]::ReadAllText((Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r4/file-operations.patch'),[Text.Encoding]::UTF8)
+        foreach ($section in @($previous -split '(?m)(?=^diff --git )' | Where-Object { $_ })) {
+            $key = ($section -split "`n")[0]
+            $actual = $sections[$key]
+            if ($key -ceq ('diff --git a/'+$expressionPath+' b/'+$expressionPath)) { $actual = $actual.Replace($rethrowHunks[0],'') }
+            $actual -replace '(?m)^(index |@@ )[^\n]*\n','' | Should -BeExactly ($section -replace '(?m)^(index |@@ )[^\n]*\n','')
+        }
+        $interface = $sections['diff --git a/features/Libraries/UITestRunner/step_definitions/РаботаСИнтерфейсом/Forms/Форма/Ext/Form/Module.bsl b/features/Libraries/UITestRunner/step_definitions/РаботаСИнтерфейсом/Forms/Форма/Ext/Form/Module.bsl']
+        $interface | Should -Match 'Дополнительная ошибка вложения'
+        $interface | Should -Match 'ТекстСообщения = ТекстСообщения \+ Символы.ПС \+ ОшибкаВложения'
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch')).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        $manifest.patch.gitDiffFormat | Should -Be 'full-index'
+    }
+
+    It 'pins the tested recipe and paired extension in the delivery lock' {
+        $lock = Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r6'
+        $lock.dependencies.vanessaAutomation.patchSha256 | Should -Be $manifest.patch.sha256
+        $lock.dependencies.vanessaAutomation.manifestSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $assetRoot 'manifest.json')).Hash.ToLowerInvariant()
+        $lock.dependencies.vanessaAutomation.assetName | Should -Be $manifest.artifact.fileName
+        $lock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be $manifest.pairedExtension.fileName
+    }
+
+    It 'keeps authenticated recipe and upstream excerpt bytes unchanged by Git filters' {
+        foreach ($relative in @(
+            'third-party/vanessa-automation/1.2.043.42-itl-r6/manifest.json',
+            'third-party/vanessa-automation/1.2.043.42-itl-r6/ITL-NOTICE.txt',
+            'third-party/vanessa-automation/1.2.043.42-itl-r6/LICENSE.upstream',
+            'tests/fixtures/vanessa-current-window-expression/function.upstream.bsl',
+            'tests/fixtures/vanessa-current-window-expression/provenance.json'
+        )) {
+            $path = Join-Path $repoRoot $relative
+            $raw = (Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('hash-object','--no-filters',$path)).stdout.Trim()
+            $filtered = (Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('hash-object',('--path='+$relative),$path)).stdout.Trim()
+            $filtered | Should -BeExactly $raw
+        }
+    }
+}
+
 Describe 'Reproducible Vanessa cumulative patch and resume format' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
