@@ -120,12 +120,12 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.22"
+        $manifest.facadeVersion | Should -Be "0.4.23"
         $manifest.minimumFacadeVersion | Should -Be "0.4.17"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
         $databaseRuntimeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\database_runtime.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.22"'
+        $mainSource | Should -Match 'const version = "0\.4\.23"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -141,22 +141,22 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.42"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.42"
-        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r7"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "01e708acc8b8501c41196872bc614eb82b578409de29f7736129d64024acf717"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "5dbac3e050198f639527151c04b37e87f81ed851d42ab92ffa6d6a1b31103ee3"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "3744ea1f72a1b649a16425809c2e4d0fb59b7d4661d459afa8bff2c74fbf822f"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "1f732b9475b4afd2b2112b9e80e4ef3c98237af7e54fb18d260aae3539d1f648"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r7.cfe"
-        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "5fe83922572d046c3bcd453fb09a14cc12fb53e6486123f466abb9b451a32ebd"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r8"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "4a0283c645ecc15192e17fad9bee16ebfed0ecdcdbf67bff60b24fcacb4eab46"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "feb10667879c02851123b739c69c0b9aea9dbc8303d991df8f26a305e1c575e6"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "fe142dcb11bbc48ee548059515fcb4d0fce74921d6d7a4f81a0e7d8ee0924f70"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "3906026164a83fb5603a755bebdad9b6fb951a40be9585ea3dcc46e9a9f120ee"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.assetName | Should -Be "VAExtension.1.32-itl-r8.cfe"
+        $manifest.families.'vanessa-ui'.pairedExtensionArtifact.sha256 | Should -Be "7c9e792fcae9901fff34e3b6b3e80238c0e645574d9a1d14632b640a016f00bb"
         $manifest.families.'vanessa-ui'.pairedExtensionArtifact.protocol | Should -Be "itl-file-code-v1"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.22"
-        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.22"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.22/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "c5c7ed1b793beade3eac82475817505622a95b620e9722bd5362e592bf26ec01"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.23"
+        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.23"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.23/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "5685e56689b529cf772803eb0b7e576f55a8944d880bb1b4088ae69eb1574329"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -347,13 +347,13 @@ Describe "ITL on-demand MCP facade" {
             }
             $mismatch | Should -Match "DEPENDENCY_SELECTION_REQUIRED"
 
-            $lock.dependencies.itlOndemandMcp.version = "0.4.22"
+            $lock.dependencies.itlOndemandMcp.version = "0.4.23"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
             $resolved = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.22\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.23\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -386,7 +386,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.22"
+                $version = "0.4.23"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $cacheBytes = [byte[]](1, 2, 3, 4)
                 $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($cacheBytes)))).Replace('-', '').ToLowerInvariant()
@@ -407,7 +407,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.22\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.23\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -439,13 +439,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.22"
+                        version = "0.4.23"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.22\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.23\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -481,7 +481,7 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.22"
+                        version = "0.4.23"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $sourceSha256
