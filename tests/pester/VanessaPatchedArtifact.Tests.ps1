@@ -471,10 +471,10 @@ Describe 'Current-window expression failure attribution in controlled Vanessa r6
     }
 
     It 'pins the tested recipe and paired extension in the delivery lock' {
-        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r7'
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r8'
         $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lock = Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r7'
+        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r8'
         $lock.dependencies.vanessaAutomation.patchSha256 | Should -Be $manifest.patch.sha256
         $lock.dependencies.vanessaAutomation.manifestSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $assetRoot 'manifest.json')).Hash.ToLowerInvariant()
         $lock.dependencies.vanessaAutomation.assetName | Should -Be $manifest.artifact.fileName
@@ -570,6 +570,83 @@ Describe 'Reproducible Vanessa cumulative patch and resume format' {
             $index.Groups[1].Length | Should -Be 40
             $index.Groups[2].Length | Should -Be 40
         }
+    }
+}
+
+Describe 'Vanessa pre-action rejection completion' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $recipe = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r8'
+        $patch = [IO.File]::ReadAllText((Join-Path $recipe 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $section = @($patch -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq 'diff --git a/VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl b/VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl' })
+        if ($section.Count -ne 1) { throw 'Expected one MCP command owner.' }
+        $added = (@($section[0] -split "`n" | Where-Object { $_ -match '^\+[^+]' } | ForEach-Object { $_.Substring(1) }) -join "`n")
+        $body = [regex]::Match($added,'(?ms)^Процедура ОтклонитьКомандуMCPДоВыполнения\(.*?^КонецПроцедуры').Value
+    }
+
+    It 'qualifies only explicit validation sites and retains the prior recipe' {
+        $body | Should -Not -BeNullOrEmpty
+        @($added -split "`n" | Where-Object { $_ -match '^\s+ОтклонитьКомандуMCPДоВыполнения\(' }) | Should -HaveCount 5
+        @($added -split "`n" | Where-Object { $_ -match 'ЗавершитьВызовИнструментаСОшибкой.*ITL_VANESSA_COMMAND_REJECTED' }) | Should -HaveCount 1
+        $body | Should -Not -Match 'Контекст|Context|ВыполнитьСценарий|ПодключитьОбработчикОжидания'
+        $manifest = Get-Content -LiteralPath (Join-Path $recipe 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        (Get-FileHash -LiteralPath (Join-Path $recipe 'file-operations.patch')).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        $prior = [IO.File]::ReadAllText((Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r7/file-operations.patch'),[Text.Encoding]::UTF8)
+        foreach ($oldSection in @($prior -split '(?m)(?=^diff --git )' | Where-Object { $_ })) {
+            $header = ($oldSection -split "`n")[0]
+            if ($header -ceq ($section[0] -split "`n")[0]) { continue }
+            $current = @($patch -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq $header })
+            $current.Count | Should -Be 1
+            ($current[0] -replace '(?m)^index [^\n]+\n','') | Should -BeExactly ($oldSection -replace '(?m)^index [^\n]+\n','')
+        }
+    }
+
+    It 'completes the request once after clearing all existing pending fields' {
+        # Replace only the two object adapters; execute the production procedure.
+        $production = $body.Replace('Ванесса.','').Replace('МодульМсп_Сервер().','')
+        $probe = @'
+Перем Ид, Сценарии, СтрокаФичи, Ответы;
+Функция ИдентификаторЗадачиMCP()
+    Возврат Ид;
+КонецФункции
+Процедура УстановитьИдентификаторЗадачиMCP(Значение)
+    Ид = Значение;
+КонецПроцедуры
+Процедура УстановитьФлагОповеститьMCPСерверПослеВыполненияСценариев(А, Б)
+    Если А <> Неопределено ИЛИ Б <> Неопределено Тогда ВызватьИсключение "SCENARIO_PENDING"; КонецЕсли;
+    Сценарии = Неопределено;
+КонецПроцедуры
+Процедура УстановитьФлагОповеститьMCPСерверПослеВыполненияОднойСтрокиФичи(Значение)
+    СтрокаФичи = Значение;
+КонецПроцедуры
+Процедура ЗавершитьВызовИнструментаСОшибкой(Запрос, Код, Текст)
+    Если Ид <> Неопределено ИЛИ Сценарии <> Неопределено ИЛИ СтрокаФичи <> Неопределено Тогда ВызватьИсключение "PENDING_NOT_CLEARED"; КонецЕсли;
+    Если Запрос <> "request-1" ИЛИ Код <> "ITL_VANESSA_COMMAND_REJECTED" ИЛИ Текст <> "строка 266" Тогда ВызватьИсключение "ORIGINAL_ERROR_LOST"; КонецЕсли;
+    Ответы = Ответы + 1;
+КонецПроцедуры
+// PRODUCTION
+Ид = "request-1"; Сценарии = Истина; СтрокаФичи = Истина; Ответы = 0;
+ОтклонитьКомандуMCPДоВыполнения("строка 266");
+Если Ответы <> 1 Тогда ВызватьИсключение "COMPLETION_NOT_ONCE"; КонецЕсли;
+Сообщить("PRE_ACTION_COMPLETION_PASSED");
+'@
+        $probePath = Join-Path $TestDrive 'Отказ команды с пробелом.os'
+        [IO.File]::WriteAllText($probePath,$probe.Replace('// PRODUCTION',$production),[Text.UTF8Encoding]::new($true))
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = (Get-Command oscript -ErrorAction Stop).Source
+        $info.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8',$probePath)
+        $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+        $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+        $info.StandardOutputEncoding=[Text.UTF8Encoding]::new($false); $info.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+        $process=[Diagnostics.Process]::Start($info)
+        try {
+            $stdout=$process.StandardOutput.ReadToEndAsync(); $stderr=$process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); $process.WaitForExit(); throw 'Completion probe timed out.' }
+            $output=$stdout.GetAwaiter().GetResult()+$stderr.GetAwaiter().GetResult()
+            $process.ExitCode | Should -Be 0 -Because $output
+            $output | Should -Match 'PRE_ACTION_COMPLETION_PASSED'
+        } finally { $process.Dispose() }
     }
 }
 

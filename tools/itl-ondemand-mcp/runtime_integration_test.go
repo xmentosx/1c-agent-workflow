@@ -879,6 +879,9 @@ func TestGatewayPreservesQualifiedVanessaPathProtocolErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertToolErrorCode(t, result, "PATH_INVALID")
+	if ensures, stops := broker.counts(); ensures != 1 || stops != 0 || rt.backend == nil {
+		t.Fatalf("pre-action path rejection discarded runtime: ensures=%d stops=%d", ensures, stops)
+	}
 
 	evidencePath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui", rt.instanceID+".evidence.jsonl")
 	raw, err := os.ReadFile(evidencePath)
@@ -887,6 +890,110 @@ func TestGatewayPreservesQualifiedVanessaPathProtocolErrors(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"resultCode":"PATH_INVALID"`) {
 		t.Fatalf("path protocol code was not preserved in evidence: %s", raw)
+	}
+}
+
+func TestGatewayKeepsOnlyQualifiedPreActionRejections(t *testing.T) {
+	for _, tc := range []struct {
+		name, tool, message string
+		properResult, keep  bool
+	}{
+		{"non-executable-line", "execute_feature_step", "ITL_VANESSA_COMMAND_REJECTED: строка 266 не исполняется", false, true},
+		{"invalid-syntax", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED: ошибка синтаксиса строка 5", false, true},
+		{"legacy-ambiguous", "run_scenario", "ACTION_FAILED: ошибка синтаксиса строка 5", false, false},
+		{"wrong-producer", "get_editor_state", "ITL_VANESSA_COMMAND_REJECTED: отказ", false, false},
+		{"unqualified-path-site", "run_scenario", "PATH_INVALID: отказ", false, false},
+		{"native-path-validation", "open_feature_file", "INVALID_PARAMS: Файл <C:\\Путь с пробелом\\ошибка.feature> не был найден.", false, true},
+		{"unqualified-invalid-params", "run_scenario", "INVALID_PARAMS: отказ", false, false},
+		{"malformed", "run_scenario", "ITL_VANESSA_COMMAND_REJECTED", false, false},
+		{"proper-tool-error", "run_scenario", "existing ordinary tool error", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := append(vanessaIntegrationTools(), &mcp.Tool{Name: "execute_feature_step", InputSchema: map[string]any{"type": "object"}})
+			server := mcp.NewServer(&mcp.Implementation{Name: "rejection-backend", Version: "1"}, nil)
+			calls := 0
+			for _, definition := range tools {
+				tool := definition
+				server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					if tool.Name == tc.tool {
+						calls++
+						if tc.properResult {
+							return toolError("EXISTING_ERROR", tc.message, nil), nil
+						}
+						return nil, &jsonrpc.Error{Code: -32603, Message: tc.message}
+					}
+					text := tool.Name
+					switch tool.Name {
+					case "get_environment_data":
+						text = "VanessaExt: true"
+					case "connect_test_client":
+						text = "TestClient подключен"
+					case "get_window_list_testclient":
+						text = "Окно: Главное"
+					}
+					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+				})
+			}
+			backend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+			t.Cleanup(backend.Close)
+			broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
+			rt, session := newGatewayFacadeSession(t, "vanessa-ui", tools, broker, nil)
+			arguments := map[string]any{}
+			if tc.tool == "open_feature_file" {
+				arguments["filePath"] = `C:\Путь с пробелом\ошибка.feature`
+			}
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": tc.tool, "arguments": arguments}})
+			if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result), tc.message) {
+				t.Fatalf("original error lost: result=%+v err=%v", result, err)
+			}
+			ensures, stops := broker.counts()
+			wantStops := 1
+			if tc.keep {
+				wantStops = 0
+			}
+			if calls != 1 || ensures != 1 || stops != wantStops || (rt.backend != nil) != tc.keep {
+				t.Fatalf("wrong cleanup/replay: calls=%d ensures=%d stops=%d keep=%v", calls, ensures, stops, tc.keep)
+			}
+			if tc.keep && !tc.properResult {
+				details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+				if details["callOutcome"] != "not-started" || details["automaticRetryPerformed"] != false {
+					t.Fatalf("missing outcome proof: %+v", details)
+				}
+			}
+			result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "get_environment_data", "arguments": map[string]any{}}})
+			if err != nil || result.IsError {
+				t.Fatalf("following call failed: %+v %v", result, err)
+			}
+			ensures, _ = broker.counts()
+			want := 2
+			if tc.keep {
+				want = 1
+			}
+			if ensures != want || calls != 1 {
+				t.Fatalf("following call restarted/replayed: ensures=%d calls=%d", ensures, calls)
+			}
+		})
+	}
+}
+
+func TestQualifiedRejectionRequiresVanessaFamily(t *testing.T) {
+	err := &jsonrpc.Error{Code: -32603, Message: "ITL_VANESSA_COMMAND_REJECTED: rejected"}
+	if qualifiedVanessaCommandRejection("roctup", "run_scenario", err) != nil {
+		t.Fatal("foreign family accepted Vanessa producer contract")
+	}
+	for _, code := range []string{"PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"} {
+		for _, tool := range []string{"open_feature_file", "load_features", "check_syntax"} {
+			err := &jsonrpc.Error{Code: -32603, Message: code + ": C:\\Путь с пробелом\\ошибка.feature"}
+			result := qualifiedVanessaCommandRejection("vanessa-ui", tool, err)
+			if result == nil || !result.IsError {
+				t.Fatalf("qualified path contract lost: %s/%s", tool, code)
+			}
+			recovered := recoveredResult(result, &recoveryResult{PreviousInstanceID: "old", InstanceID: "new"})
+			details := recovered.StructuredContent.(map[string]any)["details"].(map[string]any)
+			if details["automaticRetryPerformed"] != true || toolResultCode(recovered) != code {
+				t.Fatal("existing idempotent recovery history contradicted/lost")
+			}
+		}
 	}
 }
 

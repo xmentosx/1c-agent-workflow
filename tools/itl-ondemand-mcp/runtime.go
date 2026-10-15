@@ -450,6 +450,13 @@ func recoveryAction(toolName, previousInstanceID, instanceID string, backendReco
 }
 
 func recoveredResult(result *mcp.CallToolResult, recovery *recoveryResult) *mcp.CallToolResult {
+	// A qualified rejection may be the final reply to an existing idempotent
+	// recovery retry. Report that earlier retry consistently with the metadata.
+	if structured, ok := result.StructuredContent.(map[string]any); ok {
+		if details, ok := structured["details"].(map[string]any); ok && details["callOutcome"] == "not-started" {
+			details["automaticRetryPerformed"] = true
+		}
+	}
 	if result.Meta == nil {
 		result.Meta = mcp.Meta{}
 	}
@@ -480,17 +487,48 @@ func backendProtocolToolError(err error) (*mcp.CallToolResult, string) {
 		return nil, ""
 	}
 	switch code {
-	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED":
+	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED", "ITL_VANESSA_COMMAND_REJECTED", "INVALID_PARAMS":
 		return toolError(code, message, map[string]any{"backendJSONRPCCode": rpcError.Code}), code
 	default:
 		return nil, ""
 	}
 }
 
+// Only these producer sites establish that no client action was dispatched.
+// An unqualified ACTION_FAILED (including older backends) remains ambiguous.
+func qualifiedVanessaCommandRejection(family, tool string, err error) *mcp.CallToolResult {
+	if family != "vanessa-ui" {
+		return nil
+	}
+	result, code := backendProtocolToolError(err)
+	qualified := false
+	switch code {
+	case "ITL_VANESSA_COMMAND_REJECTED":
+		qualified = tool == "execute_feature_step" || tool == "run_scenario"
+	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED":
+		qualified = tool == "open_feature_file" || tool == "load_features" || tool == "check_syntax"
+	case "INVALID_PARAMS":
+		// OpenFeatureFile's missing path/file checks precede request setup and
+		// MCPOpenFeatureFile dispatch. Other tools do not establish this proof.
+		qualified = tool == "open_feature_file"
+	}
+	if !qualified {
+		return nil
+	}
+	details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+	details["callOutcome"] = "not-started"
+	details["automaticRetryPerformed"] = false
+	details["action"] = "correct-command-and-retry"
+	return result
+}
+
 func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	deadline := time.Now().Add(r.vanessaConnectWait)
 	for {
 		result, err := session.CallTool(ctx, params)
+		if rejected := qualifiedVanessaCommandRejection(r.family, params.Name, err); rejected != nil {
+			return rejected, nil
+		}
 		if err != nil || result == nil || result.IsError {
 			return result, err
 		}

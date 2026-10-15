@@ -26,5 +26,7 @@ third-party/vanessa-automation/1.2.043.42-itl-r6/ITL-NOTICE.txt text eol=lf
 third-party/vanessa-automation/1.2.043.42-itl-r6/LICENSE.upstream -text whitespace=cr-at-eol
 third-party/vanessa-automation/1.2.043.42-itl-r7/ITL-NOTICE.txt text eol=lf
 third-party/vanessa-automation/1.2.043.42-itl-r7/LICENSE.upstream -text whitespace=cr-at-eol
+third-party/vanessa-automation/1.2.043.42-itl-r8/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r8/LICENSE.upstream -text whitespace=cr-at-eol
 tests/fixtures/vanessa-diagnostic-screenshot/*.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-diagnostic-screenshot/provenance.json text eol=lf
