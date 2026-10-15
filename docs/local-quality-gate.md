@@ -91,6 +91,15 @@ verified read-only isolated override. Owned missing dependencies repair through
 the same component test; unknown runtime identity still disables proof reuse.
 Scope and acceptance: [component environments](../openspec/changes/redesign-source-delivery/evidence/component-python-environments.md).
 
+`MultiClientMcpOwnership` uses a private registry, distribution and local cache for
+each test, including a cached-registry refresh failure. `OpenSpecCliRuntime` records
+native command identity, PID/times, executable SHA, decimal/hex exit code and both
+output streams. On failure it retains the exact Temp fixture and copies runtime
+receipts and small workspace inputs to
+`build/test-results/local/openspec-cli-failures/<id>/failure.json`. Follow the path
+in the warning to investigate; a later passing run does not resolve the native
+crash. Successful fixtures are removed through the same Temp boundary check.
+
 For a new barrier, include the original task's agent-usable continuation in its
 owned acceptance scenarios. Compare changed frequent paths against the same
 before/after workload using existing timings; record context deltas separately.

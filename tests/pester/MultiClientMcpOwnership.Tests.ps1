@@ -1,4 +1,28 @@
-﻿Describe 'Shared client MCP ownership' {
+﻿Describe 'Isolated client MCP ownership' {
+BeforeEach {
+    $script:McpFixtureEnvironment = @{}
+    $fixtureHome = Join-Path $TestDrive ('MCP cache с пробелом ' + [guid]::NewGuid().ToString('N'))
+    $script:McpFixtureRegistry = Join-Path $fixtureHome 'registry'
+    $fixturePaths = @{
+        VIBECODING1C_MCP_LOCAL_HOME = $fixtureHome
+        VIBECODING1C_MCP_REGISTRY_PATH = $script:McpFixtureRegistry
+        VIBECODING1C_MCP_DISTRIBUTION_PATH = (Join-Path $fixtureHome 'distribution')
+    }
+    foreach ($name in $fixturePaths.Keys) {
+        $script:McpFixtureEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        New-Item -ItemType Directory -Force -Path $fixturePaths[$name] | Out-Null
+        [Environment]::SetEnvironmentVariable($name, $fixturePaths[$name], 'Process')
+    }
+    [IO.File]::WriteAllText((Join-Path $script:McpFixtureRegistry 'registry.json'), '{"schemaVersion":2,"servers":[]}', [Text.UTF8Encoding]::new($false))
+}
+
+AfterEach {
+    foreach ($name in $script:McpFixtureEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $script:McpFixtureEnvironment[$name], 'Process')
+    }
+}
+
+Describe 'Shared client MCP ownership' {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
         $helperPath = Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
@@ -337,12 +361,45 @@
                 [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@([pscustomobject]@{name='reserved';url='https://facade.invalid'})}
             }
             function Sync-ItlUiToolsMcp { return $null }
-            function Refresh-Vibecoding1cMcpRegistry {}
+            $script:McpFixtureRefreshCount = 0
+            function Update-Vibecoding1cMcpRegistryCheckout {
+                $script:McpFixtureRefreshCount++
+                Get-Vibecoding1cMcpRegistryRoot | Should -Be $script:McpFixtureRegistry
+                return $script:McpFixtureRegistry
+            }
             Sync-ItlClientMcpConfig -Client claude-code *> $null
             $entries = Read-ItlClientMcpEntries -Client claude-code
             $entries.reserved.url | Should -Be 'https://user.invalid'
             $entries.'1C-docs-mcp'.url | Should -Be 'https://itl.invalid'
             @(Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner ondemand-facade) | Should -Not -Contain reserved
+            $script:McpFixtureRefreshCount | Should -Be 1
+        }
+    }
+
+    It 'preserves config when manifest discovery encounters a cached registry update failure' {
+        $root = Join-Path $TestDrive 'Отказ скрытого обновления с кешем'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        $path = Join-Path $root '.mcp.json'
+        [IO.File]::WriteAllText($path, '{"mcpServers":{"reserved":{"url":"https://user.invalid","disabled":true}}}', [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $script:McpFixtureRefreshCount = 0
+            function Update-Vibecoding1cMcpRegistryCheckout {
+                $script:McpFixtureRefreshCount++
+                Get-Vibecoding1cMcpRegistryRoot | Should -Be $script:McpFixtureRegistry
+                throw 'fixture registry offline during manifest discovery'
+            }
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { throw 'Remote config must not be rebuilt after the failed refresh.' }
+            function Write-ItlOnDemandMcpClientConfig { return $null }
+            function Sync-ItlUiToolsMcp { return $null }
+            $before = Get-ItlMcpFileState -Path $path
+            $messages = (@(Sync-ItlClientMcpConfig -Client claude-code *>&1) | ForEach-Object { [string]$_ }) -join "`n"
+            $messages | Should -Match 'freshness is unverified'
+            $messages | Should -Match 'fixture registry offline'
+            Get-ItlMcpFileState -Path $path | Should -Be $before
+            $script:McpFixtureRefreshCount | Should -Be 1
+            Test-Path -LiteralPath (Get-ItlManagedMcpStatePath) | Should -BeFalse
         }
     }
 
@@ -569,4 +626,6 @@ Describe 'Copied client MCP ownership proof' {
             (Get-ItlMcpFileState $fixture.targetOwner) | Should -BeExactly $ownerBefore
         }
     }
+}
+
 }

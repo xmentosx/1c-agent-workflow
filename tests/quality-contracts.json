@@ -743,7 +743,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/OpenSpecCliRuntime.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.openspec-cli.ps1", "scripts/source-openspec.ps1", "tests/pester/OpenSpecCliRuntime.Tests.ps1", ".agents/skills/1c-workflow/resources/openspec-cli/package.json", ".agents/skills/1c-workflow/resources/openspec-cli/package-lock.json"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.openspec-cli.ps1", "scripts/source-openspec.ps1", "tests/pester/OpenSpecCliRuntime.Tests.ps1", "tests/pester/OpenSpecCliRuntime.TestSupport.ps1", ".agents/skills/1c-workflow/resources/openspec-cli/package.json", ".agents/skills/1c-workflow/resources/openspec-cli/package-lock.json"],
       "tests": ["tests/pester/OpenSpecCliRuntime.Tests.ps1"]
     },
     {

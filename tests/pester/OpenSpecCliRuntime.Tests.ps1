@@ -1,8 +1,58 @@
 ﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+    . (Join-Path $PSScriptRoot 'OpenSpecCliRuntime.TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
+}
+
+Describe 'OpenSpec runtime failure evidence' {
+    It 'retains Unicode native output, process identity, receipts and the failed fixture' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec диагностика ' + [guid]::NewGuid().ToString('N'))
+        $artifactRoot = Join-Path $TestDrive 'Артефакты сбоя'
+        $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
+        try {
+            $runtime = Join-Path $root '.agent-1c/tools/openspec-cli/1.13.1'
+            New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+            $receipt = Join-Path $runtime 'itl-runtime.json'
+            [IO.File]::WriteAllText($receipt, '{"nodeVersion":"fixture","cliVersion":"1.13.1"}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"dependencyMode":"locked"}', [Text.UTF8Encoding]::new($false))
+            $child = Join-Path $root 'Проверка вывода.ps1'
+            [IO.File]::WriteAllText($child, '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::WriteLine($PSScriptRoot); [Console]::Error.WriteLine("fixture stderr"); exit -1073740791', [Text.UTF8Encoding]::new($true))
+            $capture = Invoke-OpenSpecRuntimeTestProcess -Evidence $evidence -FilePath 'powershell.exe' -Arguments @('-NoProfile', '-File', $child) -WorkingDirectory $root
+            $capture.exitCode | Should -Be -1073740791
+            $capture.stdout.Trim() | Should -Be $root
+            $capture.stderr.Trim() | Should -Be 'fixture stderr'
+            $evidence.commands.Count | Should -Be 1
+            $evidence.commands[0].exitHex | Should -Be '0xC0000409'
+            $evidence.commands[0].pid | Should -BeGreaterThan 0
+            $evidence.commands[0].processStartedAt | Should -Not -BeNullOrEmpty
+            $evidence.commands[0].executableSha256 | Should -Match '^[0-9a-f]{64}$'
+            $evidence.commands[0].arguments[-1] | Should -Be $child
+            $artifact = Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $false -Failure 'fixture native exit' -ArtifactRoot $artifactRoot
+            Test-Path -LiteralPath $root | Should -BeTrue
+            $report = Get-Content -LiteralPath $artifact -Raw -Encoding UTF8 | ConvertFrom-Json
+            $report.fixtureRoot | Should -Be $root
+            $report.commands[0].stdout.Trim() | Should -Be $root
+            $report.commands[0].exitHex | Should -Be '0xC0000409'
+            $savedReceipt = Join-Path (Split-Path -Parent $artifact) '.agent-1c/tools/openspec-cli/1.13.1/itl-runtime.json'
+            (Get-FileHash -LiteralPath $savedReceipt).Hash | Should -Be (Get-FileHash -LiteralPath $receipt).Hash
+            Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $true -Failure $null
+            Test-Path -LiteralPath $savedReceipt | Should -BeTrue
+        } finally {
+            Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $true -Failure $null
+        }
+    }
+
+    It 'cleans a successful fixture without creating failure artifacts' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec success ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $artifactRoot = Join-Path $TestDrive 'unused-artifacts'
+        $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
+        Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $true -Failure $null -ArtifactRoot $artifactRoot
+        Test-Path -LiteralPath $root | Should -BeFalse
+        Test-Path -LiteralPath $artifactRoot | Should -BeFalse
+    }
 }
 
 Describe 'Pinned OpenSpec CLI runtime' {
@@ -90,6 +140,9 @@ Describe 'Pinned OpenSpec CLI runtime' {
 
     It 'provisions an exact local Node and CLI pair without using the global OpenSpec command' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec проект ' + [guid]::NewGuid().ToString('N'))
+        $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
+        $succeeded = $false
+        $failure = $null
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
             Set-Content -LiteralPath (Join-Path $root '.agent-1c\project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
@@ -107,7 +160,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
             $result.after.available | Should -BeTrue
             $result.after.version | Should -Be '1.13.1'
             $result.after.path | Should -Match 'openspec-cli[\\/]1\.13\.1'
-            (& $result.after.nodePath $result.after.path --version).Trim() | Should -Be '1.13.1'
+            (Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('--version')).Trim() | Should -Be '1.13.1'
             $peerRoot = Join-Path $root 'peer-project'
             New-Item -ItemType Directory -Force -Path (Join-Path $peerRoot '.agent-1c') | Out-Null
             Set-Content -LiteralPath (Join-Path $peerRoot '.agent-1c\project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
@@ -125,7 +178,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
             Set-Content -LiteralPath (Join-Path $peerRoot 'openspec/specs/legacy/spec.md') -Encoding UTF8 -Value '### Requirement: Existing local rule'
             Set-Content -LiteralPath (Join-Path $peerRoot 'openspec/changes/legacy-change/.openspec.yaml') -Encoding UTF8 -Value 'schema: spec-driven'
             $legacySpecHash = (Get-FileHash -LiteralPath (Join-Path $peerRoot 'openspec/specs/legacy/spec.md') -Algorithm SHA256).Hash
-            $legacyContext = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+            $legacyContext = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                 '-ProjectRoot', $peerRoot, '-Action', 'openspec-context', '-OpenSpecChangeId', 'legacy-change'
             )
             $legacyContext.exitCode | Should -Be 0 -Because $legacyContext.combinedText
@@ -134,39 +187,39 @@ Describe 'Pinned OpenSpec CLI runtime' {
             $legacyBinding.change.changeRoot | Should -Be (Join-Path $peerRoot 'openspec/changes/legacy-change')
             Push-Location $peerRoot
             try {
-                $legacyStatusText = @(& $peerCli.nodePath $peerCli.path status --change legacy-change --json 2>&1) -join "`n"
+                $legacyStatusText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $peerCli -Arguments @('status', '--change', 'legacy-change', '--json') -IncludeStderr
                 $LASTEXITCODE | Should -Be 0 -Because $legacyStatusText
                 ($legacyStatusText | ConvertFrom-Json).changeName | Should -Be 'legacy-change'
-                $legacyInstructionsText = @(& $peerCli.nodePath $peerCli.path instructions proposal --change legacy-change --json 2>&1) -join "`n"
+                $legacyInstructionsText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $peerCli -Arguments @('instructions', 'proposal', '--change', 'legacy-change', '--json') -IncludeStderr
                 $LASTEXITCODE | Should -Be 0 -Because $legacyInstructionsText
                 $legacyInstructionsText | ConvertFrom-Json | Should -Not -BeNullOrEmpty
             } finally { Pop-Location }
             (Get-FileHash -LiteralPath (Join-Path $peerRoot 'openspec/specs/legacy/spec.md') -Algorithm SHA256).Hash | Should -Be $legacySpecHash
             $peerReceiptBefore = (Get-FileHash -LiteralPath (Join-Path $peerRoot '.agent-1c\tools\openspec-cli\1.13.1\itl-runtime.json') -Algorithm SHA256).Hash
             foreach ($subcommand in @('context', 'list', 'status', 'instructions', 'store', 'new', 'archive')) {
-                $helpText = @(& $result.after.nodePath $result.after.path $subcommand --help 2>&1) -join "`n"
+                $helpText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @($subcommand, '--help') -IncludeStderr
                 $LASTEXITCODE | Should -Be 0 -Because $helpText
                 $helpText | Should -Match 'Usage:'
             }
             Push-Location $RepoRoot
             try {
-                $contextText = @(& $result.after.nodePath $result.after.path context --json) -join "`n"
+                $contextText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('context', '--json')
                 $LASTEXITCODE | Should -Be 0 -Because $contextText
                 $context = $contextText | ConvertFrom-Json
                 $context.root.path | Should -Be $RepoRoot
 
-                $listText = @(& $result.after.nodePath $result.after.path list --json) -join "`n"
+                $listText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('list', '--json')
                 $LASTEXITCODE | Should -Be 0 -Because $listText
                 $list = $listText | ConvertFrom-Json
                 $list | Should -Not -BeNullOrEmpty
 
-                $statusText = @(& $result.after.nodePath $result.after.path status --change upgrade-ai-rules-upstream-20a083e5 --json) -join "`n"
+                $statusText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('status', '--change', 'upgrade-ai-rules-upstream-20a083e5', '--json')
                 $LASTEXITCODE | Should -Be 0 -Because $statusText
                 $status = $statusText | ConvertFrom-Json
                 $status.changeName | Should -Be 'upgrade-ai-rules-upstream-20a083e5'
                 @($status.artifacts).Count | Should -BeGreaterThan 0
 
-                $instructionsText = @(& $result.after.nodePath $result.after.path instructions apply --change upgrade-ai-rules-upstream-20a083e5 --json) -join "`n"
+                $instructionsText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('instructions', 'apply', '--change', 'upgrade-ai-rules-upstream-20a083e5', '--json')
                 $LASTEXITCODE | Should -Be 0 -Because $instructionsText
                 $instructions = $instructionsText | ConvertFrom-Json
                 $instructions | Should -Not -BeNullOrEmpty
@@ -190,7 +243,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 foreach ($directory in @($localRoot, $pointerRoot, $globalRoot, $brokenRoot)) {
                     New-Item -ItemType Directory -Force -Path $directory | Out-Null
                 }
-                $setupText = @(& $result.after.nodePath $result.after.path store setup itl-fixture --path $storeRoot --no-init-git --json 2>&1) -join "`n"
+                $setupText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('store', 'setup', 'itl-fixture', '--path', $storeRoot, '--no-init-git', '--json') -IncludeStderr
                 $LASTEXITCODE | Should -Be 0 -Because $setupText
                 $setupText | Should -Match 'itl-fixture'
 
@@ -208,7 +261,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 )) {
                     Push-Location $scenario.directory
                     try {
-                        $contextText = @(& $result.after.nodePath $result.after.path context @($scenario.args) --json 2>$null) -join "`n"
+                        $contextText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments (@('context') + @($scenario.args) + @('--json'))
                         $LASTEXITCODE | Should -Be 0 -Because $contextText
                         $resolved = $contextText | ConvertFrom-Json
                         $resolved.root.source | Should -Be $scenario.expectedSource
@@ -217,16 +270,16 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 }
                 Push-Location $brokenRoot
                 try {
-                    $brokenText = @(& $result.after.nodePath $result.after.path context --json 2>&1) -join "`n"
+                    $brokenText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('context', '--json') -IncludeStderr
                     $LASTEXITCODE | Should -Not -Be 0 -Because $brokenText
                     $brokenText | Should -Match 'missing-itl-fixture'
                 } finally { Pop-Location }
 
-                $defaultText = @(& $result.after.nodePath $result.after.path config set defaultStore itl-fixture 2>&1) -join "`n"
+                $defaultText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('config', 'set', 'defaultStore', 'itl-fixture') -IncludeStderr
                 $LASTEXITCODE | Should -Be 0 -Because $defaultText
                 Push-Location $globalRoot
                 try {
-                    $globalText = @(& $result.after.nodePath $result.after.path context --json 2>$null) -join "`n"
+                    $globalText = Invoke-OpenSpecRuntimeTestCli -Evidence $evidence -Cli $result.after -Arguments @('context', '--json')
                     $LASTEXITCODE | Should -Be 0 -Because $globalText
                     $globalContext = $globalText | ConvertFrom-Json
                     $globalContext.root.source | Should -Be 'global_default'
@@ -253,12 +306,12 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 Test-Path -LiteralPath (Join-Path $pointerRoot 'openspec/changes') | Should -BeFalse
 
                 Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked","openSpec":{"storeId":"itl-fixture"}}'
-                $blockedWrite = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                $blockedWrite = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                     '-ProjectRoot', $root, '-Action', 'openspec-new-change', '-OpenSpecChangeId', 'must-not-be-created'
                 )
                 $blockedWrite.exitCode | Should -Not -Be 0
                 $blockedWrite.combinedText | Should -Match 'OPEN_SPEC_EXTERNAL_STORE_DEFERRED'
-                $blockedArchive = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                $blockedArchive = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                     '-ProjectRoot', $root, '-Action', 'openspec-archive-change', '-OpenSpecChangeId', 'existing-change'
                 )
                 $blockedArchive.exitCode | Should -Not -Be 0
@@ -274,7 +327,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 $reportedContextJson.rootPath | Should -Be $root
                 $reportedContextJson.source | Should -Be 'nearest'
                 $reportedContextJson.cliVersion | Should -Be '1.13.1'
-                $routed = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                $routed = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                     '-ProjectRoot', $root, '-Action', 'openspec-new-change', '-OpenSpecChangeId', 'fixture-archive'
                 )
                 $routed.exitCode | Should -Be 0 -Because $routed.combinedText
@@ -301,7 +354,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
                 $deltaRoot = Join-Path $changeRoot 'specs/fixture-capability'
                 New-Item -ItemType Directory -Force -Path $deltaRoot | Out-Null
                 Set-Content -LiteralPath (Join-Path $deltaRoot 'spec.md') -Encoding UTF8 -Value "## ADDED Requirements`n`n### Requirement: Fixture archive`nThe fixture SHALL archive a valid requirement.`n`n#### Scenario: Archive succeeds`n- **WHEN** the archive command runs`n- **THEN** the current spec contains the requirement"
-                $archived = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                $archived = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                     '-ProjectRoot', $root, '-Action', 'openspec-archive-change', '-OpenSpecChangeId', 'fixture-archive'
                 )
                 $archived.exitCode | Should -Be 0 -Because $archived.combinedText
@@ -317,7 +370,7 @@ Describe 'Pinned OpenSpec CLI runtime' {
             $repeat = & { . $HelperPath -ProjectRoot $root -Action help *> $null; Provision-ItlOpenSpecCli }
             $repeat.available | Should -BeTrue
             (Get-FileHash -LiteralPath (Join-Path $root '.agent-1c\tools\openspec-cli\1.13.1\itl-runtime.json') -Algorithm SHA256).Hash | Should -Be $beforeRepeat
-            $legacyPowerShell = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+            $legacyPowerShell = Invoke-OpenSpecRuntimeTestHelper -Evidence $evidence -FilePath $HelperPath -Arguments @(
                 '-ProjectRoot', $root, '-Action', 'provision-openspec-cli'
             )
             $legacyPowerShell.exitCode | Should -Be 0 -Because $legacyPowerShell.combinedText
@@ -344,11 +397,19 @@ Describe 'Pinned OpenSpec CLI runtime' {
             {
                 & { . $HelperPath -ProjectRoot $root -Action help *> $null; Provision-ItlOpenSpecCli }
             } | Should -Throw '*OPEN_SPEC_CLI_RUNTIME_CONFLICT*'
+            $succeeded = $true
+        } catch {
+            $failure = $_ | Out-String
+            throw
         } finally {
-            $full = [IO.Path]::GetFullPath($root)
-            $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
-            if (-not $full.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing to remove a test path outside Temp: $full" }
-            if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+            try {
+                $artifact = Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $succeeded -Failure $failure
+                if ($artifact) { Write-Warning "OpenSpec failure evidence: $artifact; exact fixture retained: $root" }
+            } catch {
+                # Diagnostics must not replace the original assertion/runner error.
+                if ($succeeded) { throw }
+                Write-Warning "OpenSpec evidence could not be finalized: $($_.Exception.Message). Exact fixture retained: $root"
+            }
         }
     }
 }
