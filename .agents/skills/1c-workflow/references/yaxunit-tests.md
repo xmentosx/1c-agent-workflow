@@ -50,15 +50,25 @@ Use Vanessa instead of YAxUnit when the assertion depends on a form, command vis
 
 Before any normal executable verification starts, `/itl-check` validates both test catalogs. Missing, invalid, ambiguous, or incomplete classification stops before Designer or Enterprise. It then loads the workflow-pinned YAxUnit CFE and the separate test extension, disables safe mode and unsafe-action protection only for the fixed `YAXUNIT` extension through the local Designer Agent allowlist, and runs `1C:Enterprise /C RunUnitTests=<config.json>`. The authoritative result is JUnit under `build/test-results/yaxunit`; a missing report, zero executed tests, failures, or errors fails verification. The exit-code file is supplemental and a disagreement is reported.
 
-The project test extension has a separate opt-in: set the JSON boolean
-`yaxunit.testsDisableSafeMode=true` in this project's configuration when its tests
-need SafeMode off. The default is `false`; environment variables do not grant
-this permission. `yaxunit.testsExtensionName` must match the registered
+For a task that requires project-test SafeMode off, the agent passes
+`-DisableProjectTestsSafeMode` to the normal helper command under the user's
+authorization; do not ask again for that same task. No project-file edit is
+required. The JSON boolean `yaxunit.testsDisableSafeMode=true` remains a reusable
+project opt-in. Without either request the default is `false`; ambient
+environment variables do not grant this permission. `yaxunit.testsExtensionName` must match the registered
 `Configuration.xml` identifier exactly, including Cyrillic. Tooling roles,
 wildcards and command syntax are refused. The helper verifies source and runtime
 content, the exact infobase and live Designer PID/start/EXE/listener before issuing
 an execution-context-bound capability to the pinned facade. Only SafeMode is
 changed; the project's unsafe-action protection and content remain unchanged.
+
+Project tests load through the existing snapshot/checked-load owner. Its exact
+registered source, applicability, database apply and fresh-session readiness
+remain mandatory. AllExtensions module/configuration checks retain their actual
+native results as environment diagnostics; their aggregate failure does not
+block this installation or claim a clean environment. Malformed/unknown native
+completion still blocks. This policy does not apply to production extension
+loads or qualify other extensions. JUnit failures remain failures.
 
 An old content-only receipt is rechecked under the existing exact-base guard and
 owned runtime drain. If SafeMode is already off, no extension reload or setter

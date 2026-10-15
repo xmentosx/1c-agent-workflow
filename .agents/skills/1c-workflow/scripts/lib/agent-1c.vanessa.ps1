@@ -8046,7 +8046,7 @@ function New-ProjectTestsDesignerCapability {
         [object]$ContentProof, [Diagnostics.Process]$Process, [int]$Port, [string]$HostPublicKey)
 
     if (-not (Get-YAxUnitProjectTestsSafeModeOptIn)) {
-        throw 'ITL_PROJECT_TESTS_OPT_IN_REQUIRED: enable yaxunit.testsDisableSafeMode explicitly in this project before this operation.'
+        throw 'ITL_PROJECT_TESTS_OPT_IN_REQUIRED: pass -DisableProjectTestsSafeMode for the authorized task or enable yaxunit.testsDisableSafeMode in this project.'
     }
     Assert-YAxUnitProjectTestsName -Name $ExtensionName
     if ($ExtensionName -cne (Get-YAxUnitTestsExtensionName)) { throw 'ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID: registered project name changed; repeat the original tooling synchronization.' }
@@ -8073,10 +8073,16 @@ function New-ProjectTestsDesignerCapability {
     if ($Process.HasExited) { throw 'ITL_PROJECT_TESTS_DESIGNER_OWNER_CHANGED: the owned Designer exited before capability creation.' }
     $settings = Get-OneCExecutionGuardSettings
     $helperRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../../..'))
+    # Content receipts retain their versioned identity. The existing EXE wire
+    # contract takes its SHA-256 digest, not the receipt format prefix.
+    if ([string]$source.fingerprint -cnotmatch '^v2\|git-tree-sha256\|([a-f0-9]{64})$') {
+        throw 'ITL_PROJECT_TESTS_CONTENT_PROOF_INVALID: unsupported source fingerprint; repeat through the current source owner.'
+    }
+    $wireSourceFingerprint = $Matches[1]
     $payload = [ordered]@{
         schemaVersion=1; operation='project-tests-safe-mode'; projectRoot=[string]$script:ProjectRoot; helperRoot=$helperRoot
         registeredName=$name.InnerText; extensionName=$ExtensionName; optIn=$true
-        sourceFingerprint=[string]$source.fingerprint; runtimeContentHash=[string]$ContentProof.runtimeContentHash
+        sourceFingerprint=$wireSourceFingerprint; runtimeContentHash=[string]$ContentProof.runtimeContentHash
         unsafeActionProtection=[bool]$ContentProof.unsafeActionProtection
         base=@{kind=$InfoBaseKind;path=$InfoBasePath}
         designer=@{pid=$Process.Id;started=([uint64]$Process.StartTime.ToFileTimeUtc()).ToString('x16');executable=$Process.MainModule.FileName}

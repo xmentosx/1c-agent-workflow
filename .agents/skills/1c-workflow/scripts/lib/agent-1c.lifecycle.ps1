@@ -1838,6 +1838,7 @@ function Invoke-DesignerGate6CheckLadder {
         [string]$ExtensionName = '',
         [string]$SourceFingerprint = '',
         [object]$EditableLoad = $null,
+        [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
         [AllowNull()][object]$LegacyBaseline = $null,
         [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
@@ -1850,10 +1851,12 @@ function Invoke-DesignerGate6CheckLadder {
     if ($modes.Count -eq 0 -or @($modes | Where-Object { $_ -cnotin $allowedModes }).Count -gt 0) {
         throw 'GATE6_RUNTIME_MODES_INVALID: CheckModules needs at least one supported runtime mode.'
     }
-    $extensionArgs = if ($ExtensionName) { @('-Extension', $ExtensionName) } else { @() }
+    $projectTests = $ValidationPurpose -ceq 'project-tests'
+    $extensionArgs = if ($projectTests) { @('-AllExtensions') } elseif ($ExtensionName) { @('-Extension', $ExtensionName) } else { @() }
+    $applicabilityArgs = if ($ExtensionName) { @('-Extension', $ExtensionName) } else { @() }
     $steps = @(
         [pscustomobject]@{ name='modules'; args=@('/CheckModules') + $modes + $extensionArgs },
-        $(if ($ExtensionName) { [pscustomobject]@{ name='applicability'; args=@('/CheckCanApplyConfigurationExtensions') + $extensionArgs } }),
+        $(if ($ExtensionName) { [pscustomobject]@{ name='applicability'; args=@('/CheckCanApplyConfigurationExtensions') + $applicabilityArgs } }),
         [pscustomobject]@{ name='configuration'; args=@('/CheckConfig', '-ConfigLogIntegrity', '-IncorrectReferences') + $modes + @('-HandlersExistence', '-ExtendedModulesCheck') + $extensionArgs }
     ) | Where-Object { $null -ne $_ }
     $evidence = [System.Collections.Generic.List[object]]::new()
@@ -1915,10 +1918,20 @@ function Invoke-DesignerGate6CheckLadder {
             $assessment = [pscustomobject]@{status=$assessment.status;applyAllowed=[bool]$assessment.applyAllowed;cleanPassed=$false;
                 evidencePath=$assessmentPath;evidenceSha256=(Get-FileHash -LiteralPath $assessmentPath -Algorithm SHA256).Hash.ToLowerInvariant()}
         }
-        if (-not $verdict.passed) {
+        $diagnosticOnly = $projectTests -and $step.name -in @('modules','configuration')
+        if ($diagnosticOnly -and (-not $verdict.passed)) {
+            # Native diagnostics are retained, not relabelled as passed or proven
+            # unrelated. Missing/malformed results and transport failures block.
+            if ($null -eq $verdict.resultCode -or $verdict.exitCode -notin @(0,101) -or
+                $verdict.resultCode -notin @(0,101) -or
+                @($verdict.reasons | Where-Object { $_ -match 'not written|invalid|cannot be decoded' }).Count -gt 0) {
+                throw "GATE6_CHECK_FAILED: invalid project-test environment evidence; step=$($step.name); $(@($verdict.reasons) -join '; '). Repeat through the original owner."
+            }
+            Write-Warning "GATE6_PROJECT_TESTS_ENVIRONMENT: native $($step.name) did not pass; result=$resultPath; log=$logPath. Installation requires exact applicability, database apply and fresh runtime readiness; test execution remains authoritative for test results."
+        } elseif (-not $verdict.passed) {
             if ($null -eq $assessment -or -not $assessment.applyAllowed) {
                 $assessmentDetail = if ($null -ne $assessment) { "; assessment=$($assessment.evidencePath)" } else { '' }
-                throw "GATE6_CHECK_FAILED: step=$($step.name); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | ')$assessmentDetail. Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
+                throw "GATE6_CHECK_FAILED: step=$($step.name); command=$($step.args[0]); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | ')$assessmentDetail. Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
             }
             if ($artifactAssessment) {
                 Write-Warning "GATE6_YAXUNIT_VENDOR_DIAGNOSTICS: native $($step.name) did not pass; exact immutable YAxUnit artifact diagnostics permit apply with a non-clean vendor WARN. Assessment: $($assessment.evidencePath)"
@@ -1936,6 +1949,7 @@ function Invoke-DesignerGate6CheckLadder {
             exitCode = [int]$verdict.exitCode
             dumpResult = [int]$verdict.resultCode
             nativePassed = [bool]$verdict.passed
+            diagnosticOnly = [bool]$diagnosticOnly
             assessment = $assessment
         })
     }
@@ -1945,6 +1959,8 @@ function Invoke-DesignerGate6CheckLadder {
         infoBaseKind = $InfoBaseKind
         infoBasePath = $InfoBasePath
         extensionName = $ExtensionName
+        validationPurpose = $ValidationPurpose
+        cleanPassed = (@($evidence | Where-Object { -not $_.nativePassed }).Count -eq 0)
         editableLoad = $EditableLoad
         platformPath = Get-PlatformPath
         runtimeModes = @($modes)
@@ -2165,7 +2181,7 @@ function Invoke-PlatformGate6NativeCheck {
             -DesignerArgs (@($Arguments) + @('/DumpResult',$ResultPath)) | Out-Null
     } catch {
         $native = $_.Exception.Data['ItlDesignerBatchResult']
-        if ($null -eq $native -or $Arguments[0] -cne '/CheckConfig' -or $native.operation -cne '/CheckConfig' -or
+        if ($null -eq $native -or $Arguments[0] -cnotin @('/CheckConfig','/CheckModules') -or $native.operation -cne $Arguments[0] -or
             -not $native.ownedProcessesReleased -or $native.infoBaseKind -cne $InfoBaseKind -or
             -not (Test-ItlOnDemandInfoBaseMatch -First $native.infoBasePath -Second $InfoBasePath)) { throw }
         $exitCode = [int]$native.exitCode
@@ -2244,6 +2260,8 @@ function Invoke-ConfigLoadDesignerAttempt {
         [string[]]$DesignerArgs,
         [string]$ExtensionName = '',
         [switch]$RequireGate6,
+        [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
+        [scriptblock]$AfterApply = $null,
         [AllowNull()][object]$StaticCoverageContext = $null,
         [AllowNull()][object]$LegacyContext = $null,
         [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
@@ -2254,6 +2272,15 @@ function Invoke-ConfigLoadDesignerAttempt {
         [AllowNull()][object]$EnclosingSnapshot = $null
     )
 
+    if ($ValidationPurpose -ceq 'project-tests') {
+        if ($null -ne $ArtifactDiagnosticBaseline -or $null -ne $StaticCoverageContext -or $null -ne $LegacyContext) {
+            throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: project tests cannot combine another validation exemption.'
+        }
+        Assert-YAxUnitProjectTestsLoadContext -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -DesignerArgs $DesignerArgs
+    }
+    if ($null -ne $AfterApply -and $ValidationPurpose -cne 'project-tests') {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: post-apply readiness belongs to the project-test installation owner.'
+    }
     if ($null -ne $ArtifactDiagnosticBaseline) {
         $canonicalBaseline = Get-YAxUnitArtifactDiagnosticBaseline `
             -PinnedEntry (Get-StateValue -State $ArtifactDiagnosticBaseline -Name 'pin' -Default $null) -ExtensionName $ExtensionName
@@ -2346,14 +2373,15 @@ function Invoke-ConfigLoadDesignerAttempt {
         Write-Host 'Gate 6 native ladder skipped only for the unchanged complete MCP source proof revalidated after editable load.'
     } else {
         $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
-            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline `
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -ValidationPurpose $ValidationPurpose `
             -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -User $User -Password $Password
     }
     if ($null -ne $ArtifactDiagnosticBaseline -and
         (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifactSha256) {
         throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Preserve the snapshot and repeat the original operation with the unchanged official artifact.'
     }
-    # This is the first database apply. A failed or missing check never reaches it.
+    # Mandatory checks precede this first apply. Project-test environment
+    # diagnostics retain their native failure and do not grant clean proof.
     $applyArgs = if ($ExtensionName) { @('/UpdateDBCfg', '-Dynamic-', '-WarningsAsErrors', '-Extension', $ExtensionName) } else { @('/UpdateDBCfg') }
     $contentKind = if ($ExtensionName) { 'extension' } else { 'configuration' }
     $applyStarted = $true
@@ -2361,6 +2389,7 @@ function Invoke-ConfigLoadDesignerAttempt {
         -NativeEffectContract ([pscustomobject]@{ schemaVersion=1; kind='update-db-cfg'; project=[IO.Path]::GetFullPath($script:ProjectRoot)
             sourceFingerprint=$SourceFingerprint; contentKind=$contentKind; extensionName=$ExtensionName; gate6=$evidence; staticCoverage=$StaticCoverageContext }) `
         -DesignerArgs $applyArgs | Out-Null
+    if ($null -ne $AfterApply) { & $AfterApply | Out-Null }
     $applySucceeded = $true
     if ($snapshot.owned) {
         Complete-OneCDatabaseRestorationDuty -Duty $snapshot.duty -Resolution committed

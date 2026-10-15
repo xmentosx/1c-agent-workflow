@@ -466,9 +466,9 @@ Describe "YAxUnit selective installation" {
     }
 }
 
-Describe 'Project test SafeMode permission belongs to project JSON' {
-    BeforeEach { $script:savedProjectConfig=$script:Config }
-    AfterEach { $script:Config=$script:savedProjectConfig }
+Describe 'Project test SafeMode project and task permission' {
+    BeforeEach { $script:savedProjectConfig=$script:Config; $script:ProjectTestsSafeModeRequested=$false }
+    AfterEach { $script:Config=$script:savedProjectConfig; $script:ProjectTestsSafeModeRequested=$false }
     It 'defaults to off and accepts only an explicit JSON true or false' {
         foreach ($json in @('{}','{"yaxunit":{}}','{"yaxunit":{"testsDisableSafeMode":false}}')) {
             $script:Config=$json | ConvertFrom-Json
@@ -480,6 +480,19 @@ Describe 'Project test SafeMode permission belongs to project JSON' {
             $script:Config=('{"yaxunit":{"testsDisableSafeMode":'+$value+'}}') | ConvertFrom-Json
             { Get-YAxUnitProjectTestsSafeModeOptIn } | Should -Throw '*ITL_PROJECT_TESTS_OPTION_INVALID*'
         }
+    }
+    It 'accepts a task request without changing project JSON and clears it on the next invocation' {
+        $root=Join-Path $TestDrive ('Разрешённая задача '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & {
+            . $context.HelperPath -ProjectRoot $root -Action help -DisableProjectTestsSafeMode *> $null
+            Get-YAxUnitProjectTestsSafeModeOptIn | Should -BeTrue
+            @(Get-Agent1cReexecArguments) | Should -Contain "-DisableProjectTestsSafeMode"
+            Test-Path -LiteralPath (Join-Path $root '.agent-1c/project.json') | Should -BeFalse
+            . $context.HelperPath -ProjectRoot $root -Action help *> $null
+            Get-YAxUnitProjectTestsSafeModeOptIn | Should -BeFalse
+        }
+        . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
     }
     It 'accepts the exact Unicode identifier and rejects reserved roles, whitespace and command syntax' {
         foreach ($name in @('tests','ТестыPM5Канбан')) { { Assert-YAxUnitProjectTestsName $name } | Should -Not -Throw }

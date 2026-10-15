@@ -26,21 +26,43 @@ function Get-YAxUnitTestsExtensionName {
 }
 
 function Get-YAxUnitProjectTestsSafeModeOptIn {
-    # Permission belongs to this project's JSON, never to a machine/process env.
+    # A task-scoped helper switch carries the agent's authorized intent.
+    # Project JSON remains a reusable opt-in; ambient environment is not authority.
     $yaxunit = Get-StateValue -State $script:Config -Name 'yaxunit' -Default $null
-    if ($null -eq $yaxunit) { return $false }
+    $requested = [bool]$script:ProjectTestsSafeModeRequested
+    if ($null -eq $yaxunit) { return $requested }
     $option = $yaxunit.PSObject.Properties['testsDisableSafeMode']
-    if ($null -eq $option) { return $false }
+    if ($null -eq $option) { return $requested }
     if ($option.Value -isnot [bool]) {
         throw 'ITL_PROJECT_TESTS_OPTION_INVALID: yaxunit.testsDisableSafeMode must be a JSON boolean. Correct the project setting, then repeat the original command.'
     }
-    return [bool]$option.Value
+    return ($requested -or [bool]$option.Value)
 }
 
 function Assert-YAxUnitProjectTestsName {
     param([string]$Name)
     if ($Name -cnotmatch '^[\p{L}_][\p{L}\p{M}\p{Nd}_]*$' -or $Name -in @('client_mcp','VAExtension','YAXUNIT')) {
         throw "ITL_PROJECT_TESTS_EXTENSION_NAME_INVALID: '$Name' must be the exact registered test-extension identifier, separate from the three tooling roles. Correct yaxunit.testsExtensionName and Configuration.xml, then repeat the original command."
+    }
+}
+
+function Assert-YAxUnitProjectTestsLoadContext {
+    param([string]$ExtensionName, [string]$SourceFingerprint, [string[]]$DesignerArgs)
+    $name = Get-YAxUnitTestsExtensionName
+    Assert-YAxUnitProjectTestsName -Name $name
+    $path = Resolve-ProjectPath (Get-YAxUnitTestsPath)
+    if ($ExtensionName -cne $name -or $DesignerArgs.Count -ne 7 -or
+        $DesignerArgs[0] -cne '/LoadConfigFromFiles' -or
+        -not [string]::Equals([IO.Path]::GetFullPath($DesignerArgs[1]), [IO.Path]::GetFullPath($path), [StringComparison]::OrdinalIgnoreCase) -or
+        $DesignerArgs[2] -cne '-Extension' -or $DesignerArgs[3] -cne $name -or
+        $DesignerArgs[4] -cne '-Format' -or $DesignerArgs[5] -cne 'Hierarchical' -or $DesignerArgs[6] -cne '/UpdateDBCfg') {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: use the registered project-test source and exact load through Ensure-YAxUnitExtensions.'
+    }
+    [xml]$metadata = Read-Utf8Text -Path (Join-Path $path 'Configuration.xml')
+    $node = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+    $source = Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)
+    if ($null -eq $node -or $node.InnerText -cne $name -or $source.fingerprint -cne $SourceFingerprint) {
+        throw 'GATE6_PROJECT_TESTS_CONTEXT_INVALID: registered name or source fingerprint changed; repeat the original helper operation.'
     }
 }
 
@@ -633,7 +655,12 @@ function Ensure-YAxUnitExtensions {
     }
     if (-not $testsMatch) {
         Invoke-ConfigLoadDesignerAttempt -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
-            -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint `
+            -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint -ValidationPurpose 'project-tests' `
+            -AfterApply {
+                $fresh = @(Get-ToolingRuntimeExtensions -State $State -Names @($testsExtensionName))
+                $installed = @($fresh | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+                Assert-ToolingRuntimeExtensionReady -Runtime $installed -Name $testsExtensionName
+            } `
             -DesignerArgs @("/LoadConfigFromFiles", $testsPath, "-Extension", $testsExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg") | Out-Null
     }
     $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName, $testsExtensionName))

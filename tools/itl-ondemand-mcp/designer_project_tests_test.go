@@ -280,7 +280,7 @@ func TestProjectTestsCapabilityPowerShell51FactoryUnicodeRoundTrip(t *testing.T)
 	if err := os.WriteFile(filepath.Join(testsPath, "Configuration.xml"), []byte(metadata), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fixture := map[string]any{"projectRoot": projectRoot, "base": claims.Base, "fingerprint": claims.SourceFingerprint,
+	fixture := map[string]any{"projectRoot": projectRoot, "base": claims.Base, "fingerprint": "v2|git-tree-sha256|" + claims.SourceFingerprint,
 		"guardRoot": claims.GuardRoot, "python": "python", "hostPublicKey": request.HostPublicKey, "port": request.Port}
 	fixtureBytes, err := json.Marshal(fixture)
 	if err != nil {
@@ -324,7 +324,7 @@ $cap=New-ProjectTestsDesignerCapability -State $state -InfoBaseKind $state.infoB
 		t.Fatalf("PS5 UTF8 HMAC rejected: %v", err)
 	}
 	actual := request.authorizedProjectTests
-	if actual.ProjectRoot != projectRoot || actual.HelperRoot != claims.HelperRoot || actual.ExtensionName != "ТестыPM5Канбан" || actual.RuntimeContentHash != "native-Хэш" || !*actual.UnsafeActionProtection {
+	if actual.ProjectRoot != projectRoot || actual.HelperRoot != claims.HelperRoot || actual.ExtensionName != "ТестыPM5Канбан" || actual.SourceFingerprint != claims.SourceFingerprint || actual.RuntimeContentHash != "native-Хэш" || !*actual.UnsafeActionProtection {
 		t.Fatalf("cross-language scope changed: %+v", actual)
 	}
 }
