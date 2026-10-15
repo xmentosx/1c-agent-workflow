@@ -471,8 +471,10 @@ Describe 'Current-window expression failure attribution in controlled Vanessa r6
     }
 
     It 'pins the tested recipe and paired extension in the delivery lock' {
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r7'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $lock = Get-Content -LiteralPath (Join-Path $repoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r6'
+        $lock.dependencies.vanessaAutomation.downstreamRevision | Should -Be 'itl-r7'
         $lock.dependencies.vanessaAutomation.patchSha256 | Should -Be $manifest.patch.sha256
         $lock.dependencies.vanessaAutomation.manifestSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $assetRoot 'manifest.json')).Hash.ToLowerInvariant()
         $lock.dependencies.vanessaAutomation.assetName | Should -Be $manifest.artifact.fileName
@@ -567,6 +569,115 @@ Describe 'Reproducible Vanessa cumulative patch and resume format' {
         foreach ($index in [regex]::Matches($actual,'(?m)^index ([0-9a-f]+)\.\.([0-9a-f]+) ')) {
             $index.Groups[1].Length | Should -Be 40
             $index.Groups[2].Length | Should -Be 40
+        }
+    }
+}
+
+Describe 'Diagnostic screenshot failure preserves the original report' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        $recipe = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r7'
+        $fixture = Join-Path $repoRoot 'tests/fixtures/vanessa-diagnostic-screenshot'
+        $manifest = Get-Content -LiteralPath (Join-Path $recipe 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $provenance = Get-Content -LiteralPath (Join-Path $fixture 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patch = [IO.File]::ReadAllText((Join-Path $recipe 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $section = @($patch -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq ('diff --git a/'+$provenance.path+' b/'+$provenance.path) })
+        if ($section.Count -ne 1) { throw 'Expected the existing main form owner.' }
+        $hunks = @($section[0] -split '(?m)(?=^@@ )' | Where-Object { $_ -match '^@@ ' -and $_ -match 'ИмяПроцедурыПриОшибкеСохранения|ПродолжитьПослеОшибкиСохраненияСкриншота|ЗавершитьСнятиеСкриншотовОшибки|Объект\.КаталогВыгрузкиСкриншотов' })
+        $root = Join-Path $TestDrive 'Сохранение снимка с пробелом'
+        $target = Join-Path $root $provenance.path
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+        [IO.File]::Copy((Join-Path $fixture 'callbacks.r6.bsl'),$target)
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('config','core.autocrlf','false'))
+        $diff = 'diff --git a/'+$provenance.path+' b/'+$provenance.path+"`n--- a/"+$provenance.path+"`n+++ b/"+$provenance.path+"`n"+($hunks -join '')
+        $hunkPath = Join-Path $TestDrive 'diagnostic.patch'
+        [IO.File]::WriteAllText($hunkPath,$diff,[Text.UTF8Encoding]::new($false))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--check','--whitespace=error-all',$hunkPath))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--whitespace=error-all',$hunkPath))
+        $patched = [IO.File]::ReadAllText($target,[Text.Encoding]::UTF8)
+        function Get-Body([string]$Name) {
+            $match = [regex]::Match($patched,'(?ms)^(?:Процедура|Функция) '+[regex]::Escape($Name)+'\(.*?^Конец(?:Процедуры|Функции)[^\n]*')
+            if (-not $match.Success) { throw "Missing production body $Name" }
+            $match.Value
+        }
+    }
+
+    It 'applies the actual I/O patch to authenticated r6 owner excerpts' {
+        (Get-FileHash -LiteralPath (Join-Path $fixture 'callbacks.r6.bsl')).Hash.ToLowerInvariant() | Should -Be $provenance.sha256
+        $prior = Join-Path $repoRoot ('third-party/vanessa-automation/'+$provenance.baselineRecipe+'/file-operations.patch')
+        (Get-FileHash -LiteralPath $prior).Hash.ToLowerInvariant() | Should -Be $provenance.baselinePatchSha256
+        (Get-FileHash -LiteralPath (Join-Path $recipe 'file-operations.patch')).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        $manifest.upstream.commit | Should -Be $provenance.commit
+        foreach ($name in @('ПолученСнимокЭкранаОбработчикОповещения','ПолученСнимокОкна')) {
+            $body = Get-Body $name
+            $body | Should -Match '(?s)ДвоичныеДанные\.Записать\(.*?Исключение\s+Если НЕ ПродолжитьПослеОшибкиСохраненияСкриншота.*?ВызватьИсключение;.*?Возврат;.*?КонецПопытки;'
+            $body | Should -Match '(?s)КопироватьФайлКомандаСистемы\(.*?Исключение\s+Если НЕ ПродолжитьПослеОшибкиСохраненияСкриншота.*?ВызватьИсключение;.*?Возврат;.*?КонецПопытки;'
+            $body.IndexOf('ДвоичныеДанные.Записать(') | Should -BeLessThan $body.IndexOf('ДобавитьИмяФайлаСкриншотаКСтрокеТекущегоСценария(')
+        }
+    }
+
+    It 'passes explicit diagnostic continuation through all native capture adapters' {
+        foreach ($name in @('СделатьСкриншотОшибкиТекущегоОкна','СделатьСкриншотыВсехОконКомпонента','ОпределитьСвойстваПроцессаИСделатьСкриншотЕслиНеобходимоОбработкаОповещения','СделатьСкриншотыВсехОконКомпонентаПродолжение')) {
+            Get-Body $name | Should -Match 'Вставить\("ИмяПроцедурыПриОшибкеСохранения", "ЗавершитьСнятиеСкриншотовОшибки"\)'
+        }
+        Get-Body 'СделатьСкриншотКомпонента' | Should -Match 'Свойство\("ИмяПроцедурыПриОшибкеСохранения", ИмяПроцедурыПриОшибкеСохранения\)'
+        Get-Body 'СкриншотКомпонентойВсегоЭкрана' | Should -Match 'Вставить\("ИмяПроцедурыПриОшибкеСохранения", ИмяПроцедурыПриОшибкеСохранения\)'
+        # No other recipe owner grants optionality to ordinary screenshots/autodoc.
+        @($patch -split "`n" | Where-Object { $_ -match '^\+.*Вставить\("ИмяПроцедурыПриОшибкеСохранения", "' }) | Should -HaveCount 4
+    }
+
+    It 'executes <probeName> against production BSL' -ForEach @(
+        @{probeName='report continuation including logger failure'; probeFile='continuation.os'; expected='DIAGNOSTIC_CONTINUATION_PASSED'; bodies=@('ПродолжитьПослеОшибкиСохраненияСкриншота','ЗавершитьСнятиеСкриншотовОшибки')},
+        @{probeName='real file I/O failures in both callbacks, mandatory and diagnostic'; probeFile='callback-io.os'; expected='DIAGNOSTIC_CALLBACK_IO_PASSED'; bodies=@('ПродолжитьПослеОшибкиСохраненияСкриншота','ПолученСнимокЭкранаОбработчикОповещения','ПолученСнимокОкна')}
+    ) {
+        $helper = Get-Body 'ПродолжитьПослеОшибкиСохраненияСкриншота'
+        $terminal = Get-Body 'ЗавершитьСнятиеСкриншотовОшибки'
+        $terminal | Should -Not -Match 'СделатьСкриншот|ЗакрытьМодальный|ПодключитьОбработчикОжидания'
+        Get-Body 'СделатьСкриншотыОшибкиПродолжение' | Should -Match 'ЗавершитьСнятиеСкриншотовОшибки\(\);'
+        $production = (@($bodies | ForEach-Object { Get-Body $_ }) -join "`n") -replace '(?m)^\s*#.*$',''
+        $probe = [IO.File]::ReadAllText((Join-Path $fixture $probeFile),[Text.Encoding]::UTF8).Replace('// PRODUCTION_PROCEDURES',$production)
+        $probePath = Join-Path $TestDrive 'Диагностика с пробелом.os'
+        [IO.File]::WriteAllText($probePath,$probe,[Text.UTF8Encoding]::new($true))
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = (Get-Command oscript -ErrorAction Stop).Source
+        $ioRoot = Join-Path $TestDrive 'Файловая проверка с пробелом'
+        [void][IO.Directory]::CreateDirectory($ioRoot)
+        $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @('-encoding=utf-8',$probePath,$ioRoot)
+        $startInfo.UseShellExecute = $false; $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true; $startInfo.RedirectStandardError = $true
+        $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($startInfo)
+        try {
+            $outputTask = $process.StandardOutput.ReadToEndAsync(); $errorTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); $process.WaitForExit(); throw 'Diagnostic continuation probe timed out.' }
+            $output = $outputTask.GetAwaiter().GetResult() + $errorTask.GetAwaiter().GetResult()
+            $process.ExitCode | Should -Be 0 -Because $output
+            $output | Should -Match $expected
+        } finally { $process.Dispose() }
+    }
+
+    It 'retains unrelated cumulative fixes and authenticates the new recipe bytes through Git filters' {
+        $previous = [IO.File]::ReadAllText((Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r6/file-operations.patch'),[Text.Encoding]::UTF8)
+        $normalize = '(?m)^(index |@@ )[^\n]*\n'
+        $previousMain = @($previous -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq ('diff --git a/'+$provenance.path+' b/'+$provenance.path) })[0]
+        $retainedMain = $section[0]
+        foreach ($hunk in $hunks) { $retainedMain = $retainedMain.Replace($hunk,'') }
+        ($retainedMain -replace $normalize,'') | Should -BeExactly ($previousMain -replace $normalize,'')
+        foreach ($oldSection in @($previous -split '(?m)(?=^diff --git )' | Where-Object { $_ })) {
+            $header = ($oldSection -split "`n")[0]
+            if ($header -ceq ('diff --git a/'+$provenance.path+' b/'+$provenance.path)) { continue }
+            $current = @($patch -split '(?m)(?=^diff --git )' | Where-Object { ($_ -split "`n")[0] -ceq $header })
+            $current.Count | Should -Be 1
+            ($current[0] -replace $normalize,'') | Should -BeExactly ($oldSection -replace $normalize,'')
+        }
+        foreach ($relative in @('third-party/vanessa-automation/1.2.043.42-itl-r7/manifest.json','third-party/vanessa-automation/1.2.043.42-itl-r7/ITL-NOTICE.txt','third-party/vanessa-automation/1.2.043.42-itl-r7/LICENSE.upstream','tests/fixtures/vanessa-diagnostic-screenshot/callbacks.r6.bsl','tests/fixtures/vanessa-diagnostic-screenshot/provenance.json')) {
+            $path = Join-Path $repoRoot $relative
+            $raw = (Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('hash-object','--no-filters',$path)).stdout.Trim()
+            (Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('hash-object',('--path='+$relative),$path)).stdout.Trim() | Should -BeExactly $raw
         }
     }
 }
