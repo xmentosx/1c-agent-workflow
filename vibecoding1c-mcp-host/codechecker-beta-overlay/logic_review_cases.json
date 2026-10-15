@@ -1,0 +1,101 @@
+[
+  {
+    "id": "05-two-dates",
+    "group": "control",
+    "expected": "protected",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не Данные.Свойство(\"ДатаНачала\") Или Не Данные.Свойство(\"ДатаОкончания\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если ТипЗнч(Данные.ДатаНачала) <> Тип(\"Дата\") Или ТипЗнч(Данные.ДатаОкончания) <> Тип(\"Дата\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Возврат Данные.ДатаНачала <= Данные.ДатаОкончания;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "06-repeated-date",
+    "group": "regression",
+    "expected": "unsafe",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не Данные.Свойство(\"ДатаНачала\") Или Не Данные.Свойство(\"ДатаНачала\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если ТипЗнч(Данные.ДатаНачала) <> Тип(\"Дата\") Или ТипЗнч(Данные.ДатаОкончания) <> Тип(\"Дата\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Возврат Данные.ДатаНачала <= Данные.ДатаОкончания;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "07-negated-and",
+    "group": "control",
+    "expected": "protected",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не (Данные.Свойство(\"Имя\") И ТипЗнч(Данные.Имя) = Тип(\"Строка\")) Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Возврат СтрДлина(Данные.Имя) > 0;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "08-negated-or",
+    "group": "regression",
+    "expected": "unsafe",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не (Данные.Свойство(\"Имя\") Или ТипЗнч(Данные.Имя) = Тип(\"Строка\")) Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Возврат СтрДлина(Данные.Имя) > 0;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "09-defined-or-missing",
+    "group": "control",
+    "expected": "protected",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не Данные.Свойство(\"Сумма\") Или Данные.Сумма = Неопределено Тогда\n        Возврат 0;\n    КонецЕсли;\n    Если ТипЗнч(Данные.Сумма) <> Тип(\"Число\") Тогда\n        Возврат 0;\n    КонецЕсли;\n    Возврат Данные.Сумма;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "10-undefined-not-guard",
+    "group": "regression",
+    "expected": "unsafe",
+    "code": "Функция ОбработатьДанные(Данные)\n    Если ТипЗнч(Данные) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Данные.Сумма = Неопределено Тогда\n        Возврат 0;\n    КонецЕсли;\n    Если ТипЗнч(Данные.Сумма) <> Тип(\"Число\") Тогда\n        Возврат 0;\n    КонецЕсли;\n    Возврат Данные.Сумма;\nКонецФункции\n",
+    "qualityCriteria": [
+      "All assertions about operand evaluation must agree with the actual path.",
+      "No unreachable subsequent read may be presented as a reachable failure on the same input.",
+      "No confirmed performance finding without an identifiable cost mechanism or measurement."
+    ]
+  },
+  {
+    "id": "11-mixed-safe",
+    "group": "holdout",
+    "expected": "protected",
+    "code": "Функция ПроверитьЗначения(Пакет)\n    Если ТипЗнч(Пакет) <> Тип(\"Структура\") Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Если Не (Пакет.Свойство(\"Баланс\") И ТипЗнч(Пакет.Баланс) = Тип(\"Число\"))\n        Или Не (Пакет.Свойство(\"Остаток\") И ТипЗнч(Пакет.Остаток) = Тип(\"Число\")) Тогда\n        Возврат Ложь;\n    КонецЕсли;\n    Возврат Пакет.Баланс >= Пакет.Остаток;\nКонецФункции\n",
+    "qualityCriteria": [
+      "Missing either numeric field returns False without reading it.",
+      "Both fields are protected despite mixed nested Not/And/Or.",
+      "No unsupported performance findings."
+    ]
+  },
+  {
+    "id": "12-local-reads",
+    "group": "holdout",
+    "expected": "no-confirmed-cost-defect",
+    "code": "Функция СогласоватьКоличество(Количество)\n    Если ТипЗнч(Количество) <> Тип(\"Число\") Тогда\n        Возврат 0;\n    КонецЕсли;\n    Если Количество < 0 Или Количество = 0 Тогда\n        Возврат 0;\n    КонецЕсли;\n    Возврат Количество + Количество;\nКонецФункции\n",
+    "qualityCriteria": [
+      "Repeated arithmetic/local reads do not alone establish a logic or performance defect.",
+      "For positive input the second Or operand is evaluated; for negative input it is skipped.",
+      "No hypothetical future datatype finding."
+    ]
+  },
+  {
+    "id": "13-query-loop",
+    "group": "holdout",
+    "expected": "cost-mechanism-present",
+    "code": "Функция НаименованияКонтрагентов(Ссылки)\n    Результат = Новый Массив;\n    Для Каждого Ссылка Из Ссылки Цикл\n        Запрос = Новый Запрос(\"ВЫБРАТЬ Контрагенты.Наименование КАК Наименование ИЗ Справочник.Контрагенты КАК Контрагенты ГДЕ Контрагенты.Ссылка = &Ссылка\");\n        Запрос.УстановитьПараметр(\"Ссылка\", Ссылка);\n        Выборка = Запрос.Выполнить().Выбрать();\n        Если Выборка.Следующий() Тогда\n            Результат.Добавить(Выборка.Наименование);\n        КонецЕсли;\n    КонецЦикла;\n    Возврат Результат;\nКонецФункции\n",
+    "qualityCriteria": [
+      "Do not suppress genuine cost mechanisms: one database execution per input element.",
+      "Explain N executions for N elements rather than inventing a measured latency.",
+      "Keep unknown configuration schema and business requirements separate from confirmed source facts."
+    ]
+  }
+]
