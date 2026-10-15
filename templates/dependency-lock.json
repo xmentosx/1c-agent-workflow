@@ -22,14 +22,14 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-5700f54-r42",
-      "commit": "827e5ccaa7e319dc5871555f7e997093478359c4",
+      "ref": "itl-main-5700f54-r43",
+      "commit": "efe96e1c680d74cf868f2c4bb7512678d40b6a13",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
-      "downstreamRevision": 42,
-      "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-10-10T11:08:40Z"
+      "downstreamRevision": 43,
+      "compatibilityStatus": "pending",
+      "compatibilityCheckedAt": ""
     },
     "openSpecCli": {
       "version": "1.13.1",

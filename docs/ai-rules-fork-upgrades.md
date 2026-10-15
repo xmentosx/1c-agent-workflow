@@ -1,5 +1,33 @@
 # Controlled ai_rules_1c upgrades
 
+## Necessary AI verification without numeric approval prompts
+
+The local r43 candidate `efe96e1c680d74cf868f2c4bb7512678d40b6a13` on
+`upgrade/ai-validation-autonomy` removes the downstream requirement for a special
+AI-call grant or finite next allocation during an ordinary authorized task.
+Default 2/3 retry counts are diagnostic checkpoints; substantive corrections
+still require fresh confirmation. Explicit user limits, stop, raw findings,
+one unchanged-input unusable-response recovery and the separate host repair
+session remain binding. Gate selection, false-positive adjudication and fresh
+ITL completion requirements are preserved. This supersedes the prepared task-grant
+policy without introducing an authorization registry or changing installed state.
+
+The dependency lock is **pending**, not published or installed. Focused fork
+tests cover an actual update from r36 and compare all five affected installed
+rules and the direct `1c-validate` skill with a fresh Codex installation while
+preserving user restrictions.
+Decision scenarios cover ordinary continuation beyond 3 calls, compaction,
+explicit caps, stop, separate tasks and repeated unusable responses; their
+presence is not proof of a live model run. Later authorized `PublishDevelop`
+owns candidate qualification and immutable publication; do not patch working
+project copies or describe this local source change as deployed.
+
+Against prepared candidate `27c1d6a`, the six on-demand policy/skill files grow
+from 104,973 to 105,440 normalized UTF-8 bytes (+467 bytes; approximately 117
+tokens using the bytes/4 proxy). The always-on root is unchanged. This small
+increase replaces allocation bookkeeping with explicit continuation and user-limit
+semantics; no model call, registry or runtime collector is added.
+
 ## Published baseline and migration candidate
 
 The audited remote workflow `develop` at `c900620e6569ce4cec39e30abfa3f8ce2c150ce1` pins the published controlled rules r41, `itl-main-c1fb8e6-r41` (`84ed7c7a8dcc783159537f41f38196640ffa968c`), against upstream `c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb`. Its paired publication and acceptance are recorded in [final Develop acceptance](../openspec/changes/upgrade-ai-rules-upstream-20a083e5/evidence/final-develop-acceptance-20261009.md). The earlier workflow `master` at `69c0863bfe3bd837543267f122e81a28dcfa5488` still installs r33; it is a separate supported migration baseline, not the current Develop pin.

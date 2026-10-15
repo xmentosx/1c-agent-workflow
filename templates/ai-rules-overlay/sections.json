@@ -867,11 +867,11 @@
     {
       "path": "content/rules/dev-standards-env.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Accepted Q23: empty UI_TESTING defaults to essential; invalid UI_TESTING falls back to manual. Retire the old UI-only invalid-value correction requirement, retaining strict handling for other settings and named one-off/broader no-UI precedence. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Accepted Q23: empty UI_TESTING defaults to essential; invalid UI_TESTING falls back to manual. Retire the old UI-only invalid-value correction requirement, retaining strict handling for other settings and named one-off/broader no-UI precedence. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "f3cb3c41d1831497405f249a4180802c0e35581ca3e22dcb68d4c20b564dc15b",
       "baselineSha256": "634ba7b88873d0e39fac20a1138a7a7364122f22d5e68fe513f7e097237c4bdd",
-      "resultSha256": "634ba7b88873d0e39fac20a1138a7a7364122f22d5e68fe513f7e097237c4bdd"
+      "resultSha256": "ebc5e758f85088a9d31a76fb555f0957d6035202f23dde4f3652cf71f54fcd4e"
     },
     {
       "path": "content/rules/edt-workflow.md",
@@ -931,10 +931,10 @@
       "path": "content/rules/mcp-policy.md",
       "requirementId": "ITL-AI-RULES-R42",
       "disposition": "resolved",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing.",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "beb00ba2bd95afa35bcb18dd3564a4f29fef47a6bc76aac2d8f9e08f55713886",
       "baselineSha256": "43f14196960675d4a3fc93bfe54d81ab561b37dfc5c92cef8d8d1e33aa7efd65",
-      "resultSha256": "60f121d0fd56f4e17170cf0c218e5c30aa03fde40a69d65516bb29aeb32850da"
+      "resultSha256": "ebf61943d2434b24636d2f262614bbddf42392b24adbd665f9bb493cbd2c70c7"
     },
     {
       "path": "content/rules/memory-setup.md",
@@ -1047,11 +1047,11 @@
     {
       "path": "content/rules/verification-ai-evidence.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Previous downstream-only: r35 canonical evidence preservation, bounded unsupported-result recovery and authorized adjudication, with independent hard gates retained. Now carry-forward: reconcile-evidence-modes-and-one-budget; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Previous downstream-only: r35 canonical evidence preservation, bounded unsupported-result recovery and authorized adjudication, with independent hard gates retained. Now carry-forward: reconcile-evidence-modes-and-one-budget; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "3b2ecff52feb35b48e32c4353b521650b13d1be2e6273fde9380af0824e442e7",
-      "resultSha256": "3b2ecff52feb35b48e32c4353b521650b13d1be2e6273fde9380af0824e442e7"
+      "resultSha256": "4144b33f29dc64063f1ae2c03f541203c5795c6ff54c0fc18697a155b80b7b83"
     },
     {
       "path": "content/rules/verification-delivery.md",
@@ -1066,19 +1066,19 @@
       "path": "content/rules/verification-gates.md",
       "requirementId": "ITL-AI-RULES-R42",
       "disposition": "resolved",
-      "reason": "Accepted D13 / EV8a-EV8c: small partial main-CF skips the platform ladder only with complete exact saved-input MCP proof; managed legacy structural continuation retains native failure and strict default gates. Previous decision: Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing.",
+      "reason": "Accepted D13 / EV8a-EV8c: small partial main-CF skips the platform ladder only with complete exact saved-input MCP proof; managed legacy structural continuation retains native failure and strict default gates. Previous decision: Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "60e2abee5a6c2ca01de3dc4b59f8dbe0a4deacf0694ce34491aa216995765f64",
       "baselineSha256": "675781df08caf584fcd7ecbba6294454a74b4ecac87d92a1b2ceb4a73fe5450e",
-      "resultSha256": "76a740cad60ae8deb81244ad38641af10dc12e962b97e021ffd22c4427097cee"
+      "resultSha256": "1991557a504f38d0705a009e7553a0758d4ea7b4c73431f8334d80b55c8b2911"
     },
     {
       "path": "content/rules/verification-policy.md",
       "requirementId": "ITL-AI-RULES-R42",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. R42: resolved against published r41; retain managed ITL ownership and on-demand routing.",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "4e7e09e9da2f351ecf1b1fbe1f20a8ca370af160fb65bb6bddf6650e6f2ec186",
       "baselineSha256": "dbadeaa331d2d74155e174153be54e61b0c6acedd77dab4d77efee3a63920c0b",
-      "resultSha256": "7dd57722abd840e4d8b8186c77579bf119fd17e96f3fabfac2d69e8c7a9c2130"
+      "resultSha256": "61039adee23897d0bb02e461a16d3af80481e366ab2ad6c283876ea9231f87b0"
     },
     {
       "path": "content/skills/1c-change-package/references/manual-implementation.md",
@@ -1137,11 +1137,11 @@
     {
       "path": "content/skills/1c-metadata-manage/docs/form-manage.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. Retain the already prepared 27c1d6a candidate safeguards and Unicode qualification fixtures unchanged while superseding its AI task-grant policy.",
       "upstreamSha256": "3906349a34461516b5fd9d6dfc8474e04126e81386ee098e01652e96fe80478b",
       "baselineSha256": "c899e6da45e5d3e966787668835429884c6bb38f9d63110d4411978332eff577",
-      "resultSha256": "c899e6da45e5d3e966787668835429884c6bb38f9d63110d4411978332eff577"
+      "resultSha256": "cc88f0a56ccb0a3fcf6dfa15e4bdd2288641e667ccab2fa1b7b32fe760c1c348"
     },
     {
       "path": "content/skills/1c-metadata-manage/docs/runtime-selection.md",
@@ -1551,11 +1551,11 @@
     {
       "path": "content/skills/1c-validate/SKILL.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "reconcile-evidence-modes-and-one-budget; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "reconcile-evidence-modes-and-one-budget; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: direct validation entrypoint delegates necessary confirmations and diagnostic checkpoints to the same policy, retaining explicit user limits and one unusable-response recovery.",
       "upstreamSha256": "0c857b3e46cbd75acc17282da45a1c45bd78d496eb49ccc8862e8fb0929a20c8",
       "baselineSha256": "fd85f66e7ca32de691885d52f284aa887a93649410f0d97330ade1e81ad95eae",
-      "resultSha256": "fd85f66e7ca32de691885d52f284aa887a93649410f0d97330ade1e81ad95eae"
+      "resultSha256": "b07ddc99d8048af055bcad8baf55ccbf5036bdbdb0d5f08245cd4283b41dcb6f"
     },
     {
       "path": "content/skills/caveman/SKILL.md",
@@ -2199,11 +2199,11 @@
     {
       "path": "tests/ItlLifecycleGuard.Tests.ps1",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: preserve-or-adapt-owned-regressions-and-provenance; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: preserve-or-adapt-owned-regressions-and-provenance; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. Retain the already prepared 27c1d6a candidate safeguards and Unicode qualification fixtures unchanged while superseding its AI task-grant policy.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "a3d3554859a9198b29ca9a338f05f82fecf4389afde4154a40aa9f5f0211d5c4",
-      "resultSha256": "a3d3554859a9198b29ca9a338f05f82fecf4389afde4154a40aa9f5f0211d5c4"
+      "resultSha256": "0cd3b15853cf4548693b49a571fcdfc947a5cc469d178347c00f60e3f59126b2"
     },
     {
       "path": "tests/LayoutAndManifest.Tests.ps1",
@@ -2316,11 +2316,11 @@
     {
       "path": "tests/TestSupport.ps1",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: preserve-or-adapt-owned-regressions-and-provenance; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: preserve-or-adapt-owned-regressions-and-provenance; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. Retain the already prepared 27c1d6a candidate safeguards and Unicode qualification fixtures unchanged while superseding its AI task-grant policy.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "7b9caf14ac79f9df0704a128b54aae65a6a03c049dac0c28f7111a58acfba3f7",
-      "resultSha256": "7b9caf14ac79f9df0704a128b54aae65a6a03c049dac0c28f7111a58acfba3f7"
+      "resultSha256": "2b746f428a900ba312b2c5d93a973a64248bfbac8771456f9e6724fce43e8781"
     },
     {
       "path": "tests/UpgradeFromR33.Tests.ps1",
@@ -2343,11 +2343,11 @@
     {
       "path": "tests/VerificationEvidence.Tests.ps1",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Preserve reviewed ITL-owned addition; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "Preserve reviewed ITL-owned addition; exact candidate audited against upstream and r36 baseline. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "ac14df27bbd4c2251357eb24346f22ff2642f74dad7c8e907d52006944dd1b61",
-      "resultSha256": "ac14df27bbd4c2251357eb24346f22ff2642f74dad7c8e907d52006944dd1b61"
+      "resultSha256": "a23ed88e9da082a2b4cd1ac9b883f70a515bdd9f4cd4191d6231653fdf217a4f"
     },
     {
       "path": "tests/WorkflowHardening.Tests.ps1",
@@ -2406,11 +2406,11 @@
     {
       "path": "tools/tests/gate-scenarios.json",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "take-upstream",
-      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline. R42: take-upstream against published r41; retain managed ITL ownership and on-demand routing.",
+      "disposition": "resolved",
+      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline. R42: take-upstream against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "61f9b1bcf89c3824496c0a471b069fbd4dac81f766483fce921d939a926f1147",
       "baselineSha256": "6d7a847ad840a391459114e90e03b4d8750afd309c2f05d655f8673e34c9013f",
-      "resultSha256": "61f9b1bcf89c3824496c0a471b069fbd4dac81f766483fce921d939a926f1147"
+      "resultSha256": "fe1075fb183616d1937fbf14067cc24ca068043cee26dab6ce89b4b4e103ef70"
     },
     {
       "path": "tools/tests/marketplace-bootstrap.ps1",
@@ -2447,6 +2447,15 @@
       "upstreamSha256": "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
       "baselineSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3",
       "resultSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/docs/mxl-manage.md",
+      "requirementId": "ITL-AI-VERIFICATION-CONTINUATION",
+      "disposition": "resolved",
+      "reason": "Preserve prepared candidate quality: unresolved schema or validator outcomes cannot become successful verification. Retain the already prepared 27c1d6a candidate safeguards and Unicode qualification fixtures unchanged while superseding its AI task-grant policy.",
+      "upstreamSha256": "08309d73e50c2ea17ce91b3039943c58bfaeb9100898868280ebb56fcc521a05",
+      "baselineSha256": "08309d73e50c2ea17ce91b3039943c58bfaeb9100898868280ebb56fcc521a05",
+      "resultSha256": "39a2ccfb3ee0171882d13130100514906271ec7951ba5e875d0a08c6e3e26ca9"
     }
   ],
   "targetComposition": "append-upstream",
