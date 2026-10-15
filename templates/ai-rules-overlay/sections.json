@@ -2410,7 +2410,7 @@
       "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline. R42: take-upstream against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy.",
       "upstreamSha256": "61f9b1bcf89c3824496c0a471b069fbd4dac81f766483fce921d939a926f1147",
       "baselineSha256": "6d7a847ad840a391459114e90e03b4d8750afd309c2f05d655f8673e34c9013f",
-      "resultSha256": "fe1075fb183616d1937fbf14067cc24ca068043cee26dab6ce89b4b4e103ef70"
+      "resultSha256": "1c74299c6ab367945e92da4526982ca04314833ec3623380c24261aeed278b09"
     },
     {
       "path": "tools/tests/marketplace-bootstrap.ps1",

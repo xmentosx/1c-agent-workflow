@@ -2,7 +2,7 @@
 
 ## Necessary AI verification without numeric approval prompts
 
-The local r43 candidate `efe96e1c680d74cf868f2c4bb7512678d40b6a13` on
+The local r43 candidate `a7b1801a866d850f435ba2a3b5c0f62376f937a6` on
 `upgrade/ai-validation-autonomy` removes the downstream requirement for a special
 AI-call grant or finite next allocation during an ordinary authorized task.
 Default 2/3 retry counts are diagnostic checkpoints; substantive corrections
