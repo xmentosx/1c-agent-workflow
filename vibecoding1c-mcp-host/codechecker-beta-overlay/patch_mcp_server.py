@@ -92,6 +92,8 @@ LOGIC_TOOL = '''def _itl_logic_prompt(code: str) -> str:
         "Не подменяй последствия текущего кода гипотетической будущей заменой его типов. "
         "Неизвестные бизнес-требования, неподтверждённые сведения о платформе и "
         "предположения о нагрузке вынеси отдельно как непроверенные; это не найденные ошибки. "
+        "Диагностика не проверяет способы исправления: не включай исправляющий код, SQL "
+        "или рекомендации по реализации ни в одну ячейку, в том числе в требуемый результат. "
         "Перед ответом сверь каждое утверждение карты, объяснений и замечаний с тем же "
         "разбором путей и критериями доказательства. Устрани противоречия во всём ответе, "
         "а не только в итоговом выводе. Верни только согласованный итог без черновых "
@@ -120,13 +122,32 @@ def _itl_logic_review_prompt(code: str, draft: str) -> str:
         "Не цитируй черновые ошибки и не описывай процесс исправления. "
         "Формат ответа этого этапа — только JSON-объект, представляющий строки таблицы: "
         '{"rows":[{"status":"...","method":"...","quote":"...",'
-        '"input":"...","actual":"...","required":"","basis":"","explanation":"...",'
+        '"input":{"bindings":[],"path":""},"actual":"...","required":"","basis":"","explanation":"...",'
         '"proof_kind":"","requirement_quote":"","required_value":""}]}. '
         "Допустимые status: защищено, ошибка логики, проблема производительности, "
         "не подтверждено. Подтверждённое падение на достижимой операции с нарушенным "
         "предусловием языка/API имеет status «ошибка логики»; неизвестность бизнес-правил "
         "не переводит доказанную ошибку выполнения в «не подтверждено». "
-        "Все одиннадцать полей строки — строки. Для ошибки логики actual "
+        "Все поля строки, кроме input, — строки. input — объект с bindings и path. "
+        "bindings — массив объектов {target,state,value}: target — точное имя параметра "
+        "или путь к полю из исходника (в том числе из Свойство с буквальным именем); "
+        "state — absent, value, type или size. absent означает отсутствие поля и требует "
+        "value=null; value задаёт JSON-скаляр (null означает Неопределено); type задаёт "
+        "имя типа строкой; size задаёт неотрицательное целое число элементов. "
+        "Не помещай код или описание структуры в target: каждое поле — отдельная binding. "
+        "path — дословный фрагмент исходника для входа в нужную ветку либо пустая строка. "
+        "Для вызова без параметров bindings=[], path у подтверждённого замечания "
+        "содержит цитату достигаемой операции. Укажи все условия входа, необходимые "
+        "для достижения операции, включая типы ранее проверенных значений. "
+        "quote — непрерывный дословный фрагмент исходника без номеров строк, многоточий "
+        "и реконструированного кода. Имена полей в actual, basis и explanation также "
+        "сверь с исходником: сервер отклоняет несуществующие пути к полям. "
+        "Не давай исправляющий код, SQL или рекомендации по реализации ни в одном поле: "
+        "этот инструмент диагностирует существующее поведение и не проверяет исправления. "
+        "required заполняй только для explicit_requirement наблюдаемым требуемым значением, "
+        "без предлагаемого способа исправления. Для runtime_precondition, производительности "
+        "и прочих строк required пусто: допустимое поведение сформирует сервер. "
+        "Для explicit_requirement actual "
         "и required должны описывать разные наблюдаемые результаты, basis — доказанное "
         "основание требуемого результата. Недостижимость сама по себе не заменяет "
         "ни расхождение результатов, ни основание. Для производительности basis "
@@ -139,7 +160,7 @@ def _itl_logic_review_prompt(code: str, draft: str) -> str:
         "оператор или правило порядка исполнения за текст требования. Если явного "
         "требования нет, поля пусты и поведенческая гипотеза не подтверждена. "
         "В остальных строках proof_kind, requirement_quote, required_value могут быть пусты. "
-        "Для остальных статусов required и basis могут быть пустыми. "
+        "Для остальных статусов basis может быть пустым. "
         "Если замечаний и полезных фактов нет, верни rows=[]. "
         "Не добавляй итог, число ошибок, Markdown или другие поля: таблицу и единственный "
         "итог сформирует сервер по status. Этот формат заменяет текстовую таблицу "
@@ -147,9 +168,78 @@ def _itl_logic_review_prompt(code: str, draft: str) -> str:
     )
 
 
+def _itl_logic_source_refs(code: str):
+    """Index spellings, not execution semantics; comments are not code evidence."""
+    import re
+    identifier = r"(?<!\\w)[^\\W\\d]\\w*"
+    path_pattern = identifier + r"(?:\\s*\\.\\s*" + identifier + r")+"
+    # Preserve string literals (including doubled quotes) while dropping comments.
+    lexical = re.sub(r'"(?:""|[^"])*"|//[^\\n]*',
+                     lambda m: "" if m.group().startswith("//") else m.group(), code)
+    executable = re.sub(r'"(?:""|[^"])*"', '""', lexical)
+    canon = lambda s: re.sub(r"\\s*\\.\\s*", ".", s.strip()).casefold()
+    refs = {}
+    for match in re.finditer(path_pattern, lexical):
+        raw = match.group()
+        refs[canon(raw)] = re.sub(r"\\s*\\.\\s*", ".", raw)
+    targets = dict(refs)
+    for match in re.finditer(identifier, executable):
+        targets.setdefault(canon(match.group()), match.group())
+    property_pattern = (r"(" + identifier + r"(?:\\s*\\.\\s*" + identifier + r")*)"
+                        r'\\s*\\.\\s*(?:Свойство|Property)\\s*\\(\\s*"(' + identifier + r')"')
+    for match in re.finditer(property_pattern, lexical, re.IGNORECASE):
+        raw = re.sub(r"\\s*\\.\\s*", ".", match[1]) + "." + match[2]
+        refs[canon(raw)] = targets[canon(raw)] = raw
+    methods = {m.casefold() for m in re.findall(
+        r"(?i)\\b(?:Функция|Процедура|Function|Procedure)\\s+([^\\W\\d]\\w*)\\s*\\(", executable)}
+    return lexical, refs, targets, methods, canon
+
+
+def _itl_logic_witness(value, targets, canon, code: str) -> str:
+    """Render typed bindings using source-owned names, never a model-written witness."""
+    import json
+    if not isinstance(value, dict) or set(value) != {"bindings", "path"}:
+        raise ValueError("Invalid logic witness")
+    bindings, path = value["bindings"], value["path"]
+    if isinstance(path, str):
+        path = path.replace("\\r\\n", "\\n")
+    if not isinstance(bindings, list) or not isinstance(path, str) or (path and path not in code):
+        raise ValueError("Ungrounded logic witness path")
+    parts, seen = [], {}
+    for binding in bindings:
+        if not isinstance(binding, dict) or set(binding) != {"target", "state", "value"}:
+            raise ValueError("Invalid logic binding")
+        target, state, literal = binding["target"], binding["state"], binding["value"]
+        if not isinstance(target, str) or canon(target) not in targets or not isinstance(state, str):
+            raise ValueError("Unknown or repeated logic binding target")
+        states = seen.setdefault(canon(target), set())
+        if state in states or (states and (state == "absent" or "absent" in states)):
+            raise ValueError("Conflicting logic bindings")
+        states.add(state)
+        name = targets[canon(target)]
+        if state == "absent" and literal is None and "." in name:
+            parts.append(name + ": поле отсутствует")
+        elif state == "value" and (literal is None or type(literal) in (str, bool, int, float)):
+            # JSON quoting separates data values from names and executable BSL.
+            scalar = json.dumps(literal, ensure_ascii=False, allow_nan=False)
+            parts.append(name + " = " + scalar + " (JSON-значение)")
+        elif state == "type" and isinstance(literal, str) and literal.strip():
+            parts.append(name + ": тип " + json.dumps(literal, ensure_ascii=False))
+        elif state == "size" and type(literal) is int and literal >= 0:
+            parts.append(name + ": число элементов " + str(literal))
+        else:
+            raise ValueError("Invalid logic binding state/value")
+    if path:
+        parts.append("Ветка исходника: " + path)
+    return "; ".join(parts)
+
+
 def _itl_logic_render_review(text: str, code: str = "") -> str:
     """Own qualification and verdict; unsupported hypotheses remain visible."""
     import json
+    import re
+    code = code.replace("\\r\\n", "\\n")
+    lexical, refs, targets, methods, canon = _itl_logic_source_refs(code)
     text = text.strip().replace("\\r\\n", "\\n")
     if "```json\\n" in text:
         # Providers may explain/revise before the final machine-readable block.
@@ -173,18 +263,34 @@ def _itl_logic_render_review(text: str, code: str = "") -> str:
     for row in value["rows"]:
         if isinstance(row, dict) and set(row) == keys - {"explanation"}:
             row = dict(row, explanation="")
-        if not isinstance(row, dict) or set(row) != keys or any(not isinstance(v, str) for v in row.values()):
+        if (not isinstance(row, dict) or set(row) != keys
+                or any(not isinstance(v, str) for k, v in row.items() if k != "input")):
             raise ValueError("Invalid logic review row fields")
         if row["status"] not in statuses:
             raise ValueError("Invalid logic review status")
         if row["proof_kind"] not in {"", "runtime_precondition", "explicit_requirement"}:
             raise ValueError("Invalid logic proof kind")
         row = dict(row)
+        if row["method"] and methods and row["method"].casefold() not in methods:
+            raise ValueError("Unknown logic method")
+        row["input"] = _itl_logic_witness(row["input"], targets, canon, code)
+        quote = row["quote"].replace("\\r\\n", "\\n")
+        if quote and (quote not in code or quote not in lexical):
+            raise ValueError("Ungrounded logic source quotation")
+        # Check every narrative cell, not only the main quote. This is lexical
+        # grounding, not a claim to execute BSL or prove reachability.
+        for key in ("actual", "required", "basis", "explanation"):
+            for match in re.finditer(r"(?<!\\w)[^\\W\\d]\\w*(?:\\.[^\\W\\d]\\w*)+", row[key]):
+                if canon(match.group()) not in refs:
+                    raise ValueError("Unknown logic source reference")
+        if (row["required"].strip() and row["proof_kind"] != "explicit_requirement"
+                and (row["status"] != "ошибка логики" or row["proof_kind"] == "runtime_precondition")):
+            raise ValueError("Implementation advice is not a required result")
         reason = ""
         if row["status"] in counts and any(not row[k].strip() for k in ("method", "quote", "input", "actual")):
             reason = "Недостаточно данных о достижимом входе и фактическом результате. "
         elif row["status"] == "ошибка логики" and (
-            not row["required"].strip() or not row["basis"].strip()
+            (row["proof_kind"] != "runtime_precondition" and not row["required"].strip()) or not row["basis"].strip()
             or row["actual"].strip() == row["required"].strip()
         ):
             reason = "Нет доказанного расхождения фактического и требуемого результата. "
@@ -199,6 +305,11 @@ def _itl_logic_render_review(text: str, code: str = "") -> str:
         if reason:
             row["status"] = "не подтверждено"
             row["explanation"] = reason + row["explanation"]
+        if row["status"] == "ошибка логики":
+            row["required"] = ("Соблюдение предусловия операции или отклонение входа до неё."
+                               if row["proof_kind"] == "runtime_precondition" else row["required_value"])
+        else:
+            row["required"] = ""
         if row["status"] in counts:
             counts[row["status"]] += 1
         cells = []
@@ -252,8 +363,9 @@ async def check_1c_logic(code: str) -> _ItlLogicResult:
             answer = _itl_logic_render_review(reviewed.text, bounded_code)
         except ValueError:
             return _itl_logic_result(_error_result(
-                "Проверка логики не завершена: провайдер вернул некорректные структурированные "
-                "замечания. Повторите check_1c_logic с тем же кодом; черновик не выдан как итог.",
+                "Проверка логики не завершена: провайдер вернул некорректные или не привязанные "
+                "к исходнику свидетельства. Повторите check_1c_logic с тем же кодом; "
+                "черновик не выдан как итог.",
                 bounder, call,
             ))
         return _itl_logic_result(AnswerResult(

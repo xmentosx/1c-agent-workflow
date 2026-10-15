@@ -54,8 +54,8 @@ class BounderStub:
 
 
 def review_payload(marker):
-    return json.dumps({"rows": [{"status": "не подтверждено", "method": "fixture",
-        "quote": "source", "input": "fixture input", "actual": marker,
+    return json.dumps({"rows": [{"status": "не подтверждено", "method": "",
+        "quote": "", "input": {"bindings": [], "path": ""}, "actual": marker,
         "required": "", "basis": "", "explanation": "provider evidence",
         "proof_kind": "", "requirement_quote": "", "required_value": ""}]}, ensure_ascii=False)
 
@@ -63,7 +63,7 @@ def review_payload(marker):
 def rendered_answer(marker):
     return ("| Статус | Метод | Цитата | Вход | Фактический результат | Требуемый результат | Основание | Объяснение |\n"
             "|---|---|---|---|---|---|---|---|\n"
-            f"| не подтверждено | fixture | source | fixture input | {marker} | — | — | provider evidence |\n\n"
+            f"| не подтверждено | — | — | — | {marker} | — | — | provider evidence |\n\n"
             "Подтверждённых ошибок логики и проблем производительности не обнаружено.")
 
 
@@ -289,13 +289,13 @@ class BetaLogicToolTests(unittest.TestCase):
     def test_structured_findings_have_one_server_owned_count_without_dropping_real_bugs(self):
         scope, calls, _, _ = make_scope()
         row = json.loads(review_payload("неподтверждённый факт"))["rows"][0]
-        logic = dict(row, status="ошибка логики", actual="Возврат 0", required="Возврат 1",
+        logic = dict(row, status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"}, actual="Возврат 0", required="Возврат 1",
                      basis="Явный контракт функции", explanation="Обязательное присваивание недостижимо",
                      proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
-        performance = dict(row, status="проблема производительности", actual="N запросов",
+        performance = dict(logic, status="проблема производительности", actual="N запросов", required="", proof_kind="",
                            basis="Один Запрос.Выполнить на каждой из N итераций")
         answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row, logic, performance]}, ensure_ascii=False),
-                                                   "// Результат должен быть 1.\nВозврат 0;")
+                                                   "// Результат должен быть 1.\nВозврат 0;\nЗапрос.Выполнить();")
         self.assertIn("неподтверждённый факт", answer)
         self.assertIn("Обязательное присваивание недостижимо", answer)
         self.assertIn("N запросов", answer)
@@ -330,10 +330,10 @@ class BetaLogicToolTests(unittest.TestCase):
     def test_well_formed_but_unproved_findings_stay_visible_without_becoming_errors(self):
         scope, _, _, _ = make_scope()
         row = json.loads(review_payload("0"))["rows"][0]
-        unsupported = [dict(row, status="ошибка логики", required="0", basis="contract"),
-                       dict(row, status="ошибка логики", required="1", basis=""),
+        unsupported = [dict(row, status="ошибка логики", required="0", basis="contract", proof_kind="explicit_requirement"),
+                       dict(row, status="ошибка логики", required="1", basis="", proof_kind="explicit_requirement"),
                        dict(row, status="проблема производительности", basis=""),
-                       dict(row, status="ошибка логики", input="", required="1", basis="contract")]
+                       dict(row, status="ошибка логики", required="1", basis="contract", proof_kind="explicit_requirement")]
         for claim in unsupported:
             result = scope["_itl_logic_render_review"](json.dumps({"rows": [claim]}))
             self.assertIn("не подтверждено", result)
@@ -364,7 +364,7 @@ class BetaLogicToolTests(unittest.TestCase):
     def test_explicit_requirement_must_be_a_source_comment_with_the_required_value(self):
         scope, _, _, _ = make_scope()
         row = json.loads(review_payload("Возврат 0"))["rows"][0]
-        row.update(status="ошибка логики", required="Возврат 1", basis="Контракт функции",
+        row.update(status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"}, required="Возврат 1", basis="Контракт функции",
                    proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
         code = '    // Результат должен быть 1.\nВозврат 0;\nВозврат 2;'
         for quote in ("Результат должен быть 1.", "// Результат должен быть 1."):
@@ -382,7 +382,7 @@ class BetaLogicToolTests(unittest.TestCase):
     def test_runtime_precondition_needs_no_invented_business_comment(self):
         scope, _, _, _ = make_scope()
         row = json.loads(review_payload("Системное исключение"))["rows"][0]
-        row.update(status="ошибка логики", required="Предусловие операции соблюдено", basis="Контракт API",
+        row.update(status="ошибка логики", method="fixture", quote="ВызовОперации();", input={"bindings": [], "path": "ВызовОперации();"}, required="", basis="Контракт API",
                    proof_kind="runtime_precondition")
         answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), "ВызовОперации();")
         self.assertIn("Подтверждено ошибок логики: 1", answer)
@@ -399,9 +399,9 @@ class BetaLogicToolTests(unittest.TestCase):
             scope["_itl_logic_render_review"]('```json\n{"rows":[]}')
         # An incomplete unconfirmed observation must not discard a separate real finding.
         incomplete = dict(row, actual="", explanation="Не является отдельной ошибкой")
-        real = dict(row, status="ошибка логики", actual="Исключение", required="Без падения",
+        real = dict(row, status="ошибка логики", method="fixture", quote="ВызовОперации();", input={"bindings": [], "path": "ВызовОперации();"}, actual="Исключение", required="",
                     basis="Предусловие API", proof_kind="runtime_precondition", explanation="")
-        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [real, incomplete]}))
+        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [real, incomplete]}), "ВызовОперации();")
         self.assertIn("Подтверждено ошибок логики: 1", answer)
         self.assertIn("Не является отдельной ошибкой", answer)
 
@@ -413,6 +413,173 @@ class BetaLogicToolTests(unittest.TestCase):
         self.assertTrue(result.truncation[0]["truncated"])
         self.assertEqual(len(calls), 2)
         self.assertEqual(scope["_ItlLogicResult"].__annotations__, {"result": str})
+
+    def test_quotes_are_exact_source_fragments_not_reconstructions_or_comments(self):
+        scope, _, _, _ = make_scope()
+        row = json.loads(review_payload("факт"))["rows"][0]
+        code = '// Нельзя цитировать как исполнение: Возврат Подмена;\r\nВозврат\r\n    Параметры.Остаток;'
+        render = lambda r: scope["_itl_logic_render_review"](json.dumps({"rows": [r]}), code)
+        self.assertIn("Возврат<br>    Параметры.Остаток;", render(dict(row, quote="Возврат\r\n    Параметры.Остаток;")))
+        for quote in ('Возврат Параметры.Остаток;', 'Параметры.Остаток в строке 3',
+                      'Параметры.Остат...', 'Возврат Подмена;'):
+            with self.subTest(quote=quote), self.assertRaises(ValueError):
+                render(dict(row, quote=quote))
+        with self.assertRaises(ValueError):
+            scope["_itl_logic_render_review"](json.dumps({"rows": [dict(row, quote="Возврат \n0;")]}), "Возврат // пояснение\n0;")
+        row["input"] = {"bindings": [], "path": "Возврат\r\n    Параметры.Остаток;"}
+        self.assertIn("Ветка исходника:", render(row))
+
+    def test_unknown_field_paths_are_rejected_in_every_narrative_cell(self):
+        scope, _, _, _ = make_scope()
+        row = json.loads(review_payload("Параметры.Остаток"))["rows"][0]
+        code = 'Возврат Параметры.Остаток;'
+        for key in ("actual", "required", "basis", "explanation"):
+            with self.subTest(cell=key), self.assertRaises(ValueError):
+                scope["_itl_logic_render_review"](json.dumps({"rows": [dict(row, **{key: "Параметры.Остатко"})]}), code)
+        # Prose sentence punctuation is not a member access; literal data is not a target name.
+        row.update(actual="Правило API. Предусловие нарушено.", input={"bindings": [
+            {"target": "Параметры.Остаток", "state": "value", "value": "Параметры.Остатко"}], "path": ""})
+        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        self.assertIn('"Параметры.Остатко" (JSON-значение)', answer)
+
+    def test_typed_witness_names_are_grounded_in_accesses_and_property_literals(self):
+        scope, _, _, _ = make_scope()
+        for owner, field in (("Параметры", "Артикул"), ("Options", "Enabled"), ("Данные", "СтавкаНДС")):
+            code = f'Функция Проверить({owner})\nЕсли Не {owner}.Свойство("{field}") Тогда Возврат Ложь; КонецЕсли;\nКонецФункции'
+            row = json.loads(review_payload("факт"))["rows"][0]
+            row.update(method="Проверить", quote=f'{owner}.Свойство("{field}")', input={"bindings": [
+                {"target": owner.lower()+"."+field.lower(), "state": "absent", "value": None}], "path": ""})
+            answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+            self.assertIn(owner+"."+field+": поле отсутствует", answer)
+            for target in (owner+"."+field+"Опечатка", owner+"Опечатка", owner+" = Новый Структура"):
+                row["input"]["bindings"][0]["target"] = target
+                with self.subTest(target=target), self.assertRaises(ValueError):
+                    scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+            row["input"] = {"bindings": [], "path": ""}
+            row["method"] = "ПроверитьОпечатка"
+            with self.assertRaises(ValueError):
+                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+
+    def test_witness_rejects_ambiguous_states_but_keeps_type_and_cardinality(self):
+        scope, _, _, _ = make_scope()
+        row = json.loads(review_payload("N обращений"))["rows"][0]
+        code = 'Для Каждого Элемент Из Коллекция Цикл Обработать(Элемент); КонецЦикла;'
+        binding = {"target": "Коллекция", "state": "size", "value": 12}
+        row["input"] = {"bindings": [binding, dict(binding, state="type", value="Массив")], "path": ""}
+        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        self.assertIn("число элементов 12", answer)
+        self.assertIn('тип "Массив"', answer)
+        invalid = [dict(binding, value=True), dict(binding, value=-1), dict(binding, state="absent", value=None),
+                   dict(binding, state="value", value={"freeform": "code"}), dict(binding, state="code"),
+                   dict(binding, state="type", value=""), dict(binding, state="value", value=float('nan'))]
+        for bad in invalid:
+            row["input"] = {"bindings": [bad], "path": ""}
+            with self.subTest(binding=bad), self.assertRaises(ValueError):
+                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        for witness in ("произвольный вход", {"bindings": [binding, binding], "path": ""},
+                        {"bindings": [], "path": "ПодменённаяВетка()"}):
+            row["input"] = witness
+            with self.assertRaises(ValueError):
+                scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+
+    def test_invalid_optimization_advice_cannot_become_a_confirmed_required_result(self):
+        code = 'Для Каждого Элемент Из Коллекция Цикл Запрос.Выполнить(); КонецЦикла;'
+        row = json.loads(review_payload("N обращений к БД"))["rows"][0]
+        row.update(status="проблема производительности", method="fixture", quote="Запрос.Выполнить();",
+                   input={"bindings": [{"target": "Коллекция", "state": "size", "value": 10}], "path": ""},
+                   basis="Один запрос на каждой итерации", required="Один запрос с НеверныйОператор()")
+        first, calls, errors, _ = make_scope(review_text=json.dumps({"rows": [row]}), draft="unsafe remediation")
+        failed = asyncio.run(first["check_1c_logic"](code))
+        self.assertIn("Проверка логики не завершена", failed.answer)
+        self.assertIn("Повторите check_1c_logic с тем же кодом", failed.answer)
+        self.assertNotIn("НеверныйОператор", failed.answer)
+        self.assertNotIn("unsafe remediation", failed.answer)
+        self.assertEqual(len(calls), 2)
+        row["required"] = ""
+        second, resumed, _, _ = make_scope(review_text=json.dumps({"rows": [row]}), draft="fresh analysis")
+        accepted = asyncio.run(second["check_1c_logic"](code))
+        self.assertIn("N обращений к БД", accepted.answer)
+        self.assertIn("Подтверждено ошибок логики: 0; проблем производительности: 1.", accepted.answer)
+        self.assertEqual(accepted.result, accepted.answer)
+        self.assertEqual(calls[0][1], resumed[0][1])
+        self.assertEqual(len(resumed), 2)
+        self.assertIs(resumed[0][4], resumed[1][4])
+        self.assertIsNot(calls[0][4], resumed[0][4])
+        self.assertFalse(accepted.truncation[0]["truncated"])
+
+    def test_required_result_is_source_owned_not_model_authored_repair_code(self):
+        scope, _, _, _ = make_scope()
+        row = json.loads(review_payload("0"))["rows"][0]
+        row.update(status="ошибка логики", method="fixture", quote="Возврат 0;", input={"bindings": [], "path": "Возврат 0;"},
+                   required="Заменить реализацию на НепроверенныйСпособ()", basis="Явное требование",
+                   proof_kind="explicit_requirement", requirement_quote="Результат должен быть 1.", required_value="1")
+        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), '// Результат должен быть 1.\nВозврат 0;')
+        self.assertIn("Подтверждено ошибок логики: 1", answer)
+        self.assertIn("| 0 | 1 |", answer)
+        self.assertNotIn("НепроверенныйСпособ", answer)
+        row.update(proof_kind="runtime_precondition", required="", actual="Системное исключение", basis="Предусловие API")
+        answer = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), 'Возврат 0;')
+        self.assertIn("Соблюдение предусловия операции или отклонение входа до неё.", answer)
+        self.assertIn("Подтверждено ошибок логики: 1", answer)
+
+    def test_unseen_identifiers_and_layouts_use_the_same_grounding_and_prompt_policy(self):
+        policies = set()
+        for index, field in enumerate(("МаркерДоступа", "Quantity", "_Признак7", "ЧислоЁмкостей")):
+            owner = f"Вход{index}"
+            for op in ("И", "Или"):
+                code = f'Если {owner}.Свойство("{field}") {op} Проверить({owner} . {field}) Тогда\nВозврат Истина; КонецЕсли;'
+                row = json.loads(review_payload(f"{owner}.{field}"))["rows"][0]
+                row.update(quote=f'{owner} . {field}', input={"bindings": [
+                    {"target": owner+"."+field, "state": "value", "value": False}], "path": ""})
+                scope, calls, _, _ = make_scope(review_text=json.dumps({"rows": [row]}))
+                accepted = asyncio.run(scope["check_1c_logic"](code))
+                self.assertNotIn("Проверка логики не завершена", accepted.answer)
+                policies.add(calls[1][1].split("Код:\n```bsl\n", 1)[0])
+                row["explanation"] = f"{owner}.{field}Подмена"
+                with self.assertRaises(ValueError):
+                    scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        self.assertEqual(len(policies), 1)
+
+    def test_original_e50_field_typos_and_sql_advice_fail_before_becoming_evidence(self):
+        source = ('Функция ПроверитьКлючРаботы(КлючРаботы)\n'
+                  'Если КлючРаботы.ВидРаботы = "Задание" Тогда\n'
+                  'Если Не КлючРаботы.Свойство("Задание") Или ТипЗнч(КлючРаботы.Задание) <> Тип("Строка") Тогда\n'
+                  'ВызватьИсключение "Некорректная ссылка задания.";\nКонецЕсли;\nКонецЕсли;\nКонецФункции')
+        row = json.loads(review_payload("Чтение отсутствующего поля не происходит"))["rows"][0]
+        row.update(status="защищено", method="ПроверитьКлючРаботы", quote='КлючРаботы.Свойство("Задание")',
+                   input={"bindings": [{"target": "КлючРаботы.ВидРаботы", "state": "value", "value": "Задание"},
+                                       {"target": "КлючРаботы.Задание", "state": "absent", "value": None}], "path": ""})
+        unknown_access = dict(row, actual="Операнд ТипЗнч(КлючРаботы.Задано) не вычисляется")
+        unknown_input = dict(row, input={"bindings": [{"target": "КлючРаботы.ВидРаботты", "state": "value", "value": "Задание"}], "path": ""})
+        for bad in (unknown_access, unknown_input):
+            scope, calls, errors, _ = make_scope(review_text=json.dumps({"rows": [bad]}))
+            result = asyncio.run(scope["check_1c_logic"](source))
+            self.assertIn("Проверка логики не завершена", result.answer)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(errors), 1)
+        row.update(status="проблема производительности", required="Один запрос с условием В ИД() для всех ссылок", basis="N запросов")
+        scope, _, _, _ = make_scope()
+        with self.assertRaises(ValueError):
+            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), source)
+
+    def test_large_source_and_quoted_comments_keep_grounding_at_the_bounded_boundary(self):
+        scope, _, _, _ = make_scope()
+        # A token boundary prevents a failed dotted-path search from retrying at
+        # every suffix of a 100k identifier (the original R08 workload).
+        code = "Ж" * 100000
+        row = json.loads(review_payload("факт"))["rows"][0]
+        result = scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        self.assertNotIn("Проверка логики не завершена", result)
+        code = 'Текст = "строка // не комментарий ""данные"""; // Чужой.Объект\nВозврат Данные.Поле;'
+        row.update(quote='Текст = "строка // не комментарий ""данные""";', actual="Данные.Поле")
+        self.assertIn("Данные.Поле", scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code))
+        row["actual"] = "Чужой.Объект"
+        with self.assertRaises(ValueError):
+            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
+        code = 'Функция Основная()\nТекст = "Функция Подмена()";\nВозврат 0;\nКонецФункции'
+        row.update(method="Подмена", quote="Возврат 0;", actual="0")
+        with self.assertRaises(ValueError):
+            scope["_itl_logic_render_review"](json.dumps({"rows": [row]}), code)
 
     def test_presence_and_negation_have_explicit_opposite_results_in_both_stages(self):
         scope, calls, _, _ = make_scope(draft="untrusted polarity claim")

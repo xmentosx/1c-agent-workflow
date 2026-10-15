@@ -153,6 +153,40 @@ class ModernTelemetryTests(unittest.IsolatedAsyncioTestCase):
     def events(self, captured):
         return [json.loads(record.getMessage()) for record in captured.records]
 
+    async def test_ungrounded_evidence_is_terminal_error_with_content_safe_continuation(self):
+        class UngroundedReviewClient(Client):
+            malformed = True
+
+            async def collect_prompt(self, entry, sent, *, budget):
+                value = await super().collect_prompt(entry, sent, budget=budget)
+                if self.malformed and "Формат ответа этого этапа" in sent:
+                    payload = json.loads(value)
+                    payload["rows"][0]["actual"] = "Данные.Порго"
+                    return json.dumps(payload)
+                return value
+
+        client = UngroundedReviewClient()
+        scope, _ = scope_for(client)
+        code = "Возврат Данные.Порог;"
+        with self.assertLogs(observability.LOGGER, level="INFO") as captured:
+            failed = await scope["check_1c_logic"](code)
+            client.malformed = False
+            accepted = await scope["check_1c_logic"](code)
+        events = self.events(captured)
+        terminal = [e for e in events if e["event"] == "tool_end"]
+        self.assertEqual([e["outcome"] for e in terminal], ["error", "returned"])
+        self.assertEqual([e["attempts"] for e in terminal], [2, 2])
+        self.assertEqual(len({e["requestId"] for e in terminal}), 2)
+        self.assertEqual(len({e["inputSha256"] for e in terminal}), 1)
+        self.assertEqual(len({e["snapshotSha256"] for e in terminal}), 1)
+        self.assertIn("Повторите check_1c_logic с тем же кодом", failed.answer)
+        self.assertEqual(accepted.answer, rendered_answer("unsupported-response-secret"))
+        self.assertEqual(accepted.result, accepted.answer)
+        self.assertEqual(failed.truncation, accepted.truncation)
+        self.assertEqual(len(client.calls), 4)
+        for secret in (code, "Данные.Порго", "unsupported-response-secret"):
+            self.assertNotIn(secret, json.dumps(events, ensure_ascii=False))
+
     async def test_invalid_review_is_terminal_error_and_original_task_can_continue(self):
         class MalformedReviewClient(Client):
             malformed = True
