@@ -1561,6 +1561,83 @@ function Confirm-ItlOnDemandExecutionInvocation {
     return $fresh
 }
 
+function Write-ItlRoctupStartupFailureDiagnostic {
+    param([string]$InstanceId, [object]$State, [object]$RuntimeState, [object]$LaunchResult,
+        [int]$Port, [string]$BackendVersion, [string]$Stage, [datetime]$StartedAt,
+        [long]$ElapsedMilliseconds, [string]$StartupMessage, [string]$Password)
+
+    # Observation only: this file is never an ownership or recovery proof.
+    $redact = { param([string]$Text, [int]$Limit)
+        if ($Password) { $Text = $Text.Replace($Password, '[redacted]') }
+        if ($Text.Length -gt $Limit) { $Text = $Text.Substring(0, $Limit) }
+        return $Text
+    }
+    $observation = [ordered]@{ pid = $null; processStartTime = $null; executablePath = $null; state = 'unknown'; exitCode = $null }
+    $logPath = ''; $logStatus = 'unknown'; $logBytes = $null; $logExcerpt = ''; $logTruncated = $false
+    if ($null -ne $LaunchResult) {
+        $logPath = [string](Get-StateValue $LaunchResult 'logPath' '')
+        $observation.executablePath = Get-StateValue $LaunchResult 'executablePath' $null
+        # Do not use the string-oriented state reader for a Process: ToString()
+        # itself throws after exit, precisely when startup evidence is needed.
+        $processProperty = $LaunchResult.PSObject.Properties['process']
+        $launchedProcess = if ($null -ne $processProperty) { $processProperty.Value } else { $null }
+        if ($null -ne $launchedProcess) {
+            try { $observation.pid = $launchedProcess.Id } catch { }
+            try { $observation.processStartTime = $launchedProcess.StartTime.ToUniversalTime().ToString('o') } catch { }
+            try {
+                $launchedProcess.Refresh()
+                if ($launchedProcess.HasExited) {
+                    $observation.state = 'exited'
+                    try { $observation.exitCode = $launchedProcess.ExitCode } catch { }
+                } else { $observation.state = 'running' }
+            } catch { }
+        }
+    }
+    # StartTime can become unavailable after exit; retain the original saved launch identity.
+    if ($null -eq $observation.processStartTime) {
+        $savedStart = [string](Get-StateValue $RuntimeState 'processStartTime' '')
+        if ($savedStart) { $observation.processStartTime = $savedStart }
+    }
+    if ($logPath) {
+        $reader = $null
+        try {
+            if (-not [IO.File]::Exists($logPath)) { $logStatus = 'missing' }
+            else {
+                $logBytes = ([IO.FileInfo]$logPath).Length
+                $stream = [IO.FileStream]::new($logPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false, $true), $true)
+                $buffer = New-Object char[] 4096
+                $count = $reader.ReadBlock($buffer, 0, $buffer.Length)
+                $logExcerpt = & $redact ([string]::new($buffer, 0, $count)) 4096
+                $logTruncated = $reader.Peek() -ge 0
+                $logStatus = if ($logBytes -eq 0) { 'empty' } else { 'read' }
+            }
+        } catch { $logStatus = 'unreadable' }
+        finally { if ($null -ne $reader) { $reader.Dispose() } }
+    }
+    $portState = 'unknown'
+    if ($Port -gt 0) {
+        try { $portState = if (Test-TcpPortOpen -Port $Port) { 'listening' } else { 'closed' } } catch { }
+    }
+    $record = [ordered]@{
+        schemaVersion = 1; kind = 'roctup-startup-failure-observation'; instanceId = $InstanceId
+        capturedAt = (Get-Date).ToUniversalTime().ToString('o'); capturedBeforeCleanup = $true
+        startedAt = $StartedAt.ToUniversalTime().ToString('o'); elapsedMilliseconds = $ElapsedMilliseconds; stage = $Stage
+        infoBaseKind = [string](Get-StateValue $State 'infoBaseKind' ''); infoBasePath = [string](Get-StateValue $State 'devBranchInfoBasePath' '')
+        backendVersion = $BackendVersion; port = $Port; portState = $portState; process = $observation
+        startupMessage = (& $redact $StartupMessage 1024)
+        log = [ordered]@{ path = $logPath; status = $logStatus; bytes = $logBytes; excerpt = $logExcerpt; truncated = $logTruncated }
+    }
+    $summary = "ROCTUP startup observation: stage=$Stage; process=$($observation.state); exitCode=$($observation.exitCode); port=$portState; log=$logStatus."
+    try {
+        $path = Join-Path (Join-Path $script:ProjectRoot 'logs/1c') ('roctup-startup-failure-' + [guid]::NewGuid().ToString('N') + '.json')
+        Write-Utf8TextAtomic -Path $path -Value ($record | ConvertTo-Json -Depth 5) -RetryCount 1
+        return "$summary Diagnostic: $path"
+    } catch {
+        return "$summary Diagnostic could not be saved: $(& $redact $_.Exception.Message 256)"
+    }
+}
+
 function Start-ItlOnDemandBackendInstance {
     param([string]$Family, [string]$InstanceId, [string]$CatalogSha256, [string]$AuxiliaryContour = "", [object]$ServiceAdmissionPlan = $null)
     Invoke-WithItlOnDemandRuntimeMutation -Family $Family -InstanceIds @($InstanceId) -OwnerFunction 'Start-ItlOnDemandBackendInstanceCore' -OwnerArguments $PSBoundParameters
@@ -1620,9 +1697,14 @@ function Start-ItlOnDemandBackendInstanceCore {
     $runtimeState = $null
     $runtimeStatePersisted = $false
     $result = $null
+    $startupStage = 'artifact'
+    $startupStartedAt = (Get-Date).ToUniversalTime()
+    $startupWatch = [Diagnostics.Stopwatch]::StartNew()
     try {
         if ($Family -eq "roctup") {
             $artifact = Install-RoctupMcpArtifact
+            $version = [string]$artifact.version
+            $startupStage = 'port-lease'
             $range = Get-RoctupMcpPortRange
             $portLease = Resolve-ItlManagedPortLease -Family $portFamily -Key $key -Start $range.start -End $range.end -State $state -Subject "ROCTUP on-demand MCP port" -LeaseToken $portLeaseToken
             $port = [int]$portLease.port
@@ -1684,9 +1766,11 @@ function Start-ItlOnDemandBackendInstanceCore {
             testClientOwnershipMarkers = @(); testClientLogPath = ""; vanessaParamsPath = $vanessaParamsPath
             logPath = ""; startingAt = (Get-Date).ToUniversalTime().ToString("o"); startedAt = ""
         }
+        $startupStage = 'runtime-state'
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         $runtimeStatePersisted = $true
         $sessionWait = Get-OneCSessionWaitParameters
+        $startupStage = 'launch'
         if ($Family -eq "roctup") {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $state.devBranchInfoBasePath `
@@ -1706,6 +1790,7 @@ function Start-ItlOnDemandBackendInstanceCore {
                 -Password $serviceInfoBase.password `
                 -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
         }
+        $startupStage = 'process-identity'
         $process = Get-Process -Id $result.process.Id -ErrorAction Stop
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{
             status = "process-started"
@@ -1717,8 +1802,10 @@ function Start-ItlOnDemandBackendInstanceCore {
         })
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         Set-ItlOnDemandManagedPortLeaseStatus -Family $portFamily -Key $key -LeaseToken $portLeaseToken -Status "process-started" -ProcessId $result.process.Id
+        $startupStage = 'port-readiness'
         $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 })
         if (-not $ready) { throw "$Family on-demand MCP did not open port $port. Log: $($result.logPath)" }
+        $startupStage = 'port-owner'
         if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $port -ProcessId $result.process.Id)) {
             throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $port is not proven to be owned by backend PID $($result.process.Id)."
         }
@@ -1732,6 +1819,17 @@ function Start-ItlOnDemandBackendInstanceCore {
         return $runtimeState
     } catch {
         $startupError = $_
+        $startupDiagnostic = ''
+        if ($Family -eq 'roctup') {
+            try {
+                $startupDiagnostic = ' ' + (Write-ItlRoctupStartupFailureDiagnostic -InstanceId $InstanceId -State $state -RuntimeState $runtimeState -LaunchResult $result -Port $port -BackendVersion $version -Stage $startupStage -StartedAt $startupStartedAt -ElapsedMilliseconds $startupWatch.ElapsedMilliseconds -StartupMessage $startupError.Exception.Message -Password $targetPassword)
+            } catch {
+                $diagnosticError = $_.Exception.Message
+                if ($targetPassword) { $diagnosticError = $diagnosticError.Replace($targetPassword, '[redacted]') }
+                if ($diagnosticError.Length -gt 256) { $diagnosticError = $diagnosticError.Substring(0, 256) }
+                $startupDiagnostic = " ROCTUP startup observation unavailable: $diagnosticError"
+            }
+        }
         $canFinalizeCleanup = $true
         if ($null -ne $result -and $null -ne $result.process) {
             Stop-Process -Id $result.process.Id -Force -ErrorAction SilentlyContinue
@@ -1744,7 +1842,7 @@ function Start-ItlOnDemandBackendInstanceCore {
             try {
                 Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership | Out-Null
             } catch {
-                throw "$($startupError.Exception.Message) Cleanup could not prove strict stop; runtime state and leases were retained: $($_.Exception.Message)"
+                throw "$($startupError.Exception.Message)$startupDiagnostic Cleanup could not prove strict stop; runtime state and leases were retained: $($_.Exception.Message)"
             }
         } elseif (-not $runtimeStatePersisted -and $canFinalizeCleanup) {
             if ($port -gt 0) { Release-ItlOnDemandManagedPortLease -Family $portFamily -Key $key -LeaseToken $portLeaseToken }
@@ -1754,8 +1852,9 @@ function Start-ItlOnDemandBackendInstanceCore {
             }
         }
         if (-not $canFinalizeCleanup) {
-            throw "$($startupError.Exception.Message) Cleanup could not prove process exit and closed ports; runtime state and leases were retained."
+            throw "$($startupError.Exception.Message)$startupDiagnostic Cleanup could not prove process exit and closed ports; runtime state and leases were retained."
         }
+        if ($startupDiagnostic) { throw "$($startupError.Exception.Message)$startupDiagnostic" }
         throw $startupError
     }
 }

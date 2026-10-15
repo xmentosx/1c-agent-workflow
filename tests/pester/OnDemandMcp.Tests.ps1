@@ -797,6 +797,148 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It 'keeps ROCTUP failure observations before cleanup, including early exit and diagnostic write failure' {
+        foreach ($case in @('running', 'exited', 'identity-error', 'launch-error', 'write-error')) {
+            $actual = & {
+                $savedRoot = $script:ProjectRoot
+                $script:ProjectRoot = Join-Path $TestDrive ('ROCTUP Проба ' + $case)
+                $root = $script:ProjectRoot
+                $script:cleanupCalls = 0; $script:identityCalls = 0; $script:observedBeforeStop = $null
+                $script:launchProcess = [pscustomobject]@{ Id = 76001; StartTime = [datetime]'2026-10-15T08:00:00Z'; HasExited = ($case -eq 'exited'); ExitCode = 17 }
+                $script:launchProcess | Add-Member ScriptMethod Refresh { }
+                function Read-ItlOnDemandRuntimeState { $null }
+                function Read-CurrentDevBranchStateForRoctupMcp { [pscustomobject]@{ devBranchInfoBasePath = (Join-Path $root 'База 1'); infoBaseKind = 'file' } }
+                function Assert-DevBranchApplicationReady { param($State) $State }
+                function Get-ItlOnDemandPortFamily { 'roctup-mcp' }
+                function Get-ItlOnDemandPortKey { 'roctup-key' }
+                function Install-RoctupMcpArtifact { [pscustomobject]@{path='fixture.epf';version='v1.7.1'} }
+                function Get-RoctupMcpPortRange { [pscustomobject]@{start=48000;end=48010} }
+                function New-ItlManagedPortLeaseToken { 'private-lease-secret' }
+                function Resolve-ItlManagedPortLease { [pscustomobject]@{port=48001;leaseToken='private-lease-secret'} }
+                function Get-RoctupMcpUrl { 'http://127.0.0.1:48001/mcp' }
+                function Start-EnterpriseBackground {
+                    if ($case -eq 'launch-error') { throw 'original launch failure' }
+                    $log = Join-Path $root 'Журнал 1С.log'
+                    Write-Utf8Text -Path $log -Value ''
+                    [pscustomobject]@{process=$script:launchProcess;logPath=$log;executablePath='C:\platform\1cv8c.exe'}
+                }
+                function Get-Process {
+                    $script:identityCalls++
+                    if ($script:identityCalls -eq 1) {
+                        if ($case -eq 'identity-error') { throw 'original identity failure' }
+                        return $script:launchProcess
+                    }
+                    return $null
+                }
+                function Resolve-Agent1cFullPath { param($Path) $Path }
+                function Write-ItlOnDemandRuntimeState { }
+                function Set-ItlOnDemandManagedPortLeaseStatus { }
+                function Wait-RoctupMcpPort { param($Port,$TimeoutSeconds) if ($TimeoutSeconds -ne 30) { throw 'changed timeout' }; $false }
+                function Test-TcpPortOpen { $false }
+                function Stop-Process {
+                    $files = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs/1c') -Filter 'roctup-startup-failure-*.json' -ErrorAction SilentlyContinue)
+                    if ($files.Count) { $script:observedBeforeStop = Read-Utf8Text $files[0].FullName | ConvertFrom-Json }
+                    $script:launchProcess.HasExited = $true
+                }
+                function Start-Sleep { }
+                function Stop-ItlOnDemandBackendInstance { $script:cleanupCalls++ }
+                if ($case -eq 'write-error') { function Write-Utf8TextAtomic { throw 'diagnostic write denied' } }
+                $message = ''
+                try { Start-ItlOnDemandBackendInstance -Family roctup -InstanceId ('a'*32) -CatalogSha256 ('b'*64) | Out-Null }
+                catch { $message = $_.Exception.Message }
+                finally { $script:ProjectRoot = $savedRoot }
+                $files = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs/1c') -Filter 'roctup-startup-failure-*.json' -ErrorAction SilentlyContinue)
+                [pscustomobject]@{message=$message;before=$script:observedBeforeStop;files=$files;cleanup=$script:cleanupCalls;process=$script:launchProcess}
+            }
+            $actual.cleanup | Should -Be 1
+            if ($case -eq 'write-error') {
+                $actual.message | Should -Match 'did not open port.*Diagnostic could not be saved: diagnostic write denied'
+                $actual.files.Count | Should -Be 0
+                continue
+            }
+            $actual.files.Count | Should -Be 1
+            $json = Read-Utf8Text $actual.files[0].FullName
+            $json | Should -Not -Match 'private-lease-secret|portLeaseToken|commandLine|environment'
+            $record = $json | ConvertFrom-Json
+            $record.capturedBeforeCleanup | Should -BeTrue
+            $record.infoBasePath | Should -Match 'ROCTUP Проба .*База 1'
+            if ($case -eq 'launch-error') {
+                $actual.message | Should -Match '^original launch failure.*stage=launch'
+                $record.process.state | Should -Be 'unknown'
+                $record.process.pid | Should -BeNullOrEmpty
+            } else {
+                $actual.before.process.pid | Should -Be 76001
+                $record.log.status | Should -Be 'empty'
+                if ($case -eq 'exited') { $record.process.state | Should -Be 'exited'; $record.process.exitCode | Should -Be 17 }
+                else { $record.process.state | Should -Be 'running'; $record.process.exitCode | Should -BeNullOrEmpty }
+                $actual.process.HasExited | Should -BeTrue
+                if ($case -eq 'identity-error') { $actual.message | Should -Match '^original identity failure.*stage=process-identity' }
+                else { $actual.message | Should -Match '^roctup on-demand MCP did not open port.*stage=port-readiness' }
+            }
+        }
+    }
+
+    It 'observes the original exited native Process without invoking its invalid string conversion' {
+        & {
+            $savedRoot = $script:ProjectRoot
+            $script:ProjectRoot = Join-Path $TestDrive 'ROCTUP Завершенный процесс'
+            $child = $null
+            try {
+                $start = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path, '-NoProfile -Command exit 17')
+                $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+                $child = [Diagnostics.Process]::Start($start)
+                $child.WaitForExit(10000) | Should -BeTrue
+                $log = Join-Path $script:ProjectRoot 'Журнал открыт.log'
+                Write-Utf8Text $log 'Ошибка запуска 1С'
+                $writer = [IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+                try {
+                    $launch = [pscustomobject]@{ process=$child;logPath=$log;executablePath=$start.FileName }
+                    $message = Write-ItlRoctupStartupFailureDiagnostic -InstanceId ('d'*32) -LaunchResult $launch -StartedAt (Get-Date) -Stage port-readiness -StartupMessage 'original'
+                    $record = Read-Utf8Text (($message -split 'Diagnostic: ',2)[1]) | ConvertFrom-Json
+                    $record.process.pid | Should -Be $child.Id
+                    $record.process.state | Should -Be 'exited'
+                    $record.process.exitCode | Should -Be 17
+                    $record.log.status | Should -Be 'read'
+                    $record.log.excerpt | Should -Be 'Ошибка запуска 1С'
+                } finally { $writer.Dispose() }
+            } finally {
+                if ($null -ne $child) { $child.Dispose() }
+                $script:ProjectRoot = $savedRoot
+            }
+        }
+    }
+
+    It 'bounds and redacts startup log observations and distinguishes missing unreadable and unknown data' {
+        & {
+            $savedRoot = $script:ProjectRoot
+            $script:ProjectRoot = Join-Path $TestDrive 'Диагностика ROCTUP'
+            function Test-TcpPortOpen { throw 'port observation unavailable' }
+            try {
+                $state = [pscustomobject]@{ infoBaseKind='file';devBranchInfoBasePath='C:\База с пробелом' }
+                $log = Join-Path $script:ProjectRoot 'Лог 1С.log'
+                foreach ($status in @('read','missing','unreadable','unknown')) {
+                    if ($status -eq 'read') { Write-Utf8Text -Path $log -Value ('пароль-secret;' + ('Текст '*2000)) }
+                    if ($status -eq 'missing') { Remove-Item -LiteralPath $log }
+                    if ($status -eq 'unreadable') { [IO.File]::WriteAllBytes($log,[byte[]]@(255,255,255)) }
+                    $launch = if ($status -eq 'unknown') { $null } else { [pscustomobject]@{logPath=$log;executablePath='1cv8c.exe';process=$null} }
+                    $summary = Write-ItlRoctupStartupFailureDiagnostic -InstanceId ('c'*32) -State $state -LaunchResult $launch -Port 6003 -Stage launch -StartedAt (Get-Date) -StartupMessage 'original пароль-secret error' -Password 'пароль-secret'
+                    $path = ($summary -split 'Diagnostic: ',2)[1]
+                    $raw = Read-Utf8Text $path
+                    $record = $raw | ConvertFrom-Json
+                    $record.log.status | Should -Be $status
+                    $record.process.state | Should -Be 'unknown'
+                    $record.portState | Should -Be 'unknown'
+                    $record.process.pid | Should -BeNullOrEmpty
+                    $raw | Should -Not -Match 'пароль-secret'
+                    $record.startupMessage | Should -Be 'original [redacted] error'
+                    $record.infoBasePath | Should -Be 'C:\База с пробелом'
+                    $raw.Length | Should -BeLessThan 10000
+                    if ($status -eq 'read') { $record.log.truncated | Should -BeTrue; $record.log.excerpt.Length | Should -BeLessOrEqual 4096 }
+                }
+            } finally { $script:ProjectRoot = $savedRoot }
+        }
+    }
+
     It "records the actual executable returned for an on-demand backend manager" {
         $runtime = & {
             $script:runtimeStatuses = @()
@@ -820,6 +962,7 @@ Describe "ITL on-demand MCP facade" {
                 }
             }
             function Wait-RoctupMcpPort { return $true }
+            function Write-ItlRoctupStartupFailureDiagnostic { throw 'successful start must not collect diagnostics' }
             function Test-ItlOnDemandPortOwnedByProcess { return $true }
             function Set-ItlOnDemandManagedPortLeaseStatus {}
             function Get-Process { return [pscustomobject]@{ Id = 76001; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
