@@ -18,3 +18,9 @@ tests/fixtures/vanessa-html-forms/lib/** -text whitespace=-blank-at-eol,-blank-a
 
 # Exact upstream portability modules retain their native BOM and line endings.
 tests/fixtures/vanessa-extension-portability/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+
+# Hash-pinned excerpt and new recipe notices must survive checkout unchanged.
+tests/fixtures/vanessa-current-window-expression/function.upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-current-window-expression/provenance.json text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r6/ITL-NOTICE.txt text eol=lf
+third-party/vanessa-automation/1.2.043.42-itl-r6/LICENSE.upstream -text whitespace=cr-at-eol

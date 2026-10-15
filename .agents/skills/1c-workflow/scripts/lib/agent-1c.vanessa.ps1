@@ -4128,6 +4128,7 @@ function New-VanessaParamsFile {
     # Native VanessaExt is per TestManager process, not an infobase install.
     # useaddin maps to ИспользоватьКомпонентуVanessaExt; QuietInstall is on /C.
     $params["useaddin"] = $true
+    $params["useaddinforscreencapture"] = $true
     $params["QuitIfSilentInstallationAddinFails"] = $true
 
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)

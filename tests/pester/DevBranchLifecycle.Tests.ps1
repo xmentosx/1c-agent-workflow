@@ -5255,6 +5255,7 @@ try {
                 $clientRecord.PSObject.Properties[$additionalParamsKey].Value | Should -Not -Match ([regex]::Escape("/DisableStartupDialogs"))
 
                 $params.useaddin | Should -BeTrue
+                $params.useaddinforscreencapture | Should -BeTrue
                 $params.QuitIfSilentInstallationAddinFails | Should -BeTrue
                 $command | Should -Be "StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;VAParams=$paramsPath"
                 $command | Should -Not -Match 'VAParams="'
