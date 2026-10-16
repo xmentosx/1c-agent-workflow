@@ -46,6 +46,7 @@ function Get-DeliveryPlanIdentity {
         $identity['queue'] = @($Plan.queue | ForEach-Object { [ordered]@{ id=[string]$_.id; base=[string]$_.base; head=[string]$_.head } })
     }
     if ($Plan.PSObject.Properties['replacesPlanId']) { $identity['replacesPlanId'] = [string]$Plan.replacesPlanId }
+    if ($Plan.PSObject.Properties['replanQueueScope']) { $identity['replanQueueScope'] = [string]$Plan.replanQueueScope }
     return $identity
 }
 
