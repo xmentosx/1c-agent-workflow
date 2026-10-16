@@ -2,9 +2,9 @@
     $RepoRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
     function New-StorageCopy {
-        param([string]$Root,[string]$Status='passed',[string]$Candidate=('a'*40),[string]$Capsule=('f'*64))
+        param([string]$Root,[string]$Status='passed',[string]$Candidate=('a'*40),[string]$Capsule=('f'*64),[string]$Phase='Develop')
         $candidate=$Candidate;$capsule=$Capsule
-        $parent=Join-Path $Root ('q Проект/develop-'+$capsule.Substring(0,12)+'-'+$candidate.Substring(0,12)+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
+        $parent=Join-Path $Root ('q Проект/'+$Phase.ToLowerInvariant()+'-'+$capsule.Substring(0,12)+'-'+$candidate.Substring(0,12)+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         $project=Join-Path $parent 'project';$branch=Join-Path $parent 'branch'
         [void][IO.Directory]::CreateDirectory($project)
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('init','-b','master')|Out-Null
@@ -14,7 +14,7 @@
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('add','--all')|Out-Null
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('commit','-m','fixture')|Out-Null
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('worktree','add','--detach',$branch,'HEAD')|Out-Null
-        $claim=@{schemaVersion=2;kind='itl-qualification-fixture-target';status='disposed';phase='Develop';projectRoot=$project;branchRoot=$branch;copyRoot=$parent;projectsRoot=$Root;candidateCommit=$candidate;capsuleSha256=$capsule;workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $RepoRoot)}
+        $claim=@{schemaVersion=2;kind='itl-qualification-fixture-target';status='disposed';phase=$Phase;projectRoot=$project;branchRoot=$branch;copyRoot=$parent;projectsRoot=$Root;candidateCommit=$candidate;capsuleSha256=$capsule;workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $RepoRoot)}
         Write-QualificationFixtureJson -Path (Join-Path $parent 'qualification-fixture.json') -Value $claim
         Write-Utf8Text -Path (Join-Path $parent 'preparation-logs/restore.log') -Value 'Ошибка: тестовый путь с пробелами; exact diagnostic'
         Write-Utf8Text -Path (Join-Path $branch '.agent-1c/dev-branches/negative.json') -Value '{"pendingMergeOperation":"refresh-dev-branch","cursor":17}'
@@ -38,7 +38,7 @@
         return $copy
     }
     function New-RecoverableStorageCopy {
-        param([string]$Root,[string]$State='materializing')
+        param([string]$Root,[string]$State='materializing',[string]$Phase='Develop')
         $candidate=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
         # The capsule producer is a source repository, not another disposable
         # qualification target. Keep the cleanup target's Unicode path unchanged.
@@ -55,9 +55,9 @@
         $head=(Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('rev-parse','HEAD')).stdout.Trim()
         $files=@(Get-ChildItem -LiteralPath $capsule -File|ForEach-Object {@{path=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()}})
         $manifest=Join-Path $capsule 'capsule.json'
-        Write-QualificationFixtureJson -Path $manifest -Value @{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase='Develop';infoBaseKind='file';branchName='golden';masterCommit=$head;branchCommit=$head;workflowCommit=$candidate;files=$files}
+        Write-QualificationFixtureJson -Path $manifest -Value @{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';branchName='golden';masterCommit=$head;branchCommit=$head;workflowCommit=$candidate;files=$files}
         $sha=(Get-FileHash -LiteralPath $manifest).Hash.ToLowerInvariant()
-        $copy=New-StorageCopy -Root $Root -Candidate $candidate -Capsule $sha
+        $copy=New-StorageCopy -Root $Root -Candidate $candidate -Capsule $sha -Phase $Phase
         $copy.claim.status=$State;$copy.claim.capsulePath=$manifest
         Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
         Invoke-RepositoryGit -RepositoryRoot $copy.fixture.projectRoot -Arguments @('remote','add','origin',(Join-Path $capsule 'source.bundle'))|Out-Null
@@ -233,6 +233,57 @@ Describe 'Legacy disposed copy cleanup through the existing owner' {
 }
 
 Describe 'Failed factory and unclosed qualification copy recovery' {
+    It 'archives the exact inactive database and raw Git state before disposing <phase>, and keeps Release checkpoints' -ForEach @(@{phase='Develop'},@{phase='Release'}) -Tag archive_inactive {
+        $root=Join-Path $TestDrive ('archive Пример '+$phase);$copy=New-RecoverableStorageCopy -Root $root -State ready -Phase $phase
+        $script:archiveDatabase=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/test/1Cv8.1CD'
+        Write-Utf8Text -Path $script:archiveDatabase -Value 'unique database state after the original failure'
+        $indexHash=(Get-FileHash -LiteralPath (Join-Path $copy.fixture.projectRoot '.git/index')).Hash
+        $diagnostics=Join-Path $root 'diagnostics'
+        $checkpoint=Join-Path $copy.fixture.branchRoot '.agent-1c/runs/release-e2e/test/checkpoint.json'
+        Write-QualificationFixtureJson -Path $checkpoint -Value @{status='passed';lastPassedStage='extension-smoke'}
+        Mock Invoke-SourceFixtureInstalledAction {
+            param($Root,$Arguments)
+            $Arguments|Should -Contain '-ArchivedInactive'
+            $i=[Array]::IndexOf($Arguments,'-RecoveryArchiveIndex');$folder=Split-Path -Parent $Arguments[$i+1]
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip=[IO.Compression.ZipFile]::OpenRead((Join-Path $folder 'recovery.zip'))
+            try {$zip.GetEntry('branch/.agent-1c/infobases/test/1Cv8.1CD')|Should -Not -BeNullOrEmpty;$zip.GetEntry('project/.git/index')|Should -Not -BeNullOrEmpty}finally{$zip.Dispose()}
+            Remove-Item -LiteralPath $script:archiveDatabase
+            $path=Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json';$claim=Read-QualificationFixtureJson -Path $path;$claim.status='disposed'
+            $claim|Add-Member -NotePropertyName disposal -NotePropertyValue @{status='disposed';candidateCommit=$claim.candidateCommit}
+            Write-QualificationFixtureJson -Path $path -Value $claim
+        }
+        $arguments=@{Fixture=$copy.fixture;CandidateRoot=$RepoRoot;ProjectsRoot=$root;DiagnosticRoot=$diagnostics;ReportPath=(Join-Path $diagnostics 'cleanup-proof.json');RecoveryCleanup=$true;ArchiveInactive=$true}
+        $ledgerPath=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $RepoRoot) 'itl/resources/v1/ledger.json'
+        $script:archiveRetainedReference=$true
+        Mock Test-Path {return $true} -ParameterFilter {$LiteralPath -eq $ledgerPath}
+        Mock Read-QualificationFixtureJson {if($script:archiveRetainedReference){return @{resources=@(@{state='retained';identity=[pscustomobject]@{path=$copy.root}})}}else{return @{resources=@()}}} -ParameterFilter {$Path -eq $ledgerPath}
+        {Remove-SourceE2EFixtureCopy @arguments}|Should -Throw '*FIXTURE_COPY_PRESERVED*'
+        $script:archiveRetainedReference=$false
+        {Remove-SourceE2EFixtureCopy @arguments}|Should -Throw '*FIXTURE_COPY_RESUMABLE*'
+        Test-Path -LiteralPath $script:archiveDatabase|Should -BeTrue
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
+        Remove-Item -LiteralPath $checkpoint
+        $script:archiveRemovalInterrupted=$true
+        Mock Remove-Item {
+            param([string]$LiteralPath)
+            if($script:archiveRemovalInterrupted){throw 'injected interruption after archived database disposal'}
+            if(-not [IO.Path]::GetFullPath($LiteralPath).StartsWith([IO.Path]::GetFullPath($TestDrive)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'TEST_DELETE_OUTSIDE_TESTDRIVE'}
+            foreach($file in [IO.Directory]::EnumerateFiles($LiteralPath,'*',[IO.SearchOption]::AllDirectories)){[IO.File]::SetAttributes($file,[IO.FileAttributes]::Normal)}
+            [IO.Directory]::Delete($LiteralPath,$true)
+        } -ParameterFilter {$LiteralPath -eq $copy.root}
+        {Remove-SourceE2EFixtureCopy @arguments}|Should -Throw '*injected interruption*'
+        $archiveHash=(Get-FileHash -LiteralPath (Join-Path $diagnostics 'recovery.zip')).Hash
+        $script:archiveRemovalInterrupted=$false
+        (Remove-SourceE2EFixtureCopy @arguments).status|Should -BeExactly 'archived-inactive'
+        (Get-FileHash -LiteralPath (Join-Path $diagnostics 'recovery.zip')).Hash|Should -BeExactly $archiveHash
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -Exactly
+        $restore=Join-Path $root 'restored';[IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $diagnostics 'recovery.zip'),$restore)
+        (Read-Utf8Text -Path (Join-Path $restore 'branch/.agent-1c/infobases/test/1Cv8.1CD'))|Should -BeExactly 'unique database state after the original failure'
+        (Get-FileHash -LiteralPath (Join-Path $restore 'project/.git/index')).Hash|Should -BeExactly $indexHash
+        (Read-QualificationFixtureJson -Path (Join-Path $restore 'qualification-fixture.json')).status|Should -BeExactly 'ready'
+        (Read-QualificationFixtureJson -Path (Join-Path $diagnostics 'cleanup-proof.json')).reason|Should -BeExactly 'archive-inactive-qualification'
+    }
     It 'continues interrupted cleanup after the base owner already recorded disposal' -Tag recovery_resume {
         $root=Join-Path $TestDrive 'disposed retry Пример';$copy=New-RecoverableStorageCopy -Root $root -State preparation-failed
         $script:disposedRetryDatabase=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/test/1Cv8.1CD'

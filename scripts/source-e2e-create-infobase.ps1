@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$ProjectRoot='', [string]$DevBranchName='', [ValidateSet('Create','Dispose')][string]$Operation='Create', [string]$ExpectedCandidate='', [string]$OutputPath='')
+param([string]$ProjectRoot='', [string]$DevBranchName='', [ValidateSet('Create','Dispose')][string]$Operation='Create', [string]$ExpectedCandidate='', [string]$OutputPath='', [switch]$ArchivedInactive, [string]$RecoveryArchiveIndex='')
 # Source-only preparation. The installed baseline still owns RestoreIB.
 $lib=Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib'
 . (Join-Path $lib 'agent-1c.core.ps1')
@@ -50,15 +50,42 @@ function New-SourceQualificationInfoBase {
     return [pscustomobject]@{infoBasePath=$base;logPath=$log}
 }
 
+function Get-SourceQualificationArchivedDatabaseHash {
+    param([string]$Parent,[object]$Claim,[string]$IndexPath,[string]$DatabasePath)
+    $prefix=$Parent+[IO.Path]::DirectorySeparatorChar
+    $index=[IO.Path]::GetFullPath($IndexPath)
+    if($index.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $index) -cne 'recovery-index.json'){throw 'FIXTURE_ARCHIVED_DATABASE_PROOF_INVALID'}
+    $folder=Split-Path -Parent $index
+    $proof=Read-QualificationFixtureJson -Path (Resolve-QualificationFixtureChild -Root $folder -RelativePath 'cleanup-proof.json')
+    if([string]$proof.kind -cne 'itl-fixture-copy-cleanup-proof' -or [string]$proof.reason -cne 'archive-inactive-qualification' -or
+        [string]$proof.copyRoot -ine $Parent -or [string]$proof.candidateCommit -cne [string]$Claim.candidateCommit -or
+        [string]$proof.phase -cne [string]$Claim.phase -or [string]$proof.capsule.sha256 -cne [string]$Claim.capsuleSha256){throw 'FIXTURE_ARCHIVED_DATABASE_PROOF_INVALID'}
+    $relative=$DatabasePath.Substring($prefix.Length).Replace('\','/')
+    $records=@(foreach($record in (Read-QualificationFixtureJson -Path $index)){if([string]$record.path -ceq $relative){$record}})
+    if($records.Count -ne 1 -or $records[0].retainedSource -or [string]$records[0].sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'FIXTURE_ARCHIVED_DATABASE_PROOF_INVALID'}
+    Add-Type -AssemblyName System.IO.Compression
+    $stream=[IO.File]::OpenRead((Resolve-QualificationFixtureChild -Root $folder -RelativePath 'recovery.zip'))
+    $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read)
+    try {
+        $entry=$zip.GetEntry($relative)
+        if(-not $entry){throw 'FIXTURE_ARCHIVED_DATABASE_PROOF_INVALID'}
+        $input=$entry.Open();$hash=[Security.Cryptography.SHA256]::Create()
+        try {$actual=[BitConverter]::ToString($hash.ComputeHash($input)).Replace('-','').ToLowerInvariant()}finally{$input.Dispose();$hash.Dispose()}
+        if($actual -cne [string]$records[0].sha256){throw 'FIXTURE_ARCHIVED_DATABASE_PROOF_INVALID'}
+        return $actual
+    }finally{$zip.Dispose();$stream.Dispose()}
+}
+
 function Remove-SourceQualificationDatabases {
-    param([string]$BranchRoot, [string]$CandidateCommit)
+    param([string]$BranchRoot, [string]$CandidateCommit,[switch]$ArchivedInactive,[string]$RecoveryArchiveIndex='')
     . (Join-Path $lib 'agent-1c.seed.ps1')
     $branch=[IO.Path]::GetFullPath($BranchRoot).TrimEnd('\','/')
     $parent=Split-Path -Parent $branch
     $claimPath=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'qualification-fixture.json'
     $claim=Read-QualificationFixtureJson -Path $claimPath
     if($CandidateCommit -notmatch '^[0-9a-f]{40}$' -or
-        [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
+        [string]$claim.kind -cne 'itl-qualification-fixture-target' -or
+        ([string]$claim.phase -cne 'Develop' -and -not ($ArchivedInactive -and [string]$claim.phase -ceq 'Release')) -or
         [string]$claim.status -notin @('materializing','preparation-failed','ready','disposed') -or [string]$claim.candidateCommit -cne $CandidateCommit -or
         [string]$claim.branchRoot -ine $branch -or [string]$claim.projectRoot -ine (Join-Path $parent 'project') -or
         $branch -ine (Join-Path $parent 'branch')) {throw 'FIXTURE_DISPOSE_OWNERSHIP_INVALID'}
@@ -105,6 +132,7 @@ function Remove-SourceQualificationDatabases {
         $seedLocks.Add((Open-BranchSeedLease -Paths $paths -Mode write -TimeoutSeconds 1))
     }
     foreach($file in $files){
+        $archivedHash=if($ArchivedInactive){Get-SourceQualificationArchivedDatabaseHash -Parent $parent -Claim $claim -IndexPath $RecoveryArchiveIndex -DatabasePath $file}else{''}
         $settings=Get-OneCExecutionGuardSettings
         . (Join-Path $lib '../../../itl-remote-runner/scripts/ExecutionGuard.ps1')
         $owner=$null
@@ -115,6 +143,7 @@ function Remove-SourceQualificationDatabases {
             }
             [void](Assert-ItlExecutionGuardHost -Owner $owner)
             [void](Resolve-QualificationFixtureChild -Root $parent -RelativePath $file.Substring($parent.Length+1))
+            if($ArchivedInactive -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $archivedHash){throw 'FIXTURE_ARCHIVED_DATABASE_CHANGED: preserve the current database and repeat archival after diagnosis'}
             # The guard excludes workflow writers; the exclusive handle also excludes native clients.
             $stream=[IO.FileStream]::new($file,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::DeleteOnClose)
             try {$bytes=$stream.Length} finally {$stream.Dispose()}
@@ -141,7 +170,7 @@ if($ProjectRoot){
     Import-DotEnv -Path (Join-Path $script:ProjectRoot '.dev.env')
     Read-ProjectConfig
     if($Operation -eq 'Dispose'){
-        $result=Remove-SourceQualificationDatabases -BranchRoot $script:ProjectRoot -CandidateCommit $ExpectedCandidate
+        $result=Remove-SourceQualificationDatabases -BranchRoot $script:ProjectRoot -CandidateCommit $ExpectedCandidate -ArchivedInactive:$ArchivedInactive -RecoveryArchiveIndex $RecoveryArchiveIndex
         if($OutputPath){Write-QualificationFixtureJson -Path $OutputPath -Value $result}
     } else {$null=New-SourceQualificationInfoBase -BranchRoot $script:ProjectRoot -BranchName $DevBranchName -PlatformPath (Get-PlatformPath)}
 }
