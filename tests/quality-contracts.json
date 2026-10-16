@@ -57,6 +57,7 @@
       "scripts/invoke-develop-e2e.ps1",
       "scripts/source-e2e-fixture.ps1",
       "scripts/source-e2e-storage.ps1",
+      "scripts/source-e2e-copy-recovery.ps1",
       "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/develop-e2e-cleanup.ps1",
@@ -65,6 +66,7 @@
     "release": [
       "scripts/source-e2e-fixture.ps1",
       "scripts/source-e2e-storage.ps1",
+      "scripts/source-e2e-copy-recovery.ps1",
       "scripts/source-e2e-create-infobase.ps1",
       "scripts/lifecycle-qualification-fixture.ps1",
       "scripts/build-client-mcp-patched.ps1",
@@ -83,6 +85,7 @@
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
       "scripts/source-e2e-storage.ps1",
+      "scripts/source-e2e-copy-recovery.ps1",
       "scripts/develop-configuration-rejection.ps1",
       "scripts/stand-env-identity.ps1",
       "scripts/git-path-list.ps1"
@@ -679,7 +682,7 @@
       "gate": "targeted",
       "budgetSeconds": 60,
       "primaryTest": "tests/pester/SourceE2EStorage.Tests.ps1",
-      "paths": ["scripts/source-e2e-storage.ps1", "scripts/source-e2e-fixture.ps1", "scripts/lifecycle-qualification-fixture.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "tests/pester/SourceE2EStorage.Tests.ps1"],
+      "paths": ["scripts/source-e2e-storage.ps1", "scripts/source-e2e-copy-recovery.ps1", "scripts/source-e2e-fixture.ps1", "scripts/lifecycle-qualification-fixture.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "tests/pester/SourceE2EStorage.Tests.ps1"],
       "tests": ["tests/pester/SourceE2EStorage.Tests.ps1"]
     },
     {

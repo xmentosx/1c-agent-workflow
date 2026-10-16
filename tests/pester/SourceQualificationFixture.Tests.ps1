@@ -207,6 +207,24 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         }
     }
 
+    It 'records a clone failure before the first Git write and reclaims only its owned factory files' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'early failure seed')
+        $receipt=Join-Path $TestDrive 'early-failure.json';$projects=Join-Path $TestDrive 'failed factory Пример'
+        Mock Invoke-RepositoryGit {throw 'original clone failure'} -ParameterFilter {$Arguments[0] -eq 'clone'}
+        {New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot $projects -ReceiptPath $receipt}|Should -Throw '*original clone failure*'
+        $failed=Read-QualificationFixtureJson -Path $receipt
+        $failed.claim.status|Should -BeExactly 'preparation-failed'
+        $failed.claim.preparationFailure.error|Should -BeExactly 'original clone failure'
+        Test-Path -LiteralPath $failed.projectRoot|Should -BeFalse
+        $lease=Open-SourceE2EFixtureUse -ProjectRoot $failed.projectRoot
+        $lease.Dispose()
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $projects -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $TestDrive 'failure evidence') -IncludeLegacy
+        $result.removed|Should -Be 1
+        Test-Path -LiteralPath $failed.claim.copyRoot|Should -BeFalse
+        (Read-QualificationFixtureJson -Path (Join-Path $result.entries[0].diagnostics 'qualification-fixture.json')).preparationFailure.error|Should -BeExactly 'original clone failure'
+        Test-Path -LiteralPath $seed.project|Should -BeTrue
+    }
+
     It 'preserves the negative pending/cursor/baseline and exact source while excluding foreign refs and runtime ownership' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'capsule paths')
         $seedBase=Join-Path $seed.branch '.agent-1c/infobases/negative'
@@ -381,7 +399,7 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
             switch($Action){
                 'release-e2e-snapshot'{$i=[Array]::IndexOf($Arguments,'-ReleaseSnapshotPath');Write-Utf8Text -Path (Join-Path $Root $Arguments[$i+1]) -Value 'synthetic release database'}
                 'qualification-create-infobase'{$state=Read-QualificationFixtureJson -Path (Join-Path $Root ('.agent-1c/dev-branches/'+$Arguments[1]+'.json'));Write-Utf8Text -Path (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD') -Value 'synthetic native create result'}
-                'release-e2e-restore'{if($script:failRestore){$script:failRestore=$false;throw 'original restore failure; target retained'}}
+                'release-e2e-restore'{{Open-SourceE2EFixtureUse -ProjectRoot (Join-Path (Split-Path -Parent $Root) 'project')}|Should -Throw '*FIXTURE_COPY_IN_USE*';if($script:failRestore){$script:failRestore=$false;throw 'original restore failure; target retained'}}
                 'update-workflow'{Write-Utf8Text -Path (Join-Path $Root '.agent-1c/dependency-lock.json') -Value ('{"dependencies":{"workflowPackage":{"commit":"'+$script:fixtureCandidateCommit+'"}}}')}
                 'refresh-dev-branch'{throw 'Full refresh requires a source database absent from this sealed fixture; preserve the native reproducer.'}
                 'refresh-dev-branch-lite'{
@@ -396,7 +414,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $options=@{ProjectRoot=$seed.project;Phase='Release';CandidateRoot=$RepoRoot;ProjectsRoot=(Join-Path $TestDrive 'release owned projects');AiRulesSource=$RepoRoot;ReceiptPath=$receipt}
         {New-SourceE2EFixtureProject @options}|Should -Throw '*original restore failure*'
         $failed=Read-QualificationFixtureJson -Path $receipt
-        $failed.claim.status|Should -BeExactly 'materializing'
+        $failed.claim.status|Should -BeExactly 'preparation-failed'
+        $failed.claim.preparationFailure.error|Should -BeExactly 'original restore failure; target retained'
         $ready=New-SourceE2EFixtureProject @options
         Write-QualificationFixtureJson -Path $receipt -Value $ready
         $ready.projectRoot|Should -Not -Be $failed.projectRoot

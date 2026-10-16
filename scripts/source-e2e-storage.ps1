@@ -55,13 +55,16 @@ function Open-SourceE2EFixtureUse {
     catch {throw "FIXTURE_COPY_IN_USE: $parent; retain the copy and repeat after its current owner exits."}
 }
 
+. (Join-Path $PSScriptRoot 'source-e2e-copy-recovery.ps1')
+
 function Get-SourceE2EFixtureCopyContext {
-    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot, [switch]$LegacyCleanup, [string]$ProjectsRoot)
+    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot, [switch]$LegacyCleanup, [string]$ProjectsRoot, [switch]$RecoveryCleanup)
     $parent=Split-Path -Parent ([IO.Path]::GetFullPath([string]$Fixture.projectRoot).TrimEnd('\','/'))
     $prefix=$parent+[IO.Path]::DirectorySeparatorChar
     foreach($external in @($ReportPath,$DiagnosticRoot)){
         if([IO.Path]::GetFullPath($external) -ieq $parent -or [IO.Path]::GetFullPath($external).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
     }
+    if($RecoveryCleanup){return Get-SourceE2ECopyRecoveryContext -Parent $parent -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $DiagnosticRoot}
     # Persisted terminal proof is a prerequisite. Failed Develop repeats from the
     # immutable seed; its diagnostic bundle stays with the existing gate logs.
     $report=if($LegacyCleanup){$null}else{Read-QualificationFixtureJson -Path $ReportPath}
@@ -98,7 +101,7 @@ function Get-SourceE2EFixtureCopyContext {
     }
     if(-not $claim.PSObject.Properties['schemaVersion'] -or [int]$claim.schemaVersion -ne 2 -or
         [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
-        [string]$claim.status -notin @('materializing','ready','disposed') -or [string]$claim.copyRoot -ine $parent -or
+        [string]$claim.status -notin @('materializing','preparation-failed','ready','disposed') -or [string]$claim.copyRoot -ine $parent -or
         [string]$claim.projectRoot -ine (Join-Path $parent 'project') -or [string]$claim.branchRoot -ine (Join-Path $parent 'branch') -or
         [string]$Fixture.branchRoot -ine [string]$claim.branchRoot -or [string]$Fixture.claim.candidateCommit -cne [string]$claim.candidateCommit -or
         [string]$report.candidate.commit -cne [string]$claim.candidateCommit -or [string]$report.status -notin @('passed','failed') -or
@@ -130,24 +133,35 @@ function Write-SourceE2EFixtureTerminal {
 }
 
 function Remove-SourceE2EFixtureCopy {
-    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot)
+    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup)
     $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
     $parent=$context.parent;$prefix=$context.prefix;$claim=$context.claim;$claimPath=$context.claimPath;$archivedClaim=$context.archivedClaim;$report=$context.report
-    if([string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
+    if(-not $RecoveryCleanup -and [string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
     if(-not (Test-Path -LiteralPath $parent)){return @{status='removed';root=$parent;diagnostics=$DiagnosticRoot;alreadyRemoved=$true}}
     $lease=Open-SourceE2EFixtureUse -ProjectRoot ([string]$claim.projectRoot)
     try {
-        if(Test-Path -LiteralPath (Join-Path $parent 'project/.git')){
+        if($RecoveryCleanup){
+            # Preparation may finish between discovery and admission. Rebind
+            # under the same lease before deciding whether its base is disposable.
+            $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
+            $claim=$context.claim;$report=$context.report
+        }
+        if((Test-Path -LiteralPath (Join-Path $parent 'project/.git')) -and (-not $RecoveryCleanup -or $context.gitValid)){
             $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $claim.projectRoot
             if($common -ine (Join-Path $parent 'project/.git')){throw 'FIXTURE_COPY_GIT_OUTSIDE_TARGET'}
             foreach($row in @(Get-RepositoryGitPathList -RepositoryRoot $claim.projectRoot -Arguments @('worktree','list','--porcelain','-z'))){
                 if($row.StartsWith('worktree ') -and -not ([IO.Path]::GetFullPath($row.Substring(9))).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_FOREIGN_WORKTREE'}
             }
+            if((Test-Path -LiteralPath (Join-Path $parent 'branch/.git')) -and (Get-RepositoryCommonGitDirectory -RepositoryRoot $claim.branchRoot) -ine $common){throw 'FIXTURE_COPY_FOREIGN_WORKTREE'}
         }
         if($env:OS -eq 'Windows_NT'){
             # Independent copies have independent roots. Never terminate a reader
             # to make cleanup possible, including an editor opened on this copy.
-            $readers=@(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop|Where-Object {$_.ProcessId -ne $PID -and [string]$_.CommandLine -and ([string]$_.CommandLine).IndexOf($parent,[StringComparison]::OrdinalIgnoreCase) -ge 0})
+            $readers=@(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop|Where-Object {
+                $_.ProcessId -ne $PID -and [string]$_.CommandLine -and
+                (([string]$_.CommandLine).IndexOf($parent,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                 ($RecoveryCleanup -and (Test-SourceE2ECopyProducerCommand -CommandLine $_.CommandLine -ProjectsRoot $ProjectsRoot)))
+            })
             if($readers.Count){throw 'FIXTURE_COPY_IN_USE: a live process still references this exact copy'}
         }
         $directories=[Collections.Generic.Stack[string]]::new();$directories.Push($parent)
@@ -156,7 +170,7 @@ function Remove-SourceE2EFixtureCopy {
             foreach($item in @(Get-ChildItem -LiteralPath $directories.Pop() -Force)){
                 if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'FIXTURE_REPARSE_POINT'}
                 if($item.PSIsContainer){$directories.Push($item.FullName)}else{
-                    if($item.Name -ieq '1Cv8.1CD'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED'}
+                    if($item.Name -ieq '1Cv8.1CD' -and -not $RecoveryCleanup){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED'}
                     $relative=$item.FullName.Substring($prefix.Length).Replace('\','/')
                     if($relative -match '^(project|branch)/\.agent-1c/.*/checkpoint\.json$'){throw 'FIXTURE_COPY_RESUMABLE: producer checkpoint is still present'}
                     if($relative -match '^(project|branch)/\.agent-1c/execution-checkpoints/.*\.json$'){
@@ -166,6 +180,20 @@ function Remove-SourceE2EFixtureCopy {
                     $files.Add($item);$bytes += $item.Length
                 }
             }
+        }
+        if($RecoveryCleanup){
+            $databases=@($files|Where-Object Name -ieq '1Cv8.1CD')
+            if($databases.Count){
+                if([string]$claim.status -notin @('materializing','preparation-failed')){throw 'FIXTURE_RECOVERY_DATABASE_RETAINED'}
+                # Only the existing exact-infobase owner can dispose a failed
+                # factory database. Its admission and exclusive handle still bind.
+                $null=Invoke-SourceFixtureInstalledAction -Root $claim.branchRoot -Action 'qualification-create-infobase' -Arguments @(
+                    '-Operation','Dispose','-ExpectedCandidate',[string]$claim.candidateCommit,'-OutputPath',(Join-Path $DiagnosticRoot 'database-disposal.json')) -LogRoot (Join-Path $DiagnosticRoot 'database-disposal-logs') -TimeoutSeconds 180
+                if(@($databases|Where-Object {Test-Path -LiteralPath $_.FullName}).Count){throw 'FIXTURE_RECOVERY_DATABASE_RETAINED'}
+                foreach($database in $databases){[void]$files.Remove($database)}
+                $claim=Read-QualificationFixtureJson -Path $context.claimPath
+            }
+            Save-SourceE2ECopyRecoveryArchive -Context $context -Files @($files) -DiagnosticRoot $DiagnosticRoot
         }
         foreach($file in $files){
             $relative=$file.FullName.Substring($prefix.Length)
@@ -177,7 +205,7 @@ function Remove-SourceE2EFixtureCopy {
         }
         # Keep the claim outside the removed tree, including partial-delete retry.
         Write-QualificationFixtureJson -Path $archivedClaim -Value $claim
-        if(($context.legacy -or [string]$report.status -eq 'failed') -and (Test-Path -LiteralPath (Join-Path $parent 'project/.git'))){
+        if(($context.legacy -or [string]$report.status -eq 'failed') -and (Test-Path -LiteralPath (Join-Path $parent 'project/.git')) -and (-not $RecoveryCleanup -or $context.gitValid)){
             # Preserve derived/reflog-only pending commits without retaining the
             # tools, database or a second copy of the original sealed snapshot.
             Invoke-RepositoryGit -RepositoryRoot $claim.projectRoot -Arguments @('bundle','create',(Join-Path $DiagnosticRoot 'source.bundle'),'--all','--reflog')|Out-Null
@@ -214,19 +242,24 @@ function Remove-CompletedSourceE2ECopies {
     foreach($directory in @(Get-ChildItem -LiteralPath $container -Directory -Force)){
         if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){$retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason='FIXTURE_REPARSE_POINT'});continue}
         $claimPath=Join-Path $directory.FullName 'qualification-fixture.json'
-        if(-not (Test-Path -LiteralPath $claimPath -PathType Leaf)){$retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason='FIXTURE_COPY_CLAIM_MISSING'});continue}
         try {
-            $claim=Read-QualificationFixtureJson -Path $claimPath
+            $claim=if(Test-Path -LiteralPath $claimPath -PathType Leaf){Read-QualificationFixtureJson -Path $claimPath}else{$null}
             foreach($preserved in $PreservePaths){
                 $p=[IO.Path]::GetFullPath($preserved).TrimEnd('\','/')
                 if($directory.FullName -ieq $p -or $p.StartsWith($directory.FullName+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $directory.FullName.StartsWith($p+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_PRESERVED: active or retained owner reference'}
             }
-            $legacy=$IncludeLegacy -and [int]$claim.schemaVersion -eq 1 -and [string]$claim.phase -eq 'Develop' -and [string]$claim.status -eq 'disposed'
+            $legacy=$IncludeLegacy -and $claim -and [int]$claim.schemaVersion -eq 1 -and [string]$claim.phase -eq 'Develop' -and [string]$claim.status -eq 'disposed'
             if($legacy){
                 $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
                 $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=$claim.projectRoot;branchRoot=$claim.branchRoot;claim=$claim} -CandidateRoot $CandidateRoot -ReportPath (Join-Path $diagnostics 'disposal.json') -DiagnosticRoot $diagnostics -LegacyCleanup -ProjectsRoot $ProjectsRoot
                 $removed++;$removedBytes += $result.removedBytes;$entries.Add($result);continue
             }
+            if($IncludeLegacy -and (-not $claim -or ([string]$claim.phase -eq 'Develop' -and [string]$claim.status -in @('materializing','preparation-failed','ready')))){
+                $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
+                $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=(Join-Path $directory.FullName 'project')} -CandidateRoot $CandidateRoot -ReportPath (Join-Path $diagnostics 'cleanup-proof.json') -DiagnosticRoot $diagnostics -RecoveryCleanup -ProjectsRoot $ProjectsRoot
+                $removed++;$removedBytes += $result.removedBytes;$entries.Add($result);continue
+            }
+            if(-not $claim){throw 'FIXTURE_COPY_CLAIM_MISSING'}
             if(-not $claim.PSObject.Properties['schemaVersion'] -or [int]$claim.schemaVersion -ne 2 -or
                 [string]$claim.phase -ne 'Develop' -or [string]$claim.status -ne 'disposed' -or
                 [string]$claim.workflowCommonGit -ine $common -or -not $claim.PSObject.Properties['terminal']){
