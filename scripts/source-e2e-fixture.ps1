@@ -30,6 +30,21 @@ $fixtureLib = Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-wo
 
 function Invoke-SourceFixtureInstalledAction {
     param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
+    # Keep the factory's public call stable across published/frozen candidates.
+    # The guarded continuation owns only its exact existing refresh invocation;
+    # its AllowFailure children go directly to the one native process owner.
+    if(-not $AllowFailure -and $TimeoutSeconds -eq 5400 -and
+        $Action -in @('refresh-dev-branch','refresh-dev-branch-lite') -and
+        $Arguments.Count -eq 4 -and $Arguments[0] -ceq '-DevBranchName' -and
+        $Arguments[2] -ceq '-ExpectedMasterCommit' -and $Arguments[1] -and
+        $Arguments[3] -cmatch '^[a-f0-9]{40}$'){
+        return Invoke-SourceFixtureRefresh -Root $Root -BranchName $Arguments[1] -ExpectedMasterCommit $Arguments[3] -Action $Action -AgentTarget $AgentTarget -LogRoot $LogRoot
+    }
+    return Invoke-SourceFixtureInstalledProcess -Root $Root -Action $Action -Arguments $Arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
+}
+
+function Invoke-SourceFixtureInstalledProcess {
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
     [void][IO.Directory]::CreateDirectory($LogRoot)
     $token = $Action+'-'+[guid]::NewGuid().ToString('N')
     $stdout = Join-Path $LogRoot ($token+'.stdout.log'); $stderr = Join-Path $LogRoot ($token+'.stderr.log')
@@ -437,7 +452,7 @@ function New-SourceE2EFixtureProject {
             Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('add','--all')|Out-Null
             if((Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('diff','--cached','--quiet') -AllowFailure).exitCode -ne 0){Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('commit','-m','test: prepare exact release candidate')|Out-Null}
             $masterHead=(Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('rev-parse','HEAD')).stdout.Trim()
-            $null=Invoke-SourceFixtureRefresh -Root $branch -BranchName $context.branchName -ExpectedMasterCommit $masterHead -AgentTarget $AgentTarget -LogRoot $logs
+            $null=Invoke-SourceFixtureInstalledAction -Root $branch -Action 'refresh-dev-branch' -Arguments @('-DevBranchName',$context.branchName,'-ExpectedMasterCommit',$masterHead) -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 5400
             $installed=Read-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dependency-lock.json')
             if([string]$installed.dependencies.workflowPackage.commit -cne $commit){throw 'FIXTURE_REFRESHED_CANDIDATE_MISMATCH'}
         }finally{$env:ITL_WORKFLOW_SOURCE_PATH=$previousSource;$env:ITL_AI_RULES_SOURCE_PATH=$previousRules}
