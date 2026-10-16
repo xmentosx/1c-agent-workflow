@@ -62,7 +62,7 @@ Describe "Develop E2E journey qualification router" {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
         function New-AncestorJourneyFixture {
-            param([switch]$IncludePesterOwnerInputs)
+            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair)
             $root = Join-Path $TestDrive ('ancestor ' + (Get-NonAsciiFixtureSegment) + ' ' + [guid]::NewGuid().ToString('N'))
             [void](New-RouterFixture -Root $root)
             $catalog = Get-QualityContractCatalog -RepositoryRoot $root
@@ -72,6 +72,10 @@ Describe "Develop E2E journey qualification router" {
             Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
             $runtime = Join-Path $root ('.agents/skills/1c-workflow/scripts/runtime ' + (Get-NonAsciiFixtureSegment) + '.ps1')
             [IO.File]::WriteAllText($runtime, "'original runtime'`r`n", [Text.UTF8Encoding]::new($true))
+            if ($IncludeManifestRepair) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root 'scripts/source-e2e-manifest-repair.ps1'), "'original semantic repair'`r`n", [Text.UTF8Encoding]::new($true))
+            }
             & git -C $root add --all; & git -C $root commit --quiet -m 'captured journey inputs'
             $commit = (& git -C $root rev-parse HEAD).Trim(); $tree = (& git -C $root rev-parse 'HEAD^{tree}').Trim()
             $external = [ordered]@{complete=$true;standStateSha256=('c'*64);runtime=('r'*64);artifacts=@(('a'*64),('b'*64));environment=('e'*64)}
@@ -134,6 +138,17 @@ Describe "Develop E2E journey qualification router" {
         $proof.report.repository.tree | Should -BeExactly $f.tree
         (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
         $proof.continuation.currentTree | Should -BeExactly $tree
+    }
+
+    It 'invalidates journey proof when the shared manifest repair changes' {
+        $f = New-AncestorJourneyFixture -IncludeManifestRepair
+        [IO.File]::WriteAllText((Join-Path $f.root 'scripts/source-e2e-manifest-repair.ps1'), "'changed semantic repair'`r`n", [Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all
+        & git -C $f.root commit --quiet -m 'change shared semantic repair'
+        $tree = Publish-AncestorFixtureTargeted -Fixture $f
+        $current = Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $current.fingerprint | Should -Not -BeExactly $f.inputs.fingerprint
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
     }
 
     It 'preserves journey proof across isolated Pester layout changes while rejecting unknown owner inputs' {

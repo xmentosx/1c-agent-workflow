@@ -606,3 +606,52 @@ exit 23
         (Read-Utf8Text -Path $stderr[0].FullName).Trim()|Should -BeExactly $unicode
     }
 }
+
+Describe 'Stable qualification factory action dispatch' {
+    BeforeEach {
+        Mock Invoke-SourceFixtureRefresh { [pscustomobject]@{route='guarded-refresh'} }
+        Mock Invoke-SourceFixtureInstalledProcess { [pscustomobject]@{route='native-process'} }
+        $script:expectedCommit='a'*40
+    }
+
+    It 'routes the unchanged <Action> factory call through the shared continuation' -ForEach @(
+        @{Action='refresh-dev-branch'},@{Action='refresh-dev-branch-lite'}
+    ) {
+        $root=Join-Path $TestDrive 'factory branch'
+        $logs=Join-Path $TestDrive 'retained logs'
+        $script:dispatchExpectedRoot=$root
+        $script:dispatchExpectedLogs=$logs
+        $script:dispatchExpectedAction=$Action
+        $result=Invoke-SourceFixtureInstalledAction -Root $root -Action $Action -Arguments @('-DevBranchName','fixture','-ExpectedMasterCommit',$script:expectedCommit) -AgentTarget kilocode -LogRoot $logs -TimeoutSeconds 5400
+        $result.route|Should -BeExactly 'guarded-refresh'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 1 -Exactly -ParameterFilter {
+            $Root -ceq $script:dispatchExpectedRoot -and $BranchName -ceq 'fixture' -and $ExpectedMasterCommit -ceq $script:expectedCommit -and
+            $Action -ceq $script:dispatchExpectedAction -and $AgentTarget -ceq 'kilocode' -and $LogRoot -ceq $script:dispatchExpectedLogs
+        }
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 0 -Exactly
+    }
+
+    It 'sends the continuation child directly to the native process without recursive routing' {
+        $expectedArguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',$script:expectedCommit)
+        $result=Invoke-SourceFixtureInstalledAction -Root $TestDrive -Action refresh-dev-branch-lite -Arguments $expectedArguments -LogRoot $TestDrive -TimeoutSeconds 5400 -AllowFailure
+        $result.route|Should -BeExactly 'native-process'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 0 -Exactly
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 1 -Exactly -ParameterFilter {
+            $Action -ceq 'refresh-dev-branch-lite' -and $AllowFailure -and $TimeoutSeconds -eq 5400 -and
+            ($Arguments -join '|') -ceq ('-DevBranchName|fixture|-ExpectedMasterCommit|'+$script:expectedCommit)
+        }
+    }
+
+    It 'preserves ordinary dispatch for unsupported <Case> instead of acquiring repair authority' -ForEach @(
+        @{Case='other action';Action='release-e2e-restore';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40));Seconds=5400},
+        @{Case='extra option';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40),'-ConfigLoadMode','Full');Seconds=5400},
+        @{Case='another budget';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40));Seconds=7200},
+        @{Case='missing target';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture');Seconds=5400},
+        @{Case='invalid target';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit','not-a-commit');Seconds=5400}
+    ) {
+        $result=Invoke-SourceFixtureInstalledAction -Root $TestDrive -Action $Action -Arguments $Arguments -LogRoot $TestDrive -TimeoutSeconds $Seconds
+        $result.route|Should -BeExactly 'native-process'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 0 -Exactly
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 1 -Exactly
+    }
+}

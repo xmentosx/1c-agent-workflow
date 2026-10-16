@@ -16,6 +16,7 @@ param(
 )
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-manifest-repair.ps1')
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 . (Join-Path $PSScriptRoot 'source-delivery-process.ps1')
 . (Join-Path $PSScriptRoot 'stand-env-identity.ps1')
@@ -28,7 +29,22 @@ $fixtureLib = Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-wo
 . (Join-Path $PSScriptRoot 'source-e2e-storage.ps1')
 
 function Invoke-SourceFixtureInstalledAction {
-    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200)
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
+    # Keep the factory's public call stable across published/frozen candidates.
+    # The guarded continuation owns only its exact existing refresh invocation;
+    # its AllowFailure children go directly to the one native process owner.
+    if(-not $AllowFailure -and $TimeoutSeconds -eq 5400 -and
+        $Action -in @('refresh-dev-branch','refresh-dev-branch-lite') -and
+        $Arguments.Count -eq 4 -and $Arguments[0] -ceq '-DevBranchName' -and
+        $Arguments[2] -ceq '-ExpectedMasterCommit' -and $Arguments[1] -and
+        $Arguments[3] -cmatch '^[a-f0-9]{40}$'){
+        return Invoke-SourceFixtureRefresh -Root $Root -BranchName $Arguments[1] -ExpectedMasterCommit $Arguments[3] -Action $Action -AgentTarget $AgentTarget -LogRoot $LogRoot
+    }
+    return Invoke-SourceFixtureInstalledProcess -Root $Root -Action $Action -Arguments $Arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
+}
+
+function Invoke-SourceFixtureInstalledProcess {
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
     [void][IO.Directory]::CreateDirectory($LogRoot)
     $token = $Action+'-'+[guid]::NewGuid().ToString('N')
     $stdout = Join-Path $LogRoot ($token+'.stdout.log'); $stderr = Join-Path $LogRoot ($token+'.stderr.log')
@@ -55,13 +71,30 @@ function Invoke-SourceFixtureInstalledAction {
         }
         $process.WaitForExit();$process.Refresh()
         Assert-SourceE2ENativeDisk -Process $process -LogPaths @($stdout,$stderr) -EvidencePath (Join-Path $LogRoot ($token+'.disk-full.json')) -VolumePaths @($Root,[IO.Path]::GetTempPath())
-        if([int]$process.ExitCode -ne 0){throw "FIXTURE_ACTION_FAILED: $Action exit=$($process.ExitCode); see $stdout and $stderr; repeat the same qualification after diagnosis"}
-        return [pscustomobject]@{stdout=$stdout;stderr=$stderr;durationMs=[int64]$watch.ElapsedMilliseconds}
+        if([int]$process.ExitCode -ne 0 -and -not $AllowFailure){throw "FIXTURE_ACTION_FAILED: $Action exit=$($process.ExitCode); see $stdout and $stderr; repeat the same qualification after diagnosis"}
+        return [pscustomobject]@{exitCode=[int]$process.ExitCode;stdout=$stdout;stderr=$stderr;durationMs=[int64]$watch.ElapsedMilliseconds}
     } catch {$errorText=$_.Exception.Message;throw}
     finally {
         try { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $process -PriorErrorMessage $errorText }
         finally { $process.Dispose(); $watch.Stop() }
     }
+}
+
+function Invoke-SourceFixtureRefresh {
+    param([string]$Root, [string]$BranchName, [string]$ExpectedMasterCommit, [string]$AgentTarget, [string]$LogRoot,
+        [ValidateSet('refresh-dev-branch','refresh-dev-branch-lite')][string]$Action='refresh-dev-branch')
+    $arguments=@('-DevBranchName',$BranchName,'-ExpectedMasterCommit',$ExpectedMasterCommit)
+    $result=Invoke-SourceFixtureInstalledAction -Root $Root -Action $Action -Arguments $arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds 5400 -AllowFailure
+    $summary=Read-SourceE2ECompactSummary -ProcessResult $result
+    if([int]$result.exitCode -eq 0 -and [string]$summary.action -ceq $Action -and [string]$summary.status -ceq 'succeeded'){return $result}
+    $repaired=Repair-SourceE2EManifestConflict -Root $Root -BranchName $BranchName -ProcessResult $result -Operation $Action
+    if($repaired){
+        $retry=Invoke-SourceFixtureInstalledAction -Root $Root -Action $Action -Arguments $arguments -AgentTarget $AgentTarget -LogRoot $LogRoot -TimeoutSeconds 5400 -AllowFailure
+        $retrySummary=Read-SourceE2ECompactSummary -ProcessResult $retry
+        if([int]$retry.exitCode -eq 0 -and [string]$retrySummary.action -ceq $Action -and [string]$retrySummary.status -ceq 'succeeded'){return $retry}
+        throw "FIXTURE_ACTION_FAILED: $Action continuation exit=$($retry.exitCode); see $($retry.stdout) and $($retry.stderr); original failure retained at $($result.stdout)"
+    }
+    throw "FIXTURE_ACTION_FAILED: $Action exit=$($result.exitCode); see $($result.stdout) and $($result.stderr); semantic repair refused"
 }
 
 function Assert-SourceFixtureGitClean {

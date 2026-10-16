@@ -295,7 +295,7 @@
       "gate": "targeted",
       "budgetSeconds": 600,
       "primaryTest": "tests/pester/DevelopManifestContinuation.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/source-e2e-manifest-repair.ps1", "scripts/source-e2e-fixture.ps1", "scripts/git-path-list.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1"],
       "reuseInputPaths": ["tests/quality-contracts.json"],
       "tests": ["tests/pester/DevelopManifestContinuation.Tests.ps1"]
     },
@@ -305,7 +305,7 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/E2EClientSelection.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/stand-env-identity.ps1", "scripts/source-delivery-process.ps1", "scripts/source-e2e-storage.ps1", "scripts/release-e2e/admission.ps1", "scripts/release-e2e/extension-recovery.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/source-e2e-manifest-repair.ps1", "scripts/invoke-release-e2e.ps1", "scripts/stand-env-identity.ps1", "scripts/source-delivery-process.ps1", "scripts/source-e2e-storage.ps1", "scripts/release-e2e/admission.ps1", "scripts/release-e2e/extension-recovery.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1"],
       "reuseInputPaths": ["tests/quality-contracts.json"],
       "tests": ["tests/pester/E2EClientSelection.Tests.ps1"]
     },
@@ -697,7 +697,7 @@
       "gate": "targeted",
       "budgetSeconds": 240,
       "primaryTest": "tests/pester/SourceQualificationFixture.Tests.ps1",
-      "paths": ["scripts/source-e2e-fixture.ps1", "scripts/source-e2e-create-infobase.ps1", "scripts/lifecycle-qualification-fixture.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1", ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard*.py", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
+      "paths": ["scripts/source-e2e-fixture.ps1", "scripts/source-e2e-manifest-repair.ps1", "scripts/source-e2e-create-infobase.ps1", "scripts/lifecycle-qualification-fixture.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1", ".agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard*.py", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "scripts/source-proof-json.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1", "tests/pester/SourceQualificationFixture.Tests.ps1"],
       "reuseInputPaths": ["scripts/source-delivery-process.ps1", ".agents/skills/itl-remote-runner/scripts/PythonRuntime.ps1", ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard_host.py", ".agents/skills/itl-remote-runner/scripts/itl_remote/common.py", ".agents/skills/itl-remote-runner/assets/python-runtime/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1"],
       "tests": ["tests/pester/SourceQualificationFixture.Tests.ps1"]
     },
@@ -725,7 +725,7 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/source-e2e-manifest-repair.ps1"],
       "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
     },
     {

@@ -1,5 +1,6 @@
 BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+    . (Join-Path $repoRoot 'scripts/source-e2e-manifest-repair.ps1')
     . (Join-Path $repoRoot 'scripts/develop-configuration-rejection.ps1')
     . (Join-Path $repoRoot 'scripts/stand-env-identity.ps1')
     . (Join-Path $repoRoot 'scripts/develop-e2e-qualification.ps1')
