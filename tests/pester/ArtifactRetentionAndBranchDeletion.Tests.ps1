@@ -113,16 +113,27 @@ Describe 'ITL artifact retention' {
         (Test-ItlArtifactPathWithoutReparse -Root $root -Path $other -Recursive) | Should -BeFalse
     }
 
-    It 'deletes only a hash-matched eligible result pair and leaves unknown files' {
+    It 'deletes only a hash-matched eligible <Extension> pair with <HashCase> hash and leaves unknown files' -TestCases @(
+        @{ Extension = 'cf'; HashCase = 'lower' },
+        @{ Extension = 'cf'; HashCase = 'upper' },
+        @{ Extension = 'cf'; HashCase = 'mixed' },
+        @{ Extension = 'cfe'; HashCase = 'lower' },
+        @{ Extension = 'cfe'; HashCase = 'upper' },
+        @{ Extension = 'cfe'; HashCase = 'mixed' }
+    ) {
+        param($Extension, $HashCase)
         $root = Join-Path $TestDrive 'Результаты с пробелами'
         New-Item -ItemType Directory -Path $root -Force | Out-Null
-        $artifact = Join-Path $root 'old.cf'
+        $artifact = Join-Path $root "old.$Extension"
         $manifest = "$artifact.manifest.json"
         $unknown = Join-Path $root 'manual.cf'
         [IO.File]::WriteAllText($artifact, 'old-result')
         [IO.File]::WriteAllText($manifest, '{}')
         [IO.File]::WriteAllText($unknown, 'manual-result')
-        $entry = [pscustomobject]@{ category = 'result'; group = 'test'; root = $root; path = $artifact; companion = $manifest; expectedSha256 = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash; sizeBytes = 10; delete = $true }
+        $hash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash
+        if ($HashCase -eq 'lower') { $hash = $hash.ToLowerInvariant() }
+        elseif ($HashCase -eq 'mixed') { $hash = $hash.Substring(0, 32).ToLowerInvariant() + $hash.Substring(32) }
+        $entry = [pscustomobject]@{ category = 'result'; group = 'test'; root = $root; path = $artifact; companion = $manifest; expectedSha256 = $hash; sizeBytes = 10; delete = $true }
         Mock Get-ItlArtifactCleanupPlan { [pscustomobject]@{ policy = [pscustomobject]@{ enabled = $true }; entries = @($entry) } }
         Invoke-ItlArtifactCleanup -DryRun | Out-Null
         (Test-Path -LiteralPath $artifact) | Should -BeTrue
@@ -130,6 +141,22 @@ Describe 'ITL artifact retention' {
         (Test-Path -LiteralPath $artifact) | Should -BeFalse
         (Test-Path -LiteralPath $manifest) | Should -BeFalse
         (Test-Path -LiteralPath $unknown) | Should -BeTrue
+    }
+
+    It 'preserves an eligible result and its manifest when the artifact bytes changed' {
+        $root = Join-Path $TestDrive 'Изменённый результат с пробелами'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $artifact = Join-Path $root 'changed.cf'
+        $manifest = "$artifact.manifest.json"
+        [IO.File]::WriteAllText($artifact, 'original-result')
+        $hash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($manifest, '{}')
+        [IO.File]::WriteAllText($artifact, 'changed-result')
+        $entry = [pscustomobject]@{ category = 'result'; group = 'test'; root = $root; path = $artifact; companion = $manifest; expectedSha256 = $hash; sizeBytes = 14; delete = $true }
+        Mock Get-ItlArtifactCleanupPlan { [pscustomobject]@{ policy = [pscustomobject]@{ enabled = $true }; entries = @($entry) } }
+        { Invoke-ItlArtifactCleanup -WarningAction SilentlyContinue } | Should -Throw '*ITL_ARTIFACT_CLEANUP_INCOMPLETE*'
+        [IO.File]::ReadAllText($artifact) | Should -Be 'changed-result'
+        (Test-Path -LiteralPath $manifest) | Should -BeTrue
     }
 
     It 'keeps automatic cleanup silent so it cannot replace action output' {

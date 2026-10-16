@@ -363,7 +363,7 @@ function Invoke-ItlArtifactCleanup {
         try {
             if (-not (Test-ItlArtifactPathWithoutReparse -Root $entry.root -Path $entry.path -Recursive)) { throw 'path contains a reparse point or is outside the managed root' }
             if ($entry.companion -and -not (Test-ItlArtifactPathWithoutReparse -Root $entry.root -Path $entry.companion)) { throw 'manifest path is unsafe' }
-            if ($entry.expectedSha256 -and (Get-FileHash -LiteralPath $entry.path -Algorithm SHA256).Hash -cne $entry.expectedSha256) { throw 'artifact hash differs from its manifest' }
+            if ($entry.expectedSha256 -and (Get-FileHash -LiteralPath $entry.path -Algorithm SHA256).Hash -ine $entry.expectedSha256) { throw 'artifact hash differs from its manifest' }
             Remove-Item -LiteralPath $entry.path -Recurse -Force -ErrorAction Stop
             if ($entry.companion) { Remove-Item -LiteralPath $entry.companion -Force -ErrorAction Stop }
             $removed += $entry.sizeBytes
