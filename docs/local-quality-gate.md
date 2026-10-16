@@ -560,6 +560,18 @@ target; `SOURCE_INFOBASE_PATH` указывает на его восстанов
 При отказе сохраняются снимок и диагностика; сначала исправляется изоляция или
 выясняется внешнее изменение seed, затем применяется явное продолжение Capture.
 
+Если readiness потребовал обновить workflow самого seed, завершённые обновления
+можно признать командой `scripts/source-e2e-fixture.ps1 -Action Capture -Phase
+Develop -ProjectRoot <seed> -AcknowledgeWorkflowUpdate -OutputPath <receipt.json>`
+(для Release повторить с соответствующей фазой). Capture проверяет точную
+цепочку receipts владельца update-workflow, Git и сохранённые SHA. Capsule/DT,
+опубликованный N-1 baseline, данные, pending/cursor/Designer state и context
+не меняются. Обычный Capture повторно проверяет признанную цепочку; новый
+workflow-update требует нового явного признания. Чужой коммит, изменённый backup,
+данные или семантическое состояние продолжают блокировать квалификацию.
+Флаг требует существующую capsule и несовместим с Recapture. После признания
+повторяется исходная квалификация через её сохранённый план.
+
 После upgrade/fresh Develop освобождает только производные `1Cv8.1CD` своего
 qualification target, в том числе после неудачного первого RestoreIB. Сюда входит
 только его локальный `project/.agent-1c/branch-seed/<sourceKey>/infobase/1Cv8.1CD`:

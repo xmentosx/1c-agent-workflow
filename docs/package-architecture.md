@@ -51,6 +51,26 @@ recorded supervisor. Support is published separately from a clean published
 baseline before this recovery is used. Existing archives, lease, circuit breaker,
 qualification and compare-and-swap cleanup remain authoritative.
 
+The user approved bounded fixture Capture continuation on 2026-10-16.
+Explicit `source-e2e-fixture.ps1 -Action Capture -AcknowledgeWorkflowUpdate`
+may admit only a contiguous terminal update-workflow receipt chain from the
+sealed capsule's master/branch commits. The update owner validates receipt
+identity and backup bytes; Capture checks single-parent Git hops, endpoint-pinned
+workflow ownership, no business/scenario changes or takeover of existing paths,
+before/after path continuity and original environment provenance. Admission is
+SHA-bound in the existing fixture descriptor, and ordinary Capture revalidates
+the exact admission. New transitions require explicit acknowledgement again.
+The immutable capsule/DT and published baseline, database SHA, semantic
+pending/cursor/Designer state, context SHA and stand configuration remain fixed.
+This adds no lifecycle write authority or state owner; it cannot replace
+Recapture or authorize database restoration. Support is qualified/published
+separately before frozen delivery resumes. The cost is bounded by the selected
+receipt backups and current managed paths; no native database snapshot is rerun.
+On the selected two-hop stand, proof inspection measured 35s for Develop and
+40s for Release on 2026-10-16, excluding the unchanged database SHA check.
+The native fixture suite now has 46 cases and measured 171.8s; its declared
+contract budget is 240s rather than 120s, retaining every original assertion.
+
 The develop authority boundary is channel-local, not candidate-local: the
 supervisor is the tracked published tip before the operation, never the queued
 candidate or a dirty checkout. It alone holds the existing operation lease and
