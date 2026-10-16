@@ -39,6 +39,18 @@ Explicit PublishDevelop Replan archives the original checkpoint and rejected
 proof through this same owner; unchanged inputs cannot reset its circuit breaker.
 This adds no state owner, lock family or master-channel authority.
 
+The user approved bounded frozen-scope recovery on 2026-10-16. Explicit
+`PublishDevelop -Replan <originalPlanId> -ReplanQueueScope Frozen` transfers the
+original checkpoint to a compatible published develop supervisor only after
+checking recorded-supervisor ancestry, checkpoint SHA and immutable plan/queue/
+candidate identity. That owner integrates the original candidate with published
+develop and retains the original queue pairs; later and advanced registrations
+remain queued. The replacement pins its supervisor and scope for retries.
+Ordinary Replan still incorporates the current queue; ResumePlan still pins its
+recorded supervisor. Support is published separately from a clean published
+baseline before this recovery is used. Existing archives, lease, circuit breaker,
+qualification and compare-and-swap cleanup remain authoritative.
+
 The develop authority boundary is channel-local, not candidate-local: the
 supervisor is the tracked published tip before the operation, never the queued
 candidate or a dirty checkout. It alone holds the existing operation lease and
