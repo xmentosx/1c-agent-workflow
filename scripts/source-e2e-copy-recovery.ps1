@@ -59,6 +59,8 @@ function Get-SourceE2ECopyRecoveryContext {
             [string]$claim.workflowCommonGit -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot))){throw 'FIXTURE_RECOVERY_FOREIGN_OWNER'}
     }
     $binding=$null
+    if($claim -and [string]$claim.status -eq 'disposed' -and
+        ([string]$claim.disposal.status -cne 'disposed' -or [string]$claim.disposal.candidateCommit -cne $commit)){throw 'FIXTURE_RECOVERY_DISPOSAL_PROOF_MISSING'}
     if(-not $claim -or [string]$claim.status -eq 'ready'){$binding=Get-SourceE2ECopyReportBinding -CandidateRoot $CandidateRoot -Commit $commit -Parent $Parent}
     if($claim -and [string]$claim.status -eq 'ready' -and -not $binding){throw 'FIXTURE_RECOVERY_TERMINAL_PROOF_MISSING'}
     $origin=Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('remote','get-url','origin') -AllowFailure
