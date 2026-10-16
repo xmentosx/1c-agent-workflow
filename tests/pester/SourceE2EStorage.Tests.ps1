@@ -2,8 +2,8 @@
     $RepoRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
     function New-StorageCopy {
-        param([string]$Root,[string]$Status='passed')
-        $candidate='a'*40;$capsule='f'*64
+        param([string]$Root,[string]$Status='passed',[string]$Candidate=('a'*40))
+        $candidate=$Candidate;$capsule='f'*64
         $parent=Join-Path $Root ('q Проект/develop-'+$capsule.Substring(0,12)+'-'+$candidate.Substring(0,12)+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         $project=Join-Path $parent 'project';$branch=Join-Path $parent 'branch'
         [void][IO.Directory]::CreateDirectory($project)
@@ -23,6 +23,19 @@
         $report=Join-Path $Root ('output/'+[guid]::NewGuid().ToString('N')+'/raw.json')
         Write-QualificationFixtureJson -Path $report -Value @{status=$Status;candidate=@{commit=$candidate};error=$(if($Status -eq 'failed'){'original failing scenario'}else{$null})}
         return @{root=$parent;fixture=@{projectRoot=$project;branchRoot=$branch;claim=[pscustomobject]$claim};report=$report;diagnostics=(Join-Path (Split-Path -Parent $report) 'diagnostics');claim=$claim}
+    }
+    function New-LegacyStorageCopy {
+        param([string]$Root)
+        $candidate=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $copy=New-StorageCopy -Root $Root -Candidate $candidate
+        foreach($key in @('copyRoot','projectsRoot','workflowCommonGit')){$copy.claim.Remove($key)}
+        $copy.claim.schemaVersion=1
+        $copy.claim.disposal=@{status='disposed';candidateCommit=$candidate;finishedAt='2026-10-12T17:14:08.2443587Z';removedDatabases=@(@{path=(Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/dev-branches/golden/1Cv8.1CD');bytes=1024})}
+        $origin=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('remote','get-url','origin')).stdout.Trim()
+        Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.projectRoot '.agent-1c/dependency-lock.json') -Value @{dependencies=@{workflowPackage=@{repo=$origin;commit=$candidate}}}
+        Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+        $copy.fixture.claim=[pscustomobject]$copy.claim
+        return $copy
     }
 }
 
@@ -128,6 +141,67 @@ Describe 'Terminal disposable Develop copy retention' {
                 [IO.Directory]::Delete($junction)
             }
         }
+    }
+}
+
+Describe 'Legacy disposed copy cleanup through the existing owner' {
+    It 'uses the normal source-delivery cleanup adapter and its preserved owner paths' {
+        $root=Join-Path $TestDrive 'штатная уборка с пробелами';$copy=New-LegacyStorageCopy -Root $root
+        . (Join-Path $RepoRoot 'scripts/source-delivery-cleanup.ps1')
+        $script:Root=$RepoRoot
+        $result=Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $root -PreservePaths @($copy.fixture.branchRoot)
+        $result.removed|Should -Be 0;$result.retained|Should -Be 1
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+        $result=Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $root
+        $result.removed|Should -Be 1
+        Test-Path -LiteralPath (Join-Path $result.entries[0].diagnostics 'source.bundle')|Should -BeTrue
+        # Keep unit-test evidence in TestDrive, not in the source common Git store.
+        Remove-Item -LiteralPath $result.entries[0].diagnostics -Recurse -Force
+    }
+    It 'reclaims a version 1 copy and preserves diagnostics, checkpoints, Git history and untracked Unicode data' {
+        $root=Join-Path $TestDrive 'старые копии с пробелами';$copy=New-LegacyStorageCopy -Root $root
+        Write-Utf8Text -Path (Join-Path $copy.fixture.branchRoot 'seed.txt') -Value 'изменённый исходник'
+        Write-Utf8Text -Path (Join-Path $copy.fixture.branchRoot 'новый файл.txt') -Value 'нужные пользовательские данные'
+        Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.branchRoot '.agent-1c/execution-checkpoints/completed.json') -Value @{status='resumed'}
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy
+        $result.removed|Should -Be 1;$result.removedBytes|Should -BeGreaterThan 65536
+        Test-Path -LiteralPath $copy.root|Should -BeFalse
+        $diagnostics=$result.entries[0].diagnostics
+        (Read-Utf8Text -Path (Join-Path $diagnostics 'branch/untracked/новый файл.txt'))|Should -BeExactly 'нужные пользовательские данные'
+        (Read-QualificationFixtureJson -Path (Join-Path $diagnostics 'branch/.agent-1c/execution-checkpoints/completed.json')).status|Should -BeExactly 'resumed'
+        $restored=Join-Path $root 'restored'
+        Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('clone',(Join-Path $diagnostics 'source.bundle'),$restored)|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $restored -Arguments @('apply','--binary',(Join-Path $diagnostics 'branch-working.patch'))|Out-Null
+        (Read-Utf8Text -Path (Join-Path $restored 'seed.txt'))|Should -BeExactly 'изменённый исходник'
+        (Read-QualificationFixtureJson -Path (Join-Path $diagnostics 'qualification-fixture.json')).schemaVersion|Should -Be 1
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+    }
+    It 'retains legacy copies with <reason> and completes the original cleanup after the owner condition clears' -ForEach @(
+        @{reason='lease'},@{reason='preserved'},@{reason='checkpoint'},@{reason='database'},@{reason='source'},@{reason='disposal'},@{reason='path'}
+    ) {
+        $root=Join-Path $TestDrive ('защита с пробелами '+[guid]::NewGuid().ToString('N'));$copy=New-LegacyStorageCopy -Root $root
+        $lease=$null;$preserve=@();$checkpoint=Join-Path $copy.fixture.branchRoot '.agent-1c/execution-checkpoints/active.json';$database=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/1Cv8.1CD'
+        switch($reason){
+            lease {$lease=Open-SourceE2EFixtureUse -ProjectRoot $copy.fixture.projectRoot}
+            preserved {$preserve=@((Join-Path $copy.fixture.branchRoot '.agent-1c/snapshots/seed.dt'))}
+            checkpoint {Write-QualificationFixtureJson -Path $checkpoint -Value @{status='suspended'}}
+            database {Write-Utf8Text -Path $database -Value 'live database'}
+            source {Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.projectRoot '.agent-1c/dependency-lock.json') -Value @{dependencies=@{workflowPackage=@{repo='foreign';commit=$copy.claim.candidateCommit}}}}
+            disposal {$copy.claim.disposal.candidateCommit='b'*40}
+            path {$copy.claim.branchRoot=Join-Path $root 'foreign'}
+        }
+        Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+        try {
+            $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy -PreservePaths $preserve
+            $result.removed|Should -Be 0;$result.retained|Should -Be 1
+            Test-Path -LiteralPath $copy.root|Should -BeTrue
+            if($reason -in @('lease','preserved','checkpoint','database')){
+                if($lease){$lease.Dispose();$lease=$null}
+                if(Test-Path -LiteralPath $checkpoint){Remove-Item -LiteralPath $checkpoint}
+                if(Test-Path -LiteralPath $database){Remove-Item -LiteralPath $database}
+                (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+            }
+        } finally {if($lease){$lease.Dispose()}}
     }
 }
 

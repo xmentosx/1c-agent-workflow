@@ -197,6 +197,7 @@ Describe 'Source delivery post-success cleanup' {
         Mock Remove-SourceDeliveryStaleTestFixtures { [pscustomobject]@{ removedFixtures=0; removedWorktrees=0 } }
         Mock Remove-SourceDeliveryStaleVanessaBuildWork { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
         Mock Remove-SourceDeliveryStaleReleaseRecoveryArtifacts { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
+        Mock Remove-SourceDeliveryCompletedFixtureCopies { [pscustomobject]@{ removed=0; retained=0; removedBytes=0 } }
         Mock Remove-DevelopE2EStaleFreshProjects { [pscustomobject]@{ removedProjects=0 } }
         Mock Remove-DevelopE2EStaleLauncherRegistrations { 0 }
         Mock Remove-ReleaseE2EStaleLauncherRegistrations { 0 }
@@ -204,6 +205,7 @@ Describe 'Source delivery post-success cleanup' {
         Mock Get-DevelopE2ELauncherListPath { Join-Path $TestDrive 'ibases.v8i' }
         $result = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $TestDrive
         $result.status | Should -Be 'completed-with-warnings'; @($result.warnings).Count | Should -Be 1; $result.warnings[0] | Should -Match 'candidate cleanup unavailable'
+        Should -Invoke Remove-SourceDeliveryCompletedFixtureCopies -Times 1 -Exactly -ParameterFilter {$FreshProjectsRoot -eq $TestDrive}
     }
 
     It 'resolves develop and master cleanup executors from their exact remote channel commits' {

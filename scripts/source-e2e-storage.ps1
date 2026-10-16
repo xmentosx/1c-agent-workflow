@@ -56,18 +56,46 @@ function Open-SourceE2EFixtureUse {
 }
 
 function Get-SourceE2EFixtureCopyContext {
-    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot)
+    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot, [switch]$LegacyCleanup, [string]$ProjectsRoot)
     $parent=Split-Path -Parent ([IO.Path]::GetFullPath([string]$Fixture.projectRoot).TrimEnd('\','/'))
     $prefix=$parent+[IO.Path]::DirectorySeparatorChar
     foreach($external in @($ReportPath,$DiagnosticRoot)){
-        if([IO.Path]::GetFullPath($external).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
+        if([IO.Path]::GetFullPath($external) -ieq $parent -or [IO.Path]::GetFullPath($external).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
     }
     # Persisted terminal proof is a prerequisite. Failed Develop repeats from the
     # immutable seed; its diagnostic bundle stays with the existing gate logs.
-    $report=Read-QualificationFixtureJson -Path $ReportPath
+    $report=if($LegacyCleanup){$null}else{Read-QualificationFixtureJson -Path $ReportPath}
     $claimPath=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'qualification-fixture.json'
     $archivedClaim=Join-Path $DiagnosticRoot 'qualification-fixture.json'
     $claim=Read-QualificationFixtureJson -Path $(if(Test-Path -LiteralPath $claimPath){$claimPath}else{$archivedClaim})
+    if($LegacyCleanup){
+        # Version 1 has no workflowCommonGit/terminal record. Its completed
+        # database-disposal receipt is the terminal owner proof, not a test pass.
+        # Validate the installed package against this source repository before
+        # allowing the same copy remover to archive the remaining source data.
+        $safe=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath ('q Проект/'+(Split-Path -Leaf $parent))
+        if($safe -ine $parent -or [int]$claim.schemaVersion -ne 1 -or
+            [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
+            [string]$claim.status -cne 'disposed' -or [string]$claim.disposal.status -cne 'disposed' -or
+            [string]$claim.disposal.candidateCommit -cne [string]$claim.candidateCommit -or
+            [string]$claim.projectRoot -ine (Join-Path $parent 'project') -or [string]$claim.branchRoot -ine (Join-Path $parent 'branch') -or
+            [string]$Fixture.branchRoot -ine [string]$claim.branchRoot -or [string]$Fixture.claim.candidateCommit -cne [string]$claim.candidateCommit -or
+            [string]$claim.candidateCommit -cnotmatch '^[a-f0-9]{40}$' -or [string]$claim.capsuleSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            (Split-Path -Leaf $parent) -cnotmatch ('^develop-'+([string]$claim.capsuleSha256).Substring(0,12)+'-'+([string]$claim.candidateCommit).Substring(0,12)+'-[a-f0-9]{8}(?:-[a-f0-9]{8})?$')){throw 'FIXTURE_LEGACY_OWNERSHIP_INVALID'}
+        [void][DateTimeOffset]::Parse([string]$claim.disposal.finishedAt,[Globalization.CultureInfo]::InvariantCulture)
+        if(@($claim.disposal.removedDatabases).Count -eq 0){throw 'FIXTURE_LEGACY_DISPOSAL_MISSING'}
+        foreach($database in $claim.disposal.removedDatabases){
+            $db=[IO.Path]::GetFullPath([string]$database.path)
+            if(-not $db.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $db) -ine '1Cv8.1CD' -or (Test-Path -LiteralPath $db)){throw 'FIXTURE_LEGACY_DISPOSAL_INVALID'}
+        }
+        $lockPath=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project/.agent-1c/dependency-lock.json'
+        $package=(Read-QualificationFixtureJson -Path $lockPath).dependencies.workflowPackage
+        $origin=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('remote','get-url','origin')).stdout.Trim()
+        if([string]$package.repo -cne $origin -or [string]$package.commit -cnotmatch '^[a-f0-9]{40}$'){throw 'FIXTURE_LEGACY_SOURCE_MISMATCH'}
+        $ancestry=Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('merge-base','--is-ancestor',[string]$package.commit,[string]$claim.candidateCommit) -AllowFailure
+        if($ancestry.exitCode -ne 0){throw 'FIXTURE_LEGACY_SOURCE_MISMATCH'}
+        return @{parent=$parent;prefix=$prefix;claim=$claim;claimPath=$claimPath;archivedClaim=$archivedClaim;report=$null;legacy=$true}
+    }
     if(-not $claim.PSObject.Properties['schemaVersion'] -or [int]$claim.schemaVersion -ne 2 -or
         [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
         [string]$claim.status -notin @('materializing','ready','disposed') -or [string]$claim.copyRoot -ine $parent -or
@@ -81,7 +109,7 @@ function Get-SourceE2EFixtureCopyContext {
         (Split-Path -Leaf $parent) -cnotmatch ('^develop-'+([string]$claim.capsuleSha256).Substring(0,12)+'-'+([string]$claim.candidateCommit).Substring(0,12)+'-[a-f0-9]{8}(?:-[a-f0-9]{8})?$')){throw 'FIXTURE_COPY_PATH_INVALID'}
     $safe=Resolve-QualificationFixtureChild -Root ([string]$claim.projectsRoot) -RelativePath $parent.Substring(([string]$claim.projectsRoot).TrimEnd('\','/').Length+1)
     if($safe -ine $parent){throw 'FIXTURE_COPY_PATH_INVALID'}
-    return @{parent=$parent;prefix=$prefix;claim=$claim;claimPath=$claimPath;archivedClaim=$archivedClaim;report=$report}
+    return @{parent=$parent;prefix=$prefix;claim=$claim;claimPath=$claimPath;archivedClaim=$archivedClaim;report=$report;legacy=$false}
 }
 
 function Write-SourceE2EFixtureTerminal {
@@ -102,7 +130,7 @@ function Write-SourceE2EFixtureTerminal {
 }
 
 function Remove-SourceE2EFixtureCopy {
-    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot)
+    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot)
     $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
     $parent=$context.parent;$prefix=$context.prefix;$claim=$context.claim;$claimPath=$context.claimPath;$archivedClaim=$context.archivedClaim;$report=$context.report
     if([string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
@@ -129,13 +157,19 @@ function Remove-SourceE2EFixtureCopy {
                 if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'FIXTURE_REPARSE_POINT'}
                 if($item.PSIsContainer){$directories.Push($item.FullName)}else{
                     if($item.Name -ieq '1Cv8.1CD'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED'}
+                    $relative=$item.FullName.Substring($prefix.Length).Replace('\','/')
+                    if($relative -match '^(project|branch)/\.agent-1c/.*/checkpoint\.json$'){throw 'FIXTURE_COPY_RESUMABLE: producer checkpoint is still present'}
+                    if($relative -match '^(project|branch)/\.agent-1c/execution-checkpoints/.*\.json$'){
+                        $checkpoint=Read-QualificationFixtureJson -Path $item.FullName
+                        if([string]$checkpoint.status -cne 'resumed'){throw 'FIXTURE_COPY_RESUMABLE: execution checkpoint is not resumed'}
+                    }
                     $files.Add($item);$bytes += $item.Length
                 }
             }
         }
         foreach($file in $files){
             $relative=$file.FullName.Substring($prefix.Length)
-            if($relative -eq 'qualification-fixture.json' -or $relative.Replace('\','/') -match '^(preparation-logs/|(?:project|branch)/(?:logs/|\.agent-1c/(?:runs|dev-branches)/))'){
+            if($relative -eq 'qualification-fixture.json' -or $relative.Replace('\','/') -match '^(preparation-logs/|(?:project|branch)/(?:\.dev\.env$|logs/|\.agent-1c/(?:[^/]+\.json$|(?:runs|dev-branches|execution-checkpoints)/)))'){
                 $dest=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $relative
                 [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dest));Copy-Item -LiteralPath $file.FullName -Destination $dest -Force -ErrorAction Stop
                 if((Get-FileHash -LiteralPath $dest).Hash -cne (Get-FileHash -LiteralPath $file.FullName).Hash){throw 'FIXTURE_COPY_DIAGNOSTICS_CHANGED'}
@@ -143,7 +177,7 @@ function Remove-SourceE2EFixtureCopy {
         }
         # Keep the claim outside the removed tree, including partial-delete retry.
         Write-QualificationFixtureJson -Path $archivedClaim -Value $claim
-        if([string]$report.status -eq 'failed' -and (Test-Path -LiteralPath (Join-Path $parent 'project/.git'))){
+        if(($context.legacy -or [string]$report.status -eq 'failed') -and (Test-Path -LiteralPath (Join-Path $parent 'project/.git'))){
             # Preserve derived/reflog-only pending commits without retaining the
             # tools, database or a second copy of the original sealed snapshot.
             Invoke-RepositoryGit -RepositoryRoot $claim.projectRoot -Arguments @('bundle','create',(Join-Path $DiagnosticRoot 'source.bundle'),'--all','--reflog')|Out-Null
@@ -152,6 +186,12 @@ function Remove-SourceE2EFixtureCopy {
                 if(Test-Path -LiteralPath (Join-Path $tree '.git')){
                     $patch=(Invoke-RepositoryGit -RepositoryRoot $tree -Arguments @('diff','--binary','--no-ext-diff','--no-textconv','HEAD')).stdout
                     Write-Utf8Text -Path (Join-Path $DiagnosticRoot ($role+'-working.patch')) -Value $patch
+                    foreach($relative in @(Get-RepositoryGitPathList -RepositoryRoot $tree -Arguments @('ls-files','--others','--exclude-standard','-z'))){
+                        $source=Resolve-QualificationFixtureChild -Root $tree -RelativePath $relative
+                        $dest=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath ($role+'/untracked/'+$relative)
+                        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dest));Copy-Item -LiteralPath $source -Destination $dest -Force -ErrorAction Stop
+                        if((Get-FileHash -LiteralPath $dest).Hash -cne (Get-FileHash -LiteralPath $source).Hash){throw 'FIXTURE_COPY_DIAGNOSTICS_CHANGED'}
+                    }
                 }
             }
         }
@@ -166,28 +206,40 @@ function Remove-SourceE2EFixtureCopy {
 }
 
 function Remove-CompletedSourceE2ECopies {
-    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot)
+    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot,[switch]$IncludeLegacy,[string[]]$PreservePaths=@())
     $container=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath 'q Проект'
-    $removed=0;$retained=0
-    if(-not (Test-Path -LiteralPath $container -PathType Container)){return @{removed=0;retained=0}}
+    $removed=0;$retained=0;[int64]$removedBytes=0;$entries=[Collections.Generic.List[object]]::new()
+    if(-not (Test-Path -LiteralPath $container -PathType Container)){return @{removed=0;retained=0;removedBytes=0;entries=@()}}
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
     foreach($directory in @(Get-ChildItem -LiteralPath $container -Directory -Force)){
-        if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+        if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){$retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason='FIXTURE_REPARSE_POINT'});continue}
         $claimPath=Join-Path $directory.FullName 'qualification-fixture.json'
-        if(-not (Test-Path -LiteralPath $claimPath -PathType Leaf)){continue}
+        if(-not (Test-Path -LiteralPath $claimPath -PathType Leaf)){$retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason='FIXTURE_COPY_CLAIM_MISSING'});continue}
         try {
             $claim=Read-QualificationFixtureJson -Path $claimPath
+            foreach($preserved in $PreservePaths){
+                $p=[IO.Path]::GetFullPath($preserved).TrimEnd('\','/')
+                if($directory.FullName -ieq $p -or $p.StartsWith($directory.FullName+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $directory.FullName.StartsWith($p+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_PRESERVED: active or retained owner reference'}
+            }
+            $legacy=$IncludeLegacy -and [int]$claim.schemaVersion -eq 1 -and [string]$claim.phase -eq 'Develop' -and [string]$claim.status -eq 'disposed'
+            if($legacy){
+                $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
+                $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=$claim.projectRoot;branchRoot=$claim.branchRoot;claim=$claim} -CandidateRoot $CandidateRoot -ReportPath (Join-Path $diagnostics 'disposal.json') -DiagnosticRoot $diagnostics -LegacyCleanup -ProjectsRoot $ProjectsRoot
+                $removed++;$removedBytes += $result.removedBytes;$entries.Add($result);continue
+            }
             if(-not $claim.PSObject.Properties['schemaVersion'] -or [int]$claim.schemaVersion -ne 2 -or
                 [string]$claim.phase -ne 'Develop' -or [string]$claim.status -ne 'disposed' -or
-                [string]$claim.workflowCommonGit -ine $common -or -not $claim.PSObject.Properties['terminal']){continue}
+                [string]$claim.workflowCommonGit -ine $common -or -not $claim.PSObject.Properties['terminal']){
+                $retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason='FIXTURE_COPY_NOT_TERMINAL_OR_NOT_OWNED'});continue
+            }
             $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
             $report=Join-Path $diagnostics 'terminal-report.json'
             Write-QualificationFixtureJson -Path $report -Value $claim.terminal
-            [void](Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=$claim.projectRoot;branchRoot=$claim.branchRoot;claim=$claim} -CandidateRoot $CandidateRoot -ReportPath $report -DiagnosticRoot $diagnostics)
-            $removed++
-        } catch {$retained++;Write-Warning "Completed fixture copy retained: $($directory.FullName); $($_.Exception.Message)"}
+            $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=$claim.projectRoot;branchRoot=$claim.branchRoot;claim=$claim} -CandidateRoot $CandidateRoot -ReportPath $report -DiagnosticRoot $diagnostics
+            $removed++;$removedBytes += $result.removedBytes;$entries.Add($result)
+        } catch {$retained++;$entries.Add(@{root=$directory.FullName;status='retained';reason=$_.Exception.Message});Write-Warning "Completed fixture copy retained: $($directory.FullName); $($_.Exception.Message)"}
     }
-    return @{removed=$removed;retained=$retained}
+    return @{removed=$removed;retained=$retained;removedBytes=$removedBytes;entries=@($entries)}
 }
 
 function Read-SourceE2EOutputTail {

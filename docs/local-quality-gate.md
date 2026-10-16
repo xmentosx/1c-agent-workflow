@@ -695,6 +695,19 @@ checkpoint остаётся диагностируемым отказом. Уд�
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.
 
+`Cleanup` также вызывает владельца qualification-копий в `FreshProjectsRoot/q Проект`.
+Современная Develop-копия удаляется только после terminal proof и утилизации базы.
+Для старого манифеста v1 требуется завершённая квитанция утилизации с тем же
+candidate, точные project/branch paths и установленный workflow из того же
+исходного репозитория; установленный commit должен принадлежать истории candidate.
+Удаление сохраняет диагностические файлы, конфигурацию, завершённые execution
+checkpoints, Git bundle, изменения и незарегистрированные исходники в общем Git
+каталоге `itl/evidence/fixture-cleanup`. Это квитанция уборки, а не новая
+квалификация тестов. Активная/retained ссылка, занятая copy lease, живой процесс,
+оставшаяся база, reparse point или незавершённый checkpoint сохраняют копию.
+Release-копии, незавершённая подготовка и каталоги без ownership-квитанции не
+усыновляются по имени или возрасту; результат показывает причину сохранения.
+
 Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
 `Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
 opening every raw file; the projection retains 2048 detailed recent entries and
