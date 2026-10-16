@@ -233,6 +233,35 @@ Describe 'Legacy disposed copy cleanup through the existing owner' {
 }
 
 Describe 'Failed factory and unclosed qualification copy recovery' {
+    It 'continues interrupted cleanup after the base owner already recorded disposal' -Tag recovery_resume {
+        $root=Join-Path $TestDrive 'disposed retry Пример';$copy=New-RecoverableStorageCopy -Root $root -State preparation-failed
+        $script:disposedRetryDatabase=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/test/1Cv8.1CD'
+        Write-Utf8Text -Path $script:disposedRetryDatabase -Value 'incomplete derived base'
+        Mock Invoke-SourceFixtureInstalledAction {
+            param($Root)
+            Remove-Item -LiteralPath $script:disposedRetryDatabase
+            $path=Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json'
+            $claim=Read-QualificationFixtureJson -Path $path;$claim.status='disposed'
+            $claim|Add-Member -NotePropertyName disposal -NotePropertyValue @{status='disposed';candidateCommit=$claim.candidateCommit;removedDatabases=@(@{path=$script:disposedRetryDatabase})}
+            Write-QualificationFixtureJson -Path $path -Value $claim
+        }
+        $script:interruptDisposedRetry=$true
+        Mock Remove-Item {
+            param([string]$LiteralPath)
+            if($script:interruptDisposedRetry){throw 'injected interruption after owned disposal'}
+            if(-not [IO.Path]::GetFullPath($LiteralPath).StartsWith([IO.Path]::GetFullPath($TestDrive)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'TEST_DELETE_OUTSIDE_TESTDRIVE'}
+            foreach($file in [IO.Directory]::EnumerateFiles($LiteralPath,'*',[IO.SearchOption]::AllDirectories)){[IO.File]::SetAttributes($file,[IO.FileAttributes]::Normal)}
+            [IO.Directory]::Delete($LiteralPath,$true)
+        } -ParameterFilter {$LiteralPath -eq $copy.root}
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+        $diagnostics=Join-Path (Join-Path $root 'diagnostics') (Split-Path -Leaf $copy.root)
+        $archive=Join-Path $diagnostics 'recovery.zip';$sha=(Get-FileHash -LiteralPath $archive).Hash
+        (Read-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json')).status|Should -BeExactly 'disposed'
+        $script:interruptDisposedRetry=$false
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+        (Get-FileHash -LiteralPath $archive).Hash|Should -BeExactly $sha
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -Exactly
+    }
     It 'retains the complete first recovery archive across an interrupted recursive removal' -Tag recovery_race {
         $root=Join-Path $TestDrive 'interrupted Пример';$copy=New-RecoverableStorageCopy -Root $root
         $script:interruptRemoval=$true

@@ -254,7 +254,8 @@ function Remove-CompletedSourceE2ECopies {
                 $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=$claim.projectRoot;branchRoot=$claim.branchRoot;claim=$claim} -CandidateRoot $CandidateRoot -ReportPath (Join-Path $diagnostics 'disposal.json') -DiagnosticRoot $diagnostics -LegacyCleanup -ProjectsRoot $ProjectsRoot
                 $removed++;$removedBytes += $result.removedBytes;$entries.Add($result);continue
             }
-            if($IncludeLegacy -and (-not $claim -or ([string]$claim.phase -eq 'Develop' -and [string]$claim.status -in @('materializing','preparation-failed','ready')))){
+            $disposalRetry=$claim -and [int]$claim.schemaVersion -eq 2 -and [string]$claim.status -eq 'disposed' -and -not $claim.PSObject.Properties['terminal']
+            if($IncludeLegacy -and (-not $claim -or ([string]$claim.phase -eq 'Develop' -and ([string]$claim.status -in @('materializing','preparation-failed','ready') -or $disposalRetry)))){
                 $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
                 $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=(Join-Path $directory.FullName 'project')} -CandidateRoot $CandidateRoot -ReportPath (Join-Path $diagnostics 'cleanup-proof.json') -DiagnosticRoot $diagnostics -RecoveryCleanup -ProjectsRoot $ProjectsRoot
                 $removed++;$removedBytes += $result.removedBytes;$entries.Add($result);continue
