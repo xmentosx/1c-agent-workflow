@@ -253,6 +253,15 @@ It "rejects a ResumePlan whose recorded supervisor is not trusted by origin mast
             $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$planId) -AllowFailure
             $result.exitCode | Should -Not -Be 0
             $result.stderr | Should -Match 'DELIVERY_RESUME_SUPERVISOR_UNTRUSTED'
+            $attemptRoot=Join-Path $commonGitDirectory 'itl/publication-attempts'
+            New-Item -ItemType Directory -Force -Path $attemptRoot | Out-Null
+            $checkpointPath=Join-Path $attemptRoot 'develop.json'
+            $checkpoint='{"planId":"'+$planId+'"}'
+            [IO.File]::WriteAllText($checkpointPath,$checkpoint,[Text.UTF8Encoding]::new($false))
+            $frozen=Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-Replan',$planId,'-ReplanQueueScope','Frozen') -AllowFailure
+            $frozen.exitCode | Should -Not -Be 0
+            $frozen.stderr | Should -Match 'DELIVERY_RESUME_SUPERVISOR_UNTRUSTED'
+            [IO.File]::ReadAllText($checkpointPath) | Should -BeExactly $checkpoint
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 }

@@ -1,5 +1,63 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryFrozen.TestSupport.ps1') }
 Describe 'Explicit develop plan replacement' {
+    It 'transfers frozen recovery to published develop and preserves late and advanced registrations' {
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture=New-FrozenFixture
+            $alpha=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure).exitCode | Should -Not -Be 0
+            $original=Read-FrozenAttempt $fixture
+            $oldPlan=[string]$original.planId
+            $checkpointPath=Join-Path $fixture.root '.git/itl/publication-attempts/develop.json'
+            $checkpoint=[IO.File]::ReadAllText($checkpointPath)
+            $oldPlanPath=Join-Path $fixture.root ".git/itl/plans/v1/$oldPlan.json"
+            $oldPlanBytes=[IO.File]::ReadAllText($oldPlanPath)
+            $advanced=Add-FrozenTask $fixture advanced
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            & git -C $fixture.root switch --quiet -c beta $fixture.base
+            $beta=Add-FrozenTask $fixture beta
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
+            & git -C $fixture.root switch --quiet -c support $fixture.base
+            Add-Content -LiteralPath (Join-Path $fixture.root 'scripts/source-delivery-supervisor.ps1') -Value '# published recovery support generation' -Encoding UTF8
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: publish recovery support separately'
+            $support=(& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
+            $options=@('-Replan',$oldPlan,'-ReplanQueueScope','Frozen')
+            # Even a matching checkpoint hash cannot transfer inconsistent scope.
+            $tampered=$checkpoint | ConvertFrom-Json
+            $tampered.queue[0].head=$advanced
+            [IO.File]::WriteAllText($checkpointPath,($tampered|ConvertTo-Json -Depth 24),[Text.UTF8Encoding]::new($false))
+            $bad=Invoke-FrozenDelivery $fixture PublishDevelop $options -AllowFailure
+            $bad.stderr | Should -Match 'DELIVERY_FROZEN_REPLAN_IDENTITY'
+            (Read-FrozenAttempt $fixture).queue[0].head | Should -BeExactly $advanced
+            [IO.File]::WriteAllText($checkpointPath,$checkpoint,[Text.UTF8Encoding]::new($false))
+            (Invoke-FrozenDelivery $fixture PublishDevelop $options -AllowFailure).exitCode | Should -Not -Be 0
+            $replacement=Read-FrozenAttempt $fixture
+            $replacement.replacesPlanId | Should -BeExactly $oldPlan
+            $replacement.replanQueueScope | Should -BeExactly 'Frozen'
+            @($replacement.queue.id) | Should -Be @('alpha')
+            $replacement.queue[0].head | Should -BeExactly $alpha
+            $newPlan=Get-Content -LiteralPath (Join-Path $fixture.root ".git/itl/plans/v1/$($replacement.planId).json") -Raw | ConvertFrom-Json
+            $newPlan.supervisor.commit | Should -BeExactly $support
+            $newPlan.replanQueueScope | Should -BeExactly 'Frozen'
+            foreach($head in @($alpha,$support)) { & git -C $fixture.root merge-base --is-ancestor $head $replacement.candidate; $LASTEXITCODE | Should -Be 0 }
+            foreach($head in @($advanced,$beta)) { & git -C $fixture.root merge-base --is-ancestor $head $replacement.candidate; $LASTEXITCODE | Should -Be 1 }
+            $wrongScope=Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$oldPlan) -AllowFailure
+            $wrongScope.stderr | Should -Match 'DELIVERY_REPLAN_SCOPE_CHANGED'
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$null
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop $options).stdout | ConvertFrom-Json
+            $published.planId | Should -BeExactly $replacement.planId
+            $published.commit | Should -BeExactly $replacement.candidate
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/alpha/head).Trim() | Should -BeExactly $advanced
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/beta/head).Trim() | Should -BeExactly $beta
+            [IO.File]::ReadAllText($oldPlanPath) | Should -BeExactly $oldPlanBytes
+            @(Get-ChildItem -LiteralPath (Join-Path $fixture.root ".git/itl/publication-attempts/replaced/$oldPlan") -Filter '*.json').Count | Should -Be 1
+            @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
+        } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
+    }
     It 'keeps an unchanged circuit and freezes a changed replacement across later registrations' {
         $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {

@@ -24,6 +24,8 @@ param(
     [string]$ReleaseResumeMode = "Auto",
     [string]$ResumePlan = "",
     [string]$Replan = "",
+    [ValidateSet('Current', 'Frozen')]
+    [string]$ReplanQueueScope = 'Current',
     [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
@@ -149,7 +151,10 @@ try {
     $requestedChannel = if ($Action -in @("RegisterChange", "Plan", "PublishDevelop")) { "develop" } else { "master" }
     $selectedChannel = $requestedChannel
     $recordedSupervisor = ""
+    $transferFrozenReplan = $false
+    $replanCheckpointSha256 = ''
     if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
+    if ($ReplanQueueScope -ne 'Current' -and -not $Replan) { throw '-ReplanQueueScope Frozen requires -Replan.' }
     $activeAttempt = $null
     if ($Action -eq 'PublishDevelop') {
         $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
@@ -158,7 +163,19 @@ try {
             try { $activeAttempt = Get-Content -LiteralPath $activeAttemptPath -Raw -Encoding UTF8 | ConvertFrom-Json }
             catch { throw "DELIVERY_CHECKPOINT_INVALID: '$activeAttemptPath': $($_.Exception.Message). The checkpoint and queue were preserved." }
         }
-        if ($Replan) { $ResumePlan = $Replan }
+        if ($Replan) {
+            $ResumePlan = $Replan
+            if ($ReplanQueueScope -eq 'Frozen') {
+                if (-not $activeAttempt -or -not $activeAttempt.PSObject.Properties['planId']) { throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: Frozen requires an active original checkpoint.' }
+                if ([string]$activeAttempt.planId -ceq $Replan) {
+                    $transferFrozenReplan = $true
+                    $replanCheckpointSha256 = (Get-FileHash -LiteralPath $activeAttemptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                } elseif ($activeAttempt.PSObject.Properties['replacesPlanId'] -and [string]$activeAttempt.replacesPlanId -ceq $Replan -and
+                    $activeAttempt.PSObject.Properties['replanQueueScope'] -and [string]$activeAttempt.replanQueueScope -ceq 'Frozen') {
+                    $ResumePlan = [string]$activeAttempt.planId
+                } else { throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: Frozen requires the original checkpoint or its frozen replacement.' }
+            }
+        }
         elseif (-not $ResumePlan -and $activeAttempt -and $activeAttempt.PSObject.Properties['planId'] -and [string]$activeAttempt.planId) {
             $activePlanPath = Join-Path $commonGitPath "itl/plans/v1/$([string]$activeAttempt.planId).json"
             $activePlan = Get-Content -LiteralPath $activePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -219,6 +236,7 @@ try {
             }
         }
     }
+    if ($transferFrozenReplan) { $selectedChannel = 'develop' }
     $authorityTip = Get-DeliveryBootstrapTrackingCommit -Branch $selectedChannel
     if ($authorityTip) {
         $supervisorCommit = $authorityTip
@@ -226,7 +244,7 @@ try {
             if (-not (Test-DeliveryBootstrapAncestor -Ancestor $recordedSupervisor -Descendant $authorityTip)) {
                 throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: recorded supervisor '$recordedSupervisor' is not an ancestor of origin/$selectedChannel '$authorityTip'."
             }
-            $supervisorCommit = $recordedSupervisor
+            if (-not $transferFrozenReplan) { $supervisorCommit = $recordedSupervisor }
         }
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
@@ -285,6 +303,14 @@ try {
         }
     }
     Assert-DeliveryBootstrapAgentTargetSupport -SupervisorAst $supervisorAst -SupervisorCommit $supervisorCommit -BoundParameters $arguments
+    if ($ReplanQueueScope -eq 'Frozen') {
+        foreach ($requiredParameter in @('ReplanQueueScope','ReplanCheckpointSha256')) {
+            if (@($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq $requiredParameter }).Count -eq 0) {
+                throw "DELIVERY_FROZEN_REPLAN_UNSUPPORTED: published supervisor '$supervisorCommit' lacks frozen recovery support. Publish support separately, then repeat this command; the original checkpoint and queue were preserved."
+            }
+        }
+        if ($transferFrozenReplan) { $arguments['ReplanCheckpointSha256'] = $replanCheckpointSha256 }
+    } else { $arguments.Remove('ReplanQueueScope') }
     if ($Replan -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Replan' }).Count -eq 0) {
         if ($savedPlan.PSObject.Properties['queue']) { throw "DELIVERY_REPLAN_UNSUPPORTED: recorded supervisor '$supervisorCommit' cannot replace this frozen plan. Its checkpoint and queue were preserved." }
         if ($activeAttempt -and [string]$activeAttempt.planId -cne $Replan) { throw "DELIVERY_REPLAN_CHECKPOINT_CHANGED: continue active plan '$([string]$activeAttempt.planId)' before replacing another plan." }

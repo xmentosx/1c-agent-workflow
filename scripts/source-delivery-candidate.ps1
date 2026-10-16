@@ -586,6 +586,37 @@ function Publish-AccumulatedDevelop {
         $replacementPlanPath = Join-Path (Get-DeliveryPlanRoot) "$Replan.json"
         $replacementPlan = Get-Content -LiteralPath $replacementPlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ((Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $replacementPlan)) -cne $Replan) { throw "DELIVERY_REPLAN_INVALID: original immutable plan identity is invalid at '$replacementPlanPath'; checkpoint and proof were preserved." }
+        if ($ReplanQueueScope -eq 'Frozen') {
+            if ([string]$frozenAttempt.planId -ceq $Replan) {
+                if ($ReplanCheckpointSha256 -notmatch '^[a-f0-9]{64}$' -or
+                    (Get-DeliveryFileSha256 -Path (Get-DevelopPublicationAttemptPath)) -cne $ReplanCheckpointSha256) {
+                    throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: original checkpoint changed during supervisor transfer; repeat the same Frozen Replan after inspecting Status.'
+                }
+                foreach ($trustedCommit in @([string]$replacementPlan.supervisor.commit, [string]$script:DeliverySupervisorCommit)) {
+                    if ((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',$trustedCommit,$remoteBefore) -AllowFailure).exitCode -ne 0) {
+                        throw 'DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: frozen recovery authority is not an ancestor of freshly fetched published develop; original checkpoint and queue were preserved.'
+                    }
+                }
+                if (-not $replacementPlan.PSObject.Properties['queue']) { throw 'DELIVERY_FROZEN_REPLAN_IDENTITY: Frozen requires immutable queue membership; the historical plan and checkpoint were preserved.' }
+                $expectedQueue = @($replacementPlan.queue | Sort-Object id | ForEach-Object { "$($_.id)|$($_.base)|$($_.head)" }) -join "`n"
+                $actualQueue = @($frozenAttempt.queue | Sort-Object id | ForEach-Object { "$($_.id)|$($_.base)|$($_.head)" }) -join "`n"
+                if (-not $replacementPlan.PSObject.Properties['queue'] -or $expectedQueue -cne $actualQueue -or
+                    [string]$replacementPlan.candidate.commit -cne [string]$frozenAttempt.candidate -or
+                    [string]$replacementPlan.candidate.tree -cne [string]$frozenAttempt.tree -or
+                    (Get-GitValue -Arguments @('rev-parse', "$($frozenAttempt.candidate)^{tree}")) -cne [string]$frozenAttempt.tree) {
+                    throw 'DELIVERY_FROZEN_REPLAN_IDENTITY: original checkpoint does not match its immutable plan; checkpoint and queue were preserved.'
+                }
+                foreach ($entry in @($frozenAttempt.queue)) {
+                    if ((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$entry.head,[string]$frozenAttempt.candidate) -AllowFailure).exitCode -ne 0) {
+                        throw 'DELIVERY_FROZEN_REPLAN_IDENTITY: original candidate does not contain every frozen queue head.'
+                    }
+                }
+            } elseif (-not $frozenAttempt.PSObject.Properties['replanQueueScope'] -or [string]$frozenAttempt.replanQueueScope -cne 'Frozen') {
+                throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: replacement queue scope differs; continue the active plan shown by Status.'
+            }
+        } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen') {
+            throw 'DELIVERY_REPLAN_SCOPE_CHANGED: repeat this replacement with -ReplanQueueScope Frozen.'
+        }
         if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {
             $replacementOriginal = $frozenAttempt
             $attemptPath = Get-DevelopPublicationAttemptPath
@@ -629,7 +660,12 @@ function Publish-AccumulatedDevelop {
         if ($frozenAttempt -and [string]$frozenAttempt.remoteBefore -ceq $remoteBefore) {
             $startPoint = if ($frozenAttempt.PSObject.Properties['queuedCandidate']) { [string]$frozenAttempt.queuedCandidate } elseif ($frozenAttempt.PSObject.Properties['promotionSourceCandidate']) { [string]$frozenAttempt.promotionSourceCandidate } else { [string]$frozenAttempt.candidate }
         } elseif ($frozenPlan) { $startPoint = [string]$frozenPlan.candidate.commit }
-        elseif (-not $frozenAttempt) {
+        elseif ($replacementOriginal -and $ReplanQueueScope -eq 'Frozen') {
+            $entries = @($replacementOriginal.queue)
+            # The exact validated original candidate also retains its owned
+            # compatibility promotion; later accepted candidates are excluded.
+            $startPoint = [string]$replacementOriginal.candidate
+        } elseif (-not $frozenAttempt) {
             $snapshot = Get-SourceRegistrationSnapshot
             $entries = @($snapshot.entries)
             $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
@@ -668,6 +704,7 @@ function Publish-AccumulatedDevelop {
         }
         $attempt | Add-Member -NotePropertyName queuedCandidate -NotePropertyValue $queuedCandidate -Force
         if ($Replan) { $attempt | Add-Member -NotePropertyName replacesPlanId -NotePropertyValue $Replan -Force }
+        if ($ReplanQueueScope -eq 'Frozen') { $attempt | Add-Member -NotePropertyName replanQueueScope -NotePropertyValue 'Frozen' -Force }
         $attempt.candidate = $candidate
         $attempt.tree = $candidateTree
         Write-DevelopPublicationAttempt -Attempt $attempt
@@ -695,12 +732,14 @@ function Publish-AccumulatedDevelop {
             $priorIdentity = Get-DeliveryPlanIdentity -Plan $replacementPlan
             $nextIdentity = Get-DeliveryPlanIdentity -Plan $deliveryPlan
             $priorIdentity.Remove('replacesPlanId'); $nextIdentity.Remove('replacesPlanId')
+            $priorIdentity.Remove('replanQueueScope'); $nextIdentity.Remove('replanQueueScope')
             if ((Get-DeliveryCanonicalJsonSha256 -Value $priorIdentity) -ceq (Get-DeliveryCanonicalJsonSha256 -Value $nextIdentity)) {
                 throw "DELIVERY_REPLAN_INPUTS_UNCHANGED: plan '$Replan' still has the same candidate, owner inputs and valid evidence. Continue its original publication; after diagnosing a repeated stage failure use -RetryBlockedStage, rather than replacing its circuit breaker."
             }
         }
         if ($attempt.PSObject.Properties['replacesPlanId']) {
             $deliveryPlan | Add-Member -NotePropertyName replacesPlanId -NotePropertyValue ([string]$attempt.replacesPlanId) -Force
+            if ($attempt.PSObject.Properties['replanQueueScope']) { $deliveryPlan | Add-Member -NotePropertyName replanQueueScope -NotePropertyValue ([string]$attempt.replanQueueScope) -Force }
             $deliveryPlan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $deliveryPlan)
         }
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
