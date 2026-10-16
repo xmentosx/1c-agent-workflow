@@ -722,6 +722,21 @@ qualification report с точным target и завершённой прове
 доказанной принадлежности не усыновляются по имени или возрасту; результат
 показывает причину сохранения.
 
+После отдельного разбора старой попытки source-владелец копии поддерживает
+явный `ArchiveInactive` для Develop/Release. Этот режим не включается обычным
+sweep и не означает успешной проверки: он сохраняет полный `recovery.zip`,
+включая базы, raw Git/index и незавершённый merge, до удаления исходной копии.
+Действующие copy lease, процессы, owner-ссылки и producer checkpoints защищаются
+как прежде. Для утилизации базы владелец проверяет архивную запись и SHA базы;
+Release без такого архива по-прежнему не допускается к disposal. Восстановление
+в исходный `copyRoot` из ZIP возвращает прежние абсолютные worktree pointers;
+seed DT, вынесенный по точному SHA, восстанавливается из `retainedSource` в index.
+Архив и исходная диагностика остаются на месте при ошибке; повторяется тот же
+вызов владельца с теми же путями. Нужные текущему плану копии в этот режим не
+включаются. Никаких passed-отметок или публикации этот режим не создаёт.
+Если данные изменились после первого архива, сохраняются обе версии: исходный
+архив не перезаписывается, новый вызов получает другой DiagnosticRoot.
+
 Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
 `Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
 opening every raw file; the projection retains 2048 detailed recent entries and

@@ -58,13 +58,14 @@ function Open-SourceE2EFixtureUse {
 . (Join-Path $PSScriptRoot 'source-e2e-copy-recovery.ps1')
 
 function Get-SourceE2EFixtureCopyContext {
-    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot, [switch]$LegacyCleanup, [string]$ProjectsRoot, [switch]$RecoveryCleanup)
+    param([object]$Fixture, [string]$CandidateRoot, [string]$ReportPath, [string]$DiagnosticRoot, [switch]$LegacyCleanup, [string]$ProjectsRoot, [switch]$RecoveryCleanup, [switch]$ArchiveInactive)
     $parent=Split-Path -Parent ([IO.Path]::GetFullPath([string]$Fixture.projectRoot).TrimEnd('\','/'))
     $prefix=$parent+[IO.Path]::DirectorySeparatorChar
     foreach($external in @($ReportPath,$DiagnosticRoot)){
         if([IO.Path]::GetFullPath($external) -ieq $parent -or [IO.Path]::GetFullPath($external).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_EVIDENCE_INSIDE_TARGET'}
     }
-    if($RecoveryCleanup){return Get-SourceE2ECopyRecoveryContext -Parent $parent -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $DiagnosticRoot}
+    if($ArchiveInactive -and -not $RecoveryCleanup){throw 'FIXTURE_ARCHIVE_REQUIRES_RECOVERY_CONTEXT'}
+    if($RecoveryCleanup){return Get-SourceE2ECopyRecoveryContext -Parent $parent -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $DiagnosticRoot -ArchiveInactive:$ArchiveInactive}
     # Persisted terminal proof is a prerequisite. Failed Develop repeats from the
     # immutable seed; its diagnostic bundle stays with the existing gate logs.
     $report=if($LegacyCleanup){$null}else{Read-QualificationFixtureJson -Path $ReportPath}
@@ -133,7 +134,7 @@ function Write-SourceE2EFixtureTerminal {
 }
 
 function Remove-SourceE2EFixtureCopy {
-    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup)
+    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive)
     $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
     $parent=$context.parent;$prefix=$context.prefix;$claim=$context.claim;$claimPath=$context.claimPath;$archivedClaim=$context.archivedClaim;$report=$context.report
     if(-not $RecoveryCleanup -and [string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
@@ -145,6 +146,17 @@ function Remove-SourceE2EFixtureCopy {
             # under the same lease before deciding whether its base is disposable.
             $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
             $claim=$context.claim;$report=$context.report
+        }
+        if($ArchiveInactive){
+            $ledgerPath=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot) 'itl/resources/v1/ledger.json'
+            if(Test-Path -LiteralPath $ledgerPath){
+                $ledger=Read-QualificationFixtureJson -Path $ledgerPath
+                foreach($resource in @($ledger.resources|Where-Object {$_.state -in @('active','retained')})){
+                    if(-not $resource.identity.PSObject.Properties['path'] -or -not [string]$resource.identity.path){continue}
+                    $preserved=[IO.Path]::GetFullPath([string]$resource.identity.path).TrimEnd('\','/')
+                    if($parent -ieq $preserved -or $parent.StartsWith($preserved+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $preserved.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_PRESERVED: active or retained owner reference'}
+                }
+            }
         }
         if((Test-Path -LiteralPath (Join-Path $parent 'project/.git')) -and (-not $RecoveryCleanup -or $context.gitValid)){
             $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $claim.projectRoot
@@ -183,17 +195,27 @@ function Remove-SourceE2EFixtureCopy {
         }
         if($RecoveryCleanup){
             $databases=@($files|Where-Object Name -ieq '1Cv8.1CD')
+            if($ArchiveInactive){Save-SourceE2ECopyRecoveryArchive -Context $context -Files @($files) -DiagnosticRoot $DiagnosticRoot}
             if($databases.Count){
-                if([string]$claim.status -notin @('materializing','preparation-failed')){throw 'FIXTURE_RECOVERY_DATABASE_RETAINED'}
+                if(-not $ArchiveInactive -and [string]$claim.status -notin @('materializing','preparation-failed')){throw 'FIXTURE_RECOVERY_DATABASE_RETAINED'}
                 # Only the existing exact-infobase owner can dispose a failed
                 # factory database. Its admission and exclusive handle still bind.
-                $null=Invoke-SourceFixtureInstalledAction -Root $claim.branchRoot -Action 'qualification-create-infobase' -Arguments @(
-                    '-Operation','Dispose','-ExpectedCandidate',[string]$claim.candidateCommit,'-OutputPath',(Join-Path $DiagnosticRoot 'database-disposal.json')) -LogRoot (Join-Path $DiagnosticRoot 'database-disposal-logs') -TimeoutSeconds 180
+                $disposalArguments=@('-Operation','Dispose','-ExpectedCandidate',[string]$claim.candidateCommit,'-OutputPath',(Join-Path $DiagnosticRoot 'database-disposal.json'))
+                if($ArchiveInactive){$disposalArguments+=@('-ArchivedInactive','-RecoveryArchiveIndex',(Join-Path $DiagnosticRoot 'recovery-index.json'))}
+                $null=Invoke-SourceFixtureInstalledAction -Root $claim.branchRoot -Action 'qualification-create-infobase' -Arguments $disposalArguments -LogRoot (Join-Path $DiagnosticRoot 'database-disposal-logs') -TimeoutSeconds 180
                 if(@($databases|Where-Object {Test-Path -LiteralPath $_.FullName}).Count){throw 'FIXTURE_RECOVERY_DATABASE_RETAINED'}
                 foreach($database in $databases){[void]$files.Remove($database)}
                 $claim=Read-QualificationFixtureJson -Path $context.claimPath
             }
-            Save-SourceE2ECopyRecoveryArchive -Context $context -Files @($files) -DiagnosticRoot $DiagnosticRoot
+            if(-not $ArchiveInactive){Save-SourceE2ECopyRecoveryArchive -Context $context -Files @($files) -DiagnosticRoot $DiagnosticRoot}
+            if($ArchiveInactive){
+                # The full archive includes raw Git/index/merge state and every
+                # database. Do not manufacture a terminal test result or duplicate
+                # its trees as patches/untracked files beside that archive.
+                Write-QualificationFixtureJson -Path $archivedClaim -Value $claim
+                Remove-Item -LiteralPath $parent -Recurse -Force -ErrorAction Stop
+                return @{status='archived-inactive';root=$parent;removedBytes=$bytes;diagnostics=$DiagnosticRoot}
+            }
         }
         foreach($file in $files){
             $relative=$file.FullName.Substring($prefix.Length)

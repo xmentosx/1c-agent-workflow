@@ -71,6 +71,37 @@ Describe 'Owned qualification native database creation before restore' {
         (Read-Utf8Text -Path (Join-Path $script:createBase 'partial.txt'))|Should -BeExactly 'keep original failure'
         Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
     }
+    It 'retires Release only with an exact archived database: <scenario>' -ForEach @(@{scenario='valid'},@{scenario='archive-corrupt'},@{scenario='database-changed'},@{scenario='locked'}) -Tag archive_inactive {
+        $candidate='a'*40;$capsule='b'*64;$claimPath=Join-Path $parent 'qualification-fixture.json'
+        $claim=Read-QualificationFixtureJson -Path $claimPath
+        $claim|Add-Member phase Release;$claim|Add-Member candidateCommit $candidate;$claim|Add-Member capsuleSha256 $capsule
+        Write-QualificationFixtureJson -Path $claimPath -Value $claim
+        $database=Join-Path $script:createBase '1Cv8.1CD';Write-Utf8Text -Path $database -Value 'unique inactive database'
+        $diagnostics=Join-Path $TestDrive 'archive Пример';[void][IO.Directory]::CreateDirectory($diagnostics)
+        $relative=$database.Substring($parent.Length+1).Replace('\','/');$sha=(Get-FileHash -LiteralPath $database).Hash.ToLowerInvariant()
+        Write-QualificationFixtureJson -Path (Join-Path $diagnostics 'cleanup-proof.json') -Value @{kind='itl-fixture-copy-cleanup-proof';reason='archive-inactive-qualification';copyRoot=$parent;candidateCommit=$candidate;phase='Release';capsule=@{sha256=$capsule}}
+        $index=Join-Path $diagnostics 'recovery-index.json'
+        Write-QualificationFixtureJson -Path $index -Value @(@{path=$relative;sha256=$sha;retainedSource=$null})
+        Add-Type -AssemblyName System.IO.Compression
+        $stream=[IO.File]::Create((Join-Path $diagnostics 'recovery.zip'));$zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create)
+        try {$output=$zip.CreateEntry($relative).Open();$bytes=[Text.Encoding]::UTF8.GetBytes($(if($scenario -eq 'archive-corrupt'){'corrupt archived bytes'}else{'unique inactive database'}));try {$output.Write($bytes,0,$bytes.Length)}finally{$output.Dispose()}}finally{$zip.Dispose();$stream.Dispose()}
+        $script:disposalGuardRoot=Join-Path $parent 'custom guard root'
+        Mock Get-OneCExecutionGuardSettings {[pscustomobject]@{root=$script:disposalGuardRoot;python='';waitTimeoutSeconds=5}}
+        $handle=$null
+        try {
+            if($scenario -eq 'database-changed'){Write-Utf8Text -Path $database -Value 'new state must survive'}
+            if($scenario -eq 'locked'){$handle=[IO.File]::Open($database,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)}
+            $disposalParameters=@{BranchRoot=$branch;CandidateCommit=$candidate;ArchivedInactive=$true;RecoveryArchiveIndex=$index}
+            if($scenario -eq 'valid'){
+                (Remove-SourceQualificationDatabases @disposalParameters).status|Should -BeExactly 'disposed'
+                Test-Path -LiteralPath $database|Should -BeFalse
+            }else{
+                {Remove-SourceQualificationDatabases @disposalParameters}|Should -Throw
+                Test-Path -LiteralPath $database|Should -BeTrue
+                (Read-QualificationFixtureJson -Path $claimPath).status|Should -BeExactly 'materializing'
+            }
+        }finally{if($handle){$handle.Dispose()}}
+    }
     It 'rejects a successful launcher without an actual database file' {
         Mock Invoke-NativeProcessAndWaitResult {[pscustomobject]@{timedOut=$false;exitCode=0}}
         {New-SourceQualificationInfoBase -BranchRoot $script:createBranch -BranchName negative -PlatformPath unused}|Should -Throw '*FIXTURE_CREATE_FAILED*'
