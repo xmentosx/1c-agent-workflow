@@ -115,6 +115,12 @@
             $exe = Join-Path $root "itl-ondemand-mcp.exe"
             Set-Content -LiteralPath $exe -Encoding ASCII -Value "fixture"
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $exe, "Process")
+            { & { . $HelperPath -ProjectRoot $root -Action help *> $null; Get-ItlOnDemandMcpEndpointDescriptors } } |
+                Should -Throw '*ITL_ONDEMAND_FACADE_OVERRIDE_SHA_MISMATCH*'
+            $fixtureLock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixtureLock.dependencies.itlOndemandMcp.sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            New-Item -ItemType Directory -Path (Join-Path $root 'templates') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'templates/dependency-lock.json') -Encoding UTF8 -Value ($fixtureLock | ConvertTo-Json -Depth 30)
             $endpoints = & { . $HelperPath -ProjectRoot $root -Action help *> $null; @(Get-ItlOnDemandMcpEndpointDescriptors) }
             @($endpoints).Count | Should -Be 4
             @($endpoints.name) | Should -Contain "itl-roctup-data"
