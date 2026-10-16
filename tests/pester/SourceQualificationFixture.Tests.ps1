@@ -467,6 +467,9 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
                 'refresh-dev-branch'{
                     $i=[Array]::IndexOf($Arguments,'-ExpectedMasterCommit')
                     Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('merge','--ff-only',$Arguments[$i+1])|Out-Null
+                    $stdout=Join-Path $Root 'logs/fixture-refresh.json'
+                    Write-Utf8Text -Path $stdout -Value '{"action":"refresh-dev-branch","status":"succeeded"}'
+                    return [pscustomobject]@{exitCode=0;stdout=$stdout;stderr='mock';durationMs=12}
                 }
                 default{throw "Unexpected action $Action"}
             }

@@ -477,6 +477,15 @@ runner-ом из master, если master ещё не входит в её ист
 checkpoint, чужая или грязная ветка блокируют gate до запуска 1С.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из
 qualification cache, поэтому после ошибки `Release` он не запускается заново.
+Подготовка Release fixture и Develop upgrade используют один
+`source-e2e-manifest-repair.ps1` для единственного конфликта `.ai-rules.json`.
+Обработчик сверяет точную операцию (`refresh-dev-branch` или
+`refresh-dev-branch-lite`), pending-транзакцию, родителей и стадии индекса,
+затем проверяет provenance через установленного владельца. Он сохраняет
+совместимый контекст OpenSpec и повторяет ту же команду один раз. Исходная
+ошибка остаётся в журнале; merge commit и переход состояния выполняет lifecycle
+helper. Неизвестные изменения, чужая операция или неуспешное продолжение
+сохраняют отказ. Capsule, workload и qualification claim этим ремонтом не меняются.
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
 для того же дерева не запускается.
 

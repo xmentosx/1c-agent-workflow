@@ -7,6 +7,7 @@
 Describe 'Unattended E2E client selection' {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        . (Join-Path $RepoRoot 'scripts/source-e2e-manifest-repair.ps1')
         . (Join-Path $RepoRoot 'scripts/source-delivery-process.ps1')
         . (Join-Path $RepoRoot 'scripts/source-e2e-storage.ps1')
         function Get-E2ETestDefinition {
