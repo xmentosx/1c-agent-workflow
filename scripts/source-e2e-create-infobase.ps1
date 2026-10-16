@@ -59,7 +59,7 @@ function Remove-SourceQualificationDatabases {
     $claim=Read-QualificationFixtureJson -Path $claimPath
     if($CandidateCommit -notmatch '^[0-9a-f]{40}$' -or
         [string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Develop' -or
-        [string]$claim.status -notin @('materializing','ready','disposed') -or [string]$claim.candidateCommit -cne $CandidateCommit -or
+        [string]$claim.status -notin @('materializing','preparation-failed','ready','disposed') -or [string]$claim.candidateCommit -cne $CandidateCommit -or
         [string]$claim.branchRoot -ine $branch -or [string]$claim.projectRoot -ine (Join-Path $parent 'project') -or
         $branch -ine (Join-Path $parent 'branch')) {throw 'FIXTURE_DISPOSE_OWNERSHIP_INVALID'}
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $branch

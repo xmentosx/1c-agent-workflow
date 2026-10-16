@@ -289,6 +289,11 @@ function New-SourceE2EFixtureProject {
     }
     [void][IO.Directory]::CreateDirectory($parent)
     $watch=[Diagnostics.Stopwatch]::StartNew()
+    $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;capsulePath=[string]$descriptor.path;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
+    Write-QualificationFixtureJson -Path $claimPath -Value $claim
+    if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
+    $preparationLease=Open-SourceE2EFixtureUse -ProjectRoot $target
+    try {
     Invoke-RepositoryGit -RepositoryRoot $parent -Arguments @('clone','--no-checkout','--no-hardlinks','--no-tags','--branch','master',(Join-Path $capsule 'source.bundle'),$target)|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','--detach',[string]$manifest.masterCommit)|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $target -Arguments @('checkout','-B','master',[string]$manifest.masterCommit)|Out-Null
@@ -299,9 +304,6 @@ function New-SourceE2EFixtureProject {
     }
     # Origin is the immutable local bundle, never the seed or a publishing remote.
     foreach($item in @($target,$branch)){Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.name','ITL qualification')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.email','qualification@example.invalid')|Out-Null}
-    $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
-    Write-QualificationFixtureJson -Path $claimPath -Value $claim
-    if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
     $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
     $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
     $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative
@@ -337,6 +339,16 @@ function New-SourceE2EFixtureProject {
     $claim.status='ready';$claim['restoreDurationMs']=$restore.durationMs;$claim['preparationDurationMs']=[int64]$watch.ElapsedMilliseconds
     Write-QualificationFixtureJson -Path $claimPath -Value $claim
     return [pscustomobject]@{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='executed'}
+    } catch {
+        $originalError=$_
+        $claim.status='preparation-failed'
+        $claim['preparationFailure']=@{kind='itl-fixture-preparation-failure';error=$originalError.Exception.Message;finishedAt=[DateTime]::UtcNow.ToString('o')}
+        try {
+            Write-QualificationFixtureJson -Path $claimPath -Value $claim
+            if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='failed'}}
+        } catch {Write-Warning "Fixture failure receipt could not be persisted: $($_.Exception.Message); original failure: $($originalError.Exception.Message)"}
+        throw $originalError
+    } finally {$preparationLease.Dispose()}
 }
 
 if($Action){

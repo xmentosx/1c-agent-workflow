@@ -2,8 +2,8 @@
     $RepoRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
     function New-StorageCopy {
-        param([string]$Root,[string]$Status='passed',[string]$Candidate=('a'*40))
-        $candidate=$Candidate;$capsule='f'*64
+        param([string]$Root,[string]$Status='passed',[string]$Candidate=('a'*40),[string]$Capsule=('f'*64))
+        $candidate=$Candidate;$capsule=$Capsule
         $parent=Join-Path $Root ('q Проект/develop-'+$capsule.Substring(0,12)+'-'+$candidate.Substring(0,12)+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         $project=Join-Path $parent 'project';$branch=Join-Path $parent 'branch'
         [void][IO.Directory]::CreateDirectory($project)
@@ -35,6 +35,33 @@
         Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.projectRoot '.agent-1c/dependency-lock.json') -Value @{dependencies=@{workflowPackage=@{repo=$origin;commit=$candidate}}}
         Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
         $copy.fixture.claim=[pscustomobject]$copy.claim
+        return $copy
+    }
+    function New-RecoverableStorageCopy {
+        param([string]$Root,[string]$State='materializing')
+        $candidate=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        # The capsule producer is a source repository, not another disposable
+        # qualification target. Keep the cleanup target's Unicode path unchanged.
+        $seed=Join-Path $Root 'original';[void][IO.Directory]::CreateDirectory($seed)
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('init','-b','master')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('config','user.name','Fixture')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('config','user.email','fixture@example.invalid')|Out-Null
+        Write-Utf8Text -Path (Join-Path $seed 'seed.txt') -Value 'immutable source'
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('add','--all')|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('commit','-m','fixture')|Out-Null
+        $capsule=Join-Path $Root 'sealed';[void][IO.Directory]::CreateDirectory($capsule)
+        Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('bundle','create',(Join-Path $capsule 'source.bundle'),'--all')|Out-Null
+        foreach($name in @('infobase.dt','state.json','master.env','branch.env','release-e2e.json')){Write-Utf8Text -Path (Join-Path $capsule $name) -Value 'sealed source bytes'}
+        $head=(Invoke-RepositoryGit -RepositoryRoot $seed -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $files=@(Get-ChildItem -LiteralPath $capsule -File|ForEach-Object {@{path=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()}})
+        $manifest=Join-Path $capsule 'capsule.json'
+        Write-QualificationFixtureJson -Path $manifest -Value @{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase='Develop';infoBaseKind='file';branchName='golden';masterCommit=$head;branchCommit=$head;workflowCommit=$candidate;files=$files}
+        $sha=(Get-FileHash -LiteralPath $manifest).Hash.ToLowerInvariant()
+        $copy=New-StorageCopy -Root $Root -Candidate $candidate -Capsule $sha
+        $copy.claim.status=$State;$copy.claim.capsulePath=$manifest
+        Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+        Invoke-RepositoryGit -RepositoryRoot $copy.fixture.projectRoot -Arguments @('remote','add','origin',(Join-Path $capsule 'source.bundle'))|Out-Null
+        Write-Utf8Text -Path (Join-Path $copy.fixture.branchRoot '.agent-1c/snapshots/qualification-fixtures/seed.dt') -Value 'sealed source bytes'
         return $copy
     }
 }
@@ -202,6 +229,132 @@ Describe 'Legacy disposed copy cleanup through the existing owner' {
                 (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
             }
         } finally {if($lease){$lease.Dispose()}}
+    }
+}
+
+Describe 'Failed factory and unclosed qualification copy recovery' {
+    It 'retains the complete first recovery archive across an interrupted recursive removal' -Tag recovery_race {
+        $root=Join-Path $TestDrive 'interrupted Пример';$copy=New-RecoverableStorageCopy -Root $root
+        $script:interruptRemoval=$true
+        Mock Remove-Item {
+            param([string]$LiteralPath,[switch]$Recurse,[switch]$Force)
+            if($script:interruptRemoval){throw 'injected recursive removal interruption'}
+            if(-not [IO.Path]::GetFullPath($LiteralPath).StartsWith([IO.Path]::GetFullPath($TestDrive)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'TEST_DELETE_OUTSIDE_TESTDRIVE'}
+            [IO.Directory]::Delete($LiteralPath,$true)
+        } -ParameterFilter {$LiteralPath -eq $copy.root}
+        $first=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy
+        $first.removed|Should -Be 0
+        $diagnostics=Join-Path (Join-Path $root 'diagnostics') (Split-Path -Leaf $copy.root)
+        $archive=Join-Path $diagnostics 'recovery.zip';$sha=(Get-FileHash -LiteralPath $archive).Hash
+        foreach($path in @((Join-Path $copy.fixture.projectRoot '.git'),(Join-Path $copy.root 'qualification-fixture.json'),(Join-Path $copy.fixture.projectRoot 'seed.txt'))){
+            if(-not [IO.Path]::GetFullPath($path).StartsWith([IO.Path]::GetFullPath($TestDrive)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'TEST_DELETE_OUTSIDE_TESTDRIVE'}
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath $path -Recurse -Force
+        }
+        $script:interruptRemoval=$false
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+        (Get-FileHash -LiteralPath $archive).Hash|Should -BeExactly $sha
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip=[IO.Compression.ZipFile]::OpenRead($archive)
+        try {$zip.GetEntry('project/seed.txt')|Should -Not -BeNullOrEmpty}finally{$zip.Dispose()}
+    }
+    It 'protects an older live factory in the same root even before its child names the exact copy' -Tag recovery_race {
+        $root=Join-Path $TestDrive 'old producer Пример';$copy=New-RecoverableStorageCopy -Root $root
+        $script:producerRunning=$true
+        Mock Get-CimInstance {if($script:producerRunning){[pscustomobject]@{ProcessId=999991;CommandLine=('powershell.exe -File source-e2e-fixture.ps1 -Action Prepare -FreshProjectsRoot "'+$root+'"')}}}
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+        Test-SourceE2ECopyProducerCommand -CommandLine ('powershell.exe -File source-e2e-fixture.ps1 -Action Prepare -FreshProjectsRoot "'+(Join-Path $root 'independent')+'"') -ProjectsRoot $root|Should -BeFalse
+        $script:producerRunning=$false
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+    }
+    It 'rereads ownership under the lease when preparation finishes during cleanup discovery' -Tag recovery_race {
+        $root=Join-Path $TestDrive 'race Пример';$copy=New-RecoverableStorageCopy -Root $root
+        $script:leaseOpener=(Get-Command Open-SourceE2EFixtureUse).ScriptBlock;$script:finishDuringAdmission=$true
+        Mock Open-SourceE2EFixtureUse {
+            param($ProjectRoot)
+            if($script:finishDuringAdmission){$path=Join-Path (Split-Path -Parent $ProjectRoot) 'qualification-fixture.json';$claim=Read-QualificationFixtureJson -Path $path;$claim.status='ready';Write-QualificationFixtureJson -Path $path -Value $claim}
+            & $script:leaseOpener -ProjectRoot $ProjectRoot
+        }
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+        $script:finishDuringAdmission=$false;$copy.claim.status='preparation-failed';Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+    }
+    It 'accepts only the immutable qualification report for the exact completed target' {
+        $root=Join-Path $TestDrive 'proof with spaces Пример';$control=Join-Path $root 'control.git';$parent=Join-Path $root 'copy'
+        $commit=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+        $tree=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
+        Mock Get-RepositoryCommonGitDirectory {return $control} -ParameterFilter {$RepositoryRoot -eq $RepoRoot}
+        $cache=Join-Path $control ('itl/develop-e2e-qualifications/'+$tree+'/identity/upgrade')
+        $reportPath=Join-Path $cache 'route-report.json';$manifestPath=Join-Path $cache 'manifest.json'
+        $proof=@{schemaVersion=1;kind='itl-develop-e2e-route-report';status='passed';repository=@{commit=$commit;tree=$tree};result=@{configurationRejection=@{status='passed';proof=@{projectRoot=(Join-Path $parent 'branch');snapshotRestored=$true;cursorRestored=$true;nativeOperationsReleased=$true}}}}
+        Write-QualificationFixtureJson -Path $reportPath -Value $proof
+        Write-QualificationFixtureJson -Path $manifestPath -Value @{schemaVersion=1;kind='itl-develop-e2e-qualification-cache';identity=@{tree=$tree;reportSha256=(Get-FileHash -LiteralPath $reportPath).Hash.ToLowerInvariant()}}
+        (Get-SourceE2ECopyReportBinding -CandidateRoot $RepoRoot -Commit $commit -Parent $parent).kind|Should -BeExactly 'passed-negative'
+        [IO.File]::AppendAllText($reportPath,' ')
+        Get-SourceE2ECopyReportBinding -CandidateRoot $RepoRoot -Commit $commit -Parent $parent|Should -BeNullOrEmpty
+        $proof.result.configurationRejection.proof.projectRoot=Join-Path $root 'foreign/branch'
+        Write-QualificationFixtureJson -Path $reportPath -Value $proof
+        Write-QualificationFixtureJson -Path $manifestPath -Value @{schemaVersion=1;kind='itl-develop-e2e-qualification-cache';identity=@{tree=$tree;reportSha256=(Get-FileHash -LiteralPath $reportPath).Hash.ToLowerInvariant()}}
+        Get-SourceE2ECopyReportBinding -CandidateRoot $RepoRoot -Commit $commit -Parent $parent|Should -BeNullOrEmpty
+    }
+    It 'delegates failed-factory database disposal to its original owner and repeats unchanged after the owner becomes available' {
+        $root=Join-Path $TestDrive 'failed base Пример';$copy=New-RecoverableStorageCopy -Root $root -State preparation-failed
+        $script:recoveryDatabase=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/test/1Cv8.1CD'
+        Write-Utf8Text -Path $script:recoveryDatabase -Value 'derived incomplete restore'
+        $script:ownerAvailable=$false
+        Mock Invoke-SourceFixtureInstalledAction {
+            param($Root,$Action,$Arguments)
+            $Action|Should -BeExactly 'qualification-create-infobase';$Arguments[1]|Should -BeExactly 'Dispose';$Arguments[3]|Should -BeExactly $copy.claim.candidateCommit
+            if(-not $script:ownerAvailable){throw 'original base owner held'}
+            Remove-Item -LiteralPath $script:recoveryDatabase
+            $path=Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json';$claim=Read-QualificationFixtureJson -Path $path;$claim.status='disposed';Write-QualificationFixtureJson -Path $path -Value $claim
+        }
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+        Test-Path -LiteralPath $script:recoveryDatabase|Should -BeTrue
+        $script:ownerAvailable=$true
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -Exactly -ParameterFilter {$Root -eq $copy.fixture.branchRoot}
+    }
+    It 'reclaims <state> factory copies, retaining exact source data and the immutable seed' -ForEach @(@{state='materializing'},@{state='preparation-failed'},@{state='unclaimed'}) {
+        $root=Join-Path $TestDrive ('неудачная подготовка '+[guid]::NewGuid().ToString('N'));$copy=New-RecoverableStorageCopy -Root $root -State $state
+        if($state -eq 'unclaimed'){Remove-Item -LiteralPath (Join-Path $copy.root 'qualification-fixture.json')}
+        $binary=Join-Path $copy.fixture.branchRoot 'src/cf/данные с пробелами.bin';$bytes=[byte[]](0,13,10,255,192,128,1);[void][IO.Directory]::CreateDirectory((Split-Path -Parent $binary));[IO.File]::WriteAllBytes($binary,$bytes)
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy
+        $result.removed|Should -Be 1;Test-Path -LiteralPath $copy.root|Should -BeFalse
+        $diagnostics=$result.entries[0].diagnostics
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip=[IO.Compression.ZipFile]::OpenRead((Join-Path $diagnostics 'recovery.zip'))
+        try {$stream=$zip.GetEntry('branch/src/cf/данные с пробелами.bin').Open();$output=[IO.MemoryStream]::new();try{$stream.CopyTo($output);[Convert]::ToBase64String($output.ToArray())|Should -BeExactly ([Convert]::ToBase64String($bytes))}finally{$stream.Dispose();$output.Dispose()}}finally{$zip.Dispose()}
+        $index=Read-QualificationFixtureJson -Path (Join-Path $diagnostics 'recovery-index.json')
+        $retained=@($index|Where-Object retainedSource)[0]
+        (Get-FileHash -LiteralPath $retained.retainedSource).Hash.ToLowerInvariant()|Should -BeExactly $retained.sha256
+        Test-Path -LiteralPath (Join-Path $diagnostics 'source.bundle')|Should -BeTrue
+    }
+    It 'requires hashed terminal owner proof for an old ready copy, then completes the same cleanup' {
+        $root=Join-Path $TestDrive 'старая проверка';$copy=New-RecoverableStorageCopy -Root $root -State ready
+        $copy.claim.schemaVersion=1;foreach($key in @('copyRoot','projectsRoot','workflowCommonGit')){$copy.claim.Remove($key)}
+        Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 0
+        Mock Get-SourceE2ECopyReportBinding {return @{kind='passed-negative';path='original frozen report';sha256=('a'*64);capsule=$null}}
+        (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
+    }
+    It 'retains a recovery target with <reason> before any archive or base disposal' -ForEach @(@{reason='lease'},@{reason='checkpoint'},@{reason='foreign-source'},@{reason='changed-seed'},@{reason='Release'}) {
+        $root=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'));$copy=New-RecoverableStorageCopy -Root $root
+        $lease=$null
+        switch($reason){
+            lease {$lease=Open-SourceE2EFixtureUse -ProjectRoot $copy.fixture.projectRoot}
+            checkpoint {Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.branchRoot '.agent-1c/runs/release/checkpoint.json') -Value @{status='failed';snapshot='needed for restart'}}
+            foreign-source {Invoke-RepositoryGit -RepositoryRoot $copy.fixture.projectRoot -Arguments @('remote','set-url','origin','https://example.invalid/foreign.git')|Out-Null}
+            changed-seed {Write-Utf8Text -Path (Join-Path (Split-Path -Parent $copy.claim.capsulePath) 'infobase.dt') -Value 'changed seed'}
+            Release {$copy.claim.phase='Release';Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim}
+        }
+        Mock Invoke-SourceFixtureInstalledAction {throw 'must not dispose a protected base'}
+        try {
+            $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy
+            $result.removed|Should -Be 0;Test-Path -LiteralPath $copy.root|Should -BeTrue
+            Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
+        }finally{if($lease){$lease.Dispose()}}
     }
 }
 
