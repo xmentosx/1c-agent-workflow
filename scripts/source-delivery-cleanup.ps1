@@ -274,6 +274,18 @@ function Remove-SourceDeliveryStaleReleaseSeedArchives {
     return [pscustomobject]@{ removedArchives = $removed.Count; freedBytes = $freedBytes; entries = @($removed) }
 }
 
+function Remove-SourceDeliveryCompletedFixtureCopies {
+    param([string]$FreshProjectsRoot,[string[]]$PreservePaths=@())
+    # Load the existing copy owner in a child scope. Cleanup does not adopt
+    # Release/resumable copies or maintain a second resource registry.
+    & {
+        param($ownerRoot,$copyRoot,$preserved)
+        . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
+        $diagnostics=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $ownerRoot) 'itl/evidence/fixture-cleanup'
+        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved
+    } $script:Root $FreshProjectsRoot $PreservePaths
+}
+
 function Invoke-SourceDeliveryPostSuccessCleanup {
     param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @(), [ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase = 'post-operation')
 
@@ -284,6 +296,7 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },
         [pscustomobject]@{ name = 'vanessaBuildWork'; action = { Remove-SourceDeliveryStaleVanessaBuildWork -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'releaseRecoveryArtifacts'; action = { Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'completedFixtureCopies'; action = { Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'freshProjects'; action = { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'freshLauncherEntries'; action = { Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $FreshProjectsRoot } }
     )) {
