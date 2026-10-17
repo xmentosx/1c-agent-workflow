@@ -469,6 +469,12 @@ gate восстанавливает их и не повторяет preliminary 
 выбранных Release-стадиях оркестратор выполняет `Develop` и `Release` на одном
 временном commit и делает единственный push лишь после двух успехов. Ошибка
 любой стадии не двигает remote и не очищает очередь.
+Release runner требует живую исходную базу `SOURCE_INFOBASE_PATH/1Cv8.1CD`
+для `seed-parallel` и полного каталога, включающего этот сценарий. Выборочные
+`config-cadence`, `extension-smoke` и `ondemand-mcp` используют восстановленную
+базу ветки и замороженное дерево master; фабрика не достраивает для них вторую
+базу и не меняет капсулу. Во всех scope путь источника остаётся внутри стенда;
+прежнее предусловие recovery-only сохраняется.
 До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
 план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
 checkpoint snapshots. Readiness и runner используют один read-only контракт

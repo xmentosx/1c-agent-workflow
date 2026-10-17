@@ -716,6 +716,42 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $optionalServerSummary.seedParallelServerResetPassed | Should -BeFalse
             @($optionalServerSummary.executedStages) | Should -Not -Contain "server-reset"
 
+            # A frozen qualification copy has a restored branch DB, not a live
+            # source DB. Its branch-only scope must pass the public runner while
+            # full/seed/recovery admission retains the original prerequisite.
+            $sourceDatabase = Join-Path $sourceSnapshot '1Cv8.1CD'
+            $sourceDatabaseBytes = [IO.File]::ReadAllBytes($sourceDatabase)
+            Remove-Item -LiteralPath $sourceDatabase
+            try {
+                $frozenSummaryPath = Join-Path $tempRoot 'frozen-source-summary.json'
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot 'scripts\invoke-release-e2e.ps1') `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $frozenSummaryPath `
+                    -Capabilities 'config-cadence,extension-smoke,ondemand-mcp' -ResumeMode Auto
+                $LASTEXITCODE | Should -Be 0
+                $frozenSummary = Get-Content -LiteralPath $frozenSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $frozenSummary.status | Should -BeExactly 'passed'
+                @($frozenSummary.selectedCapabilities | Sort-Object) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
+                @($frozenSummary.executedStages) | Should -Not -Contain 'seed-parallel'
+                @($frozenSummary.resumedStages) | Should -Not -Contain 'seed-parallel'
+                Test-Path -LiteralPath $sourceDatabase | Should -BeFalse
+                $headBeforeRefusal = (& git -C $worktreeRoot rev-parse HEAD).Trim()
+                foreach ($scope in @('all','seed-parallel','recovery')) {
+                    $scopeArguments = @()
+                    if ($scope -eq 'seed-parallel') { $scopeArguments += @('-Capabilities','seed-parallel') }
+                    if ($scope -eq 'recovery') { $scopeArguments += '-RecoverInterruptedExtensionOnly' }
+                    $previousPreference = $ErrorActionPreference
+                    $ErrorActionPreference = 'Continue'
+                    try {
+                        $missingSourceOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot 'scripts\invoke-release-e2e.ps1') `
+                            -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot ('missing-source-'+$scope+'.json')) @scopeArguments 2>&1
+                        $missingSourceExit = $LASTEXITCODE
+                    } finally { $ErrorActionPreference = $previousPreference }
+                    $missingSourceExit | Should -Not -Be 0
+                    ($missingSourceOutput -join [Environment]::NewLine) | Should -Match 'Dedicated E2E source snapshot does not contain 1Cv8.1CD'
+                    (& git -C $worktreeRoot rev-parse HEAD).Trim() | Should -BeExactly $headBeforeRefusal
+                }
+            } finally { [IO.File]::WriteAllBytes($sourceDatabase, $sourceDatabaseBytes) }
+
             # A corrupt checkpoint must be refused before any expensive stage.
             $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
             Set-Content -LiteralPath $checkpointPath -Encoding UTF8 -Value "{broken"
