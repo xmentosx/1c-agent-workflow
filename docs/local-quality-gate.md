@@ -469,6 +469,12 @@ gate восстанавливает их и не повторяет preliminary 
 выбранных Release-стадиях оркестратор выполняет `Develop` и `Release` на одном
 временном commit и делает единственный push лишь после двух успехов. Ошибка
 любой стадии не двигает remote и не очищает очередь.
+Release runner требует живую исходную базу `SOURCE_INFOBASE_PATH/1Cv8.1CD`
+для `seed-parallel` и полного каталога, включающего этот сценарий. Выборочные
+`config-cadence`, `extension-smoke` и `ondemand-mcp` используют восстановленную
+базу ветки и замороженное дерево master; фабрика не достраивает для них вторую
+базу и не меняет капсулу. Во всех scope путь источника остаётся внутри стенда;
+прежнее предусловие recovery-only сохраняется.
 До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
 план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
 checkpoint snapshots. Readiness и runner используют один read-only контракт
@@ -486,6 +492,21 @@ runner-ом из master, если master ещё не входит в её ист
 checkpoint, чужая или грязная ветка блокируют gate до запуска 1С.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из
 qualification cache, поэтому после ошибки `Release` он не запускается заново.
+Подготовка Release fixture и Develop upgrade используют один
+`source-e2e-manifest-repair.ps1` для единственного конфликта `.ai-rules.json`.
+Обработчик сверяет точную операцию (`refresh-dev-branch` или
+`refresh-dev-branch-lite`), pending-транзакцию, родителей и стадии индекса,
+затем проверяет provenance через установленного владельца. Он сохраняет
+совместимый контекст OpenSpec и повторяет ту же команду один раз. Исходная
+ошибка остаётся в журнале; merge commit и переход состояния выполняет lifecycle
+helper. Неизвестные изменения, чужая операция или неуспешное продолжение
+сохраняют отказ. Capsule, workload и qualification claim этим ремонтом не меняются.
+Фабрика сохраняет прежний вызов `Invoke-SourceFixtureInstalledAction`; точный
+refresh с branch/target и бюджетом 5400 секунд направляет его диспетчер в общий
+обработчик. Дочерние вызовы с `AllowFailure` проходят к единственному владельцу
+native process напрямую. Это позволяет объединить опубликованную поддержку
+с замороженным кандидатом, уже выбравшим lite refresh; другие действия, опции
+и бюджеты не получают автоматического ремонта.
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
 для того же дерева не запускается.
 
@@ -559,6 +580,18 @@ target; `SOURCE_INFOBASE_PATH` указывает на его восстанов
 тот же владелец Capture подтверждает неизменность исходного seed без Recapture.
 При отказе сохраняются снимок и диагностика; сначала исправляется изоляция или
 выясняется внешнее изменение seed, затем применяется явное продолжение Capture.
+
+Если readiness потребовал обновить workflow самого seed, завершённые обновления
+можно признать командой `scripts/source-e2e-fixture.ps1 -Action Capture -Phase
+Develop -ProjectRoot <seed> -AcknowledgeWorkflowUpdate -OutputPath <receipt.json>`
+(для Release повторить с соответствующей фазой). Capture проверяет точную
+цепочку receipts владельца update-workflow, Git и сохранённые SHA. Capsule/DT,
+опубликованный N-1 baseline, данные, pending/cursor/Designer state и context
+не меняются. Обычный Capture повторно проверяет признанную цепочку; новый
+workflow-update требует нового явного признания. Чужой коммит, изменённый backup,
+данные или семантическое состояние продолжают блокировать квалификацию.
+Флаг требует существующую capsule и несовместим с Recapture. После признания
+повторяется исходная квалификация через её сохранённый план.
 
 После upgrade/fresh Develop освобождает только производные `1Cv8.1CD` своего
 qualification target, в том числе после неудачного первого RestoreIB. Сюда входит

@@ -35,6 +35,19 @@
         Write-QualificationFixtureJson -Path (Join-Path $branch '.agent-1c/dev-branches/negative.json') -Value $state
         return [pscustomobject]@{project=$project;branch=$branch;pendingCommit=$pendingCommit}
     }
+    function Add-SeedWorkflowUpdate {
+        param([string]$Root,[string]$Value,[string]$ChangedPath='AGENT-INSTALL.md')
+        $script:ProjectRoot=$Root
+        $source=[pscustomobject]@{root=$RepoRoot;commit=('b'*40);ref='develop';repo='fixture';source='path'}
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @($ChangedPath,'.dev.env') -SnapshotParent (Join-Path $Root '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+        Write-Utf8Text -Path (Join-Path $Root $ChangedPath) -Value $Value
+        [IO.File]::AppendAllText((Join-Path $Root '.dev.env'),("WORKFLOW_FIXTURE_VALUE="+$Value+"`n"),[Text.UTF8Encoding]::new($false))
+        Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('add','--',$ChangedPath)|Out-Null
+        Invoke-RepositoryGit -RepositoryRoot $Root -Arguments @('commit','-m','owned workflow fixture update')|Out-Null
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
+        return Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+    }
 }
 
 Describe 'Owned qualification native database creation before restore' {
@@ -254,6 +267,82 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         Test-Path -LiteralPath $failed.claim.copyRoot|Should -BeFalse
         (Read-QualificationFixtureJson -Path (Join-Path $result.entries[0].diagnostics 'qualification-fixture.json')).preparationFailure.error|Should -BeExactly 'original clone failure'
         Test-Path -LiteralPath $seed.project|Should -BeTrue
+    }
+
+    It 'admits only exact owner receipts and keeps capsule, DT, baseline and semantic workload unchanged' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Продолжение Capture with spaces')
+        $first=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $capsuleSha=(Get-FileHash -LiteralPath $first.path).Hash
+        $dt=Join-Path (Split-Path -Parent $first.path) 'infobase.dt';$dtSha=(Get-FileHash -LiteralPath $dt).Hash
+        $manifest=Read-QualificationFixtureJson -Path $first.path
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value one
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value two
+        $null=Add-SeedWorkflowUpdate -Root $seed.branch -Value branch
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw '*FIXTURE_SEED_CHANGED*'
+        $continued=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate
+        @($continued.workflowUpdateAdmission.master.receipts).Count|Should -Be 2
+        @($continued.workflowUpdateAdmission.branch.receipts).Count|Should -Be 1
+        (Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop).sha256|Should -BeExactly $first.sha256
+        (Get-FileHash -LiteralPath $first.path).Hash|Should -BeExactly $capsuleSha
+        (Get-FileHash -LiteralPath $dt).Hash|Should -BeExactly $dtSha
+        (Read-QualificationFixtureJson -Path $first.path).workflowCommit|Should -BeExactly $manifest.workflowCommit
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value three
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw '*FIXTURE_SEED_CHANGED*'
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Not -Throw
+    }
+
+    It 'rejects acknowledgement after <damage> and preserves the old capsule/config' -ForEach @(
+        @{damage='foreign-commit'},@{damage='business-in-receipt'},@{damage='backup'},@{damage='receipt'},
+        @{damage='environment'},@{damage='database'},@{damage='semantic-state'},@{damage='config'}
+    ) {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive ('Отказ Capture '+$damage))
+        $first=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $configPath=Join-Path $seed.project '.agent-1c/release-e2e.json'
+        $snapshot=Add-SeedWorkflowUpdate -Root $seed.project -Value update -ChangedPath $(if($damage -eq 'business-in-receipt'){'src/cf/invalid.bsl'}else{'AGENT-INSTALL.md'})
+        switch($damage){
+            'foreign-commit' {Write-Utf8Text -Path (Join-Path $seed.project 'foreign.txt') -Value foreign;Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('add','--','foreign.txt')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('commit','-m','foreign')|Out-Null}
+            'backup' {[IO.File]::AppendAllText((Join-Path $snapshot 'item-1'),'tamper')}
+            'receipt' {$p=Join-Path $snapshot 'transaction.json';$r=Read-QualificationFixtureJson -Path $p;$r.branchRef='refs/heads/foreign';Write-QualificationFixtureJson -Path $p -Value $r}
+            'environment' {[IO.File]::AppendAllText((Join-Path $seed.project '.dev.env'),"UNOWNED=changed`n")}
+            'database' {Write-Utf8Text -Path (Join-Path $seed.branch '.agent-1c/infobases/negative/1Cv8.1CD') -Value changed}
+            'semantic-state' {$p=Join-Path $seed.branch '.agent-1c/dev-branches/negative.json';$s=Read-QualificationFixtureJson -Path $p;$s.eventLogPendingCursor.position=18;Write-QualificationFixtureJson -Path $p -Value $s}
+            'config' {$c=Read-QualificationFixtureJson -Path $configPath;$c.devBranchName='foreign';Write-QualificationFixtureJson -Path $configPath -Value $c}
+        }
+        $before=Read-Utf8Text -Path $configPath
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Throw
+        (Read-Utf8Text -Path $configPath)|Should -BeExactly $before
+        (Get-FileHash -LiteralPath $first.path).Hash.ToLowerInvariant()|Should -BeExactly $first.sha256
+    }
+
+    It 'requires an existing capsule and rejects acknowledgement combined with recapture' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Capture options')
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Throw '*FIXTURE_EXISTING_CAPSULE_REQUIRED*'
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate -Recapture}|Should -Throw '*FIXTURE_CAPTURE_OPTIONS_CONFLICT*'
+    }
+
+    It 'keeps ordinary Capture strict after acknowledgement when <damage> changes' -ForEach @(
+        @{damage='environment'},@{damage='database'},@{damage='cursor'},@{damage='context'},@{damage='receipt-sha'}
+    ) {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive ('Признанный seed '+$damage))
+        $statePath=Join-Path $seed.branch '.agent-1c/dev-branches/negative.json'
+        $contextPath=Join-Path $seed.branch '.agent-1c/runs/baseline.json'
+        Write-Utf8Text -Path $contextPath -Value 'original context'
+        $state=Read-QualificationFixtureJson -Path $statePath
+        $state|Add-Member -NotePropertyName eventLogBaselinePath -NotePropertyValue $contextPath
+        Write-QualificationFixtureJson -Path $statePath -Value $state
+        $first=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $snapshot=Add-SeedWorkflowUpdate -Root $seed.project -Value update
+        $null=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate
+        switch($damage){
+            'environment' {[IO.File]::AppendAllText((Join-Path $seed.project '.dev.env'),"UNOWNED=changed`n")}
+            'database' {Write-Utf8Text -Path (Join-Path $seed.branch '.agent-1c/infobases/negative/1Cv8.1CD') -Value changed}
+            'cursor' {$state.eventLogPendingCursor.position=18;Write-QualificationFixtureJson -Path $statePath -Value $state}
+            'context' {Write-Utf8Text -Path $contextPath -Value 'changed context'}
+            'receipt-sha' {$p=Join-Path $snapshot 'transaction.json';$r=Read-QualificationFixtureJson -Path $p;$r.updatedAt='tampered';Write-QualificationFixtureJson -Path $p -Value $r}
+        }
+        {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop}|Should -Throw
+        (Get-FileHash -LiteralPath $first.path).Hash.ToLowerInvariant()|Should -BeExactly $first.sha256
     }
 
     It 'preserves the negative pending/cursor/baseline and exact source while excluding foreign refs and runtime ownership' {
@@ -565,5 +654,54 @@ exit 23
         if($internalAction){$argv[[Array]::IndexOf($argv,'-ProjectRoot')+1]|Should -BeExactly $root}
         else{$argv[0]|Should -BeExactly '--';$argv|Should -Not -Contain '-ProjectRoot'}
         (Read-Utf8Text -Path $stderr[0].FullName).Trim()|Should -BeExactly $unicode
+    }
+}
+
+Describe 'Stable qualification factory action dispatch' {
+    BeforeEach {
+        Mock Invoke-SourceFixtureRefresh { [pscustomobject]@{route='guarded-refresh'} }
+        Mock Invoke-SourceFixtureInstalledProcess { [pscustomobject]@{route='native-process'} }
+        $script:expectedCommit='a'*40
+    }
+
+    It 'routes the unchanged <Action> factory call through the shared continuation' -ForEach @(
+        @{Action='refresh-dev-branch'},@{Action='refresh-dev-branch-lite'}
+    ) {
+        $root=Join-Path $TestDrive 'factory branch'
+        $logs=Join-Path $TestDrive 'retained logs'
+        $script:dispatchExpectedRoot=$root
+        $script:dispatchExpectedLogs=$logs
+        $script:dispatchExpectedAction=$Action
+        $result=Invoke-SourceFixtureInstalledAction -Root $root -Action $Action -Arguments @('-DevBranchName','fixture','-ExpectedMasterCommit',$script:expectedCommit) -AgentTarget kilocode -LogRoot $logs -TimeoutSeconds 5400
+        $result.route|Should -BeExactly 'guarded-refresh'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 1 -Exactly -ParameterFilter {
+            $Root -ceq $script:dispatchExpectedRoot -and $BranchName -ceq 'fixture' -and $ExpectedMasterCommit -ceq $script:expectedCommit -and
+            $Action -ceq $script:dispatchExpectedAction -and $AgentTarget -ceq 'kilocode' -and $LogRoot -ceq $script:dispatchExpectedLogs
+        }
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 0 -Exactly
+    }
+
+    It 'sends the continuation child directly to the native process without recursive routing' {
+        $expectedArguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',$script:expectedCommit)
+        $result=Invoke-SourceFixtureInstalledAction -Root $TestDrive -Action refresh-dev-branch-lite -Arguments $expectedArguments -LogRoot $TestDrive -TimeoutSeconds 5400 -AllowFailure
+        $result.route|Should -BeExactly 'native-process'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 0 -Exactly
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 1 -Exactly -ParameterFilter {
+            $Action -ceq 'refresh-dev-branch-lite' -and $AllowFailure -and $TimeoutSeconds -eq 5400 -and
+            ($Arguments -join '|') -ceq ('-DevBranchName|fixture|-ExpectedMasterCommit|'+$script:expectedCommit)
+        }
+    }
+
+    It 'preserves ordinary dispatch for unsupported <Case> instead of acquiring repair authority' -ForEach @(
+        @{Case='other action';Action='release-e2e-restore';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40));Seconds=5400},
+        @{Case='extra option';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40),'-ConfigLoadMode','Full');Seconds=5400},
+        @{Case='another budget';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit',('a'*40));Seconds=7200},
+        @{Case='missing target';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture');Seconds=5400},
+        @{Case='invalid target';Action='refresh-dev-branch-lite';Arguments=@('-DevBranchName','fixture','-ExpectedMasterCommit','not-a-commit');Seconds=5400}
+    ) {
+        $result=Invoke-SourceFixtureInstalledAction -Root $TestDrive -Action $Action -Arguments $Arguments -LogRoot $TestDrive -TimeoutSeconds $Seconds
+        $result.route|Should -BeExactly 'native-process'
+        Should -Invoke Invoke-SourceFixtureRefresh -Times 0 -Exactly
+        Should -Invoke Invoke-SourceFixtureInstalledProcess -Times 1 -Exactly
     }
 }

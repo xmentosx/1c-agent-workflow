@@ -7,15 +7,16 @@
 Describe 'Develop upgrade manifest continuation' {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+. (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')
         $tokens=$null; $errors=$null
         $owner=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-develop-e2e.ps1'),[ref]$tokens,[ref]$errors)
         if ($errors) { throw 'Develop owner must parse' }
-        foreach ($name in @('Read-CompactSummary','Repair-DevelopUpgradeManifestConflict','Invoke-DevelopUpgradeRefresh')) {
+        foreach ($name in @('Read-CompactSummary','Invoke-DevelopUpgradeRefresh')) {
             $definition=$owner.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$false)
             . ([scriptblock]::Create($definition.Extent.Text))
         }
         function New-DevelopManifestMergeFixture {
-            param([string]$Root,[string]$Case='valid')
+            param([string]$Root,[string]$Case='valid',[string]$Operation='refresh-dev-branch')
             $utf8=[Text.UTF8Encoding]::new($false)
             $main=Join-Path $Root 'Стенд main'; $branch=Join-Path $Root 'Ветка r40'
             New-Item -ItemType Directory -Force -Path $main | Out-Null
@@ -87,11 +88,11 @@ Describe 'Develop upgrade manifest continuation' {
             }
             try {
                 & $module {
-                    param($Before,$Target,$WrongParent)
+                    param($Before,$Target,$WrongParent,$Operation)
                     $state=Read-DevBranchState -Name fixture
-                    Set-PendingDevBranchMergeTransaction -State $state -Operation refresh-dev-branch -Branch itldev/fixture -BranchCommit $Before -TargetCommit $Target -Stage conflicts -AllowedPaths @(Get-DevBranchMergeIndexPaths) -ConflictPaths @(Get-DevBranchMergeUnmergedPaths)
+                    Set-PendingDevBranchMergeTransaction -State $state -Operation $Operation -Branch itldev/fixture -BranchCommit $Before -TargetCommit $Target -Stage conflicts -AllowedPaths @(Get-DevBranchMergeIndexPaths) -ConflictPaths @(Get-DevBranchMergeUnmergedPaths)
                     if ($WrongParent) { Update-DevBranchState -State (Read-DevBranchState -Name fixture) -Updates @{pendingMergeTargetCommit=$WrongParent} }
-                } $before $target $(if($Case -eq 'parent-mismatch'){$base}else{''})
+                } $before $target $(if($Case -eq 'parent-mismatch'){$base}else{''}) $Operation
             } finally {Remove-Module $module -ErrorAction SilentlyContinue}
             if ($Case -eq 'stage-mismatch') {
                 $blob=(Invoke-RepositoryGit $branch @('rev-parse',($base+':.ai-rules.json'))).stdout.Trim()
@@ -99,7 +100,7 @@ Describe 'Develop upgrade manifest continuation' {
             }
             $logs=Join-Path $branch 'logs';New-Item -ItemType Directory $logs|Out-Null
             $stdout=Join-Path $logs 'initial failed.stdout.json';$stderr=Join-Path $logs 'initial failed.stderr.log'
-            [IO.File]::WriteAllText($stdout,(@{action='refresh-dev-branch';status='failed';errorCategory='merge-conflict';requiredAction='agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'}|ConvertTo-Json -Compress),$utf8)
+            [IO.File]::WriteAllText($stdout,(@{action=$Operation;status='failed';errorCategory='merge-conflict';requiredAction='agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'}|ConvertTo-Json -Compress),$utf8)
             [IO.File]::WriteAllText($stderr,$merge.stderr,$utf8)
             return @{main=$main;root=$branch;base=$base;branch=$before;target=$target;statePath=$statePath;result=[pscustomobject]@{exitCode=1;stdout=$stdout;stderr=$stderr};rule=$rule}
         }
@@ -171,16 +172,89 @@ Describe 'Develop upgrade manifest continuation' {
         }
     }
 
+    It 'continues factory <Operation> once through its exact installed transaction' -ForEach @(
+        @{Operation='refresh-dev-branch'},@{Operation='refresh-dev-branch-lite'}
+    ) {
+        $script:factoryFixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive $Operation) -Operation $Operation
+        $fixture=$script:factoryFixture
+        $script:factoryCalls=New-Object 'Collections.Generic.List[object]'
+        $rawBefore=(Get-FileHash -LiteralPath $fixture.result.stdout).Hash
+        $stateBefore=(Get-FileHash -LiteralPath $fixture.statePath).Hash
+        Mock Invoke-SourceFixtureInstalledAction {
+            param($Root,$Action,$Arguments,$AgentTarget,$LogRoot,$TimeoutSeconds,[switch]$AllowFailure)
+            $script:factoryCalls.Add(@{root=$Root;action=$Action;arguments=@($Arguments);allowFailure=[bool]$AllowFailure})
+            if($script:factoryCalls.Count -eq 1){return $script:factoryFixture.result}
+            @(Get-RepositoryGitPathList $Root @('diff','--name-only','--diff-filter=U','-z')).Count|Should -Be 0
+            # Only the simulated installed owner completes this real Git merge.
+            [void](Invoke-RepositoryGit $Root @('commit','--quiet','--no-edit'))
+            $stdout=Join-Path $LogRoot 'factory-retry.stdout.json'
+            [IO.File]::WriteAllText($stdout,(@{action=$Action;status='succeeded'}|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+            return [pscustomobject]@{exitCode=0;stdout=$stdout;stderr=$script:factoryFixture.result.stderr}
+        }
+        $result=Invoke-SourceFixtureRefresh -Root $fixture.root -BranchName fixture -ExpectedMasterCommit $fixture.target -Action $Operation -AgentTarget kilocode -LogRoot (Split-Path $fixture.result.stdout)
+        $result.exitCode|Should -Be 0
+        $script:factoryCalls.Count|Should -Be 2
+        foreach($call in $script:factoryCalls){
+            $call.root|Should -BeExactly $fixture.root
+            $call.action|Should -BeExactly $Operation
+            $call.arguments|Should -Be @('-DevBranchName','fixture','-ExpectedMasterCommit',$fixture.target)
+            $call.allowFailure|Should -BeTrue
+        }
+        (Get-FileHash -LiteralPath $fixture.result.stdout).Hash|Should -BeExactly $rawBefore
+        (Get-FileHash -LiteralPath $fixture.statePath).Hash|Should -BeExactly $stateBefore
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD^1')).stdout.Trim()|Should -BeExactly $fixture.branch
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD^2')).stdout.Trim()|Should -BeExactly $fixture.target
+        $m=Get-Content -LiteralPath (Join-Path $fixture.root '.ai-rules.json') -Raw -Encoding UTF8|ConvertFrom-Json
+        $m.integrations.openspec.projectMdGenerated|Should -BeTrue
+        $m.files.'openspec/project.md'.source|Should -BeExactly '<auto-generated:1c-rules>'
+    }
+
+    It 'retains unsupported lite <Case> and never starts a continuation' -ForEach @(
+        @{Case='unknown-top'},@{Case='unknown-integration'},@{Case='branch-only-rule'},@{Case='forged-hash'},
+        @{Case='business-conflict'},@{Case='parent-mismatch'},@{Case='stage-mismatch'},@{Case='version-mismatch'}
+    ) {
+        $script:factoryFixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive $Case) -Case $Case -Operation 'refresh-dev-branch-lite'
+        $fixture=$script:factoryFixture
+        $before=(Get-FileHash -LiteralPath (Join-Path $fixture.root '.ai-rules.json')).Hash
+        $stateBefore=(Get-FileHash -LiteralPath $fixture.statePath).Hash
+        Mock Invoke-SourceFixtureInstalledAction {return $script:factoryFixture.result}
+        {Invoke-SourceFixtureRefresh -Root $fixture.root -BranchName fixture -ExpectedMasterCommit $fixture.target -Action 'refresh-dev-branch-lite' -LogRoot (Split-Path $fixture.result.stdout)}|Should -Throw '*semantic repair refused*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -Exactly
+        (Get-FileHash -LiteralPath (Join-Path $fixture.root '.ai-rules.json')).Hash|Should -BeExactly $before
+        (Get-FileHash -LiteralPath $fixture.statePath).Hash|Should -BeExactly $stateBefore
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD')).stdout.Trim()|Should -BeExactly $fixture.branch
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','MERGE_HEAD')).stdout.Trim()|Should -BeExactly $fixture.target
+    }
+
+    It 'retains a failed lite continuation and never attempts a second repair' {
+        $script:factoryFixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive 'failed continuation') -Operation 'refresh-dev-branch-lite'
+        $fixture=$script:factoryFixture
+        Mock Invoke-SourceFixtureInstalledAction {return $script:factoryFixture.result}
+        {Invoke-SourceFixtureRefresh -Root $fixture.root -BranchName fixture -ExpectedMasterCommit $fixture.target -Action 'refresh-dev-branch-lite' -LogRoot (Split-Path $fixture.result.stdout)}|Should -Throw '*continuation exit=1*original failure retained*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -Exactly
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD')).stdout.Trim()|Should -BeExactly $fixture.branch
+        (Invoke-RepositoryGit $fixture.root @('rev-parse','MERGE_HEAD')).stdout.Trim()|Should -BeExactly $fixture.target
+    }
+
+    It 'refuses a lite result when the requested operation is full refresh' {
+        $script:factoryFixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive 'operation mismatch') -Operation 'refresh-dev-branch-lite'
+        $fixture=$script:factoryFixture
+        Mock Invoke-SourceFixtureInstalledAction {return $script:factoryFixture.result}
+        {Invoke-SourceFixtureRefresh -Root $fixture.root -BranchName fixture -ExpectedMasterCommit $fixture.target -LogRoot (Split-Path $fixture.result.stdout)}|Should -Throw '*semantic repair refused*'
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -Exactly
+        @(Get-RepositoryGitPathList $fixture.root @('diff','--name-only','--diff-filter=U','-z'))|Should -Contain '.ai-rules.json'
+    }
+
     It 'preserves a later manifest edit instead of overwriting the returned conflict' {
         $fixture=New-DevelopManifestMergeFixture (Join-Path $TestDrive 'Поздняя правка')
         $script:lateManifestPath=Join-Path $fixture.root '.ai-rules.json'
         $indexBefore=@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0
-        Mock Read-CompactSummary {
+        Mock Read-SourceE2ECompactSummary {
             param($ProcessResult)
             [IO.File]::AppendAllText($script:lateManifestPath,"`nuser late repair`n",[Text.UTF8Encoding]::new($false))
             [IO.File]::ReadAllText($ProcessResult.stdout,[Text.UTF8Encoding]::new($false))|ConvertFrom-Json
         }
-        (Repair-DevelopUpgradeManifestConflict -Root $fixture.root -BranchName fixture -ProcessResult $fixture.result)|Should -BeFalse
+        (Repair-SourceE2EManifestConflict -Root $fixture.root -BranchName fixture -ProcessResult $fixture.result)|Should -BeFalse
         [IO.File]::ReadAllText($script:lateManifestPath)|Should -Match 'user late repair'
         (@(Get-RepositoryGitPathList $fixture.root @('ls-files','--stage','-z'))-join [char]0)|Should -BeExactly $indexBefore
         (Invoke-RepositoryGit $fixture.root @('rev-parse','HEAD')).stdout.Trim()|Should -BeExactly $fixture.branch

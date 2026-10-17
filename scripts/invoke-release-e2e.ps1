@@ -122,9 +122,14 @@ $projectPrefix = $ProjectRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySep
 if (-not $sourceSnapshotPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Dedicated E2E stand SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand: $sourceSnapshotPath"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $sourceSnapshotPath "1Cv8.1CD") -PathType Leaf)) {
-    throw "Dedicated E2E source snapshot does not contain 1Cv8.1CD: $sourceSnapshotPath"
+function Assert-E2ESourceSnapshotDatabase {
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceSnapshotPath "1Cv8.1CD") -PathType Leaf)) {
+        throw "Dedicated E2E source snapshot does not contain 1Cv8.1CD: $sourceSnapshotPath"
+    }
 }
+# Keep the existing recovery-only admission unchanged. Ordinary qualification
+# resolves its capability scope before requiring a live source database.
+if ($RecoverInterruptedExtensionOnly) { Assert-E2ESourceSnapshotDatabase }
 if (-not $HelperPath) {
     $HelperPath = Join-Path $worktreePath ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
 }
@@ -1654,6 +1659,12 @@ foreach ($capability in $selectedCapabilities) { [void]$selectedCapabilitySet.Ad
 function Test-ReleaseE2ECapabilitySelected {
     param([Parameter(Mandatory = $true)][string]$Name)
     return $selectedCapabilitySet.Contains($Name)
+}
+# Seed synchronization observes the live source database. The branch-only
+# capabilities use the restored branch DB and frozen master tree instead.
+# Empty scope still resolves to ALL and therefore retains this prerequisite.
+if (Test-ReleaseE2ECapabilitySelected -Name 'seed-parallel') {
+    Assert-E2ESourceSnapshotDatabase
 }
 $serverResetDisposition = Get-ReleaseE2EServerResetDisposition `
     -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
