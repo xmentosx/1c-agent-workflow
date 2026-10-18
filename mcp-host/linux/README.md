@@ -25,17 +25,21 @@ Add `mcpEndpoints` entries only for owned MCP containers, for example:
 The common read-only probe validates the published port binding, initializes
 MCP inside the immutable container ID, reads its full structural tool catalog,
 and runs its agreed safe health tool. Two public probes must match that server
-name and catalog; a safe public health call completes acceptance. Description
+name and catalog; a safe public health call supplies separate functional
+evidence, not the availability decision. Description
 text is excluded from the fingerprint, while JSON schema properties remain.
 Diagnostic sessions are terminated. No response bodies or credentials enter
 the persisted status.
 
 The shared probe keeps a five-second protocol/catalog budget and a separate
 30-second safe-tool budget. A slow healthy tool does not fail its transport
-deadline. Functional timeouts remain unverified, never authorize a restart, and
-retain stage, method, budget and elapsed time without payloads or credentials.
-The Linux owner reports these proofs as degraded; the existing timer retries
-under the same maintenance lock after the functional cause is restored.
+deadline. When identity matches, functional timeouts retain `status=matched`
+and report `health_passed=false` with a separate `health_error`; the Linux
+watchdog remains healthy and preserves the diagnostic in its endpoint proof.
+They never authorize a restart and retain stage, method, budget and elapsed time
+without payloads or credentials. Unknown or mismatched identity remains a
+distinct availability failure. The dependent operation must verify its required
+tool after the functional cause is restored.
 
 A twice-confirmed foreign endpoint authorizes at most one restart per run of
 that exact owned container, only when its internal health proof passed and no

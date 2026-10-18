@@ -105,6 +105,17 @@ class RecoveryBoundaries(unittest.TestCase):
                          lambda *a, **k: {'status': 'mismatch', 'container_id': 'f' * 64})
         self.assertEqual(self.mutations(), [])
 
+    def test_matched_identity_with_optional_timeout_remains_available_without_restart(self):
+        self.endpoint()
+        proof = {'status': 'matched', 'health_passed': False,
+                 'health_error': {'reason': 'TimeoutError', 'stage': 'safe health',
+                                  'method': 'tools/call', 'timeoutSeconds': 30}}
+        result = host.recover(self.config, self.run_command, lambda *a, **k: proof)
+        self.assertEqual(result['status'], 'healthy')
+        self.assertEqual(result['endpoints'][0]['health_error'], proof['health_error'])
+        self.assertFalse(result['endpoints'][0]['health_passed'])
+        self.assertEqual(self.mutations(), [])
+
     def test_missing_container_cannot_expand_compose_ownership(self):
         del self.items['itl-test-code']
         self.compose['services']['foreign'] = {'container_name': 'foreign-container'}

@@ -1927,7 +1927,7 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "qualifies native CodeChecker once per watchdog attempt and reuses its safe call" -Tag DirectHealthBudget {
+    It "qualifies native CodeChecker once per watchdog attempt without upstream tool calls" -Tag DirectHealthBudget {
         $configPath = Join-Path $TestDrive 'watchdog проверка с пробелом.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
@@ -1940,14 +1940,14 @@ services:
             function Invoke-ProcessWithTimeout {
                 param($FilePath, $Arguments, $TimeoutSec)
                 $script:HealthBudgetRuns++; $script:HealthBudgetArguments = $Arguments; $script:HealthBudgetLimit = $TimeoutSec
-                return @{ exitCode = 0; lines = @('{"status":"matched","container_id":"fixture-id","health_passed":true,"elapsedSeconds":11.3}') }
+                return @{ exitCode = 0; lines = @('{"status":"matched","container_id":"fixture-id","health_passed":false,"elapsedSeconds":0.3}') }
             }
             function Invoke-DockerCommandCapture { return 'fixture-id running' }
             function Get-HostContainerPublishState { return 'running' }
             function Test-HostTcpPortOpen { return $true }
             function Read-HostState { return $script:HealthBudgetState }
             function Write-HostState { param($Config, $State) $script:HealthBudgetState = $State }
-            function Get-HostServerFunctionalHealth { throw 'A qualified CodeChecker must not issue another fetch_its' }
+            function Open-HostMcpConnection { throw 'CodeChecker health must not issue upstream calls, including legacy/proxy functional probes' }
             function Repair-DockerDesktopAvailability { return 'already-available' }
             function Repair-TrackedGraphHealthchecks { return 0 }
             function Repair-TrackedMcpHostAndPublish {
@@ -1958,18 +1958,48 @@ services:
             Invoke-McpHostWatchdogRunCore -Config $config *> $null
             $script:HealthBudgetRuns | Should -Be 1
             $script:HealthBudgetLimit | Should -Be 180
-            $script:HealthBudgetArguments | Should -Contain '--health-arguments-base64'
+            $script:HealthBudgetArguments | Should -Not -Contain '--health-tool'
+            $script:HealthBudgetArguments | Should -Not -Contain '--health-arguments-base64'
+            Get-HostServerSafeHealthTool -ServerId codechecker | Should -BeNullOrEmpty
+            (Get-HostServerFunctionalHealth -Server @{id='codechecker';url='http://host:22003/mcp'}).status | Should -Be 'not-probed'
             $script:HealthBudgetState.servers[0].status | Should -Be 'running'
-            $script:HealthBudgetState.servers[0].functionalStatus | Should -Be 'qualified'
+            $script:HealthBudgetState.servers[0].functionalStatus | Should -Be 'not-probed'
             $record = @(ConvertTo-RegistryServers -State $script:HealthBudgetState -HostId fixture -PublishedAt fixture)[0]
             $record.health | Should -Be 'running'
             $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)
             $state.status | Should -Be 'succeeded'
             @($state.endpointProofs).Count | Should -Be 1
-            $state.endpointProofs[0].proof.elapsedSeconds | Should -Be 11.3
+            $state.endpointProofs[0].proof.elapsedSeconds | Should -Be 0.3
             Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
             Get-HostDirectEndpointProof -Config $config -Server $server | Out-Null
             $script:HealthBudgetRuns | Should -Be 2
+        }
+    }
+
+    It "retains explicit CodeChecker capability qualification and its failure" -Tag DirectHealthBudget {
+        $configPath = Join-Path $TestDrive 'required-codechecker-tool.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:RequiredCheckerFailure=$false; $script:RequiredCheckerCalls=0; $script:RequiredCheckerCloses=0
+            function Open-HostMcpConnection { @{} }
+            function Invoke-HostMcpTool {
+                param($Connection,$Name,$Arguments)
+                $Name | Should -Be 'fetch_its'
+                $Arguments.id | Should -Be 'root'
+                $script:RequiredCheckerCalls++
+                if ($script:RequiredCheckerFailure) { throw 'fixture upstream timeout' }
+                return @{result='fixture completed answer'}
+            }
+            function Close-HostMcpConnection { $script:RequiredCheckerCloses++ }
+            $server=@{id='codechecker';url='http://host:22003/mcp'}
+            (Get-HostServerFunctionalHealth -Server $server -IncludeUpstream).status | Should -Be qualified
+            $script:RequiredCheckerFailure=$true
+            $health=Get-HostServerFunctionalHealth -Server $server -IncludeUpstream
+            $health.status | Should -Be degraded
+            $health.message | Should -Match 'fixture upstream timeout'
+            $script:RequiredCheckerCalls | Should -Be 2
+            $script:RequiredCheckerCloses | Should -Be 2
         }
     }
 
@@ -2000,28 +2030,59 @@ services:
         }
     }
 
-    It "retains running identity and reports a failed optional capability separately" -Tag DirectHealthBudget {
+    It "publishes and reconciles an available <ServerId> despite an optional tool timeout" -Tag DirectHealthBudget -TestCases @(
+        @{ServerId='codechecker'}, @{ServerId='graph'}, @{ServerId='syntax'}
+    ) {
+        param($ServerId)
         $configPath = Join-Path $TestDrive 'matched-health-error.json'
         @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $config = @{stateRoot=$TestDrive}
-            $script:HealthErrorState = @{servers=@(@{id='codechecker';scope='global';name='checker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'})}
+            $config = @{stateRoot=$TestDrive;watchdog=@{enabled=$true}}
+            $script:HealthErrorState = @{servers=@(@{id=$ServerId;scope='global';name='checker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'})}
             function Get-HostContainerPublishState { 'running' }
             function Test-HostTcpPortOpen { $true }
-            function Get-HostDirectEndpointProof { @{status='matched';health_passed=$false;health_error=@{method='tools/call';reason='TimeoutError';timeoutSeconds=30}} }
+            function Get-HostDirectEndpointProof { @{status='matched';qualified_url='http://host:22003/mcp/';health_passed=$false;health_error=@{method='tools/call';reason='TimeoutError';timeoutSeconds=30}} }
             function Read-HostState { $script:HealthErrorState }
             function Write-HostState { param($Config,$State) $script:HealthErrorState=$State }
             function Get-HostServerFunctionalHealth { throw 'Do not repeat an already failed safe call.' }
-            Update-HostStateForPublish -Config $config
+            function Repair-DockerDesktopAvailability { 'already-available' }
+            function Repair-TrackedGraphHealthchecks { 0 }
+            function Repair-TrackedMcpHostAndPublish { Update-HostStateForPublish -Config $config }
+            function Publish-Registry { }
+            function Invoke-DockerCommand { throw 'An optional timeout never authorizes container mutation' }
+            Invoke-McpHostWatchdogRunCore -Config $config *> $null
             $record = @(ConvertTo-RegistryServers -State $script:HealthErrorState -HostId fixture -PublishedAt fixture)[0]
             $record.status | Should -Be running
+            $record.health | Should -Be running
+            $record.url | Should -Be 'http://host:22003/mcp/'
             $record.functionalStatus | Should -Be degraded
             $record.functionalMessage | Should -Match 'identity matched.*method=tools/call.*TimeoutError'
+            (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be succeeded
+            # Qualification must allow the very same timed-out proof, for both
+            # native and proxy setup, without claiming that the tool passed.
+            Resolve-HostRuntimeMcpUrl -Config $config -Runtime $script:HealthErrorState.servers[0] | Should -Be 'http://host:22003/mcp/'
         }
     }
 
-    It "publishes a functional timeout with its cause and records watchdog failure" -Tag DirectHealthBudget {
+    It "rejects incomplete endpoint identity despite a successful tool: <ProofStatus> / <QualifiedUrl>" -Tag DirectHealthBudget -TestCases @(
+        @{ProofStatus='unverified';QualifiedUrl='http://host:22003/mcp/'},
+        @{ProofStatus='mismatch';QualifiedUrl='http://host:22003/mcp/'},
+        @{ProofStatus='matched';QualifiedUrl=''}
+    ) {
+        param($ProofStatus,$QualifiedUrl)
+        $configPath = Join-Path $TestDrive 'identity-required.json'
+        @{schemaVersion=1;stateRoot=$TestDrive} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostDirectEndpointProof { @{status=$ProofStatus;qualified_url=$QualifiedUrl;health_passed=$true} }
+            $runtime = @{id='codechecker';containerName='checker';url='http://host:22003/mcp';hostPort=22003;endpointMode='direct'}
+            { Enable-ToolsListProxyForRuntime -Config @{} -Runtime $runtime } | Should -Throw '*ITL_HOST_MCP_ENDPOINT_UNVERIFIED*'
+            $runtime.url | Should -Be 'http://host:22003/mcp'
+        }
+    }
+
+    It "keeps unverified identity unavailable even when its diagnostic mentions a tool timeout" -Tag DirectHealthBudget {
         $configPath = Join-Path $TestDrive 'proof-timeout.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
@@ -2040,7 +2101,7 @@ services:
             { Invoke-McpHostWatchdogRunCore -Config $config *> $null } | Should -Throw '*TimeoutError*'
             $record = @(ConvertTo-RegistryServers -State $script:TimeoutProofState -HostId fixture -PublishedAt fixture)[0]
             $record.status | Should -Be 'unknown'
-            $record.health | Should -Be 'degraded'
+            $record.health | Should -Be 'unknown'
             $record.functionalMessage | Should -Match 'stage=public safe health; method=tools/call; reason=TimeoutError; timeoutSeconds=30'
             (Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $config)).status | Should -Be 'failed'
         }
@@ -4776,13 +4837,11 @@ services:
             function Invoke-DockerCommandChecked { param($Arguments) $script:CanonicalDockerCalls += ,$Arguments; $script:CanonicalProxyRunning=$true }
             function Wait-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $true }
             function Test-ToolsListProxyReady { param($Port, $ExpectedServerId, $ExpectedUpstreamUrl) $ExpectedUpstreamUrl | Should -Be 'http://host.docker.internal:18006/mcp/'; return $script:CanonicalProxyRunning }
-            # The original setup continues through the new proof boundary; no guessed URL is saved on failure.
-            { Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime } | Should -Throw '*ITL_HOST_MCP_ENDPOINT_UNVERIFIED*'
-            $runtime.url | Should -Be 'http://public-host:18006/mcp'
-            $script:CanonicalDockerCalls.Count | Should -Be 0
-            $script:CanonicalProofReady = $true
+            # Identity and URL are already proven. The original setup must
+            # continue even though no safe tool has passed yet.
             Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
             $runtime.directUrl | Should -Be 'http://public-host:18006/mcp/'
+            $script:CanonicalProofReady = $true
             if ($FixtureMode -eq 'proxy') {
                 $runtime.url | Should -Be 'http://public-host:22006/mcp'
                 $script:CanonicalDockerCalls.Count | Should -Be 1

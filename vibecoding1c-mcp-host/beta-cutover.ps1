@@ -1072,7 +1072,9 @@ function Invoke-BetaCutover {
                 $context.runtime.url = $qualifiedCandidateUrl
                 $context.runtime | Add-Member -NotePropertyName directUrl -NotePropertyValue $qualifiedCandidateUrl -Force
             }
-            $health = Get-HostServerFunctionalHealth -Server $context.runtime
+            # Installing a candidate still requires its real capability proof;
+            # only periodic availability checks omit upstream-dependent tools.
+            $health = Get-HostServerFunctionalHealth -Server $context.runtime -IncludeUpstream
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
             $nativePublic = [string](Get-ObjectValue -Object $context.runtime -Name "endpointMode" -Default "") -eq "direct"
             if (-not $nativePublic) { $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context }
