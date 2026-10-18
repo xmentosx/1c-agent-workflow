@@ -2937,18 +2937,16 @@ function Resolve-HostRuntimeMcpUrl {
     $direct['url'] = $directUrl
     $proof = Get-HostDirectEndpointProof -Config $Config -Server $direct -Refresh
     $qualifiedUrl = [string](Get-ObjectValue -Object $proof -Name 'qualified_url' -Default '')
-    $tool = Get-HostServerSafeHealthTool -ServerId ([string]$direct.id)
-    if ([string]$proof.status -ne 'matched' -or -not $qualifiedUrl -or
-        $null -ne (Get-ObjectValue -Object $proof -Name 'health_error' -Default $null) -or
-        ($tool -and -not [bool](Get-ObjectValue -Object $proof -Name 'health_passed' -Default $false))) {
-        $failure = Get-ObjectValue -Object $proof -Name 'health_error' -Default $null
-        if ($null -eq $failure) { $failure = $proof }
-        $details = @('safe endpoint qualification is incomplete')
+    # The shared probe qualifies identity and the exact URL independently of
+    # optional tools. A tool timeout must not block publishing that proven URL.
+    if ([string]$proof.status -ne 'matched' -or -not $qualifiedUrl) {
+        $failure = $proof
+        $details = @('endpoint identity qualification is incomplete')
         foreach ($field in @('status', 'stage', 'method', 'reason', 'originalUrl', 'httpStatus', 'location', 'timeoutSeconds')) {
             $value = Get-ObjectValue -Object $failure -Name $field -Default ''
             if ([string]$value) { $details += "${field}='$value'" }
         }
-        throw "ITL_HOST_MCP_ENDPOINT_UNVERIFIED: server='$($direct.id)' originalUrl='$directUrl'; $($details -join '; '). Retain the running server and its state. Inspect this exact server through host status, resolve the reported endpoint/health cause, then repeat the original host operation; do not publish a guessed URL or restart it as discovery."
+        throw "ITL_HOST_MCP_ENDPOINT_UNVERIFIED: server='$($direct.id)' originalUrl='$directUrl'; $($details -join '; '). Retain the running server and its state. Inspect this exact server through host status, resolve the reported identity/transport cause, then repeat the original host operation; do not publish a guessed URL or restart it as discovery."
     }
     return $qualifiedUrl
 }
@@ -3630,10 +3628,14 @@ function Invoke-McpHostWatchdogRunCore {
         }
 
         $dockerRecovery = @($dockerRecoveryEvents) -join " -> "
-        $degradedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()) | Where-Object {
+        $trackedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()))
+        $degradedServers = @($trackedServers | Where-Object {
             $badStates = @("degraded", "stopped", "missing", "unreachable", "unknown", "unavailable", "remote-disconnected")
-            [string](Get-ObjectValue -Object $_ -Name "health" -Default "") -in $badStates -or
-                [string](Get-ObjectValue -Object $_ -Name "status" -Default "") -in $badStates
+            # Legacy records may only have health; a current protocol status is
+            # authoritative when present, even if an optional capability failed.
+            $availability = [string](Get-ObjectValue -Object $_ -Name "status" -Default "")
+            if (-not $availability) { $availability = [string](Get-ObjectValue -Object $_ -Name "health" -Default "") }
+            $availability -in $badStates
         } | ForEach-Object {
             $name = [string](Get-ObjectValue -Object $_ -Name "name" -Default (Get-ObjectValue -Object $_ -Name "id" -Default "unknown"))
             $reason = [string](Get-ObjectValue -Object $_ -Name "functionalMessage" -Default "functional qualification failed")
@@ -3641,6 +3643,13 @@ function Invoke-McpHostWatchdogRunCore {
         })
         if ($degradedServers.Count -gt 0) {
             throw "Tracked MCP reconcile left degraded endpoints: $($degradedServers -join '; ')."
+        }
+        foreach ($server in $trackedServers) {
+            if ([string](Get-ObjectValue -Object $server -Name "functionalStatus" -Default "") -eq "degraded") {
+                $name = [string](Get-ObjectValue -Object $server -Name "name" -Default (Get-ObjectValue -Object $server -Name "id" -Default "unknown"))
+                $reason = [string](Get-ObjectValue -Object $server -Name "functionalMessage" -Default "functional qualification failed")
+                Write-Warning "MCP '$name' is available; optional functional capability is degraded: $reason. Its dependent operation must verify the required tool."
+            }
         }
         $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
         Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
@@ -4467,13 +4476,13 @@ function Uninstall-McpHostNightlyIndex {
 }
 
 function Get-HostServerSafeHealthTool {
-    param([string]$ServerId)
+    param([string]$ServerId, [switch]$IncludeUpstream)
 
     switch ($ServerId) {
         "syntax" { return "syntaxcheck" }
         "ssl" { return "vector_store_state" }
         "templates" { return "list_templates" }
-        "codechecker" { return "fetch_its" }
+        "codechecker" { if ($IncludeUpstream) { return "fetch_its" }; return "" }
         "bookstack" { return "index_status" }
         "mantis" { return "health" }
         "sppr" { return "sppr_index_status" }
@@ -4486,9 +4495,7 @@ function Get-HostServerSafeHealthTool {
 function Get-HostServerSafeHealthArguments {
     param([string]$ServerId)
 
-    if ($ServerId -eq "codechecker") {
-        return [ordered]@{ id = "root" }
-    }
+    if ($ServerId -eq "codechecker") { return [ordered]@{ id = "root" } }
     if ($ServerId -eq "syntax") { return [ordered]@{ code = "Procedure HealthCheck()`nEndProcedure"; file_name = "HealthCheck.bsl" } }
     return $null
 }
@@ -4571,9 +4578,12 @@ function Get-GraphFunctionalHealth {
 }
 
 function Get-HostServerFunctionalHealth {
-    param([object]$Server)
+    param([object]$Server, [switch]$IncludeUpstream)
 
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "codechecker" -and -not $IncludeUpstream) {
+        return [pscustomobject]@{ status = "not-probed"; message = "Upstream CodeChecker tools are not periodic MCP health probes. Verify the required tool in its dependent operation; identity/catalog qualification does not prove upstream readiness." }
+    }
     if ($id -eq "docs" -and (Test-ModernHostServer -Server $Server)) {
         try {
             $direct = [string](Get-ObjectValue -Object $Server -Name "directUrl" -Default (Get-ObjectValue -Object $Server -Name "url" -Default ""))
@@ -4586,7 +4596,7 @@ function Get-HostServerFunctionalHealth {
             return [pscustomobject]@{ status = "qualified"; message = "Docs native index ready and safe MCP lookup passed." }
         } catch { return [pscustomobject]@{ status = "degraded"; message = "Docs functional qualification failed: $($_.Exception.Message)" } }
     }
-    $toolName = Get-HostServerSafeHealthTool -ServerId $id
+    $toolName = Get-HostServerSafeHealthTool -ServerId $id -IncludeUpstream:$IncludeUpstream
     if (-not $toolName) {
         return [pscustomobject]@{ status = "not-probed"; message = "No server-specific safe health tool is configured." }
     }
@@ -4732,8 +4742,7 @@ function Update-HostStateForPublish {
         if ([string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct" -and $publishStatus -in @("running", "unknown")) {
             $directProof = Get-HostDirectEndpointProof -Config $Config -Server $serverHash
         }
-        if ($null -ne $directProof -and [string]$directProof.status -eq 'matched' -and
-            $null -eq (Get-ObjectValue -Object $directProof -Name 'health_error' -Default $null)) {
+        if ($null -ne $directProof -and [string]$directProof.status -eq 'matched') {
             $qualifiedUrl = [string](Get-ObjectValue -Object $directProof -Name 'qualified_url' -Default '')
             if ($qualifiedUrl -and [string]$serverHash.url -cne $qualifiedUrl) {
                 Set-NativeRuntimeEndpoint -Runtime $serverHash -Url $qualifiedUrl
@@ -4750,12 +4759,12 @@ function Update-HostStateForPublish {
         } elseif ($null -ne $directProof -and $null -ne (Get-ObjectValue -Object $directProof -Name "health_error" -Default $null)) {
             $healthError = Get-ObjectValue -Object $directProof -Name "health_error" -Default $null
             $functionalHealth = [pscustomobject]@{ status = "degraded"; message = "MCP identity matched; safe tool health failed; method=$($healthError.method); reason=$($healthError.reason); timeoutSeconds=$($healthError.timeoutSeconds)." }
-        } elseif ($null -ne $directProof -and $id -eq "codechecker" -and (Get-ObjectValue -Object $directProof -Name "health_passed" -Default $false)) {
-            $functionalHealth = [pscustomobject]@{ status = "qualified"; message = "Internal and public MCP identity and safe health tool 'fetch_its' passed." }
         } else {
             $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
         }
-        $effectiveHealth = $(if ([string]$functionalHealth.status -eq "degraded") { "degraded" } else { $publishStatus })
+        # Availability has one owner: the container-bound MCP protocol proof.
+        # Functional diagnostics stay visible without reclassifying the server.
+        $effectiveHealth = $publishStatus
         $currentHealth = [string](Get-ObjectValue -Object $serverHash -Name "health" -Default "")
         if ($currentHealth -ne $effectiveHealth) {
             $serverHash["health"] = $effectiveHealth

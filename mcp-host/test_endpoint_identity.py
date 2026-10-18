@@ -382,8 +382,10 @@ if($caseMode -eq 'seed'){
         self.public.name, self.public.tool = self.internal.name, self.internal.tool
         self.public.health_delay = 1.2
         result = identity.check_endpoint('itl-bookstack', self.public.url, self.public.port,
-                                         'index_status', timeout=1, health_timeout=1, run=self.command_run)
+                                         'index_status', timeout=1, health_timeout=1, run=self.command_run,
+                                         qualify_url=True)
         self.assertEqual(result['status'], 'matched')
+        self.assertEqual(result['qualified_url'], self.public.url + '/')
         self.assertFalse(result['health_passed'])
         self.assertEqual(result['health_error']['stage'], 'safe health')
         self.assertEqual(result['health_error']['method'], 'tools/call')
