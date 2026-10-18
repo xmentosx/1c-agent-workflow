@@ -271,12 +271,42 @@ Describe "ITL on-demand MCP facade" {
         $workflow | Should -Match 'itl-ondemand-mcp-windows-amd64\.exe'
 
         $buildResult = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests)
-        $repeatBuildResult = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests)
+        $reader = [IO.File]::Open($buildResult[0].path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $repeatBuildResult = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests)
+            $reader.ReadByte() | Should -Be 77
+        } finally { $reader.Dispose() }
         $buildResult.Count | Should -Be 1
         $repeatBuildResult.Count | Should -Be 1
         $buildResult[0].path | Should -Be (Join-Path $RepoRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe")
         $buildResult[0].sha256 | Should -Be ([string]$lock.dependencies.itlOndemandMcp.sha256)
         $repeatBuildResult[0].sha256 | Should -Be $buildResult[0].sha256
+    }
+
+    It "preserves a different occupied output and supports an unused Unicode output path" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl сборка " + [guid]::NewGuid().ToString("N"))
+        $occupiedPath = Join-Path $tempRoot "занятый файл.exe"
+        $unusedPath = Join-Path $tempRoot "новый файл.exe"
+        $reader = $null
+        try {
+            New-Item -ItemType Directory -Path $tempRoot | Out-Null
+            [IO.File]::WriteAllBytes($occupiedPath, [byte[]]@(1, 2, 3))
+            $beforeHash = (Get-FileHash -LiteralPath $occupiedPath -Algorithm SHA256).Hash
+            $reader = [IO.File]::Open($occupiedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            { & (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -OutputPath $occupiedPath -SkipTests } |
+                Should -Throw '*ITL_ONDEMAND_BUILD_OUTPUT_REPLACE_FAILED*unused -OutputPath*'
+            (Get-FileHash -LiteralPath $occupiedPath -Algorithm SHA256).Hash | Should -Be $beforeHash
+            $reader.ReadByte() | Should -Be 1
+            $result = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -OutputPath $unusedPath -SkipTests)
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $result.Count | Should -Be 1
+            $result[0].path | Should -Be $unusedPath
+            $result[0].sha256 | Should -Be ([string]$lock.dependencies.itlOndemandMcp.sha256)
+            @(Get-ChildItem -LiteralPath $tempRoot -Filter '*.tmp').Count | Should -Be 0
+        } finally {
+            if ($reader) { $reader.Dispose() }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "uses the compatibility manifest instead of an unsupported upstream latest in fresh mode" {

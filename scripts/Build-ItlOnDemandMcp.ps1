@@ -16,6 +16,14 @@ $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out-Null
 $temporaryOutputPath = "{0}.{1}.tmp" -f $OutputPath, [guid]::NewGuid().ToString("N")
 
+function Test-ItlOnDemandBuildOutputMatches {
+    param([string]$Path, [string]$Sha256)
+    try {
+        return ((Test-Path -LiteralPath $Path -PathType Leaf) -and
+            (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Sha256)
+    } catch { return $false }
+}
+
 Push-Location $sourceRoot
 try {
     if (-not $SkipTests) {
@@ -35,7 +43,18 @@ try {
         $env:CGO_ENABLED = "0"
         & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $temporaryOutputPath .
         if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp build failed." }
-        Move-Item -LiteralPath $temporaryOutputPath -Destination $OutputPath -Force
+        $builtSha256 = (Get-FileHash -LiteralPath $temporaryOutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if (-not (Test-ItlOnDemandBuildOutputMatches -Path $OutputPath -Sha256 $builtSha256)) {
+            try {
+                Move-Item -LiteralPath $temporaryOutputPath -Destination $OutputPath -Force
+            } catch [System.IO.IOException] {
+                # A concurrent publisher may have installed these exact bytes
+                # after the comparison. Never replace an identical live image.
+                if (-not (Test-ItlOnDemandBuildOutputMatches -Path $OutputPath -Sha256 $builtSha256)) {
+                    throw "ITL_ONDEMAND_BUILD_OUTPUT_REPLACE_FAILED: Keep the existing output and repeat with an unused -OutputPath. $($_.Exception.Message)"
+                }
+            }
+        }
     } finally {
         $env:GOOS = $oldGoOs
         $env:GOARCH = $oldGoArch
