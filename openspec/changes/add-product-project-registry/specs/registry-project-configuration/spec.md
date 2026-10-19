@@ -6,6 +6,18 @@
 
 ## ADDED Requirements
 
+### Requirement: Отдельный checkpoint G3 и совместимый переход
+
+Реализация installed binding/recovery/startup G3 SHALL требовать отдельно одобренной границы checkpoint и разрешения соответствующего apply; approval D9 памяти или completed G2 SHALL NOT заменять их. Один существующий MCP/client owner SHALL владеть local plan до первой записи, receipts, applied marker и pinned resume/owned restore; dispatcher SHALL использовать этот owner после прежнего lifecycle admission. Новая общая очередь/lock family/coordinator SHALL NOT требоваться. Capability SHALL проверяться до первой binding записи. Штатный downgrade к неподдерживающему пакету SHALL сначала выполнить совместимый owned restore либо остановиться до замены helper; исторический permissive parser SHALL NOT объявляться проверяющим новые поля. Legacy unbound SHALL сохранять прежнее поведение. Наполнение AC-36–38 SHALL оставаться обязательным до выпуска, а не новым startup barrier.
+
+#### Scenario: Документ checkpoint готов
+- **WHEN** G2 завершён, D9 согласован и G3 checkpoint подготовлен, но G3 apply не разрешён
+- **THEN** допускается только проработка документов, G3/G4 и миграция установок не начинаются; критерии runtime остаются открытыми
+
+#### Scenario: Downgrade активной привязки через updater
+- **WHEN** штатный updater готовится заменить поддерживающий helper старым пакетом при активном binding
+- **THEN** сначала подтверждается совместимый owned restore либо замена останавливается с продолжением через прежнего owner; чужие settings и данные сохранены
+
 ### Requirement: Выбор проекта вместо PM4 или PM5 до unattended
 
 Bootstrap SHALL заменить вопрос «PM4 или PM5?» выбором проекта из каталога и определять базовый продукт/семейство по выбранной записи. Для заполненной записи он SHALL автоматически подключать все настроенные проектные и общие MCP с учётом overrides/disabled, без отдельных вопросов о каждом MCP, provider, host, конфигурации источника или подтверждении подключения. Выбор проекта и обязательные локальные параметры SHALL быть определены до unattended/download/1C/Git baseline; отдельный выбор профиля версии SHALL NOT быть обязательным.
@@ -45,6 +57,8 @@ Bootstrap SHALL заменить вопрос «PM4 или PM5?» выбором
 - **THEN** операция сообщает ошибку и продолжение через существующего владельца; она не объявляет настройку успешно отложенной
 
 ### Requirement: Автоматическое обновление наследуемых настроек при запуске команд
+
+Startup SHALL иметь одну remote tip/fetch попытку с общим network deadline 10 s на top-level operation; nested/broker SHALL переиспользовать закреплённый контекст без повторного check/guard expansion. При timeout/ошибочном новом snapshot и валидном applied baseline независимая основная задача SHALL продолжаться на прежней revision с WARN актуальности. Help/status/read-only preview и pinned recovery SHALL оставаться доступны. Пробы изменённого источника/основная операция и существующее ожидание lifecycle lock SHALL сохранять отдельные owner budgets; Mantis search SHALL NOT входить в metadata startup. Engineering цели no-op overhead из design SHALL измеряться отдельно и SHALL NOT становиться runtime FAIL.
 
 Для привязанного к каталогу проекта обычная верхнеуровневая команда workflow SHALL перед своей основной фазой автоматически проверять актуальность выбранного контекста и применять неконфликтные изменения наследуемых настроек, включая MCP, СППР/Mantis связи, области поиска и маршруты создания. Отдельный запуск команды обновления или подтверждение каждого изменения SHALL NOT требоваться. Система SHALL выполнять трёхстороннее сравнение ранее применённого снимка, текущего локального состояния и нового контекста, показывать краткое «как было → как стало» и основание Git. Полный preview SHALL оставаться доступным по запросу.
 

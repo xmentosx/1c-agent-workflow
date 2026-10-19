@@ -73,6 +73,21 @@ Always-on agent instructions, MCP tool schemas и startup routes в G2 не из
 
 Все три критерия пока открыты. Подготовка списка/данных и их отдельная разрешённая публикация предшествуют первому выпуску функции каталога и первому выпуску памяти. Они не переоткрывают completed G2 и не становятся условием начала G3/G4; implementation/installed/native критерии остаются самостоятельными. Memory AC-44 потребляет тот же результат, не дублирует каталог или процедуру наполнения.
 
+### Checkpoint и конкретный план G3
+
+| ID / этап | Проверяемое поведение | Достаточное доказательство |
+|---|---|---|
+| AC-39 / G3.0–7 | Installed-state/startup граница G3 отдельно согласована и принята по исходному пути | Перед кодом отдельно зафиксированы approval checkpoint G3, разрешённый срез, actual source/queue/owners и baseline. В реализации/приёмке: один существующий dispatcher/MCP/client owner с persisted before-write plan/receipts/marker-last, без второго coordinator/lock family; complete action/broker classification, одна revision в nested context. Network startup ≤10 s с valid baseline/WARN continuation, save ≤60 s/две публикационные попытки/read-back неизвестного push. Fault/cancel/two-session/partial/pinned resume/owned restore и actual client reload observation сохранены; source readiness не выводится из JSON. Managed downgrade до старого helper выполняет compatible restore или останавливает замену; прямому историческому permissive parser не приписывается новая защита. Canary завершает original init/обычную команду/legacy association/branch path с сохранением чужих байтов на поддерживаемых clients/Windows/terminal stands. Отдельно минимум 20 warm local samples, median/p95 overhead и changed surface bytes/proxies; цели 1 s/2 s не runtime barrier. G3 source/installed proof и наполнение AC-36–38 перед выпуском различимы; нет G4/native memory/массовой миграции как побочного эффекта |
+
+Статус AC-39: **не принят**. Этим запросом подготовлены checkpoint и план, без approval/кода/новых timings/live checks. G2 evidence не закрывает G3; D9 approval не заменяет его checkpoint. Последовательность G3.0–7 и mapping задач — design, без дублирующего журнала.
+
+| Готовность | Проверка границы |
+|---|---|
+| План | Обе OpenSpec валидны и согласованы, G3 checkpoint подготовлен; это текущий результат |
+| G3 owner/source | Срезы G3.0–6 реализованы/приняты соответствующими owner fixtures; live отсутствие не скрыто словом ready |
+| G3 installed | G3.7 по отдельно разрешённому canary: actual source scope/client reload/original task, compatibility и platform matrix с обязательным evidence |
+| Первый выпуск | Дополнительно все обязательные критерии change и AC-36–38 на наполненном опубликованном SHA, затем отдельно разрешённая source delivery; даже зелёный G3 canary не заменяет выпускное наполнение |
+
 ### Граница G2 и подготовленный D9
 
 | ID / этап | Проверяемое поведение | Достаточное доказательство |
@@ -95,6 +110,7 @@ Always-on agent instructions, MCP tool schemas и startup routes в G2 не из
 | Граница G2 interface / D9 / installed G3 | AC-35 | AC-43: код/consumer proof G2 отдельно от native G1 и D9 approval; ни один не заменяет G5 |
 | Update → отдельная ассоциация → отдельный memory opt-in | AC-31–34 | AC-39–42: initial IDs без reset, legacy notes/TOOL и independent result |
 | Подтверждённое наполнение до первого выпуска обеих функций | AC-36–38, задачи 1.9–1.11/5.7 | AC-44, задача 6.6: один выпускной snapshot и подтверждённая карта; native grants/readiness отдельно, seed/synthetic proof не заменяют данные |
+| Installed G3 checkpoint / source / canary / выпуск разделены | AC-39, plan G3.0–7 | Memory AC-39/43/44: G3 не включает G4/opt-in; один applied context и прежний registry owner, выпускное наполнение обязательно |
 
 ## Сквозной установленный canary
 

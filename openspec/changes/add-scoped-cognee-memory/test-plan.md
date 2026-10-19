@@ -169,6 +169,8 @@ G2.1–5 и authoritative handoff определены в registry design: schem
 
 ### Обязательное наполнение перед первым выпуском
 
+Согласованность с checkpoint G3: registry AC-39 и design G3.0–7 требуют отдельного approval до кода, source/owner proof и отдельно разрешённого installed canary. G2/D9/native G1 не заменяют их. Для memory AC-39/43/44 сохраняются один applied context, отдельный opt-in/qualification и обязательное выпускное наполнение; 10 s registry startup network deadline не меняет memory read/write/native Q бюджеты. Checkpoint пока предложен, новых live/installed результатов нет.
+
 | ID | Проверяемое поведение | Достаточное доказательство |
 |---|---|---|
 | AC-44 | Первый выпуск использует наполненный подтверждённый реестр | До первого выпуска каталога и первого выпуска памяти выполнены registry AC-36–38 и задачи 1.9–1.11/5.7. В memory acceptance указан тот же опубликованный SHA согласованных catalog/relations/endpoint files, подтверждённый выпускной перечень продуктов/проектов, их resolved MCP/СППР/Mantis и карта основных областей с availableIn/ограничениями/первичными ссылками. Для объявленных shared-product сценариев проверены home/applicability и отдельно native IDs/grants/currentness; отсутствие optional home не разрешает общий remember и не блокирует registry-only выпуск. Pilot-only/необъяснённые пробелы не принимаются; изменение затронутых правил/настроек требует сверить proof. Нет второго наполнения, автоматического импорта документов/чата, новых runtime barriers или always-on full-catalog context. G2 остаётся завершённым, G3/G4 могут разрабатываться независимо от этой выпускной задачи после отдельного разрешения |
