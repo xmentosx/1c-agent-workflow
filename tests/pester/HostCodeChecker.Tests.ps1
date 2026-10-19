@@ -8,6 +8,17 @@
 }
 
 Describe 'HostCodeChecker component regressions' {
+    It "repairs only the pinned FastMCP session cancellation owner" {
+        $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/codechecker-beta-overlay/test_fastmcp_lifecycle.py'
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & $SourceTestPython -X utf8 -B $testPath 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousErrorActionPreference }
+        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match 'OK'
+    }
     It "completes only verified ITS results and shares the direct fallback deadline" {
         $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/codechecker-beta-overlay/test_fetch_completion.py'
         $previousErrorActionPreference = $ErrorActionPreference
@@ -77,7 +88,7 @@ Describe 'HostCodeChecker component regressions' {
         }
         $hostRoot = Join-Path $RepoRoot 'vibecoding1c-mcp-host'
         $ignore = Get-Content (Join-Path $hostRoot '.dockerignore')
-        ($ignore -join "`n") | Should -Be (@('**', '!codechecker-beta-overlay/', 'codechecker-beta-overlay/*', '!codechecker-beta-overlay/Dockerfile', '!codechecker-beta-overlay/patch_mcp_server.py', '!codechecker-beta-overlay/fetch_completion.py', '!codechecker-beta-overlay/test_fetch_completion.py', '!codechecker-overlay/', 'codechecker-overlay/*', '!codechecker-overlay/observability.py') -join "`n")
+        ($ignore -join "`n") | Should -Be (@('**', '!codechecker-beta-overlay/', 'codechecker-beta-overlay/*', '!codechecker-beta-overlay/Dockerfile', '!codechecker-beta-overlay/patch_mcp_server.py', '!codechecker-beta-overlay/fetch_completion.py', '!codechecker-beta-overlay/test_fetch_completion.py', '!codechecker-beta-overlay/patch_fastmcp_lifecycle.py', '!codechecker-beta-overlay/test_fastmcp_lifecycle.py', '!codechecker-overlay/', 'codechecker-overlay/*', '!codechecker-overlay/observability.py') -join "`n")
         Get-Content (Join-Path $hostRoot 'codechecker-beta-overlay/Dockerfile') -Raw | Should -Match 'COPY codechecker-overlay/observability.py /app/MCP_1copilot/observability.py'
     }
 }

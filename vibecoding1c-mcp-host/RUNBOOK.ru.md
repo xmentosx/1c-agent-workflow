@@ -248,8 +248,37 @@ Terminal `outcome` принимает `returned`, `error`, `refused`, `cancelled
 
 Modern Docker build использует контекст `vibecoding1c-mcp-host` и
 `-f codechecker-beta-overlay/Dockerfile`. Корневой `.dockerignore` разрешает только
-Dockerfile, patcher и общий `codechecker-overlay/observability.py`; локальные конфиги
+Dockerfile, patcher, проверяемые адаптеры с их тестами и общий
+`codechecker-overlay/observability.py`; локальные конфиги
 и runtime в контекст не входят. Legacy build сохраняет свой прежний контекст.
+
+В закреплённом FastMCP 3.4.7 обработчик `LowLevelServer.run` не отменяет свою
+группу обработчиков при завершении входного потока сессии. Build-time patch
+`patch_fastmcp_lifecycle.py` восстанавливает `finally: tg.cancel_scope.cancel()`
+из базового MCP SDK. Проверка AST и точной версии останавливает сборку при
+изменившемся владельце; новая версия зависимости требует повторной квалификации.
+При закрытии сессии отменяются только её вызовы, освобождаются upstream HTTP-поток
+и guard дискуссии. Явная `notifications/cancelled` продолжает работать. Native-тесты
+используют настоящий binary API client с in-memory upstream, включая независимую
+сессию. Изменение не задаёт новый таймаут, retry или fallback.
+
+Штатный [контракт CodeChecker](https://docs.onerpa.ru/mcp-servery-1c/servery/code-checker/konfiguraciya)
+уже определяет единый `ONEC_AI_OPERATION_TIMEOUT` для SSE, повторов и fallback
+и рекомендует укладывать его в таймаут MCP-клиента. `ONEC_AI_TIMEOUT` не
+ограничивает SSE. Согласование этих настроек не заменяет отмену обработчика
+после закрытия MCP-сессии. Наличие возможности в документации проверяется
+отдельно от её наличия в выбранном digest образа.
+
+Приёмка отмены должна наблюдать сигнал клиента: один лишь возврат timeout в
+Codex не доказывает остановку сервера. В изолированном вызове через app-server
+Codex Desktop 0.163.0-alpha.10.2 (`mcpServer/tool/call`, лимит 120 с, серверный
+бюджет 300 с) клиент вернул timeout за 120012 мс без `notifications/cancelled`
+или `DELETE`; upstream-вызов оставался активным. После завершения проверочного
+клиента `DELETE` отменил его за 137156 мс от начала. Это подтверждает исправление
+закрытия сессии, но не гарантированную отмену по timeout Codex. Следующий владелец
+этой границы — MCP-клиент Codex: он должен передавать отмену конкретного запроса
+при истечении своего лимита. Серверный deadline нельзя выводить из отсутствующего
+сигнала или заменять новым фиксированным лимитом без изменения контракта.
 
 `snapshotSha256` связывает проверки точного неизменившегося кода. Доступные FastMCP request/session/
 client/task значения и `user-agent` записываются только как SHA-256; поля отсутствуют, если транспорт
