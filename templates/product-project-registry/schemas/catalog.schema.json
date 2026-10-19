@@ -1,0 +1,354 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roles": {
+            "$ref": "#/definitions/roles"
+          },
+          "links": {
+            "$ref": "#/definitions/links"
+          }
+        },
+        "required": [
+          "productId",
+          "name"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "productId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profileId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "customized": {
+            "type": "boolean"
+          },
+          "roles": {
+            "$ref": "#/definitions/roles"
+          },
+          "links": {
+            "$ref": "#/definitions/links"
+          }
+        },
+        "required": [
+          "projectId",
+          "productId",
+          "name"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "productId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roles": {
+            "$ref": "#/definitions/roles"
+          },
+          "links": {
+            "$ref": "#/definitions/links"
+          }
+        },
+        "required": [
+          "profileId",
+          "productId",
+          "name"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "code",
+              "graph",
+              "productDocs"
+            ]
+          },
+          "endpoint": {
+            "type": "object",
+            "properties": {
+              "hostId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "serverId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "configId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "hostId",
+              "serverId"
+            ],
+            "additionalProperties": false
+          },
+          "namespace": {
+            "type": "string",
+            "minLength": 1
+          },
+          "binding": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "dedicated",
+                  "view"
+                ]
+              },
+              "viewId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "sourceId",
+          "role",
+          "endpoint"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "instances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "sppr",
+              "mantis"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^https?://[^\\s]+$"
+          }
+        },
+        "required": [
+          "instanceId",
+          "type",
+          "url"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "products",
+    "projects",
+    "sources",
+    "instances"
+  ],
+  "additionalProperties": true,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ITL product/project catalog v1",
+  "definitions": {
+    "role": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "own",
+            "disabled"
+          ]
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "roles": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/role"
+        },
+        "graph": {
+          "$ref": "#/definitions/role"
+        },
+        "productDocs": {
+          "$ref": "#/definitions/role"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "sppr": {
+          "$ref": "#/definitions/sppr"
+        },
+        "mantis": {
+          "$ref": "#/definitions/mantis"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "sppr": {
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+        }
+      },
+      "required": [
+        "instanceId",
+        "projectId"
+      ],
+      "additionalProperties": true
+    },
+    "mantis": {
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "projectIds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "searchProjectIds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "createRoutes": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "required": [
+        "instanceId",
+        "projectIds"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

@@ -35,6 +35,18 @@
     return $Default
 }
 
+function Read-Vibecoding1cProductContext {
+    # Explicit G2 entrypoint; existing MCP/startup paths do not invoke it.
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$ProjectId,
+        [string]$ProfileId = '', [object]$Overrides = @{},
+        [hashtable]$Conditions = @{}, [string]$ProductVersion = '')
+    . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1')
+    $snapshot = Read-ItlProductCatalogSnapshot -RepositoryRoot $RepositoryRoot -Commit $Commit
+    return Resolve-ItlProductContext -Snapshot $snapshot -ProjectId $ProjectId -ProfileId $ProfileId -Overrides $Overrides -Conditions $Conditions -ProductVersion $ProductVersion
+}
+
 function ConvertTo-Vibecoding1cMcpArray {
     param([AllowNull()][object]$Value)
 
