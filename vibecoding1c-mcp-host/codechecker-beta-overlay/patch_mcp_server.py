@@ -263,34 +263,50 @@ def patch_fetch_source(source: str) -> str:
                and any(isinstance(t, ast.Name) and t.id == 'client' for t in n.targets)]
     if len(allocations) != 1 or len(clients) != 1 or ast.unparse(allocations[0].value) != 'client.new_budget()':
         raise RuntimeError('Pinned operation budget allocation changed.')
-    direct.body.remove(allocations[0])
-    direct.body.insert(direct.body.index(clients[0]) + 1, allocations[0])
     fallbacks = calls(direct, '_fallback')
     if not fallbacks:
         raise RuntimeError('Pinned fallback boundary missing.')
-    for call in fallbacks:
-        keyword(call, 'budget', 'budget')
-    outer = [n for n in direct.body if isinstance(n, ast.Try)]
-    handlers = [h for n in outer for h in n.handlers
-                if isinstance(h.type, ast.Name) and h.type.id == 'UpstreamTransportError']
-    if len(handlers) != 1 or handlers[0].name != 'e':
-        raise RuntimeError('Pinned transport failure boundary changed.')
-    handlers[0].body[0:0] = ast.parse('if isinstance(e, OperationTimeoutError):\n    raise').body
-    outcomes = [c for c in calls(direct, 'DirectOutcome')
-                if any(k.arg == 'fallback_reason' and isinstance(k.value, ast.Constant) and k.value.value is None for k in c.keywords)]
+    fallback = nodes['_fallback']
+    native_budget = any(a.arg == 'budget' for a in fallback.args.kwonlyargs)
+    if native_budget:
+        # d598f990 already owns one direct/fallback budget. Keep its policy
+        # unchanged; accept no unqualified partial/vendor rewrite. Source hashes
+        # do not depend on the Python 3.11/3.13 AST dump schema.
+        from hashlib import sha256
+        expected = {
+            '_call_capability': '4b9fb0056aacbcdc2d788c69d1acb4c2fa90c77c1e71658e1e2a9fffc74c3cc1',
+            '_fallback': '5dfb0609bfde26e8f5a6ee217746f9089fbcc1bb37dd1cd5868b4ab7cab4092f',
+        }
+        for name, digest in expected.items():
+            if sha256(ast.get_source_segment(source, nodes[name]).encode()).hexdigest() != digest:
+                raise RuntimeError('Unqualified native shared-budget owner: ' + name)
+    else:
+        direct.body.remove(allocations[0])
+        direct.body.insert(direct.body.index(clients[0]) + 1, allocations[0])
+        for call in fallbacks:
+            keyword(call, 'budget', 'budget')
+        outer = [n for n in direct.body if isinstance(n, ast.Try)]
+        handlers = [h for n in outer for h in n.handlers
+                    if isinstance(h.type, ast.Name) and h.type.id == 'UpstreamTransportError']
+        if len(handlers) != 1 or handlers[0].name != 'e':
+            raise RuntimeError('Pinned transport failure boundary changed.')
+        handlers[0].body[0:0] = ast.parse('if isinstance(e, OperationTimeoutError):\n    raise').body
+    outcomes = calls(direct, 'DirectOutcome') if native_budget else [
+        c for c in calls(direct, 'DirectOutcome')
+        if any(k.arg == 'fallback_reason' and isinstance(k.value, ast.Constant) and k.value.value is None for k in c.keywords)]
     if len(outcomes) != 1:
         raise RuntimeError('Pinned successful direct outcome changed.')
     keyword(outcomes[0], 'completion', 'result.get("_itl_fetch_completion")')
     nodes['DirectOutcome'].body.extend(ast.parse('completion: Optional[Dict[str, str]] = None').body)
 
-    fallback = nodes['_fallback']
-    fallback.args.kwonlyargs.append(ast.arg(arg='budget', annotation=ast.parse('Optional[OperationBudget]', mode='eval').body))
-    fallback.args.kw_defaults.append(ast.Constant(None))
-    prompt_calls = calls(fallback, '_send_prompt')
-    if len(prompt_calls) != 1:
-        raise RuntimeError('Pinned fallback prompt boundary changed.')
-    keyword(prompt_calls[0], 'budget', 'budget')
-    fallback.body[1:1] = ast.parse('''if budget is not None and budget.expired():
+    if not native_budget:
+        fallback.args.kwonlyargs.append(ast.arg(arg='budget', annotation=ast.parse('Optional[OperationBudget]', mode='eval').body))
+        fallback.args.kw_defaults.append(ast.Constant(None))
+        prompt_calls = calls(fallback, '_send_prompt')
+        if len(prompt_calls) != 1:
+            raise RuntimeError('Pinned fallback prompt boundary changed.')
+        keyword(prompt_calls[0], 'budget', 'budget')
+        fallback.body[1:1] = ast.parse('''if budget is not None and budget.expired():
     raise OperationTimeoutError("Operation budget exhausted before fallback", phase="fallback", requests_issued=budget.requests_issued, capability=capability)
 ''').body
 

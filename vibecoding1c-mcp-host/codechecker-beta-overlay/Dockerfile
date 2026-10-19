@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=comol/1c-code-checker@sha256:7ce11d25bfc0f662f8e425ca7dbb6eeeb2f4d0dbca31da68d0138c41ddba8cb3
+ARG BASE_IMAGE=comol/1c-code-checker@sha256:d598f990de043c211a3c09e6db0d4490fd91dcfb0cfd0708ab629e3bcd27118e
 FROM ${BASE_IMAGE}
 
 USER root
