@@ -5552,6 +5552,21 @@ function Test-RegistryCurrentHostMatchesState {
     return ($existingJson -ceq $candidateJson)
 }
 
+function Assert-RegistryPublicationWorktree {
+    param([string]$Root)
+    # Boolean Git predicate: no path-list parsing (in particular no newline split).
+    foreach ($scope in @('working', 'cached')) {
+        $arguments = @('-C', $Root, 'diff', '--quiet')
+        if ($scope -eq 'cached') { $arguments += '--cached' }
+        $arguments += @('--', '.', ':(exclude)registry.json')
+        $result = Invoke-ProcessWithTimeout -FilePath 'git' -Arguments $arguments -TimeoutSec 30 -Description 'Check foreign registry changes'
+        if ($result.exitCode -eq 1) {
+            throw "REGISTRY_FOREIGN_CHANGES: preserve and commit or move your catalog/other tracked changes outside this publication, then repeat publish. No foreign files were staged or committed: $Root"
+        }
+        if ($result.exitCode -ne 0) { throw "REGISTRY_STATUS_UNVERIFIED: cannot check $Root; diagnose Git, then repeat publish. No publication attempted." }
+    }
+}
+
 function Publish-Registry {
     param(
         [object]$Config,
@@ -5577,6 +5592,7 @@ function Publish-Registry {
     }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
+        Assert-RegistryPublicationWorktree -Root $registryRoot
         if (-not $hostUnchanged) {
             Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
             Write-Host "Registry written: $registryPath"
@@ -5586,9 +5602,11 @@ function Publish-Registry {
         }
         if (-not $hostUnchanged) {
             Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
-            $status = ((& git -C $registryRoot status --porcelain) -join "`n")
-            if ($status) {
-                Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
+            $diff = Invoke-ProcessWithTimeout -FilePath 'git' -Arguments @('-C', $registryRoot, 'diff', '--cached', '--quiet', '--', 'registry.json') -TimeoutSec 30 -Description 'Check endpoint publication diff'
+            if ($diff.exitCode -eq 1) {
+                Invoke-Git -Root $registryRoot -Arguments @("commit", "--only", "-m", "publish vibecoding1c MCP registry", "--", "registry.json")
+            } elseif ($diff.exitCode -ne 0) {
+                throw 'REGISTRY_STATUS_UNVERIFIED: cannot check staged endpoint diff; repeat publish after Git diagnosis.'
             } else {
                 Write-Host "Registry unchanged."
             }

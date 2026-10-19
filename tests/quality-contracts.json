@@ -141,6 +141,34 @@
   },
   "contracts": [
     {
+      "id": "product-project-registry",
+      "owner": "MCP configuration and runtime",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/ProductProjectRegistry.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "templates/product-project-registry/*"
+      ],
+      "tests": [
+        "tests/pester/ProductProjectRegistry.Tests.ps1"
+      ]
+    },
+    {
+      "id": "product-registry-publication",
+      "owner": "standalone MCP host and CodeChecker overlay",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ProductRegistryPublisher.Tests.ps1",
+      "paths": [
+        "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1"
+      ],
+      "tests": [
+        "tests/pester/ProductRegistryPublisher.Tests.ps1"
+      ]
+    },
+    {
       "id": "pester-cache-compatibility",
       "owner": "Pester scheduler-independent current and legacy cache compatibility",
       "gate": "targeted",

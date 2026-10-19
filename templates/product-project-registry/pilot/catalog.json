@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "products": [
+    {
+      "productId": "pm5-corp",
+      "name": "PM5 КОРП"
+    }
+  ],
+  "projects": [
+    {
+      "projectId": "pm5-core-development",
+      "productId": "pm5-corp",
+      "name": "Разработка PM5 КОРП",
+      "customized": false
+    }
+  ],
+  "sources": [],
+  "instances": []
+}
