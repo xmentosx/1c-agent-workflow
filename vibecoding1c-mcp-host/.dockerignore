@@ -3,6 +3,8 @@
 codechecker-beta-overlay/*
 !codechecker-beta-overlay/Dockerfile
 !codechecker-beta-overlay/patch_mcp_server.py
+!codechecker-beta-overlay/fetch_completion.py
+!codechecker-beta-overlay/test_fetch_completion.py
 !codechecker-overlay/
 codechecker-overlay/*
 !codechecker-overlay/observability.py

@@ -235,12 +235,106 @@ def patch_source(source: str) -> str:
     return _instrument_source(result)
 
 
+def patch_fetch_source(source: str) -> str:
+    """Wire a narrowly scoped ITS client and one direct/fallback deadline."""
+    tree = ast.parse(source)
+    nodes = {n.name: n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+    required = {'_get_client', '_call_capability', '_fallback', 'DirectOutcome', 'fetch_its'}
+    if not required.issubset(nodes) or '_ItlFetchResult' in nodes:
+        raise RuntimeError('Pinned fetch/deadline layout changed or already patched.')
+
+    def calls(node, name):
+        return [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name]
+
+    def keyword(call, name, value):
+        if any(k.arg == name for k in call.keywords):
+            raise RuntimeError('Pinned fetch/deadline keyword already exists: ' + name)
+        call.keywords.append(ast.keyword(arg=name, value=ast.parse(value, mode='eval').body))
+
+    constructor = calls(nodes['_get_client'], 'OneCApiClient')
+    if len(constructor) != 1:
+        raise RuntimeError('Pinned client factory changed.')
+    constructor[0].func.id = '_ItlFetchClient'
+    direct = nodes['_call_capability']
+    allocations = [n for n in direct.body if isinstance(n, ast.Assign)
+                   and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                   and n.targets[0].id == 'budget']
+    clients = [n for n in direct.body if isinstance(n, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == 'client' for t in n.targets)]
+    if len(allocations) != 1 or len(clients) != 1 or ast.unparse(allocations[0].value) != 'client.new_budget()':
+        raise RuntimeError('Pinned operation budget allocation changed.')
+    direct.body.remove(allocations[0])
+    direct.body.insert(direct.body.index(clients[0]) + 1, allocations[0])
+    fallbacks = calls(direct, '_fallback')
+    if not fallbacks:
+        raise RuntimeError('Pinned fallback boundary missing.')
+    for call in fallbacks:
+        keyword(call, 'budget', 'budget')
+    outer = [n for n in direct.body if isinstance(n, ast.Try)]
+    handlers = [h for n in outer for h in n.handlers
+                if isinstance(h.type, ast.Name) and h.type.id == 'UpstreamTransportError']
+    if len(handlers) != 1 or handlers[0].name != 'e':
+        raise RuntimeError('Pinned transport failure boundary changed.')
+    handlers[0].body[0:0] = ast.parse('if isinstance(e, OperationTimeoutError):\n    raise').body
+    outcomes = [c for c in calls(direct, 'DirectOutcome')
+                if any(k.arg == 'fallback_reason' and isinstance(k.value, ast.Constant) and k.value.value is None for k in c.keywords)]
+    if len(outcomes) != 1:
+        raise RuntimeError('Pinned successful direct outcome changed.')
+    keyword(outcomes[0], 'completion', 'result.get("_itl_fetch_completion")')
+    nodes['DirectOutcome'].body.extend(ast.parse('completion: Optional[Dict[str, str]] = None').body)
+
+    fallback = nodes['_fallback']
+    fallback.args.kwonlyargs.append(ast.arg(arg='budget', annotation=ast.parse('Optional[OperationBudget]', mode='eval').body))
+    fallback.args.kw_defaults.append(ast.Constant(None))
+    prompt_calls = calls(fallback, '_send_prompt')
+    if len(prompt_calls) != 1:
+        raise RuntimeError('Pinned fallback prompt boundary changed.')
+    keyword(prompt_calls[0], 'budget', 'budget')
+    fallback.body[1:1] = ast.parse('''if budget is not None and budget.expired():
+    raise OperationTimeoutError("Operation budget exhausted before fallback", phase="fallback", requests_issued=budget.requests_issued, capability=capability)
+''').body
+
+    fetch = nodes['fetch_its']
+    fetch.returns = ast.Name(id='_ItlFetchResult', ctx=ast.Load())
+    results = calls(fetch, 'AnswerResult')
+    if len(results) != 2:
+        raise RuntimeError('Pinned ITS result boundaries changed.')
+    for result in results:
+        result.func.id = '_ItlFetchResult'
+    direct_results = [r for r in results if any(k.arg == 'fallback_reason' for k in r.keywords)]
+    if len(direct_results) != 1:
+        raise RuntimeError('Pinned ITS direct result changed.')
+    keyword(direct_results[0], 'completion', 'outcome.completion')
+
+    lines = source.splitlines(keepends=True)
+    edits = []
+    for name in required:
+        node = nodes[name]
+        start = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1
+        edits.append((start, node.end_lineno, ast.unparse(ast.fix_missing_locations(node)) + '\n'))
+    helpers = '''from .fetch_completion import make_fetch_client as _itl_make_fetch_client
+_ItlFetchClient = _itl_make_fetch_client(OneCApiClient)
+
+class _ItlFetchResult(AnswerResult):
+    completion: Optional[Dict[str, str]] = None
+
+
+'''
+    for start, end, replacement in sorted(edits, reverse=True):
+        if start == nodes['_get_client'].lineno - 1:
+            replacement = helpers + replacement
+        lines[start:end] = [replacement]
+    result = ''.join(lines)
+    ast.parse(result)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?", type=Path, default=Path("/app/MCP_1copilot/mcp_server.py"))
     args = parser.parse_args()
     source = args.path.read_text(encoding="utf-8")
-    args.path.write_text(patch_source(source), encoding="utf-8")
+    args.path.write_text(patch_fetch_source(patch_source(source)), encoding="utf-8")
 
 
 if __name__ == "__main__":
