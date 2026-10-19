@@ -1,7 +1,8 @@
 """Complete only a verified ITS fetch result; leave other native flows intact.
 
 The native client owns discovery, the initial tool-call request, ACK, session
-guards and deadlines. Only the ACK response for a matched ITS fetch is read here.
+guards and deadlines. A scoped observer examines only the matched ITS ACK stream; the native reader
+retains parsing, error handling and request deadlines.
 No HTTPX method is patched and no assistant completion is fabricated.
 """
 from dataclasses import dataclass, field
@@ -101,74 +102,94 @@ class _FetchScope:
 
 
 def make_fetch_client(base):
-    """Keep the native client's sessions, budgets and validation for every call."""
-    class FetchClient(base):
-        async def _collect_stream_inner(self, entry, payload, read_timeout=None):
-            scope = getattr(entry, '_itl_fetch_scope', None)
-            if scope is None or scope.client is not self:
-                return await super()._collect_stream_inner(entry, payload, read_timeout)
-            if not scope.call_id:
-                # Keep the native parser and validation of the requested tool call.
-                result = await super()._collect_stream_inner(entry, payload, read_timeout)
-                scope.bind_call(result.get('assistant_uuid'), result.get('tool_calls'))
-                return result
-            from MCP_1copilot.api_client import ApiError, DirectToolError, UpstreamTransportError
-            from MCP_1copilot.text_assembly import FragmentAccumulator
-            import httpx
-            url = self.base_url.rstrip('/') + '/chat_api/v1/conversations/' + quote(entry.conversation_id, safe='') + '/messages'
-            text, reasoning, tools = FragmentAccumulator(), FragmentAccumulator(), []
-            try:
-                async with self.client.stream('POST', url, json=payload,
-                        headers={'Accept': 'text/event-stream'}, timeout=self._stream_timeout(read_timeout)) as response:
-                    if response.status_code != 200:
-                        await response.aread()
-                        details = self._extract_upstream_error(response)
-                        raise ApiError(details.get('message', 'Upstream HTTP '+str(response.status_code)),
-                                       status_code=response.status_code, data=details)
-                    async for line in response.aiter_lines():
-                        value = scope.observe(line)
-                        if not isinstance(value, dict):
-                            continue
-                        delta, content = value.get('content_delta'), value.get('content')
-                        if value.get('role') in (None, 'assistant'):
-                            for fragment in (delta, content):
-                                if isinstance(fragment, dict):
-                                    text.add(fragment.get('content'))
-                                    reasoning.add(fragment.get('reasoning_content'))
-                        if value.get('role') == 'tool' and value.get('finished') is True and isinstance(content, dict):
-                            tools.append(content)
-                        if value.get('role') == 'assistant' and value.get('finished') is True:
-                            entry.last_assistant_uuid = value.get('uuid')
-                            return {'assistant_uuid': value.get('uuid'), 'full_text': text.text(),
-                                    'final_text': content.get('content', '') if isinstance(content, dict) else '',
-                                    'reasoning_text': reasoning.text(), 'tool_results': tools,
-                                    'tool_calls': (content.get('tool_calls') or []) if isinstance(content, dict) else []}
-            except httpx.HTTPError as error:
-                raise UpstreamTransportError('ITS stream transport failed: '+type(error).__name__,
-                                             capability='its.fetch', phase='stream') from error
-            raise DirectToolError('ITS stream ended without a completed result', capability='its.fetch', phase='stream')
+    """Observe the ACK while the native reader retains deadlines and parsing."""
+    import codecs
+    import contextvars
+    import re
 
-        async def _call_capability_guarded(self, entry, resolved, arguments, budget):
+    current = contextvars.ContextVar('itl_verified_its_fetch', default=None)
+
+    def observed_stream(stream, scope):
+        # HTTPX belongs to the native runtime; non-native contract tests are stdlib only.
+        import httpx
+
+        class ObservedStream(httpx.AsyncByteStream):
+            def __init__(self, stream, scope):
+                self.stream, self.scope = stream, scope
+
+            async def __aiter__(self):
+                decoder = codecs.getincrementaldecoder('utf-8')('strict')
+                fragments, after_cr = [], False
+                async for chunk in self.stream:
+                    decoded = decoder.decode(chunk)
+                    if decoded:
+                        if after_cr and decoded.startswith('\n'):
+                            decoded = decoded[1:]
+                        after_cr = decoded.endswith('\r')
+                        pieces = re.split(r'\r\n|\r|\n', decoded)
+                        fragments.append(pieces[0])
+                        for piece in pieces[1:]:
+                            self.scope.observe(''.join(fragments))
+                            fragments = [piece]
+                    yield chunk
+                tail = decoder.decode(b'', final=True)
+                if tail:
+                    fragments.append(tail)
+                if fragments:
+                    self.scope.observe(''.join(fragments))
+
+            async def aclose(self):
+                await self.stream.aclose()
+
+        return ObservedStream(stream, scope)
+
+    class FetchClient(base):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.client.event_hooks.setdefault('response', []).append(self._observe_its_ack)
+
+        async def _observe_its_ack(self, response):
+            scope = current.get()
+            if scope is None or scope.client is not self or not scope.call_id:
+                return
+            import httpx
+            if (response.request.method != 'POST' or response.status_code != 200
+                    or response.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'text/event-stream'
+                    or response.request.url != httpx.URL(self.base_url.rstrip('/') + '/chat_api/v1/conversations/' + quote(scope.conversation_id, safe='') + '/messages')):
+                return
+            response.stream = observed_stream(response.stream, scope)
+
+        async def _collect_stream_inner(self, entry, payload, read_timeout=None):
+            result = await super()._collect_stream_inner(entry, payload, read_timeout)
+            scope = current.get()
+            if (scope is not None and scope.client is self
+                    and scope.conversation_id == entry.conversation_id and not scope.call_id):
+                scope.bind_call(result.get('assistant_uuid'), result.get('tool_calls'))
+            return result
+
+        async def _call_capability_guarded(self, entry, resolved, arguments, budget, *native_args, **native_kwargs):
             if (resolved.capability != 'its.fetch' or not resolved.is_available
                     or set(arguments) != {'id'} or not isinstance(arguments['id'], str)
                     or not arguments['id']):
-                return await super()._call_capability_guarded(entry, resolved, arguments, budget)
+                return await super()._call_capability_guarded(entry, resolved, arguments, budget, *native_args, **native_kwargs)
             scope = _FetchScope(self, resolved.upstream_name, dict(arguments))
+            scope.conversation_id = entry.conversation_id
             previous = getattr(entry, '_itl_fetch_scope', None)
             entry._itl_fetch_scope = scope
+            token = current.set(scope)
             try:
-                return await super()._call_capability_guarded(entry, resolved, arguments, budget)
+                return await super()._call_capability_guarded(entry, resolved, arguments, budget, *native_args, **native_kwargs)
             except _FetchReady as ready:
                 if ready.scope is not scope:
                     raise
                 return ready.result
             finally:
+                current.reset(token)
                 try:
                     from MCP_1copilot.observability import log_event
                     log_event('its_fetch_completion', reason=scope.reason,
                               matchedCall=bool(scope.call_id), capability='its.fetch')
                 except Exception:
-                    # Diagnostics cannot change the operation's result or cancellation.
                     pass
                 if previous is None:
                     del entry._itl_fetch_scope

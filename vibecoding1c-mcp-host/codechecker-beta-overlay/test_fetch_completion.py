@@ -107,6 +107,18 @@ class FetchProofTests(unittest.TestCase):
         args = (object(), SimpleNamespace(capability='syntax.validate', is_available=True), {'code': 'Возврат Истина;'}, object())
         self.assertEqual(asyncio.run(client._call_capability_guarded(*args)), args)
 
+    def test_native_options_are_forwarded_without_reinterpretation(self):
+        class Base:
+            def __init__(self): self.client = SimpleNamespace(event_hooks={})
+            async def _call_capability_guarded(self, *args, **kwargs): return args, kwargs
+        client = make_fetch_client(Base)()
+        entry = SimpleNamespace(conversation_id='fixture')
+        args = (entry, SimpleNamespace(capability='its.fetch', is_available=True, upstream_name=NAME), {'id':'root'}, object())
+        for positional, keywords in ((('native-note',), {}), ((), {'note':'native-note'})):
+            self.assertEqual(asyncio.run(client._call_capability_guarded(*args, *positional, **keywords)),
+                             (args + positional, keywords))
+            self.assertFalse(hasattr(entry, '_itl_fetch_scope'))
+
 
 FIXTURE = '''from dataclasses import dataclass
 from typing import Dict, Optional
@@ -208,6 +220,11 @@ class DeadlineTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError): patch_fetch_source(result)
         with self.assertRaises(RuntimeError): patch_fetch_source(FIXTURE.replace('budget = client.new_budget()', 'budget = other()'))
 
+    def test_unqualified_native_budget_layout_is_rejected(self):
+        source = FIXTURE.replace('diagnostic="", *, context=None):', 'diagnostic="", *, context=None, budget=None):')
+        with self.assertRaisesRegex(RuntimeError, 'Unqualified native shared-budget owner'):
+            patch_fetch_source(source)
+
 
 if '--native' in sys.argv:
     sys.argv.remove('--native')
@@ -218,7 +235,7 @@ if '--native' in sys.argv:
     from MCP_1copilot.session_registry import ScopeOwner
 
     class NativeFetchTests(unittest.IsolatedAsyncioTestCase):
-        async def exercise(self, client_type, frames, *, capability='its.fetch', cancel=False, item='root'):
+        async def exercise(self, client_type, frames, *, capability='its.fetch', cancel=False, item='root', split_utf8=False, note=None):
             client = client_type(Config(onec_ai_token='offline-fixture', _env_file=None))
             hooks = client.client.event_hooks
             await client.client.aclose()
@@ -227,7 +244,11 @@ if '--native' in sys.argv:
                 def __init__(self, number): self.number = number
                 async def __aiter__(self):
                     yielded.append(self.number)
-                    yield ('data: '+json.dumps(frames[self.number])+'\n\n').encode()
+                    if split_utf8:
+                        wire = ('data: '+json.dumps(frames[self.number], ensure_ascii=False)+'\r\n\r\n').encode('utf-8')
+                        for byte in wire: yield bytes([byte])
+                    else:
+                        yield ('data: '+json.dumps(frames[self.number])+'\n\n').encode()
                     if self.number:
                         while True:
                             await asyncio.sleep(.005)
@@ -241,7 +262,10 @@ if '--native' in sys.argv:
             entry = client.conversations.register(ScopeOwner('offline','fixture','fetch'),'12345678-1234-1234-1234-123456789abc')
             try:
                 budget = OperationBudget(.08)
-                task = asyncio.create_task(client.call_capability(entry,capability,{'id':item},budget))
+                if note is None:
+                    task = asyncio.create_task(client.call_capability(entry,capability,{'id':item},budget))
+                else:
+                    task = asyncio.create_task(client.call_capability(entry,capability,{'id':item},budget,note=note))
                 if cancel:
                     while 1 not in yielded: await asyncio.sleep(.001)
                     task.cancel()
@@ -266,6 +290,16 @@ if '--native' in sys.argv:
             result = await self.exercise(make_fetch_client(OneCApiClient),events())
             self.assertEqual(result['final_text'], TEXT)
             self.assertEqual(result['_itl_fetch_completion']['assistant_synthesis'], 'not_completed')
+
+        async def test_utf8_and_crlf_split_across_native_chunks_preserve_exact_document(self):
+            result = await self.exercise(make_fetch_client(OneCApiClient),events(),split_utf8=True)
+            self.assertEqual(result['final_text'], TEXT)
+
+        async def test_new_native_note_option_remains_compatible(self):
+            if 'note' not in inspect.signature(OneCApiClient.call_capability).parameters:
+                self.skipTest('The October 1 native ABI has no note option; its original regressions still run.')
+            result = await self.exercise(make_fetch_client(OneCApiClient),events(),note='native-option-fixture')
+            self.assertEqual(result['final_text'], TEXT)
 
         async def test_truncated_result_does_not_become_success(self):
             from MCP_1copilot.api_client import OperationTimeoutError
