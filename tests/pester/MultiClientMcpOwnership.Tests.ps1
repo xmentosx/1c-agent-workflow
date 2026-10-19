@@ -28,6 +28,28 @@ Describe 'Shared client MCP ownership' {
         $helperPath = Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
     }
 
+    It 'keeps facade and UI ownership outside a ready ai_rules default reconciliation' {
+        $root=Join-Path $TestDrive 'Правила и отдельные владельцы MCP'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c/mcp'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["claude-code"]}}',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/mcp/vibecoding1c-selection.json'),'{"schemaVersion":1,"servers":[]}',[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='ondemand-facade';endpoints=@(@{name='existing-facade';url='https://retained.invalid'})}) *> $null
+            function Get-Vibecoding1cMcpSelectionCompleteness {[pscustomobject]@{isComplete=$true;reasons=@()}}
+            function Get-Vibecoding1cMcpReadyClientConfigNames {@('1C-docs-mcp')}
+            function Get-Vibecoding1cMcpSelectedClientConfigNames {@('1C-docs-mcp')}
+            function Get-Vibecoding1cMcpClientConfigEndpointSet {[pscustomobject]@{allEndpoints=@(@{name='1C-docs-mcp';url='https://docs.invalid'})}}
+            # A ready provider used to replace its legacy set here. Preserve
+            # that trigger explicitly even on stands without the executable.
+            function Write-ItlOnDemandMcpClientConfig {throw 'Foreign facade owner was invoked'}
+            function Sync-ItlUiToolsMcp {throw 'Foreign UI owner was invoked'}
+            {Invoke-AiRules1cManagedMcpConfigReconcile -Operation fixture *> $null}|Should -Not -Throw
+            (Read-ItlClientMcpEntries claude-code)['existing-facade'].url|Should -Be 'https://retained.invalid'
+            @(Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner ondemand-facade)|Should -Be @('existing-facade')
+        }
+    }
+
     It 'updates proven default URLs and adds SPPR while preserving overrides for <Client>' -ForEach @(
         @{Client='claude-code'}, @{Client='codex'}, @{Client='opencode'}
     ) {

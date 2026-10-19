@@ -21,6 +21,10 @@
             "type": "string",
             "minLength": 1
           },
+          "baseConfigurationVersion": {
+            "type": "string",
+            "enum": ["PM4", "PM5"]
+          },
           "roles": {
             "$ref": "#/definitions/roles"
           },

@@ -5706,14 +5706,16 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     $replacementServerIds = @($readyClientNames | Where-Object { $managedServerIds -contains $_ } | Select-Object -Unique)
 
     if ($PlanOnly) {
-        Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -IncludeClientSurfaces -PlanOnly
+        Write-Vibecoding1cMcpClientConfig -Clients @(Get-AgentTargets) -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -PlanOnly
         return [pscustomobject]@{planned=$true;reconciled=$false;preserved=$true;replacements=@($replacementServerIds);pruned=@()}
     }
 
     $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpReconcileSnapshotPaths)
     try {
         $clients = @(Get-AgentTargets)
-        Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -IncludeClientSurfaces
+        # This reconcile replaces ai_rules/vibecoding defaults only. Explicit
+        # sync-client-mcp/package setup owns changes to facade/UI families.
+        Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths)
         $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
         $removed = @()
         $pruned = @()
@@ -9108,6 +9110,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
     param([Parameter(Mandatory = $true)][object]$Source)
 
     Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
+    if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
     $registeredState = Read-DevBranchState -Name ''
     Assert-WorkflowUpdateDevelopmentBranchRoot -State $registeredState
     $pending = Get-WorkflowUpdatePendingSnapshot
@@ -9544,6 +9547,7 @@ function Update-WorkflowPackage {
         }
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+        if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
         $previousRolloutPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
         if (Test-Path -LiteralPath $previousRolloutPath -PathType Leaf) {
             try { $previousRollout = Read-Utf8Text -Path $previousRolloutPath | ConvertFrom-Json -ErrorAction Stop }
@@ -9735,6 +9739,8 @@ function Update-WorkflowPackage {
         Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) | Out-Null
     } else {
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
+        . Import-ItlProductProjectSetup
+        Invoke-ItlProductProjectPostUpdateOffer
     }
 }
 

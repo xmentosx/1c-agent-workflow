@@ -14,6 +14,7 @@ function Read-ItlProductProjectRecord {
         $record=ConvertTo-ItlCatalogCanonicalValue (Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop)
         if ($record.schemaVersion -ne 1) { throw 'unsupported schema' }
         if ([IO.Path]::GetFullPath([string]$record.projectRoot).TrimEnd('\') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\')) { throw 'record belongs to another root' }
+        if($Kind -eq 'applied' -and ($record.catalogRevision -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$' -or $record.catalogRevision -cne $record.context.catalogRevision -or $record.contextHash -cne (Get-ItlCatalogHash $record.context))){throw 'applied context/hash/revision is invalid'}
         return $record
     } catch { throw "CATALOG_LOCAL_RECORD_INVALID: $Kind; use catalog status/owned recovery without deleting IDs or client files." }
 }
@@ -107,23 +108,72 @@ function Set-ItlProductProjectStepProof {
     }
 }
 
+function Get-ItlProductProjectSettingPlans {
+    param([object]$Operation)
+    foreach($kind in @('binding','selection')){
+        $field=if($kind -eq 'binding'){'binding'}else{'privateSelection'}
+        $plan=Get-ItlCatalogField $Operation $field
+        if($plan -and $plan.enabled){$plan['kind']=$kind;Write-Output -NoEnumerate $plan}
+    }
+}
+
+function Assert-ItlProductProjectNotCancelled {
+    param([string]$OperationId)
+    $cancel=Read-ItlProductProjectRecord cancel
+    if($cancel -and $cancel.operationId -ceq $OperationId){throw [OperationCanceledException]::new('CATALOG_CANCEL_REQUESTED: completed writes remain owned; use catalog resume or restore.')}
+}
+
 function Invoke-ItlProductProjectClientApply {
     param([object]$Context,[object[]]$Requests,
-        [ValidateSet('apply','resume','restore','cancel')][string]$Mode='apply')
+        [ValidateSet('apply','resume','restore','cancel')][string]$Mode='apply',
+        [AllowNull()][object]$DesiredBinding=$null,[switch]$BindProject,
+        [object]$PrivateSelection=$null,[switch]$SavePrivateSelection,
+        [object]$ExpectedInputStates=$null,[string]$ExpectedOwnerState='',
+        [object[]]$ProofRequests=$null,[switch]$RestoreCompatibility)
     $operation=Read-ItlProductProjectRecord 'operation'
     if ($Mode -eq 'apply') {
         if ($operation -and $operation.status -notin @('completed','restored','cancelled')) { throw 'CATALOG_OPERATION_PENDING: use status/resume/restore on the pinned operation; latest tip cannot replace it.' }
         if(-not $Context -or -not $Context.catalogRevision){throw 'CATALOG_CONTEXT_REQUIRED: preview a validated pinned catalog context before apply.'}
-        $operation=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=[guid]::NewGuid().ToString('N');status='planning';direction='forward';prepared=$false;context=$Context;requests=$Requests;restoreRequests=@();expectedProof=@{};beforeProof=@{};receipts=@();activeWrite=$null;beforeApplied=(Read-ItlProductProjectRecord 'applied')}
+        if($BindProject -and $null -ne $DesiredBinding){Assert-ItlProductProjectBindingValue $DesiredBinding}
+        if($null -ne $ExpectedInputStates){
+            $expected=ConvertTo-Vibecoding1cMcpHashtable $ExpectedInputStates
+            foreach($path in $expected.Keys){if((Get-ItlMcpFileState $path) -cne $expected[$path]){throw 'CLIENT_MCP_PREVIEW_CHANGED: input changed after the decision; repeat preview before applying.'}}
+        }
+        if($ExpectedOwnerState -and (Get-ItlMcpFileState (Get-ItlManagedMcpStatePath)) -cne $ExpectedOwnerState){throw 'CLIENT_MCP_PREVIEW_CHANGED: ownership changed after the decision; repeat preview.'}
+        $operation=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=[guid]::NewGuid().ToString('N');status='planning';direction='forward';prepared=$false;context=$Context;requests=$Requests;restoreRequests=@();expectedProof=@{};beforeProof=@{};receipts=@();activeWrite=$null;beforeApplied=(Read-ItlProductProjectRecord 'applied');restoreCompatibility=$RestoreCompatibility.IsPresent}
+        $beforeBinding=Get-ItlCatalogField (Read-ItlProductProjectConfig) 'productProject'
+        $operation['binding']=[ordered]@{enabled=$BindProject.IsPresent;before=$beforeBinding;desired=$DesiredBinding;expected=$beforeBinding;active=$false;target=$null}
+        $beforeSelection=Read-ItlProductProjectSetting selection
+        $operation['privateSelection']=[ordered]@{enabled=$SavePrivateSelection.IsPresent;before=$beforeSelection;desired=$PrivateSelection;expected=$beforeSelection;active=$false;target=$null}
+        $operation['previewInputStates']=$(if($null -ne $ExpectedInputStates){ConvertTo-Vibecoding1cMcpHashtable $ExpectedInputStates}else{$null})
+        $operation['previewOwnerState']=$ExpectedOwnerState
+        if(@($Requests).Count -eq 0 -and $operation.beforeApplied){
+            $operation.expectedProof=ConvertTo-ItlCatalogCanonicalValue $operation.beforeApplied.proof
+            $operation.beforeProof=ConvertTo-ItlCatalogCanonicalValue $operation.beforeApplied.proof
+        }
+        if($null -ne $ProofRequests){
+            $operation.expectedProof=Get-ItlProductProjectClientProof $ProofRequests;$operation.beforeProof=ConvertTo-ItlCatalogCanonicalValue $operation.expectedProof
+            if(@($Requests).Count -eq 0){$operation.restoreRequests=@(New-ItlProductProjectRestoreRequests $ProofRequests)}
+        }
     } elseif (-not $operation) { throw 'CATALOG_OPERATION_MISSING: preview a new operation; no client state was changed.' }
     if($Mode -eq 'cancel'){
-        if(@($operation.receipts).Count -or $operation.activeWrite){$operation.status='partial';Write-ItlProductProjectRecord 'operation' $operation;return [pscustomobject]@{status='needs-recovery';operationId=$operation.operationId;continuation='Use catalog resume or restore; completed writes remain owned.'}}
+        $activeSettings=@(Get-ItlProductProjectSettingPlans $operation|Where-Object active)
+        if(@($operation.receipts).Count -or $operation.activeWrite -or $activeSettings.Count){$operation.status='partial';Write-ItlProductProjectRecord 'operation' $operation;return [pscustomobject]@{status='needs-recovery';operationId=$operation.operationId;continuation='Use catalog resume or restore; completed writes remain owned.'}}
         $operation.status='cancelled';Write-ItlProductProjectRecord 'operation' $operation
         return [pscustomobject]@{status='cancelled';operationId=$operation.operationId}
     }
     if($Mode -in @('resume','restore')){
-        if($operation.status -eq 'completed' -and $Mode -eq 'resume'){return [pscustomobject]@{status='configured';operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision}}
+        if($operation.status -eq 'completed' -and $Mode -eq 'resume'){return [pscustomobject]@{status=$(if(Get-ItlCatalogField $operation 'restoreCompatibility' $false){'compatible-restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision}}
         if($operation.status -in @('cancelled','restored')){return [pscustomobject]@{status=$operation.status;operationId=$operation.operationId}}
+        if(-not $operation.prepared){$ExpectedInputStates=Get-ItlCatalogField $operation 'previewInputStates';$ExpectedOwnerState=[string](Get-ItlCatalogField $operation 'previewOwnerState' '')}
+        foreach($settingPlan in @(Get-ItlProductProjectSettingPlans $operation)){
+            $current=Read-ItlProductProjectSetting $settingPlan.kind
+            if((Get-ItlCatalogHash $current) -cne (Get-ItlCatalogHash $settingPlan.expected)){
+                if(-not $settingPlan.active -or (Get-ItlCatalogHash $current) -cne (Get-ItlCatalogHash $settingPlan.target)){throw 'CATALOG_SETTING_CONFLICT: owned preferences are neither the durable input nor intended write; preserve them before resume/restore.'}
+                $settingPlan.expected=$current;$settingPlan.active=$false
+                Write-ItlProductProjectRecord operation $operation
+            }
+        }
         if($operation.activeWrite){
             $null=Confirm-ItlClientMcpPreparedWrite $operation.activeWrite
             Set-ItlProductProjectStepProof $operation.expectedProof $operation.activeWrite.client $operation.activeWrite.owner (Read-ItlClientMcpEntries $operation.activeWrite.client)
@@ -144,7 +194,9 @@ function Invoke-ItlProductProjectClientApply {
         if(-not $operation.prepared){
             $operation.requests=@($preparedSet.requests)
             $operation.restoreRequests=@(New-ItlProductProjectRestoreRequests $preparedSet.requests)
-            $operation.expectedProof=Get-ItlProductProjectClientProof $preparedSet.requests
+            $operation.expectedProof=ConvertTo-Vibecoding1cMcpHashtable (Get-ItlCatalogField $operation.beforeApplied 'proof' @{})
+            $updatedProof=Get-ItlProductProjectClientProof $preparedSet.requests
+            foreach($key in @(Get-ItlCatalogKeys $updatedProof)){$operation.expectedProof[$key]=$updatedProof[$key]}
             $operation['beforeProof']=ConvertTo-ItlCatalogCanonicalValue $operation.expectedProof
             $operation['inputStates']=ConvertTo-Vibecoding1cMcpHashtable $preparedSet.fileStates
             $operation.prepared=$true
@@ -153,8 +205,7 @@ function Invoke-ItlProductProjectClientApply {
     }
     $beforeWrite={
         param($intent)
-        $cancel=Read-ItlProductProjectRecord cancel
-        if($cancel -and $cancel.operationId -ceq $operation.operationId){throw [OperationCanceledException]::new('CATALOG_CANCEL_REQUESTED: completed writes remain owned; use catalog resume or restore.')}
+        Assert-ItlProductProjectNotCancelled $operation.operationId
         Assert-ItlProductProjectClientProof $operation.expectedProof
         $intent.beforeFiles=ConvertTo-Vibecoding1cMcpHashtable $intent.beforeFiles
         $operation.activeWrite=ConvertTo-ItlCatalogCanonicalValue $intent
@@ -171,44 +222,88 @@ function Invoke-ItlProductProjectClientApply {
         $operation.status='partial';Write-ItlProductProjectRecord 'operation' $operation
     }
     try {
-        if (@($Requests).Count) { $null=Write-ItlClientMcpEndpointSet -Requests $Requests -PreserveUserChanges:($Mode -eq 'apply' -or -not $operation.prepared) -OnPrepared $prepared -OnBeforeWrite $beforeWrite -OnReceipt $receipt }
+        $inputs=@(foreach($settingPlan in @(Get-ItlProductProjectSettingPlans $operation)){if($settingPlan.kind -eq 'binding'){$script:ConfigPath}else{Get-Vibecoding1cMcpSelectionPath}})
+        $protectForward=($Mode -eq 'apply' -or -not $operation.prepared) -and -not (Get-ItlCatalogField $operation 'restoreCompatibility' $false)
+        if (@($Requests).Count) { $null=Write-ItlClientMcpEndpointSet -Requests $Requests -AdditionalInputPaths $inputs -ExpectedInputStates $ExpectedInputStates -ExpectedOwnerState $ExpectedOwnerState -PreserveUserChanges:$protectForward -OnPrepared $prepared -OnBeforeWrite $beforeWrite -OnReceipt $receipt }
         elseif($Mode -eq 'apply') { $operation.status='applying';Write-ItlProductProjectRecord 'operation' $operation }
         Assert-ItlProductProjectClientProof $operation.expectedProof
+        foreach($settingPlan in @(Get-ItlProductProjectSettingPlans $operation)){
+            Assert-ItlProductProjectNotCancelled $operation.operationId
+            $settingPlan.target=if($operation.direction -eq 'restore'){$settingPlan.before}else{$settingPlan.desired}
+            $settingPlan.active=$true
+            Write-ItlProductProjectRecord operation $operation
+            Set-ItlProductProjectSetting -Kind $settingPlan.kind -Value $settingPlan.target -Expected $settingPlan.expected
+            $settingPlan.expected=$settingPlan.target;$settingPlan.active=$false
+            $operation.receipts=@($operation.receipts)+@(@{kind=$settingPlan.kind})
+            Write-ItlProductProjectRecord operation $operation
+        }
         if($operation.direction -eq 'restore'){
             Assert-ItlProductProjectClientProof $operation.beforeProof
             if($operation.beforeApplied){Write-ItlProductProjectRecord 'applied' $operation.beforeApplied}
             else { $path=Get-ItlProductProjectPath 'applied';if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path} }
             $operation.status='restored'
         }else{
-            $applied=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=$operation.operationId;catalogRevision=$Context.catalogRevision;context=$Context;proof=$operation.expectedProof;configurationState='configured';activeClientContext='unverified';contextHash=(Get-ItlCatalogHash $Context)}
-            Write-ItlProductProjectRecord 'applied' $applied
+            Assert-ItlProductProjectNotCancelled $operation.operationId
+            $stage=if((Get-ItlCatalogField $Context 'configurationStage') -eq 'binding-only'){'binding-only'}else{'configured'}
+            $applied=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=$operation.operationId;catalogRevision=$Context.catalogRevision;context=$Context;proof=$operation.expectedProof;configurationState=$stage;activeClientContext='unverified';contextHash=(Get-ItlCatalogHash $Context)}
+            $baseline=Get-ItlCatalogField $operation.beforeApplied 'compatibilityBaseline'
+            if(-not $baseline){$baseline=@{requests=$operation.restoreRequests;binding=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'binding') 'before');selection=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'privateSelection') 'before');applied=$operation.beforeApplied}}
+            $applied['compatibilityBaseline']=$baseline
+            if(Get-Command Get-ItlProductProjectNoOpInputs -ErrorAction SilentlyContinue){$applied['noOpInputs']=Get-ItlProductProjectNoOpInputs $operation.expectedProof -IncludeClientSurfaces:([bool](Get-ItlCatalogField $Context 'catalogIncludesClientSurfaces' $false))}
+            if(Get-ItlCatalogField $operation 'restoreCompatibility' $false){
+                $original=Get-ItlCatalogField $baseline 'applied'
+                if($original){Write-ItlProductProjectRecord applied $original}
+                else{$path=Get-ItlProductProjectPath applied;if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}}
+            }else{Write-ItlProductProjectRecord 'applied' $applied}
             $operation.status='completed'
         }
         Write-ItlProductProjectRecord 'operation' $operation
-        return [pscustomobject]@{status=$(if($operation.direction -eq 'restore'){'restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$Context.catalogRevision;activeClientContext='unverified'}
+        return [pscustomobject]@{status=$(if($operation.direction -eq 'restore'){'restored'}elseif(Get-ItlCatalogField $operation 'restoreCompatibility' $false){'compatible-restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$Context.catalogRevision;activeClientContext='unverified'}
     } catch {
-        $operation.status=if(@($operation.receipts).Count -or $operation.activeWrite){'partial'}elseif($_.Exception -is [OperationCanceledException]){'cancelled'}else{'prepared'}
+        $activeSettings=@(Get-ItlProductProjectSettingPlans $operation|Where-Object active)
+        $operation.status=if(@($operation.receipts).Count -or $operation.activeWrite -or $activeSettings.Count){'partial'}elseif($_.Exception -is [OperationCanceledException]){'cancelled'}else{'prepared'}
         Write-ItlProductProjectRecord 'operation' $operation
         throw
     }
 }
 
-function Invoke-ItlProductProjectRecovery {
-    param([ValidateSet('status','resume','restore','cancel')][string]$Mode='status')
-    if($Mode -in @('resume','restore')){return Invoke-ItlProductProjectClientApply -Mode $Mode}
+function Invoke-ItlProductProjectCompatibilityRestore {
     $operation=Read-ItlProductProjectRecord operation
+    if($operation -and $operation.status -notin @('completed','restored','cancelled')){throw 'CATALOG_OPERATION_PENDING: finish pinned resume/restore before requesting compatibility restore.'}
     $applied=Read-ItlProductProjectRecord applied
+    $baseline=Get-ItlCatalogField $applied 'compatibilityBaseline'
+    if(-not $baseline -or (Get-ItlCatalogField $baseline 'binding')){throw 'CATALOG_COMPAT_BASELINE_UNAVAILABLE: retain the current compatible helper and binding; no proven pre-association baseline is available for a managed downgrade.'}
+    $requests=@(ConvertTo-Vibecoding1cMcpArray (Get-ItlCatalogField $baseline 'requests' @()))
+    $keys=@($requests|ForEach-Object {"$($_.client)/$($_.owner)"})
+    foreach($key in @(Get-ItlCatalogKeys $applied.proof)){
+        if($key -notin $keys){$proof=$applied.proof[$key];$requests+=@(@{client=$proof.client;owner=$proof.owner;endpoints=@()})}
+    }
+    $inputs=[ordered]@{}
+    foreach($path in @($script:ConfigPath,(Get-Vibecoding1cMcpSelectionPath))+@($requests|ForEach-Object {Get-ItlClientMcpConfigPaths $_.client})){$inputs[$path]=Get-ItlMcpFileState $path}
+    $ownerState=Get-ItlMcpFileState (Get-ItlManagedMcpStatePath)
+    Assert-ItlProductProjectClientProof $applied.proof
+    $result=Invoke-ItlProductProjectClientApply -Context $applied.context -Requests $requests -BindProject -DesiredBinding (Get-ItlCatalogField $baseline 'binding') -SavePrivateSelection -PrivateSelection (Get-ItlCatalogField $baseline 'selection') -ExpectedInputStates $inputs -ExpectedOwnerState $ownerState -RestoreCompatibility
+    return [pscustomobject]@{status='compatible-restored';operationId=$result.operationId;activeClientContext='unverified';continuation='Repeat the original update-workflow; reload the client and verify active tools separately.'}
+}
+
+function Invoke-ItlProductProjectRecovery {
+    param([ValidateSet('status','resume','restore','cancel','restore-compatible')][string]$Mode='status')
+    if($Mode -eq 'restore-compatible'){return Invoke-ItlProductProjectCompatibilityRestore}
+    if($Mode -in @('resume','restore')){return Invoke-ItlProductProjectClientApply -Mode $Mode}
+    $recordError=''
+    try{$operation=Read-ItlProductProjectRecord operation}catch{if($Mode -ne 'status'){throw};$operation=$null;$recordError='invalid-operation'}
+    try{$applied=Read-ItlProductProjectRecord applied}catch{if($Mode -ne 'status'){throw};$applied=$null;$recordError+=' invalid-applied'}
     if($Mode -eq 'cancel'){
         if(-not $operation -or $operation.status -in @('completed','restored','cancelled')){return [pscustomobject]@{status='idle';cancellationRequested=$false}}
         Write-ItlProductProjectRecord cancel @{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=$operation.operationId}
         return [pscustomobject]@{status='cancel-requested';operationId=$operation.operationId;continuation='The current write may complete. Use -Action vibecoding1c-mcp-select -CatalogAction resume or restore after it stops.'}
     }
     return [pscustomobject]@{
-        status=$(if($operation){$operation.status}else{'unbound'})
+        status=$(if($recordError){$recordError.Trim()}elseif($operation){$operation.status}else{'unbound'})
         operationId=$(if($operation){$operation.operationId}else{$null})
         catalogRevision=$(if($operation){$operation.context.catalogRevision}elseif($applied){$applied.catalogRevision}else{$null})
         completedWrites=$(if($operation){@($operation.receipts).Count}else{0})
-        pendingWrite=$(if($operation){$null -ne $operation.activeWrite}else{$false})
+        pendingWrite=$(if($operation){$null -ne $operation.activeWrite -or @(Get-ItlProductProjectSettingPlans $operation|Where-Object active).Count -gt 0}else{$false})
         activeClientContext='unverified'
         continuation='Use -Action vibecoding1c-mcp-select -CatalogAction resume|restore; status is read-only and never refreshes the catalog.'
     }

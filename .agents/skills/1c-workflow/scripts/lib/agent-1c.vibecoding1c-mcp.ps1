@@ -39,6 +39,12 @@ function Import-ItlProductProject {
     if (-not (Get-Command Resolve-ItlProductContext -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1') }
     if (-not (Get-Command Save-ItlCatalogRecord -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project.ps1') }
     if (-not (Get-Command Invoke-ItlProductProjectClientApply -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-runtime.ps1') }
+    if (-not (Get-Command Read-ItlProductProjectSnapshot -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-context.ps1') }
+}
+
+function Import-ItlProductProjectSetup {
+    . Import-ItlProductProject
+    if(-not (Get-Command Invoke-ItlProductProjectCommand -ErrorAction SilentlyContinue)){. (Join-Path $PSScriptRoot 'agent-1c.product-project-ui.ps1')}
 }
 
 function Read-Vibecoding1cProductContext {
@@ -369,6 +375,7 @@ function Ensure-Vibecoding1cMcpRegistry {
 }
 
 function Update-Vibecoding1cMcpRegistryCheckout {
+    param([DateTime]$DeadlineUtc=[DateTime]::MinValue)
     $registryRoot = Get-Vibecoding1cMcpRegistryRoot
     if (Test-Vibecoding1cMcpRegistryPathOverride) {
         if (-not (Test-Path -LiteralPath $registryRoot -PathType Container -ErrorAction SilentlyContinue)) {
@@ -380,6 +387,20 @@ function Update-Vibecoding1cMcpRegistryCheckout {
     $repo = Get-Vibecoding1cMcpRegistryRepo
     $parent = Split-Path -Parent $registryRoot
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+    if($DeadlineUtc -ne [DateTime]::MinValue){
+        # Bound catalog operations use the same checkout owner, one fetch and
+        # one absolute metadata deadline. Never fall back to another pull.
+        if(-not (Test-Path -LiteralPath $registryRoot -PathType Container)){
+            $null=Invoke-ItlCatalogGit $parent @('clone','--no-tags',$repo,$registryRoot) $DeadlineUtc
+            return $registryRoot
+        }
+        $upstream=Invoke-ItlCatalogGit $registryRoot @('rev-parse','--abbrev-ref','--symbolic-full-name','@{u}') $DeadlineUtc -AllowFailure
+        if($upstream.exitCode -ne 0 -or -not $upstream.stdout.Trim()){throw 'CATALOG_TRACKING_REQUIRED: configure the registry checkout tracking branch; no branch is guessed and no second network request is made.'}
+        $null=Invoke-ItlCatalogGit $registryRoot @('fetch','--no-tags') $DeadlineUtc
+        $null=Invoke-ItlCatalogGit $registryRoot @('merge','--ff-only',$upstream.stdout.Trim()) $DeadlineUtc
+        return $registryRoot
+    }
 
     if (-not (Test-Path -LiteralPath $registryRoot -PathType Container -ErrorAction SilentlyContinue)) {
         Write-Host "Cloning vibecoding1c MCP registry: $repo"
@@ -413,7 +434,7 @@ function Read-Vibecoding1cMcpRegistry {
     $operation = Get-Variable -Name ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $operation) {
         try { Ensure-Vibecoding1cMcpRegistry | Out-Null } catch {
-            Write-Warning 'MCP registry refresh failed; using the operation cached snapshot without freshness proof. Existing remote configuration is preserved.'
+            if(-not (Get-Vibecoding1cMcpObjectValue -Object $operation.Value -Name 'warningShown' -Default $false)){Write-Warning 'MCP registry refresh failed; using the operation cached snapshot without freshness proof. Existing remote configuration is preserved.'}
         }
         return $operation.Value.snapshot
     }
@@ -1718,7 +1739,7 @@ function Set-Vibecoding1cMcpSelection {
             }
         }
 
-        $servers += [ordered]@{
+        $serverChoice = [ordered]@{
             id = $id
             family = "vibecoding1c"
             enabled = $true
@@ -1728,6 +1749,8 @@ function Set-Vibecoding1cMcpSelection {
             localScope = $localScope
             selectedAt = (Get-Date).ToString("o")
         }
+        if((Get-ConfigValue -Path 'productProject' -Default $null) -and $id -in @('code','graph','bookstack')){$serverChoice['catalogOverride']=$true}
+        $servers += $serverChoice
     }
 
     $selectionHash["servers"] = $servers
@@ -2990,6 +3013,12 @@ function Start-Vibecoding1cMcp {
     $selection = Read-Vibecoding1cMcpSelection
     $context = Get-Vibecoding1cMcpScopeContext
     $selectedServers = @(Select-Vibecoding1cMcpManifestServers)
+    $catalogContext=$null
+    if(Get-ConfigValue -Path productProject -Default $null){
+        . Import-ItlProductProject
+        $catalogContext=Get-ItlProductProjectSetupContext
+        $selectedServers=@($selectedServers|Where-Object {-not (Test-ItlProductProjectCatalogRole -ServerId $_.id -Selection $selection)})
+    }
     $needsRegistry = $false
     $needsDistribution = $false
     $needsModel = $false
@@ -3063,7 +3092,12 @@ function Start-Vibecoding1cMcp {
         }
     }
 
-    Write-Vibecoding1cMcpClientConfig
+    if($catalogContext){
+        $catalogContext=ConvertTo-ItlCatalogCanonicalValue $catalogContext
+        if($catalogContext.Contains('configurationStage')){$catalogContext.Remove('configurationStage')}
+        Set-ItlProductProjectOperationContext $catalogContext
+        Initialize-ItlProductProjectContext -AllowPrompt:$AllowPrompt
+    }else{Write-Vibecoding1cMcpClientConfig}
 }
 
 function Stop-Vibecoding1cMcp {
@@ -3169,6 +3203,11 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
         }
 
         $selection = Read-Vibecoding1cMcpSelection
+        if(Get-ConfigValue -Path productProject -Default $null){
+            . Import-ItlProductProject
+            Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext;Start-Vibecoding1cMcp -AllowPrompt:$false}
+            return
+        }
         $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
         if (-not $selectionCompleteness.isComplete) {
             Write-Warning "vibecoding1c MCP selection is incomplete; automatic inheritance was skipped."
@@ -3194,6 +3233,7 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
 
         Start-Vibecoding1cMcp -DistributionReady:$needsLocalDistribution -AllowPrompt:$false
     } catch {
+        if(Get-ConfigValue -Path productProject -Default $null){throw}
         Write-Warning "Automatic vibecoding1c MCP inheritance failed. $($_.Exception.Message)"
         Write-Host "Run when ready:"
         Write-Host "  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
@@ -3206,6 +3246,13 @@ function Prepare-Vibecoding1cMcpSelectionForInit {
     Write-Section (Get-Agent1cUtf8Text "0J/QvtC00LPQvtGC0L7QstC60LAg0LLRi9Cx0L7RgNCwIHZpYmVjb2RpbmcxYyBNQ1A=")
     Ensure-GitIgnore
     Invoke-Vibecoding1cMcpSetupSelectionInheritance
+
+    if(Get-ConfigValue -Path productProject -Default $null){
+        . Import-ItlProductProject
+        $null=Get-ItlProductProjectSetupContext
+        Write-Host 'Project catalog selection is pinned before unattended initialization. Missing optional links remain deferred; native readiness is unverified.'
+        return
+    }
 
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
@@ -3246,6 +3293,13 @@ function Setup-Vibecoding1cMcpCore {
     Ensure-GitIgnore
     Invoke-Vibecoding1cMcpSetupSelectionInheritance
     $selection = Read-Vibecoding1cMcpSelection
+    if(Get-ConfigValue -Path productProject -Default $null){
+        . Import-ItlProductProject
+        $null=Get-ItlProductProjectSetupContext
+        Start-Vibecoding1cMcp -AllowPrompt:$AllowPrompt
+        Show-Vibecoding1cMcpStatus
+        return
+    }
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
     if ($Force -or -not $selectionCompleteness.isComplete) {
         if (-not $AllowPrompt) {
@@ -3672,12 +3726,15 @@ function Get-Vibecoding1cMcpKiloConfigPath {
 }
 
 function Get-Vibecoding1cMcpClientConfigEndpointSet {
+    param([object]$ProductContext=$null)
+    if($null -eq $ProductContext -and (Get-Command Get-ItlProductProjectOperationContext -ErrorAction SilentlyContinue)){$ProductContext=Get-ItlProductProjectOperationContext}
     $registrySnapshot = Read-Vibecoding1cMcpRegistry
     $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
     $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
     $selection = Read-Vibecoding1cMcpSelection
     $resolvedRemoteEndpoints = @()
     foreach ($server in @(Select-Vibecoding1cMcpManifestServers)) {
+        if($null -ne $ProductContext -and (Test-ItlProductProjectCatalogRole -ServerId $server.id -Selection $selection)){continue}
         if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
             continue
         }
@@ -3701,6 +3758,26 @@ function Get-Vibecoding1cMcpClientConfigEndpointSet {
             $byClientName[$clientName] = $endpoint
         }
     }
+    $roleOverrides=[ordered]@{}
+    if($null -ne $ProductContext){
+        foreach($pair in @(@('code','code'),@('graph','graph'),@('productDocs','bookstack'))){
+            $role=$pair[0];$id=$pair[1];$name=Get-Vibecoding1cMcpAiRules1cClientName $id
+            $entry=Get-Vibecoding1cMcpSelectionEntry -Selection $selection -ServerId $id
+            $provider=Get-Vibecoding1cMcpSelectedProvider -Server @{id=$id} -Selection $selection
+            if($provider -eq 'local' -or (Get-Vibecoding1cMcpObjectValue -Object $entry -Name 'catalogOverride' -Default $false)){
+                $roleOverrides[$role]=@{provider=$provider;hostId=(Get-Vibecoding1cMcpObjectValue -Object $entry -Name hostId);configId=(Get-Vibecoding1cMcpObjectValue -Object $entry -Name configId);provenance='local-selection';nativeProductBinding='unverified'}
+                continue
+            }
+            $byClientName.Remove($name)
+            if(-not (Test-Vibecoding1cMcpServerAllowedForProject -Server @{id=$id;scope=$(if($role -eq 'productDocs'){'global'}else{'project'})})){
+                $roleOverrides[$role]=@{provenance='existing-project-policy';nativeProductBinding='unverified';mode='disabled-by-policy'}
+                continue
+            }
+            $intent=Get-ItlCatalogField $ProductContext.endpointIntents $role
+            if($null -eq $intent -or -not (Test-Vibecoding1cMcpServerEnabled -Server @{id=$id} -Selection $selection)){continue}
+            $byClientName[$name]=[pscustomobject]@{id=$id;name=$name;clientNames=@{aiRules1c=$name};scope=$(if($role -eq 'productDocs'){'global'}else{'project'});url=$intent.url;provider='remote';family='vibecoding1c';configurationIntent=$true;status='unknown';health='unknown';sourceId=$intent.sourceId;hostId=$intent.hostId;configId=$intent.configId;namespace=$intent.namespace;catalogRevision=$ProductContext.catalogRevision;toolTimeoutSeconds=300}
+        }
+    }
     $allEndpoints = @($byClientName.Values)
     $globalEndpoints = @($allEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
     $localEndpoints = @($allEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
@@ -3709,6 +3786,7 @@ function Get-Vibecoding1cMcpClientConfigEndpointSet {
         globalEndpoints = @($globalEndpoints)
         localEndpoints = @($localEndpoints)
         allEndpoints = @($allEndpoints)
+        roleOverrides=$roleOverrides
     }
 }
 
@@ -3964,11 +4042,29 @@ function Write-Vibecoding1cMcpKiloConfig {
 }
 
 function Write-Vibecoding1cMcpClientConfig {
-    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces, [switch]$PreserveUserChanges)
+    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces, [switch]$PreserveUserChanges,[object]$EndpointSet=$null,[switch]$ReturnRequests,[switch]$UsePinnedCatalog)
 
-    if (-not $PlanOnly) { Write-Section "Write vibecoding1c MCP client config" }
+    if (-not $PlanOnly -and -not $ReturnRequests) { Write-Section "Write vibecoding1c MCP client config" }
 
-    $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
+    if(-not $PlanOnly -and -not $ReturnRequests -and (Get-ConfigValue -Path productProject -Default $null)){
+        . Import-ItlProductProject
+        $null=Get-ItlProductProjectSetupContext
+        $context=ConvertTo-ItlCatalogCanonicalValue (Get-ItlProductProjectOperationContext)
+        if($context.Contains('configurationStage')){$context.Remove('configurationStage')}
+        $selectedClients=if($Clients.Count){@($Clients)}elseif($Client){@($Client)}else{@(Get-ItlActiveClient)}
+        $preview=New-ItlProductProjectPreview $context $selectedClients -IncludeClientSurfaces:$IncludeClientSurfaces
+        $decisionValue=Get-Variable CatalogDecision -ErrorAction SilentlyContinue
+        $decision=if($decisionValue){[string]$decisionValue.Value}else{''}
+        $chosen=Resolve-ItlProductProjectPreviewDecision $preview -Decision $decision -AllowPrompt:(Test-InteractiveInputAvailable)
+        $changed=@($preview.changes|Where-Object {$_.status -in @('managed-change','addition','retirement','conflict') -or ($_.status -eq 'local-override' -and $_.owned -and $decision -eq 'registry')}).Count -gt 0
+        if(-not $changed -and $preview.applied -and $preview.applied.catalogRevision -ceq $chosen.context.catalogRevision -and (Get-ItlCatalogField $preview.applied.context 'settingsIntentHash') -ceq $chosen.context.settingsIntentHash -and $preview.applied.context.knowledgeHash -ceq $chosen.context.knowledgeHash -and (Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)) -ceq (Get-ItlCatalogHash $chosen.preferences)){return}
+        $null=Invoke-ItlProductProjectClientApply $chosen.context $chosen.requests -ProofRequests $chosen.proofRequests -SavePrivateSelection -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        Set-ItlProductProjectOperationContext $chosen.context
+        Write-Host 'Catalog MCP configuration saved through the pinned plan. Reload the client and verify active tools separately.'
+        return
+    }
+
+    if($null -eq $EndpointSet){$endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet}
     if (-not $PlanOnly) {
         foreach ($endpoint in @($endpointSet.allEndpoints)) {
             if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name 'functionalStatus' -Default '') -eq 'degraded') {
@@ -3984,7 +4080,7 @@ function Write-Vibecoding1cMcpClientConfig {
         if ($name -and $url) { [pscustomobject]@{ name = $name; url = $url; toolTimeoutSeconds = $toolTimeoutSeconds } }
     })
     $registryOperation = Get-Variable -Name ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
-    $preserveRemote = $null -ne $registryOperation -and $null -ne $registryOperation.Value.error
+    $preserveRemote = -not $UsePinnedCatalog -and $null -ne $registryOperation -and $null -ne $registryOperation.Value.error
     $requests = @(if (-not $preserveRemote) { $selectedClients | ForEach-Object { [pscustomobject]@{client=[string]$_; owner='vibecoding1c'; endpoints=$endpoints; replaceAiRulesServerIds=$ReplaceAiRulesServerIds} } })
     if ($IncludeClientSurfaces) {
         foreach ($selectedClient in $selectedClients) {
@@ -3995,6 +4091,7 @@ function Write-Vibecoding1cMcpClientConfig {
         }
     }
     if ($requests.Count -eq 0) { return }
+    if($ReturnRequests){return @($requests)}
     $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly -PreserveUserChanges:$PreserveUserChanges)
     if (-not $PlanOnly) {
         Ensure-GitIgnore

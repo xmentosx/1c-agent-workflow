@@ -4,6 +4,9 @@
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
         $HelperPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         $RuntimePath=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1'
+        function New-StartupCatalogFixture {
+            return @{catalogRevision=('a'*40);inputGitObjectIds=@{};catalog=@{schemaVersion=1;products=@(@{productId='corp';name='Corp';baseConfigurationVersion='PM5';roles=@{code=@{mode='own';sourceId='corp-code'}}});projects=@(@{projectId='fixture';productId='corp';name='Fixture'});profiles=@();sources=@(@{sourceId='corp-code';role='code';namespace='native-code';endpoint=@{hostId='a';serverId='code';configId='corp'}});instances=@()};relations=@{schemaVersion=1;relations=@();knowledgeAreas=@{}};registry=@{schemaVersion=2;hosts=@(@{hostId='a';configurations=@(@{id='corp'});servers=@(@{id='code';scope='project';family='vibecoding1c';configId='corp';url='https://source.invalid/mcp'})})}}
+        }
     }
     BeforeEach {
         $caseClient=if(Get-Variable Client -ErrorAction SilentlyContinue){$Client}else{''}
@@ -13,6 +16,7 @@
         . $HelperPath -ProjectRoot $root -Action help *> $null
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1')
         . $RuntimePath
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')
         $Client=$caseClient
         $context=@{projectId='fixture';productId='corp';catalogRevision=('a'*40);settingsHash='settings-a';knowledgeHash='knowledge-a'}
         $requests=@(
@@ -186,5 +190,229 @@
         (Invoke-ItlProductProjectClientApply -Mode resume).operationId | Should -Be $id
         $null=Invoke-ItlProductProjectClientApply -Mode restore
         (Read-ItlClientMcpEntries codex).code.url | Should -Be 'https://old.invalid'
+    }
+    It 'writes tracked binding before the applied marker and restores only that property' {
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context $requests -BindProject -DesiredBinding $binding
+        (Read-Utf8Text $script:ConfigPath|ConvertFrom-Json).productProject.projectId|Should -Be fixture
+        $config=Read-ItlProductProjectConfig;$config['userField']='keep this'
+        Write-Utf8TextAtomic $script:ConfigPath ($config|ConvertTo-Json -Depth 20)
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        (Read-ItlProductProjectConfig).Contains('productProject')|Should -BeFalse
+        (Read-ItlProductProjectConfig).userField|Should -Be 'keep this'
+        Test-Path -LiteralPath (Get-ItlProductProjectPath applied)|Should -BeFalse
+    }
+    It 'resumes the exact binding intent after config write before its receipt or marker' {
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        Mock Write-Utf8TextAtomic {
+            & $AtomicWriter @PesterBoundParameters
+            if($Path -eq $script:ConfigPath -and $Value -match 'productProject'){throw 'injected binding receipt gap'}
+        }
+        {Invoke-ItlProductProjectClientApply $context $requests -BindProject -DesiredBinding $binding}|Should -Throw '*binding receipt gap*'
+        (Read-ItlProductProjectRecord operation).binding.active|Should -BeTrue
+        Test-Path -LiteralPath (Get-ItlProductProjectPath applied)|Should -BeFalse
+        $id=(Read-ItlProductProjectRecord operation).operationId
+        Mock Write-Utf8TextAtomic { & $AtomicWriter @PesterBoundParameters }
+        (Invoke-ItlProductProjectClientApply -Mode resume).operationId|Should -Be $id
+        (Read-ItlProductProjectRecord applied).operationId|Should -Be $id
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        (Read-ItlProductProjectConfig).Contains('productProject')|Should -BeFalse
+    }
+    It 'validates binding capability before any client writes' {
+        Mock Write-ItlClientMcpEndpointSet {throw 'unexpected client writer'}
+        {Invoke-ItlProductProjectClientApply $context $requests -BindProject -DesiredBinding @{schemaVersion=2}}|Should -Throw '*CATALOG_BINDING_CAPABILITY*'
+        Should -Invoke Write-ItlClientMcpEndpointSet -Times 0 -Exactly
+    }
+    It 'retains the last proven clients and initial compatibility baseline on a knowledge-only update' {
+        $null=Invoke-ItlProductProjectClientApply $context $requests
+        $previous=Read-ItlProductProjectRecord applied
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.knowledgeHash='knowledge-b'
+        Mock Write-ItlClientMcpEndpointSet {throw 'unexpected client writer'}
+        $null=Invoke-ItlProductProjectClientApply $changed @()
+        $actual=Read-ItlProductProjectRecord applied
+        (Get-ItlCatalogHash $actual.proof)|Should -Be (Get-ItlCatalogHash $previous.proof)
+        (Get-ItlCatalogHash $actual.compatibilityBaseline)|Should -Be (Get-ItlCatalogHash $previous.compatibilityBaseline)
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('a'*40)
+        Should -Invoke Write-ItlClientMcpEndpointSet -Times 0 -Exactly
+    }
+    It 'includes local preferences and tracked binding in the same plan and restores each owned field' {
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $preferences=@{memoryOptIn=$false;clientOverrides=@{codex=@('code')}}
+        $null=Invoke-ItlProductProjectClientApply $context $requests -BindProject -DesiredBinding $binding -SavePrivateSelection -PrivateSelection $preferences
+        (Read-ItlProductProjectSetting selection).clientOverrides.codex[0]|Should -Be code
+        (Get-ItlProductProjectBinding).projectId|Should -Be fixture
+        $selection=ConvertTo-ItlCatalogCanonicalValue (Read-Vibecoding1cMcpSelection);$selection['personalField']='preserve'
+        Write-Vibecoding1cMcpSelection $selection
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        (Read-Vibecoding1cMcpSelection).personalField|Should -Be preserve
+    }
+    It 'recovers a private-preference receipt gap through the same pinned operation' {
+        $selectionPath=Get-Vibecoding1cMcpSelectionPath
+        Mock Write-Utf8TextAtomic {
+            & $AtomicWriter @PesterBoundParameters
+            if($Path -eq $selectionPath -and $Value -match 'memoryOptIn'){throw 'injected preference receipt gap'}
+        }
+        {Invoke-ItlProductProjectClientApply $context $requests -SavePrivateSelection -PrivateSelection @{memoryOptIn=$false}}|Should -Throw '*preference receipt gap*'
+        (Read-ItlProductProjectRecord operation).privateSelection.active|Should -BeTrue
+        Test-Path -LiteralPath (Get-ItlProductProjectPath applied)|Should -BeFalse
+        Mock Write-Utf8TextAtomic { & $AtomicWriter @PesterBoundParameters }
+        $null=Invoke-ItlProductProjectClientApply -Mode resume
+        (Read-ItlProductProjectSetting selection).memoryOptIn|Should -BeFalse
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
+    }
+    It 'previews through the real writer, rejects a post-decision race and accepts only explicitly owned keys' {
+        Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})}) *> $null
+        $path=Join-Path $root '.mcp.json'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('https://old.invalid','https://manual.invalid'))
+        $desired=@(@{client='claude-code';owner='vibecoding1c';acceptedOwnedKeys=@('code');endpoints=@(@{name='code';url='https://new.invalid'})})
+        $plan=Write-ItlClientMcpEndpointSet $desired -PreserveUserChanges -ReturnPlan
+        $plan.projections[0].entries.code.url|Should -Be 'https://new.invalid'
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://manual.invalid'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('manual.invalid','later.invalid'))
+        {Invoke-ItlProductProjectClientApply $context $desired -ExpectedInputStates $plan.fileStates -ExpectedOwnerState $plan.ownerState}|Should -Throw '*CLIENT_MCP_PREVIEW_CHANGED*'
+        Test-Path -LiteralPath (Get-ItlProductProjectPath operation)|Should -BeFalse
+        $plan=Write-ItlClientMcpEndpointSet $desired -PreserveUserChanges -ReturnPlan
+        $null=Invoke-ItlProductProjectClientApply $context $desired -ExpectedInputStates $plan.fileStates -ExpectedOwnerState $plan.ownerState
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://new.invalid'
+        {Write-ItlClientMcpEndpointSet @(@{client='claude-code';owner='vibecoding1c';acceptedOwnedKeys=@('unowned');endpoints=@(@{name='unowned';url='https://invalid.invalid'})}) -ReturnPlan}|Should -Throw '*cannot take ownership*'
+    }
+    It 'requires a decision before writes for a real three-way conflict' {
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $path=Join-Path $root '.mcp.json'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('old.invalid','manual.invalid'))
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-source';name='code';url='https://new.invalid'})}}
+        $before=Get-ItlMcpFileState $path
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        $preview.changes[0].status|Should -Be conflict
+        {Resolve-ItlProductProjectPreviewDecision $preview}|Should -Throw '*CATALOG_CONFLICT_NEEDS_USER_ACTION*'
+        (Get-ItlMcpFileState $path)|Should -Be $before
+        (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('a'*40)
+    }
+    It 'persists keep-local and does not ask again on the next update' {
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $path=Join-Path $root '.mcp.json';Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('old.invalid','manual.invalid'))
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-source';name='code';url='https://new.invalid'})}}
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        $decision=Resolve-ItlProductProjectPreviewDecision $preview keep-local
+        $null=Invoke-ItlProductProjectClientApply $decision.context $decision.requests -SavePrivateSelection -PrivateSelection $decision.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://manual.invalid'
+        $next=New-ItlProductProjectPreview $changed @('claude-code')
+        @($next.changes|Where-Object status -eq conflict).Count|Should -Be 0
+        {Resolve-ItlProductProjectPreviewDecision $next}|Should -Not -Throw
+    }
+    It 'accepts catalog settings only for the approved conflicted owner keys' {
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $path=Join-Path $root '.mcp.json';Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('old.invalid','manual.invalid'))
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-source';name='code';url='https://new.invalid'})}}
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        $decision=Resolve-ItlProductProjectPreviewDecision $preview registry
+        $null=Invoke-ItlProductProjectClientApply $decision.context $decision.requests -SavePrivateSelection -PrivateSelection $decision.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        (Read-ItlClientMcpEntries claude-code).code.url|Should -Be 'https://new.invalid'
+    }
+    It 'defers all changes on the old revision without reverting the current manual edit' {
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $path=Join-Path $root '.mcp.json';Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('old.invalid','manual.invalid'))
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-source';name='code';url='https://new.invalid'})}}
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        $decision=Resolve-ItlProductProjectPreviewDecision $preview defer
+        $before=Get-ItlMcpFileState $path
+        $null=Invoke-ItlProductProjectClientApply $decision.context $decision.requests -ProofRequests $decision.proofRequests -SavePrivateSelection -PrivateSelection $decision.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        (Get-ItlMcpFileState $path)|Should -Be $before
+        (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('a'*40)
+        (Read-ItlProductProjectSetting selection).defer.settingsIntentHash|Should -Be $preview.settingsIntentHash
+        $decision.deferred|Should -BeTrue
+    }
+    It 'distinguishes arrays from scalar policy values in native proof' {
+        (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@('one')}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args='one'}} @('entry'))
+        (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@()}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=$null}} @('entry'))
+    }
+    It 'runs one startup resolve/apply then performs no client writes on no-op and publisher-only changes' {
+        $snapshot=New-StartupCatalogFixture
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Mock Update-Vibecoding1cMcpRegistryCheckout {throw 'unexpected network refresh'}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $key=ConvertTo-ItlClientMcpKey '1c-code-metadata-mcp' codex
+        (Read-ItlClientMcpEntries codex)[$key].url|Should -Be 'https://source.invalid/mcp'
+        $first=Read-ItlProductProjectRecord applied
+        Mock Write-ItlClientMcpEndpoints {if(-not $PlanOnly){throw 'unexpected no-op client write'};& $LowLevelWriter @PesterBoundParameters}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        (Read-ItlProductProjectRecord applied).operationId|Should -Be $first.operationId
+        $snapshot.catalogRevision=('b'*40);$snapshot.registry['publishedAt']='publisher-only'
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('b'*40)
+        Should -Invoke Read-ItlProductProjectSnapshot -Times 3 -Exactly
+        Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 0 -Exactly
+    }
+    It 'continues offline with a validated applied context and blocks no-cache without guessing IDs' {
+        $snapshot=New-StartupCatalogFixture
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $previous=Read-ItlProductProjectRecord applied
+        Mock Read-ItlProductProjectSnapshot {throw 'fixture offline'}
+        Mock Read-ItlProductCatalogSnapshot {return $snapshot}
+        Mock Write-ItlClientMcpEndpointSet {throw 'unexpected offline writer'}
+        Invoke-Vibecoding1cMcpRegistryOperation {
+            {Initialize-ItlProductProjectContext}|Should -Not -Throw
+            (Get-ItlProductProjectOperationContext).catalogRevision|Should -Be $previous.catalogRevision
+        }
+        Should -Invoke Write-ItlClientMcpEndpointSet -Times 0 -Exactly
+        # A separate new local root has no applied baseline; the same offline
+        # condition must not manufacture a project, product or fresh binding.
+        $next=Join-Path $TestDrive 'No baseline'
+        [void][IO.Directory]::CreateDirectory((Join-Path $next '.agent-1c'))
+        $script:ProjectRoot=$next;$script:ConfigPath=Join-Path $next '.agent-1c/project.json'
+        Write-Utf8TextAtomic $script:ConfigPath (@{productProject=$binding;aiRules=@{tools=@('codex')}}|ConvertTo-Json -Depth 10)
+        Read-ProjectConfig
+        Invoke-Vibecoding1cMcpRegistryOperation {{Initialize-ItlProductProjectContext}|Should -Throw '*fixture offline*'}
+        Test-Path -LiteralPath (Get-ItlProductProjectPath applied)|Should -BeFalse
+    }
+    It 'blocks an unfinished initial association before main even without a tracked binding' {
+        Mock Write-ItlClientMcpEndpoints {
+            $value=& $LowLevelWriter @PesterBoundParameters
+            if($ReturnReceipt -and $Client -eq 'codex'){throw 'injected initial interruption'}
+            return $value
+        }
+        {Invoke-ItlProductProjectClientApply $context $requests}|Should -Throw '*initial interruption*'
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        Mock Read-ItlProductProjectSnapshot {throw 'unexpected pending refresh'}
+        Invoke-Vibecoding1cMcpRegistryOperation {{Initialize-ItlProductProjectContext}|Should -Throw '*CATALOG_OPERATION_PENDING*'}
+        Should -Invoke Read-ItlProductProjectSnapshot -Times 0 -Exactly
+        $probe=Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot',$root,'-Action','sync-client-mcp','-Client','codex')
+        $probe.exitCode|Should -Be 1
+        $probe.combinedText|Should -Match 'CATALOG_OPERATION_PENDING'
+        $diagnostic=Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot',$root,'-Action','vibecoding1c-mcp-status','-CatalogAction','status')
+        $diagnostic.exitCode|Should -Be 0
+    }
+    It 'keeps diagnostics available for a damaged applied record without deleting state' {
+        $null=Invoke-ItlProductProjectClientApply $context $requests
+        $path=Get-ItlProductProjectPath applied
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('settings-a','tampered'))
+        {Read-ItlProductProjectRecord applied}|Should -Throw '*CATALOG_LOCAL_RECORD_INVALID*'
+        (Invoke-ItlProductProjectRecovery status).status|Should -Be invalid-applied
+        Test-Path -LiteralPath $path|Should -BeTrue
+        $null=Invoke-ItlProductProjectClientApply -Mode restore
+        Test-Path -LiteralPath $path|Should -BeFalse
     }
 }

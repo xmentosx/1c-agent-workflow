@@ -2,7 +2,7 @@
 
 ## Основание и границы проверки
 
-Текущая source граница G3: registry Git/source contracts и client apply/recovery kernel реализуются в соседнем change по отдельному approval. Kernel ещё не включает bootstrap/startup binding; его isolated client fixtures не являются квалификацией памяти. G4/реальные installed migration не начаты. Таблица dependency hashes ниже обновлена по этой согласованной source постановке; исходные G1/D9 evidence и budgets не меняются.
+Текущая source граница G3: registry Git/source contracts и client apply/recovery подключены к выбору проекта, bootstrap/startup, конфликтам, ordinary sync и fixture-only compatibility path по отдельному approval. Pure G2 home/read interface уже проверен; источник фактической G3 приёмки — соседний registry test-plan. Эти source/isolated client fixtures не квалифицируют память, весь installed G3 или активные MCP tools. G4/реальные installed migration не начаты. Таблица dependency hashes ниже обновлена по этой source постановке; G1/D9 evidence и budgets не меняются.
 
 Постановка подготовлена 2026-10-18 и уточнена 2026-10-19 по решениям текущего чата: Cognee, шесть областей, отдельный реестр, OpenViking optional, максимум совместимости с ai_rules_1c, только проектирование. Семь уточнений отражены в AC-31–37; общий порядок/миграция и native допуск Q1–Q7 — в design/specs/tasks и AC-38–42. Основной критерий — стоимость правильно решённой задачи, а не размер одного ответа.
 
@@ -28,18 +28,18 @@ Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agen
 | Файл | SHA-256 прочитанного основания |
 |---|---|
 | `proposal.md` | `eca1531cf6f17a6d611b598bf5ca5186307754affe67d57a71838aa165269a71` |
-| `design.md` | `6adfbf898f0bf00c406add0aed3ad1afcbe7e12cf0bb37331ed2334d7cbaf9c6` |
-| `test-plan.md` | `8dca254fef2ae1762157ce43872f7c2ed65f34e4062210f33352ad14d3915b24` |
-| `tasks.md` | `ae52618365a00d01c7272b4c2e8db77b1098bf2c3af580d27d081ad8a7a1ca87` |
+| `design.md` | `0772d69ec359dd9de20edc80d92b1a2206e428db163d1034793804ff677ad4bc` |
+| `test-plan.md` | `020fbaebb9fde5a0eb17569332f0adee9c0a1747543adf43146fcdd46c3bc06a` |
+| `tasks.md` | `03c3dd464eb7495d053e5acf05376dd267cb07bf8c70fb45550050e08bd12f59` |
 | `inventory.md` | `a216881d6eb43722a87d925a9ea40a419f9e668e6baa397fe88135b352bb9e27` |
-| `specs/product-project-registry/spec.md` | `f3e1f8a7660037d6818323bb4bd889da78daa8e0e1b56bd24c8dc5529a297729` |
-| `specs/product-knowledge-applicability/spec.md` | `1ae229efdddcbc6f6c6d3b1a072536c9529780973d4e5aeab5b327647b6b1c72` |
-| `specs/registry-source-binding/spec.md` | `19de48f43a081fb9f70ef009e6d72e6d5dd07fb8dab5691d9893d7ed06b83b8c` |
-| `specs/registry-project-configuration/spec.md` | `cd4ce7198757353abc5fcc7f0e1b5fe55cf0943a6922c10b0ade2c00e0163371` |
+| `specs/product-project-registry/spec.md` | `74a31ae7222f68c5a23847102cebbff913b6dd615652565352335680ca246e16` |
+| `specs/product-knowledge-applicability/spec.md` | `80a8a59d585a52055b11832a4cabf22b166123e7dc8143c175d1c02885ddcdd1` |
+| `specs/registry-source-binding/spec.md` | `f54af27e91f7788eabf9594713b7775ee17934d24c99380e67df3052b903c5ba` |
+| `specs/registry-project-configuration/spec.md` | `e0dae8198af153806543d2ccc103b1016011c156e446915febc1b603f70cafbf` |
 
 Основание обновлено 2026-10-19 после согласования общего порядка G0–G6 и миграции; таблица содержит текущие SHA-256 девяти прочитанных документов. Сохраняются отдельные catalog/catalog.json и catalog/product-relations.json, business IDs, optional profiles, отношения/knowledgeAreas, раздельные origin/applicability/evidence и три статуса. Новое/изменённое общее правило home подтверждает человек. Три проектные MCP-роли прежние, Cognee общий; один updater/pinned context, defer сохраняет valid current local на прежней catalog revision. Диагностика/recovery исключены из автоприменения.
 
-**Согласованный интерфейс, runtime ещё не реализован:** registry-spec теперь задаёт optional `knowledgeAreas.<area>.memoryHomeProductId`, одну scalar product reference из availableIn/того же SHA, valid missing field и consumer home/read set с revision. AC-27–29 реестра сопоставлены с AC-20/32/35 памяти. Неоднозначное назначение остаётся узким candidate; смена home не означает перенос заметок или полноту поиска. Native dataset IDs/grants остаются у Cognee/binding, не в каталоге; нет четвёртой роли, второго resolver/updater, IAM/provisioning. Schema/resolver, seed-карта и installed qualification остаются незакрытой runtime зависимостью; документы не объявляют её действующей.
+**Согласованный интерфейс, pure G2 реализован и проверен:** registry-spec теперь задаёт optional `knowledgeAreas.<area>.memoryHomeProductId`, одну scalar product reference из availableIn/того же SHA, valid missing field и consumer home/read set с revision. AC-27–29 реестра сопоставлены с AC-20/32/35 памяти. Неоднозначное назначение остаётся узким candidate; смена home не означает перенос заметок или полноту поиска. Native dataset IDs/grants остаются у Cognee/binding, не в каталоге; нет четвёртой роли, второго resolver/updater, IAM/provisioning. Schema/resolver и подтверждённый minimal seed имеют source evidence G2; реальные homes, выпускное наполнение и installed/native qualification остаются отдельными зависимостями. Source G3 не объявляет memory consumer работающим.
 
 ## Уточнение границ D9/G2, 2026-10-19
 

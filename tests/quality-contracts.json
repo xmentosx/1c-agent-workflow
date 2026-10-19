@@ -141,6 +141,21 @@
   },
   "contracts": [
     {
+      "id": "product-project-setup",
+      "owner": "existing registry setup and lifecycle owners",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        ".agents/skills/1c-workflow/assets/product-project-compatibility.json",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"
+      ],
+      "tests": ["tests/pester/ProductProjectSetup.Tests.ps1", "tests/pester/ProductProjectContext.Tests.ps1"]
+    },
+    {
       "id": "product-project-client-apply",
       "owner": "existing MCP client writer and lifecycle dispatcher",
       "gate": "targeted",
