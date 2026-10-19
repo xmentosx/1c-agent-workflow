@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "f0a818b1e3b438e1bbf53401a822b3ea78edf394",
+  "observedStartUtc": "2026-10-19T20:26:33.242244+00:00",
+  "observedEndUtc": "2026-10-19T20:31:17.5955063Z",
+  "overall": "NOT_ACCEPTED",
+  "scope": "Existing dev-ermakov MCP read-only qualification; temporary local native transport/HTTP Git stand. No installation migration, deployment, publication, G4 or Cognee calls.",
+  "serverVersionMeaning": "initialize.serverInfo.version is the MCP framework version, not an attested application build commit or image digest.",
+  "handshakes": [
+    {
+      "name": "bookstack",
+      "endpoint": "http://dev-ermakov.itland.local:18005/mcp",
+      "serverInfo": {
+        "name": "bookstack-product-docs",
+        "version": "2.14.7"
+      },
+      "protocolVersion": "2024-11-05",
+      "outcome": "handshake_passed",
+      "toolSchemasSha256": "632755f5ee3152db201d37c6bf74b7e13625abb896d696c842931658e927fc1c",
+      "toolCount": 5,
+      "toolNames": [
+        "index_status",
+        "list_structure",
+        "read_page",
+        "reindex_docs",
+        "search_docs"
+      ]
+    },
+    {
+      "name": "mantis",
+      "endpoint": "http://dev-ermakov.itland.local:18006/mcp",
+      "serverInfo": {
+        "name": "mantis-ticket",
+        "version": "2.14.7"
+      },
+      "protocolVersion": "2024-11-05",
+      "outcome": "handshake_passed",
+      "toolSchemasSha256": "8fef6f9d0327e679d89cbce8638a7722cc1bc66cbfc6458e0632b024155d04a9",
+      "toolCount": 10,
+      "toolNames": [
+        "execute_write",
+        "get_attachment",
+        "health",
+        "index_control",
+        "mantis_metadata",
+        "read_comments",
+        "read_ticket",
+        "search_tickets",
+        "ticket_history",
+        "write_operation"
+      ]
+    },
+    {
+      "name": "sppr",
+      "endpoint": "http://dev-ermakov.itland.local:18007/mcp",
+      "serverInfo": {
+        "name": "sppr-knowledge",
+        "version": "2.14.7"
+      },
+      "protocolVersion": "2024-11-05",
+      "outcome": "handshake_passed",
+      "toolSchemasSha256": "43d3d87c03a1358306d731d08e3a9e4913baa9a52088cb5693632592d34a9461",
+      "toolCount": 7,
+      "toolNames": [
+        "find_sppr_paths",
+        "get_sppr_context",
+        "list_sppr_objects",
+        "list_sppr_relations",
+        "read_sppr_object",
+        "search_sppr",
+        "sppr_index_status"
+      ]
+    },
+    {
+      "name": "code",
+      "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+      "serverInfo": {
+        "name": "FastMCP-118d",
+        "version": "2.14.7"
+      },
+      "protocolVersion": "2024-11-05",
+      "outcome": "handshake_passed",
+      "toolSchemasSha256": "658c64a36df8e95ee04334fd0629c97d45791d5b838f74977874d97e1c29d98a",
+      "toolCount": 28,
+      "toolNames": [
+        "bsl_scope_members",
+        "build_ordinary_form",
+        "codesearch",
+        "compact_call",
+        "compact_metadata",
+        "compact_search",
+        "compact_symbol",
+        "get_form_artifact",
+        "get_metadata_details",
+        "get_method_call_hierarchy",
+        "get_module_structure",
+        "get_report_artifact",
+        "get_role_artifact",
+        "get_xsd_schema",
+        "graph_dependencies",
+        "helpsearch",
+        "inspect_form_layout",
+        "list_artifact_links",
+        "metadatasearch",
+        "plugin_reload",
+        "plugin_state",
+        "register_external_result_link",
+        "reindex",
+        "search_forms",
+        "search_function",
+        "stats",
+        "unpack_ordinary_form",
+        "verify_xml"
+      ]
+    },
+    {
+      "name": "graph",
+      "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+      "serverInfo": {
+        "name": "FastMCP-f94e",
+        "version": "3.4.7"
+      },
+      "protocolVersion": "2024-11-05",
+      "outcome": "handshake_passed",
+      "toolSchemasSha256": "662d168070891ccbff14467ea7b6fcdf2c2c870451a748ca4474235978627fcb",
+      "toolCount": 54,
+      "toolNames": [
+        "affected_subgraph",
+        "answer_metadata_question",
+        "build_ordinary_form",
+        "compare_base_and_extension",
+        "compare_graph_scope",
+        "delete_graph_project",
+        "explain_graph_entity",
+        "explain_graph_evidence",
+        "explain_path",
+        "fetch_graph_nodes",
+        "find_by_guid",
+        "find_form_links",
+        "find_graph_path",
+        "find_object_referrers",
+        "find_objects_using_object",
+        "find_predefined_values",
+        "find_register_movement_docs",
+        "find_test_artifacts",
+        "find_usages_of_object",
+        "get_access_rights",
+        "get_data_links",
+        "get_event_subscriptions",
+        "get_form_structure",
+        "get_graph_capabilities",
+        "get_graph_project_status",
+        "get_graph_schema",
+        "get_graph_stats",
+        "get_graph_tool_schema",
+        "get_indexing_status",
+        "get_metadata_prompt",
+        "get_object_dossier",
+        "get_register_writers",
+        "get_report_dcs_lineage",
+        "health_graph",
+        "list_graph_capabilities",
+        "list_graph_indexes",
+        "list_graph_projects",
+        "list_plugins",
+        "metadata_report",
+        "refresh_extension_layers",
+        "refresh_graph_project",
+        "register_graph_project",
+        "reload_plugins",
+        "resolve_effective_entity",
+        "resolve_graph_entity",
+        "resolve_qualified_name",
+        "run_graph_cypher_template",
+        "search_code",
+        "search_forms",
+        "search_metadata",
+        "search_metadata_by_description",
+        "trace_call_chain",
+        "trace_impact",
+        "unpack_ordinary_form"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "bookstack-negative-book",
+      "ac": [
+        "AC-09",
+        "AC-21"
+      ],
+      "status": "FAILED",
+      "arguments": {
+        "query": "PM5",
+        "mode": "text",
+        "limit": 1,
+        "filters": {
+          "book_id": 2147483647
+        }
+      },
+      "expected": "Validation error or no pages, never unrelated pages",
+      "actual": {
+        "ok": true,
+        "source": "cache",
+        "total_matches": 79,
+        "returnedPageId": 13
+      },
+      "sourceInfoAdvertised": false
+    },
+    {
+      "id": "mantis-multi-project",
+      "ac": [
+        "AC-11",
+        "AC-21"
+      ],
+      "status": "FAILED",
+      "arguments": {
+        "query": "PM5",
+        "filters": {
+          "project_ids": [
+            2147483646,
+            2147483647
+          ]
+        },
+        "limit": 1
+      },
+      "expected": "Supported explicit union scope; nonexistent projects must not return global results",
+      "actual": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error calling tool 'search_tickets': Unsupported filters: project_ids"
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "id": "sppr-project-metadata",
+      "ac": [
+        "AC-10"
+      ],
+      "status": "FAILED",
+      "expected": "list_sppr_projects advertised with bounded UUID/name metadata",
+      "actual": "tools/list contains 7 tools; list_sppr_projects is absent"
+    },
+    {
+      "id": "sppr-project-scope",
+      "ac": [
+        "AC-10"
+      ],
+      "status": "PASSED_SUBSET",
+      "positiveProjectId": "76bcfc1f-e8c2-4cd6-80ef-997b99bca476",
+      "positiveTotal": 4895,
+      "positiveReturned": 1,
+      "negativeProjectId": "00000000-0000-0000-0000-000000000000",
+      "negativeTotal": 0,
+      "generation": "3ee72f1105234a05bbef6952becdf61d",
+      "policy": "95ae3b7ff80b1153cd974c2eb7f061c79ce017d3c1524b5fbcd20bda9ce31f70"
+    },
+    {
+      "id": "sppr-exact-mantis-link",
+      "ac": [
+        "AC-10",
+        "AC-12"
+      ],
+      "status": "PASSED_SUBSET",
+      "objectId": "Catalog_ТехническиеПроекты:0089e9c3-75a7-11ef-8122-000c295e34e3",
+      "projectId": "76bcfc1f-e8c2-4cd6-80ef-997b99bca476",
+      "field": "итлКодMantis",
+      "value": "59095",
+      "source": "Stored exact field, not similarity search"
+    },
+    {
+      "id": "graph-project-scope",
+      "ac": [
+        "AC-08"
+      ],
+      "status": "PASSED_SUBSET",
+      "nativeNamespace": "default",
+      "nativeProjectId": "pm5corp",
+      "searchType": "fulltext",
+      "positiveReturned": 1,
+      "negativeError": {
+        "code": "project_not_accessible",
+        "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+      },
+      "activeGeneration": null,
+      "limitation": "Does not attest source application build or exact configuration version; no client activation was performed"
+    },
+    {
+      "id": "code-generation-identity",
+      "ac": [
+        "AC-08"
+      ],
+      "status": "PASSED_SUBSET",
+      "nativeProjectId": "code-20d3eae87f48",
+      "generation": "20261019T072351Z-bdde6609",
+      "sourceFingerprint": "bdde6609fa2e4c5a0b275272e5eed75f624b9196f1aafececb310dae2058dfb4",
+      "releaseVersion": "1.0.0",
+      "buildDigest": null,
+      "limitation": "Dedicated endpoint/native generation observed; selected catalog binding and exact configuration version are not qualified"
+    },
+    {
+      "id": "native-utf8-roundtrip",
+      "ac": [
+        "AC-19"
+      ],
+      "status": "PASSED_SUBSET",
+      "stand": {
+        "os": "Microsoft Windows NT 10.0.26300.0",
+        "powerShell": "5.1.26100.9711",
+        "isElevated": false,
+        "transport": "Invoke-ItlNativeProcessCapture through Invoke-TestPowerShellFile"
+      },
+      "relativePath": "Проверка G3 transport/проверка пути.py",
+      "exactMatch": true,
+      "limitation": "One Windows 11 local session; not Windows 10/Server/terminal support acceptance"
+    },
+    {
+      "id": "native-git-deadline",
+      "ac": [
+        "AC-17",
+        "AC-39"
+      ],
+      "status": "PASSED_SUBSET",
+      "deadlineSeconds": 10,
+      "elapsedIncludingCleanupSeconds": 10.128006599999999,
+      "requestAccepted": true,
+      "actual": "NATIVE_PROCESS_TIMEOUT from real git ls-remote HTTP child; shared owner cleanup; cooperative local listener shutdown",
+      "limitation": "Measures native Git timeout boundary, not full startup offline continuation or complete 10-second startup elapsed"
+    }
+  ],
+  "unverified": [
+    "Pinned source build/image identity and full code/graph binding/version verification (task 2.1)",
+    "BookStack qualified view cache/semantic/live/read and multi-project Mantis native Linux vector resources",
+    "Actual active MCP catalog after client reload/discovery across affected clients",
+    "Full original PM4/PM5 bootstrap/update/branch/fault/concurrent-session lifecycle canary with 1C",
+    "Windows 10, Windows Server 2019+ and terminal multi-user stands",
+    "All four startup cost/surface scenarios and installed-facing walkthrough"
+  ],
+  "excludedReleaseWork": "Registry population AC-36–38/5.7 is mandatory before release, independently of this G3 run. Minimal PM5 pilot is not release data.",
+  "harnessNotes": [
+    "Initial direct native console rendering was not used as UTF-8 text proof; retained HTTP JSON is UTF-8. Exact Unicode regression subsequently passed through shared native capture.",
+    "Initial deadline harness omitted runtime-values and failed during cleanup; retained as qualification-deadline-harness-failed.json, not product evidence. Same HTTP topology passed after loading the existing owner dependency. No runtime source changed."
+  ],
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/qualification-native.json",
+      "sha256": "1f891f4845a79eea7f89b434b83b42c79404e4a43e223cb538bcfaef8b91d0b5"
+    },
+    {
+      "path": "build/test-results/g3/qualification-followup.json",
+      "sha256": "5be90280098982fd95cda63c9864a18c3d6db422543c73d5799bab1b4f65266d"
+    },
+    {
+      "path": "build/test-results/g3/qualification-transport.json",
+      "sha256": "a85b53dac2a852f8af44a63e379dbdaac7bee2e5c1a020c58f6380d2ee0dfdec"
+    },
+    {
+      "path": "build/test-results/g3/qualification-deadline.json",
+      "sha256": "fab7237f858a8eb65f130e9ade25e9fe27f2d9d10290c9bc787a7d6626cb50f3"
+    },
+    {
+      "path": "build/test-results/g3/qualification-deadline-harness-failed.json",
+      "sha256": "6367b9cef12faa7391bd3dddebc185f84d6d8d5f80ade6a16a936c1934eec6d6"
+    }
+  ]
+}
