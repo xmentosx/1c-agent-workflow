@@ -141,6 +141,31 @@
   },
   "contracts": [
     {
+      "id": "product-project-setup",
+      "owner": "existing registry setup and lifecycle owners",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "reuseInputPaths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+        "scripts/git-path-list.ps1",
+        "templates/product-project-registry/*"
+      ],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        ".agents/skills/1c-workflow/assets/product-project-compatibility.json",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"
+      ],
+      "tests": ["tests/pester/ProductProjectSetup.Tests.ps1", "tests/pester/ProductProjectContext.Tests.ps1"]
+    },
+    {
       "id": "product-project-client-apply",
       "owner": "existing MCP client writer and lifecycle dispatcher",
       "gate": "targeted",

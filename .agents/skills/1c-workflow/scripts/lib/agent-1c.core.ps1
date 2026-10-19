@@ -4846,7 +4846,8 @@ function Read-InitWizardFileInfoBaseAnswers {
 function Read-InitWizardAnswersOnce {
     $agentTarget = $(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() })
     $platformPath = Read-InitPlatformPath
-    $baseConfigurationVersion = Read-InitBaseConfigurationVersion
+    . Import-ItlProductProjectSetup
+    $baseConfigurationVersion = Read-ItlProductProjectInitFamily
     $infoBaseKind = Read-InitInfoBaseKind
 
     $answers = [ordered]@{
@@ -4854,6 +4855,9 @@ function Read-InitWizardAnswersOnce {
         agentModel = $AgentModel.Trim().ToLowerInvariant()
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
+        catalogMode = 'catalog'
+        projectId = $script:PreparedCatalogCandidate.binding.projectId
+        catalogProfileId = (Get-ItlCatalogField $script:PreparedCatalogCandidate.binding 'profileId' '')
         infoBaseKind = $infoBaseKind
         sourceUsesRepository = $false
         sourceInfoBasePath = ""
@@ -4958,6 +4962,12 @@ function Normalize-InitAnswers {
     param([object]$Answers)
 
     $baseConfigurationVersion = ConvertTo-BaseConfigurationVersion -Value (Get-AnswerValue -Answers $Answers -Names @("baseConfigurationVersion", "BASE_CONFIGURATION_VERSION") -Default "PM5")
+    $catalogMode='legacy';$catalogProjectId='';$catalogProfileId=''
+    if((Get-AnswerValue -Answers $Answers -Names @('projectId','catalogProjectId') -Default '') -or (Get-AnswerValue -Answers $Answers -Names @('catalogMode') -Default '') -eq 'catalog'){
+        . Import-ItlProductProjectSetup
+        $candidate=Resolve-ItlProductProjectInitAnswers $Answers
+        if($candidate){$baseConfigurationVersion=$candidate.context.baseConfigurationVersion;$catalogMode='catalog';$catalogProjectId=$candidate.binding.projectId;$catalogProfileId=[string](Get-ItlCatalogField $candidate.binding 'profileId' '')}
+    }
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
     $dependencyModeValue = Get-AnswerValue -Answers $Answers -Names @("dependencyMode", "DEPENDENCY_MODE") -Default ""
     if (-not $dependencyModeValue) {
@@ -4970,6 +4980,9 @@ function Normalize-InitAnswers {
         agentModel = ([string](Get-AnswerValue -Answers $Answers -Names @("agentModel", "AGENT_MODEL") -Default $AgentModel)).Trim().ToLowerInvariant()
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
         baseConfigurationVersion = $baseConfigurationVersion
+        catalogMode=$catalogMode
+        projectId=$catalogProjectId
+        catalogProfileId=$catalogProfileId
         infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
         sourceUsesRepository = $sourceUsesRepository
         sourceInfoBasePath = [string](Get-AnswerValue -Answers $Answers -Names @("sourceInfoBasePath", "SOURCE_INFOBASE_PATH") -Default "")
@@ -5045,6 +5058,7 @@ function Save-InitAnswers {
     Set-DependencyLockMode -Mode $Answers.dependencyMode
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     $script:InitVibecoding1cMcpSetupRequested = [bool]$Answers.vibecoding1cMcpSetupDuringInit
+    if((Get-AnswerValue -Answers $Answers -Names @('catalogMode') -Default 'legacy') -eq 'catalog'){. Import-ItlProductProjectSetup;Save-ItlProductProjectInitBinding $Answers}
 }
 
 function New-ConfiguredInitAnswers {

@@ -3,7 +3,8 @@
   "products": [
     {
       "productId": "pm5-corp",
-      "name": "PM5 КОРП"
+      "name": "PM5 КОРП",
+      "baseConfigurationVersion": "PM5"
     }
   ],
   "projects": [

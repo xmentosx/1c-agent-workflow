@@ -88,7 +88,7 @@ function Save-ItlCatalogRecord {
             $current = Get-ItlCatalogRecord $snapshot.catalog $Collection $id
             $currentHash = Get-ItlCatalogHash $current
             if ($currentHash -ceq $expectedHash) {
-                $request.status='saved'; $request.outcome='confirmed'; $request['catalogRevision']=$tip; $request.reason='remote-record-confirmed'; $request.continuation=''; return [pscustomobject]$request
+                $request.status='saved'; $request.outcome='confirmed'; $request['catalogRevision']=$tip; $request['verifiedSnapshot']=$snapshot; $request.reason='remote-record-confirmed'; $request.continuation=''; return [pscustomobject]$request
             }
             if ($currentHash -cne $baseHash) {
                 $request.status='conflict'; $request.reason='same-record-changed'; $request['comparison']=@{applied=(Get-ItlCatalogRecord $base.catalog $Collection $id);current=$current;proposed=$Record}; return [pscustomobject]$request
@@ -108,7 +108,7 @@ function Save-ItlCatalogRecord {
             $remoteTip = (Invoke-ItlCatalogGit $workRoot @('rev-parse','FETCH_HEAD') $DeadlineUtc).stdout.Trim()
             $remoteSnapshot = Read-ItlProductCatalogSnapshot $workRoot $remoteTip
             if ((Get-ItlCatalogHash (Get-ItlCatalogRecord $remoteSnapshot.catalog $Collection $id)) -ceq $expectedHash) {
-                $request.status='saved'; $request.outcome='confirmed'; $request['catalogRevision']=$remoteTip; $request.reason='remote-record-confirmed'; $request.continuation=''; return [pscustomobject]$request
+                $request.status='saved'; $request.outcome='confirmed'; $request['catalogRevision']=$remoteTip; $request['verifiedSnapshot']=$remoteSnapshot; $request.reason='remote-record-confirmed'; $request.continuation=''; return [pscustomobject]$request
             }
             if ($push.exitCode -ne 0 -and $remoteTip -ceq $tip) { $request.reason='write-denied-or-unavailable'; return [pscustomobject]$request }
         }

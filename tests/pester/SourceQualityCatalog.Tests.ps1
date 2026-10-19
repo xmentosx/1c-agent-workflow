@@ -399,8 +399,18 @@ Describe 'Source quality catalog contracts' {
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
         $classificationConsumer = 'tests/pester/ToolingReadiness.Tests.ps1'
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 80
+        $registryConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
+        # The historical 57/80 cohort is unchanged; two explicit consumers now
+        # prove the new shared lifecycle/setup contract, rather than becoming
+        # an unexplained increase or being dropped to satisfy this count.
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be 82
+        foreach($test in $registryConsumers){@($selection.tests)|Should -Contain $test}
+        $registryOwner=@($catalog.contracts|Where-Object id -eq 'product-project-setup')[0]
+        @($registryOwner.tests|Sort-Object)|Should -Be $registryConsumers
+        @($registryOwner.paths)|Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        @(Get-QualityContractReuseInputPaths -Contract $registryOwner)|Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1'
         @($selection.tests) | Should -Contain $classificationConsumer
         $classificationOwner = @($catalog.contracts | Where-Object id -eq 'verification-failure-classification')[0]
         @($classificationOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
@@ -439,7 +449,8 @@ Describe 'Source quality catalog contracts' {
         $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
         $dependencySeconds = 14.161
         # Conservatively account for the new blob-pressure consumer without rewriting the historical measurements.
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1'
+        $registryBudgetReserve=[double]$registryOwner.budgetSeconds
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -450,7 +461,8 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 83
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers}).Count | Should -Be 83
+        @($currentSelection.tests).Count | Should -Be 85
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -459,7 +471,7 @@ Describe 'Source quality catalog contracts' {
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
         $currentParallelSpanSeconds = 936.459
         $serialReleaseSeconds = 198.938
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)

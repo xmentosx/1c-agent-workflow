@@ -4,8 +4,14 @@ param(
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
-    [ValidateSet('', 'status', 'resume', 'restore', 'cancel')]
+    [ValidateSet('', 'status', 'resume', 'restore', 'cancel', 'restore-compatible', 'list', 'preview', 'select', 'create', 'sync', 'context')]
     [string]$CatalogAction = '',
+    [string]$CatalogProjectId='',
+    [string]$CatalogProfileId='',
+    [string]$CatalogRecordPath='',
+    [ValidateRange(1,50)][int]$CatalogLimit=10,
+    [ValidateSet('', 'keep-local', 'registry', 'defer')]
+    [string]$CatalogDecision = '',
     [ValidateSet("", "status", "restore", "reconcile")]
     [string]$WorkflowUpdateRecovery = "",
     [string]$WorkflowUpdateSnapshotId = "",
@@ -469,10 +475,13 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 }
 
 $script:InitDatabaseSettingsReady = $false
+$script:CatalogRegistryOperationOwned=$false
+$script:PreparedCatalogCandidate=$null
 try {
     if($CatalogAction){
-        if($InternalOnDemandOperation -or $Action -notin @('vibecoding1c-mcp-select','vibecoding1c-mcp-status') -or ($Action -eq 'vibecoding1c-mcp-status' -and $CatalogAction -ne 'status')){throw 'CATALOG_ACTION_SCOPE: use vibecoding1c-mcp-select for recovery or vibecoding1c-mcp-status -CatalogAction status for read-only status.'}
+        if($InternalOnDemandOperation -or $Action -notin @('vibecoding1c-mcp-select','vibecoding1c-mcp-status') -or ($Action -eq 'vibecoding1c-mcp-status' -and $CatalogAction -notin @('status','list','preview','context'))){throw 'CATALOG_ACTION_SCOPE: use vibecoding1c-mcp-select for mutation/recovery or vibecoding1c-mcp-status for read-only catalog commands.'}
         . Import-ItlProductProject
+        if($CatalogAction -in @('list','preview','select','create','sync','context')){. Import-ItlProductProjectSetup}
         # Cooperative cancellation only signals the current operation. It never
         # acquires its writer authority or changes clients, binding or receipts.
         if($CatalogAction -eq 'cancel'){Invoke-ItlProductProjectRecovery cancel;return}
@@ -508,6 +517,15 @@ try {
     # database execution is admitted only at the native phase boundary.
     Read-ProjectConfig
     Initialize-GitIndexLockTracking
+    if(-not $InternalOnDemandOperation -and -not $CatalogAction -and -not $WorkflowUpdateRecovery -and
+        ((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/mcp/product-context-operation.json')))){
+        . Import-ItlProductProject
+        if((Get-ItlProductProjectStartupDisposition $Action $CatalogAction $InternalOnDemandOperation $WorkflowUpdateRecovery) -eq 'project-operation'){
+            if(-not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){$script:ItlMcpRegistryOperation=@{attempted=$false;snapshot=$null;error=$null};$script:CatalogRegistryOperationOwned=$true}
+            Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces:($Action -eq 'sync-client-mcp')
+            Read-ProjectConfig
+        }
+    }
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
     if ($InternalOnDemandOperation) {
@@ -544,11 +562,11 @@ try {
         "complete-one-off-proof" { Complete-VerificationOneOffProof -EvidencePath $VerificationEvidencePath | ConvertTo-Json -Depth 8 -Compress }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
-        "vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus} }
+        "vibecoding1c-mcp-status" { if($CatalogAction -eq 'status'){Invoke-ItlProductProjectRecovery status}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable)}else{Show-Vibecoding1cMcpStatus} }
         "context-benchmark" { Invoke-KiloContextBenchmark }
         "vibecoding1c-mcp-start" { Start-Vibecoding1cMcp }
         "vibecoding1c-mcp-stop" { Stop-Vibecoding1cMcp }
-        "vibecoding1c-mcp-select" { if($CatalogAction){Invoke-ItlProductProjectRecovery $CatalogAction}else{Set-Vibecoding1cMcpSelection} }
+        "vibecoding1c-mcp-select" { if($CatalogAction -in @('status','resume','restore','cancel','restore-compatible')){Invoke-ItlProductProjectRecovery $CatalogAction}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable)}else{Set-Vibecoding1cMcpSelection} }
         "vibecoding1c-mcp-refresh-registry" { Refresh-Vibecoding1cMcpRegistry }
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }
@@ -683,4 +701,4 @@ try {
         }
     }
     exit 1
-} finally { Exit-Agent1cLifecycleOperation }
+} finally { if($script:CatalogRegistryOperationOwned){Remove-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue}; Exit-Agent1cLifecycleOperation }

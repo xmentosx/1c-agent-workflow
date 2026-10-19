@@ -27,8 +27,37 @@ client writer to restore only its owned entries, preserving unrelated settings.
 A changed owned key or an unconfirmed physical write requires comparison with
 the retained operation before continuing; never delete its IDs or ownership
 records. Configuration success still requires client reload/new-session
-observation before claiming the tools are active. This source stage provides
-recovery only; catalog selection/bootstrap/startup integration is not yet enabled.
+observation before claiming the tools are active.
+
+For a catalog project use `vibecoding1c-mcp-status -CatalogAction list` (at most
+10 choices, `-CatalogLimit` up to 50), then `-CatalogAction preview -CatalogProjectId
+<id>` or explicit `vibecoding1c-mcp-select -CatalogAction select -CatalogProjectId
+<id>`. `select -CatalogProjectId new` asks only for missing record data; a denied
+Git publication retains a private request and its stable ID. `-CatalogRecordPath`
+accepts a prepared business record. These actions do not create SPPR/Mantis
+objects. `-CatalogAction sync` uses the same startup plan; `context` reports only
+the selected project, role intentions and integration defaults. Missing optional
+links remain deferred. Interactive init chooses the project before unattended
+work; explicit legacy JSON answers retain their PM4/PM5 route.
+
+Bound operations check the catalog once with a 10-second metadata deadline.
+A valid applied context continues offline with a freshness warning. Conflicts
+offer keep-local, registry or defer before writes; use `-CatalogDecision` for an
+explicit automated choice. Unattended ambiguity does not choose for the user.
+To install an older incompatible package, first use `-CatalogAction
+restore-compatible` with the current helper. It restores the proven initial
+owned settings/binding and preserves unrelated values; conflicts retain the
+current helper and need resolution. Package update success and subsequent
+choose/new/later association have separate outcomes. Association keeps memory
+off unless a separate compatible memory consumer is explicitly enabled.
+
+For Mantis calls read `context.integrationDefaults`: pass `mantisSearch.filters`
+to the existing search tool; an explicit issue ID can be read globally. Use the
+matching `mantisCreateRoutes` purpose for creation, asking only for this operation
+when absent. Keep the existing writer's `operation_id` unchanged on retry and
+use its status/unknown-outcome recovery. Catalog defaults never replace that
+journal or authorize a write. SPPR exact links identify native objects; similarity
+search is separate evidence and cannot substitute for a missing exact link.
 
 Common internal actions:
 
@@ -203,7 +232,7 @@ To measure Browser Automation, switch it manually in Kilo Settings, reload Kilo,
 
 UI tool actions install the exact lock versions and reconcile direct `stdio` entries owned by `ui-tools`. They preserve foreign same-name entries, do not use the on-demand facade or ITL port registry, and never create a desktop lock. `ui-tools-status` reports `configured`, `external`, `missing`, or `degraded`; configured is not a runtime-health claim.
 
-vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the selected session client while preserving other installed clients. `sync-client-mcp` requires explicit `-Client` and writes vibecoding1c, on-demand facade, and UI MCP entries into that client's config without changing the active client, `ai_rules_1c`, or generated skills/commands. The helper preflights these families together; project rules updates preflight all selected clients before invoking the fork installer or deleting legacy defaults. A conflicting owner or changed input preserves the current files: review the reported key/edit, resolve its ownership, then repeat the original command. Never restore an old MCP snapshot over a late user edit. After Cursor `.cursor/mcp.json` is written, reload the window, enable ITL servers in `+ -> MCP Servers`, and open a new Agent chat; an already open chat is not attached. Do not dot-source internal MCP writers as a supported scenario. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
+vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the selected session client while preserving other installed clients. `sync-client-mcp` requires explicit `-Client` and writes vibecoding1c, on-demand facade, and UI MCP entries into that client's config without changing the active client, `ai_rules_1c`, or generated skills/commands. The helper preflights these families together; project rules updates preflight all selected clients before invoking the fork installer or deleting legacy defaults. A conflicting owner or changed input preserves the current files: review the reported key/edit, resolve its ownership, then repeat the original command. Never restore an old MCP snapshot over a late user edit. After Cursor `.cursor/mcp.json` is written, reload the window, enable ITL servers in `+ -> MCP Servers`, and open a new Agent chat; an already open chat is not attached. Do not dot-source internal MCP writers as a supported scenario. For legacy unbound projects, setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
 
 In the short `/itl` panel, show advanced/helper actions only as grouped additional capabilities, not as visible slash commands:
 
