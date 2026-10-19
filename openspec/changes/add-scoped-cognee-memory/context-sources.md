@@ -29,7 +29,7 @@ Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agen
 |---|---|
 | `proposal.md` | `eca1531cf6f17a6d611b598bf5ca5186307754affe67d57a71838aa165269a71` |
 | `design.md` | `0772d69ec359dd9de20edc80d92b1a2206e428db163d1034793804ff677ad4bc` |
-| `test-plan.md` | `020fbaebb9fde5a0eb17569332f0adee9c0a1747543adf43146fcdd46c3bc06a` |
+| `test-plan.md` | `cb8e7b60bd080ed65b199e224b1e41de2844aaf1a3a607466343762a56c8fe98` |
 | `tasks.md` | `03c3dd464eb7495d053e5acf05376dd267cb07bf8c70fb45550050e08bd12f59` |
 | `inventory.md` | `a216881d6eb43722a87d925a9ea40a419f9e668e6baa397fe88135b352bb9e27` |
 | `specs/product-project-registry/spec.md` | `74a31ae7222f68c5a23847102cebbff913b6dd615652565352335680ca246e16` |
