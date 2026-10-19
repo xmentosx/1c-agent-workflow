@@ -100,7 +100,7 @@ class ProductDocsTransportTests(unittest.TestCase):
         self.assertIs(mcp.options.get("stateless_http"), True)
         self.assertEqual(
             mcp.registered_tools,
-            ["search_docs", "read_page", "list_structure", "reindex_docs", "index_status"],
+            ["search_docs", "read_page", "list_structure", "reindex_docs", "index_status", "source_info"],
         )
 
 

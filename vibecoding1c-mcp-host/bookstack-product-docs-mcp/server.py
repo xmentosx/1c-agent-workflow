@@ -29,6 +29,7 @@ except ImportError:  # Source tests can run before the server requirements are i
 
 from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
 from query_cache import QueryVectorCache
+from views import ACTIVE_VIEW, ViewRouter, effective_filters, load_views
 
 
 DEFAULT_SEARCH_LIMIT = 5
@@ -182,6 +183,7 @@ class Settings:
     embedding_provider_order: Tuple[str, ...] = ()
     embedding_query_cache_ttl_seconds: int = 86400
     query_cache_path: str = ""
+    views_json: str = "{}"
 
     @staticmethod
     def from_env() -> "Settings":
@@ -214,6 +216,7 @@ class Settings:
                 int_env("BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS", 86400))),
             query_cache_path=os.environ.get("BOOKSTACK_QUERY_CACHE_PATH",
                 os.environ.get("BOOKSTACK_CACHE_PATH", "/data/bookstack-cache.sqlite") + ".query-vectors.sqlite").strip(),
+            views_json=os.environ.get('BOOKSTACK_VIEWS_JSON', '{}'),
         )
 
     def validate(self) -> None:
@@ -838,6 +841,7 @@ class DocsCache:
 class ProductDocsService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.views = load_views(settings.views_json)
         self.client = BookStackClient(settings)
         self.cache = DocsCache(settings.cache_path)
         self.fragment_index = FragmentIndex(self.cache)
@@ -862,7 +866,7 @@ class ProductDocsService:
     ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
-        effective_filters = filters or {}
+        scoped_filters = effective_filters(filters, self.views)
         limit = max(1, min(int(limit or DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT))
         cursor = int(cursor or 0)
         if cursor < 0:
@@ -872,11 +876,11 @@ class ProductDocsService:
         started = time.perf_counter()
         text_started = time.perf_counter()
         cache_pages = self.cache.count_pages()
-        results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 and mode != "semantic" else []
+        results = self.cache.search(query, cache_pages, scoped_filters) if cache_pages > 0 and mode != "semantic" else []
         text_ms = round((time.perf_counter() - text_started) * 1000, 1)
         semantic_trace: Dict[str, Any] = {}
         semantic = (self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES),
-                                          effective_filters, semantic_trace, diagnostics)
+                                          scoped_filters, semantic_trace, diagnostics)
                     if mode != "text" else [])
         rank_started = time.perf_counter()
         results = rank_search_results(merge_results(results, semantic), query)
@@ -884,13 +888,15 @@ class ProductDocsService:
         live_used = False
         live_ms = 0.0
         requested_end = cursor + limit
-        if mode != "semantic" and (not results or truthy(str(effective_filters.get("live", "false")))):
+        if mode != "semantic" and (not results or truthy(str(scoped_filters.get("live", "false")))):
             live_used = True
             live_started = time.perf_counter()
-            live_query = build_bookstack_search_query(query, effective_filters)
+            live_query = build_bookstack_search_query(query, scoped_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
             results = rank_search_results(
-                merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)]),
+                merge_results(results, [item for item in
+                    (normalize_search_item(raw) for raw in self.client.search(live_query, live_limit))
+                    if matches_filters(item, scoped_filters)]),
                 query,
             )
             live_ms = round((time.perf_counter() - live_started) * 1000, 1)
@@ -992,6 +998,8 @@ class ProductDocsService:
         if not resolved_id:
             return {"ok": False, "error": "page_id is required, or url must exist in the local cache"}
         page = self.client.read_page(int(resolved_id))
+        if not matches_filters(normalize_search_item(page), effective_filters({}, self.views)):
+            return {"ok": False, "error": "Page is outside the selected BookStack view"}
         cached = self.cache.get_page(int(resolved_id))
         if (
             not cached
@@ -1060,6 +1068,15 @@ class ProductDocsService:
         if scope not in {"all", "shelves", "books", "chapters", "pages"}:
             return {"ok": False, "error": "scope must be all, shelves, books, chapters, or pages", "structure": {}}
         limit = max(1, min(int(limit or DEFAULT_STRUCTURE_LIMIT), MAX_STRUCTURE_LIMIT))
+        if ACTIVE_VIEW.get():
+            selected = effective_filters({}, self.views)
+            with self.cache.connect() as connection:
+                pages = [self.cache._row_to_page(row) for row in connection.execute('SELECT * FROM pages ORDER BY id')]
+            pages = [page for page in pages if matches_filters(page, selected)]
+            structure = {'pages': [compact_page_metadata(page) for page in pages[:limit]]} if scope in {'all', 'pages'} else {}
+            return {'ok': True, 'scope': scope, 'limit': limit, 'structure': structure,
+                    'result_count': sum(len(items) for items in structure.values()),
+                    'coverage': 'cached pages in selected view; use search/read for live content'}
         structure = self.client.structure(scope, limit)
         return {
             "ok": True,
@@ -1070,6 +1087,8 @@ class ProductDocsService:
         }
 
     def reindex_docs(self, force: bool = False, limit: int = 0) -> Dict[str, Any]:
+        if ACTIVE_VIEW.get():
+            return {'ok': False, 'error': 'Global indexing requires the global endpoint; a view does not expand collection'}
         if not self._index_lock.acquire(blocking=False):
             return {"ok": False, "error": "Indexing is already running; inspect index_status and retry reindex_docs"}
         self.fragment_index.state(in_progress=True, error="")
@@ -1473,6 +1492,13 @@ def normalize_search_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def matches_filters(page: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     if not filters:
         return True
+    for field in ('book_id', 'chapter_id', 'page_id'):
+        actual = page.get('id' if field == 'page_id' else field)
+        if field in filters and actual != filters[field]:
+            return False
+        plural = field[:-3] + '_ids'
+        if plural in filters and actual not in filters[plural]:
+            return False
     item_type = str(filters.get("type", "")).lower()
     if item_type and str(page.get("type", "")).lower() != item_type:
         return False
@@ -1675,6 +1701,15 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
             result = {"ok": False, "error": str(exc)}
         return wrap_result("status", result)
 
+    @mcp.tool
+    def source_info():
+        """Read source/view identity; this describes scope, not a verified product version."""
+        view_id = ACTIVE_VIEW.get()
+        return wrap_result('source', {'ok': True, 'source': service.settings.base_url,
+                           'viewId': view_id, 'binding': 'view' if view_id else 'global',
+                           'selectors': service.views.get(view_id, {}),
+                           'capabilities': ['product-docs-view-v1', 'stable-id-selectors']})
+
     return mcp, service
 
 
@@ -1688,7 +1723,12 @@ def main() -> None:
     else:
         service.start_background_warm()
     service.start_scheduler()
-    mcp.run(transport="http", host=service.settings.host, port=service.settings.port)
+    if service.views:
+        import uvicorn
+        uvicorn.run(ViewRouter(mcp.http_app(path='/mcp'), service.views), host=service.settings.host,
+                    port=service.settings.port)
+    else:
+        mcp.run(transport="http", host=service.settings.host, port=service.settings.port)
 
 
 if __name__ == "__main__":

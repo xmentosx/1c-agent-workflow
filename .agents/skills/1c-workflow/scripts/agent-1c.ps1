@@ -4,6 +4,8 @@ param(
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
+    [ValidateSet('', 'status', 'resume', 'restore', 'cancel')]
+    [string]$CatalogAction = '',
     [ValidateSet("", "status", "restore", "reconcile")]
     [string]$WorkflowUpdateRecovery = "",
     [string]$WorkflowUpdateSnapshotId = "",
@@ -468,6 +470,13 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 
 $script:InitDatabaseSettingsReady = $false
 try {
+    if($CatalogAction){
+        if($InternalOnDemandOperation -or $Action -notin @('vibecoding1c-mcp-select','vibecoding1c-mcp-status') -or ($Action -eq 'vibecoding1c-mcp-status' -and $CatalogAction -ne 'status')){throw 'CATALOG_ACTION_SCOPE: use vibecoding1c-mcp-select for recovery or vibecoding1c-mcp-status -CatalogAction status for read-only status.'}
+        . Import-ItlProductProject
+        # Cooperative cancellation only signals the current operation. It never
+        # acquires its writer authority or changes clients, binding or receipts.
+        if($CatalogAction -eq 'cancel'){Invoke-ItlProductProjectRecovery cancel;return}
+    }
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
     }
@@ -535,11 +544,11 @@ try {
         "complete-one-off-proof" { Complete-VerificationOneOffProof -EvidencePath $VerificationEvidencePath | ConvertTo-Json -Depth 8 -Compress }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
-        "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
+        "vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus} }
         "context-benchmark" { Invoke-KiloContextBenchmark }
         "vibecoding1c-mcp-start" { Start-Vibecoding1cMcp }
         "vibecoding1c-mcp-stop" { Stop-Vibecoding1cMcp }
-        "vibecoding1c-mcp-select" { Set-Vibecoding1cMcpSelection }
+        "vibecoding1c-mcp-select" { if($CatalogAction){Invoke-ItlProductProjectRecovery $CatalogAction}else{Set-Vibecoding1cMcpSelection} }
         "vibecoding1c-mcp-refresh-registry" { Refresh-Vibecoding1cMcpRegistry }
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }

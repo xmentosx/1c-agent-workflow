@@ -21,4 +21,14 @@ Describe 'HostBookStack component regressions' {
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
         ($output -join [Environment]::NewLine) | Should -Match "Ran 50 tests"
     }
+    It 'enforces BookStack ID selectors and request-bound views on every read path' {
+        $previousPreference=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            $output = & $SourceTestPython -X utf8 -B (Join-Path $RepoRoot 'vibecoding1c-mcp-host/bookstack-product-docs-mcp/test_views.py') 2>&1
+            $testExit=$LASTEXITCODE
+        } finally { $ErrorActionPreference=$previousPreference }
+        $testExit | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match 'Ran 6 tests'
+    }
 }

@@ -6,7 +6,7 @@
 
 ## 1. Основание, зависимость и параметры квалификации
 
-Registry checkpoint G3 и план G3.0–7 подготовлены в связанном change; это не approval/apply и не закрытие installed зависимости памяти. Registry AC-39 отделяет реализацию, canary и первый выпуск с наполнением AC-36–38. Задачи памяти/AC-44 используют один применённый registry context; своего startup/updater нет. Сейчас G3/G4/наполнение и миграция не начинаются.
+Registry checkpoint G3 и план G3.0–7 подготовлены в связанном change; checkpoint одобрен и source G3 разрешён, но это не закрытие installed зависимости памяти. Registry AC-39 отделяет реализацию, canary и первый выпуск с наполнением AC-36–38. Задачи памяти/AC-44 используют один применённый registry context; своего startup/updater нет. Source G3 начат; G4/наполнение и миграция действующих установок не начинаются.
 
 - [x] 1.1 Квалифицировать G2 interface реальным registry reader/resolver/publisher и consumer fixture на одном source base, не mock ответа: pinned revision, scalar home/availableIn, valid missing field/ambiguous home, bounded read candidates/ограничения, provenance и отдельные settings/knowledge hashes. Проверить home-only change без client writes/объявленной миграции и common-provider boundary. Документы не закрывают эту зависимость; registry AC-01–03/05–07/27–29/35, memory AC-15/16/20/32/35/43. Реальные homes/grants и installed G3 квалифицируются отдельно.
 - [x] 1.2 D9 отдельно одобрен прямым сообщением пользователя 2026-10-19: «D9 согласовываю». Приняты конкретные owners/state/recovery/client/platform/context/rollback границы design D9. Это завершение checkpoint, не runtime proof AC-43 и не разрешение G4: тем же сообщением пользователь запретил память G4 и installed migration.

@@ -112,7 +112,7 @@ function Set-ItlOpenCodeMcpOwnerBindings {
 }
 
 function Write-ItlOpenCodeMcpEndpoints {
-    param([object[]]$Endpoints, [string]$Owner, [string[]]$PreserveOwnedKeys = @(), [string[]]$FinalSetOwnerKeys = @(), [AllowNull()][object]$ExpectedInputStates = $null, [string]$ExpectedOwnerState = '', [object[]]$PreparedClaims = @(), [object[]]$FinalSetClaims = @(), [switch]$PlanOnly, [switch]$ReturnReceipt, [switch]$RemoveLegacyManagedEntries)
+    param([object[]]$Endpoints, [string]$Owner, [string[]]$PreserveOwnedKeys = @(), [string[]]$FinalSetOwnerKeys = @(), [AllowNull()][object]$ExpectedInputStates = $null, [string]$ExpectedOwnerState = '', [object[]]$PreparedClaims = @(), [object[]]$FinalSetClaims = @(), [object]$RestoreEntries = @{}, [switch]$PlanOnly, [switch]$ReturnReceipt, [switch]$RemoveLegacyManagedEntries)
     if ($RemoveLegacyManagedEntries -and ($Owner -cne 'branch-runtime' -or @($Endpoints).Count)) {
         throw 'CLIENT_MCP_LEGACY_CLEANUP_INVALID: legacy marker cleanup requires the original empty branch-runtime reconciliation; repeat Remove-ItlLegacyBranchMcpEntries.'
     }
@@ -156,10 +156,12 @@ function Write-ItlOpenCodeMcpEndpoints {
             }
         }
         $entry = ConvertTo-ItlClientMcpEntry -Endpoint $endpoint -Owner $Owner -Client opencode
+        if($RestoreEntries.Contains($name)){$entry=ConvertTo-Vibecoding1cMcpHashtable $RestoreEntries[$name].entry}
         if ($prepared.Count) { $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $prepared[0].entry }
         $previous = if ($layer.entries.Contains($previousName)) { ConvertTo-Vibecoding1cMcpHashtable -Object $layer.entries[$previousName] } else { [ordered]@{} }
-        foreach ($policy in @('enabled','disabled')) { if ($previous.Contains($policy)) { $entry[$policy] = $previous[$policy] } }
+        foreach ($policy in @('enabled','disabled')) { if (-not $RestoreEntries.Contains($name) -and $previous.Contains($policy)) { $entry[$policy] = $previous[$policy] } }
         foreach ($key in $previous.Keys) {
+            if($RestoreEntries.Contains($name)){continue}
             if (-not $entry.Contains($key) -and $key -notin @('url','httpUrl','command','args','env','environment','transport','type','timeout','lifecycle','managedBy','family')) { $entry[$key] = $previous[$key] }
         }
         $shared = @($allBindings | Where-Object { $_.relativePath -ceq $layer.relativePath -and $_.name -ceq $previousName -and $_.ownerKey -cne $stateKey -and $_.ownerKey -notin $FinalSetOwnerKeys })
@@ -249,7 +251,17 @@ function Write-ItlOpenCodeMcpEndpoints {
     $planEntries = [ordered]@{}
     foreach ($claim in $claims) { $planEntries[$claim.name] = $claim.entry }
     $primary = if ($fileChanges.Count) { $fileChanges[0].path } else { $defaultLayer.path }
-    $plan = [pscustomobject]@{path=$primary;ownerKey=$stateKey;entries=$planEntries;claims=$claims;inputStates=$inputStates;fileChanges=$fileChanges;beforeFileState=$inputStates[$primary];beforeOwnerState=$beforeOwnerState}
+    $afterEntries=[Collections.Hashtable]::new([StringComparer]::Ordinal)
+    foreach($layer in $view.layers){
+        $document=Read-ItlJsoncDocument -Text ([string]$writes[$layer.relativePath])
+        $values=ConvertTo-ItlOpenCodeSemanticValue -Value $document.Value
+        if($values.Contains('mcp')){foreach($name in $values.mcp.Keys){$afterEntries[$name]=if($afterEntries.Contains($name)){Merge-ItlOpenCodeMcpValue $afterEntries[$name] $values.mcp[$name]}else{$values.mcp[$name]}}}
+    }
+    $afterFiles=ConvertTo-Vibecoding1cMcpHashtable $inputStates
+    foreach($change in $fileChanges){$afterFiles[$change.path]=$change.fileState}
+    $plannedState=ConvertTo-Vibecoding1cMcpHashtable $state
+    Set-ItlOpenCodeMcpOwnerBindings -State $plannedState -OwnerKey $stateKey -Bindings $nextBindings
+    $plan = [pscustomobject]@{path=$primary;ownerKey=$stateKey;entries=$planEntries;afterEntries=$afterEntries;afterFiles=$afterFiles;afterOwnership=$plannedState;claims=$claims;inputStates=$inputStates;fileChanges=$fileChanges;beforeFileState=$inputStates[$primary];beforeOwnerState=$beforeOwnerState}
     if ($PlanOnly) { return $plan }
     foreach ($path in $inputStates.Keys) {
         if ((Get-ItlMcpFileState -Path $path) -cne $inputStates[$path]) { throw "CLIENT_MCP_FINAL_SET_CHANGED: '$path' changed before the first write. Preserve it and repeat the original reconciliation." }

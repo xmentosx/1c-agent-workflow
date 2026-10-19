@@ -242,6 +242,18 @@ class AtomicJsonTests(unittest.TestCase):
 
 
 class SpprTests(unittest.TestCase):
+    def test_project_metadata_is_bounded_current_policy_and_does_not_collect(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        before = list(self.source.reads)
+        result = service.projects(limit=1)
+        self.assertEqual([A], [item['project_id'] for item in result['projects']])
+        self.assertTrue(result['projects'][0]['indexed'])
+        self.assertTrue(result['complete'])
+        self.assertEqual(before, self.source.reads)
+        self.set_policy([])
+        self.assertEqual([], service.projects()['projects'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="СППР с пробелом ")
         root = Path(self.temp.name)

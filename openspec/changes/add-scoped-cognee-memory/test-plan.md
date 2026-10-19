@@ -169,7 +169,7 @@ G2.1–5 и authoritative handoff определены в registry design: schem
 
 ### Обязательное наполнение перед первым выпуском
 
-Согласованность с checkpoint G3: registry AC-39 и design G3.0–7 требуют отдельного approval до кода, source/owner proof и отдельно разрешённого installed canary. G2/D9/native G1 не заменяют их. Для memory AC-39/43/44 сохраняются один applied context, отдельный opt-in/qualification и обязательное выпускное наполнение; 10 s registry startup network deadline не меняет memory read/write/native Q бюджеты. Checkpoint пока предложен, новых live/installed результатов нет.
+Согласованность с checkpoint G3: registry AC-39 и design G3.0–7 требуют отдельного approval до кода, source/owner proof и отдельно разрешённого installed canary. G2/D9/native G1 не заменяют их. Для memory AC-39/43/44 сохраняются один applied context, отдельный opt-in/qualification и обязательное выпускное наполнение; 10 s registry startup network deadline не меняет memory read/write/native Q бюджеты. Checkpoint G3 одобрен и source реализация разрешена; это не memory approval и не installed приёмка.
 
 | ID | Проверяемое поведение | Достаточное доказательство |
 |---|---|---|

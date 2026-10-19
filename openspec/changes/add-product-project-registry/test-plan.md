@@ -152,3 +152,8 @@ Always-on agent instructions, MCP tool schemas и startup routes в G2 не из
 ### Диагностика первого Targeted
 
 Первый RegisterChange для `59ad14c9` завершился failed: новые G2 suites были слишком широко добавлены в существующие contracts MCP/standalone-host. `HostTestSelection.Tests.ps1` сохранил исходные воспроизводители и выявил 10 лишних selections для независимых Mantis/BookStack/CodeChecker/SPPR/Go компонентов. Это дефект нашей coverage routing, не G2 data contract. Исправление — два узких stateless coverage contracts у прежних владельцев: catalog leaf/schema/entrypoint и только shared publisher. Все прежние component assertions и их условия сохранены; exact consumer list shared installer дополнен новой реальной publisher suite. Добавлены две проверки независимого выбора catalog/schema. Focused selection suite: 18/18 passed; повторная регистрация выполняется только после этой диагностики. Исходный failed run/evidence остаются в source-delivery ledger, успех не объявлен до нового Status. Runtime authority/гейты/поддержка/воспроизводители не ослаблены.
+
+
+## Разрешённый source apply G3, первый срез
+
+Checkpoint G3 одобрен пользователем; source реализация разрешена, G4 и миграция действующих установок не разрешены. Фактическое evidence G3.1/G3.2 и граница тестов — tasks.md, раздел Source срез G3.1/G3.2. Это owner/source proof для 1.7/2.2–2.5, не live deployment/installed outcome AC-08–12/21 или весь AC-39. Изоляция source view и policy metadata проверены на harmless fixtures, существующие локальные проекты не изменены. Native filtered-vector ресурсная цена остаётся отдельным canary измерением, без обещания выигрыша.

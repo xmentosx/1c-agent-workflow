@@ -120,11 +120,14 @@ def test_mcp_over_real_http_two_clients(self):
             async with Client(f"http://127.0.0.1:{port}/mcp") as client:
                 tools = await client.list_tools()
                 self.assertEqual({t.name for t in tools}, {"search_sppr", "read_sppr_object", "list_sppr_relations", "sppr_index_status",
-                                                         "get_sppr_context", "list_sppr_objects", "find_sppr_paths"})
-                # Seven bounded tools replace repeated client-side orchestration;
+                                                         "get_sppr_context", "list_sppr_objects", "find_sppr_paths", "list_sppr_projects"})
+                # Eight bounded tools replace repeated client-side orchestration;
                 # keep the always-on schema below this measured explicit budget.
                 self.assertLess(len(json.dumps([t.model_dump(mode="json", exclude_none=True) for t in tools],
                                                ensure_ascii=False, separators=(",", ":")).encode("utf-8")), 8000)
+                projects = await client.call_tool('list_sppr_projects', {'limit': 1})
+                self.assertIsNotNone(projects.structured_content)
+                self.assertEqual([A], [item['project_id'] for item in projects.structured_content['projects']])
                 for tool in tools:
                     self.assertTrue(tool.annotations.readOnlyHint)
                 hit = await client.call_tool("search_sppr", {"query": "54321"})

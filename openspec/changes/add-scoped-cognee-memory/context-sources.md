@@ -2,6 +2,8 @@
 
 ## Основание и границы проверки
 
+Текущая source граница G3: registry Git/source contracts и client apply/recovery kernel реализуются в соседнем change по отдельному approval. Kernel ещё не включает bootstrap/startup binding; его isolated client fixtures не являются квалификацией памяти. G4/реальные installed migration не начаты. Таблица dependency hashes ниже обновлена по этой согласованной source постановке; исходные G1/D9 evidence и budgets не меняются.
+
 Постановка подготовлена 2026-10-18 и уточнена 2026-10-19 по решениям текущего чата: Cognee, шесть областей, отдельный реестр, OpenViking optional, максимум совместимости с ai_rules_1c, только проектирование. Семь уточнений отражены в AC-31–37; общий порядок/миграция и native допуск Q1–Q7 — в design/specs/tasks и AC-38–42. Основной критерий — стоимость правильно решённой задачи, а не размер одного ответа.
 
 Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agent-workflow`, baseline HEAD `e9dc695d3b792179f10c35898ba02daebf0bb66c`. Исследованы перечисленные контракты, а не живые экземпляры памяти. Наличие конфигурации, схемы API или прошедшая проверка OpenSpec не доказывают live readiness.
@@ -25,10 +27,10 @@ Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agen
 
 | Файл | SHA-256 прочитанного основания |
 |---|---|
-| `proposal.md` | `c7d5974f8d5f1bf66adb219f806dc4186a313604893d87ba5024fa8c567ea9b0` |
-| `design.md` | `fce126115d89b7c0473d4f8c3f81523187bb406bdf8b31a38a61fb17ccdc15cd` |
-| `test-plan.md` | `a8675d1fad462d2faa5a1af51552d30dd87b6f6ed70cdb8b7324599b34e2c6de` |
-| `tasks.md` | `b628413cc9dfec3efcf9b1e35c50c648637a3d5a8dc6a6c1d2a3a89389a274fe` |
+| `proposal.md` | `eca1531cf6f17a6d611b598bf5ca5186307754affe67d57a71838aa165269a71` |
+| `design.md` | `6adfbf898f0bf00c406add0aed3ad1afcbe7e12cf0bb37331ed2334d7cbaf9c6` |
+| `test-plan.md` | `8dca254fef2ae1762157ce43872f7c2ed65f34e4062210f33352ad14d3915b24` |
+| `tasks.md` | `ae52618365a00d01c7272b4c2e8db77b1098bf2c3af580d27d081ad8a7a1ca87` |
 | `inventory.md` | `a216881d6eb43722a87d925a9ea40a419f9e668e6baa397fe88135b352bb9e27` |
 | `specs/product-project-registry/spec.md` | `f3e1f8a7660037d6818323bb4bd889da78daa8e0e1b56bd24c8dc5529a297729` |
 | `specs/product-knowledge-applicability/spec.md` | `1ae229efdddcbc6f6c6d3b1a072536c9529780973d4e5aeab5b327647b6b1c72` |
@@ -99,3 +101,8 @@ Registry source commit `59ad14c9`: G2 code/consumer proof сохранён в о
 ## Checkpoint и план G3, 2026-10-19
 
 В registry design подготовлены отдельный installed-state checkpoint и G3.0–7 с owners, sequencing, continuation/recovery, compatibility, source/installed evidence и выпускным наполнением. Локальные source points повторно проверены на HEAD 29501656; новые runtime возможности и live readiness не заявлены. Registry AC-39 связывает план с original-task canary, bounded waiting/context и managed downgrade; 10 s metadata startup не распространяется на memory budgets. Checkpoint пока не одобрен, G3/G4 и миграция не начинаются, D9 approval не заменяет G3. Наполнение AC-36–38/здесь AC-44 по-прежнему обязательно до первого выпуска обеих функций, отдельный source/installed/data результат не подменяет другие. Девять hashes основания обновлены после согласования документов; qualification profile и prior native evidence не менялись.
+
+
+## Разрешённый source G3 apply
+
+Checkpoint G3 одобрен прямым сообщением пользователя и source G3 разрешён; G4 и миграция действующих установок отложены. G3.1 authoring и G3.2 server scopes имеют отдельный source proof в registry tasks; это не client activation, native Linux deployment, весь AC-39 или memory readiness. Исходный native G1 profile/семь выполненных memory задач не изменены, consumer/runtime G4 не реализуется.

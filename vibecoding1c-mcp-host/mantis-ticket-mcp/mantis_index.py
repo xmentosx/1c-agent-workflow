@@ -203,8 +203,19 @@ class Vectors:
                     new.close()
                 raise
 
-    def query(self, vector, limit=200):
+    def query(self, vector, limit=200, allowed_ids=None):
         with self.lock:
+            if allowed_ids is not None:
+                # SQLite selects this scope before its candidate cap. A global ANN
+                # window must not hide a small project's vectors behind foreign data.
+                scores = []
+                keys = list(allowed_ids)
+                for begin in range(0, len(keys), 400):
+                    docs = self.collection.fetch(keys[begin:begin + 400])
+                    values = docs.values() if hasattr(docs, 'values') else docs
+                    scores.extend((sum(a*b for a,b in zip(vector, doc.vector('embedding'))), doc.id)
+                                  for doc in values)
+                return [key for _, key in sorted(scores, reverse=True)[:limit]]
             if not self._hnsw():
                 return [doc.id for doc in self.collection.query(
                     self.z.Query(field_name="embedding", vector=vector), topk=limit)]
@@ -1359,11 +1370,29 @@ class Index:
                      str(source.get("steps_to_reproduce") or "")[:400]).strip()
             if not query:
                 raise ValueError("Source issue has no searchable summary or description")
-        filters = filters or {}
-        allowed = {"project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
+        filters = dict(filters or {})
+        allowed = {"project_ids", "project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
                    "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"}
         if set(filters) - allowed:
             raise ValueError("Unsupported filters: " + ", ".join(sorted(set(filters) - allowed)))
+        project_scope = None
+        if 'project_ids' in filters:
+            raw_scope = filters['project_ids']
+            if not isinstance(raw_scope, list) or len(raw_scope) > 200 or any(
+                    isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in raw_scope):
+                raise ValueError('project_ids must be a list of at most 200 positive integer IDs')
+            project_scope = tuple(sorted(set(raw_scope)))
+            if 'project_id' in filters and (isinstance(filters['project_id'], bool) or
+                    project_scope != (int(filters['project_id']),)):
+                raise ValueError('project_id conflicts with project_ids')
+            filters['project_ids'] = list(project_scope)
+        elif 'project_id' in filters:
+            if isinstance(filters['project_id'], bool) or int(filters['project_id']) <= 0:
+                raise ValueError('project_id must be positive')
+            project_scope = (int(filters['project_id']),)
+        scope_sql = '' if project_scope is None else (' AND i.project_id IN (' +
+                    (','.join('?' for _ in project_scope) if project_scope else 'NULL') + ')')
+        scope_args = () if project_scope is None else project_scope
         for name in ("handler_id", "reporter_id", "priority", "severity"):
             if name in filters and (isinstance(filters[name], bool) or int(filters[name]) < 0):
                 raise ValueError(name + " must be a non-negative Mantis ID")
@@ -1404,6 +1433,12 @@ class Index:
             except Exception as exc:
                 raise ValueError("Search cursor expired or invalid; restart without cursor") from exc
         exact = re.fullmatch(r"#?(\d+)", query.strip())
+        scoped_vector_ids = None
+        if project_scope is not None and semantic and query.strip():
+            scoped_vector_ids = [row['vector_id'] for row in reader.all(
+                "SELECT f.vector_id FROM fragments f JOIN issues i ON i.id=f.issue_id "
+                "WHERE f.vector_id<>'' AND f.version=f.vector_version" + scope_sql +
+                ' ORDER BY i.modified DESC,f.id LIMIT ?', (*scope_args, SEARCH_CANDIDATE_LIMIT))]
         semantic_keys = []
         query_semantics = "not_requested"
         query_cache = "not_requested"
@@ -1419,7 +1454,8 @@ class Index:
                             started = time.monotonic()
                             vector, cache = self.query_vector(query)
                             embedded = time.monotonic()
-                            keys = self.vectors.query(vector)
+                            keys = (self.vectors.query(vector) if scoped_vector_ids is None else
+                                    self.vectors.query(vector, allowed_ids=scoped_vector_ids))
                             queried = time.monotonic()
                             elapsed = time.monotonic() - started
                             if elapsed > 10:
@@ -1457,15 +1493,21 @@ class Index:
         source_revision = reader.source_revision()
         def text_candidates(expression):
             nonlocal text_hits, text_misses
-            key = (source_revision, expression, SEARCH_CANDIDATE_LIMIT)
+            key = (source_revision, expression, project_scope, SEARCH_CANDIDATE_LIMIT)
             candidates = self.text_cache.get(key)
             if candidates is not None:
                 text_hits += 1
                 return candidates
             text_misses += 1
-            candidates = tuple(row["id"] for row in reader.all(
-                "SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY rank LIMIT ?",
-                (expression, SEARCH_CANDIDATE_LIMIT)))
+            if project_scope is None:
+                candidates = tuple(row['id'] for row in reader.all(
+                    'SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY rank LIMIT ?',
+                    (expression, SEARCH_CANDIDATE_LIMIT)))
+            else:
+                candidates = tuple(row['id'] for row in reader.all(
+                    'SELECT search_text.id FROM search_text JOIN fragments f ON f.id=search_text.id '
+                    'JOIN issues i ON i.id=f.issue_id WHERE search_text MATCH ?' + scope_sql +
+                    ' ORDER BY rank LIMIT ?', (expression, *scope_args, SEARCH_CANDIDATE_LIMIT)))
             self.text_cache.put(key, candidates)
             return candidates
         if tokens:
@@ -1480,18 +1522,21 @@ class Index:
             filename_started = time.monotonic()
             # The covering partial index avoids random reads of fragment bodies.
             # rowid order preserves the previous limited filename candidate set.
-            for row in reader.all("SELECT id FROM fragments INDEXED BY fragments_filename_lookup "
-                                  "WHERE kind='filename' AND instr(folded,?)>0 ORDER BY rowid LIMIT ?",
-                                  (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
+            filename_sql = ("SELECT id FROM fragments INDEXED BY fragments_filename_lookup "
+                            "WHERE kind='filename' AND instr(folded,?)>0 ORDER BY rowid LIMIT ?") if project_scope is None else (
+                            "SELECT f.id FROM fragments f INDEXED BY fragments_filename_lookup "
+                            "JOIN issues i ON i.id=f.issue_id WHERE f.kind='filename' AND instr(f.folded,?)>0" +
+                            scope_sql + ' ORDER BY f.rowid LIMIT ?')
+            for row in reader.all(filename_sql, (query.casefold(), *scope_args, SEARCH_CANDIDATE_LIMIT)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
             timings["filename_lookup"] = round((time.monotonic() - filename_started) * 1000, 2)
         else:
             source_kind = {"comments": "comment", "filenames": "filename",
                            "attachment_contents": "attachment_content"}.get(mode)
-            rows = reader.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT ?", (source_kind, source_kind, SEARCH_CANDIDATE_LIMIT))
+            rows = reader.all('SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?)' + scope_sql + ' GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT ?', (source_kind, source_kind, *scope_args, SEARCH_CANDIDATE_LIMIT))
             ranks.update({row["id"]: 1 / (60 + rank) for rank, row in enumerate(rows)})
         if exact:
-            for row in reader.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
+            for row in reader.all('SELECT f.id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE f.issue_id=?' + scope_sql, (int(exact[1]), *scope_args)):
                 ranks[row["id"]] = 10
         if semantic_keys:
             holders = ",".join("?" for _ in semantic_keys)
@@ -1504,6 +1549,8 @@ class Index:
                     ranks[fragment] = ranks.get(fragment, 0) + 1 / (60 + rank)
         checkpoint("candidate_ranking")
         def matches(issue, names):
+            if project_scope is not None and object_id(issue['project']) not in project_scope:
+                return False
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
             if "status" in filters and object_id(issue.get("status")) != int(filters["status"]):
@@ -1627,7 +1674,8 @@ class Index:
         result = {"ok": True, "issues": [], "next_cursor": "", "read_view": "index_snapshot",
                 "snapshot_at": snapshot_at, "similar_to": similar_to or None,
                 "similarity_mode": ("semantic" if query_semantics == "available" else "lexical_fallback") if similar_to else None,
-                 "candidate_limit": SEARCH_CANDIDATE_LIMIT, "candidate_window_limited": len(ranks) >= SEARCH_CANDIDATE_LIMIT,
+                 "candidate_limit": SEARCH_CANDIDATE_LIMIT, "candidate_window_limited": (len(ranks) >= SEARCH_CANDIDATE_LIMIT or
+                     (scoped_vector_ids is not None and len(scoped_vector_ids) >= SEARCH_CANDIDATE_LIMIT)),
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
                 "local_cache": {"text_hits": text_hits, "text_misses": text_misses,
@@ -1638,6 +1686,10 @@ class Index:
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},
                 "timing_ms": timings, "output_char_limit": 12000}
+        if project_scope is not None:
+            indexed_projects = {p['id'] for p in snapshot['projects'] if p['status'] != 'access_removed'}
+            result['project_scope'] = {'project_ids': list(project_scope),
+                                       'unindexed_project_ids': sorted(set(project_scope) - indexed_projects)}
         for entry in groups[:limit]:
             result["issues"].append(entry)
             # Reserve space for the cursor; even an unfiltered request remains

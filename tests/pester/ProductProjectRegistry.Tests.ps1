@@ -71,6 +71,17 @@
         (Resolve-ItlProductContext $s typical).profileId | Should -BeNullOrEmpty
     }
 
+    It 'distinguishes repeated logical server IDs by the full host/configuration binding' {
+        $s=New-CatalogFixture
+        $s.registry.hosts[0].servers[0].configId='corp'
+        $s.registry.hosts[0].configurations+=@{id='second'}
+        $s.registry.hosts[0].servers+=@{id='code';configId='second'}
+        $null=Assert-ItlProductCatalog $s.catalog $s.relations $s.registry
+        (Resolve-ItlProductContext $s typical).roles.code.source.endpoint.configId | Should -Be 'corp'
+        $s.catalog.sources[0].endpoint.Remove('configId')
+        {Assert-ItlProductCatalog $s.catalog $s.relations $s.registry} | Should -Throw '*unknown/ambiguous*'
+    }
+
     It 'rejects invalid catalog input: <Case>' -TestCases @(
         @{ Case = 'schema' }, @{ Case = 'duplicate' }, @{ Case = 'reference' }, @{ Case = 'cycle' },
         @{ Case = 'home-null' }, @{ Case = 'home-array' }, @{ Case = 'home-unknown' }, @{ Case = 'home-outside' },
