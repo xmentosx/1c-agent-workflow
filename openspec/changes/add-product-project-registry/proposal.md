@@ -33,7 +33,7 @@
 
 ## Impact
 
-Checkpoint G3 одобрен пользователем; source срезы G3.0–6 реализованы и зарегистрированы в границе owner fixtures. Прогон квалификации 2026-10-19 на существующих MCP подтвердил transport и отдельные native subsets, но выявил failed server capabilities; G3.7/AC-39 целиком не приняты. Результаты и продолжение — test-plan. G4, миграция действующих установок и публикация запрещены текущим запросом. Функциональная готовность G3 отделена от installed canary и первого выпуска, для которого AC-36–38 обязательны. Memory change потребляет тот же план/контекст, не реализует свой updater.
+Checkpoint G3 одобрен пользователем; source срезы G3.0–6 реализованы и зарегистрированы в границе owner fixtures. После failed server capabilities 2026-10-19 пользователь отдельно разрешил обновить BookStack/Mantis/СППР на dev-ermakov. На 2026-10-20 все три attested G3 builds активны; 29 live scope/compatibility controls и десять исходных Python suites прошли. G3.7/AC-39 целиком не приняты: full code/graph binding, installed/client/platform и startup matrix остаются открытыми. Результаты и продолжение — test-plan. G4, миграция действующих установок и публикация workflow/каталога запрещены текущим запросом. Функциональная готовность G3 отделена от installed canary и первого выпуска, для которого AC-36–38 обязательны. Memory change потребляет тот же план/контекст, не реализует свой updater.
 
 Владельцы изменений: ITL bootstrap/lifecycle и MCP helpers, шаблон `project.json`, существующий writer клиентских MCP, издатель host registry и серверы BookStack/СППР/Mantis. Точки расширения и границы ответственности описаны в [design.md](design.md); этапы — в [tasks.md](tasks.md), доказательства приёмки — в [test-plan.md](test-plan.md).
 
