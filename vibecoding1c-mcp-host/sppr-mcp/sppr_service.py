@@ -533,6 +533,25 @@ class Service:
                                  "complete": end >= len(selected), "scope": "indexed adjacent relationships",
                                  "cursor": self.next_cursor(end, context) if end < len(selected) else None}, policy)
 
+    def projects(self, cursor=None, limit=10):
+        policy = Policy.load(self.settings.policy)
+        limit = self.limit(limit)
+        with self.store.reader() as (db, manifest):
+            objects = self.objects(db, policy)
+            context = {'operation': 'projects', 'generation': manifest['generation'], 'policy': policy.token}
+            offset = self.cursor(cursor, context)
+            values = []
+            for project_id in sorted(policy.projects):
+                root = objects.get(project_id, {})
+                indexed = any(project_id in obj.get('roots', []) for obj in objects.values())
+                values.append({'project_id': project_id, 'name': root.get('title') or root.get('name') or '',
+                               'indexed': indexed, 'scope': 'current collector policy'})
+            result = values[offset:offset + limit]
+            return self.checked({**self.envelope(manifest, policy), 'projects': result,
+                                 'complete': offset + len(result) >= len(values),
+                                 'cursor': self.next_cursor(offset + len(result), context)
+                                 if offset + len(result) < len(values) else None}, policy)
+
     def status(self):
         policy = Policy.load(self.settings.policy)
         try:

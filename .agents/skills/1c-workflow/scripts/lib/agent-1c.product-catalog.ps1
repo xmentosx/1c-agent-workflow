@@ -34,7 +34,7 @@ function ConvertTo-ItlCatalogCanonicalValue {
 
 function Get-ItlCatalogHash {
     param([AllowNull()][object]$Value)
-    $json = ConvertTo-Json -InputObject (ConvertTo-ItlCatalogCanonicalValue $Value) -Depth 100 -Compress
+    $json = if ($null -eq $Value) { 'null' } else { ConvertTo-Json -InputObject (ConvertTo-ItlCatalogCanonicalValue $Value) -Depth 100 -Compress }
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json)))).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose() }
@@ -178,9 +178,10 @@ function Assert-ItlProductCatalog {
         $hostEntry = @($hosts | Where-Object { $_.hostId -ceq $endpoint.hostId })
         if ($hostEntry.Count -ne 1) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.hostId is unknown/ambiguous" }
         $servers = @((Get-ItlCatalogField $hostEntry[0] 'servers' @()))
-        $server = @($servers | Where-Object { (Get-ItlCatalogField $_ 'id') -ceq $endpoint.serverId })
-        if ($server.Count -ne 1) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.serverId is unknown/ambiguous" }
         $configId = Get-ItlCatalogField $endpoint 'configId'
+        $server = @($servers | Where-Object { (Get-ItlCatalogField $_ 'id') -ceq $endpoint.serverId -and
+            (-not $configId -or -not (Get-ItlCatalogField $_ 'configId') -or (Get-ItlCatalogField $_ 'configId') -ceq $configId) })
+        if ($server.Count -ne 1) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.serverId is unknown/ambiguous" }
         $publishedConfigId = Get-ItlCatalogField $server[0] 'configId'
         if ($configId -and $publishedConfigId -and $configId -cne $publishedConfigId) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.configId does not match the published server" }
         if ($configId -and -not @((Get-ItlCatalogField $hostEntry[0] 'configurations' @()) | Where-Object { (Get-ItlCatalogField $_ 'id') -ceq $configId }).Count) {
@@ -225,6 +226,11 @@ function Assert-ItlCatalogBusinessData {
         }
     } elseif ($Value -is [array]) {
         for ($i = 0; $i -lt $Value.Count; $i++) { Assert-ItlCatalogBusinessData $Value[$i] "$Path[$i]" }
+    } elseif ($Value -is [string] -and $Value -match '^https?://') {
+        $uriValue = $null
+        if ([uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uriValue) -and $uriValue.UserInfo) {
+            throw "CATALOG_INVALID: $Path contains URL credentials; keep authentication outside the business catalog"
+        }
     }
 }
 

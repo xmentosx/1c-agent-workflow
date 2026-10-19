@@ -148,11 +148,13 @@
       "primaryTest": "tests/pester/ProductProjectRegistry.Tests.ps1",
       "paths": [
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
         "templates/product-project-registry/*"
       ],
       "tests": [
-        "tests/pester/ProductProjectRegistry.Tests.ps1"
+        "tests/pester/ProductProjectRegistry.Tests.ps1",
+        "tests/pester/ProductProjectGitSave.Tests.ps1"
       ]
     },
     {

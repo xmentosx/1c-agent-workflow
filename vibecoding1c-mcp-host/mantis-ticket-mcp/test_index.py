@@ -250,6 +250,9 @@ class IndexTests(unittest.TestCase):
         for issue_id in range(1, 8):
             self.state.put_issue(ticket(issue_id, project=1 if issue_id < 5 else 2, text="Загрузка Excel"))
         first = self.search("загрузка excel", limit=2)
+        # A first search of a new project scope must rank inside that scope,
+        # rather than reusing a capped global window. Warm both exact contexts.
+        self.search('загрузка excel', filters={'project_id': 2})
         original = SearchReader.all
         def cached_reads(reader, sql, args=()):
             self.assertNotIn("FROM search_text", sql, "Warm searches must avoid FTS ranking")
@@ -514,7 +517,8 @@ class IndexTests(unittest.TestCase):
             self.state.put_issue(self.api.items[number])
         self.state.run("UPDATE fragments SET vector_id=id,vector_version=version")
         self.index.vectors = SimpleNamespace(
-            query=lambda vector: [r["vector_id"] for r in self.state.all("SELECT vector_id FROM fragments WHERE vector_id<>''")],
+            query=lambda vector, allowed_ids=None: (list(allowed_ids) if allowed_ids is not None else
+                [r["vector_id"] for r in self.state.all("SELECT vector_id FROM fragments WHERE vector_id<>''")]),
             purge=lambda: None)
         response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}], "usage": {"cost": 0.001}}
         requests = []

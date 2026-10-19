@@ -35,6 +35,11 @@
     return $Default
 }
 
+function Import-ItlProductProject {
+    if (-not (Get-Command Resolve-ItlProductContext -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1') }
+    if (-not (Get-Command Save-ItlCatalogRecord -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project.ps1') }
+}
+
 function Read-Vibecoding1cProductContext {
     # Explicit G2 entrypoint; existing MCP/startup paths do not invoke it.
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot,

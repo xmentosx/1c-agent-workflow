@@ -69,6 +69,11 @@ def create_mcp(service):
         """Show corpus freshness, live semantic progress and separate collection/embedding outcomes; does not start indexing."""
         return await invoke(service.status)
 
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def list_sppr_projects(cursor: str | None = None, limit: int = 10):
+        """List bounded project UUID/name/index availability under current collector policy; does not collect or create projects."""
+        return await invoke(service.projects, cursor=cursor, limit=limit)
+
     return mcp
 
 

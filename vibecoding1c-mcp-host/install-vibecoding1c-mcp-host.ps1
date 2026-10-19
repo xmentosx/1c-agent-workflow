@@ -1078,6 +1078,7 @@ function Get-BookStackProductDocsServerDefinition {
         containerNameTemplate = "itl-bookstack-product-docs"
         env = @(
             [ordered]@{ name = "BOOKSTACK_BASE_URL"; from = "BOOKSTACK_BASE_URL"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_VIEWS_JSON"; from = "BOOKSTACK_VIEWS_JSON"; default = "{}"; required = $false },
             [ordered]@{ name = "BOOKSTACK_TOKEN_ID"; from = "BOOKSTACK_TOKEN_ID"; required = $true },
             [ordered]@{ name = "BOOKSTACK_TOKEN_SECRET"; from = "BOOKSTACK_TOKEN_SECRET"; required = $true },
             [ordered]@{ name = "BOOKSTACK_CACHE_PATH"; value = "/data/bookstack-cache.sqlite"; required = $false },
@@ -2134,6 +2135,7 @@ function Get-HostLocalValues {
         GRAPH_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $graph -Name "reindexIntervalHours" -Default "")
         GRAPH_AUTO_UPDATE_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "autoUpdateOnStartup" -Default $true) -Default $true)
         BOOKSTACK_BASE_URL = [string](Get-ObjectValue -Object $bookstack -Name "baseUrl" -Default "")
+        BOOKSTACK_VIEWS_JSON = (ConvertTo-Json -InputObject (Get-ObjectValue -Object $bookstack -Name 'views' -Default @{}) -Depth 20 -Compress)
         BOOKSTACK_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $bookstack -Name "timeoutSeconds" -Default "20")
         BOOKSTACK_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $bookstack -Name "reindexIntervalHours" -Default "24")
         BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
@@ -5394,6 +5396,14 @@ function ConvertTo-RegistryServers {
             reportHash = [string](Get-ObjectValue -Object $server -Name "reportHash" -Default "")
             indexedAt = [string](Get-ObjectValue -Object $server -Name "indexedAt" -Default "")
             indexInputFingerprint = [string](Get-ObjectValue -Object $server -Name "indexInputFingerprint" -Default "")
+            sourceIdentity = [ordered]@{
+                hostId = $HostId
+                serverId = $id
+                configId = [string](Get-ObjectValue -Object $server -Name 'configId' -Default '')
+                observedGeneration = [string](Get-ObjectValue -Object $server -Name 'sourceFingerprint' -Default '')
+                observedAt = [string](Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')
+                provenance = 'host-publication; live handshake and source read remain required'
+            }
         }
     }
     return @($servers)
@@ -5406,12 +5416,25 @@ function New-CurrentHostRegistryEntry {
         [string]$PublishedAt
     )
     $hostId = Get-HostId -Config $Config
+    $servers = @(ConvertTo-RegistryServers -State $State -HostId $hostId -PublishedAt $PublishedAt)
+    $views = Get-ObjectValue -Object (Get-ObjectValue -Object $Config -Name 'bookStackProductDocsServer' -Default @{}) -Name 'views' -Default @{}
+    foreach ($server in $servers) {
+        if ($server.id -ne 'bookstack' -or -not $server.url) { continue }
+        $bindings = @()
+        $viewIds = if ($views -is [System.Collections.IDictionary]) { @($views.Keys) } else { @($views.PSObject.Properties.Name) }
+        foreach ($viewId in $viewIds) {
+            if ($viewId -notmatch '^[a-z0-9][a-z0-9._-]*$') { throw 'Invalid BookStack view ID in host configuration' }
+            $separator = if ($server.url.Contains('?')) { '&' } else { '?' }
+            $bindings += [ordered]@{viewId=$viewId;url=($server.url+$separator+'view='+$viewId);selectors=(Get-ObjectValue -Object $views -Name $viewId);capability='product-docs-view-v1';readiness='unverified'}
+        }
+        $server['viewBindings']=$bindings
+    }
     return [ordered]@{
         hostId = $hostId
         baseUrl = [string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "")
         publishedAt = $PublishedAt
         configurations = (ConvertTo-RegistryConfigurations -State $State -HostId $hostId -PublishedAt $PublishedAt)
-        servers = (ConvertTo-RegistryServers -State $State -HostId $hostId -PublishedAt $PublishedAt)
+        servers = $servers
     }
 }
 

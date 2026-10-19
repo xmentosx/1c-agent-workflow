@@ -8,6 +8,16 @@
 }
 
 Describe 'HostMantis component regressions' {
+    It 'applies project unions before the original candidate cap and binds cursors to scope' {
+        $previousPreference=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            $output = & $SourceTestPython -X utf8 -B (Join-Path $RepoRoot 'vibecoding1c-mcp-host/mantis-ticket-mcp/test_project_scope.py') 2>&1
+            $testExit=$LASTEXITCODE
+        } finally { $ErrorActionPreference=$previousPreference }
+        $testExit | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match 'Ran 4 tests'
+    }
     It "keeps the Mantis MCP transport stateless" {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py"
         $previousErrorActionPreference = $ErrorActionPreference

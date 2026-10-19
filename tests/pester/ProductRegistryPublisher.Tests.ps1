@@ -1,4 +1,15 @@
 Describe 'G2 endpoint publication preserves the catalog' {
+    It 'publishes explicit view descriptors and observed source identity without declaring live readiness' {
+        $config=[pscustomobject]@{bookStackProductDocsServer=@{views=@{corp=@{book_ids=@(10)}}}}
+        Mock Get-HostId {'fixture'}
+        $state=@{servers=@(@{id='bookstack';url='http://example.test/mcp';scope='global';indexedAt='observed';sourceFingerprint='generation'})}
+        $entry=New-CurrentHostRegistryEntry -Config $config -State $state -PublishedAt 'fixture'
+        $entry.servers[0].viewBindings[0].url | Should -Be 'http://example.test/mcp?view=corp'
+        $entry.servers[0].viewBindings[0].selectors.book_ids | Should -Be @(10)
+        $entry.servers[0].viewBindings[0].readiness | Should -Be 'unverified'
+        $entry.servers[0].sourceIdentity.observedGeneration | Should -Be 'generation'
+        $entry.servers[0].sourceIdentity.hostId | Should -Be 'fixture'
+    }
     BeforeAll {
         $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
