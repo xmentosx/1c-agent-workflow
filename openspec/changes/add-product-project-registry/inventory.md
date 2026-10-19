@@ -94,13 +94,25 @@ Endpoint предоставляет десять tools, метаданные 30 
 - [extend-mantis-mcp-search-and-write / mantis-search](../extend-mantis-mcp-search-and-write/specs/mantis-search/spec.md): общая видимость, фильтры, cursors, bounded context; новый список проектов дополняет существующий scalar API. Старый сценарий запрещает поиск содержимого вложений, а живой сервер уже имеет extraction: это отдельное расхождение истории данной постановки, не основание откатить текущую функцию или менять её здесь.
 - [bookstack-qwen-fulltext / bookstack-complete-semantic-index](../bookstack-qwen-fulltext/specs/bookstack-complete-semantic-index/spec.md): полнота индексирования и embedding migration. Фильтрация источников не требует повторения миграции Qwen.
 - `redesign-source-delivery` и `workflow-bound-dependencies` — существующие посторонние untracked changes; эта работа не меняет их или delivery authority.
-- [add-scoped-cognee-memory](C:/Users/xment/.codex/worktrees/scoped-cognee-memory/1c-agent-workflow/openspec/changes/add-scoped-cognee-memory/proposal.md) — связанная постановка в отдельном planning worktree; 2026-10-18 согласован общий optional `knowledgeAreas.<area>.memoryHomeProductId` contract. Реестр владеет business home/applicability/revision; memory consumer — native dataset IDs/grants, запись/чтение, актуальность и полнота поиска. Документы не доказывают наличие schema/resolver или квалификацию Cognee. В этот checkout memory change не копируется.
+- [add-scoped-cognee-memory](../add-scoped-cognee-memory/proposal.md) — связанная постановка, первоначально в отдельном planning worktree; согласованная пара теперь сохранена одним source commit `29501656`. Реестр владеет business home/applicability/revision; memory consumer — native IDs/grants/currentness. Код/consumer proof G2 и native G1 имеют отдельное evidence, документы сами их не доказывают. Исходный planning worktree памяти сохранён; G3/G4 остаются не начатыми.
 
 2026-10-19 по отдельному запросу пользователя согласованы общий порядок G0–G6 и миграция legacy установок: package update → choose/create/later → preview/association → separate memory opt-in. Existing selection/writer/lifecycle остаются владельцами defer/receipts/initial cycle; нет нового migration manager. Q1–Q7 Cognee обязательны до зависимого G4 памяти и не блокируют registry-only G2/G3/выпуск. Эти пункты — новые требования планирования, а не результаты live проверки или реализованная миграция; приёмка добавлена в test-plan обоих changes.
 
 ## Что пока не доказано
 
 Нет опубликованного каталога, подтверждённого полного набора связей продуктов/областей знаний и окончательного списка маршрутов СППР/Mantis. Приведённые IDs пригодны как проверенные примеры, но не как автоматически утверждённая бизнес-карта. Не проверены новая bootstrap/update цепочка, offline/conflict/rollback, live multi-project API и BookStack source isolation после исправления, Win10/Server/terminal canary, а также запись Mantis. Эти результаты нельзя считать выполненной приёмкой; их будущие доказательства определены в [test-plan.md](test-plan.md).
+
+## Основание checkpoint G3, 2026-10-19
+
+План подготовлен по чистому source HEAD `29501656b64285023be97b2b0edac908cd9e9ea3` в worktree `product-project-registry-g2`, без fetch/deploy/probe или запуска installed helper. Проверены только целевые локальные paths:
+
+- `agent-1c.ps1`: lifecycle admission и повторный Read-ProjectConfig предшествуют action dispatcher; native database admission находится на собственной phase boundary. Отсюда одно место будущего startup, без перехвата каждого wrapper/broker.
+- `agent-1c.vibecoding1c-mcp.ps1`: G2 on-demand reader/resolver, existing `Invoke-Vibecoding1cMcpRegistryOperation` кэширует попытку на script operation; managed refresh делает clone/fetch/ff через shared Git helper. Это ещё не G3 10 s startup transport или persistent apply/recovery.
+- `Write-ItlClientMcpEndpointSet` в `agent-1c.client-adapters.ps1`: full-input/owner hash preflight, per-write receipts и lastWritten есть; полный G3 persisted before-write plan/status/resume/owned restore требует расширения этого же owner. Current-root MCP paths и все clients берутся из действующего adapter registry.
+- `Read-ProjectConfig` в core читает JSON без capability rejection; wizard спрашивает PM4/PM5, BookStack guard основан на PM5. Поэтому opt-in parser/setup и managed downgrade требуют явной compatibility реализации; историческому parser нельзя приписать будущую проверку.
+- Локальный BookStack `matches_filters` по-прежнему не проверяет book_id; Mantis локально использует scalar project_id и SEARCH_CANDIDATE_LIMIT=10000. Это source основания G3.2, не повторный live inventory и не заявление об актуальном deployed сервере.
+
+Выпускной перечень, реальные настройки/карта и data publication не выполнялись. Предложенные бюджеты startup/save и no-op цели не измерены; AC-39 открыт. Перед будущим кодом сверить актуальный source/queue, перед canary — build/stand/source identity. Checkpoint подготовлен, approval не получен; текущая граница только документы.
 
 ## Source base G2, 2026-10-19
 

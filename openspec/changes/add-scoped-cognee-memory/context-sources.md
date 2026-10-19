@@ -21,19 +21,19 @@ Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agen
 
 ## Зависимость от разработанного реестра
 
-Авторитетная постановка — change `add-product-project-registry` в исходном checkout `C:\Users\xment\OneDrive\Документы\1c-agent-workflow`, чат `codex://threads/01a0f95e-46ff-7aa0-8593-0e4a55b2df5c`. Файлы ниже расположены относительно `openspec/changes/add-product-project-registry/`; это снимок планирования, не опубликованный runtime contract. В отдельном worktree этой постановки их нет. Перед apply зависимость должна быть доступна, её изменения сверяются по смыслу и критериям, без автоматического принятия несовместимого интерфейса.
+Авторитетная постановка — соседний change `add-product-project-registry` в этом source checkout; исходный чат `codex://threads/01a0f95e-46ff-7aa0-8593-0e4a55b2df5c`, основной planning mirror сохранён. Согласованная пара помещена вместе в commit `29501656`; первоначальный отдельный planning worktree памяти сохранён. Файлы ниже расположены относительно `openspec/changes/add-product-project-registry/`; hashes фиксируют прочитанное planning основание, не опубликованный runtime contract. Перед apply интерфейс/owners сверяются по смыслу и критериям, без автоматического принятия несовместимой зависимости.
 
 | Файл | SHA-256 прочитанного основания |
 |---|---|
-| `proposal.md` | `ce0c5348253bbb973bc8bd90a70236a6bbd4d763eaa2814812f252f50f13a169` |
-| `design.md` | `0095ba01df76e77a43a726d9a8bcd88c46ea0468a78d574fff4233dadea8fd86` |
-| `test-plan.md` | `a33da2e969d54d8a7b9b0b665d582c4a7ea393cf01ade776653fb234434aee51` |
-| `tasks.md` | `9752cbe116587ecb27e65cf6e0998d0cd5f96a4df5151ac346dc9c0a916f7fd4` |
-| `inventory.md` | `aa0be7b0f4ef965fb2158ca0c023c4c9f4ce053767cc63bc4ce0ab58ea84670d` |
-| `specs/product-project-registry/spec.md` | `5863c0a6ffda549a1bf2ff9afcf296d3d36f7655b965cc4e540ebaa70b440502` |
+| `proposal.md` | `c7d5974f8d5f1bf66adb219f806dc4186a313604893d87ba5024fa8c567ea9b0` |
+| `design.md` | `fce126115d89b7c0473d4f8c3f81523187bb406bdf8b31a38a61fb17ccdc15cd` |
+| `test-plan.md` | `a8675d1fad462d2faa5a1af51552d30dd87b6f6ed70cdb8b7324599b34e2c6de` |
+| `tasks.md` | `b628413cc9dfec3efcf9b1e35c50c648637a3d5a8dc6a6c1d2a3a89389a274fe` |
+| `inventory.md` | `a216881d6eb43722a87d925a9ea40a419f9e668e6baa397fe88135b352bb9e27` |
+| `specs/product-project-registry/spec.md` | `f3e1f8a7660037d6818323bb4bd889da78daa8e0e1b56bd24c8dc5529a297729` |
 | `specs/product-knowledge-applicability/spec.md` | `1ae229efdddcbc6f6c6d3b1a072536c9529780973d4e5aeab5b327647b6b1c72` |
 | `specs/registry-source-binding/spec.md` | `19de48f43a081fb9f70ef009e6d72e6d5dd07fb8dab5691d9893d7ed06b83b8c` |
-| `specs/registry-project-configuration/spec.md` | `9129f1212603e9c5cccc910ab689f16a60f1c7cee05ddc79f530c16a82eff545` |
+| `specs/registry-project-configuration/spec.md` | `cd4ce7198757353abc5fcc7f0e1b5fe55cf0943a6922c10b0ade2c00e0163371` |
 
 Основание обновлено 2026-10-19 после согласования общего порядка G0–G6 и миграции; таблица содержит текущие SHA-256 девяти прочитанных документов. Сохраняются отдельные catalog/catalog.json и catalog/product-relations.json, business IDs, optional profiles, отношения/knowledgeAreas, раздельные origin/applicability/evidence и три статуса. Новое/изменённое общее правило home подтверждает человек. Три проектные MCP-роли прежние, Cognee общий; один updater/pinned context, defer сохраняет valid current local на прежней catalog revision. Диагностика/recovery исключены из автоприменения.
 
@@ -89,8 +89,13 @@ Registry source commit `59ad14c9`: G2 code/consumer proof сохранён в о
 Текущий G2 candidate `b160d92c` заменяет незарегистрированный `59ad14c9`: первый Targeted выявил слишком широкую маршрутизацию новых test suites. Исправлены узкие coverage contracts у прежних владельцев, исходные independent component assertions сохранены; focused selection 18/18 passed. Runtime G2 не менялся после 42/42 PS5.1 proof. Failed proof не удалён; повторная регистрация учитывается source-delivery Status, до неё публикация/успех Targeted не заявляются. G4/installed migration по-прежнему не начаты.
 
 Финальная dependency проверка: source-delivery Status подтвердил `product-project-registry-g2` registered, source head `b160d92c2bdfb53b586b9ee9e9a10903c571144d`; общий candidate `33a2557da42bc82151f6ea94675f150118102747` имеет passed Targeted (126733 ms), source worktree clean. Helper выполнил две попытки принятия при конкурентном изменении общей очереди; чужой зарегистрированный change сохранён. Авторитетный результат — shared ledger/Status, не новый gate или журнал в памяти. Каталог/пакет не опубликованы; G4 и installed migration не начаты. Девять dependency hashes сверены.
+
 ## Наполнение перед первым выпуском, 2026-10-19
 
 По прямому поручению пользователя обе OpenSpec уточнены только документально: registry tasks 1.9–1.11/5.7 и AC-36–38 обязательны до первого выпуска каталога и памяти; memory task 6.6/AC-44 ссылается на тот же результат. Продукты/проекты, resolved MCP/СППР/Mantis и карта основной функциональности подтверждаются для выпускного набора на одном опубликованном Git SHA. Minimal seed G2 не заменяет наполнение. Optional home/осознанно отсутствующие необязательные связи допустимы; shared-memory сценарии требуют home и отдельного native grants/currentness proof. Нет bulk ingestion, второго реестра/updater, увеличения always-on context или нового runtime barrier. G3/G4, наполнение и миграция сейчас не начинаются.
 
 Таблица девяти hashes выше сверена с актуальными registry planning files после этого уточнения; копия в основном checkout совпадает. Согласованная пара OpenSpec сохраняется вместе в source worktree product-project-registry-g2 для одного документального commit/RegisterChange; исходный planning worktree памяти сохранён. Это не меняет native profile, прежние результаты, G2 implementation или отдельные границы публикации/первого memory opt-in.
+
+## Checkpoint и план G3, 2026-10-19
+
+В registry design подготовлены отдельный installed-state checkpoint и G3.0–7 с owners, sequencing, continuation/recovery, compatibility, source/installed evidence и выпускным наполнением. Локальные source points повторно проверены на HEAD 29501656; новые runtime возможности и live readiness не заявлены. Registry AC-39 связывает план с original-task canary, bounded waiting/context и managed downgrade; 10 s metadata startup не распространяется на memory budgets. Checkpoint пока не одобрен, G3/G4 и миграция не начинаются, D9 approval не заменяет G3. Наполнение AC-36–38/здесь AC-44 по-прежнему обязательно до первого выпуска обеих функций, отдельный source/installed/data результат не подменяет другие. Девять hashes основания обновлены после согласования документов; qualification profile и prior native evidence не менялись.
