@@ -95,8 +95,9 @@ function Provision-ItlOpenSpecCli {
     if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) {
         throw "OPEN_SPEC_CLI_NPM_MISSING: npm-cli.js is not paired with '$nodePath'."
     }
-    $nodeVersionText = (& $nodePath --version).TrimStart('v')
-    if ($LASTEXITCODE -ne 0 -or [version]$nodeVersionText -lt [version]'20.19.0') {
+    $nodeVersionResult = Invoke-ItlNativeProcessCapture -FilePath $nodePath -Arguments @('--version')
+    $nodeVersionText = $nodeVersionResult.stdout.Trim().TrimStart('v')
+    if ($nodeVersionResult.exitCode -ne 0 -or [version]$nodeVersionText -lt [version]'20.19.0') {
         throw "OPEN_SPEC_CLI_NODE_UNSUPPORTED: '$nodePath' reports $nodeVersionText; 20.19.0 or newer is required."
     }
     $parent = Split-Path -Parent $target
@@ -114,12 +115,15 @@ function Provision-ItlOpenSpecCli {
     try {
         Copy-Item -LiteralPath (Join-Path $pin.packageRoot 'package.json') -Destination $staging
         Copy-Item -LiteralPath (Join-Path $pin.packageRoot 'package-lock.json') -Destination $staging
-        $npmOutput = @(& $nodePath $npmCli ci --prefix $staging --ignore-scripts --no-audit --no-fund 2>&1)
-        if ($LASTEXITCODE -ne 0) { throw "OPEN_SPEC_CLI_NPM_CI_FAILED: $($npmOutput -join ' ')" }
+        $npmResult = Invoke-ItlNativeProcessCapture -FilePath $nodePath -Arguments @($npmCli, 'ci', '--prefix', $staging, '--ignore-scripts', '--no-audit', '--no-fund')
+        if ($npmResult.exitCode -ne 0) {
+            throw "OPEN_SPEC_CLI_NPM_CI_FAILED: exit=$($npmResult.exitCode); $($npmResult.stdout) $($npmResult.stderr)"
+        }
         $entryPath = Join-Path $staging 'node_modules\@fission-ai\openspec\bin\openspec.js'
         if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) { throw 'OPEN_SPEC_CLI_ENTRY_MISSING: npm ci did not install the pinned CLI entrypoint.' }
-        $installedVersion = (& $nodePath $entryPath --version).Trim()
-        if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $pin.version) {
+        $installedVersionResult = Invoke-ItlNativeProcessCapture -FilePath $nodePath -Arguments @($entryPath, '--version')
+        $installedVersion = $installedVersionResult.stdout.Trim()
+        if ($installedVersionResult.exitCode -ne 0 -or $installedVersion -ne $pin.version) {
             throw "OPEN_SPEC_CLI_VERSION_MISMATCH: expected $($pin.version), installed '$installedVersion'."
         }
         $receipt = [ordered]@{

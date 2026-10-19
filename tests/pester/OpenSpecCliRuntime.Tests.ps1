@@ -138,6 +138,69 @@ Describe 'Pinned OpenSpec CLI runtime' {
         $result.text | Should -Match '(?m)^\.agents/skills/1c-workflow/resources/openspec-cli/package-lock\.json -text\r?$'
     }
 
+    It 'provisions the pinned CLI despite benign Unicode npm stderr' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec stderr проект ' + [guid]::NewGuid().ToString('N'))
+        $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
+        $previousOptions = $env:NODE_OPTIONS
+        $succeeded = $false
+        $failure = $null
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Destination (Join-Path $root '.agent-1c/dependency-lock.json')
+            $notice = 'npm notice ' + $root
+            $preloader = Join-Path $root 'уведомление npm.js'
+            [IO.File]::WriteAllText($preloader, ('process.stderr.write(' + ($notice | ConvertTo-Json -Compress) + ' + "\n");'), [Text.UTF8Encoding]::new($false))
+            $env:NODE_OPTIONS = '--require "' + $preloader.Replace('\', '/') + '"'
+            $installed = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $nodePath = [string](Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+                $capture = Invoke-ItlNativeProcessCapture -FilePath $nodePath -Arguments @('-e', 'process.stdout.write(process.cwd())')
+                $capture.exitCode | Should -Be 0
+                $capture.stderr.Trim() | Should -Be $notice
+                $capture.stdout | Should -Be $root
+                Provision-ItlOpenSpecCli
+            }
+            $installed.available | Should -BeTrue
+            $installed.version | Should -Be '1.13.1'
+            (Get-FileHash -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json')).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json')).Hash
+            $succeeded = $true
+        } catch { $failure = ($_ | Out-String); throw }
+        finally {
+            $env:NODE_OPTIONS = $previousOptions
+            Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $succeeded -Failure $failure
+        }
+    }
+
+    It 'rejects a nonzero npm exit while preserving its Unicode diagnostics and package pin' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec отказ проект ' + [guid]::NewGuid().ToString('N'))
+        $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
+        $previousOptions = $env:NODE_OPTIONS
+        $succeeded = $false
+        $failure = $null
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Destination (Join-Path $root '.agent-1c/dependency-lock.json')
+            $preloader = Join-Path $root 'ошибка npm.js'
+            [IO.File]::WriteAllText($preloader, 'process.stderr.write("ошибка npm"); process.exit(17);', [Text.UTF8Encoding]::new($false))
+            $env:NODE_OPTIONS = '--require "' + $preloader.Replace('\', '/') + '"'
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                { Provision-ItlOpenSpecCli } | Should -Throw '*OPEN_SPEC_CLI_NPM_CI_FAILED: exit=17;*ошибка npm*'
+            }
+            Test-Path -LiteralPath (Join-Path $root '.agent-1c/tools/openspec-cli/1.13.1') | Should -BeFalse
+            (Get-FileHash -LiteralPath (Join-Path $root '.agent-1c/dependency-lock.json')).Hash |
+                Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json')).Hash
+            $succeeded = $true
+        } catch { $failure = ($_ | Out-String); throw }
+        finally {
+            $env:NODE_OPTIONS = $previousOptions
+            Complete-OpenSpecRuntimeTestFixture -Evidence $evidence -Succeeded $succeeded -Failure $failure
+        }
+    }
+
     It 'provisions an exact local Node and CLI pair without using the global OpenSpec command' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('itl OpenSpec проект ' + [guid]::NewGuid().ToString('N'))
         $evidence = New-OpenSpecRuntimeTestEvidence -FixtureRoot $root -HelperPath $HelperPath -RepositoryRoot $RepoRoot
