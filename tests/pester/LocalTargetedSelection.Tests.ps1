@@ -35,12 +35,14 @@ Describe "Local quality gate contract" {
         $entrypoint = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
 
         $oneAction = $entrypoint.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Update-AuxiliaryContour | Out-Null }')
+        $oneAction | Should -Not -Be $entrypoint
         $oneActionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $oneAction -BaselineText $entrypoint
         $oneActionImpact.fallback | Should -BeFalse
         @($oneActionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1")
 
         $twoActions = $oneAction.
-            Replace('"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }', '"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus | Out-Null }')
+            Replace('"vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus} }', '"vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus | Out-Null} }')
+        $twoActions | Should -Not -Be $oneAction
         $actionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $twoActions -BaselineText $entrypoint
         $actionImpact.fallback | Should -BeFalse
         @($actionImpact.impacts.name) | Should -Be @("update-auxiliary-contour", "vibecoding1c-mcp-status")
