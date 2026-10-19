@@ -141,6 +141,21 @@
   },
   "contracts": [
     {
+      "id": "product-project-client-apply",
+      "owner": "existing MCP client writer and lifecycle dispatcher",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ProductProjectApply.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1"
+      ],
+      "tests": ["tests/pester/ProductProjectApply.Tests.ps1"]
+    },
+    {
       "id": "product-project-registry",
       "owner": "MCP configuration and runtime",
       "gate": "targeted",

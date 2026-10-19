@@ -18,6 +18,18 @@ Mutating actions are serialized per worktree through the ignored lifecycle opera
 
 For an ambiguous pending post-copy state, use the same source-side recovery owner and [scoped workflow-update recovery](workflow-update-recovery.md). It preserves bytes for review and binds acknowledgement to exact observed hashes; it does not silently accept later edits or replace the recorded update candidate.
 
+Catalog apply recovery uses `vibecoding1c-mcp-status -CatalogAction status` and
+`vibecoding1c-mcp-select -CatalogAction resume|restore|cancel`. Status is local
+and does not refresh the registry. Cancel cooperatively signals the pinned
+operation and may let its current write finish; it does not undo completed
+writes. Resume retains the operation ID and catalog SHA. Restore uses the same
+client writer to restore only its owned entries, preserving unrelated settings.
+A changed owned key or an unconfirmed physical write requires comparison with
+the retained operation before continuing; never delete its IDs or ownership
+records. Configuration success still requires client reload/new-session
+observation before claiming the tools are active. This source stage provides
+recovery only; catalog selection/bootstrap/startup integration is not yet enabled.
+
 Common internal actions:
 
 ```text

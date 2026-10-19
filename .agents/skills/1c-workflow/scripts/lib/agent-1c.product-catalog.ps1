@@ -18,7 +18,7 @@ function Get-ItlCatalogKeys {
 function ConvertTo-ItlCatalogCanonicalValue {
     param([AllowNull()][object]$Value)
     if ($null -eq $Value) { return $null }
-    if ($Value -is [System.Collections.IDictionary] -or $Value -is [pscustomobject]) {
+    if ($Value -is [System.Collections.IDictionary] -or $Value.GetType().FullName -eq 'System.Management.Automation.PSCustomObject') {
         $result = [ordered]@{}
         $keys = [string[]]@(Get-ItlCatalogKeys $Value)
         [Array]::Sort($keys, [StringComparer]::Ordinal)

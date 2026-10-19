@@ -38,6 +38,7 @@
 function Import-ItlProductProject {
     if (-not (Get-Command Resolve-ItlProductContext -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1') }
     if (-not (Get-Command Save-ItlCatalogRecord -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project.ps1') }
+    if (-not (Get-Command Invoke-ItlProductProjectClientApply -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-runtime.ps1') }
 }
 
 function Read-Vibecoding1cProductContext {

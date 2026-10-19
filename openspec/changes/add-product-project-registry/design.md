@@ -245,6 +245,10 @@ Restore возвращает только принадлежащие опера�
 
 ### План реализации G3
 
+Source boundary текущего среза: existing client writer предоставляет точные plan projections, before-write intent и receipts. On-demand `agent-1c.product-project-runtime.ps1` сохраняет ignored root-local plan до первой записи, pinned context/ID, before/current proof по затронутым ключам и marker last. Resume/restore используют тот же writer и исходный SHA; неизвестный результат записи сверяется с сохранёнными physical before/after hashes и переходом ownership, похожий URL не даёт права присвоить ключ. OpenCode восстанавливается по каждому из четырёх физических слоёв; unrelated edits после подтверждённой записи сохраняются, edits затронутых ключей требуют разрешения. Сохраняемые native entries/TOML sections нужны только для точного owned restore и остаются в ignored local state. Бизнес-каталог их не содержит.
+
+Реальные continuation входят в существующие `vibecoding1c-mcp-select -CatalogAction resume|restore|cancel` и `vibecoding1c-mcp-status -CatalogAction status`. Cooperative cancel только сигнализирует текущему operation ID, не получает writer authority и не заменяет receipts; проверяется между client writes. Resume/restore допускаются обычным lifecycle owner. Статус не читает latest tip/полный каталог и не объявляет активный MCP context подтверждённым. Этот source срез ещё не реализует выбор/binding, конфликтный диалог, автоматический startup или canary исходной основной команды; они остаются следующими строками плана.
+
 План ниже конкретизирует существующие задачи, не создаёт параллельную очередь или второй список исполнения. Вход: completed G2 на `29501656` (проверяемое source основание подготовки этого плана), отдельное одобрение checkpoint выше и отдельное разрешение apply выбранного среза. Перед кодом проверить актуальный develop/queue и owners на чистом source base; planning HEAD не объявляется будущим актуальным base. G1/D9 памяти и полное выпускное наполнение не prerequisites разработки G3.
 
 | Срез | Зависимость, владелец / existing задачи | Конкретный результат и приёмка |

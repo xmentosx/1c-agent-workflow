@@ -665,14 +665,14 @@ function ConvertFrom-ItlMcpTomlValue {
 }
 
 function Read-ItlClientMcpEntries {
-    param([string]$Client = "")
+    param([string]$Client = "", [AllowNull()][string]$Content = $null)
     if (-not $Client) { $Client = Get-ItlActiveClient }
     if ($Client -eq 'opencode') { return (Get-ItlOpenCodeMcpView).entries }
     $adapter = Get-ItlClientAdapter -Client $Client
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     $entries = [ordered]@{}
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $entries }
-    $text = Read-Utf8Text -Path $path
+    if (-not $PSBoundParameters.ContainsKey('Content') -and -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $entries }
+    $text = if ($PSBoundParameters.ContainsKey('Content')) { $Content } else { Read-Utf8Text -Path $path }
     if ($adapter.mcpFormat -ne "toml") {
         $config = ConvertTo-Vibecoding1cMcpHashtable -Object ($text | ConvertFrom-Json)
         $container = Get-ItlClientMcpContainer -Config $config -Path ([string]$adapter.mcpContainer)
@@ -825,7 +825,7 @@ function ConvertTo-ItlMcpSemanticCanonicalValue {
     param([AllowNull()][object]$Value)
 
     if ($null -eq $Value) { return $null }
-    if ($Value -is [System.Collections.IDictionary] -or $Value -is [pscustomobject]) {
+    if ($Value -is [System.Collections.IDictionary] -or $Value.GetType().FullName -eq 'System.Management.Automation.PSCustomObject') {
         $table = ConvertTo-Vibecoding1cMcpHashtable -Object $Value
         [string[]]$keys = @($table.Keys | ForEach-Object { [string]$_ })
         [System.Array]::Sort($keys, [System.StringComparer]::Ordinal)
@@ -1043,6 +1043,7 @@ function Write-ItlClientMcpEndpoints {
         [string]$ExpectedOwnerState = '',
         [object[]]$PreparedClaims = @(),
         [object[]]$FinalSetClaims = @(),
+        [object]$RestoreEntries = @{},
         [switch]$ReturnReceipt
     )
 
@@ -1074,7 +1075,7 @@ function Write-ItlClientMcpEndpoints {
     })
 
     if ($Client -eq 'opencode') {
-        return (Write-ItlOpenCodeMcpEndpoints -Endpoints $normalized -Owner $Owner -PreserveOwnedKeys $PreserveOwnedKeys -FinalSetOwnerKeys $FinalSetOwnerKeys -ExpectedInputStates $ExpectedInputStates -ExpectedOwnerState $ExpectedOwnerState -PreparedClaims $PreparedClaims -FinalSetClaims $FinalSetClaims -PlanOnly:$PlanOnly -ReturnReceipt:$ReturnReceipt)
+        return (Write-ItlOpenCodeMcpEndpoints -Endpoints $normalized -Owner $Owner -PreserveOwnedKeys $PreserveOwnedKeys -FinalSetOwnerKeys $FinalSetOwnerKeys -ExpectedInputStates $ExpectedInputStates -ExpectedOwnerState $ExpectedOwnerState -PreparedClaims $PreparedClaims -FinalSetClaims $FinalSetClaims -RestoreEntries $RestoreEntries -PlanOnly:$PlanOnly -ReturnReceipt:$ReturnReceipt)
     }
 
     $beforeFileState = Get-ItlMcpFileState -Path $path
@@ -1123,6 +1124,11 @@ function Write-ItlClientMcpEndpoints {
         }
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($endpoint in @($normalized | Sort-Object name)) {
+            if($RestoreEntries.Contains($endpoint.name)){
+                $restoredText=[string]$RestoreEntries[$endpoint.name].tomlText
+                if(-not $restoredText){throw 'CLIENT_MCP_RESTORE_INVALID: retained TOML sections are missing; preserve current config and inspect the original operation.'}
+                $lines.Add($restoredText.TrimEnd());$lines.Add('');continue
+            }
             $lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)]")
             if ($endpoint.transport -eq "stdio") {
                 $lines.Add("command = $(ConvertTo-Vibecoding1cMcpTomlString $endpoint.command)")
@@ -1175,7 +1181,11 @@ function Write-ItlClientMcpEndpoints {
         if ($PlanOnly) {
             $claims = [ordered]@{}
             foreach ($endpoint in $normalized) { $claims[$endpoint.name] = $endpoint }
-            return [pscustomobject]@{ path=$path; ownerKey="$Client/$Owner"; entries=$claims; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
+            $plannedState=ConvertTo-Vibecoding1cMcpHashtable $state
+            $plannedOwners=ConvertTo-Vibecoding1cMcpHashtable $plannedState['owners']
+            $plannedOwners["$Client/$Owner"]=@(@($normalized|ForEach-Object {$_.name})+@($PreserveOwnedKeys)|Where-Object {$_}|Select-Object -Unique)
+            $plannedState['owners']=$plannedOwners
+            return [pscustomobject]@{ path=$path; ownerKey="$Client/$Owner"; entries=$claims; afterEntries=(Read-ItlClientMcpEntries -Client $Client -Content $content); afterFiles=@{$path=(Get-ItlMcpTextState -Text $content)}; afterOwnership=$plannedState; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
         }
         $expectedFileState = if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Read-Utf8Text -Path $path) -ceq $content) { $beforeFileState } else { Get-ItlMcpTextState -Text $content }
         if ($expectedFileState -cne $beforeFileState) { Write-Utf8TextAtomic -Path $path -Value $content }
@@ -1250,6 +1260,7 @@ function Write-ItlClientMcpEndpoints {
     $written = @()
     foreach ($endpoint in $normalized) {
         $entry = ConvertTo-ItlClientMcpEntry -Endpoint $endpoint -Owner $Owner -Client $Client
+        if($RestoreEntries.Contains($endpoint.name)){$entry=ConvertTo-Vibecoding1cMcpHashtable $RestoreEntries[$endpoint.name].entry}
         $previousKey = [string]$endpoint.name
         $ownedAlias = $false
         if (-not $beforeContainer.Contains($previousKey)) {
@@ -1264,9 +1275,11 @@ function Write-ItlClientMcpEndpoints {
             # Transport is helper-owned; preserve the user's policy/auth fields.
             $previous = ConvertTo-Vibecoding1cMcpHashtable -Object $beforeContainer[$previousKey]
             foreach ($key in @($previous.Keys)) {
+                if($RestoreEntries.Contains($endpoint.name)){continue}
                 if (-not $entry.Contains($key) -and $key -notin @('url','httpUrl','command','args','env','environment','transport','type','timeout','lifecycle','managedBy','family')) { $entry[$key] = $previous[$key] }
             }
             foreach ($key in @('enabled','disabled')) {
+                if($RestoreEntries.Contains($endpoint.name)){continue}
                 if ($previous.Contains($key)) { $entry[$key] = $previous[$key] }
             }
             if ($sharedOwners.Contains([string]$endpoint.name)) {
@@ -1296,7 +1309,11 @@ function Write-ItlClientMcpEndpoints {
         foreach ($name in @($written + $PreserveOwnedKeys | Select-Object -Unique)) {
             if ($orderedContainer.Contains($name)) { $claims[$name] = $orderedContainer[$name] }
         }
-        return [pscustomobject]@{ path=$path; ownerKey=$stateKey; entries=$claims; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
+        $plannedState=ConvertTo-Vibecoding1cMcpHashtable $state
+        $plannedOwners=ConvertTo-Vibecoding1cMcpHashtable $plannedState['owners']
+        $plannedOwners[$stateKey]=@(@($written)+@($PreserveOwnedKeys)|Select-Object -Unique)
+        $plannedState['owners']=$plannedOwners
+        return [pscustomobject]@{ path=$path; ownerKey=$stateKey; entries=$claims; afterEntries=$orderedContainer; afterFiles=@{$path=(Get-ItlMcpTextState -Text (($config|ConvertTo-Json -Depth 20)+[Environment]::NewLine))}; afterOwnership=$plannedState; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
     }
     $content = ($config | ConvertTo-Json -Depth 20) + [Environment]::NewLine
     $expectedFileState = if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Read-Utf8Text -Path $path) -ceq $content) { $beforeFileState } else { Get-ItlMcpTextState -Text $content }
@@ -1313,7 +1330,8 @@ function Write-ItlClientMcpEndpoints {
 }
 
 function Write-ItlClientMcpEndpointSet {
-    param([Parameter(Mandatory = $true)][object[]]$Requests, [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$PreserveUserChanges)
+    param([Parameter(Mandatory = $true)][object[]]$Requests, [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$PreserveUserChanges,
+        [scriptblock]$OnPrepared = $null, [scriptblock]$OnReceipt = $null, [scriptblock]$OnBeforeWrite = $null)
 
     if ($Requests.Count -eq 0) { return }
     $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
@@ -1384,6 +1402,7 @@ function Write-ItlClientMcpEndpointSet {
         $arguments = @{ Client=[string]$request.client; Owner=[string]$request.owner; Endpoints=@($request.endpoints)
             PreserveOwnedKeys=@(Get-Vibecoding1cMcpObjectValue -Object $request -Name 'preserveOwnedKeys' -Default @()); FinalSetOwnerKeys=$ownerKeys
             ReplaceAiRulesServerIds=@(Get-Vibecoding1cMcpObjectValue -Object $request -Name 'replaceAiRulesServerIds' -Default @()) }
+        $arguments['RestoreEntries']=ConvertTo-Vibecoding1cMcpHashtable (Get-Vibecoding1cMcpObjectValue -Object $request -Name 'restoreEntries' -Default @{})
         $plan = Write-ItlClientMcpEndpoints @arguments -PlanOnly
         if ($plan.beforeOwnerState -cne $ownerState -or ($fileStates.ContainsKey($plan.path) -and $fileStates[$plan.path] -cne $plan.beforeFileState)) {
             throw 'CLIENT_MCP_FINAL_SET_CHANGED: config/ownership changed during preflight; preserve those edits and rebuild the final set before writing.'
@@ -1409,7 +1428,7 @@ function Write-ItlClientMcpEndpointSet {
             $finalSetClaims += [pscustomobject]@{ownerKey=$plan.ownerKey;path=[string]$claim.path;name=$name;entry=$claim.entry}
         }
         if ($arguments.Client -eq 'opencode') { $arguments['PreparedClaims'] = @($plan.claims) }
-        $plans += [pscustomobject]@{ arguments=$arguments; path=[string]$plan.path; releaseCleanup=$false }
+        $plans += [pscustomobject]@{ arguments=$arguments; path=[string]$plan.path; afterEntries=$plan.afterEntries; releaseCleanup=$false }
     }
     # Check every input before the first write, including a later client's file.
     foreach ($path in @($fileStates.Keys)) {
@@ -1417,6 +1436,10 @@ function Write-ItlClientMcpEndpointSet {
     }
     if ((Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState) { throw 'CLIENT_MCP_FINAL_SET_CHANGED: ownership changed after preflight; no MCP config was written. Preserve it and rebuild the final set.' }
     if ($PlanOnly) { return @($plans.path | Select-Object -Unique) }
+    if ($null -ne $OnPrepared) {
+        $projections=@($plans | ForEach-Object {[pscustomobject]@{client=$_.arguments.Client;owner=$_.arguments.Owner;path=$_.path;entries=$_.afterEntries}})
+        & $OnPrepared ([pscustomobject]@{requests=$Requests;fileStates=$fileStates;ownerState=$ownerState;ownerPath=$ownerPath;projections=$projections}) | Out-Null
+    }
     $executionPlans = [Collections.Generic.List[object]]::new()
     foreach ($plan in $plans) { $executionPlans.Add($plan) }
     for ($planIndex = 0; $planIndex -lt $executionPlans.Count; $planIndex++) {
@@ -1427,6 +1450,14 @@ function Write-ItlClientMcpEndpointSet {
         }
         $arguments = $plan.arguments
         if ($arguments.Client -eq 'opencode') { $arguments['ExpectedInputStates'] = $fileStates; $arguments['ExpectedOwnerState'] = $ownerState; $arguments['FinalSetClaims'] = $finalSetClaims }
+        if($null -ne $OnBeforeWrite){
+            $intent=Write-ItlClientMcpEndpoints @arguments -PlanOnly
+            & $OnBeforeWrite ([pscustomobject]@{client=$arguments.Client;owner=$arguments.Owner;plan=$intent;beforeOwnership=(Read-ItlManagedMcpState);beforeFiles=$fileStates;step=$planIndex}) | Out-Null
+            foreach($path in @($fileStates.Keys)){
+                if((Get-ItlMcpFileState -Path $path) -cne $fileStates[$path]){throw 'CLIENT_MCP_FINAL_SET_CHANGED: input changed after durable write intent; preserve it and resume the original operation.'}
+            }
+            if((Get-ItlMcpFileState -Path $ownerPath) -cne $ownerState){throw 'CLIENT_MCP_FINAL_SET_CHANGED: ownership changed after durable write intent; preserve it and resume the original operation.'}
+        }
         $receipt = Write-ItlClientMcpEndpoints @arguments -ReturnReceipt
         if ((Get-ItlMcpFileState -Path $receipt.path) -cne $receipt.fileState -or
             (Get-ItlMcpFileState -Path $ownerPath) -cne $receipt.ownerState) {
@@ -1456,6 +1487,9 @@ function Write-ItlClientMcpEndpointSet {
         $state['lastWritten'] = $lastWritten
         Write-ItlManagedMcpState -State $state
         $ownerState = Get-ItlMcpFileState -Path $ownerPath
+        if ($null -ne $OnReceipt) {
+            & $OnReceipt ([pscustomobject]@{client=$arguments.Client;owner=$arguments.Owner;path=$receipt.path;fileStates=$fileStates;ownerState=$ownerState;ownerPath=$ownerPath;step=$planIndex}) | Out-Null
+        }
         if ($receipt.PSObject.Properties.Name -contains 'deferredOwnerRelease' -and $receipt.deferredOwnerRelease) {
             if ($plan.releaseCleanup) { throw 'CLIENT_MCP_OWNER_CONFLICT: final-set handoff was not confirmed; preserve the physical ownership and repeat the original reconciliation.' }
             # Retain the releasing owner's physical proof through an interruption.
@@ -1464,6 +1498,65 @@ function Write-ItlClientMcpEndpointSet {
         }
     }
     return @($plans.path | Select-Object -Unique)
+}
+
+function Confirm-ItlClientMcpPreparedWrite {
+    param([Parameter(Mandatory=$true)][object]$Intent)
+    # A durable writer intent is proof only for the captured physical inputs and
+    # this owner's transition. A similar URL or a new catalog tip is no proof.
+    $client=[string]$Intent.client;$key="$client/$($Intent.owner)"
+    $plan=$Intent.plan
+    $before=ConvertTo-Vibecoding1cMcpHashtable $Intent.beforeOwnership
+    $after=ConvertTo-Vibecoding1cMcpHashtable $plan.afterOwnership
+    $current=Read-ItlManagedMcpState
+    $ownerHash=Get-ItlMcpFileState -Path (Get-ItlManagedMcpStatePath)
+    $states=[ordered]@{};$written=@()
+    foreach($path in @(Get-ItlClientMcpConfigPaths -Client $client)){
+        $state=Get-ItlMcpFileState -Path $path;$states[$path]=$state
+        $beforeFiles=ConvertTo-Vibecoding1cMcpHashtable $Intent.beforeFiles
+        $afterFiles=ConvertTo-Vibecoding1cMcpHashtable $plan.afterFiles
+        $desired=if($afterFiles.Contains($path)){$afterFiles[$path]}else{$beforeFiles[$path]}
+        if($state -cne $beforeFiles[$path] -and $state -cne $desired){throw "CLIENT_MCP_RECOVERY_CONFLICT: '$path' differs from both durable inputs and writer output; retain the edit and compare this file with the pinned operation before resume/restore."}
+        if($state -ceq $desired){$written+=$path}
+    }
+    foreach($field in @('owners','pathOwners','lastWritten')){
+        $old=ConvertTo-Vibecoding1cMcpHashtable $before[$field]
+        $now=ConvertTo-Vibecoding1cMcpHashtable $current[$field]
+        $next=ConvertTo-Vibecoding1cMcpHashtable $after[$field]
+        $oldValue=$old[$key];$nowValue=$now[$key];$nextValue=$next[$key]
+        $old.Remove($key);$now.Remove($key)
+        if((Get-ItlMcpOwnedSemanticSignature @{value=$old} @('value')) -cne (Get-ItlMcpOwnedSemanticSignature @{value=$now} @('value'))){throw 'CLIENT_MCP_RECOVERY_CONFLICT: another owner changed after write intent; preserve ownership and resolve that owner before continuing.'}
+        if($field -eq 'lastWritten'){continue} # This owner may have reached baseline recording.
+        if($client -ne 'opencode'){
+            $signature=Get-ItlMcpOwnedSemanticSignature @{value=$nowValue} @('value')
+            if($signature -cne (Get-ItlMcpOwnedSemanticSignature @{value=$oldValue} @('value')) -and $signature -cne (Get-ItlMcpOwnedSemanticSignature @{value=$nextValue} @('value'))){throw 'CLIENT_MCP_RECOVERY_CONFLICT: owner keys differ from the durable transition; preserve them before resume/restore.'}
+        }else{
+            # OpenCode persists physical bindings after every layer. Each layer
+            # can therefore be at its before or after transition independently.
+            foreach($relative in @('opencode.json','opencode.jsonc','.opencode/opencode.json','.opencode/opencode.jsonc')){
+                if(($field -eq 'owners') -ne ($relative -eq 'opencode.json')){continue}
+                $oldPart=if($field -eq 'owners'){$oldValue}else{(ConvertTo-Vibecoding1cMcpHashtable $oldValue)[$relative]}
+                $nowPart=if($field -eq 'owners'){$nowValue}else{(ConvertTo-Vibecoding1cMcpHashtable $nowValue)[$relative]}
+                $newPart=if($field -eq 'owners'){$nextValue}else{(ConvertTo-Vibecoding1cMcpHashtable $nextValue)[$relative]}
+                $signature=Get-ItlMcpOwnedSemanticSignature @{value=$nowPart} @('value')
+                if($signature -cne (Get-ItlMcpOwnedSemanticSignature @{value=$oldPart} @('value')) -and $signature -cne (Get-ItlMcpOwnedSemanticSignature @{value=$newPart} @('value'))){throw 'CLIENT_MCP_RECOVERY_CONFLICT: physical owner bindings differ from the durable transition.'}
+            }
+        }
+    }
+    if($client -eq 'opencode'){
+        $bindings=@(Get-ItlOpenCodeMcpBindings -State $before -OwnerKey $key | Where-Object {(Join-Path $script:ProjectRoot $_.relativePath) -notin $written})
+        $bindings+=@(Get-ItlOpenCodeMcpBindings -State $after -OwnerKey $key | Where-Object {(Join-Path $script:ProjectRoot $_.relativePath) -in $written})
+        Set-ItlOpenCodeMcpOwnerBindings -State $current -OwnerKey $key -Bindings $bindings
+    }else{
+        $owners=ConvertTo-Vibecoding1cMcpHashtable $current['owners']
+        $source=if($plan.path -in $written){$after}else{$before}
+        $owners[$key]=@((ConvertTo-Vibecoding1cMcpHashtable $source['owners'])[$key])
+        $current['owners']=$owners
+    }
+    foreach($path in $states.Keys){if((Get-ItlMcpFileState -Path $path) -cne $states[$path]){throw 'CLIENT_MCP_RECOVERY_CONFLICT: a physical input changed during recovery; repeat the original recovery.'}}
+    if((Get-ItlMcpFileState -Path (Get-ItlManagedMcpStatePath)) -cne $ownerHash){throw 'CLIENT_MCP_RECOVERY_CONFLICT: ownership changed during recovery.'}
+    if((Get-ItlMcpOwnedSemanticSignature @{value=(Read-ItlManagedMcpState)} @('value')) -cne (Get-ItlMcpOwnedSemanticSignature @{value=$current} @('value'))){Write-ItlManagedMcpState -State $current}
+    return [pscustomobject]@{client=$client;owner=$Intent.owner;writtenPaths=$written}
 }
 
 function Remove-ItlLegacyBranchMcpEntries {

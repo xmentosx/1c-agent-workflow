@@ -2,6 +2,8 @@
 
 ## Основание и границы проверки
 
+Текущая source граница G3: registry Git/source contracts и client apply/recovery kernel реализуются в соседнем change по отдельному approval. Kernel ещё не включает bootstrap/startup binding; его isolated client fixtures не являются квалификацией памяти. G4/реальные installed migration не начаты. Таблица dependency hashes ниже обновлена по этой согласованной source постановке; исходные G1/D9 evidence и budgets не меняются.
+
 Постановка подготовлена 2026-10-18 и уточнена 2026-10-19 по решениям текущего чата: Cognee, шесть областей, отдельный реестр, OpenViking optional, максимум совместимости с ai_rules_1c, только проектирование. Семь уточнений отражены в AC-31–37; общий порядок/миграция и native допуск Q1–Q7 — в design/specs/tasks и AC-38–42. Основной критерий — стоимость правильно решённой задачи, а не размер одного ответа.
 
 Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agent-workflow`, baseline HEAD `e9dc695d3b792179f10c35898ba02daebf0bb66c`. Исследованы перечисленные контракты, а не живые экземпляры памяти. Наличие конфигурации, схемы API или прошедшая проверка OpenSpec не доказывают live readiness.
@@ -26,9 +28,9 @@ Planning checkout: `C:\Users\xment\.codex\worktrees\scoped-cognee-memory\1c-agen
 | Файл | SHA-256 прочитанного основания |
 |---|---|
 | `proposal.md` | `eca1531cf6f17a6d611b598bf5ca5186307754affe67d57a71838aa165269a71` |
-| `design.md` | `cc58aad9d5002271e164cd89de37ed82c002e6abe3e9e6eca1eec98e9bfb6dab` |
+| `design.md` | `6adfbf898f0bf00c406add0aed3ad1afcbe7e12cf0bb37331ed2334d7cbaf9c6` |
 | `test-plan.md` | `8dca254fef2ae1762157ce43872f7c2ed65f34e4062210f33352ad14d3915b24` |
-| `tasks.md` | `db4cc5404526346cdaea649176343ac70a16a122198c25be5bc9506efa53e806` |
+| `tasks.md` | `ae52618365a00d01c7272b4c2e8db77b1098bf2c3af580d27d081ad8a7a1ca87` |
 | `inventory.md` | `a216881d6eb43722a87d925a9ea40a419f9e668e6baa397fe88135b352bb9e27` |
 | `specs/product-project-registry/spec.md` | `f3e1f8a7660037d6818323bb4bd889da78daa8e0e1b56bd24c8dc5529a297729` |
 | `specs/product-knowledge-applicability/spec.md` | `1ae229efdddcbc6f6c6d3b1a072536c9529780973d4e5aeab5b327647b6b1c72` |
