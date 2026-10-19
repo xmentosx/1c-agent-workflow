@@ -3453,10 +3453,12 @@ except Exception:
         if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
             continue
         }
-        $healthProbeLines = @(Invoke-DockerCommandCapture -Arguments @(
+        # Missing curl is an input to this repair, not a failed repair. Keep the
+        # installation and final validation checked, including the success marker.
+        $healthProbe = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments @(
             "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName")
-        if (@($healthProbeLines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
+        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName"
+        if ($healthProbe.exitCode -eq 0 -and @($healthProbe.lines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
             continue
         }
 

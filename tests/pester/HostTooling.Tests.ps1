@@ -1859,7 +1859,14 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "repairs tracked graph healthchecks without restart or indexing" {
+    It "repairs tracked graph healthchecks without restart or indexing: <Scenario>" -Tag GraphHealthRepair -TestCases @(
+        @{ Scenario = 'wrapped missing curl'; ProbeExitCode = 0; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $false },
+        @{ Scenario = 'missing curl exit 127'; ProbeExitCode = 127; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $false },
+        @{ Scenario = 'existing valid shim'; ProbeExitCode = 0; ValidationExitCode = 0; ValidationMarker = $true; AlreadyInstalled = $true; ExpectedFailure = $false },
+        @{ Scenario = 'failed validation'; ProbeExitCode = 127; ValidationExitCode = 22; ValidationMarker = $true; AlreadyInstalled = $false; ExpectedFailure = $true },
+        @{ Scenario = 'validation without marker'; ProbeExitCode = 127; ValidationExitCode = 0; ValidationMarker = $false; AlreadyInstalled = $false; ExpectedFailure = $true }
+    ) {
+        param($Scenario, $ProbeExitCode, $ValidationExitCode, $ValidationMarker, $AlreadyInstalled, $ExpectedFailure)
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-graph-health-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         $stateRoot = Join-Path $tempRoot "state"
@@ -1889,36 +1896,41 @@ services:
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 $hostConfig = Read-JsonFile -Path $configPath
                 $script:GraphHealthDockerCalls = New-Object System.Collections.Generic.List[string]
-                $script:GraphHealthShimInstalled = $false
+                $script:GraphHealthShimInstalled = $AlreadyInstalled
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
-                function Invoke-DockerCommandCapture {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    if ($script:GraphHealthShimInstalled) {
-                        return @("ITL_GRAPH_HEALTH_OK")
-                    }
-                    return @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH')
-                }
-                function Invoke-DockerCommand {
-                    param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    return 1
-                }
-                function Invoke-DockerCommandChecked {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                function Invoke-ProcessWithTimeout {
+                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $FilePath | Should -Be 'docker'
                     $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
                     if ($Arguments[0] -eq "cp") {
                         $script:GraphHealthShimInstalled = $true
+                        return @{ exitCode = 0; lines = @() }
                     }
+                    if ($Arguments[2] -eq 'chmod') { return @{ exitCode = 0; lines = @() } }
+                    if ($script:GraphHealthShimInstalled) {
+                        $lines = if ($ValidationMarker) { @('ITL_GRAPH_HEALTH_OK') } else { @('OCI runtime exec failed') }
+                        return @{ exitCode = $ValidationExitCode; lines = $lines }
+                    }
+                    return @{ exitCode = $ProbeExitCode; lines = @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH') }
                 }
 
-                (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 2
+                if ($ExpectedFailure) {
+                    { Repair-TrackedGraphHealthchecks -Config $hostConfig } | Should -Throw '*validat*'
+                } else {
+                    $expectedRepairs = if ($AlreadyInstalled) { 1 } else { 2 }
+                    (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be $expectedRepairs
+                    (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 0
+                }
                 $composeText = Get-Content -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -Raw
                 $composeText | Should -Match "python -c"
                 $composeText | Should -Not -Match '\["CMD", "curl"'
                 $callText = @($script:GraphHealthDockerCalls) -join "|"
-                $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
-                $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
+                if ($AlreadyInstalled) {
+                    $callText | Should -Not -Match 'cp |chmod'
+                } else {
+                    $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
+                    $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
+                }
                 $callText | Should -Match "exec itl-graph curl -f http://localhost:8006/search"
                 $callText | Should -Not -Match "restart|reindex|setup"
                 Remove-Variable -Scope Script -Name GraphHealthDockerCalls -ErrorAction SilentlyContinue
