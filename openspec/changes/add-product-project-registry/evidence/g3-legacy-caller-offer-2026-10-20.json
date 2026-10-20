@@ -438,6 +438,38 @@
     {
       "sha256": "c36e686ef8ccbb9cb6879c7e9e61f38247fcaa49b9cfcdfd14fc68cb72d06de9",
       "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner-rebased.json"
+    },
+    {
+      "sha256": "c780f0fb3221e0431968572172846559bf7b24ae6132f0e554928bf5d290d205",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt3\\check-summary.json"
+    },
+    {
+      "sha256": "a1a14a8e1fe8840e8df63eca91d02e50add1e450dbe53cebde145b2276fd5e85",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt3\\test-selection.json"
+    },
+    {
+      "sha256": "a3d30de64a145f714b6e59c2f76f14e6561c6bb4e5063e037f6b9d67ef1b48f3",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt3\\worker-12.result.json"
+    },
+    {
+      "sha256": "1c0a2b0ea7509de0f58b7bd22697c53ef2adee9fa0ef5950801d25fdb1898afc",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt3\\worker-12.stdout.log"
+    },
+    {
+      "sha256": "e72e9e348140b52aa42846bc2c70babf852a971ede9b0e47bf22bab82d1040fe",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\watchdog-focused.json"
+    },
+    {
+      "sha256": "396bf8d20fa549131427b02de52eb583990ae02e1b90a900728b8444bc94fd94",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\watchdog-focused.log"
+    },
+    {
+      "sha256": "640bf7b6420cc023e71f9aaa114340d0d76024b89b02ae8e859fd1b15d568db7",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\watchdog-load-observation.json"
+    },
+    {
+      "sha256": "2b4bc290539a823337008c97aa136b42e2adb77411581b5286dcf9b72604875d",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\register-attempt3.log"
     }
   ],
   "openSpecValidation": {
@@ -495,5 +527,46 @@
     "metadataConflict": "Both explicit consumers and existing numeric/budget assertions retained; no Gate 6 runtime edited by this task",
     "base": "5d68733d61cea6cc9c3a7eaa7612310e90efc491",
     "rebasedRuntimeCommit": "89e730df"
+  },
+  "registrationAttempt3": {
+    "passed": 691,
+    "status": "failed",
+    "focused": {
+      "seconds": 16.6122239,
+      "skipped": 0,
+      "failed": 0,
+      "passed": 2
+    },
+    "acceptance": "Focused 2/2 is diagnostic only. Preserve failed full gate and repeat original RegisterChange/default concurrency without changing thresholds, fixtures, workload or watchdog code.",
+    "completedGroups": 17,
+    "incompleteSelection": true,
+    "durationMs": 897540,
+    "commit": "8f2ce1f011db11b17ce461edeab9c315a8a03947",
+    "loadedInputsUnchangedSincePassedGate": [
+      {
+        "currentBlob": "212a564d56662b1aadfdabd25fbc39c94d50699e",
+        "passedTreeBlob": "212a564d56662b1aadfdabd25fbc39c94d50699e",
+        "path": "tests/pester/CompactRunnerWatchdog.Tests.ps1"
+      },
+      {
+        "currentBlob": "2b0527c632e149ed5a55771bcfe6ae5d74246c40",
+        "passedTreeBlob": "2b0527c632e149ed5a55771bcfe6ae5d74246c40",
+        "path": ".agents/skills/1c-workflow/scripts/run-itl-command.ps1"
+      },
+      {
+        "currentBlob": "3d8d9bd78fe10b501d142f3d54b14c3270373fd6",
+        "passedTreeBlob": "3d8d9bd78fe10b501d142f3d54b14c3270373fd6",
+        "path": ".agents/skills/1c-workflow/scripts/lib/itl-runner-timeout.ps1"
+      },
+      {
+        "currentBlob": "b671aaf5d254625c490043999d0dd5923c6ce279",
+        "passedTreeBlob": "b671aaf5d254625c490043999d0dd5923c6ce279",
+        "path": ".agents/skills/1c-workflow/scripts/lib/itl-powershell-environment.ps1"
+      }
+    ],
+    "cause": "unconfirmed; load snapshot is an observation, not causal proof",
+    "failed": 2,
+    "failure": "CompactRunnerWatchdog wall times 7.1045555 >= 7 s and 16.2848136 >= 15 s",
+    "selectedGroups": 63
   }
 }
