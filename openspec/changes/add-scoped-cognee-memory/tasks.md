@@ -2,7 +2,7 @@
 
 Текущая dependency qualification — [одна registry-матрица G3/AC-39](../add-product-project-registry/evidence/g3-final-qualification-2026-10-20.md): свежие Code/Graph/file/startup/same-user concurrency subsets, явные cold/performance/stand/client ограничения. Memory installed AC-43/G5 и release AC-44 остаются открытыми; статусы G1/Q1–Q7/D9/G2 сохраняются. Этот результат не разрешает G4, рабочую миграцию или публикацию и не создаёт memory updater/второй журнал приёмки.
 
-В dependency-срезе подтверждены 12 live Code/Graph controls, 48 file/role checks, classification 96 actions/8 brokers и bounded same-user serialization/status. PM4/PM5 startup over-target и cold receipt writes не закрыты; private Codex trust discovery не actual tool activation. Полные implementation/installed checkbox памяти этим не закрываются, Cognee calls 0.
+В dependency-срезе подтверждены 12 live Code/Graph controls, 48 file/role checks, classification 96 actions/8 brokers и bounded same-user serialization/status. Исторические startup/cold failures сохранены; последующий [registry repair](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.md) подтвердил source/synthetic native no-op и инженерные цели на обеих family. Full installed cost/client proof остаётся открыт; private Codex trust discovery не actual tool activation. Полные implementation/installed checkbox памяти этим не закрываются, Cognee calls 0.
 
 Registry G3-CATALOG-LEGACY-ENROLLMENT исправлен без memory enrollment state. [Общий native proof](../add-product-project-registry/evidence/g3-catalog-enrollment-fix-2026-10-20.json) подтверждает исходный PM5 путь, настоящий foreground offer/later с новым caller и поздний select/restore без legacy enrollment; memory остаётся off. Focused batches и exact qualification boundary принадлежат registry; отдельный memory ledger/updater/input bridge не добавляются.
 
@@ -90,3 +90,10 @@ Registry owner закрыл G3-LEGACY-CALLER-OFFER на исходном пер�
 
 - [x] Учесть согласованный registry/source-owned recovery из exact capsule при недоступном raw seed, без memory механизма или opt-in.
 - [x] Получить bounded native G3 restore-format proof на новом PM5 target; [registry results](../add-product-project-registry/test-plan.md#результат-recovery-pm5-из-capsule-2026-10-20) подтверждает exact descriptor/data, clean roots, later и memory off. Original seed currentness unavailable; G5/AC-43/AC-44 и остальные release conditions открыты.
+
+## Dependency Startup repair, 2026-10-20
+
+- [x] Учесть [registry-owned исправление](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.md): ранний reuse проверенной projection, pinned SHA и общий no-op для subset клиентов; отдельного memory состояния/refresh/provider probe нет.
+- [x] Получить зависимый source/synthetic native repeat без переноса на full installed AC: 133 owner cases, paired/полные PM4/PM5 warm цели, первый cold no-write bytes/mtime, concurrency/status и 48 file checks passed, исходные failures сохранены.
+
+G5/AC-43/AC-44 и full G3 остаются открытыми. G1/Q1–Q7/D9/G2, шесть областей/canonical home/ai_rules_1c/optional OpenViking не меняются. G4, Gate 6 fix/run, миграция рабочих проектов и публикация не выполнялись. Квалификация и delivery принадлежат прежним registry/source owners; второго журнала не добавлено.

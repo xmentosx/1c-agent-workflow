@@ -4070,8 +4070,7 @@ function Write-Vibecoding1cMcpClientConfig {
         $decisionValue=Get-Variable CatalogDecision -ErrorAction SilentlyContinue
         $decision=if($decisionValue){[string]$decisionValue.Value}else{''}
         $chosen=Resolve-ItlProductProjectPreviewDecision $preview -Decision $decision -AllowPrompt:(Test-InteractiveInputAvailable)
-        $changed=@($preview.changes|Where-Object {$_.status -in @('managed-change','addition','retirement','conflict') -or ($_.status -eq 'local-override' -and $_.owned -and $decision -eq 'registry')}).Count -gt 0
-        if(-not $changed -and $preview.applied -and $preview.applied.catalogRevision -ceq $chosen.context.catalogRevision -and (Get-ItlCatalogField $preview.applied.context 'settingsIntentHash') -ceq $chosen.context.settingsIntentHash -and $preview.applied.context.knowledgeHash -ceq $chosen.context.knowledgeHash -and (Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)) -ceq (Get-ItlCatalogHash $chosen.preferences)){return}
+        if(Test-ItlProductProjectPreviewAlreadyApplied $preview $chosen $decision){return}
         $null=Invoke-ItlProductProjectClientApply $chosen.context $chosen.requests -ProofRequests $chosen.proofRequests -SavePrivateSelection -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
         Set-ItlProductProjectOperationContext $chosen.context
         Write-Host 'Catalog MCP configuration saved through the pinned plan. Reload the client and verify active tools separately.'

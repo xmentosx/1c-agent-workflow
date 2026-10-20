@@ -1,6 +1,6 @@
 # Tasks
 
-Актуальная квалификация G3.7 сведена в [единую матрицу AC/остатка](evidence/g3-final-qualification-2026-10-20.md), с [machine-readable evidence](evidence/g3-final-qualification-2026-10-20.json). Свежие source/live/file/concurrency subsets не закрывают full G3/AC-39. Startup over-target и cold receipt writes сохранены как открытые вопросы; absent stands — unverified. Нет нового runtime барьера, G4/рабочей миграции/публикации.
+Актуальная квалификация G3.7 сведена в [единую матрицу AC/остатка](evidence/g3-final-qualification-2026-10-20.md), с [machine-readable evidence](evidence/g3-final-qualification-2026-10-20.json). Последующий [Startup repair](evidence/g3-startup-repair-2026-10-20.md) закрыл owner-local причины лишнего чтения и first-CLI receipt writes: source/synthetic native subset passed, полный G3/AC-39 и installed cost/client/stand proof открыты. Исторические failures сохранены. Нет нового runtime барьера, G4/рабочей миграции/публикации.
 
 G3-CATALOG-LEGACY-ENROLLMENT исправлен: private catalog property не включает legacy MCP; native body, timestamp и configured-but-unready guards сохранены. [Итоговый native proof](evidence/g3-catalog-enrollment-fix-2026-10-20.json): новая PM5 copy исходной capsule, legacy update → select/restore → new/restore → настоящий переход версии с видимым offer/later → поздний select/restore. Whole foreground exit 0; memory off, обе ветки clean, workload/seed неизменны. Focused batches 158/158, дополненный Setup 26/26 и post-copy/process/rollback 96/96 имеют раздельные inputs/стоимость; окончательный Targeted принадлежит RegisterChange и его ledger, не сумме этих batch.
 
@@ -122,3 +122,11 @@ Gate 6, остальные source/client/platform controls, full G3 и обяз�
 - [x] Зафиксировать approved recovery contract и границы: новый owned target из exact capsule, explicit source-only Develop route, исходный seed/failed copy сохранены, live-seed checks обычного пути прежние, original currentness unavailable.
 - [x] Реализовать явный вход у существующего fixture factory и проверить positive/negative/capacity/default strict controls: focused 101/0/0, 292.577 s (SourceQualificationFixture + SourceE2EStorage). Без автоматического fallback, Release route или нового owner. Native proof остаётся отдельной задачей ниже.
 - [x] Восстановить отдельный PM5 target из c2c570fe…: native CREATEINFOBASE/RestoreIB passed, затем первый upgrade → official pinned recovery → later → select → restore. Exact descriptor/data hashes, clean roots, прежние workload/fork/capsule/старые artifacts подтверждены; native G3-CATALOG-RESTORE-FORMAT закрыт только в этой approved scope. Full G3 и остальные release conditions остаются открытыми.
+
+## Startup и квитанции: owner-local repair, 2026-10-20
+
+- [x] Разобрать поздний no-op и семь Git reads; reuse checked projection после refresh/SHA/input проверки, batch immutable blob IDs (7 → 5), lazy pinned read без нового cache/refresh. Новые regression сохраняют exact SHA и invalidation схем/клиентских файлов.
+- [x] Исправить лишние applied/operation receipts при первом subset-client sync общим preview owner; сохранить все proofs и полный путь нового клиента/ручной правки.
+- [x] Повторить исходные owner suites (133/0/0/0), paired 20 warm на прежних PM4/PM5 roots и полные 23 observations/family, cold CLI и same-user concurrency/status, 48 file/role controls и preservation. [Точные результаты, расходы, failures и пределы](evidence/g3-startup-repair-2026-10-20.md).
+
+Это subset задач 4.1/4.3/4.6/5.1/5.5, не их полная installed приёмка. Финальные warm median/p95 укладываются в цели 1/2 s; величина ускорения под общей нагрузкой ограниченно сопоставима, p95 выше paired baseline. First-CLI no-write control passed, включая bytes/mtime обеих квитанций. AC-39, memory AC-43/G5/AC-44 и остальная единая матрица открыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. RegisterChange единолично владеет mandatory Targeted и queue outcome.

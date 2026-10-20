@@ -91,6 +91,7 @@ function Get-ItlProductProjectStartupDisposition {
 }
 
 function Read-ItlProductProjectSnapshot {
+    param([object]$NoOpApplied=$null,[switch]$IncludeClientSurfaces)
     $operation=Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
     if(-not $operation){throw 'CATALOG_OPERATION_CONTEXT_REQUIRED: enter the existing registry operation before reading the catalog.'}
     $state=$operation.Value
@@ -98,17 +99,38 @@ function Read-ItlProductProjectSnapshot {
         if($state.catalogError){throw $state.catalogError}
         return $state.catalogSnapshot
     }
+    if(-not (Get-ItlCatalogField $state 'catalogRefreshAttempted' $false)){
+        $state['catalogRefreshAttempted']=$true;$state['catalogRefreshError']=$null;$state.attempted=$true
+        try{$null=Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(10))}catch{$state.catalogRefreshError=$_.Exception}
+    }
+    $refreshError=Get-ItlCatalogField $state 'catalogRefreshError'
+    if(-not $refreshError -and $NoOpApplied -and $NoOpApplied.configurationState -eq 'configured' -and
+        (Get-ItlCatalogField $NoOpApplied 'noOpInputs') -and (Get-ItlCatalogField $NoOpApplied.context 'registryMetadata') -and
+        (-not $IncludeClientSurfaces -or (Get-ItlCatalogField $NoOpApplied.noOpInputs 'includeClientSurfaces' $false))){
+        # Reuse only the existing checked receipt, never a new persistent cache.
+        # An unreadable/changed input takes the normal full validation path.
+        $inputsMatch=$false
+        try{$inputs=Get-ItlProductProjectNoOpInputs $NoOpApplied.proof -IncludeClientSurfaces:([bool](Get-ItlCatalogField $NoOpApplied.noOpInputs 'includeClientSurfaces' $false));$inputsMatch=(Get-ItlCatalogHash $inputs) -ceq (Get-ItlCatalogHash $NoOpApplied.noOpInputs)}catch{}
+        if($inputsMatch){
+            $root=Get-ItlCatalogField $state 'catalogPinnedRoot' (Get-Vibecoding1cMcpRegistryRoot)
+            $revision=Get-ItlCatalogField $state 'catalogPinnedRevision' ''
+            if(-not $revision){$revision=((Get-GitOutputAt -Root $root -Arguments @('rev-parse','--verify','--end-of-options','HEAD^{commit}')) -join "`n").Trim()}
+            if($revision -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'){throw 'CATALOG_INVALID: current commit did not resolve to an immutable Git object'}
+            $state['catalogPinnedRoot']=$root;$state['catalogPinnedRevision']=$revision
+            if($revision -ceq $NoOpApplied.catalogRevision){
+                $state.snapshot=$NoOpApplied.context.registryMetadata
+                return [pscustomobject]@{reusedAppliedContext=$NoOpApplied.context;catalogRevision=$revision}
+            }
+        }
+    }
     $state['catalogAttempted']=$true;$state['catalogSnapshot']=$null;$state['catalogError']=$null
-    $state.attempted=$true
-    $refreshError=$null
-    try{$null=Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(10))}catch{$refreshError=$_.Exception}
     try{
-        $commit='HEAD'
+        $commit=Get-ItlCatalogField $state 'catalogPinnedRevision' 'HEAD'
         if($refreshError){
             $reference=Get-ItlCatalogField (Read-ItlProductProjectSetting selection) 'catalogRevision'
             if($reference -cmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'){$commit=$reference}
         }
-        $snapshot=Read-ItlProductCatalogSnapshot -RepositoryRoot (Get-Vibecoding1cMcpRegistryRoot) -Commit $commit
+        $snapshot=Read-ItlProductCatalogSnapshot -RepositoryRoot (Get-ItlCatalogField $state 'catalogPinnedRoot' (Get-Vibecoding1cMcpRegistryRoot)) -Commit $commit
         $snapshot|Add-Member -NotePropertyName stale -NotePropertyValue ([bool]$refreshError) -Force
         $state.catalogSnapshot=$snapshot;$state.snapshot=$snapshot.registry
         if($refreshError){$state.error=$refreshError}
@@ -253,6 +275,27 @@ function New-ItlProductProjectPreview {
     return [pscustomobject]@{context=$Context;endpointSet=$endpointSet;requests=$requests;plan=$plan;preferences=$preferences;changes=$changes;applied=$applied;settingsIntentHash=(Get-ItlCatalogHash @{settings=$Context.settingsHash;clients=@($Clients|Sort-Object -Unique);roleOverrides=$Context.nativeRoleOverrides;endpoints=@($endpointSet.allEndpoints|ForEach-Object {@{name=(Get-Vibecoding1cMcpEndpointClientName $_);url=$_.url;timeout=(Get-ItlCatalogField $_ 'toolTimeoutSeconds' 300)}})})}
 }
 
+function Test-ItlProductProjectPreviewClientChanges {
+    param([object]$Preview,[string]$Decision='')
+    return @($Preview.changes|Where-Object {($_.status -in @('managed-change','addition','retirement','conflict')) -or ($_.status -eq 'local-override' -and $_.owned -and $Decision -eq 'registry')}).Count -gt 0
+}
+
+function Test-ItlProductProjectPreviewAlreadyApplied {
+    param([object]$Preview,[object]$Chosen,[string]$Decision='')
+    $applied=$Preview.applied
+    if(-not $applied -or $applied.configurationState -ne 'configured' -or (Test-ItlProductProjectPreviewClientChanges $Preview $Decision)){return $false}
+    if((Get-ItlProductProjectResolvedHash $applied.context) -cne (Get-ItlProductProjectResolvedHash $Chosen.context)){return $false}
+    if((Get-ItlCatalogHash (Get-ItlCatalogField $applied.context 'nativeRoleOverrides' @{})) -cne (Get-ItlCatalogHash (Get-ItlCatalogField $Chosen.context 'nativeRoleOverrides' @{}))){return $false}
+    if((Get-ItlCatalogField $Chosen.context 'catalogIncludesClientSurfaces' $false) -and -not (Get-ItlCatalogField $applied.context 'catalogIncludesClientSurfaces' $false)){return $false}
+    # A caller can request a subset of the configured clients. Its client-list
+    # hash must not replace a current project-wide receipt. Every requested
+    # owner still needs existing proof; a new client must take the normal apply.
+    foreach($request in @($Preview.requests)){
+        if(-not (Get-ItlCatalogField (Get-ItlCatalogField $applied 'proof' @{}) "$($request.client)/$($request.owner)")){return $false}
+    }
+    return (Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)) -ceq (Get-ItlCatalogHash $Chosen.preferences)
+}
+
 function Show-ItlProductProjectPreview {
     param([object]$Preview)
     [pscustomobject]@{project=$Preview.context.projectName;product=$Preview.context.productName;catalogRevision=$Preview.context.catalogRevision;changes=@($Preview.changes|Select-Object client,name,status);activeClientContext='unverified';integrationState='intent-unverified'}
@@ -322,7 +365,12 @@ function Initialize-ItlProductProjectContext {
     $applied=Read-ItlProductProjectRecord applied
     $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
     try{
-        $snapshot=Read-ItlProductProjectSnapshot
+        $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
+        $appliedFamily=Get-ItlCatalogField (Get-ItlCatalogField $applied 'context') 'baseConfigurationVersion' ''
+        $noOpApplied=if(-not $Decision -and $applied -and $applied.context.projectId -ceq $binding.projectId -and $applied.context.productId -ceq $binding.productId -and (-not $family -or -not $appliedFamily -or $family -ceq $appliedFamily)){$applied}else{$null}
+        $snapshot=Read-ItlProductProjectSnapshot -NoOpApplied $noOpApplied -IncludeClientSurfaces:$IncludeClientSurfaces
+        $reused=Get-ItlCatalogField $snapshot 'reusedAppliedContext'
+        if($reused){Set-ItlProductProjectOperationContext $reused;return}
         $effective=Get-ItlProductProjectEffectiveSnapshot $snapshot $preferences
         $context=Resolve-ItlProductProjectRuntimeContext -Snapshot $effective.snapshot -Binding $binding -Overrides (Get-ItlCatalogField $preferences 'overrides' @{}) -Conditions (ConvertTo-Agent1cHashtable (Get-ItlCatalogField $preferences 'conditionValues' @{})) -ProductVersion (Get-ItlCatalogField $preferences 'productVersion' '')
         $context['catalogPublication']=$effective.publication
@@ -349,10 +397,9 @@ function Initialize-ItlProductProjectContext {
     if(-not $Decision -and $applied -and $defer -and $defer.settingsIntentHash -ceq $preview.settingsIntentHash -and $defer.knowledgeHash -ceq $context.knowledgeHash){Set-ItlProductProjectAppliedContext $applied 'Catalog update remains explicitly deferred; the applied revision and local overrides are retained.';return}
     $chosen=Resolve-ItlProductProjectPreviewDecision $preview -Decision $Decision -AllowPrompt:$AllowPrompt
     $privateChanged=(Get-ItlCatalogHash $preferences) -cne (Get-ItlCatalogHash $chosen.preferences)
-    $hasClientChanges=@($preview.changes|Where-Object {($_.status -in @('managed-change','addition','retirement','conflict')) -or ($_.status -eq 'local-override' -and $_.owned -and $Decision -eq 'registry')}).Count -gt 0
+    $hasClientChanges=Test-ItlProductProjectPreviewClientChanges $preview $Decision
     if(-not $chosen.deferred -and -not $hasClientChanges){$chosen.proofRequests=$chosen.requests;$chosen.requests=@()}
-    $same=$applied -and $applied.context.settingsHash -ceq $chosen.context.settingsHash -and $applied.context.knowledgeHash -ceq $chosen.context.knowledgeHash -and (Get-ItlCatalogField $applied.context 'settingsIntentHash') -ceq $chosen.context.settingsIntentHash -and $applied.catalogRevision -ceq $chosen.context.catalogRevision
-    if($same -and -not $privateChanged -and -not $hasClientChanges){
+    if(Test-ItlProductProjectPreviewAlreadyApplied $preview $chosen $Decision){
         $newInputs=Get-ItlProductProjectNoOpInputs $applied.proof -IncludeClientSurfaces:$IncludeClientSurfaces
         if((Get-ItlCatalogHash $cachedInputs) -cne (Get-ItlCatalogHash $newInputs)){$applied['noOpInputs']=$newInputs;Write-ItlProductProjectRecord applied $applied}
         Set-ItlProductProjectOperationContext $chosen.context;return
@@ -375,6 +422,7 @@ function Get-ItlProductProjectNoOpInputs {
     foreach($key in @(Get-ItlCatalogKeys $Proof)){$paths+=@($Proof[$key].paths)}
     $paths+=Join-Path $script:ProjectRoot '.agent-1c/dependency-lock.json'
     foreach($leaf in @('core','client-adapters','client-opencode','client-jsonc','vibecoding1c-mcp','ondemand-mcp','product-catalog','product-project-runtime','product-project-context')){$paths+=Join-Path $PSScriptRoot "agent-1c.$leaf.ps1"}
+    foreach($schema in @('catalog','product-relations')){$paths+=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../../../../../templates/product-project-registry/schemas/$schema.schema.json"))}
     foreach($relative in @('../../assets/ondemand-mcp/compatibility.json','../../assets/ondemand-mcp/roctup.catalog.json','../../assets/ondemand-mcp/vanessa-ui.catalog.json')){$paths+=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot $relative))}
     $files=[ordered]@{};foreach($path in @($paths|Where-Object {$_}|Sort-Object -Unique)){$files[$path]=Get-ItlMcpFileState $path}
     $invocation=[ordered]@{}

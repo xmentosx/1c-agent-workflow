@@ -2,6 +2,8 @@
 
 Актуальная зависимость G3.7 — [единая registry-матрица](../add-product-project-registry/evidence/g3-final-qualification-2026-10-20.md): G3/AC-39 и memory installed AC-43/G5 открыты, включая client/platform и cost ограничения. G1/Q1–Q7/D9/G2 сохраняют прежний допуск; текущая доступность provider перед будущим opt-in проверяется отдельно. Шесть областей, canonical home, ai_rules_1c и optional OpenViking не меняются; отдельного memory startup/recovery/ledger не добавляется. G4, рабочая миграция и публикация в этом срезе запрещены; AC-44 потребляет тот же будущий release population AC-36–38.
 
+Разбор задержки Startup и лишних квитанций принадлежит registry owner: [контракт и повторные проверки](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.md). Memory consumer использует тот же pinned operation context; reuse checked applied projection после refresh/SHA/input проверки не добавляет memory cache, updater, refresh или provider probe. Unchanged single-client sync сохраняет project-wide proofs остальных клиентов. Полный G5/AC-43 не закрывается этим source/synthetic subset; engineering цели Startup, шесть областей, требования canonical home и выпускного наполнения прежние.
+
 ## Context
 
 Мотивация и границы — [proposal.md](proposal.md); проверенные исходники и точный снимок зависимой постановки — [context-sources.md](context-sources.md). Это новый потребитель change `add-product-project-registry`, а не его замена. В baseline уже есть MCP selection/client writer, reset с фазами и controlled fork; шесть scoped datasets и их привязка ещё не реализованы. Managed clause fork пока не квалифицирует новые providers и называет общий templates project-scoped вопреки ITL host policy.

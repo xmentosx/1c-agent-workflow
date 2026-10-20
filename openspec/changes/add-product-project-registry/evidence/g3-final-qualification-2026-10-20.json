@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "G3-FINAL-QUALIFICATION-2026-10-20",
-  "observedUtc": "2026-10-20T16:47:44.740532+00:00",
+  "observedUtc": "2026-10-20T19:47:44.740532+03:00",
   "qualificationSourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
   "status": "G3_AC39_OPEN",
   "scope": "Qualification and documentation only; no workflow runtime source edits, G4, working migration, Gate 6 repair/run, or publication",
@@ -155,138 +155,299 @@
     "limits": "Private-home trust/configuration discovery only; no real user trust, reload, authenticated session, or actual MCP tool invocation"
   },
   "startup": {
-    "sourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
-    "profile": "Real local Git transport and synthetic 12-client adapters; same workload as retained original harness; output location only redirected",
+    "sourceBase": "4faae104a8242f92fa69a112721c7038d41e357e",
+    "qualifiedInputEvidence": "g3-startup-repair-2026-10-20.json",
+    "profile": "Repeated original synthetic PM4/PM5 hook/file matrix plus same-stand paired control",
     "summary": [
       {
+        "clients": [
+          "codex",
+          "claude-code",
+          "opencode",
+          "kilocode",
+          "cursor",
+          "kimi",
+          "qwen",
+          "command-code",
+          "cline",
+          "zcode",
+          "mimocode",
+          "pi"
+        ],
         "family": "PM4",
-        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM4 45981f131f1141f4aa5ada37d55206a6",
-        "scenarios": [
+        "limits": [
+          "Warm startup hook, not whole 1C command/init/update/branch journey",
+          "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+          "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+          "Synthetic test-only product/project mapping, no business registry population"
+        ],
+        "observations": 23,
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM4 ff37b7c388064f2c8746f8a876961074",
+        "summary": [
           {
-            "scenario": "unchanged",
-            "samples": 20,
-            "medianSeconds": 1.7711986999999998,
-            "p95Seconds": 2.0030467,
-            "maxSeconds": 2.1045887999999997,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202,
             "fetches": 20,
-            "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12202
+            "maxSeconds": 1.0980039,
+            "medianSeconds": 0.6456945,
+            "p95Seconds": 1.0399243999999999,
+            "samples": 20,
+            "scenario": "unchanged"
           },
           {
-            "scenario": "publisher-only",
-            "samples": 1,
-            "medianSeconds": 4.2066948,
-            "p95Seconds": null,
-            "maxSeconds": 4.2066948,
-            "fetches": 1,
             "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12202
+            "clientSurfaceBytes": 12202,
+            "fetches": 1,
+            "maxSeconds": 3.0160511999999997,
+            "medianSeconds": 3.0160511999999997,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "publisher-only"
           },
           {
-            "scenario": "changed",
-            "samples": 1,
-            "medianSeconds": 9.337235399999999,
-            "p95Seconds": null,
-            "maxSeconds": 9.337235399999999,
-            "fetches": 1,
             "clientFilesWritten": 11,
-            "clientSurfaceBytes": 12345
+            "clientSurfaceBytes": 12345,
+            "fetches": 1,
+            "maxSeconds": 7.3932997,
+            "medianSeconds": 7.3932997,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "changed"
           },
           {
-            "scenario": "offline",
-            "samples": 1,
-            "medianSeconds": 4.8294005,
-            "p95Seconds": null,
-            "maxSeconds": 4.8294005,
-            "fetches": 1,
             "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12345
+            "clientSurfaceBytes": 12345,
+            "fetches": 1,
+            "maxSeconds": 3.2731415,
+            "medianSeconds": 3.2731415,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "offline"
           }
         ]
       },
       {
+        "clients": [
+          "codex",
+          "claude-code",
+          "opencode",
+          "kilocode",
+          "cursor",
+          "kimi",
+          "qwen",
+          "command-code",
+          "cline",
+          "zcode",
+          "mimocode",
+          "pi"
+        ],
         "family": "PM5",
-        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81",
-        "scenarios": [
+        "limits": [
+          "Warm startup hook, not whole 1C command/init/update/branch journey",
+          "MCP tools were not activated by actual clients; catalog endpoint readiness remains unverified",
+          "Local file transport and immediate offline connection refusal; real stalled Git deadline measured separately",
+          "Synthetic test-only product/project mapping, no business registry population"
+        ],
+        "observations": 23,
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a",
+        "summary": [
           {
-            "scenario": "unchanged",
-            "samples": 20,
-            "medianSeconds": 1.6441198,
-            "p95Seconds": 2.3213084,
-            "maxSeconds": 2.5656632999999998,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202,
             "fetches": 20,
-            "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12202
+            "maxSeconds": 1.2339931,
+            "medianSeconds": 0.7099633999999999,
+            "p95Seconds": 0.9916229,
+            "samples": 20,
+            "scenario": "unchanged"
           },
           {
-            "scenario": "publisher-only",
-            "samples": 1,
-            "medianSeconds": 3.8336204,
-            "p95Seconds": null,
-            "maxSeconds": 3.8336204,
-            "fetches": 1,
             "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12202
+            "clientSurfaceBytes": 12202,
+            "fetches": 1,
+            "maxSeconds": 3.6004983,
+            "medianSeconds": 3.6004983,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "publisher-only"
           },
           {
-            "scenario": "changed",
-            "samples": 1,
-            "medianSeconds": 8.785428699999999,
-            "p95Seconds": null,
-            "maxSeconds": 8.785428699999999,
-            "fetches": 1,
             "clientFilesWritten": 11,
-            "clientSurfaceBytes": 12345
+            "clientSurfaceBytes": 12345,
+            "fetches": 1,
+            "maxSeconds": 7.6881948,
+            "medianSeconds": 7.6881948,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "changed"
           },
           {
-            "scenario": "offline",
-            "samples": 1,
-            "medianSeconds": 4.3120179,
-            "p95Seconds": null,
-            "maxSeconds": 4.3120179,
-            "fetches": 1,
             "clientFilesWritten": 0,
-            "clientSurfaceBytes": 12345
+            "clientSurfaceBytes": 12345,
+            "fetches": 1,
+            "maxSeconds": 3.2861173999999997,
+            "medianSeconds": 3.2861173999999997,
+            "p95Seconds": null,
+            "samples": 1,
+            "scenario": "offline"
           }
         ]
       }
     ],
     "observations": 46,
     "warmSamplesPerFamily": 20,
+    "paired": [
+      {
+        "afterMedianSeconds": 0.66351445,
+        "afterP95Seconds": 0.984738,
+        "afterProfile": {
+          "readLocalMilliseconds": 75.42110000000001,
+          "reusedCheckedAppliedContext": true,
+          "snapshotMilliseconds": 401.194
+        },
+        "beforeMedianSeconds": 0.71133895,
+        "beforeP95Seconds": 0.8083182999999999,
+        "catalogRevision": "22bcfb899573cc9204fde451197698e3ac729f79",
+        "comparisonLimits": "Same root/cache/catalog SHA, separate warm observations on a shared loaded host. Median improvement and p95 variation are observations, not an exclusive causal attribution of historical 1.6-1.8 s to source.",
+        "family": "PM4",
+        "fetchCounts": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "protectedFilesChanged": [],
+        "samplesPerVersion": 20,
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\Матрица startup PM4 dfc8274d56cf4625bc15469523232783"
+      },
+      {
+        "afterMedianSeconds": 0.64612965,
+        "afterP95Seconds": 1.0574945,
+        "afterProfile": {
+          "readLocalMilliseconds": 72.2406,
+          "reusedCheckedAppliedContext": true,
+          "snapshotMilliseconds": 268.4656
+        },
+        "beforeMedianSeconds": 0.6652016999999999,
+        "beforeP95Seconds": 0.7856434,
+        "catalogRevision": "ba82e6254cb99a687617caa2069b95b125130984",
+        "comparisonLimits": "Same root/cache/catalog SHA, separate warm observations on a shared loaded host. Median improvement and p95 variation are observations, not an exclusive causal attribution of historical 1.6-1.8 s to source.",
+        "family": "PM5",
+        "fetchCounts": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "protectedFilesChanged": [],
+        "samplesPerVersion": 20,
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\Матрица startup PM5 045483be10364b21864d9a37d8106d22"
+      }
+    ],
     "targetMedianSeconds": 1,
     "targetP95Seconds": 2,
-    "targetsMet": false,
+    "targetsMet": true,
     "targetIsRuntimeBarrier": false,
     "sourceCausalRegressionProved": false,
     "wholeInstalledPairedProof": "unverified",
-    "coldNoWriteControl": "failed retained: two ignored receipts changed; client files preserved"
-  },
-  "concurrencyAndDeadline": {
-    "observedUtc": "2026-10-20T16:43:07.411549+00:00",
-    "classification": "harness trace accumulation; source assertions and native workload unchanged",
-    "originalHarnessStatus": "failed retained",
-    "originalTraceSha256": "a3eb6d78415343e722b251fd131982cd38a1707f30578babf94e4c6fec05b4ed",
-    "combinedTraceSha256": "45687de003da546c31d6fd823a6cc0764fda85f00b9ee71b94665a035e1f4030",
-    "previousTraceBytesAreExactPrefix": true,
-    "appendedInvocationBytesSha256": "7c00e07055f371e08a302c8766a73691e6cda32498f2308ff7ee693eb75ef803",
-    "currentInvocationFetches": 1,
-    "combinedHistoricalInvocationFetches": 2,
-    "fetchSid": "20261020T164038.863755Z-H844e454b-P00000dc4",
-    "fetchStartedUtc": "2026-10-20T16:40:38.869825Z",
-    "firstPinnedVerifyUtc": "2026-10-20T16:40:48.598591Z",
-    "fetchToPinnedVerifySeconds": 9.728766,
-    "wholeCliSeconds": 24.887719099999998,
-    "concurrentClientBoundedPassed": true,
-    "diagnosticSeconds": 3.6184950999999996,
-    "originalColdReceiptWritesRemainOpen": [
-      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
-      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json"
+    "coldNoWriteControl": {
+      "observedUtc": "2026-10-20T18:24:57.5158731Z",
+      "attempt": "cold-final",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект",
+      "action": "vibecoding1c-mcp-write-client-config",
+      "exitCode": 0,
+      "wholeCliSeconds": 24.6445552,
+      "metadataDeadlineSeconds": 10,
+      "requestAccepted": true,
+      "fetches": 1,
+      "mainPhaseReached": true,
+      "offlineWarning": true,
+      "protectedFilesChanged": [],
+      "passed": true,
+      "limits": "Original catalog CLI on synthetic Git/config fixture; no 1C init/update/branch journey or actual client tool activation"
+    },
+    "receiptMtimes": [
+      {
+        "cliPreparedUtc": "2026-10-20T18:24:26.8701258Z",
+        "kind": "applied",
+        "lastWriteUtc": "2026-10-20T18:23:33.0740086Z",
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
+        "sha256": "352393d7ab6ec9998da452b0ca8d53ce9a85ad2e525f5a72a5880c0ce1cdf0b4",
+        "writtenBeforeFirstCli": true
+      },
+      {
+        "cliPreparedUtc": "2026-10-20T18:24:26.8701258Z",
+        "kind": "operation",
+        "lastWriteUtc": "2026-10-20T18:23:33.096046Z",
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-repair-20261020\\original-after\\Матрица startup PM5 de09c775108d4143ba8ddec8c4e1cb5a\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json",
+        "sha256": "ada8926c8a0a09ad9020d41946578939e1ec8ec8264aea93436836cac123f564",
+        "writtenBeforeFirstCli": true
+      }
     ],
     "limits": [
-      "Two same-user Windows 11 processes and synthetic root only.",
-      "No claim of native 1C branch/init, terminal multi-user support, or active MCP tools.",
-      "Cold first-CLI receipt changes and startup over-target observations are not closed by warm success."
+      "Synthetic Git/config hook and native CLI proof, not full installed PM4/PM5 init/update/branch/restore or actual MCP client tools/reload",
+      "Both final warm series meet engineering goals on this host; full installed paired context/performance proof remains open",
+      "Full G3/AC-39, memory AC-43/G5, release population AC-36-38/AC-44 and remaining source/client/platform/distribution/seed conditions remain open",
+      "Gate 6 was neither fixed nor rerun; G4, working migration, publication and ai_rules fork edits were not started"
     ]
+  },
+  "concurrencyAndDeadline": {
+    "observedUtc": "2026-10-20T18:26:19.6609651Z",
+    "classification": "harness trace accumulation; source assertions and native workload unchanged",
+    "qualifiedInputEvidence": "g3-startup-repair-2026-10-20.json",
+    "deadlineObservations": [
+      {
+        "attempt": "cold-final",
+        "fetchStartedUtc": "2026-10-20T18:24:36.648641Z",
+        "firstPinnedReadUtc": "2026-10-20T18:24:46.627154Z",
+        "fetchToPinnedReadSeconds": 9.978513,
+        "limits": "Observed interval includes handoff to pinned local read; whole CLI is recorded separately. One stalled fetch per fresh trace."
+      },
+      {
+        "attempt": "concurrent-final",
+        "fetchStartedUtc": "2026-10-20T18:25:08.552702Z",
+        "firstPinnedReadUtc": "2026-10-20T18:25:18.528013Z",
+        "fetchToPinnedReadSeconds": 9.975311,
+        "limits": "Observed interval includes handoff to pinned local read; whole CLI is recorded separately. One stalled fetch per fresh trace."
+      }
+    ],
+    "wholeCliSeconds": 24.6445552,
+    "concurrentClientBoundedPassed": true,
+    "diagnosticSeconds": 2.7738934,
+    "originalColdReceiptWritesRemainOpen": false,
+    "limits": "First unchanged cold CLI repeated after owner fix; synthetic same-user source/file/CLI scope, not actual tools or full installed journeys. Previous failures/traces retained in snapshotBeforeStartupRepair."
   },
   "contextCost": {
     "surfaces": [
@@ -367,12 +528,7 @@
     {
       "id": "STARTUP_COST",
       "owner": "existing registry startup/writer",
-      "state": "both profiles over-target; analyze under existing checkpoint without new runtime barrier"
-    },
-    {
-      "id": "COLD_RECEIPTS",
-      "owner": "existing registry client writer",
-      "state": "two first-CLI ignored receipt writes; cause/admissibility unresolved"
+      "state": "Owner-local inefficiencies fixed; final paired and original warm goals met. Full installed paired cost/context proof remains unverified; historical source-exclusive attribution not proven."
     },
     {
       "id": "INSTALLED_JOURNEYS",
@@ -766,5 +922,196 @@
       "sha256": "95b99b9541b7df81011a3deccd44eb63a48cb0b5f0499ba301ca8723772a7a42",
       "bytes": 418349
     }
-  ]
+  ],
+  "snapshotBeforeStartupRepair": {
+    "sourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
+    "startup": {
+      "sourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
+      "profile": "Real local Git transport and synthetic 12-client adapters; same workload as retained original harness; output location only redirected",
+      "summary": [
+        {
+          "family": "PM4",
+          "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM4 45981f131f1141f4aa5ada37d55206a6",
+          "scenarios": [
+            {
+              "scenario": "unchanged",
+              "samples": 20,
+              "medianSeconds": 1.7711986999999998,
+              "p95Seconds": 2.0030467,
+              "maxSeconds": 2.1045887999999997,
+              "fetches": 20,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12202
+            },
+            {
+              "scenario": "publisher-only",
+              "samples": 1,
+              "medianSeconds": 4.2066948,
+              "p95Seconds": null,
+              "maxSeconds": 4.2066948,
+              "fetches": 1,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12202
+            },
+            {
+              "scenario": "changed",
+              "samples": 1,
+              "medianSeconds": 9.337235399999999,
+              "p95Seconds": null,
+              "maxSeconds": 9.337235399999999,
+              "fetches": 1,
+              "clientFilesWritten": 11,
+              "clientSurfaceBytes": 12345
+            },
+            {
+              "scenario": "offline",
+              "samples": 1,
+              "medianSeconds": 4.8294005,
+              "p95Seconds": null,
+              "maxSeconds": 4.8294005,
+              "fetches": 1,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12345
+            }
+          ]
+        },
+        {
+          "family": "PM5",
+          "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81",
+          "scenarios": [
+            {
+              "scenario": "unchanged",
+              "samples": 20,
+              "medianSeconds": 1.6441198,
+              "p95Seconds": 2.3213084,
+              "maxSeconds": 2.5656632999999998,
+              "fetches": 20,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12202
+            },
+            {
+              "scenario": "publisher-only",
+              "samples": 1,
+              "medianSeconds": 3.8336204,
+              "p95Seconds": null,
+              "maxSeconds": 3.8336204,
+              "fetches": 1,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12202
+            },
+            {
+              "scenario": "changed",
+              "samples": 1,
+              "medianSeconds": 8.785428699999999,
+              "p95Seconds": null,
+              "maxSeconds": 8.785428699999999,
+              "fetches": 1,
+              "clientFilesWritten": 11,
+              "clientSurfaceBytes": 12345
+            },
+            {
+              "scenario": "offline",
+              "samples": 1,
+              "medianSeconds": 4.3120179,
+              "p95Seconds": null,
+              "maxSeconds": 4.3120179,
+              "fetches": 1,
+              "clientFilesWritten": 0,
+              "clientSurfaceBytes": 12345
+            }
+          ]
+        }
+      ],
+      "observations": 46,
+      "warmSamplesPerFamily": 20,
+      "targetMedianSeconds": 1,
+      "targetP95Seconds": 2,
+      "targetsMet": false,
+      "targetIsRuntimeBarrier": false,
+      "sourceCausalRegressionProved": false,
+      "wholeInstalledPairedProof": "unverified",
+      "coldNoWriteControl": "failed retained: two ignored receipts changed; client files preserved"
+    },
+    "concurrencyAndDeadline": {
+      "observedUtc": "2026-10-20T19:43:07.411549+03:00",
+      "classification": "harness trace accumulation; source assertions and native workload unchanged",
+      "originalHarnessStatus": "failed retained",
+      "originalTraceSha256": "a3eb6d78415343e722b251fd131982cd38a1707f30578babf94e4c6fec05b4ed",
+      "combinedTraceSha256": "45687de003da546c31d6fd823a6cc0764fda85f00b9ee71b94665a035e1f4030",
+      "previousTraceBytesAreExactPrefix": true,
+      "appendedInvocationBytesSha256": "7c00e07055f371e08a302c8766a73691e6cda32498f2308ff7ee693eb75ef803",
+      "currentInvocationFetches": 1,
+      "combinedHistoricalInvocationFetches": 2,
+      "fetchSid": "20261020T164038.863755Z-H844e454b-P00000dc4",
+      "fetchStartedUtc": "2026-10-20T16:40:38.869825Z",
+      "firstPinnedVerifyUtc": "2026-10-20T16:40:48.598591Z",
+      "fetchToPinnedVerifySeconds": 9.728766,
+      "wholeCliSeconds": 24.887719099999998,
+      "concurrentClientBoundedPassed": true,
+      "diagnosticSeconds": 3.6184950999999996,
+      "originalColdReceiptWritesRemainOpen": [
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json"
+      ],
+      "limits": [
+        "Two same-user Windows 11 processes and synthetic root only.",
+        "No claim of native 1C branch/init, terminal multi-user support, or active MCP tools.",
+        "Cold first-CLI receipt changes and startup over-target observations are not closed by warm success."
+      ]
+    },
+    "limits": "Retained historical failed/over-target snapshot; current bounded results are startup and startupRepair."
+  },
+  "resolvedConditions": [
+    {
+      "id": "COLD_RECEIPTS",
+      "owner": "existing registry client writer",
+      "historicalState": "two first-CLI ignored receipt writes; cause/admissibility unresolved",
+      "state": "resolved in source and repeated first-CLI synthetic subset; bytes/mtime unchanged",
+      "evidence": "g3-startup-repair-2026-10-20.json"
+    }
+  ],
+  "startupRepair": {
+    "evidence": "g3-startup-repair-2026-10-20.json",
+    "sha256": "1d54a4ad46797b606d2d97d984307be45f93d9edfce21fe91ceb04752c83a6f6",
+    "status": "passed-source-and-synthetic-native-subset-full-G3-open",
+    "qualifiedInputs": [
+      {
+        "blob": "fdd289d081ce45b0601a84bb034e4146eb23a94b",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        "sha256": "2f2c4b9eb9fa694460b028a78d17062e93134f9c64f7e6d3710c39fd71ef9528"
+      },
+      {
+        "blob": "b1da2f6c6f750b781db42c3e6129f2b204178e46",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "14c269a9ad47ebb7b9ceff2b854c5c1009ac783adb51ddec55d5341e8628e25d"
+      },
+      {
+        "blob": "098ce1b7e178e078ffe7430789565b0a93ef8102",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "66841d17ffbb70c5fddbc905522d2970bbb1f6801e9c61259242dd1ff3fa29b3"
+      },
+      {
+        "blob": "1cade55cff0f86bf954188c96b0b56c42055648b",
+        "path": "tests/pester/ProductProjectRegistry.Tests.ps1",
+        "sha256": "28428d6c57d47ec0b78fada28db20251bdaab3687edbce23847715b0cd8b4dc3"
+      },
+      {
+        "blob": "0aa303757957a95c97a852b7793776f14b90a5bc",
+        "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+        "sha256": "b6f94f280f9c70d340fa4f7e7e8c41b09e15cea154f4a96eb4d4acd62e55a329"
+      },
+      {
+        "blob": "1c8cfef02bf78df61e5ae3667934d0c7e42283a7",
+        "path": "tests/pester/ProductProjectContext.Tests.ps1",
+        "sha256": "e8e1750144f612013f33fc403b3b33074ee66800cbdfda411af86d9620d21c2f"
+      }
+    ],
+    "fullG3": "open",
+    "memoryAC43G5": "open",
+    "releaseAC44": "open",
+    "gate6": "no fix or run",
+    "G4": "not started",
+    "workingMigration": "not started",
+    "publication": "not started"
+  }
 }
