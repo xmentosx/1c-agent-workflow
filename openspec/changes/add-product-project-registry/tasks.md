@@ -106,3 +106,10 @@ PS5.1/Pester batch: 150/150, zero failures/skips, `build/test-results/g3/apply-o
 Финальный focused batch local-final-tests.log: 110 cases, 109 passed, один новый fixture вызвал Get-ItlManagedMcpOwnerKeys с переставленными позиционными аргументами. Исправлен вызов на именованные параметры, тот же ownership scenario прошёл 1/1 (owner-scope-case.log); утверждения/ready-provider trigger сохранены. Ранее упавшие три исходных MCP scenarios прошли 3/3, exact-asset bootstrap scenario 1/1. Единый Targeted/registration остаётся у source-delivery, не объявляется этим текстом выполненным. Финальные 20 warm no-op: median 0.428 s / p95 0.503 s, protected files unchanged, local-cache fetch/native probe/LLM/memory calls 0. Исходное превышение и owner-local оптимизация сохранены в test-plan.
 
 Остаются квалифицированные live source/negative-scope builds, native client activation, полный 1С init/update/branch/concurrent-session путь, Win10/Server/terminal матрица и обязательные данные первого выпуска. G4, наполнение, реальная installed migration, публикация/развёртывание не начаты.
+
+## First legacy caller, 2026-10-20
+
+- [x] **G3-LEGACY-CALLER-OFFER:** новый post-copy показывает optional offer при первом foreground update неизменённого caller fa0e3c; native whole exit 0, фактический later, clean master/branch сразу после update. Runtime c264cbe5, 35/0 focused cases. [Результаты](test-plan.md#первое-обновление-legacy-caller-2026-10-20); bounded PM5 proof не закрывает всю 4.8/5.2/AC-39.
+- [ ] **G3-CATALOG-RESTORE-FORMAT:** поздний select → restore на descriptor непосредственно после первого update восстанавливает значения, но переставляет JSON keys и оставляет `.agent-1c/project.json` dirty. У existing settings/apply/recovery owner разобрать и повторить exact baseline без предварительной canonicalization/commit/cleanup; критерий — прежние bytes/clean root при сохранении conflict guards и private later. Diff/копия сохранены; restore в этом изменении не исправлялся.
+
+Gate 6, остальные source/client/platform controls, full G3 и обязательное наполнение реестра до выпуска остаются открытыми. G4/рабочая миграция/публикация не начинались.

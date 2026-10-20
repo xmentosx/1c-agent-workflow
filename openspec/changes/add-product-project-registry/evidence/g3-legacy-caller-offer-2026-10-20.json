@@ -1,0 +1,406 @@
+{
+  "date": "2026-10-20",
+  "status": "G3-LEGACY-CALLER-OFFER passed on original first PM5 upgrade; full G3 open",
+  "runtimeCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff",
+  "projectRoot": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+  "branchRoot": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+  "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+  "catalogCommit": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+  "baseline": {
+    "roots": [
+      {
+        "head": "15218bf118079b8e593f2a99caca8828ece1c2a1",
+        "bindingPresent": false,
+        "selectionExists": false,
+        "callerLifecycleSha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+        "callerContainsCatalogOffer": false,
+        "workflowCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+        "trees": {
+          "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+          "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+          "src/cfe": null
+        },
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project"
+      },
+      {
+        "head": "7ea9dc2342439df06907dec1b1a42bae9b048aa7",
+        "bindingPresent": false,
+        "selectionExists": false,
+        "callerLifecycleSha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+        "callerContainsCatalogOffer": false,
+        "workflowCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+        "trees": {
+          "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b",
+          "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+          "src/cfe": null
+        },
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch"
+      }
+    ],
+    "seedDescriptorSha256": "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07",
+    "seedHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+    "sourceCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff",
+    "catalogCommit": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4"
+  },
+  "originalUpdate": {
+    "offerCount": 1,
+    "binding": null,
+    "durationMs": 294704,
+    "response": "later",
+    "terminalStatus": "succeeded",
+    "cleanRoots": true,
+    "roots": [
+      {
+        "untracked": [],
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "trees": {
+          "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+          "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+          "src/cfe": null
+        },
+        "workflowCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff"
+      },
+      {
+        "untracked": [],
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "trees": {
+          "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b",
+          "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+          "src/cfe": null
+        },
+        "workflowCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff"
+      }
+    ],
+    "exitCode": 0,
+    "privateSelection": {
+      "productProject": {
+        "associationOffer": "later"
+      }
+    },
+    "legacyEnrollment": false
+  },
+  "sameVersionRetry": {
+    "qualification": "resume-branches only, not a second post-copy acceptance",
+    "exitCode": 0,
+    "durationMs": 4141
+  },
+  "lateSelect": {
+    "privateSelection": {
+      "associationOffer": "later",
+      "clientOverrides": {},
+      "catalogRevision": "0e040ccae17caf9b2521d33a3b18b66daa6ba9c4",
+      "memoryOptIn": false
+    },
+    "activeClientContext": "unverified",
+    "binding": {
+      "productId": "pm5-corp",
+      "projectId": "pm5-core-development",
+      "requiredCapability": "product-project-registry-v1",
+      "schemaVersion": 1
+    }
+  },
+  "lateRestore": {
+    "privateSelection": {
+      "associationOffer": "later"
+    },
+    "formatFinding": {
+      "id": "G3-CATALOG-RESTORE-FORMAT",
+      "firstUpdateRootsClean": true,
+      "valuesEqual": true,
+      "observation": "Late select/restore reordered JSON keys compared with the first-upgrade descriptor. No productProject binding remains; values are equal; master is dirty. Original dirty evidence retained without cleanup or a restore fix.",
+      "projectRoot": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+      "byteRestore": false,
+      "semanticHashAfter": "c44aafc0c25a16d36cca1addd6126cae28e86b262285e3ceacc7001fd8713f3b",
+      "path": ".agent-1c/project.json",
+      "status": "open",
+      "semanticHashBefore": "c44aafc0c25a16d36cca1addd6126cae28e86b262285e3ceacc7001fd8713f3b"
+    },
+    "roots": [
+      {
+        "untracked": [],
+        "changed": [
+          ".agent-1c/project.json"
+        ],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "trees": {
+          "tests/features": "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+          "src/cf": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+          "src/cfe": null
+        },
+        "workflowCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff"
+      },
+      {
+        "untracked": [],
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "trees": {
+          "tests/features": "f5b55f819a8b30180b3efb203fe0738b075a060b",
+          "src/cf": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+          "src/cfe": null
+        },
+        "workflowCommit": "c264cbe52ed7ea136f99727f466a2c04f1aeb8ff"
+      }
+    ],
+    "binding": null
+  },
+  "businessTreesUnchanged": true,
+  "standValidation": {
+    "gate6NotRerun": true,
+    "frozenSeedValid": true,
+    "seedDescriptorSha256": "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07",
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "originalGate6EvidenceUnchanged": [
+      {
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl"
+      },
+      {
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml"
+      },
+      {
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml"
+      },
+      {
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json"
+      },
+      {
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result"
+      },
+      {
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log"
+      },
+      {
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log"
+      }
+    ],
+    "seedHead": "9ee1073525eae722222b9696bfa623e757f1bd09",
+    "observedUtc": "2026-10-20T12:50:46.4724224Z",
+    "seedDescriptorPath": "D:/Git/itl-workflow-e2e-pm5/.agent-1c/release-e2e.json",
+    "ownedProcessesRemaining": 0
+  },
+  "focused": {
+    "seconds": 58.3804198,
+    "skipped": 0,
+    "failed": 0,
+    "passed": 35
+  },
+  "testSelection": {
+    "budgetSeconds": 90,
+    "contract": "product-project-caller-input",
+    "reuse": "Only delivery ledger with matching exact inputs can claim reuse",
+    "independentWorkers": true,
+    "newAlwaysOnInstructionsOrSchemas": 0
+  },
+  "constraints": {
+    "memoryOptIn": false,
+    "workingProjectMigration": false,
+    "gate6Fix": false,
+    "g4": false,
+    "publication": false,
+    "forkChanged": false,
+    "gate6Rerun": false
+  },
+  "open": [
+    "G3-CATALOG-RESTORE-FORMAT",
+    "Gate 6 product finding",
+    "remaining source/client/platform controls",
+    "full G3/AC-39 and memory AC-43/G5",
+    "release population AC-36-38 / memory AC-44"
+  ],
+  "historicalEvidence": "g3-catalog-enrollment-fix-2026-10-20.json",
+  "probeNotes": [
+    "Initial fixture lost its operation ID on dot-source and flattened scalar answer arrays; harness corrected without weakening assertions.",
+    "Counted ReadConsoleW and preserved-pipe warning output were repaired before c264cbe5 and final 35-case proof.",
+    "The initial final-seed checker failed its UTF-8 stdin transport (BOM-prefixed cat-file object ID). Explicit UTF-8 without BOM in operator common was required; original failed log retained, source unchanged."
+  ],
+  "advertisedButUnmaterializedPaths": [
+    "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\runs\\g3-legacy-caller-first-legacy\\console.log",
+    "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\runs\\g3-legacy-caller-after-later\\console.log"
+  ],
+  "consoleEvidence": "Operator transcript and retained terminal status are hashed; advertised console.log paths did not materialize and are not asserted as evidence.",
+  "rawEvidence": [
+    {
+      "sha256": "c720493698245cf8c55beff70acd4ebc96b1a3c5aa1c60adee192041fe238195",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\before-update.json"
+    },
+    {
+      "sha256": "94eea7744dfef983056beb7bab25fb068b9c5f7a0f32ac9d2db78c5329348b9b",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-first.json"
+    },
+    {
+      "sha256": "c212ade2cdb8485e1d41ade0776a9effe365853293c5747073aad69f98bc6cd6",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-late-select.json"
+    },
+    {
+      "sha256": "dc9567fdde1c76000e3842b183cad0f3825f377a801d75382af82c24b38d6002",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-final.json"
+    },
+    {
+      "sha256": "a82ca0f2a41cabb70b0ebb27d9c1162f4a7174c985755e8082f84d3789663a36",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\first-legacy-foreground-update-result.json"
+    },
+    {
+      "sha256": "ee6b0b135348ccef8da70a1fc968254ce1921618dcbfc6a1eaf9002797ef266e",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\first-legacy-foreground-update.transcript.txt"
+    },
+    {
+      "sha256": "14bf8678d1967b30aa3b97d4f997d4702b2c8f08fe934232c174e34e35090fef",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-later-foreground-update-result.json"
+    },
+    {
+      "sha256": "2cd243d9e844ffded908d43c6651b205af0babd358e8d2538bcfe901dcab3290",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-later-foreground-update.transcript.txt"
+    },
+    {
+      "sha256": "411fe0d905bc64b2188015b60d7cdae1de5272067afca4198a03b43baa5d00e2",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\first-offer-observation.json"
+    },
+    {
+      "sha256": "9f17148e16ce8d49d0867c6a122f81b896c306ac314c8b3b9780f41cfb29b25d",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\caller-transport-analysis.json"
+    },
+    {
+      "sha256": "6fc4932357f431770f76d40e0598ccd3ad5230bf9fc482a2f96b4133241a6bcf",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-select.transcript.txt"
+    },
+    {
+      "sha256": "071508dd528a25dfba2c9fd54df4fe141005d3bf291c142c6babfa57500b8957",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore.transcript.txt"
+    },
+    {
+      "sha256": "7fb629d3e4ea047a672666ed50d655efa49c15beab7cf2677cc55a4503e7eb1f",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format-observation.json"
+    },
+    {
+      "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff"
+    },
+    {
+      "sha256": "b66b2d82e64949fdefdb714070832d6511300671e861c43fb91a819228476fa5",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\focused.json"
+    },
+    {
+      "sha256": "1d80692b015829e752b21ebd9223b10925ab9a71e8851684030abdeb47ecd4bf",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\focused.xml"
+    },
+    {
+      "sha256": "1f859e2eb273d863b13638d186364af55f4a772f737ae0b4b59de60248558fa6",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\focused-green.log"
+    },
+    {
+      "sha256": "9cc0a52afc265ec6fb8ed474bc2513339b759494c289e769867ac1b3bdeb1394",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\focused-fixture-failure.log"
+    },
+    {
+      "sha256": "27f8d3c1c82a32fc8bec3881ebfd8d9be92e3b5009a6184089b5d6cf4293b019",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\input-fixture-failure.log"
+    },
+    {
+      "sha256": "e3d4cb4a297fcfd0d7c5de60ac8871b9d4dcfac192937b774b193f8861df7686",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\input-2.log"
+    },
+    {
+      "sha256": "94a28feef6e5edfeb22a5a64fe2694a64ef6777f52cdffa935b90d997f336e9a",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\input-3.log"
+    },
+    {
+      "sha256": "e200020c0b45938878987cab51efc2f330a6e1451b6a59792d798ca9160666aa",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\prepare-result.json"
+    },
+    {
+      "sha256": "ce80cd4a84a2e2d9f4ef65f3ddaf208df344dfb419682c731e4d09b14baece86",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\pm5-copy-receipt.json"
+    },
+    {
+      "sha256": "3595e103d41716cae54152909654345d1a78fc1fd3a55dd0fd1ef5a72714090c",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\final-stand-validation.json"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\final-stand-validation-utf8.log"
+    },
+    {
+      "sha256": "026c7f5eb9d454dcb9d7d8442d26bbc4928d8ccf35f86dccb6ebd8dce877a8e5",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\final-stand-validation-input-encoding-failure.log"
+    },
+    {
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\openspec-registry.log"
+    },
+    {
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\openspec-memory.log"
+    },
+    {
+      "sha256": "961a5e8ddad3f20905c0dcd927cda3f53bf9bc5c3f50038d7008dcac366edcdb",
+      "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\runs\\g3-legacy-caller-first-legacy\\status.json"
+    },
+    {
+      "sha256": "2b26cbebe4b63b6e404a8eb1d18cf25f677e685ccfac4cc881623b5de729a115",
+      "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\runs\\g3-legacy-caller-after-later\\status.json"
+    }
+  ],
+  "openSpecValidation": {
+    "memory": "passed strict",
+    "registry": "passed strict",
+    "nodeSha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
+    "version": "1.13.1",
+    "entrySha256": "ca136f0e9fd4951dcf93d8ed729ebc97b2d97d3980cd9dc9d42fc80e32e797c6"
+  }
+}
