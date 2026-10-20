@@ -52,9 +52,13 @@ filter findings, change `direct`, or alter deadlines/retries/cancellation.
 After the existing collector completes and the existing sanitizer runs:
 
 - `answer` contains the final review only when sanitized `final_text` is nonempty
-  and is an exact suffix of the legacy assembled answer.
-- `review_evidence.context` retains the entire preceding text, including ITS
-  search/document material and intermediate assistant text.
+  and is an exact suffix of the legacy assembled answer. Moving a prefix to
+  evidence also requires sanitized `full_text` to equal that final text:
+  no intermediate assistant findings may be hidden behind a final acknowledgement.
+- `review_evidence.context` retains the preceding ITS search/document material
+  only when this structural separation is proven. Missing or different
+  `full_text` keeps the complete assembled answer in `answer`, including any
+  intermediate review. There is no phrase, length, JSON or source-binding filter.
 - The original rendered material and attribution stay in `context`. Native
   `PromptOutcome.tool_results` remains unchanged for existing internal consumers;
   its document bodies are not duplicated in the public envelope. The exchange's
@@ -66,10 +70,15 @@ After the existing collector completes and the existing sanitizer runs:
   reconstruction. The existing sanitizer's prior losses are not reversed.
 
 `status=separated` means a prefix was moved to evidence; `unchanged` means the
-final review already filled the answer. If the final is missing, empty, or not an
-exact suffix, `status=unseparated` keeps the complete legacy answer and empty
+final review already filled the answer (no text is moved). If the final is
+missing, empty, not an exact suffix, or the prefix cannot be separated by the
+contract above, `status=unseparated` keeps the complete legacy answer and empty
 context. There is no new runtime rejection, retry, or readiness gate. These are
 presentation statuses, **never** factual or semantic acceptance.
+An acknowledgement such as "fixed in the code above" cannot replace a review
+present only in earlier assistant text. The conservative fallback may make the
+main answer longer; it adds no model request or retry and does not duplicate
+the full text in `context`.
 
 Readers must retain the evidence with the answer. A concise answer alone is not
 the whole evidence record. Other tools keep their existing assembly behavior.
