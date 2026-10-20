@@ -8,6 +8,15 @@
 }
 
 Describe 'HostNativeTransport component regressions' {
+    It 'checks native Code source identity without a model, Docker or live index' {
+        $previousErrorActionPreference=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            $output=& $SourceTestPython -X utf8 -B (Join-Path $RepoRoot 'vibecoding1c-mcp-host/code-source-identity/test_source_identity.py') 2>&1
+            $exitCode=$LASTEXITCODE
+        } finally { $ErrorActionPreference=$previousErrorActionPreference }
+        $exitCode|Should -Be 0 -Because ($output -join [Environment]::NewLine)
+    }
     It "round trips Python Unicode evidence through the host child-process helper" -Tag BookStackQwen {
         $root = Join-Path $TestDrive "документы с пробелом"
         New-Item -ItemType Directory -Path $root -Force | Out-Null

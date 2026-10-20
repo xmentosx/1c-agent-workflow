@@ -21,6 +21,24 @@
         @($errors).Count | Should -Be 0
     }
 
+    It 'publishes declared source metadata without claiming an observed generation' {
+        $root=Join-Path $TestDrive 'host метаданные с пробелом'
+        New-Item -ItemType Directory -Path $root -Force|Out-Null
+        $configPath=Join-Path $root 'host.json'
+        @{schemaVersion=1;stateRoot=$root}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state=@{servers=@(@{id='code';scope='project';configId='pm5corp';sourceFingerprint='current-mount';configurationVersion='5.0.2';indexedAt='2026-10-21T00:00:00Z'},@{id='graph';scope='project';configId='pm5corp'})}
+            $published=@(ConvertTo-RegistryServers $state fixture-host '2026-10-21T01:00:00Z')
+            $published[0].sourceIdentity.sourceKey|Should -Be 'fixture-host/pm5corp'
+            $published[0].sourceIdentity.observedGeneration|Should -BeNullOrEmpty
+            $published[0].sourceIdentity.observedAt|Should -BeNullOrEmpty
+            $published[0].sourceIdentity.declaredSourceFingerprint|Should -Be current-mount
+            $published[1].sourceIdentity.nativeProjectId|Should -Be pm5corp
+            Get-HostSourceIdentityKey 'host with space' pm5corp|Should -BeNullOrEmpty
+        }
+    }
+
 
 
     It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(

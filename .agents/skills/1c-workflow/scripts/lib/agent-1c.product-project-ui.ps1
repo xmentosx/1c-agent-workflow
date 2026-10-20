@@ -1,4 +1,4 @@
-# Explicit setup/authoring UI. Ordinary startup never loads this leaf.
+﻿# Explicit setup/authoring UI. Ordinary startup never loads this leaf.
 function Get-ItlProductProjectChoices {
     param([object]$Snapshot,[ValidateSet('projects','products')][string]$Collection='projects',[int]$Limit=10)
     $field=Get-ItlCatalogRecordKey $Collection
@@ -107,8 +107,15 @@ function Invoke-ItlProductProjectCommand {
         $applied=Read-ItlProductProjectRecord applied
         if(-not $applied){return [pscustomobject]@{status='unbound';continuation='Use catalog select/preview explicitly.'}}
         $context=$applied.context
+        $sourceObservations=$null
+        if($RecordPath){
+            . (Join-Path $PSScriptRoot 'agent-1c.product-source-evidence.ps1')
+            $sourceObservations=Read-ItlProductSourceObservations $context $RecordPath
+        }
         $integrationDefaults=@{mantisSearch=(Get-ItlProductProjectIntegrationIntent $context mantis-search);mantisCreateRoutes=(Get-ItlCatalogField (Get-ItlCatalogField (Get-ItlCatalogField $context.links 'mantis') 'value') 'createRoutes' @{});sppr=(Get-ItlProductProjectIntegrationIntent $context sppr-exact)}
-        return [pscustomobject]@{project=$context.projectName;projectId=$context.projectId;product=$context.productName;productId=$context.productId;catalogRevision=$applied.catalogRevision;publication=(Get-ItlCatalogField $context 'catalogPublication');roles=@($context.roles.Keys|ForEach-Object {@{role=$_;mode=$context.roles[$_].mode;resolution=$context.roles[$_].resolution;sourceId=(Get-ItlCatalogField $context.roles[$_].source 'sourceId');nativeReadiness='unverified'}});links=$context.links;integrationDefaults=$integrationDefaults;nativeRoleOverrides=(Get-ItlCatalogField $context 'nativeRoleOverrides' @{});clientOverrideCount=@(Get-ItlCatalogKeys (Get-ItlCatalogField $context 'nativeClientOverrides' @{})).Count;activeClientContext='unverified'}
+        $report=[pscustomobject]@{project=$context.projectName;projectId=$context.projectId;product=$context.productName;productId=$context.productId;catalogRevision=$applied.catalogRevision;publication=(Get-ItlCatalogField $context 'catalogPublication');roles=@($context.roles.Keys|ForEach-Object {@{role=$_;mode=$context.roles[$_].mode;resolution=$context.roles[$_].resolution;sourceId=(Get-ItlCatalogField $context.roles[$_].source 'sourceId');nativeReadiness='unverified'}});links=$context.links;integrationDefaults=$integrationDefaults;nativeRoleOverrides=(Get-ItlCatalogField $context 'nativeRoleOverrides' @{});clientOverrideCount=@(Get-ItlCatalogKeys (Get-ItlCatalogField $context 'nativeClientOverrides' @{})).Count;activeClientContext='unverified'}
+        if($RecordPath){$report|Add-Member -NotePropertyName sourceObservations -NotePropertyValue $sourceObservations}
+        return $report
     }
     Invoke-Vibecoding1cMcpRegistryOperation {
         if($Mode -eq 'sync'){Initialize-ItlProductProjectContext -Decision $Decision -AllowPrompt:$AllowPrompt;return}

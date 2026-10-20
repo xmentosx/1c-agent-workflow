@@ -329,7 +329,7 @@ AC-43/G5/AC-44 и full registry AC-39/AC-36–38 открыты. Source readines
 
 ## План приёмки зависимости Code/Graph source identity
 
-[Registry checkpoint](../add-product-project-registry/design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) и [AC-08-a–h](../add-product-project-registry/test-plan.md#план-проверки-привязки-codegraph-и-версии-источника) — единый план источников и их будущий proof. Здесь уточняются existing memory AC-15/17/20/35/43, без дублирования live qualification и без нового prerequisite начала G4. Статус всех следующих runtime проверок — **не выполнены**; подготовлен только checkpoint, код/серверы/клиенты не менялись.
+[Registry checkpoint](../add-product-project-registry/design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) и [AC-08-a–h](../add-product-project-registry/test-plan.md#план-проверки-привязки-codegraph-и-версии-источника) — единый план источников. Здесь уточняются existing memory AC-15/17/20/35/43, без дублирования live qualification и без нового prerequisite начала G4. Статус всех следующих **memory runtime** проверок — не выполнены; ограниченный registry source apply не является memory acceptance, серверы не обновлялись.
 
 | Existing AC | Проверка в отдельно разрешённом consumer/G5 | Ожидаемый результат |
 |---|---|---|
@@ -338,4 +338,4 @@ AC-43/G5/AC-44 и full registry AC-39/AC-36–38 открыты. Source readines
 | AC-20/43 | Независимая заметка при недоступном Code/Graph и dependent product-version claim из непроверенного source | Независимая операция проходит прежние memory policy/grants; dependent claim остаётся кандидатом с origin/ограничением и не повышается в общий home как подтверждённый факт. Scope/права и correction policy не ослаблены |
 | AC-35/43 | Instrumented remember/recall/startup с отсутствующим Code/Graph | Дополнительные Code/Graph probes, fetch, source cache/manifest/verifier = 0. Recall/query/card budgets, six scopes и fork-owned triggers неизменны; нет нового always-on текста/tool surface |
 
-Регистрация документации не закрывает эти AC, full registry AC-08/39, memory AC-43/G5/44 или обязательное наполнение registry AC-36–38. Native Q1–Q7/G1 и D9/G2 не переоткрываются. Cognee/OpenViking и controlled ai_rules_1c не дорабатываются этим уточнением. Gate 6, G4, рабочая миграция, deploy/reindex и публикация не запускались.
+Регистрация не закрывает эти consumer AC, full registry AC-08/39, memory AC-43/G5/44 или обязательное наполнение registry AC-36–38. Ограниченный source apply registry checkpoint и native Graph scope/reload подтверждены [единым результатом 2026-10-21](../add-product-project-registry/evidence/g3-source-binding-implementation-2026-10-21.md); это не memory adapter/G5 proof. Graph indexed revision и Code image qualification остаются открытыми. Native Q1–Q7/G1 и D9/G2 не переоткрываются. Cognee/OpenViking и controlled ai_rules_1c не дорабатываются. Gate 6, G4, рабочая миграция, deploy/reindex и публикация не запускались.

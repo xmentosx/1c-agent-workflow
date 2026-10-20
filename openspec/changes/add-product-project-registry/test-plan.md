@@ -488,7 +488,7 @@ AC-08 не закрыт: Code namespace/build identity недостаточны,
 
 ## План проверки привязки Code/Graph и версии источника
 
-Это **план, не новые результаты**. [Архитектурный checkpoint](design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) подготовлен, implementation/deployment/replay не выполнялись. Исторический [source/client proof](evidence/g3-source-client-qualification-2026-10-20.md) сохраняется; его positive/negative/null gaps не закрываются документом. Ни один новый AC-08 subcase пока не принят; полный AC-08/39 открыт.
+Пользователь одобрил [архитектурный checkpoint](design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) и source apply. [Результат 2026-10-21](evidence/g3-source-binding-implementation-2026-10-21.md) фиксирует owner regressions, native PM4/PM5 Graph scope/namespace и Codex reload/restore, startup samples и remaining blockers. Исторический [source/client proof](evidence/g3-source-client-qualification-2026-10-20.md) сохраняется. Exact indexed-version/image/full installed/frontend приёмка не выполнена; полный AC-08/39 открыт. Таблица ниже сохраняет исходный полный contract, а не объявляет partial tests полным pass.
 
 | Детализация existing AC-08 | Проверка после отдельного разрешения | Достаточное доказательство / сохранённое продолжение |
 |---|---|---|

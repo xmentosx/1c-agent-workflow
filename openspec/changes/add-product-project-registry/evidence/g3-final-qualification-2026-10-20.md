@@ -46,6 +46,10 @@
 - Первый concurrent validator потерял exit codes из-за позднего получения process handle. Повтор удержал handles до wait, control `exit 7` дал 7; оба native clients exit 0. Второй validator посчитал 2 fetch в append-трассе двух разных запусков: предыдущий immutable файл является её точным byte prefix, новая часть содержит ровно 1 fetch. Отдельная reconciliation сохраняет оба failed harness records, все события, workload и assertion «один fetch на вызов»; runtime не переигрывался ради очистки трассы.
 - Новая integrity проверка подтвердила 13 protected files/4 старых roots, 68 raw refs прошлого capsule proof, 2 восстановленных PM5 roots и 7 Gate 6 artifacts. Исходный raw seed всё ещё отсутствует; новый restored DB SHA в этой консолидации не перемерялся. Native data restore proof остаётся историческим, старый failed descriptor/diff не очищен.
 
+## Дополнение: одобренный source checkpoint, 2026-10-21
+
+[Ограниченный source apply и результаты](g3-source-binding-implementation-2026-10-21.md) обновляют текущую область AC-08/20/26: pure comparator/optional metadata реализованы, Graph explicit scope/namespace через native PM4/PM5 Codex matched, wrong endpoint после reload обнаружен, byte restore/reload вернул исходный source. Code legacy binding/version и Graph indexed revision остаются unverified; source-кандидат Code не image/live qualified. Историческое отсутствие namespace comparator в строке AC-08 выше относится к срезу 2026-10-20. Полный AC-08/39 открыт; прежние raw результаты/неуспехи сохранены. Gate 6, G4, рабочая миграция, server replacement/reindex и публикация не выполнялись.
+
 ## Остаток и порядок продолжения
 
 1. У существующих source/client owners закрыть live binding admission/точную версию и native frontend/остальные 11 adapters. Codex core/API tools/reload уже подтверждены в новой private PM4/PM5 области; это не переносится на весь client matrix или business-source readiness.

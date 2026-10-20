@@ -1,0 +1,43 @@
+# G3: source binding и indexed version, 2026-10-21
+
+**Checkpoint одобрен; ограниченный source apply выполнен. Полный AC-08/G3/AC-39 открыт.** Основание — `29ccf7fe6b77064d5fda5b912f15d1c999d1c6d3`, isolated worktree `product-project-registry-g3`. [JSON](g3-source-binding-implementation-2026-10-21.json) содержит SHA фактических source inputs, ignored raw refs и раздельные результаты. Commit/Targeted/queue authority проверяются в существующем source-delivery Status, не в отдельном memory ledger. Исторические [source/client результаты](g3-source-client-qualification-2026-10-20.md) и failed artifacts сохранены.
+
+## Что реализовано
+
+- Один effective context даёт optional expected sourceKey/nativeProjectId/namespace/versionPin. Schema не требует pin или профиля на каждый релиз; business IDs прежние.
+- Existing context command по явному RecordPath сравнивает raw metadata/read без сети и записи settings. Binding, indexed version, backend build и native activation разделены; ошибочный endpoint/namespace/pin, failed/empty read, legacy metadata, generation race и live enrichment не дают false exact proof. Настоящий app-server request/server/thread отличён от HTTP записи с native меткой. Без RecordPath обычный output прежний.
+- Host publisher отделяет declared working-source metadata от active index. Необоснованные observedGeneration/observedAt больше не выдаются за наблюдение индекса. Новое окружение Code доступно только при явно opt-in descriptor отдельно квалифицированного build; старые серверы не меняются.
+- Code source-кандидат минимально дополняет прежний generation manifest и stats. Default functional replies прежние; existing `include_provenance=true` добавляет thin read stamp до прежнего budget. Native publication/reader pin/fingerprint сохраняются. XML Version принимается лишь из тех же inventory bytes. Exact vendor SHA guards не допускают случайный rebase на другой source. Это **кандидат**, не квалифицированный/deployed image.
+- Поддерживаемый Graph v2 status/fulltext API уже доказывает explicit native scope, в том числе при top-level null; ревизия inherited индекса остаётся unverified. Пользователь подтвердил отсутствие исходников. Compiled ingestion и публичный hook до успешной активации не заменяют manifest; sidecar/state service и guessed revision не добавлены.
+
+## Проверки и стоимость
+
+| Проверка | Результат и предел |
+|---|---|
+| Owner Pester | Последний grouped run: **54/0/0**, все 3 файла executed, span **47.961 s** (HostNative 41.867 s, Setup 38.483 s, Context 8.315 s). После уточнения реального `stats.data` envelope повторён только Context: **18/0/0**, executed, span **8.803 s**; после PS5.1 BOM repair — ещё **18/0/0** на корректном Unicode fixture. Registry/host publisher предыдущие focused proofs сохранены; обязательный exact candidate Targeted принадлежит RegisterChange |
+| Native Code source suite | **7/7**, включая exact vendor source patch/AST fixture. По умолчанию без source fixture один case skipped, это не native image proof. Неудачный ingestion/unpublished/unknown generation не дают stamp; изменение нынешнего XML не меняет старую indexed revision; same Version/different bytes различимы |
+| Actual Codex core/API | Private PM4/PM5 roots с пробелами и кириллицей; по 4 безопасных tools/семейство, 9.566/8.203 s на пару. Graph binding/namespace matched, indexed version unverified; Code старого build binding/version unverified; activation matched у обоих. Wrong declared namespace — mismatch. Context/config hashes сохранены |
+| Native reload исходный путь | initial PM5 → файл указывает PM4, прежнее соединение до reload → штатный reload и mismatch → byte restore/reload и PM5 matched. 4 фазы по 4 tools, 6.947–8.653 s/пара; все retained raw exchanges повторно обработаны финальным consumer. Это core/API, остальные frontend/11 adapters не приняты |
+| Requests/context | Всего **24 native tool calls**, **0 LLM turns**. Отдельно native initialize/discovery protocol counts не инструментированы, полный ≤4 request-response/роль остаётся unverified. Новых startup MCP calls/tools/always-on rules = 0. Backend internal embedding usage не измерен; check не запрашивал semantic/LLM/embedding операции |
+| Bytes | Summary **824 bytes/пара**; финальный unit metadata **427 bytes**, thin read stamp **130 bytes**. On-demand mcp reference +**1540 bytes**, always-on delta 0. Полный каталог/raw ответы в prompt автоматически не загружаются |
+| Startup source fixtures | PM4: 20 warm, median/p95 **0.513/0.613 s**. PM5: 20 warm, **0.509/0.595 s**. Один fetch/top-level, nested reuse, protected bytes/mtime unchanged. Цели 1/2 s сохранены. Исторический baseline не является одновременной paired installed проверкой; ускорение этому изменению не приписано |
+
+Новая проверка вызывается только явно: недоступность/unknown вспомогательного source не блокирует независимые status/update/branch/restore. Продолжение — локальный код либо существующий sync/reload и повтор scoped read. В текущих legacy images exact indexed claims намеренно остаются unverified; автоматического deploy/reindex нет.
+
+## Неуспешные пробы и сохранённые ограничения
+
+Первый Pester failure был ошибкой клонирования fixture (PSCustomObject.Remove); исправлена только подготовка mutable копии, исходный failure сохранён. Обнаруженный reused Context после изменения untracked нового helper не принят как final proof: добавлены реальные owner reuse inputs, новый source staged и получен executed результат. Независимые host suites не получили лишнюю dependency на Code candidate.
+
+Первый RegisterChange остановился до Pester на PS5.1 encoding preflight: новый Unicode test был без UTF-8 BOM. Исправлена кодировка у владельца теста; финальный default-decoding/strict UTF-8/AST preflight и исходный Context suite passed. Failed registration candidate/checkpoint и logs сохранены; accepted queue не подменена. Это не ослабление Unicode assertion и не исправление delivery gate.
+
+Вторая регистрация: **455 passed / 1 failed**, span **218.318 s**. Единственный failure — прежний ProductRegistryPublisher test требовал observedGeneration из sourceFingerprint. `Get-ConfigurationState` действительно формирует это поле из commit/tree/worktree, а не native index manifest; ожидание противоречило согласованному checkpoint. Сохранён тот же publisher/fixture/legacy fingerprint assertion, добавлены строгие проверки declared fingerprint и отсутствия неподтверждённых generation/time. Focused исходный publisher suite **5/5**. Failed candidate/summary/original assertion result сохранены; delivery gate не ослаблен.
+
+Первый startup harness ошибочно загрузил две instrumentation scopes в один PowerShell и рекурсивно вызвал Git wrapper. Этот artifact сохранён; исходный PM5 stand повторён с прежним profile в отдельном дочернем процессе. Отменён только owned tool session; raw PID kill не использовался. Это harness fault, runtime не исправлялся ради ложного воспроизводителя.
+
+Ранний temporary native Manifest ABI prototype прошёл (пятикомпонентный fingerprint прежний, unpublished/unknown отказ, current mount не подставлен). Его helper отличается от окончательного opt-in/thin-stamp варианта: **это не exact final candidate proof**. Дополнительный native response-budget probe и последняя ABI попытка завершились SSH timeout 40 s без принятого результата. Они явно unverified в `native-timeouts.json`; иной сохранившийся старый result не считается ответом на новый script. Последующая read-only inspection: Code running/healthy, прежний StartedAt, в docker top только main; сервер не заменён/не перезапущен. Без native image/budget/crash-resume proof replacement запрещён существующим host contract.
+
+## Остаток и согласованность
+
+AC-08-a/c/d подтверждены в указанной Graph scope/Codex core и pure comparator области; b/e/f/g/h — только соответствующие source fixtures/измерения, полный contract не закрыт. Для exact Graph revision нужен поддерживаемый producer владельца (исходников нет); для Code — отдельная native image qualification и затем отдельно разрешённые deploy/reindex/live reads. Полные installed PM4/PM5 journeys, остальные клиенты, Windows/terminal matrix, protocol counts и paired installed context/cost сохраняются в [единой матрице](g3-final-qualification-2026-10-20.md).
+
+Memory использует этот же registry result: generation не меняет product/dataset/home/grants; unknown source не запрещает независимые заметки, dependent claim остаётся кандидатом. Six scopes, Q1–Q7/G1, D9/G2 и fork-owned ai_rules_1c прежние; G4 не начат, Cognee calls 0. Обязательное наполнение registry AC-36–38 / memory AC-44 до первого выпуска остаётся открытым. Старые stands/capsule/failed copies сохранены. Gate 6, рабочая миграция, server replacement/reindex и публикация не выполнялись.

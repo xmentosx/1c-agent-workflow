@@ -1,8 +1,8 @@
-Describe 'Catalog runtime context is pinned by the existing registry operation' {
+﻿Describe 'Catalog runtime context is pinned by the existing registry operation' {
     BeforeAll {
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
-        foreach($leaf in @('core','vanessa','vibecoding1c-mcp','product-catalog','product-project-context')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
+        foreach($leaf in @('core','vanessa','vibecoding1c-mcp','product-catalog','product-project-context','product-source-evidence')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
         function New-ContextFixture {
             $code=@{id='code';family='vibecoding1c';scope='project';configId='corp';url='http://source-a.invalid:22100/mcp'}
             $graph=@{id='graph';family='vibecoding1c';scope='project';configId='other';url='http://source-b.invalid:22101/mcp/'}
@@ -24,6 +24,87 @@ Describe 'Catalog runtime context is pinned by the existing registry operation' 
         $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='development';productId='corp'}
         $script:Config=[pscustomobject]@{productProject=[pscustomobject]$binding}
         $previousRegistry=[Environment]::GetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH','Process')
+    }
+    It 'compares captured source proof without connecting, applying settings or conflating client activation' {
+        $snapshot.catalog.sources[0].Remove('namespace')
+        $snapshot.catalog.sources[0].binding=@{mode='dedicated';sourceKey='a/corp'}
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $source=@{contractVersion=1;sourceKey='a/corp';nativeProjectId='same-native-id';namespace=$null;generation='g1';layer='index';stamp=('b'*64);indexedSource=@{revisionKind='content-sha256';revision=('c'*64);configurationVersion='5.0.1';extent=@('configuration');provenance='active-index-manifest'}}
+        function New-SourceExchange($id,$name,$payload){return @{request=@{id=$id;method='tools/call';params=@{name=$name;arguments=@{module_path='CommonModules/Модуль с пробелом/Ext/Module.bsl'}}};response=@{id=$id;result=@{isError=$false;structuredContent=$payload}}}}
+        $observation=@{checkedAt='2026-10-21T00:00:00Z';endpoint=$context.endpointIntents.code.url;transport='external-probe';metadata=(New-SourceExchange 1 stats @{status='success';data=@{sourceIdentity=$source}});read=(New-SourceExchange 2 get_module_structure @{status='success';data=@{name='Модуль с пробелом'};sourceIdentity=$source})}
+        $before=Get-ItlCatalogHash $context
+        $proof=Compare-ItlProductSourceObservation $context code $observation
+        $proof.binding|Should -Be matched
+        $proof.indexedVersion|Should -Be matched
+        $proof.clientActivation|Should -Be unverified
+        $proof.build|Should -Be unverified
+        $thin=ConvertTo-ItlCatalogCanonicalValue ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
+        $thin.read.response.result.structuredContent.sourceIdentity=@{contractVersion=1;generation='g1';layer='index';stamp=('b'*64)}
+        (Compare-ItlProductSourceObservation $context code $thin).indexedVersion|Should -Be matched
+        $observation.transport='native-client'
+        $observation.client=@{serverName='1c-code-metadata-mcp';sessionId='private-thread';loadedEndpoint=$observation.endpoint;requestIds=@(1,2)}
+        (Compare-ItlProductSourceObservation $context code $observation).clientActivation|Should -Be unverified
+        foreach($call in @($observation.metadata,$observation.read)){
+            $call.request.method='mcpServer/tool/call'
+            $call.request.params=@{threadId='private-thread';server='1c-code-metadata-mcp';tool=$call.request.params.name;arguments=$call.request.params.arguments}
+        }
+        (Compare-ItlProductSourceObservation $context code $observation).clientActivation|Should -Be matched
+        (Get-ItlCatalogHash $context)|Should -BeExactly $before
+        $foreign=ConvertTo-Vibecoding1cMcpHashtable ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
+        $foreign.metadata.response.result.structuredContent.data.sourceIdentity.sourceKey='a/foreign'
+        $wrong=Compare-ItlProductSourceObservation $context code $foreign
+        $wrong.binding|Should -Be mismatch
+        $wrong.indexedVersion|Should -Be unverified
+        $wrong.clientActivation|Should -Be matched
+        $foreign.endpoint='http://wrong.invalid/mcp'
+        (Compare-ItlProductSourceObservation $context code $foreign).reason|Should -Be endpoint-mismatch
+        $context.endpointIntents.code.expectedIdentity.pin=@{configurationVersion='5.0.2'}
+        (Compare-ItlProductSourceObservation $context code $observation).indexedVersion|Should -Be mismatch
+        $context.endpointIntents.code.expectedIdentity.pin=@{}
+        $raced=ConvertTo-Vibecoding1cMcpHashtable ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
+        $raced.read.response.result.structuredContent.sourceIdentity.generation='g2'
+        (Compare-ItlProductSourceObservation $context code $raced).indexedVersion|Should -Be unverified
+        $raced.read.response.result.structuredContent.sourceIdentity.generation='g1'
+        $raced.read.response.result.structuredContent.sourceIdentity.layer='live-file'
+        (Compare-ItlProductSourceObservation $context code $raced).indexedVersion|Should -Be unverified
+        $raced.read.response.result.isError=$true
+        (Compare-ItlProductSourceObservation $context code $raced).binding|Should -Be unverified
+        $legacy=ConvertTo-ItlCatalogCanonicalValue ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
+        $legacy.metadata.response.result.structuredContent.data.Remove('sourceIdentity')
+        (Compare-ItlProductSourceObservation $context code $legacy).reason|Should -Be native-identity-unavailable
+        $path=Join-Path $TestDrive 'наблюдение с пробелом.json'
+        @{schemaVersion=1;catalogRevision=$context.catalogRevision;settingsHash=$context.settingsHash;roles=@{code=$observation}}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $path -Encoding UTF8
+        (Read-ItlProductSourceObservations $context $path).roles.code.binding|Should -Be matched
+        $context.catalogRevision='d'*40
+        (Read-ItlProductSourceObservations $context $path).status|Should -Be unverified
+    }
+    It 'keeps explicit source pins and source scope in package schema rather than guessed product versions' {
+        $snapshot.catalog.sources[0].binding=@{mode='dedicated';sourceKey='a/corp';nativeProjectId='same-native-id';versionPin=@{configurationVersion='5.0.1'}}
+        $null=Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $context.endpointIntents.code.expectedIdentity.pin.configurationVersion|Should -Be '5.0.1'
+        $snapshot.catalog.sources[0].binding.versionPin=@{}
+        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*at least 1 properties*'
+        $snapshot.catalog.sources[0].binding.versionPin=@{configurationVersion=('x'*129)}
+        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*maxLength*'
+    }
+    It 'accepts the supported Graph selected scope without inventing a revision from inherited data' {
+        $snapshot.catalog.sources[1].binding=@{mode='dedicated';nativeProjectId='pm5corp'}
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $observation=@{checkedAt='2026-10-21T00:00:00Z';endpoint=$context.endpointIntents.graph.url;transport='external-probe'}
+        $meta=@{contract_version='2.0';context=@{project_id=$null;mcp_namespace=$null};data=@{project_id='pm5corp';mcp_namespace='default';is_accessible=$true;active_generation=$null;ingestion_state='inherited'}}
+        $read=@{contract_version='2.0';context=@{project_id='pm5corp';mcp_namespace='default'};returned=1;text='bounded fulltext fixture'}
+        $observation.metadata=@{request=@{id=1;method='tools/call';params=@{name='get_graph_project_status';arguments=@{project_id='pm5corp'}}};response=@{id=1;result=@{structuredContent=$meta}}}
+        $observation.read=@{request=@{id=2;method='tools/call';params=@{name='search_code';arguments=@{project_id='pm5corp';search_type='fulltext'}}};response=@{id=2;result=@{structuredContent=$read}}}
+        $proof=Compare-ItlProductSourceObservation $context graph $observation
+        $proof.binding|Should -Be matched
+        $proof.indexedVersion|Should -Be unverified
+        $proof.clientActivation|Should -Be unverified
+        $read.context.mcp_namespace='wrong'
+        (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be mismatch
+        $read.context.mcp_namespace='default'
+        $context.endpointIntents.graph.expectedIdentity.requireSourceKey=$true
+        (Compare-ItlProductSourceObservation $context graph $observation).reason|Should -Be sourceKey-unavailable
     }
     AfterEach {
         [Environment]::SetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH',$previousRegistry,'Process')

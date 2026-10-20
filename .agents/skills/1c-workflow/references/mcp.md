@@ -200,6 +200,27 @@ the installed project's infobase. Search is top-k; use `list_sppr_relations`
 continuations for complete stored relations and `read_sppr_object` for fields.
 `sppr_index_status` reports freshness and extraction/vector gaps without scanning.
 
+## Optional product source observation
+
+For an explicit Code/Graph qualification, the existing
+`-Action vibecoding1c-mcp-status` accepts
+`-CatalogAction context -CatalogRecordPath <observation.json>`.
+It reads a bounded UTF-8 record and adds `sourceObservations`; it performs no
+network calls or settings writes. Without the record, ordinary context output
+is unchanged. The record has `schemaVersion=1`, the applied `catalogRevision`
+and `settingsHash`, and optional `roles.code` / `roles.graph` containing endpoint,
+checkedAt and raw correlated metadata/read request-response exchanges.
+
+Report binding, indexed version, client activation and backend build separately.
+Code uses `stats.data.sourceIdentity` plus a scoped structural read with existing
+`include_provenance=true`; exact proof requires a coherent native index stamp.
+Graph v2 selected-project status/fulltext context can prove scope while its
+indexed version remains unknown. HTTP proof alone does not establish native
+client activation. Missing metadata is unverified; continue with local code or
+use existing sync/reload and repeat the scoped read. Do not deploy, reindex or
+change the product automatically. Observations apply to their captured time and
+session and are never a currentness cache or a Startup requirement.
+
 ## Vanessa UI MCP
 
 Vanessa UI MCP is always branch-local and exposed as the stable logical server `itl-vanessa-ui`. The client sees compact `resolve_tool` and `call_tool`; its full verified catalog remains internal. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.
