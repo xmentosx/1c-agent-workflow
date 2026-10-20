@@ -4570,6 +4570,12 @@ function Format-Installed1CPlatformOptions {
 
 function Test-InteractiveInputAvailable {
     try {
+        # The compact runner owns a hidden console, not a user input channel.
+        # Its original log path survives legacy-runner post-copy reexec too.
+        $runLog = Get-Variable -Name RunLogPath -ValueOnly -ErrorAction SilentlyContinue
+        if ($runLog -and [IO.Path]::GetFileName([IO.Path]::GetDirectoryName([string]$runLog)).StartsWith('compact-', [StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
         return (-not [Console]::IsInputRedirected)
     } catch {
         return $false

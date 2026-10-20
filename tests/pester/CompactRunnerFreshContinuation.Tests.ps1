@@ -59,6 +59,22 @@ $Action=$fixture.action; $RunStatusPath=$fixture.status; $RunLogPath=$fixture.lo
 Enter-Agent1cLifecycleOperation -RequestedAction $Action -RequestedOperationId $fixture.operation -RequestedOwnerPid $fixture.owner -Continuation:$fixture.continuation
 [IO.File]::WriteAllText((Join-Path $fixture.root 'child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
 Set-RunStage -Stage 'workflow-update.branches' -Detail 'Обновление ветки без stdout'
+if($fixture.mode -eq 'catalog-input') {
+    . Import-ItlProductProjectSetup
+    $compactInputAvailable=Test-InteractiveInputAvailable
+    $compactLogPath=$RunLogPath
+    try {
+        $RunLogPath=Join-Path $fixture.root 'foreground/console.log'
+        $foregroundInputAvailable=Test-InteractiveInputAvailable
+    } finally { $RunLogPath=$compactLogPath }
+    function Read-InitOptional {
+        Write-Utf8Text -Path (Join-Path $fixture.root 'unexpected-catalog-prompt.txt') -Value 'The hidden helper attempted to prompt.'
+        return ''
+    }
+    Invoke-ItlProductProjectPostUpdateOffer
+    $inputProof=@{inputRedirected=[Console]::IsInputRedirected;compactInputAvailable=$compactInputAvailable;foregroundInputAvailable=$foregroundInputAvailable;binding=(Get-ItlProductProjectBinding);selection=(Read-ItlProductProjectSetting selection)}
+    Write-Utf8Text -Path (Join-Path $fixture.root 'input-proof.json') -Value ($inputProof|ConvertTo-Json -Depth 5)
+}
 if($fixture.mode -eq 'nested') {
     [IO.File]::WriteAllText((Join-Path $fixture.root 'immediate-child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
     . $fixture.legacy
@@ -118,7 +134,8 @@ exit 0
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS',$(if($DefaultStale){$null}else{'2'}),'Process')
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_OPERATION_TIMEOUT_SECONDS',[string]$OperationSeconds,'Process')
                 $roundTrip=(Join-Path $root 'параметр с пробелом')+'\'
-                $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$freshSourceHelper,'-Mode',$Mode,'-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip)
+                $fixtureSource=if($Mode -eq 'catalog-input'){$context.HelperPath}else{$freshSourceHelper}
+                $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$fixtureSource,'-Mode',$Mode,'-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip)
                 if($LegacyNested) {
                     $legacyText=@(& git -C $context.RepoRoot show 'c6c829b61c8d31a9f52d7a64ed762c5b5b93b2d7:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') -join "`n"
                     if($LASTEXITCODE -ne 0){throw 'Canonical c6 legacy function source unavailable'}
@@ -157,6 +174,21 @@ exit 0
             finally { foreach($name in $oldEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$oldEnvironment[$name],'Process')} }
         }
         function Remove-FreshCompactFixture { param($Fixture) Remove-Item -LiteralPath $Fixture.root -Recurse -Force }
+    }
+
+    It 'skips the catalog offer in an attached hidden console across the original fresh-process boundary' {
+        $fixture=Invoke-FreshCompactFixture -Mode catalog-input -SilentSeconds 1
+        try {
+            $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
+            $fixture.status.status | Should -Be succeeded
+            $proof=Get-Content -LiteralPath (Join-Path $fixture.root 'input-proof.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $proof.inputRedirected|Should -BeFalse
+            $proof.compactInputAvailable|Should -BeFalse
+            $proof.foregroundInputAvailable|Should -BeTrue
+            $proof.binding|Should -BeNullOrEmpty
+            $proof.selection|Should -BeNullOrEmpty
+            Test-Path -LiteralPath (Join-Path $fixture.root 'unexpected-catalog-prompt.txt')|Should -BeFalse
+        } finally { Remove-FreshCompactFixture $fixture }
     }
 
     It 'keeps the original compact parent fresh while its silent continuation exceeds the configured stale threshold' {
