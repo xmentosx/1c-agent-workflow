@@ -356,6 +356,74 @@
     {
       "path": "build/test-results/g3/prompt-fix-20261020/pm5-final-readonly-r3.stderr",
       "sha256": "84de4ec0af79a6347415a02551dab5beacd07d6f53b90bb900fbe72c54ffc616"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/first-targeted-summary.json",
+      "sha256": "b2251dfd9ec44dbf438ed94f19f602eea66c9f7fb4f76f06446b5cf5b78972da"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/first-targeted-selection.json",
+      "sha256": "7a030e63db64f82611af1db1bb571aff169f5031bf8595aa629c3aa6e254a7c4"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/first-targeted-worker-11.stdout",
+      "sha256": "0b4c1ed90d754a798830d8d982ca3ae306dfcef84f65cdc652e90f9d26cfaac4"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/first-targeted-worker-11.xml",
+      "sha256": "e09fb4eb48efe3282c3442baae06ea8f8d7e7242247d4393213d96ab7007a380"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/first-targeted-fixture-console.log",
+      "sha256": "30c70cef363f430d05955dd349517b797cd0bf64b161eeab31b8d546a8abb90d"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/gate-first-observation.json",
+      "sha256": "bc0e3524b87f51b580d1a01f2c788f6b93ad7703f476c84cadb6bab4ff8126f5"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/watchdog-fixture.json",
+      "sha256": "fddb1c74835d72f2cc77e064d5c67de1b8e4a8fbdb70a9db4dc1b7bfb5c4beb2"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/watchdog-fixture.xml",
+      "sha256": "d4acfeec9d934fbf1733e6f1d4c11caa28f027015f309d10b84dc1d0df39ed9d"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/watchdog-fixture.stdout",
+      "sha256": "f7e5cbe52b1f816a2e20113b016c026be063a8eb89f33702fafc01f3b87d3dfb"
     }
-  ]
+  ],
+  "registrationFixtureObservation": {
+    "firstTargeted": {
+      "status": "failed",
+      "candidateCommit": "4d069dab79dbfac4690e1a993bc7556b50291c84",
+      "durationMs": 622046,
+      "budgetStatus": "failed",
+      "selectedFiles": 59,
+      "failedTest": "CompactRunnerWatchdog: rechecks the owned handoff after reading stale status and preserves the actual terminal failure",
+      "expectedExit": 7,
+      "actualExit": 1,
+      "fixtureCause": "Helper aborted at SetLastWriteTimeUtc on its already published heartbeat while the runner read it; terminal 7 was never published",
+      "correction": "Initialize and timestamp a private sidecar, atomically publish it, then publish the same stale main state. Original controlled interleaving, 2s watchdog, 700ms terminal and every terminal assertion preserved; no runner/runtime change",
+      "costAssessment": "First Targeted exceeded the 5-minute engineering target; this is an unresolved test-cost observation, not added startup/LLM overhead or a reason to narrow real owner coverage"
+    },
+    "focusedFixtureVerification": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 7.7022360999999995,
+      "testFile": "tests/pester/CompactRunnerWatchdog.Tests.ps1",
+      "filter": [
+        "*rechecks the owned handoff after reading stale status*"
+      ]
+    },
+    "rawFiles": [
+      "first-targeted-summary.json",
+      "first-targeted-selection.json",
+      "first-targeted-worker-11.stdout",
+      "first-targeted-worker-11.xml",
+      "first-targeted-fixture-console.log"
+    ]
+  }
 }

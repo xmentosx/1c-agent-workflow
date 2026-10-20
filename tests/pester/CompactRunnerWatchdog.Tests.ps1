@@ -180,9 +180,13 @@ function Read-JsonFile {
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
 $payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt='2000-01-01T00:00:00Z'; stage='controlled-handoff'; stageDetail='journal scan complete'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+$initialHeartbeat=$RunStatusPath + '.heartbeat.initial'
+[IO.File]::WriteAllText($initialHeartbeat, [string]$PID)
+[IO.File]::SetLastWriteTimeUtc($initialHeartbeat, [datetime]'2000-01-01')
+[IO.File]::Move($initialHeartbeat, ($RunStatusPath + '.heartbeat'))
+# Publish the controlled stale state only after its sidecar is complete. A
+# concurrent reader must not make the fixture's SetLastWriteTimeUtc fail.
 [IO.File]::WriteAllText($RunStatusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-[IO.File]::WriteAllText(($RunStatusPath + '.heartbeat'), [string]$PID)
-[IO.File]::SetLastWriteTimeUtc(($RunStatusPath + '.heartbeat'), [datetime]'2000-01-01')
 $deadline = [DateTime]::UtcNow.AddSeconds(8)
 while (-not (Test-Path -LiteralPath ($RunStatusPath + '.handoff'))) {
     if ([DateTime]::UtcNow -ge $deadline) { throw 'CONTROLLED_HANDOFF_NOT_REACHED' }
