@@ -610,6 +610,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $ready.projectRoot|Should -Not -Be $failed.projectRoot
         Test-Path -LiteralPath $failed.projectRoot -PathType Container|Should -BeTrue
         $ready.claim.status|Should -BeExactly 'ready'
+        @($ready.claim.PSObject.Properties.Name)|Should -Not -Contain 'sourceAdmission'
+        @($ready.claim.PSObject.Properties.Name)|Should -Not -Contain 'databaseBytesBasis'
         (Invoke-RepositoryGit -RepositoryRoot $ready.projectRoot -Arguments @('config','--local','--get','core.longpaths')).stdout.Trim()|Should -BeExactly 'true'
         [Convert]::ToBase64String([IO.File]::ReadAllBytes(('\\?\'+(Join-Path $ready.branchRoot $longRelative))))|Should -BeExactly 'AH//'
         (Invoke-RepositoryGit -RepositoryRoot $ready.branchRoot -Arguments @('show','HEAD:src/cf/invalid.bsl')).stdout.Trim()|Should -BeExactly 'original negative source'

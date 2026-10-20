@@ -432,8 +432,10 @@ function New-SourceE2EFixtureProject {
     [void][IO.Directory]::CreateDirectory($parent)
     $watch=[Diagnostics.Stopwatch]::StartNew()
     $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;capsulePath=[string]$descriptor.path;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
-    $claim['sourceAdmission']=if($sealedAdmission){'sealed-capsule'}else{'live-seed'}
-    $claim['databaseBytesBasis']=if($sealedAdmission){'declared-capacity-budget'}else{'live-seed-file-size'}
+    if($Phase -eq 'Develop'){
+        $claim['sourceAdmission']=if($sealedAdmission){'sealed-capsule'}else{'live-seed'}
+        $claim['databaseBytesBasis']=if($sealedAdmission){'declared-capacity-budget'}else{'live-seed-file-size'}
+    }
     Write-QualificationFixtureJson -Path $claimPath -Value $claim
     if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
     $preparationLease=Open-SourceE2EFixtureUse -ProjectRoot $target
