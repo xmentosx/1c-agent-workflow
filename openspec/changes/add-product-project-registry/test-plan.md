@@ -4,6 +4,8 @@
 
 G2 реализован и проверен; source G3.0–6 реализованы в указанной ниже границе. После failed live criteria 2026-10-19 три MCP отдельно разрешённо обновлены на dev-ermakov: на 2026-10-20 attested BookStack/Mantis/СППР builds активны, 29 live scope/compatibility controls passed. G3 целиком не принят; актуальная граница — последний раздел этого плана. Installed migration, G4 и публикация workflow/каталога не начаты. Таблица сохраняет критерии, её непроверенные installed/live части не объявляются принятыми. Ранняя инвентаризация — baseline, не приёмка изменения. OpenSpec validate проверяет документы, не рабочую систему.
 
+Последующее продолжение Code/Graph/PM5/clients/startup имеет **failed native unattended update**, несмотря на passed server/file/hook subsets. Заключение и блокеры — в [последнем разделе](#продолжение-g3-codegraph-pm5-клиенты-и-startup-2026-10-20); server deployment success не заменяет original command success.
+
 Для каждого результата фиксировать source commit, точный stand/root/client, Git SHA каталога, ожидаемое и фактическое поведение, ссылку на bounded output/receipt. Для MCP дополнительно endpoint, время, identity и безопасный вызов. Fixtures не объявлять live proof; недоступный stand — «не проверено». Дефектные регрессии сохранять в исходной топологии/условиях, не ослаблять assertions ради прохождения.
 
 ## Фактический G2, 2026-10-19
@@ -240,3 +242,64 @@ Canonical UTF-8 `tools/list` bytes до/после: BookStack 1971→2172 (+201,
 Операционные отклонения сохранены отдельно от product results: transient `System.OutOfMemoryException`/SSH resets прекратились, после восстановления SSH проверены прежние IDs/незавершённый receipt, затем выполнен guarded cutover; причина OOM не установлена. Первый invalid Dockerfile, отсутствующие Node/proxy assets и ожидание flat `project_id` вместо native `project.id` были исправлены в qualification harness с сохранением failed logs и исходных assertions. Pre-create mount guards остановили попытки до остановки сервисов: Docker Desktop даёт разные написания bind paths и container-specific device numbers; эквивалентность доказана readonly source/volume/inode checks. Ни package runtime, ни тестовые требования не ослаблялись. Один прежний ignored raw `qualification-native.json` был перезаписан последующим liveness probe: tracked bounded итог 19 октября сохранён, но его старый raw hash по этому пути больше не перепроверяется. Новые наблюдения имеют отдельные имена и hashes; старый raw не реконструирован.
 
 **Что осталось:** task 2.1/full AC-08 (code/graph publication identity и полный selected catalog binding); isolated original PM4/PM5 init/update/branch/fault/offline/concurrent-session canary 5.2; actual affected-client reload/discovery и Win10/Server2019+/terminal matrix 5.4; полные четыре startup/surface сценария 5.5 и walkthrough 5.6. Эти критерии нельзя закрыть server-only или fixture proof, рабочие проекты не мигрируются. Общий 5.3 открыт в оставшейся области AC-08/21. Обязательное наполнение 5.7 / AC-36–38 остаётся до первого выпуска и не выполнено этим canary. G1/D9/G2 и ai_rules_1c не меняются, Cognee calls/G4 не было. Регистрация этого source head проверяется только через source-delivery Status; она не означает выпуск или полную G3 приёмку.
+
+## Продолжение G3: Code/Graph, PM5, клиенты и startup, 2026-10-20
+
+**Итог: G3.7 / AC-39 не приняты.** Доступные Code/Graph, file-format и startup проверки расширены; native legacy PM5 unattended update **failed** на optional catalog prompt в скрытой console после package commits. Полный installed/client/platform путь не заменяется положительными подрезультатами. Единый [bounded evidence](evidence/g3-continuation-2026-10-20.json) содержит ожидаемое/фактическое, identities, working-patch hashes, raw references и блокеры; память использует эту же запись.
+
+Runtime under test — `d17f29da9e61388615ccad104b18328504b4b12b`, worktree `product-project-registry-g3`. Qualified local transport — existing `Invoke-ItlNativeProcessCapture`, явный UTF-8 и нормализация module roots для PS5.1. Stand: Windows 11 Home build 26300, PS `5.1.26100.9711`, non-elevated. Пользователь прямо сообщил, что готовых PM4 / Win10 / Windows Server terminal stands нет. Семейство PM4 в synthetic catalog fixture не объявляется native PM4 installation.
+
+### Code/Graph: наблюдаемый provider proof
+
+| Проверка | Результат и предел |
+|---|---|
+| Четыре endpoints | PM5 Code `22100/mcp`, Graph `22101/mcp/`; PM4 Code `22200/mcp`, Graph `22201/mcp/`. Полные MCP handshakes и original host-owner internal/public container identity + safe health passed 4/4. Полные image IDs/RepoDigests и container IDs сохранены. Серверы не заменялись и не переиндексировались |
+| Code functional read | Оба `stats` и bounded `compact_search` passed; по одному полезному результату с provenance. Native project IDs и published generation/fingerprint из API сохранены отдельно от полного host/config/server binding; одинаковый native ID не является общим продуктовым ID |
+| Graph scope | `default / pm4corp` и `default / pm5corp`: positive fulltext reads passed; неизвестный project и соседний реальный продукт на чужом endpoint возвращают `project_not_accessible`, ноль результатов. Это проверка project scope, а не новая ACL или proof wrong expected namespace admission |
+| Версия данных | В mounted `Configuration.xml`: PM4 `4.2.40.2`, PM5 `5.0.3.66`, имена/хэши XML сохранены. Dump roots не Git repositories. Graph сообщает inherited data без active generation; нельзя выдавать mounted XML version за подтверждённую версию индекса. API framework/release strings не заменяют application/source attestation |
+
+Task 2.1/full AC-08 остаётся открыт: положительный provider proof ещё не является принятой readiness выбранного catalog binding с отрицательным expected-namespace control. Данные этого обследования не публиковались в бизнес-каталог; pilot PM5 не получил выдуманные homes/links или автоматически назначенные sources.
+
+### Source-only factory repair и native PM5
+
+Для изоляции вызвана штатная factory `Prepare -Phase Develop -ProjectRoot D:/Git/itl-workflow-e2e-pm5`, с отдельным `FreshProjectsRoot=C:\itlj\g3-20261020`. Первоначально она отвергла unchanged sealed admission: `D:/Git/...` и `D:\Git\...` сравнивались как разные строки. HEADs, пять owner receipts каждой стороны и stable environment совпадали. Исправлен [существующий factory owner](../../../scripts/source-e2e-fixture.ps1): supplied root нормализуется до полного пути перед сравнением. Capsule/DT/descriptor не переписаны, новый acknowledgement/recapture не применялся.
+
+[Регрессия](../../../tests/pester/SourceQualificationFixture.Tests.ps1) сохраняет whitespace+Cyrillic root, проверяет slash/`/./` aliases и неизменный descriptor hash. Red воспроизвёл `FIXTURE_SEED_CHANGED`; qualified full owner suite — **59 passed / 0 failed / 0 skipped**. Один исходный fixture cleanup case дополнительно выявил неверный N-1 input: `origin/develop=c9cfecfe…` не ancestor reader `d17f29da…`; legal common published ancestor — `dc901f9e…`. Исправлен только выбор baseline тестового seed. Исходная clone-failure topology, workload, recovery ancestry и защитные assertions сохранены.
+
+Повтор той же factory успешно создал/восстановил owned copy из capsule SHA `c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6`:
+
+`C:\itlj\g3-20261020\q Проект\develop-c2c570fe1ec5-d17f29da9e61-1bd85973\project` и sibling `branch`.
+
+Исходный PM5 seed не обновлялся и не ассоциировался. На копии выполнен original compact `update-workflow`. После корректной нормализации PowerShell environment прошёл pinned fork preflight; в копии установлен `ai_rules_1c itl-main-5700f54-r43`, commit `987320be139b4ac0d28f1f5b0f2515f63c7f140f`, lock compatibility `passed`. Fork/cache/installed sources вручную не правились. Workflow package commit — `d17f29da…`; master `b0b8294409c5c0ff9f4bd9e0f9df701c82c27a69`, branch `ceba5cbe29ec61c0909208e6ab87ec831374d846` сохранены clean. Это результат package writes/commits, не whole-command acceptance.
+
+**Failed native reproducer:** run `compact-20261020-084832-016-b747294a` дошёл до `workflow-update.complete`, но остался `running`: `Invoke-ItlProductProjectPostUpdateOffer` ожидал `Read-Host` в скрытой console compact-runner. Exact optional catalog prompt подтверждён чтением только его owned console; чужих console members нет. Ctrl+C не завершил ожидание; затем операторский пустой Enter освободил вопрос без association/later. После вмешательства общий command завершился exit 1 / `WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED`. Failed terminal и original logs сохранены; ни `complete` stage, ни package userReport не считаются успешной приёмкой AC-31. Ручной правки lifecycle/status, raw PID termination или обхода guard не было.
+
+Copy удержана для воспроизведения. Read-only `agent-1c -Action status` через прямой diagnostic entrypoint после отказа завершился exit 0. Повторная полная **readonly** factory validation исходного seed/capsule/DB/context passed; head/descriptor не менялись, ассоциации копии нет, owned helper processes осталось 0. Запускать association/init/branch/downgrade как продолжение принятого update нельзя: этот native criterion failed. Working projects/базы не мигрировались.
+
+### Клиенты и startup
+
+На отдельных PM4/PM5 catalog-only roots использованы реальные Git reader/resolver/writer и 12 форматов: Codex, Claude Code, OpenCode, Kilo, Cursor, Kimi, Qwen, Command Code, Cline, Zcode, MimoCode, Pi. Источники/IDs — synthetic fixture, не наполнение общего реестра. Config paths проверены внутри своего root, MCP home отдельный. **48/48** read-only parsed code/graph role checks сохраняют точные URLs; custom entries сохраняются по существующему semantic signature owner. Изменение endpoint затронуло 11 физических файлов для 12 client formats; no-op/publisher/offline не переписывали client files. Это file-format/ownership proof, не actual application activation.
+
+| Added warm startup hook / real local Git transport | PM4 | PM5 |
+|---|---|---|
+| Unchanged, 20 samples: median / p95 | 0.752 / 0.867 s | 0.699 / 0.757 s |
+| Publisher-only, одна observation; client writes 0 | 2.388 s | 2.001 s |
+| Changed endpoint, одна observation; 11 physical writes | 5.506 s | 5.398 s |
+| Offline/refused origin, одна observation; client writes 0 | 2.996 s | 2.969 s |
+
+В каждой из 23 top-level операций каждого профиля — один native fetch; nested consumer повторный fetch не делает. Для последних трёх сценариев не заявляются p95 distributions. Engineering warm no-op цель выполнена на этом stand; таблица не является whole-command A/B, native platform matrix или измерением model tokens.
+
+Отдельно выполнен original **тёплый** CLI `vibecoding1c-mcp-write-client-config -Client codex` со stalled localhost Git origin. Listener реально принял запрос; один fetch, trace fetch→pinned read **9.977 s**, применён validated applied snapshot с offline warning, основная фаза достигнута, exit 0 и ноль изменений protected files. Whole CLI **24.976 s** включает загрузку/helper/main phase и не подменяет 10 s metadata deadline или added-hook latency. Cold first-explicit-sync observation (exit 0, изменены два context/operation records) сохранена отдельно и не объявлена no-op proof; warm repeat выполнен на том же root/action без изменения runtime или reproducer topology. Listener остановлен кооперативно.
+
+Codex CLI `0.163.0-alpha.10.2` после отдельного private Git initialization прочитал effective-config запрос `mcp get 1c-code-metadata-mcp --json`, но вернул **server not found**. Config hash не изменился; причина project-layer/trust/discovery не установлена, глобальные trust/settings не менялись. Это unverified selected-root activation, не доказанный дефект serializer и не разрешение auto-trust. Текущий Codex успешно вызвал native BookStack `source_info`, но binding там **global**, не этот выбранный root. Остальные actual client reload/tool catalogs не приняты.
+
+Невалидные harness attempts сохранены: старый `Invoke-TestPowerShellFile` передавал bundled PowerShell 7 module path в PS5, из-за чего отсутствовал `Get-FileHash`; existing shared native owner устранил это без правки fork. Явные UTF-8/BOM reads, task-local MCP home, fixture Git longpaths и native-format signatures установлены до qualified runs. Ошибочный вызов diagnostic `status` через compact-only wrapper и неверное декодирование no-BOM receipt не считаются product failures; правильный diagnostic entrypoint прошёл. Failed native PM5 prompt этим объяснением не снимается.
+
+### Блокеры и необходимое продолжение
+
+1. **Failed 4.8 / 5.2 / AC-31:** исправить owning post-update offer / compact-runner interaction boundary. Hidden console не пользовательский input. Сохранить terminal package success, separate association outcome и отсутствие false consent/defer; после исправления повторить исходный unattended legacy update и foreground choose/new/later. Не лечить ожидание новым timeout, ранним success при живом процессе, подменой console topology теста или ручной финализацией.
+2. **Unverified 2.1 / AC-08:** полная admission выбранного source binding, включая wrong expected namespace и честное происхождение version/generation. Четыре green providers не закрывают этот consumer contract.
+3. **Unverified 5.2/5.4/5.6:** original native PM4/PM5 init/update/association/branch/fault/recovery/downgrade journey, actual selected-project client activation и Win10/Server/terminal sessions. Готовых дополнительных stands нет по ответу пользователя; их нельзя заменить family label или парсингом client JSON/TOML.
+4. **Открытая полная 5.5:** native installed/client/context cost/walkthrough scope. Hook distributions, original warm CLI continuation и file-byte proxies не объявляются измеренным LLM context. Эта source-only factory правка не меняет always-on rules, MCP tool schemas или обычный installed runtime.
+
+Требования/приёмка не ослаблены, full AC-39 и memory installed AC-43 открыты. G1/Q1–Q7/D9/G2 не переоткрываются; Cognee calls/G4/рабочая миграция/публикация не начинались. AC-36–38/5.7 и memory AC-44 остаются обязательным наполнением перед первым выпуском; synthetic roots не закрывают его. Источник delivery proof — только source-delivery Status для конечного commit, не отдельный checkbox ledger.

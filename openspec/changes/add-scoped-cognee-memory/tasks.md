@@ -4,6 +4,8 @@
 
 Порядок G0–G6 общий с реестром. Раздел 1 содержит G0/G1 и проверку G2 interface; зависимые разделы 2–5 (G4) начинаются после применимого passed native G1, квалифицированного G2 interface и отдельно одобренного D9/разрешения кода. G3 установленного реестра нужен для совместного G5, но все server доработки не являются условием начала G4. Pure G2 не ждёт D9; каталог принимается/выпускается самостоятельно. Implementation checkbox остаются future; native результаты имеют отдельную область proof.
 
+Последующее продолжение G3 2026-10-20 подтвердило четыре Code/Graph endpoints, client-file/startup subsets, но native PM5 unattended update failed на optional catalog prompt в скрытой консоли после package commits. Полный registry AC-39 / installed memory AC-43 остаётся открыт. Единый результат и owning continuation — [registry test-plan](../add-product-project-registry/test-plan.md#продолжение-g3-codegraph-pm5-клиенты-и-startup-2026-10-20); своих capability/status ledgers память не добавляет. G4 по-прежнему запрещён, G1/Q/D9/G2 не переоткрываются.
+
 ## 1. Основание, зависимость и параметры квалификации
 
 Registry checkpoint G3 и план G3.0–7 подготовлены в связанном change; checkpoint одобрен и source G3 разрешён, но это не закрытие installed зависимости памяти. Registry AC-39 отделяет реализацию, canary и первый выпуск с наполнением AC-36–38. Задачи памяти/AC-44 используют один применённый registry context; своего startup/updater нет. Source G3 начат; G4/наполнение и миграция действующих установок не начинаются.
