@@ -61,6 +61,11 @@ func addGatewayTools(server *mcp.Server, rt *runtime) {
 }
 
 func validateFacadeCatalog(catalog *loadedCatalog) error {
+	for _, tool := range catalog.Data.Tools {
+		if tool != nil && tool.Name == ownerRecoveryTool {
+			return fmt.Errorf("catalog uses reserved facade tool %s", ownerRecoveryTool)
+		}
+	}
 	return catalog.ensureIndexes()
 }
 
@@ -86,7 +91,7 @@ func gatewayBool(value bool) *bool { return &value }
 func gatewayCallDefinition(family string) *mcp.Tool {
 	return &mcp.Tool{
 		Name:        gatewayCallTool,
-		Description: "Call one verified inner " + family + " tool by exact name. For a parameterized tool, put the exact JSON object in argumentsJson, for example {\"query\":\"...\",\"limit\":10}. Use arguments={} for a no-argument tool. Never send arguments and argumentsJson together. The facade parses and validates the verified inner schema before lazy backend startup.",
+		Description: "Call one verified inner " + family + " tool by exact name. For a parameterized tool, put the exact JSON object in argumentsJson, for example {\"query\":\"...\",\"limit\":10}. Use arguments={} for a no-argument tool. Never send arguments and argumentsJson together. The facade parses and validates the verified inner schema before lazy backend startup. Recover an owned connection with name=itl_recover_connection, arguments={}; previous calls are never replayed.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -183,7 +188,8 @@ func searchCatalogTools(catalog *loadedCatalog, family, query string, limit int)
 	normalizedQuery := normalizeSearchText(query)
 	queryTerms := strings.Fields(normalizedQuery)
 	scored := make([]scoredTool, 0, len(catalog.Data.Tools))
-	for _, tool := range catalog.Data.Tools {
+	tools := append([]*mcp.Tool{ownerRecoveryDefinition()}, catalog.Data.Tools...)
+	for _, tool := range tools {
 		name := normalizeSearchText(tool.Name)
 		haystack := normalizeSearchText(tool.Name + " " + tool.Description + " " + gatewayAliases(family, tool.Name))
 		score := 0

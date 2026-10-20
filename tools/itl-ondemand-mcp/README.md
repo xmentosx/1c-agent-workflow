@@ -29,10 +29,30 @@ The five-minute fallback still applies to broker calls outside a request phase;
 cleanup retains its separate bounded owner budget. Unknown modifying outcomes
 are never replayed merely because a deadline expired.
 
-If native cleanup is unconfirmed, the original execution keeps its guard; new
-calls cannot acquire or inherit it. The existing explicit owned-stop/shutdown
-path continues that same owner and releases it only after confirmed cleanup.
-The primary tool failure and its dispatch outcome remain in the returned result.
+If native cleanup is unconfirmed, the original execution keeps its guard. Before
+dispatching a new call, the facade retries its existing owned stop under that
+same signed execution; only confirmed cleanup permits a new execution. Cleanup
+debt from an idle stop is likewise reconciled before backend startup. An idle
+stop encountering a registration already removed by lifecycle continues through
+the existing guarded retained-launch cleanup, rather than treating removal as
+either a cleanup receipt or a permanent failure.
+
+For both families the agent can call `call_tool` with
+`name="itl_recover_connection", arguments={}`. This facade-owned operation is
+discoverable through `resolve_tool` without starting 1C and is also exposed on
+the full surface. It uses the existing stop owner, including a retained execution,
+then initializes and verifies a usable backend under a fresh call guard. Its
+budget is at most one minute and never extends a shorter caller deadline. No
+PID, base, lease or foreign instance selector is accepted, and no previous tool
+operation is replayed. An unknown modifying outcome remains unknown even when
+the connection is recovered; inspect its effect before deciding to issue it again.
+The gateway remains two tools; its call description adds only the recovery route.
+
+Primary errors retain their dispatch outcome. When upstream succeeds but cleanup
+fails, the response remains an error and includes the successful content and
+structured upstream result. Existing evidence records retain the execution ID
+and append sanitized `cleanup-failed` events for call finalization and idle
+cleanup; successful payloads are returned to the client, never persisted there.
 An already completed stop can be confirmed from the original launch proof only
 when all original processes and ports are gone and no replacement lease exists.
 

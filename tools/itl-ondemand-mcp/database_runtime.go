@@ -93,10 +93,34 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 	r.mu.Lock()
 	retainedOwner, retainedPlan, pending := r.executionOwner, r.executionPlan, r.cleanupUnconfirmed
 	r.mu.Unlock()
+	if pending && !ownedCleanup {
+		// Finish only our previous native execution before admitting a new tool.
+		// Keep the local gate across both phases; the old signed context is used
+		// for cleanup only and never for dispatching the next operation.
+		cleanupCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		cleanupCtx, finish, err := r.beginDatabaseExecutionWithLocalGate(cleanupCtx, meta, true, func() {})
+		if err != nil {
+			unlock()
+			return ctx, nil, err
+		}
+		r.mu.Lock()
+		stopErr := r.stopDatabaseBackendLocked(cleanupCtx, true)
+		r.mu.Unlock()
+		terminal, message := "succeeded", ""
+		if stopErr != nil {
+			terminal, message = "failed", stopErr.Error()
+		}
+		if err := errors.Join(stopErr, finish(terminal, message)); err != nil {
+			unlock()
+			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: %w", err)
+		}
+		retainedOwner, retainedPlan = nil, nil
+	}
 	if retainedOwner != nil {
 		if !ownedCleanup || !pending || retainedPlan == nil {
 			unlock()
-			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; request its explicit stop/shutdown, preserve the unknown result, then retry only after owned cleanup is proven")
+			return ctx, nil, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original execution still owns the infobase; call %s through this facade, preserve the unknown result, then retry only after owned cleanup is proven", ownerRecoveryTool)
 		}
 		ctx = withExecutionInvocation(ctx, retainedOwner.Proof, retainedPlan)
 		return ctx, r.finishDatabaseExecution(retainedOwner, unlock), nil
@@ -158,7 +182,7 @@ func (r *runtime) finishDatabaseExecution(owner *executionGuardOwner, unlock fun
 		pending := r.cleanupUnconfirmed
 		r.mu.Unlock()
 		if pending {
-			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; use its explicit stop/shutdown before another tool call; no uncertain call was replayed")
+			return fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: original resource owner retained; call %s through this facade before another tool call; no uncertain call was replayed", ownerRecoveryTool)
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()

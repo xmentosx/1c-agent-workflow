@@ -98,6 +98,9 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
 	}
 	defer cancel()
+	if toolName == ownerRecoveryTool {
+		return r.recoverConnection(ctx, req.Params.Meta, arguments), nil
+	}
 	progressTokenProvided := req.Params.GetProgressToken() != nil
 	tool := r.catalog.tool(toolName)
 	if tool == nil {
@@ -113,7 +116,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
 		code := "EXECUTION_GUARD_ADMISSION_FAILED"
-		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false}), nil
+		return toolError(code, err.Error(), map[string]any{"callOutcome": "not-started", "automaticRetryPerformed": false, "recoveryTool": ownerRecoveryTool}), nil
 	}
 	defer func() {
 		terminal, message := "succeeded", ""
@@ -122,7 +125,16 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		} else if callResult != nil && callResult.IsError {
 			terminal, message = "failed", resultText(callResult)
 		}
+		r.mu.Lock()
+		finalBackend, finalInstance, finalExecution := r.backend, r.instanceID, ""
+		if r.executionOwner != nil {
+			finalExecution = r.executionOwner.Proof.ID
+		}
+		r.mu.Unlock()
 		if err := finishDatabaseCall(terminal, message); err != nil {
+			r.mu.Lock()
+			r.writeEvidenceLocked(toolName, arguments, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), finalInstance, finalBackend, progressTokenProvided, 0, "", finalExecution)
+			r.mu.Unlock()
 			if callResult != nil && callResult.IsError {
 				// Keep the original failure and dispatch outcome. Cleanup failure
 				// adds its owner continuation, never erases the primary evidence.
@@ -133,12 +145,20 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 						structured["details"] = details
 					}
 					details["cleanupUnconfirmed"], details["automaticRetryPerformed"] = true, false
-					details["action"], details["cleanupError"] = "request-owned-stop-before-retry", err.Error()
+					details["action"], details["cleanupError"] = ownerRecoveryTool, err.Error()
 				}
 				callResult.Content = append(callResult.Content, &mcp.TextContent{Text: err.Error()})
 				return
 			}
-			callResult, callError = toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
+			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown"}
+			failure := toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), details)
+			if callResult != nil {
+				details["callOutcome"], details["upstreamOutcome"] = "completed", "succeeded"
+				failure.Content = append(callResult.Content, failure.Content...)
+				failure.Meta = callResult.Meta
+				failure.StructuredContent.(map[string]any)["upstreamResult"] = callResult.StructuredContent
+			}
+			callResult, callError = failure, nil
 		}
 	}()
 
@@ -445,6 +465,10 @@ func recoveryAction(toolName, previousInstanceID, instanceID string, backendReco
 	}
 	if callOutcome == "not-started" {
 		message = "runtime registration disappeared; owned recovery could not be completed before tool dispatch; the original call was not sent"
+	}
+	if toolName == ownerRecoveryTool {
+		message = "owned connection recovery could not be completed; no previous tool operation was replayed"
+		details["action"] = ownerRecoveryTool
 	}
 	return toolError("ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", message, details)
 }
@@ -901,6 +925,9 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 		return nil
 	}
 	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
+		if err != nil {
+			r.writeEvidenceLocked("idle-cleanup", map[string]any{}, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), r.instanceID, r.backend, false, 0)
+		}
 		r.mu.Unlock()
 		unlock()
 		return err
@@ -920,6 +947,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	r.stopping = false
 	if err != nil {
 		r.armIdleLocked()
+		r.writeEvidenceLocked("idle-cleanup", map[string]any{}, "cleanup-failed", "EXECUTION_GUARD_CLEANUP_UNCONFIRMED", resultEvidenceMessage(nil, err), r.instanceID, r.backend, false, 0)
 		r.mu.Unlock()
 		_ = finish("failed", err.Error())
 		return err
@@ -937,6 +965,10 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 }
 
 func (r *runtime) stop(ctx context.Context) error {
+	return r.stopWithMeta(ctx, nil)
+}
+
+func (r *runtime) stopWithMeta(ctx context.Context, meta mcp.Meta) error {
 	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return err
@@ -948,7 +980,7 @@ func (r *runtime) stop(ctx context.Context) error {
 		return err
 	}
 	r.mu.Unlock()
-	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, nil, true, unlock)
+	ctx, finish, err := r.beginDatabaseExecutionWithLocalGate(ctx, meta, true, unlock)
 	if err != nil {
 		return err
 	}
@@ -1445,7 +1477,7 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	if r.suppressEvidence {
 		return
 	}
-	if backend == nil {
+	if backend == nil || r.catalog == nil {
 		return
 	}
 	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
@@ -1457,7 +1489,7 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	argumentsHash := sha256.Sum256(argumentsRaw)
 	featurePath, featureSHA, scenarioLine := r.authoringEvidenceContextLocked(toolName, arguments, outcome)
 	logPath := ""
-	if outcome == "failed" {
+	if outcome == "failed" || outcome == "cleanup-failed" {
 		logPath = backend.LogPath
 	}
 	entry := map[string]any{
@@ -1473,6 +1505,13 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	if len(progressID) > 0 && progressID[0] != "" {
 		entry["progressEvidenceId"] = progressID[0]
 		entry["progressCountScope"] = "snapshot-at-outcome; complete events in instance.progress.jsonl"
+	}
+	// Finalization may already have released the local gate. Its captured
+	// execution must not be replaced by a newer call's owner in the evidence.
+	if len(progressID) > 1 {
+		entry["executionId"] = progressID[1]
+	} else if r.executionOwner != nil {
+		entry["executionId"] = r.executionOwner.Proof.ID
 	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, instanceID+".evidence.jsonl")

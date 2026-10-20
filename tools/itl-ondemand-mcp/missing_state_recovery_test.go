@@ -105,6 +105,9 @@ func TestMissingStatePreservesTheSessionAndDoesNotStartOrReplayWithoutQuiescence
 					t.Fatal(err)
 				}
 				rt.cleanupUnconfirmed = true
+				// Recovery may now retry exact owned cleanup before a new tool.
+				// An unconfirmed stop must still retain the original execution.
+				fake.stopFailures = 1
 				if err := finish("failed", "previous native outcome unconfirmed"); err == nil {
 					t.Fatal("the unfinished original owner was released")
 				}
