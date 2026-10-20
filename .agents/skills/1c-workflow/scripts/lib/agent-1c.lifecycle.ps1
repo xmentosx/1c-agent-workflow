@@ -869,9 +869,10 @@ function Restart-Agent1cAfterDevBranchMerge {
     if ($Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite") -and
         (Get-FullPathNormalized $script:Agent1cScriptPath) -ne (Get-FullPathNormalized $branchHelperPath)) {
         $branchHelperText = Read-Utf8Text -Path $branchHelperPath
-        if ($branchHelperText -notmatch '(?m)^function Test-RefreshManagedDependencyLockChange\s*\{') {
+        if ($branchHelperText -notmatch '(?m)^function Test-RefreshManagedDependencyLockChange\s*\{' -or
+            $branchHelperText -notmatch '(?m)^function Test-RefreshIndependentDocumentationPath\s*\{') {
             $continuationHelperPath = $script:Agent1cScriptPath
-            Write-Host "The merged branch helper predates managed dependency-lock refresh recovery. Continuing the recorded post-merge phase through the current main-worktree helper: $continuationHelperPath"
+            Write-Host "The merged branch helper predates current post-merge refresh recovery. Continuing the recorded post-merge phase through the current main-worktree helper: $continuationHelperPath"
         }
     }
     if ((Get-FullPathNormalized $continuationHelperPath) -eq (Get-FullPathNormalized $branchHelperPath)) {
@@ -14030,7 +14031,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             -Transaction $transaction `
             -Operation $Operation `
             -AllowLegacyCursorMigration | Out-Null
-        Assert-CleanGit
+        Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
     }
 
@@ -14066,6 +14067,46 @@ function Resume-DevBranchLifecycleMergeIfPresent {
     throw "LIFECYCLE_MERGE_STATE_MISMATCH operation='$Operation' stage='$($transaction.stage)' branchCommit='$($transaction.branchCommit)' targetCommit='$($transaction.targetCommit)' head='$head'."
 }
 
+function Test-RefreshIndependentDocumentationPath {
+    param([string]$Path, [string]$Operation)
+
+    # These placed-once project documents are not inputs or outputs of the
+    # post-merge load. Never extend this to source, rules, settings or staging.
+    return $Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite") -and
+        ($Path -ceq "CONTEXT.md" -or $Path -cmatch '^docs/adr/[^/]+\.md$')
+}
+
+function Assert-DevBranchLifecyclePostMergeGitState {
+    param([string]$Operation, [string[]]$AllowedPaths = @(), [switch]$StagedOnly)
+
+    if ($Operation -notin @("refresh-dev-branch", "refresh-dev-branch-lite")) {
+        Assert-CleanGit
+        return
+    }
+    # Keep the index strict: a later cursor commit must not absorb another
+    # writer's staged work. Use NUL path lists, including for untracked ADRs.
+    $staged = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--"))
+    $unmerged = @(Get-DevBranchMergeUnmergedPaths)
+    $otherPaths = @(
+        if (-not $StagedOnly) {
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--")
+            Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--")
+        }
+    )
+    $unexpected = @(
+        @($staged | Where-Object { $AllowedPaths -cnotcontains $_ })
+        $unmerged
+        @($otherPaths | Where-Object {
+            $AllowedPaths -cnotcontains $_ -and
+            -not (Test-RefreshIndependentDocumentationPath -Path $_ -Operation $Operation)
+        })
+    ) | Sort-Object -Unique
+    if (@($unexpected).Count -gt 0) {
+        Set-RunFailureContext -Category "runner" -RequiredAction "resolve-refresh-post-merge-worktree-then-repeat-same-itl-command"
+        throw "Git worktree is not clean. REFRESH_POST_MERGE_WORKTREE_CHANGED operation='$Operation' paths='$($unexpected -join ', ')'. Preserve these changes and the pending merge. Inspect their owner and diff; finish an authorized related repair through its owner, then repeat the same ITL command. For another active writer, recommend waiting for its checkpoint and retrying; offer an explicitly agreed checkpoint of the named changes only when waiting cannot resolve it. Never discard, stash, or commit foreign work automatically."
+    }
+}
+
 function Assert-DevBranchLifecycleMergePostMerge {
     param(
         [object]$State,
@@ -14088,7 +14129,7 @@ function Assert-DevBranchLifecycleMergePostMerge {
         -Transaction $transaction `
         -Operation $Operation `
         -AllowLegacyCursorMigration | Out-Null
-    Assert-CleanGit
+    Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
     return (Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName))
 }
 
@@ -17760,10 +17801,17 @@ function Complete-RefreshConfigDumpInfoPostcondition {
         @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
     ) | Sort-Object -Unique
     $unexpectedPaths = @($trackedPaths | Where-Object {
-        $allowedPaths -cnotcontains ([string]$_ -replace "\\", "/")
+        $allowedPaths -cnotcontains ([string]$_ -replace "\\", "/") -and
+        -not (Test-RefreshIndependentDocumentationPath -Path $_ -Operation $Operation)
     })
     if ($unexpectedPaths.Count -gt 0) {
         throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: $($unexpectedPaths -join ', ')"
+    }
+
+    if ($Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite")) {
+        # Preserve the existing cursor checkpoint before reporting a later
+        # untracked-file failure. The pre-commit check only guards the index.
+        Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation -AllowedPaths $allowedPaths -StagedOnly
     }
 
     $pathsToCommit = @($trackedPaths | Where-Object { $allowedPaths -ccontains ([string]$_ -replace "\\", "/") })
@@ -17782,7 +17830,7 @@ function Complete-RefreshConfigDumpInfoPostcondition {
             -Operation $Operation `
             -PostMergeHead $LoadResult.currentCommit
     }
-    Assert-CleanGit
+    Assert-DevBranchLifecyclePostMergeGitState -Operation $Operation
     if ($null -ne $TrackedKiloSnapshot) {
         $TrackedKiloSnapshot.completed = $true
     }
