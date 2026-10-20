@@ -74,3 +74,9 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 ## Dependency first legacy caller, 2026-10-20
 
 Registry owner закрыл G3-LEGACY-CALLER-OFFER на исходном первом foreground PM5 upgrade: whole success, явный later без binding/opt-in, clean roots сразу после update. [Результаты](../add-product-project-registry/test-plan.md#первое-обновление-legacy-caller-2026-10-20) используют прежнюю capsule и r43. Поздний select подтвердил memoryOptIn=false; дополнительный restore выявил G3-CATALOG-RESTORE-FORMAT (значения равны, JSON order/clean не восстановлены). Этот blocker остаётся у registry settings/recovery owner; память не получает обхода или своего state/updater. AC-43/G5 и AC-44 остаются открытыми вместе с full G3, Gate 6 и обязательным release population. G4, миграция рабочих проектов и публикация не начинались.
+
+
+## Dependency restore format, 2026-10-20
+
+- [x] Учесть source fix G3-CATALOG-RESTORE-FORMAT registry owner без отдельного memory receipt/updater: exact descriptor restore при неизменённом файле, сохранённые owned conflict/recovery и private later; focused 89/89, a2e6931e. [Результаты](test-plan.md#dependency-точный-restore-descriptor-2026-10-20).
+- [ ] Получить исходный native first legacy upgrade → later → late select/restore proof после восстановления прежнего seed 1Cv8.1CD с manifest SHA. Factory сейчас exit 1 до создания copy; эта fixture-зависимость оставляет G3-CATALOG-RESTORE-FORMAT и G5/AC-43 открытыми. Capsule, failed copy и admission сохраняются; не заменять proof canonicalization/cleanup или обходом factory. AC-44 и остальные release conditions прежние, G4 не начат.

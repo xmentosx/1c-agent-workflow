@@ -1,0 +1,231 @@
+{
+    "schemaVersion":  1,
+    "id":  "G3-CATALOG-RESTORE-FORMAT",
+    "observedUtc":  "2026-10-20T14:53:33.6725327Z",
+    "sourceStatus":  "implemented-focused-passed",
+    "nativeStatus":  "blocked-before-materialization",
+    "sourceCommit":  "a2e6931ecf96618746e9a7b6f49466fddbc1908d",
+    "runtimeGitBlobs":  {
+                            ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1":  "86f3f983388cb7828a3fa1173c10237e57754353",
+                            ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1":  "99cdc8a11a1579edebb3f4ad38d70fbf5165edad"
+                        },
+    "owner":  "existing registry settings/apply/recovery",
+    "mechanism":  {
+                      "newFile":  false,
+                      "newLock":  false,
+                      "historicalReceipt":  "semantic recovery without exact-format claim",
+                      "compatibilityBaseline":  "existing applied record retains initial file receipt",
+                      "ownedBindingEdit":  "existing conflict, no overwrite",
+                      "installedMigration":  false,
+                      "rawText":  "UTF-8 including possible BOM",
+                      "laterUnrelatedEdit":  "existing owned-property semantic merge",
+                      "wholeFileRollback":  "only current afterState hash and verified prior bytes/target",
+                      "newOwner":  false,
+                      "durableBeforePhysicalWrite":  true,
+                      "receiptGap":  "same pinned operation and resume"
+                  },
+    "focused":  {
+                    "seconds":  98.2840215,
+                    "skipped":  0,
+                    "failed":  0,
+                    "passed":  89
+                },
+    "focusedSuites":  [
+                          {
+                              "path":  "tests/pester/ProductProjectApply.Tests.ps1",
+                              "seconds":  70.549
+                          },
+                          {
+                              "path":  "tests/pester/ProductProjectContext.Tests.ps1",
+                              "seconds":  3.0667
+                          },
+                          {
+                              "path":  "tests/pester/ProductProjectSetup.Tests.ps1",
+                              "seconds":  24.6684
+                          }
+                      ],
+    "nativeAttempt":  {
+                          "admissionBypassed":  false,
+                          "firstUpdateRun":  false,
+                          "exitCode":  1,
+                          "copyReceiptCreated":  false,
+                          "lateRestoreRun":  false,
+                          "cause":  "Source 1Cv8.1CD missing, manifest SHA expected; disappearance cause unknown",
+                          "blocker":  "G3-QUALIFICATION-SEED-DATABASE-MISSING",
+                          "recaptured":  false,
+                          "lateSelectRun":  false,
+                          "factory":  "New-SourceE2EFixtureProject",
+                          "operatorsPreparedOnly":  true,
+                          "phase":  "source capsule admission",
+                          "projectsRoot":  "C:\\itlj\\g3-restore-format-20261020"
+                      },
+    "seed":  {
+                 "head":  "9ee1073525eae722222b9696bfa623e757f1bd09",
+                 "capsulePath":  "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+                 "databaseExists":  false,
+                 "descriptorSha256":  "ab2f3a01476c3ef065ed5416f2e1814a2ec38fd006b7d1ff43cccf7eea22db07",
+                 "fullSeedQualification":  "blocked-missing-database",
+                 "modifiedByThisTask":  false,
+                 "capsuleSha256":  "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+                 "expectedDatabase":  {
+                                          "path":  "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+                                          "sha256":  "b39e7a94b4451132ea5ee2a683dce2458795c6d1a76d0e3f5647432fc0cfdd1a"
+                                      }
+             },
+    "originalFailure":  {
+                            "cleaned":  false,
+                            "changed":  [
+                                            ".agent-1c/project.json"
+                                        ],
+                            "projectRoot":  "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+                            "head":  "308ac59380112deb797e3eaeafbfa115bd605f4a",
+                            "originalDiffMatches":  true,
+                            "descriptorSha256":  "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391"
+                        },
+    "continuation":  [
+                         "Restore the original source database and verify its manifest SHA without recapture or changed admission.",
+                         "Repeat unchanged old-caller first upgrade then later, capture clean exact descriptor bytes, late select pm5-core-development then restore.",
+                         "Accept only exact before/after descriptor hashes and clean master/branch with private later, legacy false, memory off, unchanged workload/fork."
+                     ],
+    "originalGate6Artifacts":  [
+                                   {
+                                       "sha256":  "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl"
+                                   },
+                                   {
+                                       "sha256":  "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml"
+                                   },
+                                   {
+                                       "sha256":  "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml"
+                                   },
+                                   {
+                                       "sha256":  "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json"
+                                   },
+                                   {
+                                       "sha256":  "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result"
+                                   },
+                                   {
+                                       "sha256":  "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log"
+                                   },
+                                   {
+                                       "sha256":  "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+                                       "path":  "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log"
+                                   }
+                               ],
+    "boundaries":  {
+                       "workingProjectMigration":  false,
+                       "gate6Fixed":  false,
+                       "releasePopulationAccepted":  false,
+                       "g4Started":  false,
+                       "gate6Rerun":  false,
+                       "fullG3Accepted":  false,
+                       "workflowPublication":  false,
+                       "aiRulesChanged":  false
+                   },
+    "selection":  {
+                      "additionalCases":  5,
+                      "owner":  "product-project-client-apply",
+                      "contextDependencyExplicit":  true,
+                      "newProviderOrLLMCalls":  0,
+                      "existingReceiptGapAssertionExtended":  true,
+                      "newMemoryCalls":  0,
+                      "serialRestrictionAdded":  false,
+                      "focusedIsNativeProof":  false,
+                      "targetedOwner":  "RegisterChange",
+                      "existingBudgetSeconds":  120,
+                      "alwaysOnContextDelta":  0,
+                      "newSuite":  false,
+                      "targetedFinalResult":  "source-delivery ledger after registration; not inferred from focused pass"
+                  },
+    "rawEvidence":  [
+                        {
+                            "sha256":  "3e1902a71841821f7403bcb251a386f192f5744310a4d1380af2d2a60db0b7ce",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\focused.log"
+                        },
+                        {
+                            "sha256":  "46fa2bccf18f642fc29712318a74bf6c7f6604b0d6ba71aabc1975916d3d6b1e",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\focused.json"
+                        },
+                        {
+                            "sha256":  "8798bbc5519a89c00cc5009ab8e7cacd96b00dc9513e386c51c3a7e156dbffe5",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\focused.xml"
+                        },
+                        {
+                            "sha256":  "b0c1caf6105c7c56c8cdb0cb97ef8cde253897197f3f0aa485f93aa5c8c6bd6b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\prepare.log"
+                        },
+                        {
+                            "sha256":  "192fcd09139dbd8a32d1b2d8bf0de6d90c7626d6160117b2825a523fb167b16a",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\run-focused.ps1"
+                        },
+                        {
+                            "sha256":  "5d3f0954bb046bfd66f9ca65f2c3e53520cc69e77fe9d2adc66514077d496572",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\prepare-pm5.ps1"
+                        },
+                        {
+                            "sha256":  "76f970086bbaaf84636df58cb06d5c64befb32e5559b1e26fe84be368ec9c834",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\check-format.ps1"
+                        },
+                        {
+                            "sha256":  "3041a6bfecb1e673ff03437a5ea8fb35e7eb13bda8e6f3af799a25052362db3e",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\common.ps1"
+                        },
+                        {
+                            "sha256":  "9296f1a028a05f26d974c3e6315e907046e0d090abed6d15bd339b6083eaecf2",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\before-update.ps1"
+                        },
+                        {
+                            "sha256":  "ba2e7998fd6219e28200e013299860e6d304168b53bd06450188f8877a371b96",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\update-foreground.ps1"
+                        },
+                        {
+                            "sha256":  "1e6723a118566ebf2e8b004c2d4c62635d0c8715962e1d2f0f7c18568fe30da0",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\catalog-cli.ps1"
+                        },
+                        {
+                            "sha256":  "30b3cad5d1414d3493a95c53f742aa98a43b9afa37ce8f788be8ae5000245d05",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\inspect.ps1"
+                        },
+                        {
+                            "sha256":  "ef88846a1dedd387221c271720107de0c4290312da3e00bc44bd46752a8e8e0f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\validate-final-stand.ps1"
+                        },
+                        {
+                            "sha256":  "fe0789b8e5b7e3cc60c69661615d899e0bff68eeebd673adfef9725ea1b681ad",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\delivery-before.log"
+                        },
+                        {
+                            "sha256":  "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\registry-validation.log"
+                        },
+                        {
+                            "sha256":  "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\memory-validation.log"
+                        },
+                        {
+                            "sha256":  "91c8008fb7327b6e513252825771655ee1cda07e8c0adf0d900d896b81103cac",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\restore-format-20261020\\export-evidence.ps1"
+                        },
+                        {
+                            "sha256":  "94eea7744dfef983056beb7bab25fb068b9c5f7a0f32ac9d2db78c5329348b9b",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-first.json"
+                        },
+                        {
+                            "sha256":  "dc9567fdde1c76000e3842b183cad0f3825f377a801d75382af82c24b38d6002",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\after-final.json"
+                        },
+                        {
+                            "sha256":  "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff"
+                        },
+                        {
+                            "sha256":  "7fb629d3e4ea047a672666ed50d655efa49c15beab7cf2677cc55a4503e7eb1f",
+                            "path":  "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format-observation.json"
+                        }
+                    ]
+}
