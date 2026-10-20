@@ -966,7 +966,7 @@ try {
         $result.args | Should -Not -Contain "/UpdateDBCfg"
         $result.listFile | Should -Be "C:\logs\changed-files.txt"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1015,7 +1015,7 @@ try {
         $result.args | Should -Contain "-updateConfigDumpInfo"
         $result.args | Should -Not -Contain "/UpdateDBCfg"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1062,7 +1062,7 @@ try {
         $result.load.loadModeUsed | Should -Be "full"
         $result.load.loadReason | Should -Be "partial-inventory-missing-files-full-load"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1153,7 +1153,7 @@ try {
         $result.drainPath | Should -Be "C:\base"
         $result.drainReason | Should -Be "configuration source load"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
         @($result.native[0].observedSequence)|Should -Be @('drain')
@@ -1236,7 +1236,7 @@ try {
         $result.load.partialLogPath | Should -Be "C:\logs\partial.log"
         $result.load.fullFallbackLogPath | Should -Be "C:\logs\full.log"
 
-        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($result.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($result.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($result.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1321,7 +1321,7 @@ try {
                 $script:Calls += , @($DesignerArgs)
                 $script:LastLogPath = "C:\logs\full.log"
             }
-            $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $source.absoluteExportPath -ListFilePath "C:\list.txt" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full 6>$null
+            $load = Invoke-ConfigLoadWithFallback -CheckProfile development -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $source.absoluteExportPath -ListFilePath "C:\list.txt" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full 6>$null
             [pscustomobject]@{ calls = @($script:Calls); load = $load; native = @($script:LifecycleGate6NativeCalls.ToArray()); sourceFingerprint = $source.fingerprint }
         }
         $full.calls.Count | Should -Be 1
@@ -1329,9 +1329,11 @@ try {
         $full.calls[0] | Should -Not -Contain "-partial"
         $full.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $full.load.loadModeUsed | Should -Be "full"
-        @($full.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+        @($full.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
         $full.load.gate6Evidence.sourceFingerprint | Should -Be $full.sourceFingerprint
-        @($full.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
+        @($full.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
+        $full.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
+        $full.load.gate6Evidence.steps[-1].skipped | Should -BeTrue
     }
 
     It "removes a stale ConfigDumpInfo cursor only for a restore-recovery full load" {
@@ -1355,7 +1357,7 @@ try {
                     Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "fresh-cursor"
                     $script:LastLogPath = "C:\logs\full.log"
                 }
-                $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full -ResetConfigDumpInfo 6>$null
+                $load = Invoke-ConfigLoadWithFallback -CheckProfile development -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -SourceFingerprint $source.fingerprint -Mode Full -ResetConfigDumpInfo 6>$null
                 [pscustomobject]@{
                     existedAtStart = $script:CursorExistedAtDesignerStart
                     cursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
@@ -1368,9 +1370,11 @@ try {
             $result.existedAtStart | Should -BeFalse
             $result.cursor | Should -Be "fresh-cursor"
             $result.load.loadModeUsed | Should -Be "full"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
             $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
-            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
+            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
+            $result.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
+            $result.load.gate6Evidence.steps[-1].skipped | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1448,6 +1452,7 @@ try {
                 }
 
                 $load = Invoke-ConfigLoadWithFallback `
+                    -CheckProfile development `
                     -InfoBasePath "C:\base" `
                     -InfoBaseKind file `
                     -State ([pscustomobject]@{}) `
@@ -1468,9 +1473,11 @@ try {
             $result.load.loadModeUsed | Should -Be "full-fallback"
             $result.fallbackInputCursor | Should -Be "original-cursor"
             $result.finalCursor | Should -Be "full-cursor"
-            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/CheckConfig', '/UpdateDBCfg')
+            @($result.native | ForEach-Object { $_.arguments[0] }) | Should -Be @('/LoadConfigFromFiles', '/DumpIB', '/LoadConfigFromFiles', '/CheckModules', '/UpdateDBCfg')
             $result.load.gate6Evidence.sourceFingerprint | Should -Be $result.sourceFingerprint
-            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $true)
+            @($result.load.gate6Evidence.steps | ForEach-Object { $_.nativePassed }) | Should -Be @($true, $false)
+            $result.load.gate6Evidence.steps[-1].status | Should -Be 'not-required-development'
+            $result.load.gate6Evidence.steps[-1].skipped | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1574,7 +1581,7 @@ try {
         $full.listFile | Should -Be ""
         $full.mode | Should -Be "full"
 
-        @($full.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($full.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($full.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($full.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }
@@ -1625,7 +1632,7 @@ try {
         $prep.drains | Should -Be 0
         $prep.message | Should -Match "list preparation failed"
 
-        @($noOpCalls.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($noOpCalls.native|ForEach-Object{$_.arguments[0]})|Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($noOpCalls.native|Where-Object{$_.infoBasePath -cne 'C:\base' -or $_.infoBaseKind -cne 'file'})|Should -HaveCount 0
         @($noOpCalls.native[-1].arguments)|Should -Contain '/UpdateDBCfg'
     }

@@ -1,4 +1,4 @@
-function Get-DataMcpExtensionName {
+﻿function Get-DataMcpExtensionName {
     return "OneMCP"
 }
 
@@ -158,7 +158,7 @@ function Install-DataMcpExtension {
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "Data MCP extension installation"
     Write-Host "Installing Data MCP extension '$(Get-DataMcpExtensionName)' from: $CfePath"
-    $result = Invoke-GuardedCfeExtensionApply `
+    $result = Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
         -CfePath $CfePath -ExtensionName (Get-DataMcpExtensionName)

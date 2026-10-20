@@ -645,7 +645,7 @@ function Ensure-YAxUnitExtensions {
         $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
     }
     if (-not $engineMatches) {
-        Invoke-GuardedCfeExtensionApply -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -CfePath $cfePath -ExtensionName $extensionName `
             -ArtifactDiagnosticBaseline (Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $entry -ExtensionName $extensionName) | Out-Null
         Install-ItlOnDemandMcp | Out-Null
@@ -654,7 +654,7 @@ function Ensure-YAxUnitExtensions {
             -User ([string](Get-EnvValue -Name "IB_USER")) -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) -Scope "yaxunit" -ReconcileYAxUnitProtections)
     }
     if (-not $testsMatch) {
-        Invoke-ConfigLoadDesignerAttempt -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+        Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
             -ExtensionName $testsExtensionName -SourceFingerprint $source.fingerprint -ValidationPurpose 'project-tests' `
             -AfterApply {
                 $fresh = @(Get-ToolingRuntimeExtensions -State $State -Names @($testsExtensionName))

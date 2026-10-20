@@ -889,6 +889,7 @@
         "tests/pester/PlatformLegacyImpact.Tests.ps1",
         "tests/pester/PlatformLegacyContext.Tests.ps1",
         "tests/pester/PlatformLoadContinuation.Tests.ps1",
+        "tests/pester/PlatformProductionPreparation.Tests.ps1",
         "tests/pester/PortRegistryLifecycle.Tests.ps1",
         "tests/pester/OneCSessionLimit.Tests.ps1",
         "tests/pester/OneCSessionCapacityWait.Tests.ps1",

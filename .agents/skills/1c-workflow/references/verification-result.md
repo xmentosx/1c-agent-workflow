@@ -119,17 +119,18 @@ For a checked source or CFE load, the ITL owner creates a native DT rollback
 snapshot before changing the editable configuration. When the enclosing
 extension-init or Release operation already owns a pending snapshot for this
 exact target, the checked load uses it without changing its completion policy.
-For an extension source load, the ITL owner loads the editable configuration,
-then runs Designer `/CheckModules`, extension applicability and `/CheckConfig`
-before `/UpdateDBCfg`. Under the generic policy each check needs a zero process exit, a fresh numeric
-`/DumpResult=0`, and a UTF-8 `/Out` log without remaining warnings or errors.
-For main configuration loads, changed BSL/XML or an unknown/full-load delta
-selects `/CheckModules` and `/CheckConfig` before apply; a known binary-only
-delta keeps the existing direct path. A selected small partial quick-fix may
-omit the ladder only with complete, current raw MCP proof for every changed
-BSL/XML input. Missing, stale or incomplete proof uses the platform fallback.
-See [platform validation evidence](platform-validation-evidence.md) for the
-existing `VerificationEvidencePath` input and its exact-source contract.
+For every editable source load, the ITL owner runs Designer `/CheckModules`
+and extension applicability when loading an extension, before `/UpdateDBCfg`.
+Each selected generic check requires zero process exit, fresh numeric
+`/DumpResult=0` and a UTF-8 `/Out` without remaining errors or warnings;
+the existing project-test and immutable vendor contracts below remain separate.
+Ordinary development, full/partial/fallback loads, tooling installs, intermediate
+CF/CFE exports and ordinary close do not run `/CheckConfig`. Static MCP coverage
+never waives required compilation. Full checks belong to explicit working-base
+preparation and existing Release qualification; load size, execution path,
+verification depth and OpenSpec do not select them.
+See [platform validation evidence](platform-validation-evidence.md) for saved-input
+MCP proof identity, which remains independent of the platform cadence.
 `GATE6_CHECK_FAILED` stops database apply and restores the owned DT snapshot;
 correct the named source finding and repeat the original ITL operation.
 A failed applicability check does not trigger the partial-load full fallback;
@@ -210,6 +211,40 @@ delivery limitation; there is no new blanket delivery block or bypass of ITL
 apply requirements. For EDT-format sources, use EDT validation and its qualified
 update owner, or an explicitly selected XML export/import route; never add this
 ladder as a second deployment owner in the same run.
+
+## Production preparation
+
+Use `-ResultPurpose production` only when the human explicitly requests preparation
+for a working infobase, on `export-dev-branch-result`, `close-dev-branch`,
+`export-auxiliary-contour-result`, `check-dev-branch` or `verify-dev-branch`.
+The default is `development`; export, closing a branch or a large change alone
+never implies production. This prepares evidence/artifacts in the authorized test
+contour and does not grant a working-base deployment.
+
+Preparation requires the complete `/CheckModules`, extension applicability when
+applicable, and `/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient
+-Server -ExternalConnection -HandlersExistence -ExtendedModulesCheck` ladder.
+A fingerprint-matching no-load path still runs any missing full qualification.
+Exact qualified proof may be reused only with matching source, loaded-base
+identity, target, layer, platform build, modes and intact native/assessment files.
+Missing proof causes checking; it is never inferred from a prior `passed` label.
+The manifest's `platformPreparation` records purpose, status and receipt path/hash
+separately from behavioural verification. `verificationPolicy=warn` cannot waive
+the production platform requirement, and platform success does not prove tests.
+
+There is no new baseline store or history reconstruction. Operation-local main-CF
+legacy comparison retains its existing comparator only when the previous loaded
+corpus is the proven original seed/lifecycle source for the whole release delta.
+A later development load and candidate self-comparison cannot supply that origin.
+Transfer-baseline commits and event-log seed baselines alone are not native
+before-checks. An already completed exact legacy qualification can be reused;
+its original completed rollback snapshot need not be retained. Without suitable
+proof, a clean native check needs no baseline, while unresolved findings stop only
+production preparation. Continue development/intermediate export or resolve the
+findings and repeat the same explicit preparation; never restore arbitrary old
+snapshots, create a whitelist, edit state, or repair unrelated product code merely
+to invent a baseline. A read-only preparation failure does not roll back a previous
+development apply. Checked-load failures retain their existing snapshot recovery.
 
 ## Verification Policy
 

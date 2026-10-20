@@ -7701,7 +7701,7 @@ function Install-VanessaMcpExtensionCfe {
     }
 
     Write-Host "Installing 1C extension '$ExtensionName' from: $CfePath"
-    $installation = Invoke-GuardedCfeExtensionApply `
+    $installation = Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
         -User $User `

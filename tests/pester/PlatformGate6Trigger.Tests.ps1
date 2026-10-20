@@ -132,17 +132,17 @@ Describe 'Conditional Gate6 for a real partial Git configuration change' {
         [Environment]::SetEnvironmentVariable('QUICKFIX_MAX_LINES', $savedQuickFix, 'Process')
         [Environment]::SetEnvironmentVariable('AGENT_1C_QUICKFIX_MAX_LINES', $savedPrefixedQuickFix, 'Process')
     }
-    It 'skips platform checks only for a small fully covered module and XML change in one owner' {
+    It 'retains native compilation for a small fully covered module and XML change in one owner' {
         $f = New-GateFixture
         $head = Invoke-GateFixtureGit $f.ProjectRoot @('rev-parse', 'HEAD')
         $sourceHashes = @($f.ChangeSet.files | ForEach-Object { Get-ItlPlatformEvidenceHash (Join-Path $f.SourceRoot $_) })
-        (Get-GateFixtureDecision $f) | Should -BeFalse
+        (Get-GateFixtureDecision $f) | Should -BeTrue
         (Invoke-GateFixtureGit $f.ProjectRoot @('rev-parse', 'HEAD')) | Should -BeExactly $head
         (Invoke-GateFixtureGit $f.ProjectRoot @('status', '--porcelain')) | Should -BeExactly ''
         $after = @($f.ChangeSet.files | ForEach-Object { Get-ItlPlatformEvidenceHash (Join-Path $f.SourceRoot $_) })
         ($after -join ',') | Should -BeExactly ($sourceHashes -join ',')
     }
-    It 'retains full checks when no operation-local evidence is supplied' {
+    It 'retains compilation when no operation-local evidence is supplied' {
         $f = New-GateFixture
         (Get-GateFixtureDecision $f '') | Should -BeTrue
     }
@@ -169,23 +169,23 @@ Describe 'Conditional Gate6 for a real partial Git configuration change' {
         $f = New-GateFixture; $f.ChangeSet.requiresFullLoad = $true
         (Get-GateFixtureDecision $f) | Should -BeTrue
     }
-    It 'requires full checks for a real deleted metadata file' {
+    It 'requires compilation for a real deleted metadata file' {
         $f = New-GateFixture Deleted
         $f.ChangeSet.missingFiles | Should -Contain 'CommonModules/Логика.xml'
         (Get-GateFixtureDecision $f) | Should -BeTrue
     }
-    It 'requires full checks for a large real diff despite complete MCP coverage' {
+    It 'requires compilation for a large real diff despite complete MCP coverage' {
         $f = New-GateFixture Large
         (Test-ItlPlatformSourceCoverage -EvidencePath $f.EvidencePath -SourceRoot $f.SourceRoot -SourceFingerprint $f.Fingerprint -Files $f.ChangeSet.files -ProjectRoot $f.ProjectRoot).covered | Should -BeTrue
         (Get-GateFixtureDecision $f) | Should -BeTrue
     }
-    It 'does not turn a small covered change into a full check because the generated dump index expanded' {
+    It 'retains compilation independently of generated dump index size' {
         $f = New-GateFixture GeneratedIndex
         $f.ChangeSet.files | Should -Not -Contain 'ConfigDumpInfo.xml'
         (Test-ItlPlatformSourceCoverage -EvidencePath $f.EvidencePath -SourceRoot $f.SourceRoot -SourceFingerprint $f.Fingerprint -Files $f.ChangeSet.files -ProjectRoot $f.ProjectRoot).covered | Should -BeTrue
-        (Get-GateFixtureDecision $f) | Should -BeFalse
+        (Get-GateFixtureDecision $f) | Should -BeTrue
     }
-    It 'requires full checks for two changed metadata owners despite complete MCP coverage' {
+    It 'requires compilation for two changed metadata owners despite complete MCP coverage' {
         $f = New-GateFixture MultipleOwners
         (Test-ItlPlatformSourceCoverage -EvidencePath $f.EvidencePath -SourceRoot $f.SourceRoot -SourceFingerprint $f.Fingerprint -Files $f.ChangeSet.files -ProjectRoot $f.ProjectRoot).covered | Should -BeTrue
         (Get-GateFixtureDecision $f) | Should -BeTrue
@@ -195,7 +195,7 @@ Describe 'Conditional Gate6 for a real partial Git configuration change' {
         [Environment]::SetEnvironmentVariable('QUICKFIX_MAX_LINES', '2', 'Process')
         (Get-GateFixtureDecision $f) | Should -BeTrue
         [Environment]::SetEnvironmentVariable('QUICKFIX_MAX_LINES', '3', 'Process')
-        (Get-GateFixtureDecision $f) | Should -BeFalse
+        (Get-GateFixtureDecision $f) | Should -BeTrue
         [Environment]::SetEnvironmentVariable('QUICKFIX_MAX_LINES', 'not-a-number', 'Process')
         (Get-GateFixtureDecision $f) | Should -BeTrue
     }
@@ -213,8 +213,8 @@ Describe 'Conditional Gate6 for a real partial Git configuration change' {
         $f = New-GateFixture UnknownBinary
         (Get-GateFixtureDecision $f) | Should -BeTrue
     }
-    It 'preserves the existing binary-only route when no BSL or metadata changed' {
+    It 'retains compilation for a known binary-only editable load' {
         $f = New-GateFixture BinaryOnly
-        (Get-GateFixtureDecision $f) | Should -BeFalse
+        (Get-GateFixtureDecision $f) | Should -BeTrue
     }
 }

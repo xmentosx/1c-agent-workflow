@@ -1,12 +1,10 @@
 # Platform Validation Evidence
 
-Use this reference only when an authorized main-CF source load has a selected
-small partial `quick-fix` and actual MCP validator responses already exist.
-Pass the receipt through the existing helper `-VerificationEvidencePath`; this
-does not authorize a load or invoke validators. Full loads, deletions, unknown
-inputs, multiple metadata owners and deltas above `QUICKFIX_MAX_LINES` (default
-40 added plus removed source lines) keep the platform fallback. The generated
-`ConfigDumpInfo.xml` cursor does not count toward that source-line limit.
+This reference describes exact saved-input MCP proof. Earlier package versions
+used it to waive a small partial native ladder; current development loads always
+retain compilation/applicability and omit full CheckConfig independently of this
+receipt. Production preparation always requires its complete platform proof.
+The receipt does not authorize a load, invoke validators or create a legacy baseline.
 
 Store the receipt and actual request/response artifacts in ignored project
 runtime. Receipt schema 1 has `kind=itl-mcp-source-validation`,

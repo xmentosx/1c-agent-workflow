@@ -74,12 +74,13 @@
                 request=@{path='request.json';sha256=(Get-ItlPlatformEvidenceHash $requestPath)};
                 result=@{path='result.json';sha256=(Get-ItlPlatformEvidenceHash $resultPath)}})}
         Write-ContinuationJson $Fixture.evidence $receipt
-        (Test-ItlPlatformSourceCoverage -EvidencePath $Fixture.evidence -SourceRoot $Fixture.sourceRoot -SourceFingerprint $Fixture.current.fingerprint `
-            -Files @($Fixture.module) -ProjectRoot $Fixture.root -InfoBaseKind file -InfoBasePath $Fixture.infoBase).covered | Should -BeTrue
+        $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $Fixture.evidence -SourceRoot $Fixture.sourceRoot -SourceFingerprint $Fixture.current.fingerprint `
+            -Files @($Fixture.module) -ProjectRoot $Fixture.root -InfoBaseKind file -InfoBasePath $Fixture.infoBase
+        $coverage.covered | Should -BeTrue -Because $coverage.reason
     }
 }
 
-Describe 'Checked load proof continuation and current MCP exemption' {
+Describe 'Checked load continuation with development and production cadence' {
     BeforeEach {
         $script:continuationFixture=New-ContinuationProject
         $f=$script:continuationFixture
@@ -87,6 +88,7 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         . $helperPath -ProjectRoot $f.root -DevBranchName 'continuation' -Action help *> $null
         $script:OneCNativeOperationJournal=$null
         $script:VerificationEvidencePath=''
+        $script:ResultPurpose='development'
         $f | Add-Member -NotePropertyName previous -NotePropertyValue (Get-ConfigSourceFingerprint -ExportPath 'src/cf')
         [IO.Directory]::CreateDirectory($f.infoBase) | Out-Null
         [IO.File]::WriteAllBytes($f.database,[byte[]](1,2,3,4))
@@ -161,6 +163,15 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         @{NativeCode=101},@{NativeCode=0}
     ) {
         $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        # This fixture starts from the exact original corpus. Cadence changes
+        # only when the test explicitly requests production preparation.
+        $origin=Read-DevBranchStateFile $f.statePath
+        $origin.loadReason='branch-copy-seed'
+        $origin | Add-Member -NotePropertyName branchSeedConfigurationFingerprint -NotePropertyValue $f.previous.fingerprint
+        $origin | Add-Member -NotePropertyName branchSeedSourceKey -NotePropertyValue 'original-seed'
+        $origin | Add-Member -NotePropertyName branchSeedSyncId -NotePropertyValue 'original-sync'
+        Update-DevBranchState -State $origin -Updates @{loadReason='branch-copy-seed';branchSeedConfigurationFingerprint=$f.previous.fingerprint;branchSeedSourceKey='original-seed';branchSeedSyncId='original-sync'}
         $descriptor='CommonModules/Изменённый.xml'
         $descriptorPath=Join-Path $f.sourceRoot $descriptor
         $original=[IO.File]::ReadAllText($descriptorPath)
@@ -217,28 +228,28 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         [IO.File]::ReadAllBytes($repairPath) | Should -Be $repairBefore
     }
 
-    It 'keeps an explicit full load strict despite matching small-change MCP evidence' {
+    It 'keeps full development compilation without a structural check despite matching MCP evidence' {
         $f=$script:continuationFixture
         Save-ContinuationCoverage $f
         $script:VerificationEvidencePath=$f.evidence
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '-partial'
         $result.loadModeUsed | Should -BeExactly 'full'
         $f.applied | Should -BeTrue
         $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
         $configuration.nativePassed | Should -BeFalse
-        $configuration.assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
-        $configuration.assessment.cleanPassed | Should -BeFalse
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
     }
 
-    It 'uses strict full fallback and the proved previous state after a covered partial native load fails safely' {
+    It 'keeps compilation and rollback through full development fallback without structural checks' {
         $f=$script:continuationFixture
         Save-ContinuationCoverage $f
         $script:VerificationEvidencePath=$f.evidence
         $f.fault='partial native failure'
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
-        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         $loads=@($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})
         $loads.Count | Should -Be 2
         $loads[0].arguments | Should -Contain '-partial'
@@ -250,8 +261,8 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         $f.applied | Should -BeTrue
         $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
         $configuration.nativePassed | Should -BeFalse
-        $configuration.assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
-        $configuration.assessment.cleanPassed | Should -BeFalse
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
         $state=Read-DevBranchStateFile $f.statePath
         $state.lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
         $state.customSetting | Should -BeExactly 'сохранить'
@@ -275,6 +286,7 @@ Describe 'Checked load proof continuation and current MCP exemption' {
     }
 
     It 'does not compare a borrowed partial failure against an unconfirmed previous database baseline' {
+        $script:ResultPurpose='production'
         $f=$script:continuationFixture
         Save-ContinuationCoverage $f
         $script:VerificationEvidencePath=$f.evidence
@@ -291,13 +303,13 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         [IO.File]::ReadAllBytes($dt) | Should -Be ([byte[]](1,2,3,4))
     }
 
-    It 'applies an actually admitted current MCP proof through snapshot editable load revalidation and one database boundary' {
+    It 'retains native compilation even with admitted MCP proof and uses one database boundary' {
         $f=$script:continuationFixture
         Save-ContinuationCoverage $f
         $script:VerificationEvidencePath=$f.evidence
         $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
         $operations=@($f.calls|ForEach-Object{$_.arguments[0]})
-        $operations | Should -Be @('/DumpIB','/LoadConfigFromFiles','/UpdateDBCfg')
+        $operations | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
         @($f.calls|Where-Object{$_.arguments[0] -eq '/LoadConfigFromFiles'})[0].arguments | Should -Not -Contain '/UpdateDBCfg'
         $f.applied | Should -BeTrue
         $result.loaded | Should -BeTrue
@@ -308,7 +320,7 @@ Describe 'Checked load proof continuation and current MCP exemption' {
     }
 
     It 'refuses changed current MCP inputs after editable load and restores the exact original target for <Fault>' -ForEach @(
-        @{Fault='source changed'},@{Fault='receipt changed'},@{Fault='result changed'}
+        @{Fault='source changed'}
     ) {
         $f=$script:continuationFixture
         Save-ContinuationCoverage $f
@@ -326,6 +338,34 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         $state.lastGate6Evidence.id | Should -BeExactly 'previous-proof'
         $state.customSetting | Should -BeExactly 'сохранить'
         if($Fault -eq 'source changed'){[IO.File]::ReadAllText((Join-Path $f.sourceRoot $f.module)) | Should -Match 'позднее изменение'}
+    }
+
+    It 'accepts production legacy findings only from the exact original seed corpus' {
+        $f=$script:continuationFixture
+        $script:ResultPurpose='production'
+        $state=Read-DevBranchStateFile $f.statePath
+        $state.loadReason='branch-copy-seed'
+        $state | Add-Member -NotePropertyName branchSeedConfigurationFingerprint -NotePropertyValue $f.previous.fingerprint
+        $state | Add-Member -NotePropertyName branchSeedSourceKey -NotePropertyValue 'original-seed'
+        $state | Add-Member -NotePropertyName branchSeedSyncId -NotePropertyValue 'original-sync'
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State $state -ExportPath 'src/cf' -Mode Full
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/CheckConfig','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $result.gate6Evidence.steps[-1].assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
+        $result.gate6Evidence.steps[-1].nativePassed | Should -BeFalse
+        $f.applied | Should -BeTrue
+    }
+
+    It 'keeps native checking independent of an unconsumed MCP artifact for <Fault>' -ForEach @(
+        @{Fault='receipt changed'},@{Fault='result changed'}
+    ) {
+        $f=$script:continuationFixture
+        Save-ContinuationCoverage $f
+        $script:VerificationEvidencePath=$f.evidence
+        $f.fault=$Fault
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf'
+        $f.applied | Should -BeTrue
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
+        $result.gate6Evidence.steps[-1].status | Should -BeExactly 'not-required-development'
     }
 
     It 'retains previous loaded proof only after exact checked rollback and completes the same owner operation after repair' {
@@ -347,9 +387,9 @@ Describe 'Checked load proof continuation and current MCP exemption' {
         $result.loaded | Should -BeTrue
         $configuration=@($result.gate6Evidence.steps|Where-Object step -eq 'configuration')[0]
         $configuration.nativePassed | Should -BeFalse
-        $configuration.exitCode | Should -Be 101
-        $configuration.assessment.status | Should -BeExactly 'accepted-with-preexisting-findings'
-        $configuration.assessment.cleanPassed | Should -BeFalse
+        $configuration.exitCode | Should -BeNullOrEmpty
+        $configuration.status | Should -BeExactly 'not-required-development'
+        $configuration.exitCode | Should -BeNullOrEmpty
         (Read-DevBranchStateFile $f.statePath).lastConfigDesignerFingerprint | Should -BeExactly $f.current.fingerprint
     }
 

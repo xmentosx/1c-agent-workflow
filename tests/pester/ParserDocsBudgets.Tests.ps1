@@ -218,7 +218,7 @@
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 1160; reviewApproxTokens = 2300; maxApproxTokens = 2400; rationale = "accepted engine-only YAxUnit exception needs an always-on USER precedence override, strict product/test boundaries and a ban on manual suppression/false clean proof; details stay on demand. Required routing adds 39 words/401 bytes (1093/2273 to 1132/2373 words/byte-4 proxy tokens); maxWords 1120 to 1160 retains a 28-word margin, with review and hard token limits unchanged" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 1180; reviewApproxTokens = 2300; maxApproxTokens = 2500; rationale = "ITL cadence needs an always-on USER override of generic Gate 6 and explicit production purpose, Release exception and deployment boundary. Proof and legacy details stay on demand; duplicated fast-router guidance is removed. Required routing changes 1132/2373 to 1164/2472 words/byte-4 proxy tokens (+32/+99), so maxWords 1160 to 1180 and hard tokens 2400 to 2500 preserve complete meaning; review threshold stays unchanged" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1475; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract; conditional retained small-suite guidance changes the measured C4 guide from 1439/2618 to 1464/2656 words/byte-4 proxy tokens (+25/+38), so maxWords increases 1450 to 1475 with the same 11-word margin; review and hard token limits and runtime safety rules remain" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }
@@ -246,6 +246,9 @@
         # their existing limits.
         # Six OpenSpec routes add 253 UTF-8 bytes to each master surface;
         # ZCode/MiMo add two client rows. Keep the measured ceilings explicit.
+        # The required itl-result production-purpose conditional adds 144 UTF-8
+        # bytes (36 byte/4 proxy tokens) per dev surface: codex 50748 -> 50892.
+        # USER precedence/proof rules remain separate; master is unchanged.
         $expectedRendered = @{
             "master/codex" = @{ files = 24; maxBytes = 33424 }
             "master/kilocode" = @{ files = 12; maxBytes = 32270 }
@@ -259,18 +262,18 @@
             "master/zcode" = @{ files = 12; maxBytes = 32114 }
             "master/mimocode" = @{ files = 12; maxBytes = 32114 }
             "master/pi" = @{ files = 12; maxBytes = 32114 }
-            "dev/codex" = @{ files = 30; maxBytes = 50842 }
-            "dev/kilocode" = @{ files = 15; maxBytes = 49468 }
-            "dev/claude-code" = @{ files = 15; maxBytes = 49273 }
-            "dev/cursor" = @{ files = 15; maxBytes = 49273 }
+            "dev/codex" = @{ files = 30; maxBytes = 50892 }
+            "dev/kilocode" = @{ files = 15; maxBytes = 49488 }
+            "dev/claude-code" = @{ files = 15; maxBytes = 49308 }
+            "dev/cursor" = @{ files = 15; maxBytes = 49308 }
             "dev/opencode" = @{ files = 16; maxBytes = 62748 }
-            "dev/kimi" = @{ files = 15; maxBytes = 49555 }
-            "dev/qwen" = @{ files = 15; maxBytes = 49273 }
-            "dev/command-code" = @{ files = 15; maxBytes = 49273 }
-            "dev/cline" = @{ files = 15; maxBytes = 49555 }
-            "dev/zcode" = @{ files = 15; maxBytes = 49273 }
-            "dev/mimocode" = @{ files = 15; maxBytes = 49273 }
-            "dev/pi" = @{ files = 15; maxBytes = 49273 }
+            "dev/kimi" = @{ files = 15; maxBytes = 49605 }
+            "dev/qwen" = @{ files = 15; maxBytes = 49308 }
+            "dev/command-code" = @{ files = 15; maxBytes = 49308 }
+            "dev/cline" = @{ files = 15; maxBytes = 49605 }
+            "dev/zcode" = @{ files = 15; maxBytes = 49308 }
+            "dev/mimocode" = @{ files = 15; maxBytes = 49308 }
+            "dev/pi" = @{ files = 15; maxBytes = 49308 }
         }
 
         $rendered = & {

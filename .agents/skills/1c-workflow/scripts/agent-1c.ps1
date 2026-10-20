@@ -127,6 +127,8 @@ param(
     [switch]$SkipAiRules,
     [switch]$InstallVanessaIfMissing,
     [switch]$AllowUnverifiedResult,
+    [ValidateSet('development', 'production')]
+    [string]$ResultPurpose = 'development',
     [switch]$AllowUnverifiedClose,
     [switch]$PreserveReleaseSnapshotApplicationProof,
     [switch]$UseCurrentWorktree,
@@ -161,6 +163,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+if ($ResultPurpose -eq 'production' -and $Action -notin @('export-dev-branch-result', 'close-dev-branch', 'export-auxiliary-contour-result', 'check-dev-branch', 'verify-dev-branch')) {
+    throw 'RESULT_PURPOSE_ACTION_INVALID: production preparation requires an explicit result export, close or branch check; it never authorizes production deployment.'
+}
 if ($DependencySelectionFile -and -not [IO.Path]::IsPathRooted($DependencySelectionFile)) {
     $DependencySelectionFile = [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $DependencySelectionFile))
 }
@@ -333,6 +338,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
+    if ($ResultPurpose -eq 'production') { Add-Agent1cReexecArgument -Arguments $arguments -Name 'ResultPurpose' -Value $ResultPurpose }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RepairSessionId" -Value $RepairSessionId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationObligationId" -Value $VerificationObligationId

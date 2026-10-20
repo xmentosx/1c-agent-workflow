@@ -519,7 +519,7 @@ Describe 'Designer Gate 6 batch verdict' {
         $actual.snapshotExists | Should -BeTrue
     }
 
-    It 'selects main configuration checks for metadata and modules, but not a binary-only delta' {
+    It 'retains native compilation for metadata modules binary and unknown source loads' {
         $result = & {
             . $helperPath -ProjectRoot $TestDrive -Action help *> $null
             [pscustomobject]@{
@@ -531,7 +531,7 @@ Describe 'Designer Gate 6 batch verdict' {
         }
         $result.module | Should -BeTrue
         $result.metadata | Should -BeTrue
-        $result.binary | Should -BeFalse
+        $result.binary | Should -BeTrue
         $result.unknown | Should -BeTrue
     }
 

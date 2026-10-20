@@ -1,4 +1,4 @@
-function Get-AuxiliaryContourBranchKey {
+﻿function Get-AuxiliaryContourBranchKey {
     $branch = (Get-GitOutput @("branch", "--show-current")).Trim()
     if ([string]::IsNullOrWhiteSpace($branch)) { $branch = "detached" }
     return (ConvertTo-SafeName $branch)
@@ -547,7 +547,7 @@ function Update-AuxiliaryContour {
         Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
         $loadUser = if ($newManagedInfoBase) { "" } else { $connection.user }
         $loadPassword = if ($newManagedInfoBase) { "" } else { $connection.password }
-        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -SourceFingerprint $source.configuration.fingerprint -ContentKind configuration -RequireGate6 -Mode "Full" -User $loadUser -Password $loadPassword
+        $configLoad = Invoke-ConfigLoadWithFallback -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -SourceFingerprint $source.configuration.fingerprint -ContentKind configuration -RequireGate6 -Mode "Full" -User $loadUser -Password $loadPassword
         if ($newManagedInfoBase) {
             Save-AuxiliaryContourState -Contour $contour -Updates @{
                 lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
@@ -557,7 +557,7 @@ function Update-AuxiliaryContour {
         foreach ($extension in @($contour.extensions)) {
             $absoluteExtensionPath = Assert-ExportPathInsideProject -ExportPath $extension.path
             $extensionSource = Get-ConfigSourceFingerprint -ExportPath $extension.path
-            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -SourceFingerprint $extensionSource.fingerprint -ContentKind extension -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
+            Invoke-ConfigLoadWithFallback -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -SourceFingerprint $extensionSource.fingerprint -ContentKind extension -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
         }
         Save-AuxiliaryContourState -Contour $contour -Updates @{
             lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
@@ -674,17 +674,34 @@ function Export-AuxiliaryContourResult {
     if (($verificationStatus -ne "passed" -or -not $currentVerificationFingerprint -or $verificationFingerprint -cne $currentVerificationFingerprint) -and -not $AllowUnverifiedResult) {
         throw "ITL_AUXILIARY_RESULT_UNVERIFIED: contour='$($contour.name)' requiredAction=check-auxiliary-contour or pass -AllowUnverifiedResult."
     }
+    $preparation = [ordered]@{purpose='development';status='not-required-development';components=@()}
+    if ((Get-PlatformCheckProfile) -eq 'production') {
+        $ready = Assert-AuxiliaryContourReady -Contour $contour -Operation 'production preparation'
+        $components = @([pscustomobject]@{path=$contour.configurationPath;fingerprint=$ready.source.configuration.fingerprint;name=''}) + @($ready.source.extensions)
+        $proofs = @(foreach ($component in $components) {
+            $proof = Confirm-ProductionPlatformCheck -ExportPath $component.path -SourceFingerprint $component.fingerprint `
+                -InfoBaseKind $ready.connection.kind -InfoBasePath $ready.connection.path -ExtensionName $component.name `
+                -LoadedBaseIdentity ($ready.source.combined + '|' + $ready.connection.identityHash) -User $ready.connection.user -Password $ready.connection.password
+            $proof | Select-Object purpose,status,receiptPath,receiptSha256
+        })
+        $preparation = [ordered]@{purpose='production';status='passed';components=$proofs}
+    }
     $artifactDir = Resolve-ProjectPath ((Get-ConfigValue -Path "artifactsPath" -Default "build/result") + "/auxiliary/$($contour.name)")
     New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
     $resultPath = Join-Path $artifactDir ("$($contour.name)-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".cf")
     Invoke-Designer -InfoBasePath $ready.connection.path -InfoBaseKind $ready.connection.kind -User $ready.connection.user -Password $ready.connection.password -DesignerArgs @("/DumpCfg", $resultPath) | Out-Null
+    if ($preparation.purpose -eq 'production' -and (Get-AuxiliaryContourFingerprint -Contour $contour).combined -cne $ready.source.combined) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_CHANGED: auxiliary preparation stopped; repeat for the current candidate.'
+    }
     $manifestPath = $resultPath + ".manifest.json"
     $manifest = [ordered]@{ schemaVersion = 1; kind = "auxiliary-cf"; contour = $contour.name; resultPath = $resultPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $resultPath).Hash.ToLowerInvariant(); sourceFingerprint = $ready.source.combined; connectionIdentityHash = $ready.connection.identityHash; verificationStatus = $verificationStatus; verificationFingerprint = $verificationFingerprint; currentVerificationFingerprint = $currentVerificationFingerprint; unverifiedOverride = [bool]$AllowUnverifiedResult; commit = Get-CurrentCommit; createdAt = (Get-Date).ToString("o") }
+    $manifest.platformPreparation = $preparation
     Write-Utf8TextAtomic -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     Save-AuxiliaryContourState -Contour $contour -Updates @{ lastResultPath = $resultPath; lastResultManifestPath = $manifestPath; lastResultAt = (Get-Date).ToString("o"); lastLogPath = $script:LastLogPath } | Out-Null
     Set-RunResultArtifacts -ResultPath $resultPath -ResultManifestPath $manifestPath
     Write-Host "Auxiliary CF saved: $resultPath"
     Write-Host "Auxiliary CF manifest: $manifestPath"
+    Write-Host "Result purpose: $($preparation.purpose); CheckConfig: $($preparation.status)"
 }
 
 function Reset-AuxiliaryContour {

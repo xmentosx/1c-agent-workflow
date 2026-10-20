@@ -382,13 +382,15 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/CompactItlRunner.Tests.ps1",
             "tests/pester/LifecycleOperationLock.Tests.ps1")
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
+        $productionPreparationConsumer = 'tests/pester/PlatformProductionPreparation.Tests.ps1'
         $gate6Tests = @(
             "tests/pester/PlatformGate6Trigger.Tests.ps1",
             "tests/pester/PlatformLegacyContext.Tests.ps1",
             "tests/pester/PlatformLegacyDiagnostics.Tests.ps1",
             "tests/pester/PlatformLegacyImpact.Tests.ps1",
             "tests/pester/PlatformLoadContinuation.Tests.ps1",
-            "tests/pester/PlatformSourceCoverage.Tests.ps1")
+            "tests/pester/PlatformSourceCoverage.Tests.ps1",
+            $productionPreparationConsumer)
         # Retain the original observed 57-file cohort. Gate 6, Mantis and
         # three extracted Release groups extend its explicit dependency set.
         $splitHostConsumers = @('tests/pester/HostMantis.Tests.ps1')
@@ -400,12 +402,12 @@ Describe 'Source quality catalog contracts' {
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
         $classificationConsumer = 'tests/pester/ToolingReadiness.Tests.ps1'
         $registryConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
-        # The historical 57/80 cohort is unchanged; two explicit consumers now
+        # The historical 57/80 cohort is unchanged; explicit consumers now
         # prove the new shared lifecycle/setup contract, rather than becoming
         # an unexplained increase or being dropped to satisfy this count.
         @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be 82
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be 83
         foreach($test in $registryConsumers){@($selection.tests)|Should -Contain $test}
         $registryOwner=@($catalog.contracts|Where-Object id -eq 'product-project-setup')[0]
         @($registryOwner.tests|Sort-Object)|Should -Be $registryConsumers
@@ -450,7 +452,10 @@ Describe 'Source quality catalog contracts' {
         $dependencySeconds = 14.161
         # Conservatively account for the new blob-pressure consumer without rewriting the historical measurements.
         $registryBudgetReserve=[double]$registryOwner.budgetSeconds
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve
+        # Named production-purpose/proof-final-result.json: 16 cases, 11.239s;
+        # reserve 17s including rounded setup cost, without changing watchdogs.
+        $productionPreparationSeconds = 17.0
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -461,8 +466,8 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers}).Count | Should -Be 83
-        @($currentSelection.tests).Count | Should -Be 85
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 83
+        @($currentSelection.tests).Count | Should -Be 86
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",

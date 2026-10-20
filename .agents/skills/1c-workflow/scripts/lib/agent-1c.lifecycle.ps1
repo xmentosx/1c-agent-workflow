@@ -1831,12 +1831,59 @@ function Remove-ConfigDumpInfoLoadSnapshot {
     }
 }
 
+function Get-PlatformCheckProfile {
+    # Release qualification is an explicit full-check owner, not a load mode.
+    $actionValue = Get-Variable -Name Action -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $actionValue -and [string]$actionValue.Value -like 'release-e2e-*') { return 'production' }
+    $purpose = Get-Variable -Name ResultPurpose -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $purpose -and [string]$purpose.Value -ceq 'production') { return 'production' }
+    return 'development'
+}
+
+function New-ProductionPlatformLegacyContext {
+    param([object]$State,[object]$ChangeSet,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath,[ref]$Assessment)
+    # The last development load is not an origin for the complete release delta.
+    # Reuse the existing seed/lifecycle owner; never create or advance an anchor.
+    $observation = $null
+    $context = New-PlatformGate6LegacyContext -State $State -ChangeSet $ChangeSet -SourceFingerprint $SourceFingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Assessment ([ref]$observation)
+    if ($null -ne $Assessment) { $Assessment.Value=$observation }
+    if ($null -eq $context) { return $null }
+    if ($ChangeSet.previousTreeObjectId -ceq $ChangeSet.currentTreeObjectId) {
+        if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_CANDIDATE_SELF_COMPARISON' }
+        return $null
+    }
+    $originProved = [string](Get-StateValue -State $State -Name 'loadReason' -Default '') -ceq 'branch-copy-seed'
+    if (-not $originProved -and $null -ne (Get-StateValue -State $State -Name 'resultTransferBaseline' -Default $null)) {
+        try {
+            $baseline = Get-DevBranchResultTransferBaseline -State $State
+            $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+            $sourceRoot = [IO.Path]::GetFullPath($ChangeSet.absoluteExportPath)
+            if (-not $sourceRoot.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) {
+                if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN'; $observation.detail='Source root is outside the project.' }
+                return $null
+            }
+            $relative = $sourceRoot.Substring($root.Length).Replace('\','/')
+            $tree = (Get-GitOutput @('rev-parse', "$($baseline.commit):$relative")).Trim()
+            $originProved = $tree -ceq [string]$ChangeSet.previousTreeObjectId
+        } catch {
+            if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN'; $observation.detail=$_.Exception.Message }
+            return $null
+        }
+    }
+    if (-not $originProved) {
+        if ($null -ne $observation) { $observation.eligible=$false; $observation.reason='PRODUCTION_ORIGIN_UNPROVEN' }
+        return $null
+    }
+    return $context
+}
+
 function Invoke-DesignerGate6CheckLadder {
     param(
         [Parameter(Mandatory = $true)][string]$InfoBasePath,
         [Parameter(Mandatory = $true)][string]$InfoBaseKind,
         [string]$ExtensionName = '',
         [string]$SourceFingerprint = '',
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
         [object]$EditableLoad = $null,
         [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
         [AllowNull()][object]$LegacyBaseline = $null,
@@ -1857,7 +1904,7 @@ function Invoke-DesignerGate6CheckLadder {
     $steps = @(
         [pscustomobject]@{ name='modules'; args=@('/CheckModules') + $modes + $extensionArgs },
         $(if ($ExtensionName) { [pscustomobject]@{ name='applicability'; args=@('/CheckCanApplyConfigurationExtensions') + $applicabilityArgs } }),
-        [pscustomobject]@{ name='configuration'; args=@('/CheckConfig', '-ConfigLogIntegrity', '-IncorrectReferences') + $modes + @('-HandlersExistence', '-ExtendedModulesCheck') + $extensionArgs }
+        $(if ($CheckProfile -eq 'production') { [pscustomobject]@{ name='configuration'; args=@('/CheckConfig', '-ConfigLogIntegrity', '-IncorrectReferences') + $modes + @('-HandlersExistence', '-ExtendedModulesCheck') + $extensionArgs } })
     ) | Where-Object { $null -ne $_ }
     $evidence = [System.Collections.Generic.List[object]]::new()
     $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
@@ -1971,6 +2018,10 @@ function Invoke-DesignerGate6CheckLadder {
             assessment = $assessment
         })
     }
+    if ($CheckProfile -eq 'development') {
+        $evidence.Add([pscustomobject]@{ step='configuration'; status='not-required-development'; skipped=$true;
+            nativePassed=$false; exitCode=$null; dumpResult=$null; resultPath=$null; logPath=$null; assessment=$null })
+    }
     $receipt = [pscustomobject]@{
         schemaVersion = $(if ($null -ne $LegacyBaseline -or $null -ne $ArtifactDiagnosticBaseline) { 2 } else { 1 })
         sourceFingerprint = $SourceFingerprint
@@ -1978,7 +2029,8 @@ function Invoke-DesignerGate6CheckLadder {
         infoBasePath = $InfoBasePath
         extensionName = $ExtensionName
         validationPurpose = $ValidationPurpose
-        cleanPassed = (@($evidence | Where-Object { -not $_.nativePassed }).Count -eq 0)
+        checkProfile = $CheckProfile
+        cleanPassed = ($CheckProfile -eq 'production' -and @($evidence | Where-Object { -not $_.nativePassed }).Count -eq 0)
         editableLoad = $EditableLoad
         platformPath = Get-PlatformPath
         runtimeModes = @($modes)
@@ -1997,47 +2049,104 @@ function Invoke-DesignerGate6CheckLadder {
     return $receipt
 }
 
+function Confirm-ProductionPlatformCheck {
+    param([string]$ExportPath,[string]$SourceFingerprint,[string]$InfoBaseKind,[string]$InfoBasePath,
+        [string]$ExtensionName='', [string]$LoadedBaseIdentity='', [AllowNull()][object]$Evidence=$null,
+        [switch]$LoadedThisOperation,
+        [string]$User=(Get-EnvValue -Name 'IB_USER'),[string]$Password=(Get-EnvValue -Name 'IB_PASSWORD'))
+
+    if ((Get-PlatformCheckProfile) -ne 'production') {
+        return [pscustomobject]@{ purpose='development'; status='not-required-development'; evidence=$null; receiptPath=$null; receiptSha256=$null }
+    }
+    $source = Get-ConfigSourceFingerprint -ExportPath $ExportPath
+    if (-not $SourceFingerprint -or $source.fingerprint -cne $SourceFingerprint -or -not $LoadedBaseIdentity) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_UNPROVEN: repeat the original branch preparation with matching loaded-source proof; intermediate development remains available.'
+    }
+    $platform = Get-PlatformPath
+    $build = [Diagnostics.FileVersionInfo]::GetVersionInfo($platform).ProductVersion
+    $platformSha = (Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ownerHashes = @('agent-1c.lifecycle.ps1','agent-1c.core.ps1','agent-1c.platform-diagnostics.ps1' | ForEach-Object {
+        (Get-FileHash -LiteralPath (Join-Path $script:Agent1cScriptRoot ('lib/' + $_)) -Algorithm SHA256).Hash.ToLowerInvariant()
+    })
+    $identity = Get-DotEnvPolicyTextHash -Text ($SourceFingerprint + '|' + $LoadedBaseIdentity + '|' + $InfoBaseKind + '|' + $InfoBasePath + '|' + $ExtensionName + '|' + $platform + '|' + $build + '|' + $platformSha + '|' + [string]::Join('|',[string[]]$ownerHashes))
+    $reuse = $false
+    try {
+        if ($null -eq $Evidence -or [string](Get-StateValue -State $Evidence -Name 'checkProfile' -Default '') -cne 'production' -or
+            $Evidence.sourceFingerprint -cne $SourceFingerprint -or $Evidence.infoBaseKind -cne $InfoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $Evidence.infoBasePath -Second $InfoBasePath) -or
+            $Evidence.extensionName -cne $ExtensionName -or $Evidence.platformPath -cne $platform -or
+            [string]::Join('|',[string[]]$Evidence.runtimeModes) -cne '-ThinClient|-Server|-ExternalConnection') { throw 'different proof' }
+        if (-not $LoadedThisOperation -and (
+            [string](Get-StateValue -State $Evidence -Name 'qualificationFingerprint' -Default '') -cne $identity -or
+            (Get-FileHash -LiteralPath $Evidence.evidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Evidence.evidenceSha256)) { throw 'different qualification' }
+        $required = @('modules') + $(if ($ExtensionName) { @('applicability') } else { @() }) + @('configuration')
+        if (@($Evidence.steps).Count -ne $required.Count) { throw 'incomplete proof' }
+        foreach ($name in $required) {
+            $step = @($Evidence.steps | Where-Object step -ceq $name)
+            if ($step.Count -ne 1) { throw 'missing step' }
+            $step = $step[0]
+            if ((Get-FileHash -LiteralPath $step.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.logSha256 -or
+                (Get-FileHash -LiteralPath $step.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.resultSha256) { throw 'changed native artifacts' }
+            $verdict = Get-DesignerBatchCheckVerdict -ExitCode $step.exitCode -ResultPath $step.resultPath -LogPath $step.logPath
+            if (-not $verdict.passed) {
+                if ($name -cne 'configuration' -or $null -eq $step.assessment -or
+                    $step.assessment.status -cne 'accepted-with-preexisting-findings' -or -not $step.assessment.applyAllowed -or
+                    (Get-FileHash -LiteralPath $step.assessment.evidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $step.assessment.evidenceSha256) { throw 'not an accepted complete result' }
+                $assessment = Read-Utf8Text -Path $step.assessment.evidencePath | ConvertFrom-Json
+                $before = $Evidence.legacyBaseline
+                if ($null -eq $before -or $assessment.status -cne 'accepted-with-preexisting-findings' -or -not $assessment.applyAllowed -or
+                    (Get-FileHash -LiteralPath $before.logPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $before.logSha256 -or
+                    (Get-FileHash -LiteralPath $before.resultPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $before.resultSha256 -or
+                    $assessment.beforeRawSha256 -cne $before.logSha256 -or $assessment.afterRawSha256 -cne $step.logSha256) { throw 'legacy artifacts changed' }
+            }
+        }
+        $reuse = $true
+    } catch { $reuse = $false }
+    if (-not $reuse) {
+        # No synthetic before-check, historic snapshot restore or last-load baseline.
+        # A clean native check needs no baseline. A failure leaves production unready.
+        $Evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -CheckProfile production -User $User -Password $Password
+    }
+    if ((Get-ConfigSourceFingerprint -ExportPath $ExportPath).fingerprint -cne $SourceFingerprint) {
+        throw 'PRODUCTION_PLATFORM_SOURCE_CHANGED: preparation stopped; repeat it for the current candidate.'
+    }
+    $Evidence | Add-Member -NotePropertyName qualificationFingerprint -NotePropertyValue $identity -Force
+    $path = $Evidence.evidencePath
+    $document = $Evidence | Select-Object * -ExcludeProperty evidencePath,evidenceSha256
+    Write-Utf8TextAtomic -Path $path -Value (($document | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+    $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Evidence | Add-Member -NotePropertyName evidenceSha256 -NotePropertyValue $sha -Force
+    $configuration = @($Evidence.steps | Where-Object step -ceq 'configuration')[0]
+    $status = if ($configuration.nativePassed) { 'passed' } else { 'accepted-with-preexisting-findings' }
+    return [pscustomobject]@{purpose='production';status=$status;evidence=$Evidence;receiptPath=$path;receiptSha256=$sha}
+}
+
+function Confirm-DevBranchProductionPreparation {
+    param([object]$State,[string]$ExportPath,[string]$ContentKind,[AllowNull()][object]$LoadResult=$null)
+    if ((Get-PlatformCheckProfile) -ne 'production') {
+        return [pscustomobject]@{purpose='development';status='not-required-development';receiptPath=$null;receiptSha256=$null}
+    }
+    $field = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $fingerprint = [string](Get-StateValue -State $State -Name $field -Default '')
+    $extension = if ($ContentKind -eq 'extension') { Require-DevBranchExtensionName -State $State } else { '' }
+    $evidence = Get-StateValue -State $State -Name 'lastGate6Evidence' -Default $null
+    $loaded = $null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name 'loaded' -Default $false)
+    if ($loaded) { $evidence = Get-StateValue -State $LoadResult -Name 'gate6Evidence' -Default $null }
+    $result = Confirm-ProductionPlatformCheck -ExportPath $ExportPath -SourceFingerprint $fingerprint `
+        -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath -ExtensionName $extension `
+        -LoadedBaseIdentity (Get-VerificationLoadedBaseIdentity -State $State) -Evidence $evidence -LoadedThisOperation:$loaded
+    Update-DevBranchState -State $State -Updates @{lastGate6Evidence=$result.evidence}
+    $State | Add-Member -NotePropertyName lastGate6Evidence -NotePropertyValue $result.evidence -Force
+    return ($result | Select-Object purpose,status,receiptPath,receiptSha256)
+}
+
 function Test-MainConfigurationGate6Required {
     param([Parameter(Mandatory = $true)][object]$ChangeSet,
         [string]$ValidationEvidencePath = '', [string]$SourceFingerprint = '',
         [string]$InfoBaseKind = '', [string]$InfoBasePath = '')
-
-    # Full, deleted and unknown inputs cannot use a partial static proof.
-    if ([bool](Get-StateValue -State $ChangeSet -Name 'requiresFullLoad' -Default $false)) { return $true }
-    if (@(Get-StateValue -State $ChangeSet -Name 'missingFiles' -Default @()).Count -gt 0) { return $true }
-    $files = @($ChangeSet.files | Where-Object { $_ })
-    if ($files.Count -eq 0) { return $true }
-    if (@($files | Where-Object { ([string]$_).StartsWith('<') }).Count -gt 0) { return $true }
-    $relevant = @($files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' })
-    if ($relevant.Count -eq 0) { return $false }
-    if ($ValidationEvidencePath -and $SourceFingerprint) {
-        $smallDelta = $false
-        try {
-            $limit = 40
-            $configuredLimit = [string](Get-EnvValue -Name 'QUICKFIX_MAX_LINES')
-            if ($configuredLimit -and (-not [int]::TryParse($configuredLimit,[ref]$limit) -or $limit -le 0)) { return $true }
-            $owners = @($relevant | ForEach-Object { Get-PlatformGate6MetadataOwner -RelativePath ([string]$_) } | Select-Object -Unique)
-            if ($owners.Count -eq 1 -and $owners[0]) {
-                $total = 0
-                $records = @(Get-GitPathList -Arguments @('diff','--numstat','-z','--no-renames',$ChangeSet.previousTreeObjectId,$ChangeSet.currentTreeObjectId))
-                if ($records.Count -gt 0) {
-                    $smallDelta = $true
-                    foreach ($record in $records) {
-                        if ($record -notmatch '^(?<added>[0-9]+)\t(?<removed>[0-9]+)\t(?<path>.+)$') { $smallDelta=$false;break }
-                        if ([IO.Path]::GetFileName([string]$Matches.path) -ieq 'ConfigDumpInfo.xml') { continue }
-                        $total += [int]$Matches.added + [int]$Matches.removed
-                    }
-                    $smallDelta = $smallDelta -and $total -le $limit
-                }
-            }
-        } catch { $smallDelta=$false }
-        if (-not $smallDelta) { return $true }
-        $coverage = Test-ItlPlatformSourceCoverage -EvidencePath $ValidationEvidencePath `
-            -SourceRoot $ChangeSet.absoluteExportPath -SourceFingerprint $SourceFingerprint `
-            -Files $relevant -ProjectRoot $script:ProjectRoot -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
-        if ($coverage.covered) { return $false }
-        Write-Host "Gate 6 static coverage unavailable: $($coverage.reason). Using the platform fallback."
-    }
+    # This gate now selects mandatory compilation, not full CheckConfig.
+    # Neither small/static coverage nor binary-only loads waive compilation.
     return $true
 }
 
@@ -2330,6 +2439,7 @@ function Invoke-ConfigLoadDesignerAttempt {
         [string[]]$DesignerArgs,
         [string]$ExtensionName = '',
         [switch]$RequireGate6,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
         [ValidateSet('configuration','project-tests')][string]$ValidationPurpose = 'configuration',
         [scriptblock]$AfterApply = $null,
         [AllowNull()][object]$StaticCoverageContext = $null,
@@ -2388,7 +2498,7 @@ function Invoke-ConfigLoadDesignerAttempt {
             -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
     }
     $legacyBaseline = $null
-    if (-not $ExtensionName -and $RequireGate6 -and $null -ne $LegacyContext) {
+    if ($CheckProfile -eq 'production' -and -not $ExtensionName -and $RequireGate6 -and $null -ne $LegacyContext) {
         $baselineLogsPath = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
         New-Item -ItemType Directory -Force -Path $baselineLogsPath | Out-Null
         $baselineResultPath = New-TimestampedFilePath -Directory $baselineLogsPath -Prefix '1c-gate6-before-' -Extension '.result'
@@ -2440,12 +2550,11 @@ function Invoke-ConfigLoadDesignerAttempt {
     if ($null -ne $StaticCoverageContext) {
         Assert-PlatformGate6StaticCoverageCurrent -Context $StaticCoverageContext -SourceFingerprint $SourceFingerprint `
             -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
-        Write-Host 'Gate 6 native ladder skipped only for the unchanged complete MCP source proof revalidated after editable load.'
-    } else {
-        $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+    }
+    $evidence = Invoke-DesignerGate6CheckLadder -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -CheckProfile $CheckProfile `
             -ExtensionName $ExtensionName -SourceFingerprint $SourceFingerprint -EditableLoad $editableLoad -LegacyBaseline $legacyBaseline -ValidationPurpose $ValidationPurpose `
             -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline -User $User -Password $Password
-    }
     if ($null -ne $ArtifactDiagnosticBaseline -and
         (Get-FileHash -LiteralPath $loadArgs[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifactSha256) {
         throw 'GATE6_SOURCE_CHANGED: pinned YAxUnit CFE changed during Gate 6 checks. Preserve the snapshot and repeat the original operation with the unchanged official artifact.'
@@ -2546,6 +2655,7 @@ function Invoke-GuardedCfeExtensionApply {
         [Parameter(Mandatory = $true)][string]$InfoBaseKind,
         [Parameter(Mandatory = $true)][string]$CfePath,
         [Parameter(Mandatory = $true)][string]$ExtensionName,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
         [AllowNull()][object]$ArtifactDiagnosticBaseline = $null,
         [string]$User = (Get-EnvValue -Name 'IB_USER'),
         [string]$Password = (Get-EnvValue -Name 'IB_PASSWORD')
@@ -2555,6 +2665,7 @@ function Invoke-GuardedCfeExtensionApply {
     }
     $sha = (Get-FileHash -LiteralPath $CfePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+        -CheckProfile $CheckProfile `
         -User $User -Password $Password -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $sha) `
         -ArtifactDiagnosticBaseline $ArtifactDiagnosticBaseline `
         -DesignerArgs @('/LoadCfg', $CfePath, '-Extension', $ExtensionName, '/UpdateDBCfg')
@@ -2576,6 +2687,7 @@ function Invoke-ConfigLoadWithFallback {
         [ValidateSet('configuration','extension')][string]$ContentKind = 'configuration',
         [string]$ExtensionName = "",
         [switch]$RequireGate6,
+        [ValidateSet('development','production')][string]$CheckProfile = 'production',
         [AllowNull()][object]$StaticCoverageContext = $null,
         [AllowNull()][object]$LegacyContext = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
@@ -2607,7 +2719,7 @@ function Invoke-ConfigLoadWithFallback {
         if ($Mode -eq "Full") {
             Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
             try {
-                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
                     -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
@@ -2637,7 +2749,7 @@ function Invoke-ConfigLoadWithFallback {
         $script:LastNativeProcessStarted = $false
         $partialNativeSucceeded = $false
         try {
-            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
                 -ExtensionName $ExtensionName -RequireGate6:$RequireGate6 -StaticCoverageContext $StaticCoverageContext -LegacyContext $LegacyContext -SourceFingerprint $SourceFingerprint `
                 -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
                     sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
@@ -2724,7 +2836,7 @@ function Invoke-ConfigLoadWithFallback {
             }
             $fullNativeSucceeded = $false
             try {
-                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile $CheckProfile -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
                     -ExtensionName $ExtensionName -RequireGate6:($RequireGate6 -or $ContentKind -eq 'configuration') -LegacyContext $fullFallbackLegacyContext -SourceFingerprint $SourceFingerprint `
                     -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
@@ -3876,22 +3988,12 @@ function Load-ConfigFromFiles {
             -AdditionalRelativePaths $sourceIntegrityRelativePaths
     }
 
-    $validationEvidencePath = ''
-    $evidenceParameter = Get-Variable -Name VerificationEvidencePath -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $evidenceParameter) { $validationEvidencePath = [string]$evidenceParameter.Value }
-    $requireGate6 = $ContentKind -eq 'configuration' -and (Test-MainConfigurationGate6Required -ChangeSet $changeSet `
-        -ValidationEvidencePath $validationEvidencePath -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)
+    # Every editable source load keeps compilation; static MCP coverage does not waive it.
+    $checkProfile = Get-PlatformCheckProfile
+    $requireGate6 = $ContentKind -eq 'configuration' -and (Test-MainConfigurationGate6Required -ChangeSet $changeSet)
     $staticCoverageContext = $null
-    if ($ContentKind -eq 'configuration' -and -not $requireGate6 -and
-        @($changeSet.files | Where-Object { [string]$_ -match '(?i)\.(bsl|xml)$' }).Count -gt 0) {
-        $staticCoverageContext = New-PlatformGate6StaticCoverageContext -ChangeSet $changeSet -EvidencePath $validationEvidencePath `
-            -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
-        if ($null -eq $staticCoverageContext) { $requireGate6 = $true }
-    }
-    # Capture the previous-state binding before invalidation, even when the
-    # partial load is covered: its full fallback still needs strict checks.
     $legacyContextAssessment = $null
-    $legacyContext = if ($ContentKind -eq 'configuration') { New-PlatformGate6LegacyContext -State $State -ChangeSet $changeSet `
+    $legacyContext = if ($checkProfile -eq 'production' -and $ContentKind -eq 'configuration') { New-ProductionPlatformLegacyContext -State $State -ChangeSet $changeSet `
         -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Assessment ([ref]$legacyContextAssessment) } else { $null }
     if ($null -ne $legacyContextAssessment -and -not $legacyContextAssessment.eligible) {
         try {
@@ -3926,7 +4028,7 @@ function Load-ConfigFromFiles {
         }
     }
     try {
-    $orchestration = Invoke-ConfigLoadWithFallback `
+    $orchestration = Invoke-ConfigLoadWithFallback -CheckProfile $checkProfile `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
         -State $loadState `
@@ -4530,6 +4632,7 @@ function Add-ConfigRepositoryTransferPlanRunUserReportLines {
 function New-ResultManifest {
     param(
         [object]$State,
+        [AllowNull()][object]$PlatformPreparation = $null,
         [string]$ResultPath,
         [ValidateSet("cf", "cfe")]
         [string]$ResultKind,
@@ -4600,6 +4703,7 @@ function New-ResultManifest {
             logPath = $verification.logPath
             reason = $verification.reason
         }
+        platformPreparation = $(if ($null -ne $PlatformPreparation) { $PlatformPreparation } else { [ordered]@{purpose='development';status='not-required-development'} })
         latest1cLogPath = [string]$script:LastLogPath
         unverifiedOverride = [bool]$UnverifiedOverride
         manualImportNote = "Import this CF/CFE into the source infobase manually after backup and normal acceptance checks. The ITL helper does not load development branch changes into the source infobase."
@@ -16282,14 +16386,14 @@ function Init-DevBranchExtension {
             Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $scaffoldPath)
             Set-RunStage -Stage "extension-init.load" -Detail "Loading the extension scaffold into the branch infobase."
             $scaffoldIdentity = Get-ConfigSourceFingerprint -ExportPath $scaffoldPath
-            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
                 -ExtensionName $ExtensionName -SourceFingerprint $scaffoldIdentity.fingerprint -EnclosingSnapshot $enclosingSnapshot -DesignerArgs @(
                     "/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg"
                 )
         } else {
             Set-RunStage -Stage "extension-init.load" -Detail "Loading the supplied CFE into the branch infobase."
             $cfeIdentity = (Get-FileHash -LiteralPath $sourceCfe -Algorithm SHA256).Hash.ToLowerInvariant()
-            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
+            $gate6Evidence = Invoke-ConfigLoadDesignerAttempt -CheckProfile (Get-PlatformCheckProfile) -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind `
                 -ExtensionName $ExtensionName -SourceFingerprint ("sha256:" + $cfeIdentity) -EnclosingSnapshot $enclosingSnapshot -DesignerArgs @(
                     "/LoadCfg", $sourceCfe, "-Extension", $ExtensionName, "/UpdateDBCfg"
                 )
@@ -16559,6 +16663,7 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch extension base update"
+        Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath $extensionExportPath -ContentKind extension -LoadResult $loadResult | Out-Null
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
@@ -16567,6 +16672,7 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch configuration base update"
+        Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath (Get-ExportPath) -ContentKind configuration -LoadResult $loadResult | Out-Null
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch infobase"
     }
 }
@@ -19197,7 +19303,7 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     $extensionName = Get-YAxUnitExtensionName
     $yaxunitLock = Get-YAxUnitPinnedEntry
     $artifactDiagnosticBaseline = Get-YAxUnitArtifactDiagnosticBaseline -PinnedEntry $yaxunitLock -ExtensionName $extensionName
-    Invoke-GuardedCfeExtensionApply `
+    Invoke-GuardedCfeExtensionApply -CheckProfile (Get-PlatformCheckProfile) `
         -InfoBasePath ([string]$state.devBranchInfoBasePath) `
         -InfoBaseKind ([string]$state.infoBaseKind) `
         -CfePath $yaxunitCfePath -ExtensionName $extensionName -ArtifactDiagnosticBaseline $artifactDiagnosticBaseline | Out-Null
@@ -20067,6 +20173,7 @@ function Export-DevBranchResult {
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -VerificationState $verificationBeforeExport -Allow:$AllowUnverifiedResult -ProceedOnWarn
     $verificationDecision = if ($verificationBeforeExport.isFreshPassed) { "fresh-passed" } else { "warn-unverified" }
 
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $loadExportPath -ContentKind $kind -LoadResult $loadResult
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     $resultPath = Resolve-Agent1cFullPath -Path $resultPath
@@ -20083,7 +20190,9 @@ function Export-DevBranchResult {
     $sourceFingerprint = $(if ($loadResult.PSObject.Properties.Match("sourceFingerprint").Count -gt 0) { [string]$loadResult.sourceFingerprint } else { "" })
     $worktreeClean = -not (Test-GitHasChanges)
     $verificationScopeCommitted = (@(Get-VerificationWorkingTreeChangePaths -PathSpec (Get-VerificationFingerprintScopePaths)).Count -eq 0)
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $loadExportPath -ContentKind $kind
     $manifestPath = New-ResultManifest `
+        -PlatformPreparation $platformPreparation `
         -State $state `
         -ResultPath $resultPath `
         -ResultKind $resultKind `
@@ -20117,6 +20226,7 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Манифест" -Value $manifestPath
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
+    Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ; CheckConfig: ' + $platformPreparation.status } else { 'Промежуточный результат; полный CheckConfig не требуется' })
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines
     Write-Host "Branch: $($state.devBranch)"
@@ -20185,6 +20295,7 @@ function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "close-dev-branch" -Allow:$AllowUnverifiedClose
 
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $(if ($kind -eq 'extension') { $extensionExportPath } else { Get-ExportPath }) -ContentKind $kind -LoadResult $(if ($kind -eq 'extension') { $extensionLoadResult } else { $configLoadResult })
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
@@ -20193,7 +20304,9 @@ function Close-DevBranch {
     $masterCommit = $targetMasterCommit
     $devBranchCommit = Get-CurrentCommit
     $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $platformPreparation = Confirm-DevBranchProductionPreparation -State $state -ExportPath $(if ($kind -eq 'extension') { $extensionExportPath } else { Get-ExportPath }) -ContentKind $kind
     $manifestPath = New-ResultManifest `
+        -PlatformPreparation $platformPreparation `
         -State $state `
         -ResultPath $resultPath `
         -ResultKind $resultKind `
@@ -20229,6 +20342,7 @@ function Close-DevBranch {
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Master commit: $masterCommit"
     Write-Host "Development branch commit: $devBranchCommit"
+    Write-Host "Result purpose: $($platformPreparation.purpose); CheckConfig: $($platformPreparation.status)"
     Write-Host "Result saved: $resultPath"
     Write-Host "Result manifest: $manifestPath"
     Write-Host "Last 1C log: $script:LastLogPath"
