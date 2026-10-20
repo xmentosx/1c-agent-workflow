@@ -75,8 +75,10 @@ function Assert-ItlCatalogSchemaValue {
     if ($null -ne $enum -and @($enum) -cnotcontains $Value) { throw "CATALOG_INVALID: $Path has unsupported value '$Value'" }
     if ($type -eq 'string') {
         $min = Get-ItlCatalogField $Schema 'minLength'
+        $max = Get-ItlCatalogField $Schema 'maxLength'
         $pattern = Get-ItlCatalogField $Schema 'pattern'
         if ($null -ne $min -and $Value.Length -lt $min) { throw "CATALOG_INVALID: $Path is empty" }
+        if ($null -ne $max -and $Value.Length -gt $max) { throw "CATALOG_INVALID: $Path exceeds maxLength" }
         if ($pattern -and $Value -cnotmatch $pattern) { throw "CATALOG_INVALID: $Path does not match $pattern" }
     }
     if ($type -eq 'integer') {
@@ -98,6 +100,8 @@ function Assert-ItlCatalogSchemaValue {
     }
     if ($type -eq 'object') {
         $keys = @(Get-ItlCatalogKeys $Value)
+        $min = Get-ItlCatalogField $Schema 'minProperties'
+        if ($null -ne $min -and $keys.Count -lt $min) { throw "CATALOG_INVALID: $Path needs at least $min properties" }
         foreach ($required in @((Get-ItlCatalogField $Schema 'required' @()))) {
             if ($keys -cnotcontains $required) { throw "CATALOG_INVALID: $Path.$required is required" }
         }

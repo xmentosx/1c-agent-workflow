@@ -1497,5 +1497,14 @@
     "registryAC20AC26": "Codex core/API subset passed",
     "fullG3": "open",
     "memoryAC43G5": "open"
+  },
+  "sourceBindingCheckpoint20261021": {
+    "evidence": "g3-source-binding-implementation-2026-10-21.json",
+    "status": "partial-source-and-native-scope",
+    "graphBinding": "matched on new PM4/PM5 native Codex fixtures; wrong namespace/endpoint rejected",
+    "graphIndexedVersion": "unverified; supported producer unavailable; no sources",
+    "code": "optional source candidate; native image qualification/deployment pending",
+    "fullG3": "open",
+    "gate6G4MigrationPublication": "not performed"
   }
 }

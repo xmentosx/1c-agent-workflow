@@ -1,5 +1,5 @@
 Describe 'G2 endpoint publication preserves the catalog' {
-    It 'publishes explicit view descriptors and observed source identity without declaring live readiness' {
+    It 'publishes explicit view descriptors and declared source identity without inventing an observed generation' {
         $config=[pscustomobject]@{bookStackProductDocsServer=@{views=@{corp=@{book_ids=@(10)}}}}
         Mock Get-HostId {'fixture'}
         $state=@{servers=@(@{id='bookstack';url='http://example.test/mcp';scope='global';indexedAt='observed';sourceFingerprint='generation'})}
@@ -7,7 +7,11 @@ Describe 'G2 endpoint publication preserves the catalog' {
         $entry.servers[0].viewBindings[0].url | Should -Be 'http://example.test/mcp?view=corp'
         $entry.servers[0].viewBindings[0].selectors.book_ids | Should -Be @(10)
         $entry.servers[0].viewBindings[0].readiness | Should -Be 'unverified'
-        $entry.servers[0].sourceIdentity.observedGeneration | Should -Be 'generation'
+        $entry.servers[0].sourceIdentity.observedGeneration | Should -BeNullOrEmpty
+        $entry.servers[0].sourceIdentity.observedAt | Should -BeNullOrEmpty
+        $entry.servers[0].sourceIdentity.declaredSourceFingerprint | Should -Be 'generation'
+        $entry.servers[0].sourceFingerprint | Should -Be 'generation'
+        $entry.servers[0].sourceIdentity.provenance | Should -Match '^host-working-source;'
         $entry.servers[0].sourceIdentity.hostId | Should -Be 'fixture'
     }
     BeforeAll {

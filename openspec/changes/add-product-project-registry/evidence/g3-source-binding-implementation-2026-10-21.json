@@ -1,0 +1,672 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-SOURCE-BINDING-IMPLEMENTATION-20261021",
+  "observedUtc": "2026-10-20T22:01:04.801401+00:00",
+  "status": "PARTIAL_SOURCE_AND_NATIVE_SCOPE_PASSED_EXACT_INDEX_IMAGE_AND_G3_OPEN",
+  "baseCommit": "29ccf7fe6b77064d5fda5b912f15d1c999d1c6d3",
+  "runtimeInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "00cd9596888365415191da2dab9c0e1bf466ee69fdd3e141ad87c4b9d1166f1f"
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "4504190b80674b4271367ee61cb5374427cbc37cd9ad65451a01ac2856e38416"
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+      "sha256": "70db508aa421e0b5c25097ed3c5cc78394129e99eacd005d9a5ce6797dd9573f"
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+      "sha256": "ea05ccb9ca20fe7d060e5080ff10b7400dc2ec7d1578bf947ec6c97a5cb993a8"
+    },
+    {
+      "path": "templates/product-project-registry/schemas/catalog.schema.json",
+      "sha256": "0778f67af6210bcd4a4deb4104437b2e53b24520d0d6aaaa33c08cb81a98f2f2"
+    },
+    {
+      "path": "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1",
+      "sha256": "b653703a87831087f684cde9575a0b2a6b5abfa1cfb886247dd31e4385a0b253"
+    },
+    {
+      "path": "tests/quality-contracts.json",
+      "sha256": "53e90c3b5c9e2285cc2e6ccd8730431079e616c2fa7421a5b9eae273b3846572"
+    },
+    {
+      "path": "vibecoding1c-mcp-host/code-source-identity/patch.py",
+      "sha256": "be8fe3de8076c5bb82ae155e9ece25fd6ac0921bd032e2e7414ea625a56a9479"
+    },
+    {
+      "path": "vibecoding1c-mcp-host/code-source-identity/source_identity.py",
+      "sha256": "b9999e671d7f54fedea92456d466dc35d82db01bfa4ce97eca66ded5af018f00"
+    },
+    {
+      "path": "vibecoding1c-mcp-host/code-source-identity/test_source_identity.py",
+      "sha256": "f3e054983a7217e832bd2d25f15e7a6446db8300a7068b09b0d1d51e90b62237"
+    },
+    {
+      "path": "vibecoding1c-mcp-host/code-source-identity/Dockerfile",
+      "sha256": "43aaad801babbc03df08d6f178e3a5c1a401c6805c94e517428a47698c4d52a2"
+    },
+    {
+      "path": "tests/pester/ProductProjectContext.Tests.ps1",
+      "sha256": "e58d9d3a21e2f148a884d64df929859a7f86f5eee91f40748a2690ad7c38fd68"
+    },
+    {
+      "path": "tests/pester/HostTooling.Tests.ps1",
+      "sha256": "22c8e39f179208560eaca1309c88469e19e9d61782375062f26beca93d4f11ac"
+    },
+    {
+      "path": "tests/pester/HostNativeTransport.Tests.ps1",
+      "sha256": "19c2f94ada12a88ec23beadcfe82f11c8599a0c0a45281f36c5ada87cfb23d96"
+    },
+    {
+      "path": "tests/pester/ProductRegistryPublisher.Tests.ps1",
+      "sha256": "f39d135e452c68b1458c7d8682c7cbfa36e7b31e4f03f1e12c0989e247b4a520"
+    }
+  ],
+  "sourceTests": [
+    {
+      "artifact": "focused-current",
+      "passed": 54,
+      "failed": 0,
+      "skipped": 0,
+      "workerSpanMs": 47961,
+      "executedFiles": [
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\HostNativeTransport.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 41867,
+          "inputDigest": ""
+        },
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 8315,
+          "inputDigest": "326a22c548464b9d7fe68b534c149b855c2c0f629b4604a91fd07272f1a95823"
+        },
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectSetup.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 38483,
+          "inputDigest": "eb34f558d0b125f00871ed9a28c2609a0356d99f448f89305ca9a048c122c7c1"
+        }
+      ]
+    },
+    {
+      "artifact": "context-native-envelope",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "workerSpanMs": 8803,
+      "executedFiles": [
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 8202,
+          "inputDigest": "f6bdaf36c3eaf0a2f4054a95480f988670f064e8cccfa5a5566c03d45ae6941b"
+        }
+      ]
+    },
+    {
+      "artifact": "context-utf8",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "workerSpanMs": 8306,
+      "executedFiles": [
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 7784,
+          "inputDigest": "a98ee3109e809cbd74bdb0d4ff7e8fe5a6062be6f2813aefd0589b03b51967cc"
+        }
+      ]
+    },
+    {
+      "artifact": "publisher-contract",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "workerSpanMs": 11648,
+      "executedFiles": [
+        {
+          "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductRegistryPublisher.Tests.ps1",
+          "execution": "executed",
+          "durationMs": 10628,
+          "inputDigest": "00173a693043c731ece0b407e1c04c7daa02b6917b4a5c66b198cce4962e61d9"
+        }
+      ]
+    }
+  ],
+  "nativeCodeSourceTests": {
+    "passed": 7,
+    "failed": 0,
+    "exactVendorFixtureEnabled": true,
+    "kind": "stdlib unit plus source patch AST; not image qualification"
+  },
+  "nativeClient": {
+    "client": "Codex app-server 0.163.0-alpha.10.2",
+    "executableSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "families": [
+      {
+        "family": "PM5",
+        "pairSeconds": 9.565948600007687,
+        "toolCalls": 4,
+        "cwdRoundTrip": true
+      },
+      {
+        "family": "PM4",
+        "pairSeconds": 8.203359700011788,
+        "toolCalls": 4,
+        "cwdRoundTrip": true
+      }
+    ],
+    "reloadPhases": [
+      {
+        "name": "initial",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-binding-20261021\\reload-initial.json",
+        "elapsedSeconds": 8.40847880000365,
+        "toolCalls": 4
+      },
+      {
+        "name": "before-reload",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-binding-20261021\\reload-before-reload.json",
+        "elapsedSeconds": 7.734456200007116,
+        "toolCalls": 4
+      },
+      {
+        "name": "after-reload",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-binding-20261021\\reload-after-reload.json",
+        "elapsedSeconds": 6.947295499994652,
+        "toolCalls": 4
+      },
+      {
+        "name": "restored",
+        "observation": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-binding-20261021\\reload-restored.json",
+        "elapsedSeconds": 8.653428100020392,
+        "toolCalls": 4
+      }
+    ],
+    "safeToolCalls": 24,
+    "llmTurns": 0,
+    "serverEmbeddingUsage": "not measured; no semantic/LLM/embedding request made by this check",
+    "protocolInitializeDiscoveryCallCount": "not separately instrumented; full protocol call-budget acceptance remains open",
+    "frontends": "Codex core/API only; desktop/IDE and other 11 adapters unverified"
+  },
+  "comparisons": {
+    "families": [
+      {
+        "sourceObservations": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "unverified",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "native-identity-unavailable",
+              "checkedAt": "2026-10-20T21:32:48.1146950+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "matched",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "indexed-revision-unavailable",
+              "checkedAt": "2026-10-20T21:32:55.5149000+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "family": "PM5",
+        "summaryBytes": 824,
+        "wrongNamespace": {
+          "binding": "mismatch",
+          "indexedVersion": "unverified",
+          "clientActivation": "matched",
+          "build": "unverified",
+          "reason": "namespace-mismatch",
+          "checkedAt": "2026-10-20T21:32:55.5149000+00:00",
+          "indexedSource": null,
+          "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+        },
+        "protectedFilesUnchanged": true
+      },
+      {
+        "sourceObservations": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "unverified",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "native-identity-unavailable",
+              "checkedAt": "2026-10-20T21:32:57.8243780+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "matched",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "indexed-revision-unavailable",
+              "checkedAt": "2026-10-20T21:33:03.9406710+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "family": "PM4",
+        "summaryBytes": 824,
+        "wrongNamespace": {
+          "binding": "mismatch",
+          "indexedVersion": "unverified",
+          "clientActivation": "matched",
+          "build": "unverified",
+          "reason": "namespace-mismatch",
+          "checkedAt": "2026-10-20T21:33:03.9406710+00:00",
+          "indexedSource": null,
+          "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+        },
+        "protectedFilesUnchanged": true
+      }
+    ],
+    "reload": [
+      {
+        "result": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "unverified",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "native-identity-unavailable",
+              "checkedAt": "2026-10-20T21:36:08.4797820+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "matched",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "indexed-revision-unavailable",
+              "checkedAt": "2026-10-20T21:36:15.8722980+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "phase": "initial"
+      },
+      {
+        "result": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "unverified",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "native-identity-unavailable",
+              "checkedAt": "2026-10-20T21:36:16.3729320+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "matched",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "indexed-revision-unavailable",
+              "checkedAt": "2026-10-20T21:36:23.6070190+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "phase": "before-reload"
+      },
+      {
+        "result": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "mismatch",
+              "indexedVersion": "unverified",
+              "clientActivation": "unverified",
+              "build": "unverified",
+              "reason": "endpoint-mismatch",
+              "checkedAt": "2026-10-20T21:36:24.6399150+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "mismatch",
+              "indexedVersion": "unverified",
+              "clientActivation": "unverified",
+              "build": "unverified",
+              "reason": "endpoint-mismatch",
+              "checkedAt": "2026-10-20T21:36:30.5615790+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "phase": "after-reload"
+      },
+      {
+        "result": {
+          "provenance": "explicit-read-only-observation",
+          "status": "observed",
+          "roles": {
+            "code": {
+              "binding": "unverified",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "native-identity-unavailable",
+              "checkedAt": "2026-10-20T21:36:31.5656300+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            },
+            "graph": {
+              "binding": "matched",
+              "indexedVersion": "unverified",
+              "clientActivation": "matched",
+              "build": "unverified",
+              "reason": "indexed-revision-unavailable",
+              "checkedAt": "2026-10-20T21:36:39.2448200+00:00",
+              "indexedSource": null,
+              "continuation": "Use the selected source only after scoped verification, or continue with local code; do not change the product or reindex automatically."
+            }
+          }
+        },
+        "phase": "restored"
+      }
+    ]
+  },
+  "startup": [
+    {
+      "family": "PM4",
+      "samples": 20,
+      "medianSeconds": 0.5133278,
+      "p95Seconds": 0.6126228,
+      "protectedFilesChanged": []
+    },
+    {
+      "family": "PM5",
+      "samples": 20,
+      "medianSeconds": 0.5090688999999999,
+      "p95Seconds": 0.5953927,
+      "protectedFilesChanged": []
+    }
+  ],
+  "cost": {
+    "fixtureMetadataBytes": 427,
+    "fixtureReadStampBytes": 130,
+    "summaryBytesPerPair": [
+      824,
+      824
+    ],
+    "newStartupMcpCalls": 0,
+    "newTools": 0,
+    "newAlwaysOnRules": 0,
+    "onDemandReferenceByteDelta": 1540,
+    "startupScope": "synthetic source-owner fixtures; historical baseline only; no full installed paired acceptance"
+  },
+  "blockers": [
+    {
+      "id": "GRAPH-INDEXED-REVISION",
+      "status": "blocked",
+      "reason": "No Graph implementation source; compiled ingestion and public plugin hooks cannot prove successful active-index revision",
+      "continuation": "Native v2 scope accepted; indexedVersion unverified until supported owner producer; local independent work continues"
+    },
+    {
+      "id": "CODE-IMAGE-QUALIFICATION",
+      "status": "unverified",
+      "reason": "Final candidate unit/AST passed; native response-budget and final ABI SSH attempts timed out; no image build/crash-resume/live index qualification",
+      "continuation": "Keep existing images; separately qualify candidate before any authorized deployment/reindex"
+    },
+    {
+      "id": "FULL-G3",
+      "status": "open",
+      "reason": "Installed PM4/PM5 journeys, frontend/platform/terminal matrix and full paired cost/protocol counts remain open; Gate 6 deferred"
+    }
+  ],
+  "nativePrototypeManifest": "Earlier temporary native Manifest fixture passed; prototype proof only, not exact final helper/image evidence",
+  "preservation": {
+    "workingMigration": false,
+    "serverReplacement": false,
+    "reindex": false,
+    "gate6RunOrRepair": false,
+    "g4OrCogneeCalls": false,
+    "publication": false,
+    "oldStandsAndFailedCopies": "preserved",
+    "lastCodeInspection": "running/healthy; original StartedAt 2026-10-19T07:21:54.935045334Z; docker top contains main only"
+  },
+  "rawRefs": [
+    {
+      "path": "build/test-results/g3/source-binding-20261021/focused-current/pester-shards/summary.json",
+      "sha256": "72ff0ed11a19971bbf24220da0b327a131f65b7012c6e9e6c5e8b0bf213c5197"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/focused-current/junit.xml",
+      "sha256": "4c15f062fcbc047786156918c23302112238bf3bee15a13bc22ea7c7d3c5f57e"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/context-native-envelope/pester-shards/summary.json",
+      "sha256": "58c00e20e8b14fb17cb8a6cc6c55a314170fdde51e7ba435c1b3fad8fb467790"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/context-native-envelope/junit.xml",
+      "sha256": "41fea7413a7e80262feeac2cc22630a0cc2df96e370c4fe930be5235029ff696"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/focused-current.log",
+      "sha256": "8b39ab657bc0199601a47ea97d2f659b546ada4c20b813f9a893cac31ee7d948"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/context-native-envelope.log",
+      "sha256": "58c00e20e8b14fb17cb8a6cc6c55a314170fdde51e7ba435c1b3fad8fb467790"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-capture.json",
+      "sha256": "f8e8fcff904ff3faaa1afbc2f5ea3f6bb7b94764ce8fc391375382b67839f8f2"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-capture.json",
+      "sha256": "2399f22819608e54d23ecaacdba2c344733ad2035b4e29fcf6ab49671bb4372c"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-comparison.json",
+      "sha256": "f8f59e33e2934054fe32d64004fb5de23fa1d60f4b81f0f4afe6733809fc5927"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-comparison-current.json",
+      "sha256": "535091148da172acf30a675f9b367cde516c8a5e089dce3aeca6e3423c6cf30f"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/observations-PM4.json",
+      "sha256": "39168d30ad3afa3e9766bb42deabe01ddfce586abe1e61bc0dc404e8b95ee14b"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/observations-PM5.json",
+      "sha256": "ed40ab7c49a72802f2ea45f869458fc220756e03cb644af79c7300a0218ab50d"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-initial.json",
+      "sha256": "d842de39c9477285e4c6cc0475e5a5317b17773721f94365bdac27481fd216ce"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-before-reload.json",
+      "sha256": "725be44dac4a6de80428cb0aee8c10e4e2c03fb9864c358965a2e0dfacd36aab"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-after-reload.json",
+      "sha256": "5b2c33a08517ae149394f9c4fe457f0410fcccc48805e62adb9f7c060494884d"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/reload-restored.json",
+      "sha256": "20881d8ce24b91032e849dc677211a833a36c0d53a6c51251f74990987d73afe"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/source-native-PM4-rpc.jsonl",
+      "sha256": "e5de8b134fd573c9156c451cba707b134fedd30be33eb3e1bc3e92a85f5ab84f"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/source-native-PM5-rpc.jsonl",
+      "sha256": "15c0afd0594204d54464422a0bcb98d5f2a4b0caf787fe847a49a4ac5fa27c39"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/source-reload-rpc.jsonl",
+      "sha256": "2fcc4050572ce9497dad7aef8d07c127300fc84e9d86ff251cff78d82cfb2a41"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/paired-PM4-after.json",
+      "sha256": "ca2362b7b602cb22f41af60b2f2e35188bac04025c74f75ac9c55d054fea5046"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/paired-PM5-after.json",
+      "sha256": "46abe238b5bf4e2aa2738981dbd0f80ee61dcb6b6c4ef9850b504f1b88ab09c9"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/profile.ps1",
+      "sha256": "163288c07df519fe124d4387ff3e8804a541ce2f9808ebdf14e113cb8aac2a2e"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/measure-startup.ps1",
+      "sha256": "03e4f9458d159c7f70a71d03f2d2c66f1f855877411ff51e5d64eb3b21764759"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/measure-startup-initial.ps1",
+      "sha256": "1837ab097d7846e2311f672d4b4abc6e4793a94d601aa6218cc8514fb0a23a69"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/startup-PM5-initial.log",
+      "sha256": "9fd6b7d4223c82985f39e2af84f42f67095bde1b61c68c74a9596567b9ece023"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-code-check-manifest.json",
+      "sha256": "b17531b1c4bb0a1aaae8fd5ee32c61f7b161408c767cd5f14c185c10e3e80582"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-code-check-manifest.py",
+      "sha256": "a961215d3c20a4d47a3fad0c7fcefae072921efdb77cebfebe2dbfb76b20da56"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-code-check-r1.py",
+      "sha256": "121154f0e87293a371264a393c3e634cdbdc763820cefd41e824f9568c3875ba"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-code-check.py",
+      "sha256": "006ed04835013671d7d1a3ea2d9a5b6c25aae8e3acb98bd03ea878f8df193c46"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-code-check-final.py",
+      "sha256": "0808bb23e3d5074c9c3f06f7817bfe96ef31c689c394ecac7c844e1ff60c75af"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-timeouts.json",
+      "sha256": "8fe52ec753ce3463fa46d6f94015ab0e7c1df98983b58cd03e6512517c560d28"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-final-inspect.json",
+      "sha256": "639881b68998bb74f14bdd8fff1e34c10d012710b50736d72ec2879cef067517"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/evaluate-current-all.ps1",
+      "sha256": "ae94877b2992385d04fe8484fdca79c13efbe4d5937bd070447a298f285393c3"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/evaluate-current-all.log",
+      "sha256": "e2eb6ce490a7cbc56c772dcb51237813ca4ffd3b11c64f52e02f0ca50aa40442"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/fixtures.json",
+      "sha256": "c079fe2ed4d0eb5b6183a8689d3574bd53bdff59566ff57a7d3d47fb918e7768"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/focused/pester-shards/summary.json",
+      "sha256": "1eff429c834c2ce6c53c8f4aadbbd6449194d08b3c23c6011fe453cc2c5585ff"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/focused-r2/pester-shards/summary.json",
+      "sha256": "cab1f2bda94d251fc19d95971b8745e0e8edc8b8e74b9b93db90ee98e3bc8e9a"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/native-source-tests-final.log",
+      "sha256": "301b9a61ec9304e0ecf809016ff74c762732e788d18dd4be763d7abbdfd2aa34"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/context-utf8/pester-shards/summary.json",
+      "sha256": "cfb5064d8129cd158382c060694fe73e108ed0d3e9035e8c208c49afb8c05f8e"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/context-utf8/junit.xml",
+      "sha256": "12d6ded4022cae95176f48e5fe9e34a7403eeb64be81429f9c84f4e8cfcc2dc3"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/encoding-final.json",
+      "sha256": "d042c36de86be428cf7a03111c57db436f3a0c2f5dc4ad83fc10f28b195899ab"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r1-encoding.stdout.log",
+      "sha256": "7e686b8a9d296998e62c63440d308a30322e38706f682e6dd7c51209d0f13d01"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r1-encoding.stderr.log",
+      "sha256": "5801996e894a01889090ab6df2c8d8d562428074b6114a77898e505364075fa2"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r1-checkpoint.json",
+      "sha256": "6db3eda6b78ac7dc15112ce4094abdbd334d8eeac65db0711ce96c2b2b8e3ff0"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/publisher-contract/pester-shards/summary.json",
+      "sha256": "4281e5eaf96a5db169b8f66ba06446d7e59e489ac7a37fc9e275586bd57dab2f"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/publisher-contract/junit.xml",
+      "sha256": "47240cedbf7d414a2e2c11c3ed50b24c34fe914ebb438250606887bff7a6cbb2"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r2-pester-summary.json",
+      "sha256": "396e3339ebb133e5aeb358999b40c3819c600423f264bdbbb74e702ea693e5ec"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r2-publisher.stdout.log",
+      "sha256": "049d5c776e0a6815c80e4fd5477c342762f035643ad73e440b4e5bc7ea052256"
+    },
+    {
+      "path": "build/test-results/g3/source-binding-20261021/registration-r2-checkpoint.json",
+      "sha256": "90b5cdc954910bc1c89eb2f92cabb1aceebcea0f438ec86a2c30d6787c1a3bbc"
+    }
+  ],
+  "registrationPreparation": {
+    "firstAttempt": "failed before tests at PS5.1 encoding preflight; candidate retained; accepted queue unchanged",
+    "repair": "UTF-8 BOM in Unicode ProductProjectContext test; final default-decoding/UTF8/AST preflight passed; current Context 18/0/0",
+    "queueAuthority": "source-delivery Status after registration; no second spec ledger",
+    "secondAttempt": {
+      "passed": 455,
+      "failed": 1,
+      "reason": "Existing publisher test incorrectly required working-source fingerprint as observed generation",
+      "evidence": "Get-ConfigurationState sourceFingerprint assignment: commit/tree/worktree; no native generation",
+      "repair": "Keep original publisher path/fixture and legacy fingerprint assertion; enforce declared fingerprint plus absent unproven generation/time. Focused publisher 5/0/0 passed",
+      "workerSpanMs": 218318
+    }
+  }
+}

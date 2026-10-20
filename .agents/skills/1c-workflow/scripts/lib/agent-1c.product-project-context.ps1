@@ -191,7 +191,16 @@ function Resolve-ItlProductProjectEndpointIntent {
     }
     $address=$null
     if(-not [Uri]::TryCreate($url,[UriKind]::Absolute,[ref]$address) -or $address.Scheme -notin @('http','https') -or $address.UserInfo -or $address.Fragment){throw 'CATALOG_SOURCE_URL_INVALID: the registry must publish an HTTP MCP URL without embedded credentials or fragments.'}
-    return [ordered]@{sourceId=$Source.sourceId;role=$Source.role;hostId=$Source.endpoint.hostId;serverId=$id;configId=(Get-ItlCatalogField $Source.endpoint 'configId');namespace=(Get-ItlCatalogField $Source 'namespace');viewId=$viewId;url=$url;scope='whole-source';readiness='unverified';declaredVersion=(Get-ItlCatalogField $candidate 'configurationVersion');sourceFingerprint=(Get-ItlCatalogField $candidate 'sourceFingerprint')}
+    $declaredIdentity=Get-ItlCatalogField $candidate 'sourceIdentity' @{}
+    $sourceBinding=Get-ItlCatalogField $Source 'binding' @{}
+    $expectedIdentity=[ordered]@{
+        sourceKey=(Get-ItlCatalogField $sourceBinding 'sourceKey' (Get-ItlCatalogField $declaredIdentity 'sourceKey'))
+        nativeProjectId=(Get-ItlCatalogField $sourceBinding 'nativeProjectId' (Get-ItlCatalogField $declaredIdentity 'nativeProjectId'))
+        namespace=(Get-ItlCatalogField $Source 'namespace')
+        pin=(Get-ItlCatalogField $sourceBinding 'versionPin' @{})
+        requireSourceKey=[bool](Get-ItlCatalogField $sourceBinding 'sourceKey')
+    }
+    return [ordered]@{sourceId=$Source.sourceId;role=$Source.role;hostId=$Source.endpoint.hostId;serverId=$id;configId=(Get-ItlCatalogField $Source.endpoint 'configId');namespace=(Get-ItlCatalogField $Source 'namespace');viewId=$viewId;url=$url;scope='whole-source';readiness='unverified';expectedIdentity=$expectedIdentity;declaredVersion=(Get-ItlCatalogField $candidate 'configurationVersion');sourceFingerprint=(Get-ItlCatalogField $candidate 'sourceFingerprint')}
 }
 
 function Resolve-ItlProductProjectRuntimeContext {

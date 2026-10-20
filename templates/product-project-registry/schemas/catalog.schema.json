@@ -178,6 +178,27 @@
               "viewId": {
                 "type": "string",
                 "minLength": 1
+              },
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$"
+              },
+              "nativeProjectId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "versionPin": {
+                "type": "object",
+                "properties": {
+                  "revisionKind": { "type": "string", "enum": ["code-source-inventory-sha256", "content-sha256"] },
+                  "revision": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                  "configurationVersion": { "type": "string", "minLength": 1, "maxLength": 128 }
+                },
+                "minProperties": 1,
+                "additionalProperties": false
               }
             },
             "required": [

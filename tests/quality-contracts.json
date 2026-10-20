@@ -150,6 +150,7 @@
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
@@ -158,6 +159,7 @@
       ],
       "paths": [
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-console.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
         ".agents/skills/1c-workflow/assets/product-project-compatibility.json",
@@ -1078,8 +1080,8 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostNativeTransport.Tests.ps1",
-      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "tests/python/test_host_index_snapshot.py"],
-      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
+      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "vibecoding1c-mcp-host/code-source-identity/*", "tests/python/test_host_index_snapshot.py"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1", "vibecoding1c-mcp-host/code-source-identity/*"],
       "tests": ["tests/pester/HostNativeTransport.Tests.ps1"]
     },
     {
