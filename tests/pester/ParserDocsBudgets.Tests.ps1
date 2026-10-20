@@ -273,6 +273,14 @@
             "dev/pi" = @{ files = 15; maxBytes = 49273 }
         }
 
+        # Refresh continuation adds 1030 bytes across two on-demand routines:
+        # preserve foreign work, recover autonomously, and give concrete
+        # decision options. Keep this measured delta additive to other owners'
+        # baseline changes; detailed recovery stays in branch-lifecycle.md.
+        foreach ($key in @($expectedRendered.Keys | Where-Object { $_ -like 'dev/*' })) {
+            $expectedRendered[$key].maxBytes += 1030
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {

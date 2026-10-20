@@ -3959,7 +3959,7 @@ try {
         try {
             $branchHelperPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $branchHelperPath) | Out-Null
-            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "function Test-RefreshManagedDependencyLockChange { return `$false }"
+            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "function Test-RefreshManagedDependencyLockChange { return `$false }`nfunction Test-RefreshIndependentDocumentationPath { return `$false }"
             $result = & {
                 . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
                 $script:Agent1cScriptPath = Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1"

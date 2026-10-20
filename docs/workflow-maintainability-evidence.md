@@ -80,6 +80,29 @@ words to the source-only root. Installed surfaces have zero delta. The installed
 topics remain behind `1c-workflow/references/workflow.md`, and that index routes
 to one matching topic rather than loading every reference.
 
+### Refresh continuation measurement, 2026-10-20
+
+At base `c9cfecfe`, the two explicit development refresh routines add 1,030
+serialized UTF-8 bytes together (258 byte/4 proxy tokens) for every supported
+client. Codex development inventory changes from 50,744 to 51,774 bytes;
+OpenCode from 62,361 to 63,391. File counts, master inventories, always-on rules
+and tool schemas do not change. The existing development inventory ceilings
+increase by exactly this delta, retaining their margins. Duplicate log-tail
+guidance was removed first. The remaining command text is needed to require
+autonomous owner-supported recovery, preservation of foreign work, and concrete
+options with a recommendation for a real user decision. Detailed path policy
+and recovery stay on demand in `branch-lifecycle.md`.
+
+A Windows PowerShell 5.1 Git-guard comparison used one whitespace-and-Cyrillic
+temporary path, one warm-up and five measured repetitions per case. Median
+clean checks were 44.0 ms before and 261.2 ms after; with a concurrent context
+edit, 33.3 ms before (blocked) and 212.4 ms after (accepted). The extra NUL path
+queries cost about 0.2 seconds per complete boundary, without a new persistent
+record, coordinator or collector. The owned regression exercises actual Git
+merge identity, failure/retry, cursor commits and document preservation through
+the refresh core, with load/normalization/MCP boundaries simulated. This is not
+real 1C E2E or installed-project qualification.
+
 ### Deterministically rendered command surfaces
 
 These totals include every generated file available in the named branch surface

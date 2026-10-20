@@ -1,6 +1,184 @@
 ﻿Describe "1C workflow development branch lifecycle checks" {
     BeforeAll { . (Join-Path $PSScriptRoot 'DevBranchLifecycleSupport.ps1') }
 
+    Describe 'Concurrent refresh documentation' -Tag 'RefreshDocumentationContinuation' {
+        It 'retries <Operation> through load, normalization and MCP while preserving concurrent documents' -TestCases @(
+            @{Operation='refresh-dev-branch'}, @{Operation='refresh-dev-branch-lite'}
+        ) {
+            param($Operation)
+            $fixture = New-LifecycleMergeConflictFixture
+            try {
+                # CONTEXT already belongs to the branch before its lifecycle
+                # merge, exactly as in the reported concurrent-writer case.
+                [IO.File]::WriteAllText((Join-Path $fixture.root 'CONTEXT.md'), 'исходный контекст', [Text.UTF8Encoding]::new($false))
+                & git -C $fixture.root add -- CONTEXT.md
+                & git -C $fixture.root commit -qm 'project context'
+                $fixture.branchCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+                & git -C $fixture.root merge --no-ff --no-commit $fixture.targetCommit *> $null
+                Set-Content -LiteralPath (Join-Path $fixture.root 'conflict.txt') -Encoding UTF8 -Value 'resolved'
+                Set-Content -LiteralPath (Join-Path $fixture.root 'src/cf/ConfigDumpInfo.xml') -Encoding UTF8 -Value 'branch-cursor'
+                & git -C $fixture.root add -- conflict.txt src/cf/ConfigDumpInfo.xml
+                & git -C $fixture.root commit --no-edit *> $null
+                $fixture | Add-Member -NotePropertyName mergeCommit -NotePropertyValue ((& git -C $fixture.root rev-parse HEAD).Trim())
+                & {
+                    . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+                    $utf8 = [Text.UTF8Encoding]::new($false)
+                    $contextPath = Join-Path $fixture.root 'CONTEXT.md'
+                    $adrPath = Join-Path $fixture.root 'docs/adr/0001 Перенос рабочего стола.md'
+                    # The other writer starts after the checkpoint and merge.
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $adrPath) | Out-Null
+                    [IO.File]::WriteAllText($contextPath, 'незавершённая проработка', $utf8)
+                    [IO.File]::WriteAllText($adrPath, 'решение другого чата', $utf8)
+                    $adrHash = (Get-FileHash -LiteralPath $adrPath).Hash
+                    $DevBranchName = 'test'
+                    $LifecyclePhase = 'post-merge'
+                    $script:MergeState = [pscustomobject]@{
+                        safeDevBranchName='test'; devBranchName='test'; devBranch='itldev/test'
+                        devBranchInfoBasePath=(Join-Path $fixture.root 'База ветки'); infoBaseKind='file'
+                        pendingMergeOperation=$Operation; pendingMergeBranch='itldev/test'
+                        pendingMergeBranchCommit=$fixture.branchCommit; pendingMergeTargetCommit=$fixture.targetCommit
+                        pendingMergeStage='merged'; pendingMergePaths=@(); pendingMergeConflictPaths=@()
+                        pendingMergeCommit=$fixture.mergeCommit; pendingMergePostMergeHead=$fixture.mergeCommit
+                        pendingMergeResult='merge-commit'; yaxunitApplicabilityBaseline=@{schemaVersion=1}
+                        lastVerificationStatus='failed'; lastVerifiedCommit=$fixture.mergeCommit
+                    }
+                    $script:Calls = [Collections.Generic.List[string]]::new()
+                    $script:LoadAttempts = 0
+                    function Read-DevBranchState { $script:MergeState }
+                    function Update-DevBranchState {
+                        param($State, $Updates)
+                        foreach ($key in $Updates.Keys) { $script:MergeState | Add-Member -Force -NotePropertyName $key -NotePropertyValue $Updates[$key] }
+                    }
+                    function Assert-DevelopmentBranchWorktreeContext {}
+                    function Assert-DevBranchExtensionInitialized {}
+                    function Sync-DevBranchContextToDotEnv {}
+                    function Complete-PendingDevBranchRefreshAfterVerifiedRecovery { $false }
+                    function Save-DevBranchCheckpoint { throw 'must not checkpoint another writer on resume' }
+                    function Sync-Master { throw 'must not repeat master/seed' }
+                    function Invoke-NewDevBranchLifecycleMerge { throw 'must not merge again' }
+                    function Restart-Agent1cAfterDevBranchMerge {
+                        $script:Calls.Add('handoff')
+                        $LifecyclePhase = 'post-merge'
+                        Invoke-RefreshDevBranchCore -OperationName $Operation -SynchronizeMaster:($Operation -eq 'refresh-dev-branch')
+                        throw 'FIXTURE_REFRESH_HANDOFF_COMPLETED'
+                    }
+                    function Sync-AiRules1cManagedIgnoredFilesFromMain {}
+                    function Sync-WorkflowManagedDependencyLockEntries {}
+                    function Update-VerificationSuiteInventory { [pscustomobject]@{yaxunit=@{legacyBaseline=$false}; classificationComplete=$true; classificationIssues=@()} }
+                    function Install-VanessaAutomation {}
+                    function Get-RoctupMcpEnabled { $false }
+                    function Install-VanessaMcpArtifacts {}
+                    function Install-ItlOnDemandMcp {}
+                    function Set-RunStage {}
+                    function New-RefreshTrackedKiloConfigSnapshot { $null }
+                    function Restore-RefreshTrackedKiloConfigSnapshot {}
+                    function Invoke-DevBranchDefaultMcpSetup { param($State); $State }
+                    function Load-ConfigFromFiles {
+                        param($InfoBasePath)
+                        $InfoBasePath | Should -Be (Join-Path $fixture.root 'База ветки')
+                        $script:LoadAttempts++
+                        if ($script:LoadAttempts -eq 1) { throw 'FIXTURE_LOAD_FAILED' }
+                        $script:Calls.Add('load')
+                        # The document writer may continue after admission.
+                        [IO.File]::WriteAllText($contextPath, 'новая редакция другого чата', $utf8)
+                        [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/ConfigDumpInfo.xml'), 'loaded-cursor', $utf8)
+                        [pscustomobject]@{currentCommit=(Get-CurrentCommit)}
+                    }
+                    function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded { $script:Calls.Add('normalize') }
+                    function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param($State); $State }
+                    function Sync-KiloItlCommandSurface {}
+                    function Invoke-AiRules1cManagedMcpConfigReconcile { $script:Calls.Add('mcp') }
+                    function Set-ItlOnDemandMcpSemanticReloadRequiredAction {}
+                    function Set-VerificationClassificationRequiredAction {}
+                    function New-LoadStateUpdates { @{} }
+                    function New-DevBranchResultTransferBaseline { @{status='fixture'} }
+                    function Get-VerificationClassificationInventoryPath { '' }
+                    function Add-VerificationStaleIfNeeded {}
+                    function Write-BaseUpdateResult {}
+                    function Get-DevBranchKind { 'configuration' }
+                    function Write-DevBranchRunUserReport { $script:Calls.Add('report') }
+                    function Save-RefreshClassificationReportContext {}
+                    { Invoke-RefreshDevBranchCore -OperationName $Operation -SynchronizeMaster:($Operation -eq 'refresh-dev-branch') } | Should -Throw 'FIXTURE_LOAD_FAILED'
+                    $script:MergeState.pendingMergeStage | Should -Be 'merged'
+                    $script:MergeState.pendingMergeTargetCommit | Should -Be $fixture.targetCommit
+                    $LifecyclePhase = ''
+                    { Invoke-RefreshDevBranchCore -OperationName $Operation -SynchronizeMaster:($Operation -eq 'refresh-dev-branch') } | Should -Throw 'FIXTURE_REFRESH_HANDOFF_COMPLETED'
+                    @($script:Calls) | Should -Be @('handoff', 'load', 'normalize', 'mcp', 'report')
+                    $script:LoadAttempts | Should -Be 2
+                    $script:MergeState.pendingMergeOperation | Should -BeNullOrEmpty
+                    $script:MergeState.lastRefreshMasterCommit | Should -Be $fixture.targetCommit
+                    $script:MergeState.lastVerificationStatus | Should -Be 'failed'
+                    $script:MergeState.lastVerifiedCommit | Should -Be $fixture.mergeCommit
+                    [IO.File]::ReadAllText($contextPath) | Should -BeExactly 'новая редакция другого чата'
+                    (Get-FileHash -LiteralPath $adrPath).Hash | Should -BeExactly $adrHash
+                    @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', '--')).Count | Should -Be 0
+                    @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD')) | Should -Be @('src/cf/ConfigDumpInfo.xml')
+                    @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard', '--')) | Should -Be @('docs/adr/0001 Перенос рабочего стола.md')
+                }
+            } finally {
+                $resolved = [IO.Path]::GetFullPath($fixture.root)
+                $resolved.StartsWith(([IO.Path]::GetTempPath().TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+                Remove-Item -LiteralPath $resolved -Recurse -Force
+            }
+        }
+
+        It 'keeps <Path> staged=<Staged> blocking without absorbing or losing foreign work' -TestCases @(
+            @{Path='CONTEXT.md'; Staged=$true},
+            @{Path='docs/adr/0001 Решение.md'; Staged=$true},
+            @{Path='src/cf/Related.bsl'; Staged=$false},
+            @{Path='src/cfe/Новый модуль.bsl'; Staged=$false},
+            @{Path='src/configs/Новый модуль.bsl'; Staged=$false},
+            @{Path='.agents/skills/foreign.md'; Staged=$false},
+            @{Path='docs/adr/execute.ps1'; Staged=$false},
+            @{Path='docs/other.md'; Staged=$false},
+            @{Path='unknown.txt'; Staged=$false}
+        ) {
+            param($Path, $Staged)
+            $fixture = New-LifecyclePostMergeCursorFixture -SkipCursor
+            try {
+                & {
+                    . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+                    $absolute = Join-Path $fixture.root $Path
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absolute) | Out-Null
+                    [IO.File]::WriteAllText($absolute, 'чужая работа', [Text.UTF8Encoding]::new($false))
+                    if ($Staged) { Invoke-Git @('add', '--', $Path) }
+                    $before = Get-CurrentCommit
+                    { Assert-DevBranchLifecyclePostMergeGitState -Operation 'refresh-dev-branch' } | Should -Throw '*REFRESH_POST_MERGE_WORKTREE_CHANGED*'
+                    $script:RunRequiredAction | Should -Be 'resolve-refresh-post-merge-worktree-then-repeat-same-itl-command'
+                    [IO.File]::ReadAllText($absolute) | Should -BeExactly 'чужая работа'
+                    [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/ConfigDumpInfo.xml'), 'new cursor', [Text.UTF8Encoding]::new($false))
+                    { Complete-RefreshConfigDumpInfoPostcondition -Operation 'refresh-dev-branch' -LoadResult ([pscustomobject]@{currentCommit=$before}) } | Should -Throw
+                    if ($Staged -or $Path -eq 'src/cf/Related.bsl') {
+                        (Get-CurrentCommit) | Should -Be $before
+                    } else {
+                        # Existing recovery checkpoints the owned cursor even
+                        # when another untracked file blocks final completion.
+                        @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD')) | Should -Be @('src/cf/ConfigDumpInfo.xml')
+                    }
+                    [IO.File]::ReadAllText($absolute) | Should -BeExactly 'чужая работа'
+                }
+            } finally {
+                $resolved = [IO.Path]::GetFullPath($fixture.root)
+                $resolved.StartsWith(([IO.Path]::GetTempPath().TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+                Remove-Item -LiteralPath $resolved -Recurse -Force
+            }
+        }
+
+        It 'retains the close guard and gives concrete decision guidance in both wrappers' {
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Assert-CleanGit { throw 'original strict guard' }
+                { Assert-DevBranchLifecyclePostMergeGitState -Operation 'close-dev-branch' } | Should -Throw 'original strict guard'
+            }
+            foreach ($name in @('itl-refresh', 'itl-refresh-lite')) {
+                $text = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents/skills/1c-workflow/kilo-command-templates/dev/$name.md.template") -Raw
+                $text | Should -Match 'resolve-refresh-post-merge-worktree-then-repeat-same-itl-command'
+                $text | Should -Match 'concrete options, consequences, and a recommendation'
+                $text | Should -Match 'Complete safe owner-supported recovery and repeat this command in the same task'
+            }
+        }
+    }
+
     It "records a resumable conflict transaction and gives the agent the same-command recovery for every lifecycle merge" {
         foreach ($case in @(
             @{ operation = "refresh-dev-branch"; stage = "refresh.merge-conflicts" },
@@ -1241,7 +1419,11 @@
                     'tampered-merge' { 'LIFECYCLE_MERGE_RESULT_MISMATCH' }
                 }
                 $result.message | Should -Match "^$expectedCode" -Because $case
-                $result.requiredAction | Should -BeNullOrEmpty -Because $case
+                if ($case -eq 'dirty-tree') {
+                    $result.requiredAction | Should -Be 'resolve-refresh-post-merge-worktree-then-repeat-same-itl-command'
+                } else {
+                    $result.requiredAction | Should -BeNullOrEmpty -Because $case
+                }
                 $result.stateUnchanged | Should -BeTrue -Because $case
                 $result.headUnchanged | Should -BeTrue -Because $case
             } finally {
@@ -1718,13 +1900,17 @@
         }
     }
 
-    It "keeps stale pending refresh recovery on the current main helper when the branch helper predates managed lock persistence" {
+    It "keeps stale pending refresh recovery on main when the branch helper predates <Capability>" -TestCases @(
+        @{ Capability='managed lock persistence'; HelperBody='# stale branch helper' },
+        @{ Capability='independent documentation'; HelperBody='function Test-RefreshManagedDependencyLockChange { return $false }' }
+    ) {
+        param($Capability, $HelperBody)
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-post-merge-stale-helper-" + [guid]::NewGuid().ToString("N"))
         $branchRoot = Join-Path $tempRoot "branch"
         try {
             $branchHelperPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $branchHelperPath) | Out-Null
-            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "# stale branch helper"
+            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value $HelperBody
             $result = & {
                 . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
                 $script:Agent1cScriptPath = Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1"
