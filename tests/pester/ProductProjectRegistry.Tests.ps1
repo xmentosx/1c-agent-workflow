@@ -229,10 +229,28 @@
         (Get-RepositoryGitPathList $root @('diff', '--name-only', '-z')) | Should -Be @('catalog/catalog.json')
         $null = Invoke-RepositoryGit $root @('rm', '-f', 'catalog/product-relations.json')
         $null = Invoke-RepositoryGit $root @('commit', '-m', 'missing file')
-        { Read-ItlProductCatalogSnapshot $root HEAD } | Should -Throw '*catalog/product-relations.json*'
+        { Read-ItlProductCatalogSnapshot $root HEAD } | Should -Throw '*cannot read catalog/product-relations.json at*'
         $old.catalogRevision | Should -Be $first
     }
 
+    It 'reads the pinned catalog with at most five Git queries while retaining exact object identities' -Tag StartupReadBudget {
+        $catalogRoot=Join-Path $TestDrive 'Реестр с пробелами'
+        $commit=New-CatalogGitFixture $catalogRoot
+        $script:ReadBudgetGit=(Get-Command Get-GitOutputAt).ScriptBlock
+        $script:ReadBudgetCalls=@()
+        Mock Get-GitOutputAt {
+            param($Root,$Arguments)
+            $script:ReadBudgetCalls+=,@($Arguments)
+            & $script:ReadBudgetGit -Root $Root -Arguments $Arguments
+        }
+        $snapshot=Read-ItlProductCatalogSnapshot $catalogRoot HEAD
+        $snapshot.catalogRevision|Should -BeExactly $commit
+        foreach($path in @('registry.json','catalog/catalog.json','catalog/product-relations.json')){
+            $expected=(Invoke-RepositoryGit $catalogRoot @('rev-parse',($commit+':'+$path))).stdout.Trim()
+            $snapshot.inputGitObjectIds[$path]|Should -BeExactly $expected
+        }
+        $script:ReadBudgetCalls.Count|Should -BeLessOrEqual 5
+    }
     It 'pins all files even when HEAD advances during the first blob read' {
         $script:ChangingRoot = Join-Path $TestDrive 'tip changed'
         $first = New-CatalogGitFixture $script:ChangingRoot

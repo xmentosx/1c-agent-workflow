@@ -130,6 +130,42 @@ Describe 'Catalog runtime context is pinned by the existing registry operation' 
         }
         Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 1 -Exactly
     }
+    It 'reuses checked inputs before decoding blobs and lazily reads the same SHA after the tip moves' {
+        $root=Join-Path $TestDrive 'Pinned early reuse'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root 'catalog'))
+        $null=Invoke-RepositoryGit $root @('init','-b','main')
+        $null=Invoke-RepositoryGit $root @('config','user.email','fixture@example.test')
+        $null=Invoke-RepositoryGit $root @('config','user.name','Fixture')
+        foreach($pair in @(@('registry.json',$snapshot.registry),@('catalog/catalog.json',$snapshot.catalog),@('catalog/product-relations.json',$snapshot.relations))){[IO.File]::WriteAllText((Join-Path $root $pair[0]),($pair[1]|ConvertTo-Json -Depth 40),[Text.UTF8Encoding]::new($false))}
+        $null=Invoke-RepositoryGit $root @('add','.')
+        $null=Invoke-RepositoryGit $root @('commit','-m','first')
+        $first=Read-ItlProductCatalogSnapshot $root HEAD
+        $hint=@{configurationState='configured';catalogRevision=$first.catalogRevision;context=@{registryMetadata=$first.registry};proof=@{};noOpInputs=@{files=@{};includeClientSurfaces=$false}}
+        [Environment]::SetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH',$root,'Process')
+        $script:UnmockedSnapshotReader=${function:Read-ItlProductCatalogSnapshot}
+        Mock Update-Vibecoding1cMcpRegistryCheckout {return $root}
+        Mock Get-ItlProductProjectNoOpInputs {return $hint.noOpInputs}
+        Mock Read-ItlProductCatalogSnapshot {& $script:UnmockedSnapshotReader -RepositoryRoot $RepositoryRoot -Commit $Commit}
+        Invoke-Vibecoding1cMcpRegistryOperation {
+            (Read-ItlProductProjectSnapshot -NoOpApplied $hint).reusedAppliedContext|Should -Not -BeNullOrEmpty
+            Should -Invoke Read-ItlProductCatalogSnapshot -Times 0
+            $null=Invoke-RepositoryGit $root @('commit','--allow-empty','-m','second')
+            Invoke-Vibecoding1cMcpRegistryOperation {
+                (Read-ItlProductProjectSnapshot -NoOpApplied $hint).catalogRevision|Should -Be $first.catalogRevision
+                (Read-ItlProductProjectSnapshot).catalogRevision|Should -Be $first.catalogRevision
+                (Read-Vibecoding1cMcpRegistry).hosts[0].hostId|Should -Be a
+            }
+        }
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 1 -Exactly -ParameterFilter {$Commit -ceq $first.catalogRevision}
+        Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 1 -Exactly
+        Invoke-Vibecoding1cMcpRegistryOperation {
+            $next=Read-ItlProductProjectSnapshot -NoOpApplied $hint
+            $next.catalogRevision|Should -Not -Be $first.catalogRevision
+            $next.catalog.products.Count|Should -Be 1
+        }
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 2 -Exactly
+        Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 2 -Exactly
+    }
     It 'remembers failed refresh for the operation without nested retries or writable fallback' {
         [Environment]::SetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH',(Join-Path $TestDrive 'No valid cache'),'Process')
         Mock Update-Vibecoding1cMcpRegistryCheckout {throw 'fixture unavailable'}

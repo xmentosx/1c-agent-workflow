@@ -1,4 +1,4 @@
-Describe 'Explicit catalog setup and bootstrap keep one selected context' {
+﻿Describe 'Explicit catalog setup and bootstrap keep one selected context' {
     BeforeAll {
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
         $HelperPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
@@ -277,6 +277,50 @@ Describe 'Explicit catalog setup and bootstrap keep one selected context' {
         {Invoke-ItlProductProjectPostUpdateOffer -WarningAction SilentlyContinue}|Should -Not -Throw
         Should -Invoke Invoke-ItlProductProjectCommand -Times 1 -Exactly
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+    }
+    It 'keeps both catalog receipts byte-identical on the first unchanged single-client sync' -Tag StartupReceiptNoOp {
+        Write-Utf8TextAtomic $script:ConfigPath '{"aiRules":{"tools":["codex","claude-code"]}}'
+        Read-ProjectConfig
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        $null=Invoke-ItlProductProjectAssociation (Select-ItlProductProjectCandidate five)
+        $marker=Get-ItlProductProjectPath applied;$operation=Get-ItlProductProjectPath operation
+        $beforeMarker=Read-Utf8Text $marker;$beforeOperation=Read-Utf8Text $operation
+        $beforeApplied=Read-ItlProductProjectRecord applied
+        # The first requested subset differs from the configured project client
+        # set, while every requested physical entry is already proven current.
+        Write-Vibecoding1cMcpClientConfig -Client codex
+        (Read-Utf8Text $marker)|Should -BeExactly $beforeMarker
+        (Read-Utf8Text $operation)|Should -BeExactly $beforeOperation
+        (Read-ItlProductProjectRecord applied).proof.Contains('claude-code/vibecoding1c')|Should -BeTrue
+        (Read-ItlProductProjectRecord applied).context.settingsIntentHash|Should -BeExactly $beforeApplied.context.settingsIntentHash
+    }
+    It 'still adopts a newly requested client and detects a later manual change after single-client sync' -Tag StartupReceiptNoOp {
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        $null=Invoke-ItlProductProjectAssociation (Select-ItlProductProjectCandidate five)
+        $before=(Read-ItlProductProjectRecord applied).operationId
+        Write-Vibecoding1cMcpClientConfig -Client claude-code
+        $after=Read-ItlProductProjectRecord applied
+        $after.operationId|Should -Not -Be $before
+        $after.proof.Contains('claude-code/vibecoding1c')|Should -BeTrue
+        Mock New-ItlProductProjectPreview {throw 'Manual client change reached full preview'}
+        Write-Utf8TextAtomic (Join-Path $root '.mcp.json') '{"mcpServers":{},"manual":"сохранить"}'
+        {Initialize-ItlProductProjectContext}|Should -Throw '*Manual client change reached full preview*'
+    }
+    It 'invalidates early reuse when the catalog schema changes without changing catalog HEAD' -Tag StartupReceiptNoOp {
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        $null=Invoke-ItlProductProjectAssociation (Select-ItlProductProjectCandidate five)
+        Remove-Variable ItlMcpRegistryOperation -Scope Script
+        Mock Update-Vibecoding1cMcpRegistryCheckout {return 'unused-root'}
+        Mock Get-GitOutputAt {return ('a'*40)}
+        Mock Read-ItlProductCatalogSnapshot {return $snapshot}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 0
+        Mock Get-ItlMcpFileState {return 'fixture-schema-changed'} -ParameterFilter {$Path -like '*/templates/product-project-registry/schemas/catalog.schema.json' -or $Path -like '*\templates\product-project-registry\schemas\catalog.schema.json'}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 1 -Exactly
     }
     It 'uses the same apply owner for ordinary sync and retains proofs of unaffected clients' {
         $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate five

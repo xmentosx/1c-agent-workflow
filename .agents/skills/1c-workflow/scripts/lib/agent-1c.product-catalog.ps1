@@ -279,10 +279,28 @@ function Read-ItlProductCatalogSnapshot {
     if ($revision -notmatch '^[0-9a-f]{40,64}$') { throw 'CATALOG_INVALID: commit did not resolve to an immutable Git object' }
     $values = @{}
     $hashes = [ordered]@{}
-    foreach ($path in @('registry.json', 'catalog/catalog.json', 'catalog/product-relations.json')) {
+    $paths = @('registry.json', 'catalog/catalog.json', 'catalog/product-relations.json')
+    $objectNames = @($paths | ForEach-Object { "${revision}:$_" })
+    # These are object identities, not path-list output. Resolve the three fixed
+    # names together at the already pinned commit, before any blob is decoded.
+    try { $objectIds = @(Get-GitOutputAt -Root $RepositoryRoot -Arguments (@('rev-parse', '--revs-only') + $objectNames)) }
+    catch { throw "CATALOG_INVALID: cannot read $($paths -join ', ') at ${revision}: $($_.Exception.Message)" }
+    if ($objectIds.Count -ne $paths.Count -or @($objectIds | Where-Object { $_ -notmatch '^[0-9a-f]{40,64}$' }).Count) {
+        # Diagnose an incomplete query without accepting partial or reordered
+        # identities. The normal path still launches only five Git reads.
+        for ($i = 0; $i -lt $paths.Count; $i++) {
+            try {
+                $id = ((Get-GitOutputAt -Root $RepositoryRoot -Arguments @('rev-parse', '--verify', $objectNames[$i])) -join "`n").Trim()
+                if ($id -notmatch '^[0-9a-f]{40,64}$') { throw 'invalid blob identity' }
+            } catch { throw "CATALOG_INVALID: cannot read $($paths[$i]) at ${revision}: $($_.Exception.Message)" }
+        }
+        throw "CATALOG_INVALID: incomplete blob identities for $($paths -join ', ') at $revision"
+    }
+    for ($i = 0; $i -lt $paths.Count; $i++) {
+        $path = $paths[$i]
         $objectName = "${revision}:$path"
         try {
-            $hashes[$path] = ((Get-GitOutputAt -Root $RepositoryRoot -Arguments @('rev-parse', '--verify', $objectName)) -join "`n").Trim()
+            $hashes[$path] = $objectIds[$i]
             $text = (Get-GitOutputAt -Root $RepositoryRoot -Arguments @('show', $objectName)) -join "`n"
             $values[$path] = $text | ConvertFrom-Json -ErrorAction Stop
         } catch { throw "CATALOG_INVALID: cannot read $path at ${revision}: $($_.Exception.Message)" }
