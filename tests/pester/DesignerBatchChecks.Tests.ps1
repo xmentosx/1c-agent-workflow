@@ -664,6 +664,86 @@ Describe 'Designer Gate 6 batch verdict' {
         @($actual.calls[5]) | Should -Contain '/UpdateDBCfg'
     }
 
+    It 'rejects zero native codes with category or unknown text independent of payload keywords (<Text>)' -ForEach @(
+        @{Text='ОбщийМодуль.Тест.Модуль Возможно ошибочное свойство: "Поле"'},
+        @{Text='ОбщийМодуль.Тест.Модуль Возможно ошибочный метод: "Метод"'},
+        @{Text='ОбщийМодуль.Тест.Модуль Возможно ошибочный параметр: "Тип"'},
+        @{Text='ОбщаяФорма.Тест.Форма Отсутствует обработчик: "ПриОткрытии"'},
+        @{Text='ОбщаяКартинка.Тест Неразрешимые ссылки на картинки: "Рисунок"'},
+        @{Text='РегистрСведений.Тест Неразрешимые ссылки на объекты метаданных: "Объект"'},
+        @{Text='Неизвестный результат проверки платформы'}
+    ) {
+        $root=Join-Path $TestDrive 'Русская диагностика 1С'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        $actual=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $resultPath=Join-Path $root 'Код результата.txt';$logPath=Join-Path $root 'Полный журнал.log'
+            [IO.File]::WriteAllText($resultPath,'0',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($logPath,$Text,[Text.UTF8Encoding]::new($true))
+            Get-DesignerBatchCheckVerdict -ExitCode 0 -ResultPath $resultPath -LogPath $logPath
+        }
+        $actual.passed | Should -BeFalse
+        $actual.exitCode | Should -Be 0
+        $actual.resultCode | Should -Be 0
+        $actual.diagnostics | Should -Be @($Text)
+        ($actual.diagnosticSummary.structuralOccurrences+$actual.diagnosticSummary.unknownLines) | Should -Be 1
+    }
+
+    It 'retains the original refusal if its diagnostic projection cannot be written' {
+        $root=Join-Path $TestDrive 'Недоступная проекция 1С'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        $actual=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Write-Utf8TextAtomic { param($Path,$Value) throw 'fixture projection write denied' }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,[string[]]$DesignerArgs)
+                $script:LastLogPath=Join-Path $root 'Исходный журнал.log'
+                [IO.File]::WriteAllText($script:LastLogPath,'ОбщийМодуль.Тест.Модуль Возможно ошибочный метод: "Метод"',[Text.UTF8Encoding]::new($true))
+                [IO.File]::WriteAllText($DesignerArgs[-1],'101',[Text.UTF8Encoding]::new($false))
+            }
+            Invoke-PlatformGate6NativeCheck -InfoBasePath $root -InfoBaseKind file -User '' -Password '' `
+                -Arguments @('/CheckConfig') -ResultPath (Join-Path $root 'Результат.txt')
+        }
+        $actual.verdict.passed | Should -BeFalse
+        $actual.verdict.resultCode | Should -Be 101
+        $actual.verdict.diagnosticSummary.structuralOccurrences | Should -Be 1
+        $actual.verdict.diagnosticsEvidence | Should -BeNullOrEmpty
+        $actual.verdict.parsedDiagnostics.rawText | Should -Match 'Возможно ошибочный метод'
+    }
+
+    It 'counts the incident category workload without depending on names and retains all raw findings' {
+        $root=Join-Path $TestDrive 'Полный набор диагностики 1С'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        $lines=[Collections.Generic.List[string]]::new()
+        foreach($group in @(
+            @{category='Возможно ошибочное свойство';unique=159;count=281},
+            @{category='Возможно ошибочный метод';unique=46;count=93},
+            @{category='Возможно ошибочный параметр';unique=41;count=43},
+            @{category='Неразрешимые ссылки на картинки';unique=2;count=2},
+            @{category='Неразрешимые ссылки на объекты метаданных';unique=20;count=20},
+            @{category='Отсутствует обработчик';unique=283;count=283}
+        )) {
+            for($i=0;$i -lt $group.count;$i++) {
+                $lines.Add(('ОбщийМодуль.Тест.Модуль {0}: "Имя{1}"' -f $group.category,($i % $group.unique)))
+            }
+        }
+        $text=$lines -join "`r`n"
+        $actual=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $resultPath=Join-Path $root 'Результат.txt';$logPath=Join-Path $root 'Диагностика.log'
+            [IO.File]::WriteAllText($resultPath,'101',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($logPath,$text,[Text.UTF8Encoding]::new($true))
+            Get-DesignerBatchCheckVerdict -ExitCode 101 -ResultPath $resultPath -LogPath $logPath
+        }
+        $actual.passed | Should -BeFalse
+        $actual.diagnostics | Should -HaveCount 722
+        $actual.diagnosticSummary.structuralOccurrences | Should -Be 722
+        $actual.diagnosticSummary.structuralUnique | Should -Be 551
+        $actual.diagnosticSummary.categories | Should -HaveCount 6
+        $actual.diagnosticSummary.unknownLines | Should -Be 0
+        $actual.parsedDiagnostics.rawText.TrimStart([char]0xFEFF) | Should -BeExactly $text
+    }
+
     It 'requires all three fresh signals and never lets a success fragment hide a later diagnostic' {
         $root = Join-Path $TestDrive ('Проверка платформы ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -689,9 +769,12 @@ Describe 'Designer Gate 6 batch verdict' {
             $exitFailed = Get-DesignerBatchCheckVerdict -ExitCode 5 -ResultPath $resultPath -LogPath $logPath
             [IO.File]::WriteAllBytes($logPath, [byte[]]@(0xFF, 0xFE, 0xFF))
             $invalidEncoding = Get-DesignerBatchCheckVerdict -ExitCode 0 -ResultPath $resultPath -LogPath $logPath
-            [pscustomobject]@{ clean=$clean; mixed=$mixed; leadingZero=$leadingZero; batchFailed=$batchFailed; invalid=$invalid; missing=$missing; exitFailed=$exitFailed; invalidEncoding=$invalidEncoding }
+            [IO.File]::WriteAllText($logPath,'Синтаксических ошибок не обнаружено!',[Text.UTF8Encoding]::new($true))
+            $nativeClean = Get-DesignerBatchCheckVerdict -ExitCode 0 -ResultPath $resultPath -LogPath $logPath
+            [pscustomobject]@{ clean=$clean; mixed=$mixed; leadingZero=$leadingZero; batchFailed=$batchFailed; invalid=$invalid; missing=$missing; exitFailed=$exitFailed; invalidEncoding=$invalidEncoding;nativeClean=$nativeClean }
         }
         $result.clean.passed | Should -BeTrue
+        $result.nativeClean.passed | Should -BeTrue
         $result.mixed.passed | Should -BeFalse
         @($result.mixed.diagnostics) | Should -HaveCount 2
         $result.leadingZero.passed | Should -BeFalse

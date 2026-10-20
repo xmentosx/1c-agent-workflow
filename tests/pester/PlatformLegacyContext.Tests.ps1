@@ -76,17 +76,19 @@
             beforeFingerprint=$beforeFingerprint;afterFingerprint=(Get-LegacyContextFixtureFingerprint $root $afterTree)}
     }
     function Invoke-LegacyContextFixture {
-        param([object]$Fixture,[string]$InfoBasePath=$Fixture.infoBase)
+        param([object]$Fixture,[string]$InfoBasePath=$Fixture.infoBase,[switch]$IncludeAssessment)
         $oldRoot=Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
         $oldValue=if($oldRoot){$oldRoot.Value}else{$null}
         $head=Invoke-LegacyContextGit $Fixture.root @('rev-parse','HEAD')
         $script:ProjectRoot=$Fixture.root
         try {
+            $assessment=$null
             $context=New-PlatformGate6LegacyContext -State $Fixture.state -ChangeSet ([pscustomobject]@{
                 previousTreeObjectId=$Fixture.beforeTree;currentTreeObjectId=$Fixture.afterTree}) `
-                -SourceFingerprint $Fixture.afterFingerprint -InfoBaseKind file -InfoBasePath $InfoBasePath
+                -SourceFingerprint $Fixture.afterFingerprint -InfoBaseKind file -InfoBasePath $InfoBasePath -Assessment ([ref]$assessment)
             (Invoke-LegacyContextGit $Fixture.root @('rev-parse','HEAD')) | Should -BeExactly $head
             @(Get-GitPathListAt -Root $Fixture.root -Arguments @('status','--porcelain=v1','-z','--untracked-files=all')) | Should -HaveCount 0
+            if ($IncludeAssessment) { return [pscustomobject]@{context=$context;assessment=$assessment} }
             return $context
         } finally {
             if($oldRoot){$script:ProjectRoot=$oldValue}else{Remove-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue}
@@ -159,7 +161,21 @@ Describe 'Operation-local previous source binding for platform legacy context' {
             'moved target' { $path=Join-Path $fixture.root 'Другая база' }
             'missing current tree' { $fixture.afterTree='0'*40 }
         }
-        Invoke-LegacyContextFixture $fixture -InfoBasePath $path | Should -BeNullOrEmpty
+        $result=Invoke-LegacyContextFixture $fixture -InfoBasePath $path -IncludeAssessment
+        $result.context | Should -BeNullOrEmpty
+        $result.assessment.eligible | Should -BeFalse
+        $expected=@{
+            'unrelated fingerprint'='PREVIOUS_TREE_FINGERPRINT_MISMATCH';'different previous tree'='PREVIOUS_TREE_FINGERPRINT_MISMATCH';
+            'seed mismatch'='SEED_FINGERPRINT_MISMATCH';'seed source absent'='SEED_SOURCE_KEY_MISSING';'seed sync absent'='SEED_SYNC_ID_MISSING';
+            'normal loaded time absent'='PREVIOUS_LOAD_TIMESTAMP_MISSING';'pending load'='PREVIOUS_LOAD_NOT_PASSED';
+            'different database kind'='INFOBASE_KIND_MISMATCH';'moved target'='INFOBASE_TARGET_MISMATCH';'missing current tree'='SOURCE_IMPACT_EVALUATION_FAILED'
+        }
+        # A syntactically valid but absent current tree is rejected by the
+        # existing impact owner, whose exact reason must survive unchanged.
+        if($Case -eq 'missing current tree') {
+            $result.assessment.reason | Should -BeExactly $result.assessment.sourceImpact.reason
+            $result.assessment.sourceImpact.proven | Should -BeFalse
+        } else { $result.assessment.reason | Should -BeExactly $expected[$Case] }
     }
 
     It 'keeps unknown metadata impact on the strict path for <Change>' -ForEach @(
@@ -167,7 +183,36 @@ Describe 'Operation-local previous source binding for platform legacy context' {
     ) {
         $fixture=New-LegacyContextFixture -Change $Change
         $dependent=(Get-FileHash -LiteralPath (Join-Path $fixture.root 'src/cf/CommonModules/Прежний/Ext/Module.bsl')).Hash
-        Invoke-LegacyContextFixture $fixture | Should -BeNullOrEmpty
+        $result=Invoke-LegacyContextFixture $fixture -IncludeAssessment
+        $result.context | Should -BeNullOrEmpty
+        $result.assessment.eligible | Should -BeFalse
+        $result.assessment.reason | Should -BeExactly $result.assessment.sourceImpact.reason
+        $result.assessment.sourceImpact.impactOwners | Should -Contain 'ОбщийМодуль.Прежний'
+        if($Change -eq 'descriptor') {
+            $result.assessment.sourceImpact.changedOwners | Should -Contain 'ОбщийМодуль.Изменённый'
+            $result.assessment.reason | Should -BeExactly 'EXISTING_DESCRIPTOR_OR_PAYLOAD_CHANGED:CommonModules/Изменённый.xml'
+            $result.assessment.path | Should -BeExactly 'CommonModules/Изменённый.xml'
+        }
         (Get-FileHash -LiteralPath (Join-Path $fixture.root 'src/cf/CommonModules/Прежний/Ext/Module.bsl')).Hash | Should -BeExactly $dependent
+    }
+
+    It 'retains a failed owner read without granting a legacy context' {
+        $fixture=New-LegacyContextFixture
+        Mock Get-GitPathList { throw 'fixture previous tree read failed' }
+        $result=Invoke-LegacyContextFixture $fixture -IncludeAssessment
+        $result.context | Should -BeNullOrEmpty
+        $result.assessment.reason | Should -BeExactly 'PREVIOUS_TREE_READ_FAILED'
+        $result.assessment.detail | Should -BeExactly 'fixture previous tree read failed'
+    }
+
+    It 'preserves a symbol refusal without presenting the symbol as a file path' {
+        $fixture=New-LegacyContextFixture
+        Mock Test-ItlPlatformLegacySourceImpact {
+            [pscustomobject]@{proven=$false;reason='PREEXISTING_REFERENCE_TO_ADDED_NAME:Имя';changedOwners=@();impactOwners=@()}
+        }
+        $result=Invoke-LegacyContextFixture $fixture -IncludeAssessment
+        $result.context | Should -BeNullOrEmpty
+        $result.assessment.reason | Should -BeExactly 'PREEXISTING_REFERENCE_TO_ADDED_NAME:Имя'
+        $result.assessment.path | Should -BeNullOrEmpty
     }
 }

@@ -7775,24 +7775,21 @@ function Get-DesignerBatchCheckVerdict {
     }
 
     $diagnostics = [System.Collections.Generic.List[string]]::new()
+    $parsedDiagnostics = $null
+    $diagnosticSummary = $null
     if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
         $reasons.Add('/Out log was not written')
     } else {
         try {
-            foreach ($line in @((Read-DesignerBatchStrictUtf8Text -Path $LogPath) -split '\r?\n')) {
-                $remaining = [string]$line
-                foreach ($success in @(
-                    '(?i)\bошибок\s+не\s+обнаружено\b',
-                    '(?i)\bпредупреждений\s+не\s+обнаружено\b',
-                    '(?i)\b(?:ошибок|предупреждений)\s*:\s*0(?![0-9])',
-                    '(?i)\b(?:errors?|warnings?)\s*(?::|=)\s*0(?![0-9])',
-                    '(?i)\b(?:0\s+errors?|0\s+warnings?|no\s+errors?|no\s+warnings?|errors?\s+were\s+not\s+found)\b'
-                )) { $remaining = [regex]::Replace($remaining, $success, '') }
-                if ($remaining -match '(?i)ошибк\p{L}*|предупреждени\p{L}*|не\s+найден\s+метод|не\s+может\s+быть\s+применен\p{L}*|невозможно|\b(?:error|fatal|failed|failure|exception|warning)\b') {
-                    $diagnostics.Add($line.Trim())
-                }
+            $parsedDiagnostics = Get-ItlPlatformStructuralDiagnostics -LogPath $LogPath
+            $diagnosticSummary = Get-ItlPlatformDiagnosticSummary -Diagnostics $parsedDiagnostics
+            foreach ($finding in @($parsedDiagnostics.knownDiagnostics) + @($parsedDiagnostics.compilerDiagnostics)) {
+                for ($occurrence=0; $occurrence -lt $finding.count; $occurrence++) { $diagnostics.Add($finding.line) }
             }
-            if ($diagnostics.Count -gt 0) { $reasons.Add("/Out has $($diagnostics.Count) warning/error diagnostic(s)") }
+            foreach ($finding in $parsedDiagnostics.unresolvedDiagnostics) { $diagnostics.Add($finding.line) }
+            if ($diagnostics.Count -gt 0) {
+                $reasons.Add("/Out has $($diagnostics.Count) diagnostic occurrence(s): structural=$($diagnosticSummary.structuralOccurrences), unique=$($diagnosticSummary.structuralUnique), compiler=$($diagnosticSummary.compilerOccurrences), unknown=$($diagnosticSummary.unknownLines)")
+            }
         } catch { $reasons.Add("/Out cannot be decoded: $($_.Exception.Message)") }
     }
     return [pscustomobject]@{
@@ -7802,6 +7799,9 @@ function Get-DesignerBatchCheckVerdict {
         resultPath = $ResultPath
         logPath = $LogPath
         diagnostics = @($diagnostics.ToArray())
+        parsedDiagnostics = $parsedDiagnostics
+        diagnosticSummary = $diagnosticSummary
+        diagnosticsEvidence = $null
         reasons = @($reasons.ToArray())
     }
 }
