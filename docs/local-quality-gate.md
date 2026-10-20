@@ -593,6 +593,19 @@ workflow-update требует нового явного признания. Ч�
 Флаг требует существующую capsule и несовместим с Recapture. После признания
 повторяется исходная квалификация через её сохранённый план.
 
+Для отдельно согласованного повтора из сохранённого снимка, когда raw seed
+недоступен, source factory допускает явный `-Action Prepare -Phase Develop`
+с `-CapsulePath`, `-CapsuleSha256` и положительным `-DatabaseBudgetBytes`.
+Он проверяет все artifacts, source project, phase и опубликованный N-1 baseline,
+затем создаёт новый owned target прежними clone/context/native restore owners.
+Бюджет базы задаётся консервативно по измерениям, не заменяется нулём при
+отсутствующем файле; capacity failure продолжает тот же explicit Prepare.
+В claim фиксируются `sourceAdmission=sealed-capsule` и declared capacity basis.
+Этот путь доказывает повтор на exact DT/source/context, но не currentness
+недоступного оригинала. Обычный live-seed admission, Capture и Release остаются
+строгими; автоматического fallback в PublishDevelop/Release нет. Capsule,
+старый seed и failed copies сохраняются; recovery не является Recapture.
+
 После upgrade/fresh Develop освобождает только производные `1Cv8.1CD` своего
 qualification target, в том числе после неудачного первого RestoreIB. Сюда входит
 только его локальный `project/.agent-1c/branch-seed/<sourceKey>/infobase/1Cv8.1CD`:

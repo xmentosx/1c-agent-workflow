@@ -79,4 +79,10 @@ Registry owner закрыл G3-LEGACY-CALLER-OFFER на исходном пер�
 ## Dependency restore format, 2026-10-20
 
 - [x] Учесть source fix G3-CATALOG-RESTORE-FORMAT registry owner без отдельного memory receipt/updater: exact descriptor restore при неизменённом файле, сохранённые owned conflict/recovery и private later; focused 89/89, a2e6931e. [Результаты](test-plan.md#dependency-точный-restore-descriptor-2026-10-20).
-- [ ] Получить исходный native first legacy upgrade → later → late select/restore proof после восстановления прежнего seed 1Cv8.1CD с manifest SHA. Factory сейчас exit 1 до создания copy; эта fixture-зависимость оставляет G3-CATALOG-RESTORE-FORMAT и G5/AC-43 открытыми. Capsule, failed copy и admission сохраняются; не заменять proof canonicalization/cleanup или обходом factory. AC-44 и остальные release conditions прежние, G4 не начат.
+- [ ] Получить исходный native first legacy upgrade → later → late select/restore proof на новом owned target из exact capsule по отдельно согласованному recovery contract ниже. Factory сейчас exit 1 до создания copy; эта fixture-зависимость оставляет G3-CATALOG-RESTORE-FORMAT и G5/AC-43 открытыми. Capsule, failed copy и admission сохраняются; не заменять proof canonicalization/cleanup или обходом factory. AC-44 и остальные release conditions прежние, G4 не начат.
+
+
+## Dependency capsule recovery, 2026-10-20
+
+- [x] Учесть согласованный registry/source-owned recovery из exact capsule при недоступном raw seed, без memory механизма или opt-in.
+- [ ] Получить bounded native G3 restore-format proof на новом PM5 target; текущий результат registry test-plan обязателен, original seed currentness unavailable, G5/AC-43/AC-44 и остальные release conditions открыты.

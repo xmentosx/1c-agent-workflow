@@ -121,6 +121,11 @@ Startup SHALL иметь одну remote tip/fetch попытку с общим 
 - **THEN** существующий settings writer возвращает исходные bytes descriptor из receipt, включая порядок JSON, BOM и переводы строк; clean descriptor не становится dirty только из-за сериализации. Receipt сохраняется до физической записи и доступен pinned resume/restore
 - **AND** при последующей чужой правке восстановление всего файла не применяется: несвязанные значения сохраняются, конфликт самой привязки останавливает запись; исторический receipt без исходных bytes допускает прежний semantic restore без обещания точного формата
 
+#### Scenario: Согласованное восстановление тестового стенда из capsule
+- **WHEN** raw seed недоступен и отдельно согласован повтор G3 из сохранённой sealed capsule
+- **THEN** существующий source fixture factory по явным path/SHA и capacity budget создаёт новый Develop target из проверенных DT/source.bundle/state/context прежнего published N-1 baseline; обычный live-seed admission и Release/publication route не переключаются на recovery автоматически
+- **AND** исходный seed и failed copy сохраняются; admission нового target явно отмечен как sealed-capsule, currentness raw seed остаётся unavailable; native first update → later → select → restore сохраняет workload и проверяет точные bytes/clean roots, private later и выключенную память, не закрывая full G3 либо G4
+
 #### Scenario: Сбой автоприменения перед основной командой
 - **WHEN** автоматическое применение началось, но завершилось частичной записью или ошибкой проверки нового подключения
 - **THEN** основная команда не выполняется по смешанному контексту, результат сообщает о незавершённом обновлении и штатном resume/restore; доступ к диагностике/восстановлению сохраняется
