@@ -474,7 +474,8 @@ Release runner требует живую исходную базу `SOURCE_INFOB
 `config-cadence`, `extension-smoke` и `ondemand-mcp` используют восстановленную
 базу ветки и замороженное дерево master; фабрика не достраивает для них вторую
 базу и не меняет капсулу. Во всех scope путь источника остаётся внутри стенда;
-прежнее предусловие recovery-only сохраняется.
+Recovery-only требует исходную базу только при незавершённом восстановлении;
+отсутствующий, recovered или completed recovery остаётся no-op без записи checkpoint.
 До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
 план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
 checkpoint snapshots. Readiness и runner используют один read-only контракт
