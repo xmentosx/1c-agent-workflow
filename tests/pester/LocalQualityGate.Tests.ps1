@@ -791,10 +791,12 @@ exit $exitCode
             "tests/pester/PlatformLegacyImpact.Tests.ps1",
             "tests/pester/PlatformLoadContinuation.Tests.ps1",
             "tests/pester/PlatformSourceCoverage.Tests.ps1")
-        # Retain the original observed 57-file cohort; the six newly owned
-        # Gate 6 files extend current inventory rather than replacing it.
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests }).Count | Should -Be 57
-        @($selection.tests).Count | Should -Be 63
+        # Preserve the observed 57-file cohort and all six Gate 6 owners.
+        # The measured autonomy regression is an additional file, not a replacement.
+        $autonomyTest = 'tests/pester/LifecycleGitContinuation.Tests.ps1'
+        @($selection.tests | Where-Object { $_ -notin @($gate6Tests + @($autonomyTest)) }).Count | Should -Be 57
+        @($selection.tests).Count | Should -Be 64
+        @($selection.tests) | Should -Contain $autonomyTest
         foreach ($test in $gate6Tests) { @($selection.tests) | Should -Contain $test }
         foreach ($test in @("DevBranchLifecycle", "CompactItlRunner", "DependencyLocks")) {
             @($selection.tests) | Should -Contain "tests/pester/$test.Tests.ps1"
@@ -819,7 +821,8 @@ exit $exitCode
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests).Count | Should -Be 69
+        @($currentSelection.tests | Where-Object { $_ -ne $autonomyTest }).Count | Should -Be 69
+        @($currentSelection.tests).Count | Should -Be 70
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
             "tests/pester/DevelopE2EQualification.Tests.ps1",
@@ -831,7 +834,12 @@ exit $exitCode
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
         $currentParallelSpanSeconds = 936.459
         $serialReleaseSeconds = 198.938
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds
+        # Current autonomy owner measured 33.218 seconds (13/0/0) on PS 5.1.
+        # Charge its whole duration even if a scheduler could overlap or reuse it.
+        $autonomyObservedSeconds = 33.218
+        $timings = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/pester-timings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        [double]$timings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $autonomyObservedSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)

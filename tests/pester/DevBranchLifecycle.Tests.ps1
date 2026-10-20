@@ -9241,7 +9241,11 @@ if (`$?) { exit 0 } else { exit 1 }
                     'tampered-merge' { 'LIFECYCLE_MERGE_RESULT_MISMATCH' }
                 }
                 $result.message | Should -Match "^$expectedCode" -Because $case
-                $result.requiredAction | Should -BeNullOrEmpty -Because $case
+                if ($case -eq 'dirty-tree') {
+                    $result.requiredAction | Should -Match '^prepare-lifecycle-git:' -Because $case
+                } else {
+                    $result.requiredAction | Should -BeNullOrEmpty -Because $case
+                }
                 $result.stateUnchanged | Should -BeTrue -Because $case
                 $result.headUnchanged | Should -BeTrue -Because $case
             } finally {
@@ -10087,6 +10091,7 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-DevBranchExtensionInitialized {}
             function Assert-CleanGit {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40); branchCommit = ("b" * 40) } }
+            function Assert-RefreshGitInputs {}
             function Update-DevBranchState {
                 param([object]$State, [hashtable]$Updates)
                 foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
@@ -10134,6 +10139,7 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ('a' * 40); branchCommit = ('b' * 40); repairPaths = @() } }
+            function Assert-RefreshGitInputs {}
             function Sync-DevBranchContextToDotEnv {}
             function Sync-AiRules1cManagedIgnoredFilesFromMain {}
             function Sync-WorkflowManagedDependencyLockEntries {}

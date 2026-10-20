@@ -2598,7 +2598,71 @@ function Get-EffectiveGitStatusLines {
     })
 }
 
+function Get-LifecycleGitChanges {
+    # Porcelain -z stores the destination first and a second record for the
+    # source of a rename/copy. Both endpoints participate in admission.
+    $records = @(Get-GitPathList -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all'))
+    for ($i = 0; $i -lt $records.Count; $i++) {
+        $record = [string]$records[$i]
+        if ($record.Length -lt 4 -or $record[2] -ne ' ') { throw 'LIFECYCLE_GIT_STATUS_INVALID: preserve the worktree and inspect Git output.' }
+        $status = $record.Substring(0, 2)
+        $path = $record.Substring(3)
+        if (-not (Test-IgnorableLocalGitStatusLine -Line $record)) {
+            [pscustomobject]@{ path = $path; status = $status }
+        }
+        if ($status -match '[RC]') {
+            $i++
+            if ($i -ge $records.Count) { throw 'LIFECYCLE_GIT_STATUS_INVALID: missing rename source.' }
+            [pscustomobject]@{ path = [string]$records[$i]; status = $status }
+        }
+    }
+}
+
+function Get-LifecycleGitPathDisposition {
+    param([string[]]$Paths, [string[]]$InputScopes, [string[]]$IndependentScopes)
+
+    foreach ($path in $Paths) {
+        $normalized = $path -replace '\\', '/'
+        $kind = 'unknown'
+        foreach ($group in @(
+            @{ kind = 'input'; scopes = $InputScopes },
+            @{ kind = 'independent'; scopes = $IndependentScopes }
+        )) {
+            foreach ($scope in $group.scopes) {
+                $scope = (([string]$scope -replace '\\', '/') -replace '^(\./)+', '').TrimEnd('/')
+                if ($scope -and ($scope -eq '.' -or $normalized -ieq $scope -or $normalized.StartsWith($scope + '/', [StringComparison]::OrdinalIgnoreCase) -or
+                    ($scope -match '[*?\[]' -and $normalized -like $scope))) {
+                    $kind = $group.kind
+                    break
+                }
+            }
+            if ($kind -ne 'unknown') { break }
+        }
+        [pscustomobject]@{ path = $path; kind = $kind }
+    }
+}
+
+function Set-LifecycleGitContinuation {
+    param([string]$Operation, [string]$Phase, [string[]]$Paths)
+
+    Set-RunFailureContext -Category runner -RequiredAction "prepare-lifecycle-git: inspect the exact paths in blockerOwner for $Operation phase=$Phase; preserve other owners' index and worktree changes. Commit only reviewed task-owned paths when a clean tree is required, or repair changed phase inputs through the original lifecycle owner; then repeat the same wrapper. Do not commit an unfinished merge manually. Ask only for an unresolved incompatible choice; do not repeat an unchanged failure."
+    $script:RunBlockerClassification = 'lifecycle-git'
+    $script:RunBlockerRequiresUserDecision = $false
+    $script:RunBlockerRetryOriginal = $true
+    $script:RunBlockerOwner = [ordered]@{ type = 'agent'; operation = $Operation; phase = $Phase; paths = @($Paths) }
+}
+
 function Assert-CleanGit {
+    param([string]$Operation = '')
+
+    if ($Operation -in @('new-dev-branch', 'new-extension-dev-branch')) {
+        $changes = @(Get-LifecycleGitChanges)
+        if ($changes.Count -gt 0) {
+            Set-LifecycleGitContinuation -Operation $Operation -Phase preflight -Paths @($changes.path)
+            throw "Git worktree is not clean. Follow requiredAction and repeat the same wrapper. Remaining Git paths: $($changes.path -join '; ')"
+        }
+        return
+    }
     $status = & git -C $script:ProjectRoot status --porcelain
     if ($LASTEXITCODE -ne 0) {
         throw "Cannot read Git status"
@@ -2834,6 +2898,7 @@ function Ensure-GitIgnore {
     $gitignorePath = Join-Path $script:ProjectRoot ".gitignore"
     $fallbackRequired = @(
         ".dev.env",
+        "/handoffs/",
         "build/result/",
         "build/event-log/",
         "testResults.xml",
@@ -2913,7 +2978,7 @@ function Ensure-GitIgnore {
     # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp", "__pycache__/", "*.pyc", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("/handoffs/", "*.mdmp", "__pycache__/", "*.pyc", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath
@@ -2929,7 +2994,9 @@ function Ensure-GitIgnore {
     }
 
     if ($linesToAdd.Count -gt 0) {
-        Add-Utf8Text -Path $gitignorePath -Value (($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
+        $existingText = if (Test-Path -LiteralPath $gitignorePath -PathType Leaf) { Read-Utf8Text -Path $gitignorePath } else { '' }
+        $separator = if ($existingText -and -not $existingText.EndsWith("`n")) { [Environment]::NewLine } else { '' }
+        Add-Utf8Text -Path $gitignorePath -Value ($separator + ($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
     }
 }
 

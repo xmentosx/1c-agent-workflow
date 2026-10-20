@@ -247,31 +247,35 @@
         # their existing limits.
         # Six OpenSpec routes add 253 UTF-8 bytes to each master surface;
         # ZCode/MiMo add two client rows. Keep the measured ceilings explicit.
+        # Lifecycle Git recovery routes add two on-demand references per surface:
+        # +518 UTF-8 bytes; native OpenCode master +496 (its own renderer).
+        # Preserve the previous margin and all behavioral contracts; measured
+        # before/after details live in lifecycle-autonomous-continuation/evidence.md.
         $expectedRendered = @{
-            "master/codex" = @{ files = 24; maxBytes = 33424 }
-            "master/kilocode" = @{ files = 12; maxBytes = 32270 }
-            "master/claude-code" = @{ files = 12; maxBytes = 32114 }
-            "master/cursor" = @{ files = 12; maxBytes = 32114 }
-            "master/opencode" = @{ files = 13; maxBytes = 43143 }
-            "master/kimi" = @{ files = 12; maxBytes = 32367 }
-            "master/qwen" = @{ files = 12; maxBytes = 32114 }
-            "master/command-code" = @{ files = 12; maxBytes = 32114 }
-            "master/cline" = @{ files = 12; maxBytes = 32367 }
-            "master/zcode" = @{ files = 12; maxBytes = 32114 }
-            "master/mimocode" = @{ files = 12; maxBytes = 32114 }
-            "master/pi" = @{ files = 12; maxBytes = 32114 }
-            "dev/codex" = @{ files = 30; maxBytes = 50842 }
-            "dev/kilocode" = @{ files = 15; maxBytes = 49468 }
-            "dev/claude-code" = @{ files = 15; maxBytes = 49273 }
-            "dev/cursor" = @{ files = 15; maxBytes = 49273 }
-            "dev/opencode" = @{ files = 16; maxBytes = 62748 }
-            "dev/kimi" = @{ files = 15; maxBytes = 49555 }
-            "dev/qwen" = @{ files = 15; maxBytes = 49273 }
-            "dev/command-code" = @{ files = 15; maxBytes = 49273 }
-            "dev/cline" = @{ files = 15; maxBytes = 49555 }
-            "dev/zcode" = @{ files = 15; maxBytes = 49273 }
-            "dev/mimocode" = @{ files = 15; maxBytes = 49273 }
-            "dev/pi" = @{ files = 15; maxBytes = 49273 }
+            "master/codex" = @{ files = 24; maxBytes = 33942 }
+            "master/kilocode" = @{ files = 12; maxBytes = 32788 }
+            "master/claude-code" = @{ files = 12; maxBytes = 32632 }
+            "master/cursor" = @{ files = 12; maxBytes = 32632 }
+            "master/opencode" = @{ files = 13; maxBytes = 43639 }
+            "master/kimi" = @{ files = 12; maxBytes = 32885 }
+            "master/qwen" = @{ files = 12; maxBytes = 32632 }
+            "master/command-code" = @{ files = 12; maxBytes = 32632 }
+            "master/cline" = @{ files = 12; maxBytes = 32885 }
+            "master/zcode" = @{ files = 12; maxBytes = 32632 }
+            "master/mimocode" = @{ files = 12; maxBytes = 32632 }
+            "master/pi" = @{ files = 12; maxBytes = 32632 }
+            "dev/codex" = @{ files = 30; maxBytes = 51360 }
+            "dev/kilocode" = @{ files = 15; maxBytes = 49986 }
+            "dev/claude-code" = @{ files = 15; maxBytes = 49791 }
+            "dev/cursor" = @{ files = 15; maxBytes = 49791 }
+            "dev/opencode" = @{ files = 16; maxBytes = 63266 }
+            "dev/kimi" = @{ files = 15; maxBytes = 50073 }
+            "dev/qwen" = @{ files = 15; maxBytes = 49791 }
+            "dev/command-code" = @{ files = 15; maxBytes = 49791 }
+            "dev/cline" = @{ files = 15; maxBytes = 50073 }
+            "dev/zcode" = @{ files = 15; maxBytes = 49791 }
+            "dev/mimocode" = @{ files = 15; maxBytes = 49791 }
+            "dev/pi" = @{ files = 15; maxBytes = 49791 }
         }
 
         $rendered = & {

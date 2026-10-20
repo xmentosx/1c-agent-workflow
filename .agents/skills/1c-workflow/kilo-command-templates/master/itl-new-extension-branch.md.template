@@ -7,6 +7,8 @@ Use this command only from the `master` worktree. Treat any text after `/itl-new
 
 Before launching, ask in chat whether the branch should create an `Empty` extension or load an existing `CFE`, then collect the extension name and the CFE path when applicable. If the developer explicitly does not know these values yet, create the branch without extension parameters; its saved `pending` state will make extension setup the mandatory first agent-guided step in the new worktree. Never ask the developer to open a terminal or copy a PowerShell command.
 
+On `requiredAction=prepare-lifecycle-git:`, read `references/lifecycle-git-continuation.md` in the 1c-workflow skill and perform agent-owned continuation, then repeat this wrapper. Do not stop for general permission when `blockerRequiresUserDecision=false`.
+
 Run the monitored helper launcher from the current project directory so the manual unsafe-action protection confirmation is visible:
 
 If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.

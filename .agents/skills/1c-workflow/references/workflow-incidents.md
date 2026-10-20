@@ -52,6 +52,9 @@ sealed patch before refresh so the existing clean-runtime guard remains intact.
 Do not introduce a different launcher or arbitrary runtime-source override.
 
 Write a report outside managed workflow files, for example in `handoffs/`.
+Install/update excludes root `/handoffs/` from untracked Git status; existing
+tracked reports remain tracked. See [Git continuation](lifecycle-git-continuation.md)
+for an older installation or a lifecycle Git blocker.
 Finish or cancel the owned operation before editing files it may still load.
 After authorization, capture the original files **before editing**:
 
