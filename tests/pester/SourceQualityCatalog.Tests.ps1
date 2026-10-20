@@ -401,16 +401,24 @@ Describe 'Source quality catalog contracts' {
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
         $classificationConsumer = 'tests/pester/ToolingReadiness.Tests.ps1'
-        $registryConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
-        # The historical 57/80 cohort is unchanged; explicit consumers now
-        # prove the new shared lifecycle/setup contract, rather than becoming
-        # an unexplained increase or being dropped to satisfy this count.
+        $registrySetupConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
+        $callerInputConsumer = 'tests/pester/ProductProjectCallerInput.Tests.ps1'
+        $registryConsumers = @($registrySetupConsumers + @($callerInputConsumer))
+        # Keep the historical 57/80 cohort. The third registry consumer proves
+        # native input independently of setup; account for its own owner/budget
+        # rather than changing the historical counts or dropping its selection.
         @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers }).Count | Should -Be 57
         @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be 83
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 1)
         foreach($test in $registryConsumers){@($selection.tests)|Should -Contain $test}
         $registryOwner=@($catalog.contracts|Where-Object id -eq 'product-project-setup')[0]
-        @($registryOwner.tests|Sort-Object)|Should -Be $registryConsumers
+        @($registryOwner.tests|Sort-Object)|Should -Be $registrySetupConsumers
+        $callerInputOwner=@($catalog.contracts|Where-Object id -eq 'product-project-caller-input')[0]
+        @($callerInputOwner.tests)|Should -Be @($callerInputConsumer)
+        foreach($path in @('agent-1c.lifecycle.ps1','agent-1c.core.ps1','agent-1c.vanessa.ps1','agent-1c.product-project-console.ps1')){
+            @($callerInputOwner.paths)|Should -Contain ('.agents/skills/1c-workflow/scripts/lib/'+$path)
+        }
+        @($callerInputOwner.paths)|Should -Contain 'tests/fixtures/product-project-caller-input.ps1'
         @($registryOwner.paths)|Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
         @(Get-QualityContractReuseInputPaths -Contract $registryOwner)|Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1'
         @($selection.tests) | Should -Contain $classificationConsumer
@@ -451,7 +459,7 @@ Describe 'Source quality catalog contracts' {
         $newCompactPassedSeconds = 240.7690454 + 13.436425 + 11.5876579
         $dependencySeconds = 14.161
         # Conservatively account for the new blob-pressure consumer without rewriting the historical measurements.
-        $registryBudgetReserve=[double]$registryOwner.budgetSeconds
+        $registryBudgetReserve=[double]$registryOwner.budgetSeconds + [double]$callerInputOwner.budgetSeconds
         # Named production-purpose/proof-final-result.json: 16 cases, 11.239s;
         # reserve 17s including rounded setup cost, without changing watchdogs.
         $productionPreparationSeconds = 17.0
@@ -467,7 +475,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
         @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 83
-        @($currentSelection.tests).Count | Should -Be 86
+        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 1)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",

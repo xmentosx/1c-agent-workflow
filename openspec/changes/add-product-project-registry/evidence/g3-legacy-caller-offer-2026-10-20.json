@@ -394,6 +394,34 @@
     {
       "sha256": "2b26cbebe4b63b6e404a8eb1d18cf25f677e685ccfac4cc881623b5de729a115",
       "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\runs\\g3-legacy-caller-after-later\\status.json"
+    },
+    {
+      "sha256": "8c7339825805c61242512ffabed7aa2983dcae9b7fc1e8fb7d863a9ab2327994",
+      "path": "C:\\Users\\xment\\AppData\\Local\\Temp\\itl-source-register-607eb2ad143c4b2a9010ebafd29b16b7\\build\\test-results\\local\\check-summary.json"
+    },
+    {
+      "sha256": "ba5f0fd8c5a6ca0a988d359f89776410ee921be231b639902fdf6ed45dfe9f9c",
+      "path": "C:\\Users\\xment\\AppData\\Local\\Temp\\itl-source-register-607eb2ad143c4b2a9010ebafd29b16b7\\build\\test-results\\local\\test-selection.json"
+    },
+    {
+      "sha256": "6128b595125761554bbc9a27b88a29aacc7d0de9492e80f5fd9344732d5e1432",
+      "path": "C:\\Users\\xment\\AppData\\Local\\Temp\\itl-source-register-607eb2ad143c4b2a9010ebafd29b16b7\\build\\test-results\\local\\pester-shards\\worker-8.result.json"
+    },
+    {
+      "sha256": "fc00903ce1ade3fcae653b8a8f1b1b5ad363b74fb89835682b9e6f1557ed1db0",
+      "path": "C:\\Users\\xment\\AppData\\Local\\Temp\\itl-source-register-607eb2ad143c4b2a9010ebafd29b16b7\\build\\test-results\\local\\pester-shards\\worker-8.stdout.log"
+    },
+    {
+      "sha256": "8fe7b283ad35ecf5e2d6149f673b2414979ddbca9a533b5fb279c83181dac17d",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\register-attempt1.log"
+    },
+    {
+      "sha256": "f979c5e8385874a19dcdf3c25d04f45c74a975874c556ab7d24bb7ee810ebdf8",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner.log"
+    },
+    {
+      "sha256": "f33e9e4af09d1148fd62203c665ed3cffb0d0522b3aed5e99df0fbcc661d9dac",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner.json"
     }
   ],
   "openSpecValidation": {
@@ -402,5 +430,27 @@
     "nodeSha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
     "version": "1.13.1",
     "entrySha256": "ca136f0e9fd4951dcf93d8ed729ebc97b2d97d3980cd9dc9d42fc80e32e797c6"
+  },
+  "registrationAttempt1": {
+    "selectedFiles": 62,
+    "sourceHead": "0cccf3051175b98bfda934e615a7c33e8f698410",
+    "passed": 500,
+    "candidateCommit": "cc724a9dd9ea02ec272741fadb83ae4660475509",
+    "failure": "SourceQualityCatalog historical cohort expected 57, actual 58: new explicit CallerInput consumer missing from registry cohort classification.",
+    "budgetStatus": "failed",
+    "status": "failed",
+    "focusedInputSha256": "052f9d04b47b1c631c045b91bf6a3b44fdfaf3d8efd884039aad0dcf1a95d382",
+    "correction": "Add separate caller-input owner/fixture/budget to explicit registry cohort; preserve historical 57/80/83 counts and runtime watchdogs; totals account for exactly three validated registry consumers.",
+    "failed": 1,
+    "incompleteSelection": true,
+    "focused": {
+      "seconds": 2.8113178,
+      "skipped": 0,
+      "failed": 0,
+      "passed": 1
+    },
+    "executedGroups": 9,
+    "durationMs": 617698,
+    "nativeRuntimeUnchanged": true
   }
 }
