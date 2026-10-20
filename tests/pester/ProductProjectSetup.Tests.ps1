@@ -239,6 +239,30 @@ Describe 'Explicit catalog setup and bootstrap keep one selected context' {
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
     }
+    It 'never asks in a captured lifecycle continuation even if its hidden console reports input available' {
+        Mock Test-InteractiveInputAvailable {return $true}
+        Mock Read-InitOptional {throw 'Hidden continuation cannot receive foreground input'}
+        $script:LifecycleOperationIsContinuation=$true
+        try {Invoke-ItlProductProjectPostUpdateOffer} finally {$script:LifecycleOperationIsContinuation=$false}
+        Should -Invoke Read-InitOptional -Times 0
+        Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
+    }
+    It 'offers association in the caller only after the exact post-copy terminal and retained snapshot proof' {
+        $script:CatalogPendingRead=0
+        Mock Get-WorkflowUpdatePendingSnapshot {
+            $script:CatalogPendingRead++
+            if($script:CatalogPendingRead -eq 1){return @{snapshot=@{root='itl-workflow-update-rollback-catalog'};receipt=@{phase='master-committed'}}}
+            return $null
+        }
+        Mock Invoke-Agent1cFreshProcess {return @{exitCode=0}}
+        Mock Get-WorkflowUpdateCompletedSnapshot {return @{receipt=@{sourceCommit='exact-source';sourceRoot='exact-root'}}}
+        Mock Assert-WorkflowDevelopmentBranchRolloutComplete {return $true}
+        Mock Invoke-ItlProductProjectPostUpdateOffer {
+            Should -Invoke Assert-WorkflowDevelopmentBranchRolloutComplete -Times 1 -Exactly
+        }
+        Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot @{root='itl-workflow-update-rollback-catalog'} -Source @{commit='exact-source';root='exact-root'}
+        Should -Invoke Invoke-ItlProductProjectPostUpdateOffer -Times 1 -Exactly
+    }
     It 'keeps package success separate from a failed association' {
         Mock Test-InteractiveInputAvailable {return $true}
         Mock Read-InitOptional {return 'choose'}

@@ -172,7 +172,7 @@ function Save-ItlProductProjectInitBinding {
 function Invoke-ItlProductProjectPostUpdateOffer {
     # The updater has already completed its package receipt and commit. A
     # separate association outcome must never turn that success into failure.
-    if((Get-ItlProductProjectBinding) -or -not (Test-InteractiveInputAvailable)){return}
+    if((Get-ItlProductProjectBinding) -or $script:LifecycleOperationIsContinuation -or -not (Test-InteractiveInputAvailable)){return}
     $preferences=Read-ItlProductProjectSetting selection
     if((Get-ItlCatalogField $preferences 'associationOffer') -eq 'later'){return}
     try{

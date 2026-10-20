@@ -8254,13 +8254,17 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
                 throw 'WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: child retained a different source identity.'
             }
             Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) | Out-Null
-            return
+        } else {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
+            Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
         }
-        Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
-        Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
     } catch {
         throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy completed, but its snapshot could not be finalized at '$($Snapshot.root)'. Preserve the receipt and repeat update-workflow for cleanup only. $($_.Exception.Message)"
     }
+    # The captured post-copy child has no foreground input channel. Ask only
+    # after its exact terminal proof and snapshot finalization, in its caller.
+    . Import-ItlProductProjectSetup
+    Invoke-ItlProductProjectPostUpdateOffer
 }
 
 function Get-WorkflowUpdateRootBusyReason {
@@ -9738,8 +9742,6 @@ function Update-WorkflowPackage {
         Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) | Out-Null
     } else {
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
-        . Import-ItlProductProjectSetup
-        Invoke-ItlProductProjectPostUpdateOffer
     }
 }
 
