@@ -257,6 +257,7 @@ Describe "Pinned YAxUnit vendor diagnostic assessment" {
         $context = Initialize-WorkflowPesterContext
         . (Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.runtime-values.ps1')
         . (Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1')
+        . (Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.platform-diagnostics.ps1')
         $tokens = $null; $parseErrors = $null
         $coreAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $context.RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1'), [ref]$tokens, [ref]$parseErrors)
         foreach ($name in @('Read-DesignerBatchStrictUtf8Text', 'Get-DesignerBatchCheckVerdict')) {

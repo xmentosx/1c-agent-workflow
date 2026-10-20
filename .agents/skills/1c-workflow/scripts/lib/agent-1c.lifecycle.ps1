@@ -1931,7 +1931,25 @@ function Invoke-DesignerGate6CheckLadder {
         } elseif (-not $verdict.passed) {
             if ($null -eq $assessment -or -not $assessment.applyAllowed) {
                 $assessmentDetail = if ($null -ne $assessment) { "; assessment=$($assessment.evidencePath)" } else { '' }
-                throw "GATE6_CHECK_FAILED: step=$($step.name); command=$($step.args[0]); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$(@($verdict.diagnostics) -join ' | ')$assessmentDetail. Do not apply the database configuration; correct or adjudicate the source findings and repeat the original operation."
+                $summary = Get-StateValue -State $verdict -Name diagnosticSummary -Default $null
+                $findingEvidence = Get-StateValue -State $verdict -Name diagnosticsEvidence -Default $null
+                $diagnosticText = if ($null -ne $summary) {
+                    'structural={0} ({1} unique), compiler={2}, unknown={3}; categories={4}' -f `
+                        $summary.structuralOccurrences,$summary.structuralUnique,$summary.compilerOccurrences,$summary.unknownLines,
+                        (@($summary.categories | ForEach-Object { "$($_.category):$($_.occurrences)" }) -join ' | ')
+                } else {
+                    (@($verdict.diagnostics | Select-Object -First 3 | ForEach-Object { ([string]$_).Substring(0,[Math]::Min(256,([string]$_).Length)) }) -join ' | ')
+                }
+                if ($null -ne $summary) {
+                    $examples=@($verdict.diagnostics | Select-Object -Unique | Select-Object -First 3 | ForEach-Object {
+                        ([string]$_).Substring(0,[Math]::Min(256,([string]$_).Length))
+                    }) -join ' | '
+                    $diagnosticText += "; examples=$examples"
+                }
+                if ($null -ne $findingEvidence) { $diagnosticText += "; fullFindings=$($findingEvidence.path)" }
+                $failure = [InvalidOperationException]::new("GATE6_CHECK_FAILED: step=$($step.name); command=$($step.args[0]); $(@($verdict.reasons) -join '; '); result=$resultPath; log=$logPath; diagnostics=$diagnosticText$assessmentDetail. Do not apply the database configuration; inspect the full findings and legacy-context refusal evidence, correct or adjudicate the source findings, and repeat the original operation.")
+                $failure.Data['ItlGate6Diagnostics'] = $findingEvidence
+                throw $failure
             }
             if ($artifactAssessment) {
                 Write-Warning "GATE6_YAXUNIT_VENDOR_DIAGNOSTICS: native $($step.name) did not pass; exact immutable YAxUnit artifact diagnostics permit apply with a non-clean vendor WARN. Assessment: $($assessment.evidencePath)"
@@ -2056,34 +2074,66 @@ function Get-PlatformGate6OwnerHashes {
 
 function New-PlatformGate6LegacyContext {
     param([object]$State,[object]$ChangeSet,[string]$SourceFingerprint,
-        [string]$InfoBaseKind,[string]$InfoBasePath)
-    if ($null -eq $State) { return $null }
-    $beforeFingerprint = [string](Get-StateValue -State $State -Name 'lastConfigDesignerFingerprint' -Default '')
-    $previousTree = [string](Get-StateValue -State $ChangeSet -Name 'previousTreeObjectId' -Default '')
-    $currentTree = [string](Get-StateValue -State $ChangeSet -Name 'currentTreeObjectId' -Default '')
-    if ($beforeFingerprint -notmatch '^v2\|git-tree-sha256\|[a-f0-9]{64}$' -or
-        $previousTree -notmatch '^[a-f0-9]{40,64}$' -or $currentTree -notmatch '^[a-f0-9]{40,64}$' -or
-        [string](Get-StateValue -State $State -Name 'configLoadStatus' -Default '') -notin @('passed','fallback-succeeded') -or
-        [string](Get-StateValue -State $State -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $State -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return $null }
-    $binding = [ordered]@{ previousFingerprint=$beforeFingerprint; previousTree=$previousTree; currentTree=$currentTree }
-    if ([string](Get-StateValue -State $State -Name 'loadReason' -Default '') -eq 'branch-copy-seed') {
-        $seedFingerprint = [string](Get-StateValue -State $State -Name 'branchSeedConfigurationFingerprint' -Default '')
-        $sourceKey = [string](Get-StateValue -State $State -Name 'branchSeedSourceKey' -Default '')
-        $syncId = [string](Get-StateValue -State $State -Name 'branchSeedSyncId' -Default '')
-        if ($seedFingerprint -cne $beforeFingerprint -or -not $sourceKey -or -not $syncId) { return $null }
-        $binding.seedSourceKey=$sourceKey; $binding.seedSyncId=$syncId; $binding.seedConfigurationFingerprint=$seedFingerprint
-    } elseif (-not [string](Get-StateValue -State $State -Name 'lastConfigDesignerLoadedAt' -Default '')) { return $null }
+        [string]$InfoBaseKind,[string]$InfoBasePath,[ref]$Assessment)
+    # Observation only. The return contract remains context-or-null; no failed
+    # assessment can become a context or authorize a before check or apply.
+    $observation = [ordered]@{schemaVersion=1;eligible=$false;reason='STATE_MISSING';path='';
+        sourceFingerprint=$SourceFingerprint;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;
+        binding=$null;sourceImpact=$null;detail='';evidencePath='';evidenceSha256=''}
     try {
+        if ($null -eq $State) { return $null }
+        $beforeFingerprint = [string](Get-StateValue -State $State -Name 'lastConfigDesignerFingerprint' -Default '')
+        $previousTree = [string](Get-StateValue -State $ChangeSet -Name 'previousTreeObjectId' -Default '')
+        $currentTree = [string](Get-StateValue -State $ChangeSet -Name 'currentTreeObjectId' -Default '')
+        $binding = [ordered]@{ previousFingerprint=$beforeFingerprint; previousTree=$previousTree; currentTree=$currentTree }
+        $observation.binding = $binding
+        $observation.reason='PREVIOUS_FINGERPRINT_MISSING_OR_INVALID'
+        if ($beforeFingerprint -notmatch '^v2\|git-tree-sha256\|[a-f0-9]{64}$') { return $null }
+        $observation.reason='PREVIOUS_TREE_MISSING_OR_INVALID'
+        if ($previousTree -notmatch '^[a-f0-9]{40,64}$') { return $null }
+        $observation.reason='CURRENT_TREE_MISSING_OR_INVALID'
+        if ($currentTree -notmatch '^[a-f0-9]{40,64}$') { return $null }
+        $observation.reason='PREVIOUS_LOAD_NOT_PASSED'
+        if ([string](Get-StateValue -State $State -Name 'configLoadStatus' -Default '') -notin @('passed','fallback-succeeded')) { return $null }
+        $observation.reason='INFOBASE_KIND_MISMATCH'
+        if ([string](Get-StateValue -State $State -Name 'infoBaseKind' -Default '') -cne $InfoBaseKind) { return $null }
+        $observation.reason='INFOBASE_TARGET_MISMATCH'
+        if (-not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue -State $State -Name 'devBranchInfoBasePath' -Default '')) -Second $InfoBasePath)) { return $null }
+        if ([string](Get-StateValue -State $State -Name 'loadReason' -Default '') -eq 'branch-copy-seed') {
+            $seedFingerprint = [string](Get-StateValue -State $State -Name 'branchSeedConfigurationFingerprint' -Default '')
+            $sourceKey = [string](Get-StateValue -State $State -Name 'branchSeedSourceKey' -Default '')
+            $syncId = [string](Get-StateValue -State $State -Name 'branchSeedSyncId' -Default '')
+            $observation.reason='SEED_FINGERPRINT_MISMATCH'
+            if ($seedFingerprint -cne $beforeFingerprint) { return $null }
+            $observation.reason='SEED_SOURCE_KEY_MISSING'
+            if (-not $sourceKey) { return $null }
+            $observation.reason='SEED_SYNC_ID_MISSING'
+            if (-not $syncId) { return $null }
+            $binding.seedSourceKey=$sourceKey; $binding.seedSyncId=$syncId; $binding.seedConfigurationFingerprint=$seedFingerprint
+        } else {
+            $observation.reason='PREVIOUS_LOAD_TIMESTAMP_MISSING'
+            if (-not [string](Get-StateValue -State $State -Name 'lastConfigDesignerLoadedAt' -Default '')) { return $null }
+        }
+        $observation.reason='PREVIOUS_TREE_READ_FAILED'
         $previousRecords = @(Get-GitPathList -Arguments @('ls-tree','-r','-z',$previousTree) | Where-Object {
             $separator = ([string]$_).IndexOf("`t")
             $separator -ge 0 -and [IO.Path]::GetFileName(([string]$_).Substring($separator + 1)) -ine 'ConfigDumpInfo.xml'
         })
         $previousTreeFingerprint = 'v2|git-tree-sha256|' + (Get-DotEnvPolicyTextHash -Text ([string]::Join([char]0,[string[]]$previousRecords)))
+        $observation.reason='PREVIOUS_TREE_FINGERPRINT_MISMATCH'
         if ($previousTreeFingerprint -cne $beforeFingerprint) { return $null }
+        $observation.reason='SOURCE_IMPACT_EVALUATION_FAILED'
         $impact = Test-ItlPlatformLegacySourceImpact -ProjectRoot $script:ProjectRoot `
             -PreviousTreeObjectId $previousTree -CurrentTreeObjectId $currentTree
-        if (-not $impact.proven) { return $null }
+        $observation.sourceImpact=$impact
+        if (-not $impact.proven) {
+            $observation.reason=$impact.reason
+            if ([string]$impact.reason -cmatch '^(?:SOURCE_DELETION_UNRESOLVED|SOURCE_OWNER_UNRESOLVED|EXISTING_OBJECT_ADDITION_UNRESOLVED|EXISTING_DESCRIPTOR_OR_PAYLOAD_CHANGED|BSL_SURFACE_CHANGED):(.+)$') {
+                $observation.path=$Matches[1]
+            }
+            return $null
+        }
+        $observation.reason='OWNER_HASH_PROOF_FAILED'
         $beforeHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $previousTree
         $afterHashes = Get-PlatformGate6OwnerHashes -TreeObjectId $currentTree
         $proof = [Collections.Generic.List[object]]::new()
@@ -2092,9 +2142,15 @@ function New-PlatformGate6LegacyContext {
                 $proof.Add([pscustomobject]@{owner=$owner;beforeSha256=$beforeHashes[$owner];afterSha256=$afterHashes[$owner]})
             }
         }
+        $observation.eligible=$true; $observation.reason='LEGACY_CONTEXT_PROVEN'
         return [pscustomobject]@{schemaVersion=1;sourceFingerprint=$SourceFingerprint;infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;
             binding=[pscustomobject]$binding;changedOwners=@($impact.impactOwners);unchangedOwnersProof=@($proof.ToArray());sourceImpact=$impact}
-    } catch { return $null }
+    } catch {
+        $observation.detail=$_.Exception.Message
+        return $null
+    } finally {
+        if ($null -ne $Assessment) { $Assessment.Value=[pscustomobject]$observation }
+    }
 }
 
 function New-PlatformGate6StaticCoverageContext {
@@ -2189,6 +2245,20 @@ function Invoke-PlatformGate6NativeCheck {
     }
     $logPath = [string]$script:LastLogPath
     $verdict = Get-DesignerBatchCheckVerdict -ExitCode $exitCode -ResultPath $ResultPath -LogPath $logPath
+    if (-not $verdict.passed) {
+        try {
+            # Complete findings stay in the operation's logs, not in routine output.
+            # This evidence grants no admission and is also available for a failed
+            # before check, before any editable mutation occurs.
+            $path = New-TimestampedFilePath -Directory (Split-Path -Parent $ResultPath) -Prefix '1c-gate6-diagnostics-' -Extension '.json'
+            $document = [ordered]@{schemaVersion=1;kind='itl-gate6-diagnostics';command=$Arguments[0];arguments=@($Arguments);
+                infoBaseKind=$InfoBaseKind;infoBasePath=$InfoBasePath;exitCode=$exitCode;dumpResult=$verdict.resultCode;
+                resultPath=$ResultPath;resultSha256=$(if(Test-Path -LiteralPath $ResultPath -PathType Leaf){(Get-FileHash -LiteralPath $ResultPath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});
+                logPath=$logPath;summary=$verdict.diagnosticSummary;findings=$verdict.parsedDiagnostics;reasons=$verdict.reasons}
+            Write-Utf8TextAtomic -Path $path -Value (($document | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+            $verdict.diagnosticsEvidence=[pscustomobject]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+        } catch { Write-Warning "Gate 6 diagnostic projection could not be saved; the original native verdict and raw artifacts remain authoritative: $($_.Exception.Message)" }
+    }
     return [pscustomobject]@{verdict=$verdict;nativeError=$nativeError;logPath=$logPath;resultPath=$ResultPath}
 }
 
@@ -2436,7 +2506,7 @@ function Invoke-ConfigLoadDesignerAttempt {
 }
 
 function Write-ConfigLoadRejectionEvidence {
-    param([object]$Failure)
+    param([object]$Failure,[AllowNull()][object]$LegacyContextAssessment=$null)
     # Diagnostic evidence only; it grants no admission, recovery, or verification success.
     if (-not $Failure.Exception.Data.Contains('ItlConfigLoadSnapshotRestored') -or
         $Failure.Exception.Message -notmatch '^GATE6_CHECK_FAILED: step=configuration;') { return }
@@ -2444,6 +2514,9 @@ function Write-ConfigLoadRejectionEvidence {
     if (-not $restored.cursorRestored -or $restored.applyStarted -or
         $Failure.Exception.Message -notmatch '; result=(.+?); log=(.+?); diagnostics=') { return }
     $paths = @($Matches[1], $Matches[2], [string]$restored.restorationLogPath)
+    $findingEvidence = $Failure.Exception.Data['ItlGate6Diagnostics']
+    if ($null -ne $findingEvidence) { $paths += $findingEvidence.path }
+    if ($null -ne $LegacyContextAssessment -and $LegacyContextAssessment.evidencePath) { $paths += $LegacyContextAssessment.evidencePath }
     $artifacts = @(foreach ($path in $paths) {
         [ordered]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
     })
@@ -2460,8 +2533,9 @@ function Write-ConfigLoadRejectionEvidence {
     $receipt = [ordered]@{schemaVersion=1;kind='itl-gate6-rejection';projectRoot=$restored.projectRoot;
         infoBaseKind=$restored.infoBaseKind;infoBasePath=$restored.infoBasePath;sourceFingerprint=$restored.sourceFingerprint;
         snapshotSha256=$restored.snapshotSha256;snapshotRestored=$true;cursorRestored=$true;applyStarted=$false;
-        nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts}
-    [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        nativeOperationsReleased=[bool]$nativeReleased;failure=$Failure.Exception.Message;artifacts=$artifacts;
+        diagnostics=$findingEvidence;legacyContextAssessment=$LegacyContextAssessment}
+    [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
     Set-RunResultArtifacts -ResultPath $path
     Write-Host "GATE6_REJECTION_EVIDENCE: $path"
 }
@@ -3816,8 +3890,19 @@ function Load-ConfigFromFiles {
     }
     # Capture the previous-state binding before invalidation, even when the
     # partial load is covered: its full fallback still needs strict checks.
+    $legacyContextAssessment = $null
     $legacyContext = if ($ContentKind -eq 'configuration') { New-PlatformGate6LegacyContext -State $State -ChangeSet $changeSet `
-        -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath } else { $null }
+        -SourceFingerprint $source.fingerprint -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Assessment ([ref]$legacyContextAssessment) } else { $null }
+    if ($null -ne $legacyContextAssessment -and -not $legacyContextAssessment.eligible) {
+        try {
+            $directory = Resolve-ProjectPath (Get-ConfigValue -Path 'logsPath' -Default 'logs/1c')
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $path = New-TimestampedFilePath -Directory $directory -Prefix '1c-gate6-legacy-context-' -Extension '.json'
+            Write-Utf8TextAtomic -Path $path -Value (($legacyContextAssessment | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $legacyContextAssessment.evidencePath=$path
+            $legacyContextAssessment.evidenceSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        } catch { Write-Warning "Legacy-context refusal evidence could not be saved: $($_.Exception.Message)" }
+    }
 
     $listFilePath = ""
     if ($Mode -ne "Full") {
@@ -3867,7 +3952,11 @@ function Load-ConfigFromFiles {
         } catch {
             Write-Warning "Previous Designer proof was not restored after checked rollback: $($_.Exception.Message). Preserve diagnostics and repeat the original operation through its recovery owner."
         }
-        try { Write-ConfigLoadRejectionEvidence -Failure $loadFailure }
+        if ($null -ne $legacyContextAssessment -and -not $legacyContextAssessment.eligible) {
+            $reason=[string]$legacyContextAssessment.reason
+            Write-Host "GATE6_LEGACY_CONTEXT_UNAVAILABLE: $($reason.Substring(0,[Math]::Min(256,$reason.Length))); evidence=$($legacyContextAssessment.evidencePath). No legacy admission was granted; inspect the missing proof, preserve this repair session, and repeat the original owner operation after correction."
+        }
+        try { Write-ConfigLoadRejectionEvidence -Failure $loadFailure -LegacyContextAssessment $legacyContextAssessment }
         catch { Write-Warning "Checked-load rejection evidence could not be saved: $($_.Exception.Message)" }
         throw $loadFailure
     }

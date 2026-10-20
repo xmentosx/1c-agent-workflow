@@ -64,7 +64,8 @@ function ConvertTo-ItlPlatformStructuralDiagnostics {
         $remaining = $identity
         foreach ($pattern in $successPatterns) { $remaining = [regex]::Replace($remaining, $pattern, '') }
         $remaining = $remaining.Trim([char[]]" `t.;,:")
-        if (-not $remaining -or $remaining -cmatch '^(?:Проверка(?: конфигурации)? завершена|Configuration check completed|Check completed)\.?$') {
+        if (-not $remaining -or $remaining -cmatch '^(?:Проверка(?: конфигурации)? завершена|Configuration check completed|Check completed)\.?$' -or
+            $identity -ceq 'Синтаксических ошибок не обнаружено!') {
             $informational.Add($identity)
             continue
         }
@@ -118,6 +119,18 @@ function Get-ItlPlatformStructuralDiagnostics {
     $result = ConvertTo-ItlPlatformStructuralDiagnostics -Text $text
     $result | Add-Member -NotePropertyName logPath -NotePropertyValue $LogPath
     return $result
+}
+
+function Get-ItlPlatformDiagnosticSummary {
+    param([Parameter(Mandatory=$true)][object]$Diagnostics)
+    $categories = @(foreach ($group in @($Diagnostics.knownDiagnostics | Group-Object category | Sort-Object Name)) {
+        [pscustomobject]@{category=$group.Name;unique=$group.Count;occurrences=[int]($group.Group | Measure-Object count -Sum).Sum}
+    })
+    return [pscustomobject]@{
+        structuralOccurrences=$Diagnostics.knownDiagnosticCount;structuralUnique=@($Diagnostics.knownDiagnostics).Count
+        compilerOccurrences=$Diagnostics.compilerDiagnosticCount;unknownLines=$Diagnostics.unresolvedDiagnosticCount
+        categories=$categories
+    }
 }
 
 function Get-ItlPlatformDiagnosticsValue {

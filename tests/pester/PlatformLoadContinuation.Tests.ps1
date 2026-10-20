@@ -131,7 +131,10 @@ Describe 'Checked load proof continuation and current MCP exemption' {
                 '/CheckModules' {
                     if($f.fault -in @('module failure','restore uncertain','borrowed failure','owner drift','partial then module failure')){$code=101;$log='Ошибка компиляции текущего модуля.'}
                 }
-                '/CheckConfig' {$code=101;$log='ОбщийМодуль.Прежний.Модуль Возможно ошибочный метод: "ПрежнийМетод"'}
+                '/CheckConfig' {
+                    $code=if($f.fault -eq 'zero-code findings'){0}else{101}
+                    $log='ОбщийМодуль.Прежний.Модуль Возможно ошибочный метод: "ПрежнийМетод"'
+                }
                 '/UpdateDBCfg' {$f.applied=$true}
                 '/RestoreIB' {
                     if($f.fault -eq 'restore uncertain'){throw 'fixture exact restore failed'}
@@ -153,6 +156,66 @@ Describe 'Checked load proof continuation and current MCP exemption' {
     }
 
     AfterEach {$script:OneCNativeOperationJournal=$null;$script:VerificationEvidencePath=''}
+
+    It 'retains full findings and the exact legacy refusal through rollback and original owner continuation (native <NativeCode>)' -ForEach @(
+        @{NativeCode=101},@{NativeCode=0}
+    ) {
+        $f=$script:continuationFixture
+        $descriptor='CommonModules/Изменённый.xml'
+        $descriptorPath=Join-Path $f.sourceRoot $descriptor
+        $original=[IO.File]::ReadAllText($descriptorPath)
+        Write-ContinuationSource $f.root $descriptor ($original.Replace('<Server>true</Server>','<Server>false</Server>'))
+        Invoke-ContinuationGit $f.root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $f.root @('commit','--quiet','-m','unsupported descriptor change') | Out-Null
+        $f.current=Get-ConfigSourceFingerprint -ExportPath 'src/cf'
+        if($NativeCode -eq 0){$f.fault='zero-code findings'}
+        $repairPath=Join-Path $f.root '.agent-1c/verification-repair/current.json'
+        Write-ContinuationJson $repairPath @{sessionId='same-repair';attempts=1;maximumAttempts=5;status='active'}
+        $repairBefore=[IO.File]::ReadAllBytes($repairPath)
+        $failure=try {
+            Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full | Out-Null
+            $null
+        } catch {$_}
+        $failure | Should -Not -BeNullOrEmpty
+        $failure.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*structural=1 \(1 unique\), compiler=0, unknown=0.*fullFindings='
+        $failure.Exception.Message.Length | Should -BeLessThan 2500
+        @($f.calls|ForEach-Object{$_.arguments[0]}) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/RestoreIB')
+        $f.applied | Should -BeFalse
+        [IO.File]::ReadAllBytes($f.database) | Should -Be ([byte[]](1,2,3,4))
+        [IO.File]::ReadAllBytes((Join-Path $f.sourceRoot 'ConfigDumpInfo.xml')) | Should -Be $f.cursorBytes
+        [IO.File]::ReadAllBytes($repairPath) | Should -Be $repairBefore
+        $receiptPaths=@(Get-ChildItem -LiteralPath (Join-Path $f.root 'logs/1c') -Filter '1c-gate6-rejection*.json')
+        $receiptPaths | Should -HaveCount 1
+        $receipt=Get-Content -LiteralPath $receiptPaths[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.snapshotRestored | Should -BeTrue
+        $receipt.cursorRestored | Should -BeTrue
+        $receipt.applyStarted | Should -BeFalse
+        $receipt.legacyContextAssessment.eligible | Should -BeFalse
+        $receipt.legacyContextAssessment.reason | Should -BeExactly ('EXISTING_DESCRIPTOR_OR_PAYLOAD_CHANGED:'+$descriptor)
+        $receipt.legacyContextAssessment.path | Should -BeExactly $descriptor
+        $receipt.legacyContextAssessment.sourceImpact.changedOwners | Should -Contain 'ОбщийМодуль.Изменённый'
+        $receipt.legacyContextAssessment.sourceImpact.impactOwners | Should -Contain 'ОбщийМодуль.Прежний'
+        $findings=Get-Content -LiteralPath $receipt.diagnostics.path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $findings.exitCode | Should -Be $NativeCode
+        $findings.dumpResult | Should -Be $NativeCode
+        $findings.findings.knownDiagnosticCount | Should -Be 1
+        $findings.findings.knownDiagnostics[0].payload | Should -BeExactly ': "ПрежнийМетод"'
+        (Get-FileHash -LiteralPath $receipt.diagnostics.path).Hash.ToLowerInvariant() | Should -BeExactly $receipt.diagnostics.sha256
+        $refusal=Get-Content -LiteralPath $receipt.legacyContextAssessment.evidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $refusal.reason | Should -BeExactly $receipt.legacyContextAssessment.reason
+
+        # Repair the unsupported fixture delta, then continue through the same
+        # owner. No source-impact rule, finding, session or counter is bypassed.
+        Write-ContinuationSource $f.root $descriptor $original
+        Invoke-ContinuationGit $f.root @('add','--all') | Out-Null
+        Invoke-ContinuationGit $f.root @('commit','--quiet','-m','restore descriptor contract') | Out-Null
+        $f.fault='';$f.calls.Clear()
+        $result=Load-ConfigFromFiles -InfoBasePath $f.infoBase -InfoBaseKind file -State (Read-DevBranchStateFile $f.statePath) -ExportPath 'src/cf' -Mode Full
+        $f.applied | Should -BeTrue
+        $result.loaded | Should -BeTrue
+        $result.gate6Evidence.cleanPassed | Should -BeFalse
+        [IO.File]::ReadAllBytes($repairPath) | Should -Be $repairBefore
+    }
 
     It 'keeps an explicit full load strict despite matching small-change MCP evidence' {
         $f=$script:continuationFixture

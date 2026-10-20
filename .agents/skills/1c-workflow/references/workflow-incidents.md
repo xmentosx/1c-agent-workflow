@@ -20,6 +20,22 @@ not proof that its cause or remedy applies to this project.
 
 ## Choose a concrete continuation
 
+For a Gate 6 refusal, read the linked `1c-gate6-diagnostics-*.json`: it retains
+the complete raw log, category counts, compiler findings, unknown lines and
+native codes. The console shows bounded counts and examples; structural
+categories alone do not establish harmless warnings. A zero process/result
+code does not override findings or unknown nonempty text.
+
+For a main-configuration load, `1c-gate6-legacy-context-*.json` records why
+comparison with previous findings was unavailable, including the exact impact
+reason/path, changed and potentially affected owners, or the missing binding.
+The checked-rollback rejection receipt links both evidence files. An unavailable
+legacy context grants no admission: correct the identified source finding or
+satisfy the missing proof through its owner, then repeat the original operation
+with the same repair session. Unsupported XML/BSL changes remain unsupported;
+matching old text is insufficient. A workflow diagnostic repair does not close
+the original project's acceptance.
+
 Diagnose enough to propose a bounded repair; do not turn the project task into an
 open-ended workflow redesign. Prepare the exact change, affected runtime, expected
 effect, validation and rollback before requesting any missing authorization.
