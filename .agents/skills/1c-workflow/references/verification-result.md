@@ -215,11 +215,21 @@ ladder as a second deployment owner in the same run.
 ## Production preparation
 
 Use `-ResultPurpose production` only when the human explicitly requests preparation
-for a working infobase, on `export-dev-branch-result`, `close-dev-branch`,
+for a working infobase or directly requests the full `CheckConfig`, on `export-dev-branch-result`, `close-dev-branch`,
 `export-auxiliary-contour-result`, `check-dev-branch` or `verify-dev-branch`.
 The default is `development`; export, closing a branch or a large change alone
 never implies production. This prepares evidence/artifacts in the authorized test
 contour and does not grant a working-base deployment.
+Route “Выполни полную проверку конфигурации CheckConfig” to
+`check-dev-branch -ResultPurpose production`; it authorizes the full check in the
+development contour without installation into a working infobase or publication.
+
+Final check and branch-result reports render the existing platform preparation
+outcome. Only explicit `not-required-development` produces the skipped-check
+notice, explaining the extra checks, their possible cost, and that preparation
+for a working infobase or a direct request runs them. Completed and reused proof
+show its actual result and receipt; absent evidence never implies a skipped or
+passed check. The notice adds no native invocation or baseline storage.
 
 Preparation requires the complete `/CheckModules`, extension applicability when
 applicable, and `/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient

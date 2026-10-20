@@ -217,7 +217,7 @@
             @{ path = "AGENTS.md"; maxWords = 1420; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "source-only maintainer rules retain semantic comparison; the on-demand selection/cost/reuse acceptance pointer increases 1398 to 1415 words (+17), so maxWords increases 1400 to 1420; review and hard token limits and safety contracts remain" },
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
-            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
+            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1630; rationale = "explicit direct CheckConfig intent adds 12 words and 28 byte-4 proxy tokens (738/1597 to 750/1625 words/tokens); hard tokens increase 1600 to 1630 for the required action/flag mapping. Review threshold, word budget and safety contracts remain; duplicated command-template guidance is removed" },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 1180; reviewApproxTokens = 2300; maxApproxTokens = 2500; rationale = "ITL cadence needs an always-on USER override of generic Gate 6 and explicit production purpose, Release exception and deployment boundary. Proof and legacy details stay on demand; duplicated fast-router guidance is removed. Required routing changes 1132/2373 to 1164/2472 words/byte-4 proxy tokens (+32/+99), so maxWords 1160 to 1180 and hard tokens 2400 to 2500 preserve complete meaning; review threshold stays unchanged" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1475; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract; conditional retained small-suite guidance changes the measured C4 guide from 1439/2618 to 1464/2656 words/byte-4 proxy tokens (+25/+38), so maxWords increases 1450 to 1475 with the same 11-word margin; review and hard token limits and runtime safety rules remain" },
@@ -486,6 +486,8 @@
         }
         $workflowSkill | Should -Match 'description:.*Route non-routine work.*routine status.*1c-workflow-fast.*explicit generated itl-\* skill'
         $fastSkill | Should -Match 'description:.*Route routine natural-language requests.*Explicit generated itl-\* skills run alone'
+        $fastSkill | Should -Match ([regex]::Escape('explicit full `CheckConfig` request: `check-dev-branch -ResultPurpose production`'))
+        $userRulesTemplate | Should -Match ([regex]::Escape('Only explicit working-infobase preparation or a direct full `CheckConfig` request uses `-ResultPurpose production`'))
         $fastSkill | Should -Match 'requiredAction=/itl-verify-fix.*explicit `itl-verify-fix` wrapper.*If that surface is unavailable.*full `1c-workflow`'
         $agentsTemplate | Should -Match 'routine natural-language lifecycle requests.*use only.*1c-workflow-fast/SKILL.md'
         $agentsTemplate | Should -Match '1c-workflow/SKILL.md` plus one matching reference only'

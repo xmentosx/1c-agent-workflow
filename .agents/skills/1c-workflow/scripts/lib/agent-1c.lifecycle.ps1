@@ -10736,9 +10736,57 @@ function Add-KiloBrowserRunUserReportLines {
     }
 }
 
-function Write-AndSetRunUserReport {
-    param([System.Collections.Generic.List[string]]$Lines)
+function Add-PlatformPreparationRunUserReportLines {
+    param([System.Collections.Generic.List[string]]$Lines, [AllowNull()][object]$Preparation)
 
+    $status = [string](Get-StateValue -State $Preparation -Name 'status' -Default '')
+    if (-not $status) { return }
+    $Lines.Add('')
+    if ($status -eq 'not-required-development') {
+        $Lines.Add('**Полная проверка конфигурации (`/CheckConfig`) не выполнялась.** В режиме разработки она отложена до подготовки к рабочей ИБ или прямого вызова, поскольку может занимать значительное время.')
+        $Lines.Add('')
+        $Lines.Add('Она дополнительно проверяет:')
+        $Lines.Add('- логическую целостность объектов конфигурации;')
+        $Lines.Add('- ссылки на отсутствующие объекты;')
+        $Lines.Add('- наличие обработчиков, назначенных формам и элементам интерфейса;')
+        $Lines.Add('- возможные ошибки обращения к свойствам, методам и некоторым объектам, указанным строкой в коде.')
+        $Lines.Add('')
+        $Lines.Add('Для запуска напишите: **«Выполни полную проверку конфигурации CheckConfig».**')
+        return
+    }
+    $display = switch ($status) {
+        'passed' { 'пройдена' }
+        'accepted-with-preexisting-findings' { 'допущена с прежними замечаниями по доказательному legacy-допуску' }
+        default { $status }
+    }
+    Add-RunUserReportLine -Lines $Lines -Label 'CheckConfig' -Value $display
+    Add-RunUserReportLine -Lines $Lines -Label 'Подтверждение CheckConfig' -Value (Get-StateValue -State $Preparation -Name 'receiptPath' -Default '')
+}
+
+function Write-DevBranchVerificationRunUserReport {
+    param([object]$State, [AllowNull()][object]$PlatformPreparation)
+
+    $verification = Get-VerificationState -State $State
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('## Проверка доработок')
+    Add-RunUserReportLine -Lines $lines -Label 'Ветка' -Value (Get-StateValue -State $State -Name 'devBranch' -Default '')
+    $status = if ([bool](Get-StateValue -State $verification -Name 'isFreshPassed' -Default $false)) { 'fresh passed' } else {
+        [string](Get-StateValue -State $verification -Name 'effectiveStatus' -Default (Get-StateValue -State $verification -Name 'status' -Default 'unknown'))
+    }
+    Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $status
+    $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
+    if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
+    $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+    if ($issues.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Незавершённые проверки' -Value ($issues -join '; ') }
+    $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
+    if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
+    Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
+}
+
+function Write-AndSetRunUserReport {
+    param([System.Collections.Generic.List[string]]$Lines, [AllowNull()][object]$PlatformPreparation = $null)
+
+    Add-PlatformPreparationRunUserReportLines -Lines $Lines -Preparation $PlatformPreparation
     $report = (@($Lines) -join [Environment]::NewLine).Trim()
     Set-RunUserReport -Report $report
     Write-Host ""
@@ -16644,6 +16692,8 @@ function Write-BaseUpdateResult {
 }
 
 function Update-DevBranchBase {
+    param([switch]$PassThruPlatformPreparation)
+
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
     Assert-DevBranchExtensionInitialized -State $state -Operation "update-dev-branch-base"
@@ -16663,7 +16713,7 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch extension base update"
-        Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath $extensionExportPath -ContentKind extension -LoadResult $loadResult | Out-Null
+        $platformPreparation = Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath $extensionExportPath -ContentKind extension -LoadResult $loadResult
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
@@ -16672,9 +16722,10 @@ function Update-DevBranchBase {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch configuration base update"
-        Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath (Get-ExportPath) -ContentKind configuration -LoadResult $loadResult | Out-Null
+        $platformPreparation = Confirm-DevBranchProductionPreparation -State $updatedState -ExportPath (Get-ExportPath) -ContentKind configuration -LoadResult $loadResult
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch infobase"
     }
+    if ($PassThruPlatformPreparation) { return $platformPreparation }
 }
 
 function Get-DevBranchSourceSyncExportPath {
@@ -19993,7 +20044,7 @@ function Invoke-DevBranchCheck {
     }
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
-    Update-DevBranchBase
+    $platformPreparation = Update-DevBranchBase -PassThruPlatformPreparation
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `
@@ -20040,6 +20091,7 @@ function Invoke-DevBranchCheck {
             throw 'ITL_VERIFICATION_SCENARIO_FULL_PROOF_INCOMPLETE: the named scenario passed but the unfiltered assessment did not produce fresh full proof. Diagnose the due component and resume the same repair session.'
         }
     }
+    Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     } catch {
         if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
             Complete-ItlVerificationRepairFailure
@@ -20226,9 +20278,9 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Манифест" -Value $manifestPath
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($verificationDecision -eq "warn-unverified") { "ВНИМАНИЕ: fresh passed отсутствует; выгружено по политике warn" } else { "fresh passed" })
-    Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ; CheckConfig: ' + $platformPreparation.status } else { 'Промежуточный результат; полный CheckConfig не требуется' })
+    Add-RunUserReportLine -Lines $reportLines -Label 'Назначение' -Value $(if ($platformPreparation.purpose -eq 'production') { 'Подготовка к рабочей ИБ' } else { 'Промежуточный результат' })
     Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
-    Write-AndSetRunUserReport -Lines $reportLines
+    Write-AndSetRunUserReport -Lines $reportLines -PlatformPreparation $platformPreparation
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "Result saved: $resultPath"
