@@ -37,6 +37,18 @@ when they do not intersect source/runtime/configuration or declared verification
 inputs. A `.md` suffix or a documentation directory alone never proves independence.
 These independent changes stay on disk and in the index; no commit is required.
 
+An ignored untracked file explicitly covered by the verification input scopes is
+still an input, even when ordinary Git status is empty. Refresh inspects those
+scopes with NUL-delimited Git paths and blocks before load; there is no additional
+baseline store. Review the exact input, correct its ignore rule or force-add only
+that task-owned path, commit it and repeat the original wrapper. Do not add
+secrets/runtime or unrelated ignored reports. Existing tracked inputs remain
+subject to the ordinary staged/unstaged checks. The cursor pre-commit index-only
+check remains narrow; the full input check still runs afterward.
+After reviewed task commits, cursor persistence keeps the original trusted
+checkpoint and reuses the existing linear-descendant resume rule. It never
+records those task commits as a helper-owned child of the merge.
+
 For changed inputs or an unknown path, inspect the exact diff and phase. Satisfy
 the input requirement through the existing owner, preserve the saved transaction
 and repeat the same refresh wrapper. A reviewed ordinary local commit outside an
