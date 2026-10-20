@@ -42,6 +42,29 @@ agent-usable route back to the original task.
   direct 1C launches, modify valid product files to appease a broken validator,
   erase recovery state, or edit the controlled ai_rules_1c installation.
 
+## Handoff report boundaries
+
+Write durable reports outside managed workflow files, for example in `handoffs/`.
+One independent problem gets one report with a unique timestamp-and-topic name,
+such as `handoff-20261020-153000-refresh-lock.md`. Do not append an unrelated
+problem to an existing report merely because it occurred in the same task,
+branch or command. Related symptoms may share a report when they belong to the
+same investigation and repair; do not assume a shared cause without evidence.
+
+Before handoff, refine the report only within that problem's scope. Once the
+report is presented to the user as ready to transfer, or handed to another
+agent/task for investigation or repair, freeze that file: do not edit, append to,
+overwrite or reuse it, including after the problem is considered resolved.
+Later evidence, corrections, workaround results or recurrence of that problem
+go into a new uniquely named supplement with an explicit link to the original
+report and a clear description of what is new. A supplement is also immutable
+after handoff. A new independent problem always gets its own report, not a
+supplement to an unrelated incident.
+
+When handing off, state whether the file is a new incident report or a supplement,
+identify the problem and provide its exact path. For a supplement, also link the
+original report. Hand off these durable files, not helper-owned report snapshots.
+
 ## Temporary ITL file patch
 
 Determine the executing copy first. Refresh starts with the clean tracked runtime
@@ -51,7 +74,8 @@ repair requires explicit scope covering other branches that use it; commit its
 sealed patch before refresh so the existing clean-runtime guard remains intact.
 Do not introduce a different launcher or arbitrary runtime-source override.
 
-Write a report outside managed workflow files, for example in `handoffs/`.
+Choose the report or supplement under the boundaries above and set `$reportPath`
+to its actual path.
 Finish or cancel the owned operation before editing files it may still load.
 After authorization, capture the original files **before editing**:
 
@@ -59,15 +83,17 @@ After authorization, capture the original files **before editing**:
 & .\.agents\skills\1c-workflow\scripts\workflow-local-patch.ps1 `
   -Action Capture -ProjectRoot (Get-Location).Path `
   -Paths @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') `
-  -ReportPath .\handoffs\workflow-incident.md
+  -ReportPath $reportPath
 ```
 
 This file-only helper saves one batch of existing, clean tracked ITL text files,
 their byte snapshots and a copy of the report under the already ignored
 `.agent-1c/snapshots/workflow-incidents/`. It never launches 1C or changes product
-files. Keep the report updated at the returned path. The receipt is data, not
-authorization. For an already edited file, preserve its diff and establish the
-original baseline before capture; never overwrite an unknown edit to satisfy it.
+files. The returned report path is a helper-owned snapshot; record new evidence
+in the durable report or a linked supplement under the boundaries above. The
+receipt is data, not authorization. For an already edited file, preserve its diff
+and establish the original baseline before capture; never overwrite an unknown
+edit to satisfy it.
 
 Apply the agreed patch, then seal it before staging/committing:
 
@@ -79,9 +105,10 @@ Repeat the original operation, record the result, and resume the project task.
 Keep the saved before/after bytes available for an exact reverse edit if needed.
 Further edits to a sealed file require reconciliation with that recorded patch;
 they are not automatically disposable. Before another authorized edit, repeat
-Capture with the additional paths and updated report, then Seal again. The same
-batch retains each file's original baseline, including already committed patch
-files. If edits were made before Capture, preserve their diff, restore only the
+Capture with the additional paths and current report or linked supplement, then
+Seal again. The same batch retains each file's original baseline, including
+already committed patch files. If edits were made before Capture, preserve their
+diff, restore only the
 recorded patch bytes, Capture, and reapply the reviewed diff before Seal.
 
 ## Replacement and recovery
