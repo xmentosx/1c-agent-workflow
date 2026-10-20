@@ -1836,7 +1836,7 @@ function Get-PlatformCheckProfile {
     $actionValue = Get-Variable -Name Action -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $actionValue -and [string]$actionValue.Value -like 'release-e2e-*') { return 'production' }
     $purpose = Get-Variable -Name ResultPurpose -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $purpose -and [string]$purpose.Value -ceq 'production') { return 'production' }
+    if ($null -ne $purpose -and [string]$purpose.Value -ieq 'production') { return 'production' }
     return 'development'
 }
 

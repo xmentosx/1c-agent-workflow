@@ -1,7 +1,7 @@
 ﻿BeforeAll {
     $helper = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
     function Invoke-PlatformPurposeFixture {
-        param([string]$Case,[string]$Extension='')
+        param([string]$Case,[string]$Extension='',[string]$Purpose='production')
         $root = Join-Path $TestDrive ('Проверка с пробелом ' + [guid]::NewGuid().ToString('N'))
         [IO.Directory]::CreateDirectory($root) | Out-Null
         & {
@@ -63,8 +63,8 @@
                     try { Invoke-ConfigLoadDesignerAttempt -InfoBasePath $target -InfoBaseKind file -SourceFingerprint $fp -ExtensionName 'Расширение' -CheckProfile development `
                         -User '' -Password '' -DesignerArgs @('/LoadConfigFromFiles',$root,'-Extension','Расширение','/UpdateDBCfg') | Out-Null } catch { $failure=$_.Exception.Message }
                 }
-                {$_ -in @('reuse','drift-log','drift-target','drift-source','no-baseline','wrong-source','development-export','disposed-snapshot')} {
-                    $script:ResultPurpose=if($Case -eq 'development-export'){'development'}else{'production'}
+                {$_ -in @('reuse','drift-log','drift-target','drift-source','no-baseline','wrong-source','development-export','disposed-snapshot','purpose-variant')} {
+                    $script:ResultPurpose=if($Case -eq 'development-export'){'development'}else{$Purpose}
                     $args=@{ExportPath=$root;SourceFingerprint=$fp;InfoBaseKind='file';InfoBasePath=$target;LoadedBaseIdentity='loaded-1';User='';Password=''}
                     if($Case -eq 'no-baseline'){$script:problem='/CheckConfig'}
                     if($Case -eq 'drift-source'){$script:problem='mutate-source'}
@@ -112,6 +112,15 @@ Describe 'Development versus explicit production preparation' {
     }
     It 'runs the full ladder only for production' {
         (Invoke-PlatformPurposeFixture production -Extension 'Расширение').calls | Should -Be @('/CheckModules','/CheckCanApplyConfigurationExtensions','/CheckConfig')
+    }
+    It 'requires full preparation for ResultPurpose <Purpose>' -ForEach @(
+        @{Purpose='production'},@{Purpose='Production'},@{Purpose='PRODUCTION'}
+    ) {
+        $r=Invoke-PlatformPurposeFixture purpose-variant -Purpose $Purpose
+        $r.failure | Should -BeNullOrEmpty
+        $r.proof.purpose | Should -BeExactly 'production'
+        $r.proof.status | Should -BeExactly 'passed'
+        $r.calls | Should -Be @('/CheckModules','/CheckConfig')
     }
     It 'keeps snapshot load compilation and apply without a hidden before-CheckConfig' {
         (Invoke-PlatformPurposeFixture development-load).calls | Should -Be @('snapshot','/LoadConfigFromFiles','/CheckModules','/UpdateDBCfg')
