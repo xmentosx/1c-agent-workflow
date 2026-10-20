@@ -12,7 +12,10 @@ param(
     [string]$OutputPath='',
     [string]$FixtureReceiptPath='',
     [string]$TerminalReportPath='',
-    [string]$DiagnosticRoot=''
+    [string]$DiagnosticRoot='',
+    [string]$CapsulePath='',
+    [string]$CapsuleSha256='',
+    [long]$DatabaseBudgetBytes=0
 )
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
@@ -362,21 +365,36 @@ function Invoke-SourceFixtureInitialRestore {
 }
 
 function New-SourceE2EFixtureProject {
-    param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$CandidateRoot, [string]$ProjectsRoot='C:\itlj', [string]$AgentTarget='', [string]$AiRulesSource='', [string]$ReceiptPath='')
+    param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$CandidateRoot, [string]$ProjectsRoot='C:\itlj', [string]$AgentTarget='', [string]$AiRulesSource='', [string]$ReceiptPath='', [string]$CapsulePath='', [string]$CapsuleSha256='', [long]$DatabaseBudgetBytes=0)
+    $sealedAdmission=[bool]($CapsulePath -or $CapsuleSha256 -or $DatabaseBudgetBytes)
+    if($sealedAdmission){
+        if($Phase -ne 'Develop' -or -not $CapsulePath -or $CapsuleSha256 -cnotmatch '^[a-f0-9]{64}$' -or $DatabaseBudgetBytes -le 0 -or $DatabaseBudgetBytes -gt ([long]::MaxValue/4)){
+            throw 'FIXTURE_CAPSULE_RECOVERY_INPUT: explicit recovery requires Prepare Develop, capsule path/SHA-256 and a positive bounded DatabaseBudgetBytes; normal Prepare still validates the live seed.'
+        }
+        $descriptor=[pscustomobject]@{path=[IO.Path]::GetFullPath($CapsulePath);sha256=$CapsuleSha256;phase=$Phase}
+    }else{
+        $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
+    }
+    $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
+    if($sealedAdmission){
+        if([string]$manifest.phase -cne $Phase -or [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/') -ine [IO.Path]::GetFullPath([string]$manifest.sourceProjectRoot).TrimEnd('\','/')){throw 'FIXTURE_CAPSULE_RECOVERY_CONTEXT: use the exact source project and Develop capsule; original seed currentness remains unavailable.'}
+        if($DatabaseBudgetBytes -lt (Get-Item -LiteralPath (Join-Path (Split-Path -Parent $descriptor.path) 'infobase.dt')).Length){throw 'FIXTURE_CAPSULE_RECOVERY_BUDGET: provide a conservative restored-database budget at least as large as the DT; preserve the capsule and repeat Prepare.'}
+        $descriptor|Add-Member -NotePropertyName workflowCommit -NotePropertyValue ([string]$manifest.workflowCommit)
+    }
     if($Phase -eq 'Develop'){
         $retentionRoot=if($ReceiptPath){Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ReceiptPath))) 'fixture-retention'}else{Join-Path $CandidateRoot 'build/test-results/fixture-retention'}
         [void](Remove-CompletedSourceE2ECopies -ProjectsRoot $ProjectsRoot -CandidateRoot $CandidateRoot -DiagnosticRoot $retentionRoot)
     }
-    $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
-    $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
     if((Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('merge-base','--is-ancestor',[string]$manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED: use the capsule captured from a published workflow baseline; preserve the rejected capsule'}
     $capsule=Split-Path -Parent ([string]$descriptor.path)
     $databaseBytes=0L
     if($Phase -eq 'Develop'){
-        $databaseBytes=[int64](Get-Item -LiteralPath ([string]$manifest.sourceDatabase.path)).Length
+        $databaseBytes=if($sealedAdmission){$DatabaseBudgetBytes}else{[int64](Get-Item -LiteralPath ([string]$manifest.sourceDatabase.path)).Length}
+        $spaceOptions=@{}
+        if($sealedAdmission){$spaceOptions['Continuation']='Free the reported volume, preserve the capsule and old copies, then repeat the same explicit Prepare with CapsulePath, CapsuleSha256 and DatabaseBudgetBytes.'}
         Assert-SourceE2ESpace -Operation 'prepare qualification copy' -Allocations @(
             @{path=$ProjectsRoot;bytes=($databaseBytes+(Get-Item -LiteralPath (Join-Path $capsule 'infobase.dt')).Length)},
-            @{path=[IO.Path]::GetTempPath();bytes=$databaseBytes})
+            @{path=[IO.Path]::GetTempPath();bytes=$databaseBytes}) @spaceOptions
     }
     $commit=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
     # Develop repeats from the seed; Release resumes its existing checkpoint.
@@ -414,6 +432,10 @@ function New-SourceE2EFixtureProject {
     [void][IO.Directory]::CreateDirectory($parent)
     $watch=[Diagnostics.Stopwatch]::StartNew()
     $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;capsulePath=[string]$descriptor.path;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
+    if($Phase -eq 'Develop'){
+        $claim['sourceAdmission']=if($sealedAdmission){'sealed-capsule'}else{'live-seed'}
+        $claim['databaseBytesBasis']=if($sealedAdmission){'declared-capacity-budget'}else{'live-seed-file-size'}
+    }
     Write-QualificationFixtureJson -Path $claimPath -Value $claim
     if($ReceiptPath){Write-QualificationFixtureJson -Path $ReceiptPath -Value @{projectRoot=$target;branchRoot=$branch;capsule=$descriptor;claim=$claim;execution='materializing'}}
     $preparationLease=Open-SourceE2EFixtureUse -ProjectRoot $target
@@ -489,6 +511,7 @@ if($Action){
     if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
     if($Recapture -and $Action -ne 'Capture'){throw 'Recapture is an explicit Capture operation, not a target repair'}
     if($AcknowledgeWorkflowUpdate -and $Action -ne 'Capture'){throw 'AcknowledgeWorkflowUpdate is an explicit Capture operation'}
+    if(($CapsulePath -or $CapsuleSha256 -or $DatabaseBudgetBytes) -and $Action -ne 'Prepare'){throw 'FIXTURE_CAPSULE_RECOVERY_INPUT: sealed-capsule recovery is an explicit Prepare operation only.'}
     if($Action -eq 'DisposeCopy'){
         $fixture=Read-QualificationFixtureJson -Path $FixtureReceiptPath
         if([IO.Path]::GetFullPath($ProjectRoot) -ine [IO.Path]::GetFullPath([string]$fixture.projectRoot)){throw 'FIXTURE_COPY_RECEIPT_TARGET_MISMATCH'}
@@ -497,6 +520,6 @@ if($Action){
         $result=Remove-SourceE2EFixtureCopy -Fixture $fixture -CandidateRoot $CandidateRoot -ReportPath $TerminalReportPath -DiagnosticRoot $DiagnosticRoot
     }
     elseif($Action -eq 'Capture'){$result=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget -Recapture:$Recapture -AcknowledgeWorkflowUpdate:$AcknowledgeWorkflowUpdate}
-    else{$result=New-SourceE2EFixtureProject -ProjectRoot $ProjectRoot -Phase $Phase -CandidateRoot $CandidateRoot -ProjectsRoot $FreshProjectsRoot -AgentTarget $AgentTarget -AiRulesSource $AiRulesSource -ReceiptPath $OutputPath}
+    else{$result=New-SourceE2EFixtureProject -ProjectRoot $ProjectRoot -Phase $Phase -CandidateRoot $CandidateRoot -ProjectsRoot $FreshProjectsRoot -AgentTarget $AgentTarget -AiRulesSource $AiRulesSource -ReceiptPath $OutputPath -CapsulePath $CapsulePath -CapsuleSha256 $CapsuleSha256 -DatabaseBudgetBytes $DatabaseBudgetBytes}
     Write-QualificationFixtureJson -Path $OutputPath -Value $result
 }

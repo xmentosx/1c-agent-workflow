@@ -453,6 +453,67 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -ParameterFilter {$Action -eq 'release-e2e-restore'}
     }
 
+    It 'recovers independent Develop targets from exact capsule while missing live seed remains unavailable' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'sealed recovery seed Пример')
+        $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $manifest=Read-QualificationFixtureCapsule $descriptor.path $descriptor.sha256
+        $stateBefore=Read-Utf8Text (Join-Path $seed.branch '.agent-1c/dev-branches/negative.json')
+        Remove-Item -LiteralPath $manifest.sourceDatabase.path
+        $projects=Join-Path $TestDrive 'sealed recovery targets Пример'
+        $options=@{ProjectRoot=$seed.project;Phase='Develop';CandidateRoot=$RepoRoot;ProjectsRoot=$projects}
+        {New-SourceE2EFixtureProject @options}|Should -Throw
+        Test-Path -LiteralPath $projects|Should -BeFalse
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'release-e2e-restore'}
+        $options.CapsulePath=$descriptor.path;$options.CapsuleSha256=$descriptor.sha256;$options.DatabaseBudgetBytes=4096L
+        $script:fixtureAvailable=0L
+        Mock Get-SourceE2EVolumeSpace { [pscustomobject]@{volume='fixture-volume';availableBytes=$script:fixtureAvailable} }
+        {New-SourceE2EFixtureProject @options}|Should -Throw '*SOURCE_E2E_SPACE_INSUFFICIENT*same explicit Prepare*CapsulePath*'
+        Test-Path -LiteralPath $projects|Should -BeFalse
+        $script:fixtureAvailable=1GB
+        $first=New-SourceE2EFixtureProject @options
+        Write-Utf8Text (Join-Path $first.branchRoot 'src/cf/invalid.bsl') 'retained failed workload'
+        $second=New-SourceE2EFixtureProject @options
+        $second.projectRoot|Should -Not -Be $first.projectRoot
+        $second.claim.status|Should -Be ready
+        $second.claim.sourceAdmission|Should -BeExactly 'sealed-capsule'
+        $second.claim.databaseBytesBasis|Should -BeExactly 'declared-capacity-budget'
+        $second.claim.databaseBytes|Should -Be 4096
+        (Read-Utf8Text (Join-Path $second.branchRoot 'src/cf/invalid.bsl'))|Should -BeExactly 'original negative source'
+        (Read-Utf8Text (Join-Path $first.branchRoot 'src/cf/invalid.bsl'))|Should -BeExactly 'retained failed workload'
+        $restored=Read-QualificationFixtureJson (Join-Path $second.branchRoot '.agent-1c/dev-branches/negative.json')
+        $restored.pendingMergeCommit|Should -BeExactly $seed.pendingCommit
+        $restored.eventLogPendingCursor.position|Should -Be 17
+        (Read-Utf8Text (Join-Path $seed.branch '.agent-1c/dev-branches/negative.json'))|Should -BeExactly $stateBefore
+        Test-Path -LiteralPath $manifest.sourceDatabase.path|Should -BeFalse
+        (Get-FileHash -LiteralPath $descriptor.path).Hash.ToLowerInvariant()|Should -BeExactly $descriptor.sha256
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -ParameterFilter {$Action -eq 'release-e2e-snapshot'}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 2 -ParameterFilter {$Action -eq 'release-e2e-restore'}
+    }
+
+    It 'rejects incomplete recovery inputs, Release, wrong source and altered capsule before materialization' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'sealed recovery refusals Пример')
+        $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $projects=Join-Path $TestDrive 'recovery must stay absent Пример'
+        $options=@{ProjectRoot=$seed.project;Phase='Develop';CandidateRoot=$RepoRoot;ProjectsRoot=$projects;CapsulePath=$descriptor.path;CapsuleSha256=$descriptor.sha256;DatabaseBudgetBytes=4096L}
+        foreach($damage in @('missing-sha','missing-budget','tiny-budget','release','wrong-source','wrong-sha')){
+            $bad=$options.Clone()
+            switch($damage){
+                'missing-sha'{$bad.CapsuleSha256=''}
+                'missing-budget'{$bad.DatabaseBudgetBytes=0}
+                'tiny-budget'{$bad.DatabaseBudgetBytes=1}
+                'release'{$bad.Phase='Release'}
+                'wrong-source'{$bad.ProjectRoot=Join-Path $TestDrive 'different seed'}
+                'wrong-sha'{$bad.CapsuleSha256='0'*64}
+            }
+            {New-SourceE2EFixtureProject @bad}|Should -Throw
+            Test-Path -LiteralPath $projects|Should -BeFalse
+        }
+        Write-Utf8Text (Join-Path (Split-Path -Parent $descriptor.path) 'infobase.dt') 'tampered snapshot'
+        {New-SourceE2EFixtureProject @options}|Should -Throw '*FIXTURE_ARTIFACT_SHA_MISMATCH*'
+        Test-Path -LiteralPath $projects|Should -BeFalse
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'qualification-create-infobase' -or $Action -eq 'release-e2e-restore'}
+    }
+
     It 'rejects insufficient storage before materialization, then completes the original Prepare after capacity recovers' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'space recovery Пример')
         $script:fixtureAvailable=0L
@@ -549,6 +610,8 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         $ready.projectRoot|Should -Not -Be $failed.projectRoot
         Test-Path -LiteralPath $failed.projectRoot -PathType Container|Should -BeTrue
         $ready.claim.status|Should -BeExactly 'ready'
+        @($ready.claim.PSObject.Properties.Name)|Should -Not -Contain 'sourceAdmission'
+        @($ready.claim.PSObject.Properties.Name)|Should -Not -Contain 'databaseBytesBasis'
         (Invoke-RepositoryGit -RepositoryRoot $ready.projectRoot -Arguments @('config','--local','--get','core.longpaths')).stdout.Trim()|Should -BeExactly 'true'
         [Convert]::ToBase64String([IO.File]::ReadAllBytes(('\\?\'+(Join-Path $ready.branchRoot $longRelative))))|Should -BeExactly 'AH//'
         (Invoke-RepositoryGit -RepositoryRoot $ready.branchRoot -Arguments @('show','HEAD:src/cf/invalid.bsl')).stdout.Trim()|Should -BeExactly 'original negative source'

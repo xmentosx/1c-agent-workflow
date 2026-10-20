@@ -29,7 +29,7 @@ public static class ItlSourceStorageNative {
 }
 
 function Assert-SourceE2ESpace {
-    param([object[]]$Allocations, [string]$Operation)
+    param([object[]]$Allocations, [string]$Operation, [string]$Continuation='Run scripts/source-delivery.ps1 -Action Cleanup; free the reported volume if still needed, then repeat the same PublishDevelop -ResumePlan command.')
     $volumes=@{}
     foreach($allocation in $Allocations){
         if([int64]$allocation.bytes -le 0){continue}
@@ -41,7 +41,7 @@ function Assert-SourceE2ESpace {
     foreach($volume in $volumes.Keys){
         $v=$volumes[$volume]
         if($v.availableBytes -lt $v.requiredBytes){
-            throw "SOURCE_E2E_SPACE_INSUFFICIENT: $Operation; volume=$volume requiredBytes=$($v.requiredBytes) availableBytes=$($v.availableBytes). Queue/checkpoint and passed proof are preserved. Run scripts/source-delivery.ps1 -Action Cleanup; free the reported volume if still needed, then repeat the same PublishDevelop -ResumePlan command."
+            throw "SOURCE_E2E_SPACE_INSUFFICIENT: $Operation; volume=$volume requiredBytes=$($v.requiredBytes) availableBytes=$($v.availableBytes). Queue/checkpoint and passed proof are preserved. $Continuation"
         }
     }
 }
