@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Dict, Optional
 import unittest
 
-from fetch_completion import _FetchReady, _FetchScope, make_fetch_client
+from fetch_completion import _FetchReady, _FetchScope, make_fetch_client, _has_result_contract
 from patch_mcp_server import patch_fetch_source
 
 NAME = 'mcp__knowledge-hub__Fetch_ITS'
@@ -28,6 +28,19 @@ def events(item='root'):
                      'name': NAME, 'status': 'ok',
                      'structured_content': {'result': {'content': TEXT, 'truncated': False}}}},
     ]
+
+
+def search_events(capability='its.search'):
+    name = ('mcp__knowledge-hub__Search_ITS' if capability == 'its.search'
+            else 'mcp__knowledge-hub__Search_Documentation')
+    arguments = {'query': 'СтрДлина'}
+    if capability == 'documentation.search':
+        arguments['version'] = 'v8.3.25'
+    frames = events()
+    frames[0]['content']['tool_calls'][0]['function'] = {
+        'name': name, 'arguments': json.dumps(arguments)}
+    frames[1]['content']['name'] = name
+    return name, arguments, frames
 
 
 class FetchProofTests(unittest.TestCase):
@@ -118,6 +131,46 @@ class FetchProofTests(unittest.TestCase):
             self.assertEqual(asyncio.run(client._call_capability_guarded(*args, *positional, **keywords)),
                              (args + positional, keywords))
             self.assertFalse(hasattr(entry, '_itl_fetch_scope'))
+
+    def test_search_completion_requires_exact_query_version_and_whole_result(self):
+        for capability in ('its.search', 'documentation.search'):
+            name, arguments, frames = search_events(capability)
+            resolved = SimpleNamespace(capability=capability, is_available=True, upstream_name=name)
+            self.assertTrue(_has_result_contract(resolved, arguments))
+            for change in ('valid', 'query', 'version', 'partial', 'error', 'empty', 'foreign'):
+                with self.subTest(capability=capability, change=change):
+                    first, tool = copy.deepcopy(frames)
+                    scope = _FetchScope(object(), name, arguments)
+                    if change in ('query', 'version'):
+                        wrong = dict(arguments, **{change: 'other'})
+                        first['content']['tool_calls'][0]['function']['arguments'] = json.dumps(wrong)
+                    if change == 'partial': tool['content']['structured_content']['result']['truncated'] = True
+                    if change == 'error': tool['content']['status'] = 'error'
+                    if change == 'empty': tool['content']['structured_content']['result']['content'] = ''
+                    if change == 'foreign': tool['parent_uuid'] = 'other'
+                    scope.event(first)
+                    if change == 'valid':
+                        with self.assertRaises(_FetchReady) as raised: scope.event(tool)
+                        self.assertEqual(raised.exception.result['tool_results'], [tool['content']])
+                        self.assertEqual(raised.exception.result['final_text'], TEXT)
+                    else:
+                        scope.event(tool)
+
+    def test_allowlist_rejects_unqualified_names_arguments_and_capabilities(self):
+        for capability in ('its.fetch', 'its.search', 'documentation.search'):
+            name, arguments = ((NAME, {'id':'root'}) if capability == 'its.fetch'
+                               else search_events(capability)[:2])
+            resolved = SimpleNamespace(capability=capability, is_available=True, upstream_name=name)
+            for wrong in ({}, dict(arguments, extra='x'),
+                          dict.fromkeys(arguments, ''), dict.fromkeys(arguments, None)):
+                self.assertFalse(_has_result_contract(resolved, wrong))
+            resolved.upstream_name = 'unqualified'
+            self.assertFalse(_has_result_contract(resolved, arguments))
+            resolved.upstream_name = name
+            resolved.is_available = False
+            self.assertFalse(_has_result_contract(resolved, arguments))
+        for capability in ('syntax.validate', 'documentation.diff', 'config.help', 'review'):
+            self.assertFalse(_has_result_contract(SimpleNamespace(capability=capability), {}))
 
 
 FIXTURE = '''from dataclasses import dataclass
@@ -235,7 +288,7 @@ if '--native' in sys.argv:
     from MCP_1copilot.session_registry import ScopeOwner
 
     class NativeFetchTests(unittest.IsolatedAsyncioTestCase):
-        async def exercise(self, client_type, frames, *, capability='its.fetch', cancel=False, item='root', split_utf8=False, note=None):
+        async def exercise(self, client_type, frames, *, capability='its.fetch', cancel=False, item='root', split_utf8=False, note=None, arguments=None, name=NAME):
             client = client_type(Config(onec_ai_token='offline-fixture', _env_file=None))
             hooks = client.client.event_hooks
             await client.client.aclose()
@@ -258,14 +311,15 @@ if '--native' in sys.argv:
                 requests.append(json.loads(request.content))
                 return httpx.Response(200, headers={'content-type':'text/event-stream'}, stream=Stream(len(requests)-1))
             client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), event_hooks=hooks)
-            client.capabilities.set_snapshot(CapabilitySnapshot(True, datetime.now(timezone.utc), {NAME:SnapshotEntry(NAME, argument_names=('id',))}))
+            arguments = arguments if arguments is not None else {'id':item}
+            client.capabilities.set_snapshot(CapabilitySnapshot(True, datetime.now(timezone.utc), {name:SnapshotEntry(name, argument_names=tuple(arguments))}))
             entry = client.conversations.register(ScopeOwner('offline','fixture','fetch'),'12345678-1234-1234-1234-123456789abc')
             try:
                 budget = OperationBudget(.08)
                 if note is None:
-                    task = asyncio.create_task(client.call_capability(entry,capability,{'id':item},budget))
+                    task = asyncio.create_task(client.call_capability(entry,capability,arguments,budget))
                 else:
-                    task = asyncio.create_task(client.call_capability(entry,capability,{'id':item},budget,note=note))
+                    task = asyncio.create_task(client.call_capability(entry,capability,arguments,budget,note=note))
                 if cancel:
                     while 1 not in yielded: await asyncio.sleep(.001)
                     task.cancel()
@@ -290,6 +344,22 @@ if '--native' in sys.argv:
             result = await self.exercise(make_fetch_client(OneCApiClient),events())
             self.assertEqual(result['final_text'], TEXT)
             self.assertEqual(result['_itl_fetch_completion']['assistant_synthesis'], 'not_completed')
+
+        async def test_search_results_finish_native_ack_without_waiting_for_synthesis(self):
+            from MCP_1copilot.api_client import OperationTimeoutError
+            for capability in ('its.search', 'documentation.search'):
+                name, arguments, frames = search_events(capability)
+                options = dict(capability=capability, name=name, arguments=arguments)
+                with self.assertRaises(OperationTimeoutError):
+                    await self.exercise(OneCApiClient, frames, **options)
+                result = await self.exercise(make_fetch_client(OneCApiClient), frames, split_utf8=True, **options)
+                self.assertEqual(result['final_text'], TEXT)
+                self.assertEqual(result['tool_results'], [frames[1]['content']])
+                frames[1]['content']['structured_content']['result']['truncated'] = True
+                with self.assertRaises(OperationTimeoutError):
+                    await self.exercise(make_fetch_client(OneCApiClient), frames, **options)
+                with self.assertRaises(asyncio.CancelledError):
+                    await self.exercise(make_fetch_client(OneCApiClient), frames, cancel=True, **options)
 
         async def test_utf8_and_crlf_split_across_native_chunks_preserve_exact_document(self):
             result = await self.exercise(make_fetch_client(OneCApiClient),events(),split_utf8=True)
