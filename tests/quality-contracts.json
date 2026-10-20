@@ -201,6 +201,7 @@
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/ProductProjectApply.Tests.ps1",
       "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",

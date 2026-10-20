@@ -129,7 +129,7 @@ function Invoke-ItlProductProjectClientApply {
         [AllowNull()][object]$DesiredBinding=$null,[switch]$BindProject,
         [object]$PrivateSelection=$null,[switch]$SavePrivateSelection,
         [object]$ExpectedInputStates=$null,[string]$ExpectedOwnerState='',
-        [object[]]$ProofRequests=$null,[switch]$RestoreCompatibility)
+        [object[]]$ProofRequests=$null,[switch]$RestoreCompatibility,[object]$BindingRestoreFile=$null)
     $operation=Read-ItlProductProjectRecord 'operation'
     if ($Mode -eq 'apply') {
         if ($operation -and $operation.status -notin @('completed','restored','cancelled')) { throw 'CATALOG_OPERATION_PENDING: use status/resume/restore on the pinned operation; latest tip cannot replace it.' }
@@ -142,7 +142,7 @@ function Invoke-ItlProductProjectClientApply {
         if($ExpectedOwnerState -and (Get-ItlMcpFileState (Get-ItlManagedMcpStatePath)) -cne $ExpectedOwnerState){throw 'CLIENT_MCP_PREVIEW_CHANGED: ownership changed after the decision; repeat preview.'}
         $operation=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=[guid]::NewGuid().ToString('N');status='planning';direction='forward';prepared=$false;context=$Context;requests=$Requests;restoreRequests=@();expectedProof=@{};beforeProof=@{};receipts=@();activeWrite=$null;beforeApplied=(Read-ItlProductProjectRecord 'applied');restoreCompatibility=$RestoreCompatibility.IsPresent}
         $beforeBinding=Get-ItlCatalogField (Read-ItlProductProjectConfig) 'productProject'
-        $operation['binding']=[ordered]@{enabled=$BindProject.IsPresent;before=$beforeBinding;desired=$DesiredBinding;expected=$beforeBinding;active=$false;target=$null}
+        $operation['binding']=[ordered]@{enabled=$BindProject.IsPresent;before=$beforeBinding;desired=$DesiredBinding;expected=$beforeBinding;active=$false;target=$null;restoreFile=$BindingRestoreFile}
         $beforeSelection=Read-ItlProductProjectSetting selection
         $operation['privateSelection']=[ordered]@{enabled=$SavePrivateSelection.IsPresent;before=$beforeSelection;desired=$PrivateSelection;expected=$beforeSelection;active=$false;target=$null}
         $operation['previewInputStates']=$(if($null -ne $ExpectedInputStates){ConvertTo-Vibecoding1cMcpHashtable $ExpectedInputStates}else{$null})
@@ -232,7 +232,15 @@ function Invoke-ItlProductProjectClientApply {
             $settingPlan.target=if($operation.direction -eq 'restore'){$settingPlan.before}else{$settingPlan.desired}
             $settingPlan.active=$true
             Write-ItlProductProjectRecord operation $operation
-            Set-ItlProductProjectSetting -Kind $settingPlan.kind -Value $settingPlan.target -Expected $settingPlan.expected
+            $restoreFile=if($operation.direction -eq 'restore'){Get-ItlCatalogField $settingPlan 'fileReceipt'}else{Get-ItlCatalogField $settingPlan 'restoreFile'}
+            $saveFileReceipt={
+                param($fileReceipt)
+                if(-not (Get-ItlCatalogField $settingPlan 'fileReceipt')){
+                    $settingPlan['fileReceipt']=$fileReceipt
+                    Write-ItlProductProjectRecord operation $operation
+                }
+            }
+            Set-ItlProductProjectSetting -Kind $settingPlan.kind -Value $settingPlan.target -Expected $settingPlan.expected -RestoreFile $restoreFile -OnBeforeWrite $saveFileReceipt
             $settingPlan.expected=$settingPlan.target;$settingPlan.active=$false
             $operation.receipts=@($operation.receipts)+@(@{kind=$settingPlan.kind})
             Write-ItlProductProjectRecord operation $operation
@@ -247,7 +255,7 @@ function Invoke-ItlProductProjectClientApply {
             $stage=if((Get-ItlCatalogField $Context 'configurationStage') -eq 'binding-only'){'binding-only'}else{'configured'}
             $applied=[ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;operationId=$operation.operationId;catalogRevision=$Context.catalogRevision;context=$Context;proof=$operation.expectedProof;configurationState=$stage;activeClientContext='unverified';contextHash=(Get-ItlCatalogHash $Context)}
             $baseline=Get-ItlCatalogField $operation.beforeApplied 'compatibilityBaseline'
-            if(-not $baseline){$baseline=@{requests=$operation.restoreRequests;binding=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'binding') 'before');selection=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'privateSelection') 'before');applied=$operation.beforeApplied}}
+            if(-not $baseline){$baseline=@{requests=$operation.restoreRequests;binding=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'binding') 'before');bindingFile=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'binding') 'fileReceipt');selection=(Get-ItlCatalogField (Get-ItlCatalogField $operation 'privateSelection') 'before');applied=$operation.beforeApplied}}
             $applied['compatibilityBaseline']=$baseline
             if(Get-Command Get-ItlProductProjectNoOpInputs -ErrorAction SilentlyContinue){$applied['noOpInputs']=Get-ItlProductProjectNoOpInputs $operation.expectedProof -IncludeClientSurfaces:([bool](Get-ItlCatalogField $Context 'catalogIncludesClientSurfaces' $false))}
             if(Get-ItlCatalogField $operation 'restoreCompatibility' $false){
@@ -282,7 +290,7 @@ function Invoke-ItlProductProjectCompatibilityRestore {
     foreach($path in @($script:ConfigPath,(Get-Vibecoding1cMcpSelectionPath))+@($requests|ForEach-Object {Get-ItlClientMcpConfigPaths $_.client})){$inputs[$path]=Get-ItlMcpFileState $path}
     $ownerState=Get-ItlMcpFileState (Get-ItlManagedMcpStatePath)
     Assert-ItlProductProjectClientProof $applied.proof
-    $result=Invoke-ItlProductProjectClientApply -Context $applied.context -Requests $requests -BindProject -DesiredBinding (Get-ItlCatalogField $baseline 'binding') -SavePrivateSelection -PrivateSelection (Get-ItlCatalogField $baseline 'selection') -ExpectedInputStates $inputs -ExpectedOwnerState $ownerState -RestoreCompatibility
+    $result=Invoke-ItlProductProjectClientApply -Context $applied.context -Requests $requests -BindProject -DesiredBinding (Get-ItlCatalogField $baseline 'binding') -SavePrivateSelection -PrivateSelection (Get-ItlCatalogField $baseline 'selection') -ExpectedInputStates $inputs -ExpectedOwnerState $ownerState -RestoreCompatibility -BindingRestoreFile (Get-ItlCatalogField $baseline 'bindingFile')
     return [pscustomobject]@{status='compatible-restored';operationId=$result.operationId;activeClientContext='unverified';continuation='Repeat the original update-workflow; reload the client and verify active tools separately.'}
 }
 

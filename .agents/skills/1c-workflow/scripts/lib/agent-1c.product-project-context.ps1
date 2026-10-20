@@ -26,7 +26,7 @@ function Read-ItlProductProjectConfig {
 }
 
 function Set-ItlProductProjectBinding {
-    param([AllowNull()][object]$Binding,[AllowNull()][object]$Expected)
+    param([AllowNull()][object]$Binding,[AllowNull()][object]$Expected,[object]$RestoreFile=$null,[scriptblock]$OnBeforeWrite)
     $before=Get-ItlMcpFileState $script:ConfigPath
     $config=Read-ItlProductProjectConfig
     if((Get-ItlCatalogHash (Get-ItlCatalogField $config 'productProject')) -cne (Get-ItlCatalogHash $Expected)){throw 'CATALOG_BINDING_CONFLICT: the tracked association changed after preview; preserve it and resolve the pinned operation before resume/restore.'}
@@ -35,9 +35,24 @@ function Set-ItlProductProjectBinding {
         Assert-ItlProductProjectBindingValue $Binding
         $config['productProject']=$Binding
     }
-    if((Get-ItlMcpFileState $script:ConfigPath) -cne $before){throw 'CATALOG_BINDING_CONFLICT: project config changed while composing the binding; preserve that edit and repeat the original recovery.'}
     $text=($config|ConvertTo-Json -Depth 40)+[Environment]::NewLine
-    if($before -eq 'absent' -or (Read-Utf8Text $script:ConfigPath) -cne $text){Write-Utf8TextAtomic $script:ConfigPath $text}
+    $remove=$false
+    # Exact rollback is safe only while the whole file still matches our write.
+    # Otherwise retain later unrelated settings through the normal property merge.
+    if($RestoreFile -and $before -ceq $RestoreFile.afterState){
+        $remove=$RestoreFile.beforeState -ceq 'absent'
+        $text=[string]$RestoreFile.beforeText
+        $original=if($remove){@{}}else{$text.TrimStart([char]0xfeff)|ConvertFrom-Json -ErrorAction Stop}
+        if((-not $remove -and (Get-ItlMcpTextState $text) -cne $RestoreFile.beforeState) -or (Get-ItlCatalogHash (Get-ItlCatalogField $original 'productProject')) -cne (Get-ItlCatalogHash $Binding)){throw 'CATALOG_BINDING_CONFLICT: saved descriptor does not match the pinned restore intent; retain the operation and resolve its receipt.'}
+    }
+    if($OnBeforeWrite){
+        # Decode bytes directly to retain a possible UTF-8 BOM in the saved text.
+        $beforeText=if($before -eq 'absent'){$null}else{(Get-Utf8Encoding).GetString([IO.File]::ReadAllBytes($script:ConfigPath))}
+        & $OnBeforeWrite ([ordered]@{beforeState=$before;beforeText=$beforeText;afterState=$(if($remove){'absent'}else{Get-ItlMcpTextState $text})})
+    }
+    if((Get-ItlMcpFileState $script:ConfigPath) -cne $before){throw 'CATALOG_BINDING_CONFLICT: project config changed while composing the binding; preserve that edit and repeat the original recovery.'}
+    if($remove){Remove-Item -LiteralPath $script:ConfigPath -ErrorAction Stop}
+    elseif((Get-ItlMcpTextState $text) -cne $before){Write-Utf8TextAtomic $script:ConfigPath $text}
     Read-ProjectConfig
 }
 
@@ -48,8 +63,8 @@ function Read-ItlProductProjectSetting {
 }
 
 function Set-ItlProductProjectSetting {
-    param([ValidateSet('binding','selection')][string]$Kind,[object]$Value,[object]$Expected)
-    if($Kind -eq 'binding'){Set-ItlProductProjectBinding -Binding $Value -Expected $Expected;return}
+    param([ValidateSet('binding','selection')][string]$Kind,[object]$Value,[object]$Expected,[object]$RestoreFile=$null,[scriptblock]$OnBeforeWrite)
+    if($Kind -eq 'binding'){Set-ItlProductProjectBinding -Binding $Value -Expected $Expected -RestoreFile $RestoreFile -OnBeforeWrite $OnBeforeWrite;return}
     $path=Get-Vibecoding1cMcpSelectionPath;$before=Get-ItlMcpFileState $path
     $selection=ConvertTo-ItlCatalogCanonicalValue (Read-Vibecoding1cMcpJsonFile -Path $path -Default @{})
     # Preserve the historical native intent of a pre-existing empty file;

@@ -202,7 +202,61 @@
         (Read-ItlProductProjectConfig).userField|Should -Be 'keep this'
         Test-Path -LiteralPath (Get-ItlProductProjectPath applied)|Should -BeFalse
     }
+    It 'restores noncanonical descriptor bytes and private later through <Recovery> with BOM=<Bom>' -ForEach @(
+        @{Recovery='restore';Bom=$false;Newline="`r`n"},@{Recovery='restore-compatible';Bom=$true;Newline="`n"}) {
+        $text=('{'+$Newline+'  "z": {"вложенный": "productProject", "a": 1},'+$Newline+' "aiRules" : { "tools": ["codex", "claude-code"] }'+$Newline+'}')
+        [IO.File]::WriteAllText($script:ConfigPath,$text,[Text.UTF8Encoding]::new($Bom))
+        $before=Get-ItlMcpFileState $script:ConfigPath
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -Not -Be $before
+        if($Recovery -eq 'restore-compatible'){
+            # A later knowledge-only operation must retain the original file receipt.
+            $null=Invoke-ItlProductProjectClientApply $context @()
+        }
+        (Invoke-ItlProductProjectRecovery -Mode $Recovery).status|Should -Be $(if($Recovery -eq 'restore'){'restored'}else{'compatible-restored'})
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -BeExactly $before
+        (Read-ItlProductProjectSetting selection).associationOffer|Should -Be later
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+    }
+    It 'refuses a later owned binding edit instead of replacing it with saved descriptor bytes' {
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Write-Utf8TextAtomic $script:ConfigPath ((Read-Utf8Text $script:ConfigPath).Replace('fixture','manual'))
+        $changed=Get-ItlMcpFileState $script:ConfigPath
+        {Invoke-ItlProductProjectClientApply -Mode restore}|Should -Throw '*CATALOG_SETTING_CONFLICT*'
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -BeExactly $changed
+        (Read-ItlProductProjectRecord applied).operationId|Should -Not -BeNullOrEmpty
+    }
+    It 'recovers the saved bytes after a restore write before its receipt' {
+        Write-Utf8TextAtomic $script:ConfigPath '{ "z": "исходный", "aiRules": {"tools":["codex"]} }'
+        $before=Get-ItlMcpFileState $script:ConfigPath
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        $id=(Read-ItlProductProjectRecord operation).operationId
+        Mock Write-Utf8TextAtomic {
+            & $AtomicWriter @PesterBoundParameters
+            if($Path -eq $script:ConfigPath){throw 'injected restore receipt gap'}
+        }
+        {Invoke-ItlProductProjectClientApply -Mode restore}|Should -Throw '*restore receipt gap*'
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -BeExactly $before
+        Mock Write-Utf8TextAtomic { & $AtomicWriter @PesterBoundParameters }
+        (Invoke-ItlProductProjectClientApply -Mode resume).operationId|Should -Be $id
+        (Read-ItlProductProjectRecord operation).status|Should -Be restored
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -BeExactly $before
+    }
+    It 'keeps semantic owned recovery available for historical receipts without saved bytes' {
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        $old=Read-ItlProductProjectRecord operation;$old.binding.Remove('fileReceipt')
+        Write-ItlProductProjectRecord operation $old
+        (Invoke-ItlProductProjectClientApply -Mode restore).status|Should -Be restored
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+    }
     It 'resumes the exact binding intent after config write before its receipt or marker' {
+        Write-Utf8TextAtomic $script:ConfigPath '{ "z": 1, "aiRules": {"tools":["codex"]} }'
+        $before=Get-ItlMcpFileState $script:ConfigPath
         $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
         Mock Write-Utf8TextAtomic {
             & $AtomicWriter @PesterBoundParameters
@@ -217,6 +271,7 @@
         (Read-ItlProductProjectRecord applied).operationId|Should -Be $id
         $null=Invoke-ItlProductProjectClientApply -Mode restore
         (Read-ItlProductProjectConfig).Contains('productProject')|Should -BeFalse
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -BeExactly $before
     }
     It 'validates binding capability before any client writes' {
         Mock Write-ItlClientMcpEndpointSet {throw 'unexpected client writer'}
