@@ -180,3 +180,16 @@ safety boundaries telegraphically.
 
 This table permits shared architecture where the invariant is genuinely shared,
 while preventing both call-site patchwork and unproved workflow-wide authority.
+
+## Direct CheckConfig request and report notice (2026-10-20)
+
+The required explicit-intent mapping adds 115 UTF-8 bytes to the fast router:
+738/1597 to 750/1625 words/`ceil(bytes/4)` proxy tokens (+12/+28). Its hard token
+budget changes from 1600 to 1630; the 1350 review threshold and 800-word limit
+remain. The matching USER override adds 39 bytes: 1164/2472 to 1170/2481 (+6/+9),
+within its existing limits. Both preserve development defaults, full Release
+qualification and the deployment boundary. Duplicate command-template guidance
+is removed, keeping rendered command surfaces within their unchanged budgets.
+Check details remain on demand; the requested notice appears once in the final
+check/result report only for an explicit skipped outcome. It adds no native
+operation, baseline storage or new runtime state owner.

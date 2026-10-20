@@ -24,6 +24,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 - branch source exchange: `sync-dev-branches`; peer name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
+- explicit full `CheckConfig` request: `check-dev-branch -ResultPurpose production`; no deployment or publication
 - explicitly requested base load without tests: `update-dev-branch-base`
 - exact compatibility alias for the normal check: `verify-dev-branch`
 - refresh from source: `refresh-dev-branch`

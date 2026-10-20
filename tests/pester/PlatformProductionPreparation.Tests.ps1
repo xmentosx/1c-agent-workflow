@@ -93,8 +93,42 @@
                     $delta=[pscustomobject]@{previousTreeObjectId=('a'*40);currentTreeObjectId=('b'*40)}
                     $proof=New-ProductionPlatformLegacyContext -State $state -ChangeSet $delta -SourceFingerprint $fp -InfoBaseKind file -InfoBasePath $target
                 }
+                { $_ -in @('check-report','partial-check-report') } {
+                    $script:VerificationTrigger='command'; $script:ExplicitVerificationComponent=''
+                    $script:DevBranchName='fixture'; $script:reportPartial=($Case -eq 'partial-check-report')
+                    $script:reportState=[pscustomobject]@{devBranch='itldev/fixture';lastVerificationSkippedComponents=@('event-log')}
+                    function Assert-ItlVerificationRepairScope {}
+                    function Read-DevBranchState { $script:reportState }
+                    function Get-DevBranchKind { 'configuration' }
+                    function Get-ExportPath { $root }
+                    function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+                    function Restore-ConfigDumpInfoLoadSnapshot {}
+                    function Remove-ConfigDumpInfoLoadSnapshot {}
+                    function Invoke-DevBranchVanessaRuntimeRelease {}
+                    function Assert-VanessaVerificationPreflight {}
+                    function Test-ItlFullVerificationProofEligible { $true }
+                    function Ensure-DevBranchEventLogBaseline { $script:reportState }
+                    function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
+                    function Update-DevBranchBase {
+                        param([switch]$PassThruPlatformPreparation)
+                        if ($PassThruPlatformPreparation) { Confirm-ProductionPlatformCheck -ExportPath $root }
+                    }
+                    function Invoke-ItlVerificationCycle {}
+                    function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+                    function Get-VerificationState {
+                        [pscustomobject]@{status='passed';effectiveStatus=$(if($script:reportPartial){'partial'}else{'passed'});isFreshPassed=(-not $script:reportPartial);assessmentIssues=$(if($script:reportPartial){@('event-log proof missing')}else{@()})}
+                    }
+                    Invoke-DevBranchCheck 6>$null
+                }
+                'legacy-report' {
+                    $proof=[pscustomobject]@{purpose='production';status='accepted-with-preexisting-findings';receiptPath=(Join-Path $root 'legacy-receipt.json')}
+                }
             }
-            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
+            if ($Case -notin @('check-report','partial-check-report')) {
+                $lines=[Collections.Generic.List[string]]::new(); $lines.Add('## Результат ветки')
+                Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $(if($null -ne $second){$second}else{$proof}) 6>$null
+            }
+            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;report=$script:RunUserReport;firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
         }
     }
 }
@@ -184,5 +218,51 @@ Describe 'Development versus explicit production preparation' {
     }
     It 'cannot use the last unqualified development load as the legacy origin' {
         (Invoke-PlatformPurposeFixture origin-rejection).proof | Should -BeNullOrEmpty
+    }
+    It 'explains a skipped configuration check once in the intermediate result report without running it' {
+        $r=Invoke-PlatformPurposeFixture development-export
+        $r.calls.Count | Should -Be 0
+        ([regex]::Matches($r.report,'Полная проверка конфигурации .* не выполнялась')).Count | Should -Be 1
+        $r.report | Should -Match 'до подготовки к рабочей ИБ или прямого вызова'
+        $r.report | Should -Match 'логическую целостность|ссылки на отсутствующие объекты'
+        $r.report | Should -Match 'наличие обработчиков'
+        $r.report | Should -Match 'свойствам, методам'
+        $r.report | Should -Match 'Выполни полную проверку конфигурации CheckConfig'
+    }
+    It 'shows the completed check result and receipt without a skipped-check notice' {
+        $r=Invoke-PlatformPurposeFixture purpose-variant
+        $r.report | Should -Match 'CheckConfig: пройдена'
+        $r.report | Should -Match ([regex]::Escape($r.proof.receiptPath))
+        $r.report | Should -Not -Match 'не выполнялась|Для запуска напишите'
+    }
+    It 'shows reused proof as a result without rerunning or claiming the check was skipped' {
+        $r=Invoke-PlatformPurposeFixture reuse
+        $r.calls | Should -Be @('/CheckModules','/CheckConfig')
+        $r.report | Should -Match 'CheckConfig: пройдена'
+        $r.report | Should -Match ([regex]::Escape($r.second.receiptPath))
+        $r.report | Should -Not -Match 'не выполнялась|Для запуска напишите'
+    }
+    It 'keeps accepted preexisting findings visible instead of reporting a clean check' {
+        $r=Invoke-PlatformPurposeFixture legacy-report
+        $r.report | Should -Match 'допущена с прежними замечаниями'
+        $r.report | Should -Not -Match 'CheckConfig: пройдена|не выполнялась'
+    }
+    It 'does not infer a skipped or passed configuration check from missing evidence' {
+        $r=Invoke-PlatformPurposeFixture origin-rejection
+        $r.report | Should -Not -Match 'CheckConfig|не выполнялась|Для запуска напишите'
+    }
+    It 'includes the notice in the actual final development check report' {
+        $r=Invoke-PlatformPurposeFixture check-report
+        $r.calls.Count | Should -Be 0
+        $r.report | Should -Match '## Проверка доработок'
+        $r.report | Should -Match 'Результат: fresh passed'
+        $r.report | Should -Match 'не выполнялась'
+    }
+    It 'preserves partial verification and missing obligations alongside the notice' {
+        $r=Invoke-PlatformPurposeFixture partial-check-report
+        $r.report | Should -Match 'Результат: partial'
+        $r.report | Should -Match 'Пропущенные компоненты: event-log'
+        $r.report | Should -Match 'event-log proof missing'
+        $r.report | Should -Not -Match 'fresh passed'
     }
 }
