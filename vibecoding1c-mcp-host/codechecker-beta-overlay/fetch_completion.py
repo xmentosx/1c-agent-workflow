@@ -1,13 +1,32 @@
-"""Complete only a verified ITS fetch result; leave other native flows intact.
+"""Complete verified retrieval/search results; leave synthesis flows intact.
 
 The native client owns discovery, the initial tool-call request, ACK, session
-guards and deadlines. A scoped observer examines only the matched ITS ACK stream; the native reader
+guards and deadlines. A scoped observer examines only the matched ACK stream; the native reader
 retains parsing, error handling and request deadlines.
 No HTTPX method is patched and no assistant completion is fabricated.
 """
 from dataclasses import dataclass, field
 import json
 from urllib.parse import quote
+
+
+# This allowlist describes direct result contracts, not tools a model may use
+# while composing a review/configuration/rewrite answer. Keep exact arguments.
+_RESULT_CONTRACTS = {
+    'its.fetch': ('mcp__knowledge-hub__Fetch_ITS', frozenset({'id'})),
+    'its.search': ('mcp__knowledge-hub__Search_ITS', frozenset({'query'})),
+    'documentation.search': (
+        'mcp__knowledge-hub__Search_Documentation', frozenset({'query', 'version'})),
+}
+
+
+def _has_result_contract(resolved, arguments):
+    contract = _RESULT_CONTRACTS.get(resolved.capability)
+    return (contract is not None and resolved.is_available
+            and resolved.upstream_name == contract[0]
+            and isinstance(arguments, dict) and set(arguments) == contract[1]
+            and all(isinstance(value, str) and value.strip()
+                    for value in arguments.values()))
 
 
 class _FetchReady(BaseException):
@@ -168,9 +187,7 @@ def make_fetch_client(base):
             return result
 
         async def _call_capability_guarded(self, entry, resolved, arguments, budget, *native_args, **native_kwargs):
-            if (resolved.capability != 'its.fetch' or not resolved.is_available
-                    or set(arguments) != {'id'} or not isinstance(arguments['id'], str)
-                    or not arguments['id']):
+            if not _has_result_contract(resolved, arguments):
                 return await super()._call_capability_guarded(entry, resolved, arguments, budget, *native_args, **native_kwargs)
             scope = _FetchScope(self, resolved.upstream_name, dict(arguments))
             scope.conversation_id = entry.conversation_id
@@ -188,7 +205,7 @@ def make_fetch_client(base):
                 try:
                     from MCP_1copilot.observability import log_event
                     log_event('its_fetch_completion', reason=scope.reason,
-                              matchedCall=bool(scope.call_id), capability='its.fetch')
+                              matchedCall=bool(scope.call_id), capability=resolved.capability)
                 except Exception:
                     pass
                 if previous is None:
