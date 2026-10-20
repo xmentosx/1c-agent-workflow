@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "outcome": "G3_HIDDEN_CONSOLE_BLOCKER_FIXED_ORIGINAL_PM5_UNATTENDED_UPDATE_PASSED",
+  "scope": "Existing input-availability owner and one original isolated PM5 update; no G4, working-project migration, server deployment or workflow/registry publication",
+  "sourceRuntimeCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+  "runtimeCore": {
+    "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+    "sha256": "688862b086e5b94780350ddde9497c4a599e03fb3165b0cb6c4fdf29f1c94a00",
+    "gitBlob": "0fad45d49774bcd157c94d1976c5e635b79f3b6f"
+  },
+  "ownerDecision": {
+    "owner": "Test-InteractiveInputAvailable",
+    "cause": "An attached CREATE_NEW_CONSOLE helper was treated as interactive solely because stdin was not redirected",
+    "solution": "Use the existing original compact-* run-log channel as unavailable user input before testing console stdin; the channel survives legacy runner -> fresh post-copy process",
+    "compatibility": "No new marker is required from the old runner. Foreground/windowed channels retain existing stdin semantics; no Win32 visibility test, new state, timeout, service, consent or defer",
+    "affectedCallers": "All existing callers of the common input-availability helper; required-input errors/continuations remain owned by their existing actions"
+  },
+  "regression": {
+    "red": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "durationSeconds": 15.333941999999999,
+      "paths": [
+        "tests/pester/CompactRunnerFreshContinuation.Tests.ps1"
+      ],
+      "phase": "red"
+    },
+    "green": {
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 158.9727298,
+      "paths": [
+        "tests/pester/CompactRunnerFreshContinuation.Tests.ps1",
+        "tests/pester/ProductProjectSetup.Tests.ps1"
+      ],
+      "phase": "green"
+    },
+    "newNativeCaseSeconds": 8.97,
+    "assertedBoundary": [
+      "Real attached hidden console with IsInputRedirected=false",
+      "Original compact -> signed fresh-process continuation",
+      "Compact input unavailable and no catalog prompt attempted",
+      "Foreground channel preserves input availability",
+      "No binding or selection/consent/defer written",
+      "Existing terminal/timeout/cleanup/failure and explicit later/empty/failed-association cases preserved"
+    ]
+  },
+  "platform": {
+    "os": {
+      "Caption": "Майкрософт Windows 11 Домашняя",
+      "BuildNumber": "26300",
+      "Version": "10.0.26300"
+    },
+    "powerShell": "5.1.26100.9711",
+    "elevated": false
+  },
+  "nativeBefore": {
+    "sourceRuntimeCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+    "installedWorkflowCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+    "coreSha256": "069c16172c84c0d1b599bc0e80645f46fb2756b788ac6e1745051a6a6863d4ba",
+    "runnerSha256": "0750b00d54ac1726f4238d56392940c79e1313f67e9bede711452341f3f440ad",
+    "powerShell": "5.1.26100.9711",
+    "elevated": false
+  },
+  "nativeRun": {
+    "observedUtc": "2026-10-20T08:40:17.8703550Z",
+    "copyRoot": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project",
+    "exitCode": 0,
+    "durationMs": 278814,
+    "seedHeadAndDescriptorUnchanged": true,
+    "sourceRuntimeCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+    "runtimeCoreSha256": "688862b086e5b94780350ddde9497c4a599e03fb3165b0cb6c4fdf29f1c94a00"
+  },
+  "nativeFinal": {
+    "outcome": "passed-original-unattended-update",
+    "sourceRuntimeCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+    "summary": {
+      "action": "update-workflow",
+      "status": "succeeded",
+      "stage": "reexec",
+      "stageDetail": "Starting a fresh helper process for the same lifecycle operation.",
+      "confirmationRequired": false,
+      "nextAction": "none",
+      "artifacts": [
+        "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\runs\\compact-20261020-113539-414-260f899f\\console.log",
+        "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\runs\\compact-20261020-113539-414-260f899f\\status.json"
+      ],
+      "error": "",
+      "errorCategory": "",
+      "requiredAction": "",
+      "blockerClassification": "",
+      "blockerRequiresUserDecision": false,
+      "blockerRetryOriginalCommand": false,
+      "blockerAction": null,
+      "blockerOwner": null,
+      "recoveryStatus": "",
+      "ownedProcessesStopped": [],
+      "foreignProcessesStopped": [],
+      "databaseReleased": false,
+      "retryOriginalCommand": false,
+      "refreshMasterCommit": "",
+      "devBranch": "",
+      "worktreePath": "",
+      "extensionInitializationStatus": "",
+      "userReport": "",
+      "resultPath": "",
+      "resultManifestPath": "",
+      "sourceIntegrityReportPath": "",
+      "responseStyle": {
+        "mode": "auto",
+        "level": "full",
+        "active": true,
+        "profile": "caveman-full",
+        "taskClass": "execution"
+      },
+      "liveness": "running-active",
+      "noProgressSeconds": 0,
+      "timeoutRemainingSeconds": 3333,
+      "ownedProcessIds": [
+        27780
+      ],
+      "cpuDeltaMilliseconds": 9515,
+      "workingSetMb": 425,
+      "logGrowthBytes": 1228,
+      "logPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\runs\\compact-20261020-113539-414-260f899f\\console.log",
+      "statusPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\runs\\compact-20261020-113539-414-260f899f\\status.json"
+    },
+    "terminalStatus": "succeeded",
+    "lifecycleStatus": "succeeded",
+    "roots": [
+      {
+        "head": "888bc98d72775627ccf952d1e2666b7901728de5",
+        "coreSha256": "688862b086e5b94780350ddde9497c4a599e03fb3165b0cb6c4fdf29f1c94a00",
+        "name": "master",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "workloadTrees": [
+          {
+            "path": "src/cf",
+            "unchanged": true,
+            "gitTree": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+            "present": true
+          },
+          {
+            "path": "src/cfe",
+            "unchanged": true,
+            "gitTree": null,
+            "present": false
+          },
+          {
+            "path": "tests/features",
+            "unchanged": true,
+            "gitTree": "420e755eb736eeb581895cc760ba6b91b8d2d8a7",
+            "present": true
+          }
+        ],
+        "clean": true,
+        "workflowCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+        "root": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project"
+      },
+      {
+        "head": "02f3b39e81edf6379f59aa7c5653e7644d087312",
+        "coreSha256": "688862b086e5b94780350ddde9497c4a599e03fb3165b0cb6c4fdf29f1c94a00",
+        "name": "branch",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "workloadTrees": [
+          {
+            "path": "src/cf",
+            "unchanged": true,
+            "gitTree": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+            "present": true
+          },
+          {
+            "path": "src/cfe",
+            "unchanged": true,
+            "gitTree": null,
+            "present": false
+          },
+          {
+            "path": "tests/features",
+            "unchanged": true,
+            "gitTree": "f5b55f819a8b30180b3efb203fe0738b075a060b",
+            "present": true
+          }
+        ],
+        "clean": true,
+        "workflowCommit": "2f996692108d60d39d32801bfaef4e60e3338a8d",
+        "root": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch"
+      }
+    ],
+    "association": {
+      "selectionPath": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\project\\.agent-1c\\mcp\\vibecoding1c-selection.json",
+      "selection": null,
+      "binding": null
+    },
+    "optionalPromptPresent": false,
+    "operatorConsoleIntervention": false,
+    "seedFullOwnerValidationPassed": true,
+    "sourceCapsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "remainingOwnedHelpers": 0,
+    "oldFailedCopyRetained": true
+  },
+  "directDiagnostic": {
+    "exitCode": 0,
+    "durationMs": null
+  },
+  "costAndContext": {
+    "focusedOwnerSuites": [
+      "tests/pester/CompactRunnerFreshContinuation.Tests.ps1",
+      "tests/pester/ProductProjectSetup.Tests.ps1"
+    ],
+    "focusedSeconds": 158.9727298,
+    "nativeUpdateSeconds": 278.814,
+    "preparedCopySeconds": 230.6184097,
+    "newCaseSeconds": 8.97,
+    "alwaysOnInstructionsOrSchemasChanged": false,
+    "contextComparison": "No rules/tool schema/client command surface change. No measured LLM token comparison or full startup A/B is claimed",
+    "selectionAndReuse": "Existing fresh-continuation and catalog-setup owner suites, one new native boundary case. RegisterChange owns Targeted selection/reuse; no manual broad gate or unchanged timing rerun"
+  },
+  "harnessNotes": [
+    "One Pester configuration attempt used += on a StringArrayOption and stopped before tests; assigning the existing two-file owner group fixed the harness",
+    "The outer capture and the inner path references initially shared a basename. The original single UUID action stdout/stderr receipts remained intact and were collected directly; update-workflow was not repeated to recover output",
+    "The legacy compact summary omits exitCode. Native process, terminal status and signed lifecycle each supplied their actual zero exit result",
+    "Mixed source/installed in-process New-Module readback failed on a snapshot path; it is retained as an invalid mixed harness observation. Standalone installed status and a fresh isolated owner readback passed; no product guard or lifecycle state was edited"
+  ],
+  "remaining": [
+    "Full G3/AC-39 and installed memory AC-43 remain open",
+    "Native foreground choose/new/later and the complete init/association/branch/fault/recovery/downgrade journey are not accepted by this unattended update",
+    "Selected source binding / wrong expected namespace and actual affected-client activation remain unverified",
+    "No ready native PM4 / Windows 10 / Windows Server terminal stands, as confirmed by the user",
+    "Registry first-release population AC-36-38/5.7 and memory AC-44 remain mandatory; no business catalog data was populated"
+  ],
+  "unchanged": [
+    "Earlier failed native result and its separate copy are retained",
+    "G1/Q1-Q7/D9/G2, six memory scopes and ai_rules_1c ownership unchanged",
+    "No G4, working-project migration or publication started"
+  ],
+  "rawEvidence": [
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/red-owner-tests.json",
+      "sha256": "afa822a232086235bf7afe8ce58dbfef5d9dbd484f80715e89953f8c11f7d530"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/red-owner-tests.xml",
+      "sha256": "7cb682aab6125f4e9a6e9e26b429d09d9cf08a575d1f3572eb773db768399f41"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/red-test.stdout",
+      "sha256": "6fded64d206e077e634e087174cb9774f5f8ed2e1a950e8712a2139de835670a"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/green-owner-tests.json",
+      "sha256": "5fe86aca8ebd98675e79780444fb6dc2202ba184ecdc0d6ecf32e7b047dc4dc9"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/green-owner-tests.xml",
+      "sha256": "bf6dd5e6986353816958a12b5e423ac700b277be616cfa4e8c46fdf2f4cb8f9e"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/green-tests-r2.stdout",
+      "sha256": "7b36ed35b92ffa080ee42ca00147035cbc6ae3f86f9cc9b465ac8114e95bcfd6"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/green-tests-r2.result.json",
+      "sha256": "d9f8be072764d8a1b72987b8708752d11fce5f1f6a62975be8bf1902a0e9893e"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-copy-receipt.json",
+      "sha256": "80c1bafb359cd006bf1e703d003c73020c9c649b83be6268230750440129bea5"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-prepare.result.json",
+      "sha256": "a2bb339d3f68c2afe9387a2d243490fb426bc34d6510fef2da000839afed4645"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-before-update.json",
+      "sha256": "c719d228e69858e2ee762f91845af9827afd81540e9409f0bde224f5d24efde6"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-update-result.json",
+      "sha256": "473553a4d4f26b5a00e98a404da74175e8103e46e040accab398c8a391424188"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-update.result.json",
+      "sha256": "491dc99d02379559cc329c7c51eafa4af98d565e5c26067b60bd21f15c6638c2"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-action.stdout",
+      "sha256": "f8a74672141a083efec4063efc675713722a17caf06dba1e636d2a44fb76f7d2"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-action.stderr",
+      "sha256": "3480c94b6aabbd0f7e8de69b6bd5c5aa73c23edfcb9a5c11590a683915110956"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-terminal.json",
+      "sha256": "04f10443658c32140f566b144965020ad08a48598e482ea83c06da8e61c76587"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-lifecycle.json",
+      "sha256": "af2469b8b06243a43df8a6cde5b1e7fa3ca92213135e3d086b312b0ee5ea97e2"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-console.log",
+      "sha256": "4dc45a09e25de6cd2e98d8f1a022b74974882ed89241bf8be8fadc4e57d8a0df"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-association.json",
+      "sha256": "37401a5093bd144de29aa9ae1b48f75a8652059f5039849a95e13435ec7c6c02"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-final.json",
+      "sha256": "270b682043d83192b35e7dbe324ad8ccf53f6604deacadcbe58c527ea93c4031"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-direct-status.json",
+      "sha256": "01048e9684d6e01bf152f6dbf37b84945cd646c6a2fe8b5190bce0347c13076f"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-direct-status.stdout",
+      "sha256": "666a4cdeb85dcd3482a728d4bb371bf46d3b232ce6bd55e352d17bfc450736ba"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-association-read.result.json",
+      "sha256": "739a2edf29119c7d24772fc5f42ad62a7db4dfa90db34f1478b1c118500876ce"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-final-readonly-r4.result.json",
+      "sha256": "245db16346bdc448845a1207845c52f68789d930bd67204aa505a839485066a5"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/platform.json",
+      "sha256": "73eff35856455e7c1023f4333b5aff9686014493618e6188fc7c8f053863e043"
+    },
+    {
+      "path": "build/test-results/g3/prompt-fix-20261020/pm5-final-readonly-r3.stderr",
+      "sha256": "84de4ec0af79a6347415a02551dab5beacd07d6f53b90bb900fbe72c54ffc616"
+    }
+  ]
+}
