@@ -345,12 +345,83 @@ class _ItlFetchResult(AnswerResult):
     return result
 
 
+def patch_review_source(source: str) -> str:
+    """Split completed review presentation without changing the prompt/collector."""
+    tree = ast.parse(source)
+    nodes = {n.name: n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+    required = {'PromptOutcome', '_send_prompt', 'review_1c_code'}
+    if not required.issubset(nodes) or '_ItlReviewResult' in nodes:
+        raise RuntimeError('Pinned review evidence layout changed or already patched.')
+    send, review, outcome = (nodes[name] for name in ('_send_prompt', 'review_1c_code', 'PromptOutcome'))
+    if not any(isinstance(d, ast.Name) and d.id == 'dataclass' for d in outcome.decorator_list):
+        raise RuntimeError('Pinned prompt outcome is no longer a dataclass.')
+    if any(a.arg == '_itl_review_parts' for a in send.args.kwonlyargs):
+        raise RuntimeError('Review evidence keyword already exists.')
+    clean = [n for n in send.body if isinstance(n, ast.Assign)
+             and ast.unparse(n) == 'cleaned = _sanitize_text(extract_best_text(result))']
+    returns = [n for n in send.body if isinstance(n, ast.Return)
+               and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+               and n.value.func.id == 'PromptOutcome']
+    prompt_calls = [n for n in ast.walk(review) if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name) and n.func.id == '_send_prompt']
+    answer_calls = [n for n in ast.walk(review) if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name) and n.func.id == 'AnswerResult']
+    if len(clean) != 1 or len(returns) != 1 or len(prompt_calls) != 1 or len(answer_calls) != 1:
+        raise RuntimeError('Pinned review assembly/result boundary changed.')
+    send.args.kwonlyargs.append(ast.arg(arg='_itl_review_parts', annotation=ast.Name(id='bool', ctx=ast.Load())))
+    send.args.kw_defaults.append(ast.Constant(False))
+    outcome.body.extend(ast.parse('review_evidence: Optional[Dict[str, Any]] = None').body)
+    offset = send.body.index(clean[0]) + 1
+    send.body[offset:offset] = ast.parse('''_itl_evidence = None
+if _itl_review_parts:
+    cleaned, _itl_evidence = _itl_split_review(result, cleaned, _sanitize_text)
+''').body
+    returns[0].value.keywords.append(ast.keyword(arg='review_evidence', value=ast.Name(id='_itl_evidence', ctx=ast.Load())))
+    prompt_calls[0].keywords.append(ast.keyword(arg='_itl_review_parts', value=ast.Constant(True)))
+    review.returns = ast.Name(id='_ItlReviewResult', ctx=ast.Load())
+    target = answer_calls[0]
+
+    class WrapAnswer(ast.NodeTransformer):
+        def visit_Call(self, node):
+            if node is target:
+                return ast.Call(func=ast.Name(id='_itl_review_result', ctx=ast.Load()),
+                                args=[node, ast.Name(id='outcome', ctx=ast.Load())], keywords=[])
+            return self.generic_visit(node)
+
+    WrapAnswer().visit(review)
+    helpers = '''from .review_evidence import split_review as _itl_split_review, evidence_for_answer as _itl_review_proof
+
+class _ItlReviewResult(AnswerResult):
+    review_evidence: Optional[Dict[str, Any]] = None
+
+def _itl_review_result(value, outcome):
+    payload = value.model_dump()
+    payload["review_evidence"] = _itl_review_proof(outcome.review_evidence, outcome.text, value.answer)
+    return _ItlReviewResult(**payload)
+
+'''
+    lines = source.splitlines(keepends=True)
+    edits = []
+    for name in required:
+        node = nodes[name]
+        start = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1
+        replacement = ast.unparse(ast.fix_missing_locations(node)) + '\n'
+        if name == 'review_1c_code':
+            replacement = helpers + replacement
+        edits.append((start, node.end_lineno, replacement))
+    for start, end, replacement in sorted(edits, reverse=True):
+        lines[start:end] = [replacement]
+    result = ''.join(lines)
+    ast.parse(result)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?", type=Path, default=Path("/app/MCP_1copilot/mcp_server.py"))
     args = parser.parse_args()
     source = args.path.read_text(encoding="utf-8")
-    args.path.write_text(patch_fetch_source(patch_source(source)), encoding="utf-8")
+    args.path.write_text(patch_review_source(patch_fetch_source(patch_source(source))), encoding="utf-8")
 
 
 if __name__ == "__main__":

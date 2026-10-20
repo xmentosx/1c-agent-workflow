@@ -42,3 +42,42 @@ The adapter cannot fix a provider stream containing only a user message and
 an empty unfinished assistant. Such a stream has no result to return. Provider
 generation/event delivery owns that failure; conversation reuse remains a
 separate diagnostic hypothesis, not an installed recovery policy.
+
+## Completed review and supporting evidence
+
+The modern compatibility overlay separates **only** `review_1c_code` presentation.
+It does not change the vendor review prompt, collect another answer, require JSON,
+filter findings, change `direct`, or alter deadlines/retries/cancellation.
+
+After the existing collector completes and the existing sanitizer runs:
+
+- `answer` contains the final review only when sanitized `final_text` is nonempty
+  and is an exact suffix of the legacy assembled answer.
+- `review_evidence.context` retains the entire preceding text, including ITS
+  search/document material and intermediate assistant text.
+- The original rendered material and attribution stay in `context`. Native
+  `PromptOutcome.tool_results` remains unchanged for existing internal consumers;
+  its document bodies are not duplicated in the public envelope. The exchange's
+  `reasoning_text` is not copied.
+- `review_evidence.assembled_sha256` hashes the legacy **sanitized** assembled
+  answer as UTF-8. Concatenate `context` with `answer` to reconstruct it.
+  When an existing plugin or truncation verdict changes the selected text,
+  `review_evidence.review_text` retains that selection instead; use it for
+  reconstruction. The existing sanitizer's prior losses are not reversed.
+
+`status=separated` means a prefix was moved to evidence; `unchanged` means the
+final review already filled the answer. If the final is missing, empty, or not an
+exact suffix, `status=unseparated` keeps the complete legacy answer and empty
+context. There is no new runtime rejection, retry, or readiness gate. These are
+presentation statuses, **never** factual or semantic acceptance.
+
+Readers must retain the evidence with the answer. A concise answer alone is not
+the whole evidence record. Other tools keep their existing assembly behavior.
+Sources/truncation/error handling and the existing plugin hook remain owned by
+the vendor path. Deployment still requires normal component qualification; local
+tests or queue registration do not install the overlay.
+
+Run `python -X utf8 -B test_review_evidence.py` for offline regressions. The image
+build also runs `--native` against the pinned model and review entrypoint with a
+retained response stub, without an upstream request. Replays of actual saved
+responses belong in ignored build evidence, not in the package or logs.

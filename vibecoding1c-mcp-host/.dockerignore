@@ -5,6 +5,8 @@ codechecker-beta-overlay/*
 !codechecker-beta-overlay/patch_mcp_server.py
 !codechecker-beta-overlay/fetch_completion.py
 !codechecker-beta-overlay/test_fetch_completion.py
+!codechecker-beta-overlay/review_evidence.py
+!codechecker-beta-overlay/test_review_evidence.py
 !codechecker-beta-overlay/patch_fastmcp_lifecycle.py
 !codechecker-beta-overlay/test_fastmcp_lifecycle.py
 !codechecker-overlay/
