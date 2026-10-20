@@ -1,0 +1,57 @@
+{
+  "status": "ANALYZED_ONLY_NO_GATE6_OR_PM5_CHANGE",
+  "nativeResult": 101,
+  "nativeCommand": "/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient -Server -ExternalConnection -HandlersExistence -ExtendedModulesCheck",
+  "module": "src/cf/DataProcessors/упо_ПомощникПереходаИзРМ4ВРМ5/Forms/Форма/Ext/Form/Module.bsl",
+  "line": 9325,
+  "procedure": "ПодготовитьБазуКОбновлениюНаЧистуюPM5",
+  "procedureLine": 9277,
+  "sourceStatement": "НаборЗаписей = РегистрыСведений.упоОшибкиОтраженияДокументовВПроектномБюджетировании.СоздатьНаборЗаписей();",
+  "missingBaseMetadataName": "упоОшибкиОтраженияДокументовВПроектномБюджетировании",
+  "presentBaseMetadataName": "упо_ОшибкиОтраженияДокументовВПроектномБюджетировании",
+  "alsoPresent": "Удалитьупо_ОшибкиОтраженияДокументовВПроектномБюджетировании",
+  "baseline": "7ea9dc2342439df06907dec1b1a42bae9b048aa7",
+  "baselineModuleBlob": "ca8717da3dcc7fbf967f9867f60cd5046f38e7a2",
+  "currentModuleBlob": "ca8717da3dcc7fbf967f9867f60cd5046f38e7a2",
+  "notIntroducedByG3": true,
+  "restoration": {
+    "snapshotRestored": true,
+    "cursorRestored": true,
+    "applyStarted": false,
+    "nativeOperationsReleased": true,
+    "snapshotSha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c",
+    "sourceFingerprint": "v2|git-tree-sha256|56bb357dd8139232e329011f4873a73938bbd4877a064b91614e51314ee37614"
+  },
+  "conclusion": "The checked base dump references an absent InformationRegisters manager property without the underscore. Configuration ChildObjects and register metadata declare the name with an underscore. This is consistent with the exact native diagnostic; it is not caused by catalog IDs, MCP enrollment or Cognee.",
+  "requiredDecision": "The PM5 source owner must confirm the intended register and continued purpose of this migration cleanup procedure before a separate code change. Do not guess a data-clearing target, suppress the diagnostic, relax Gate6, or rerun database loading in this analysis-only scope.",
+  "rawEvidence": [
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+      "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+      "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+      "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+      "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+      "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+      "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726"
+    },
+    {
+      "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+      "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4"
+    }
+  ]
+}

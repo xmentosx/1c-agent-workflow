@@ -5749,11 +5749,8 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     param([string]$Operation = "MCP reconcile", [switch]$PlanOnly)
 
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
-    $selection = Read-Vibecoding1cMcpSelection
-    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
-    $selectionPath = Get-Vibecoding1cMcpSelectionPath
-    if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("vibecoding1c MCP selection file is missing")
+    if (-not (Test-Vibecoding1cMcpLegacySelectionPresent)) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("legacy vibecoding1c MCP selection is missing; catalog-only preferences do not enable legacy setup")
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
@@ -5761,6 +5758,8 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             pruned = @()
         }
     }
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
 
     try {
         $selectedClientNames = @(Get-Vibecoding1cMcpSelectedClientConfigNames)
@@ -8344,13 +8343,17 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
                 throw 'WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: child retained a different source identity.'
             }
             Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) | Out-Null
-            return
+        } else {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
+            Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
         }
-        Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
-        Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
     } catch {
         throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy completed, but its snapshot could not be finalized at '$($Snapshot.root)'. Preserve the receipt and repeat update-workflow for cleanup only. $($_.Exception.Message)"
     }
+    # The captured post-copy child has no foreground input channel. Ask only
+    # after its exact terminal proof and snapshot finalization, in its caller.
+    . Import-ItlProductProjectSetup
+    Invoke-ItlProductProjectPostUpdateOffer
 }
 
 function Get-WorkflowUpdateRootBusyReason {
@@ -9105,7 +9108,7 @@ function Invoke-WorkflowPackageFilePostCopyCore {
 
         # Capture refreshed client configs in the same post-copy checkpoint.
         # Ready/committed continuations must keep their already recorded bytes.
-        if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
+        if (Test-Vibecoding1cMcpLegacySelectionPresent) {
             $mcpRegistryRefreshed = $false
             try {
                 Refresh-Vibecoding1cMcpRegistry
@@ -9828,8 +9831,6 @@ function Update-WorkflowPackage {
         Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) | Out-Null
     } else {
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
-        . Import-ItlProductProjectSetup
-        Invoke-ItlProductProjectPostUpdateOffer
     }
 }
 

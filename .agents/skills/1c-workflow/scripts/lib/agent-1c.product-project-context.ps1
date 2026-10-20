@@ -51,13 +51,17 @@ function Set-ItlProductProjectSetting {
     param([ValidateSet('binding','selection')][string]$Kind,[object]$Value,[object]$Expected)
     if($Kind -eq 'binding'){Set-ItlProductProjectBinding -Binding $Value -Expected $Expected;return}
     $path=Get-Vibecoding1cMcpSelectionPath;$before=Get-ItlMcpFileState $path
-    $selection=ConvertTo-ItlCatalogCanonicalValue (Read-Vibecoding1cMcpSelection)
+    $selection=ConvertTo-ItlCatalogCanonicalValue (Read-Vibecoding1cMcpJsonFile -Path $path -Default @{})
+    # Preserve the historical native intent of a pre-existing empty file;
+    # a new catalog-only file never persists reader-inferred MCP defaults.
+    if($before -ne 'absent' -and $selection.Count -eq 0){$selection=ConvertTo-ItlCatalogCanonicalValue (Read-Vibecoding1cMcpSelection)}
     $current=Get-ItlCatalogField $selection 'productProject'
     if((Get-ItlCatalogHash $current) -cne (Get-ItlCatalogHash $Expected)){throw 'CATALOG_SELECTION_CONFLICT: local catalog preferences changed after preview; preserve them and resolve the pinned operation.'}
     if((Get-ItlCatalogHash $current) -ceq (Get-ItlCatalogHash $Value)){return}
     if($null -eq $Value){$selection.Remove('productProject')}else{$selection['productProject']=$Value}
     if((Get-ItlMcpFileState $path) -cne $before){throw 'CATALOG_SELECTION_CONFLICT: selection changed during composition; no preferences were written.'}
-    Write-Vibecoding1cMcpSelection $selection
+    if($selection.Count){Write-Vibecoding1cMcpJsonFile -Path $path -Value $selection}
+    else{Remove-Item -LiteralPath $path -ErrorAction Stop}
 }
 
 function Get-ItlProductProjectStartupDisposition {
