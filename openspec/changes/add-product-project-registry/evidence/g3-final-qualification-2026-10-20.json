@@ -1,0 +1,770 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-FINAL-QUALIFICATION-2026-10-20",
+  "observedUtc": "2026-10-20T16:47:44.740532+00:00",
+  "qualificationSourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
+  "status": "G3_AC39_OPEN",
+  "scope": "Qualification and documentation only; no workflow runtime source edits, G4, working migration, Gate 6 repair/run, or publication",
+  "matrix": "g3-final-qualification-2026-10-20.md",
+  "platform": {
+    "build": "26300",
+    "caption": "Майкрософт Windows 11 Домашняя",
+    "elevatedToken": false,
+    "powerShell": "5.1.26100.9711",
+    "sessionName": null,
+    "productType": 1
+  },
+  "source": {
+    "actions": 96,
+    "nonEmptyBrokerOperations": 8,
+    "classificationPassed": true,
+    "namespaceReadiness": "Both declared namespaces remain unverified; full native selected binding admission is open"
+  },
+  "codeGraph": {
+    "checks": 12,
+    "allPassed": true,
+    "readOnlyToolCalls": 8,
+    "results": [
+      {
+        "family": "pm4corp",
+        "role": "code",
+        "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
+        "serverInfo": {
+          "name": "FastMCP-b4ed",
+          "version": "2.14.7"
+        },
+        "checks": [
+          {
+            "name": "handshake-and-tools",
+            "passed": true
+          },
+          {
+            "name": "bounded-functional-read",
+            "passed": true
+          }
+        ]
+      },
+      {
+        "family": "pm5corp",
+        "role": "code",
+        "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+        "serverInfo": {
+          "name": "FastMCP-118d",
+          "version": "2.14.7"
+        },
+        "checks": [
+          {
+            "name": "handshake-and-tools",
+            "passed": true
+          },
+          {
+            "name": "bounded-functional-read",
+            "passed": true
+          }
+        ]
+      },
+      {
+        "family": "pm4corp",
+        "role": "graph",
+        "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
+        "serverInfo": {
+          "name": "FastMCP-4993",
+          "version": "3.4.7"
+        },
+        "checks": [
+          {
+            "name": "handshake-and-tools",
+            "passed": true
+          },
+          {
+            "name": "own-project",
+            "project": "pm4corp",
+            "passed": true
+          },
+          {
+            "name": "negative-project",
+            "project": "g3-final-unknown-project",
+            "passed": true
+          },
+          {
+            "name": "negative-project",
+            "project": "pm5corp",
+            "passed": true
+          }
+        ]
+      },
+      {
+        "family": "pm5corp",
+        "role": "graph",
+        "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+        "serverInfo": {
+          "name": "FastMCP-f4ee",
+          "version": "3.4.7"
+        },
+        "checks": [
+          {
+            "name": "handshake-and-tools",
+            "passed": true
+          },
+          {
+            "name": "own-project",
+            "project": "pm5corp",
+            "passed": true
+          },
+          {
+            "name": "negative-project",
+            "project": "g3-final-unknown-project",
+            "passed": true
+          },
+          {
+            "name": "negative-project",
+            "project": "pm4corp",
+            "passed": true
+          }
+        ]
+      }
+    ],
+    "internalModelUsage": "unknown; not measured",
+    "limits": [
+      "Endpoint/native project read controls only; full selected binding admission and active client context are not established.",
+      "serverInfo is framework identity; application build is not inferred from it."
+    ]
+  },
+  "clients": {
+    "fileRoleChecks": 48,
+    "allFileChecksPassed": true,
+    "codexVersion": "codex-cli 0.163.0-alpha.10.2",
+    "privateTrustDiscovery": [
+      {
+        "mode": "untrusted",
+        "exitCode": 1,
+        "effectiveUrl": "",
+        "matches": false,
+        "stderr": "Error: No MCP server named '1c-code-metadata-mcp' found."
+      },
+      {
+        "mode": "trusted",
+        "exitCode": 0,
+        "effectiveUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+        "matches": true,
+        "stderr": ""
+      }
+    ],
+    "globalAndProjectConfigUnchanged": true,
+    "actualMcpToolCall": false,
+    "limits": "Private-home trust/configuration discovery only; no real user trust, reload, authenticated session, or actual MCP tool invocation"
+  },
+  "startup": {
+    "sourceCommit": "d94ab1392c27dcc4593b626b79c7f23e4ed3d6c9",
+    "profile": "Real local Git transport and synthetic 12-client adapters; same workload as retained original harness; output location only redirected",
+    "summary": [
+      {
+        "family": "PM4",
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM4 45981f131f1141f4aa5ada37d55206a6",
+        "scenarios": [
+          {
+            "scenario": "unchanged",
+            "samples": 20,
+            "medianSeconds": 1.7711986999999998,
+            "p95Seconds": 2.0030467,
+            "maxSeconds": 2.1045887999999997,
+            "fetches": 20,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "publisher-only",
+            "samples": 1,
+            "medianSeconds": 4.2066948,
+            "p95Seconds": null,
+            "maxSeconds": 4.2066948,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "changed",
+            "samples": 1,
+            "medianSeconds": 9.337235399999999,
+            "p95Seconds": null,
+            "maxSeconds": 9.337235399999999,
+            "fetches": 1,
+            "clientFilesWritten": 11,
+            "clientSurfaceBytes": 12345
+          },
+          {
+            "scenario": "offline",
+            "samples": 1,
+            "medianSeconds": 4.8294005,
+            "p95Seconds": null,
+            "maxSeconds": 4.8294005,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12345
+          }
+        ]
+      },
+      {
+        "family": "PM5",
+        "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81",
+        "scenarios": [
+          {
+            "scenario": "unchanged",
+            "samples": 20,
+            "medianSeconds": 1.6441198,
+            "p95Seconds": 2.3213084,
+            "maxSeconds": 2.5656632999999998,
+            "fetches": 20,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "publisher-only",
+            "samples": 1,
+            "medianSeconds": 3.8336204,
+            "p95Seconds": null,
+            "maxSeconds": 3.8336204,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12202
+          },
+          {
+            "scenario": "changed",
+            "samples": 1,
+            "medianSeconds": 8.785428699999999,
+            "p95Seconds": null,
+            "maxSeconds": 8.785428699999999,
+            "fetches": 1,
+            "clientFilesWritten": 11,
+            "clientSurfaceBytes": 12345
+          },
+          {
+            "scenario": "offline",
+            "samples": 1,
+            "medianSeconds": 4.3120179,
+            "p95Seconds": null,
+            "maxSeconds": 4.3120179,
+            "fetches": 1,
+            "clientFilesWritten": 0,
+            "clientSurfaceBytes": 12345
+          }
+        ]
+      }
+    ],
+    "observations": 46,
+    "warmSamplesPerFamily": 20,
+    "targetMedianSeconds": 1,
+    "targetP95Seconds": 2,
+    "targetsMet": false,
+    "targetIsRuntimeBarrier": false,
+    "sourceCausalRegressionProved": false,
+    "wholeInstalledPairedProof": "unverified",
+    "coldNoWriteControl": "failed retained: two ignored receipts changed; client files preserved"
+  },
+  "concurrencyAndDeadline": {
+    "observedUtc": "2026-10-20T16:43:07.411549+00:00",
+    "classification": "harness trace accumulation; source assertions and native workload unchanged",
+    "originalHarnessStatus": "failed retained",
+    "originalTraceSha256": "a3eb6d78415343e722b251fd131982cd38a1707f30578babf94e4c6fec05b4ed",
+    "combinedTraceSha256": "45687de003da546c31d6fd823a6cc0764fda85f00b9ee71b94665a035e1f4030",
+    "previousTraceBytesAreExactPrefix": true,
+    "appendedInvocationBytesSha256": "7c00e07055f371e08a302c8766a73691e6cda32498f2308ff7ee693eb75ef803",
+    "currentInvocationFetches": 1,
+    "combinedHistoricalInvocationFetches": 2,
+    "fetchSid": "20261020T164038.863755Z-H844e454b-P00000dc4",
+    "fetchStartedUtc": "2026-10-20T16:40:38.869825Z",
+    "firstPinnedVerifyUtc": "2026-10-20T16:40:48.598591Z",
+    "fetchToPinnedVerifySeconds": 9.728766,
+    "wholeCliSeconds": 24.887719099999998,
+    "concurrentClientBoundedPassed": true,
+    "diagnosticSeconds": 3.6184950999999996,
+    "originalColdReceiptWritesRemainOpen": [
+      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-applied.json",
+      "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81\\Локальный проект\\.agent-1c\\mcp\\product-context-operation.json"
+    ],
+    "limits": [
+      "Two same-user Windows 11 processes and synthetic root only.",
+      "No claim of native 1C branch/init, terminal multi-user support, or active MCP tools.",
+      "Cold first-CLI receipt changes and startup over-target observations are not closed by warm success."
+    ]
+  },
+  "contextCost": {
+    "surfaces": [
+      {
+        "path": ".agents/skills/1c-workflow/SKILL.md",
+        "beforeUtf8Bytes": 6828,
+        "afterUtf8Bytes": 6828,
+        "deltaBytes": 0,
+        "deltaCeilBytesOver4Proxy": 0,
+        "loadingBoundary": "router-or-managed-rules"
+      },
+      {
+        "path": ".agents/skills/1c-workflow-fast/SKILL.md",
+        "beforeUtf8Bytes": 6306,
+        "afterUtf8Bytes": 6306,
+        "deltaBytes": 0,
+        "deltaCeilBytesOver4Proxy": 0,
+        "loadingBoundary": "router-or-managed-rules"
+      },
+      {
+        "path": "templates/ai-rules-overlay/AGENTS.md",
+        "beforeUtf8Bytes": 2339,
+        "afterUtf8Bytes": 2339,
+        "deltaBytes": 0,
+        "deltaCeilBytesOver4Proxy": 0,
+        "loadingBoundary": "router-or-managed-rules"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/references/mcp.md",
+        "beforeUtf8Bytes": 23187,
+        "afterUtf8Bytes": 23849,
+        "deltaBytes": 662,
+        "deltaCeilBytesOver4Proxy": 166,
+        "loadingBoundary": "on-demand"
+      }
+    ],
+    "metric": "ceil(UTF-8 bytes/4) proxy; not agent tokens",
+    "onDemandMcpReferenceDeltaOwner": "Separate preexisting facade-recovery change; not new registry always-on instructions",
+    "fullAgentTokenProof": "unverified",
+    "localStartupClientLlmAndMemoryCalls": 0
+  },
+  "preservation": {
+    "passed": true,
+    "protectedFiles": 13,
+    "oldRoots": 4,
+    "previousRawReferences": 68,
+    "restoredPm5Roots": 2,
+    "gate6Artifacts": 7,
+    "originalRawSeedMissing": true,
+    "newRestoredDbShaRemeasured": false
+  },
+  "harnessIncidents": {
+    "sourceAudit": "Initial direct-helper StrictMode input had no optional binding; empty binding supplied. Original failure and all successive outputs retained. No workflow defect inferred.",
+    "deadlineGitRoot": {
+      "observedUtc": "2026-10-20T16:35:41.0038007Z",
+      "incident": "Deadline harness had no private Git initialization; config commands discovered ancestor repository",
+      "sourceIndexUnchanged": true,
+      "identityRestoredToGlobalAndLastCommit": true,
+      "coreLongpaths": "true; previous local value unavailable; retained",
+      "testRoot": "C:/Users/xment/.codex/worktrees/product-project-registry-g3/1c-agent-workflow/build/test-results/g3/final-matrix-20261020/Матрица startup PM5 09a9af3f345544e5a8ecd9668ab68d81/Локальный проект",
+      "testRootVerified": true
+    },
+    "processExit": "Initial parent exit codes null; handles retained before wait in repeated scenario, independent exit 7 control passed.",
+    "traceAppend": "harness trace accumulation; source assertions and native workload unchanged",
+    "coldNoWrite": "A real cold no-write failure; not removed by harness reconciliation or warm success."
+  },
+  "openConditions": [
+    {
+      "id": "SOURCE_BINDING",
+      "owner": "existing registry/source readiness",
+      "state": "full selected binding/namespace/version proof unverified"
+    },
+    {
+      "id": "CLIENT_ACTIVATION",
+      "owner": "existing client adapter and user client context",
+      "state": "actual project tools/reload/new-context unverified"
+    },
+    {
+      "id": "STARTUP_COST",
+      "owner": "existing registry startup/writer",
+      "state": "both profiles over-target; analyze under existing checkpoint without new runtime barrier"
+    },
+    {
+      "id": "COLD_RECEIPTS",
+      "owner": "existing registry client writer",
+      "state": "two first-CLI ignored receipt writes; cause/admissibility unresolved"
+    },
+    {
+      "id": "INSTALLED_JOURNEYS",
+      "owner": "existing bootstrap/lifecycle/recovery",
+      "state": "full init/branch/cancel/compatibility/native paths open"
+    },
+    {
+      "id": "STANDS",
+      "owner": "qualification environment",
+      "state": "PM4 installed/Win10/Windows Server/independent terminal users unavailable"
+    },
+    {
+      "id": "GATE6",
+      "owner": "PM5 source; explicitly deferred by user",
+      "state": "original failed artifacts retained; no fix or rerun"
+    },
+    {
+      "id": "LIVE_SEED",
+      "owner": "original qualification source fixture",
+      "state": "original raw seed absent; capsule snapshot proof does not restore currentness"
+    },
+    {
+      "id": "COMPONENT_DISTRIBUTION",
+      "owner": "existing source delivery/component release",
+      "state": "historical HEAD 404 to this client; exact-SHA source build is not publication/Release proof"
+    },
+    {
+      "id": "RELEASE_POPULATION",
+      "owner": "registry release AC-36-38; memory AC-44 consumes same result",
+      "state": "mandatory before first release; not prerequisite of G3/G4 source development; not started"
+    }
+  ],
+  "memoryDependency": {
+    "G1Q1Q7D9G2": "unchanged; not reopened",
+    "AC43G5": "open",
+    "AC44": "same registry population open",
+    "G4": "not started or authorized",
+    "cogneeRequests": 0
+  },
+  "delivery": "Current registration/Targeted is owned exclusively by source-delivery Status/ledger; not asserted by this pre-commit evidence",
+  "historicalEvidence": [
+    {
+      "path": "g3-continuation-2026-10-20.json",
+      "sha256": "ca4dfa725b24144273b2a96abf068cada3be0449a8929731ddbffb67a3c28f19",
+      "proofScope": "historical bounded; not new execution"
+    },
+    {
+      "path": "g3-mcp-update-2026-10-20.json",
+      "sha256": "ad0892bcfc0bc0348996d78ef747a480e7032efd0b47b4fb4c1f002836817a66",
+      "proofScope": "historical bounded; not new execution"
+    },
+    {
+      "path": "g3-capsule-recovery-2026-10-20.json",
+      "sha256": "b2320430d27e1fcaafdbbc3ac74b26dcbace99dc85b17059fb187dc99a3589b1",
+      "proofScope": "historical bounded; not new execution"
+    },
+    {
+      "path": "g3-gate6-analysis-2026-10-20.json",
+      "sha256": "11fd1c22ad0fc45bfbca1c79367134f5e7506aea8b0c6a39b54bb64ead0acc61",
+      "proofScope": "historical bounded; not new execution"
+    }
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\run-capture.ps1",
+      "sha256": "36a3e44409c969f3b7b60378ef69453001465db67b6b5077eff093d42f050859",
+      "bytes": 1216
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\live-code-graph.py",
+      "sha256": "b4d0cbbb1c8a79421f3273df82d285fd647a04bd3d03860df71f1fb955bb9bc3",
+      "bytes": 3386
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\live-code-graph.json",
+      "sha256": "7afa0965cc434aed5ad1a9fdd456f20fe2212e456b103d49e39d48175d6c2863",
+      "bytes": 699476
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\live-code-graph.result.json",
+      "sha256": "d6c5ceda1544f5f91aab8cf71afef664f33d2c3c8ce10e3333d68d153870609c",
+      "bytes": 387
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit-initial.ps1",
+      "sha256": "d61ffa5d288eae391d6a8e8746e72a14861f844533ada607850c2ce582391d43",
+      "bytes": 4442
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit.stderr",
+      "sha256": "01403aa62bce86a1ee4cc1b7a1d1bbd8306c3961771190b6dcf9ec79a2e73189",
+      "bytes": 612
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit.result.json",
+      "sha256": "0a761c67d363dbc26922b506b19e9c2ce8a7fa1bd24d1edadf94c83deddc8ce4",
+      "bytes": 389
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit-r2.ps1",
+      "sha256": "8b8f35b00a96fbfa79fcf44b37271bf68f151cca67c170c340a522f5af5c9b8b",
+      "bytes": 4457
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit-r2.result.json",
+      "sha256": "6748e899feb55a05fec4e48982c0ee260bbcf45c990481f43f8229120c9a6522",
+      "bytes": 398
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit-r2.stdout",
+      "sha256": "efef7f983ceae1ce758f777744ecf3288c96b91e5483d07ee05b6ef11ff2e8a3",
+      "bytes": 2190
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit.ps1",
+      "sha256": "3d1052478b3185e92269bb6794e20b5399a8f6e574508536cab4861b2885656f",
+      "bytes": 4436
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit-r3.result.json",
+      "sha256": "210b649a620b0050dcec34fcaa7416cd0837a748abfe0b3f10b12be510b79c2b",
+      "bytes": 398
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\source-audit.json",
+      "sha256": "edb74a22cde3751e166f7b9286a5ea4f096f4b8c867f8e556978c7697c473799",
+      "bytes": 43749
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-matrix.ps1",
+      "sha256": "05f1507516afe30972fd1dd1b27c75e6f0161692e7ede5ea5cd04d5ee6825de2",
+      "bytes": 9262
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-pm4.ps1",
+      "sha256": "515bdd48b6c43fe206d493298cc68bed5d30dc41b30245b45c6b8897807a5559",
+      "bytes": 63
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-pm4.result.json",
+      "sha256": "811ad0ddabf6cbe4b05689523ef4ecbe2bfedb11ff374b8557490b686c08464a",
+      "bytes": 388
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-pm5.result.json",
+      "sha256": "a38ee2d2616940e094c3324683aab9f04b57490804508a6974dba2260c2f1431",
+      "bytes": 392
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-matrix-PM4.json",
+      "sha256": "d42e9cb2d818f3b5250bb66b1f364513fa06c6c5992c97763c073075a6bc74ef",
+      "bytes": 14116
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-matrix-PM5.json",
+      "sha256": "0236dc685f59fc3fb00fb87188df1c2877c26c9320c6e77beee98e4abf472977",
+      "bytes": 14070
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-formats-final.ps1",
+      "sha256": "244c9d81b51f842e1afaf9a28fc6b2c0c5f3844c1bd7eb2736eb2b27a72547e9",
+      "bytes": 2196
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-formats-final.json",
+      "sha256": "efd4f7674e6befe0c43f50fa2eecbcc2674448078206ce2006e74603df87cf7b",
+      "bytes": 16895
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-formats.result.json",
+      "sha256": "71bbd9cd09c3356577fca29951408f38e2de687979bfe3383a22fd4fd7580ba0",
+      "bytes": 406
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-discovery.ps1",
+      "sha256": "26fc545db007a898dd5aefadfb332a9c5729f5d116efc2ec87b0b7793ea5a5a6",
+      "bytes": 3096
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-discovery.json",
+      "sha256": "a1c1ef455c6da76458d09e78c04276415e02d3fbad445c16bf6cb49bc7e50b0d",
+      "bytes": 1464
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\client-discovery.result.json",
+      "sha256": "86a3732de5edd80bb3416a66f63262d372b757c6267f52350831ac96024e79f4",
+      "bytes": 393
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\codex-untrusted.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\codex-untrusted.stderr",
+      "sha256": "4089425b64f1beab6381f8cec5f7ecf947ca28f6288ab58a8e58d73a8bd0076a",
+      "bytes": 57
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\codex-trusted.stdout",
+      "sha256": "963c515eae24cb06c53b08823b767d2a51cbbd765139a9f85e78441844c94abd",
+      "bytes": 438
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\codex-trusted.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-initial.ps1",
+      "sha256": "7c31233faaee6c916f2f5e4c025a2104921e168df4b47f8ed46622344b086f2f",
+      "bytes": 5536
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline.result.json",
+      "sha256": "8a2fc12bf7200ad49a564bbe5dcdd144afd14230897f09a09259f58f23226a1e",
+      "bytes": 397
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline.stderr",
+      "sha256": "57137b883703f7a571f2c898d3fb82d65fb609870a494d633e1d6017b44e14a0",
+      "bytes": 958
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\deadline-harness-recovery.json",
+      "sha256": "cb2f996483c863a165cbf8699bd414b0d7e9607bcde6ec89dc6499f9de2c75bc",
+      "bytes": 588
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli.ps1",
+      "sha256": "a806c9fcbbb17609f9d0e7f627139eb68ecf62b657ce1aab7cfe3b72613bba8f",
+      "bytes": 5751
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-r2.result.json",
+      "sha256": "7ca0a356baf432effb1363a4a934bcd5eb6a28e024fa83c1187974af91e031c3",
+      "bytes": 398
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-warm.json",
+      "sha256": "80694ab8b7051a36a299d1f019fb8483f43978c6c8913c0b5a426cffe7197c05",
+      "bytes": 1443
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-warm.stdout",
+      "sha256": "7228872c5eb9ad01463ca970a4621c0310673eaf3b3d6cb37fdcf184c412b2c7",
+      "bytes": 704
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-warm.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-warm-git-trace.jsonl",
+      "sha256": "6a77a4bd2996e27f764f315f55b3ca5650cf56114ad6e0ec21a2afc10dae5d82",
+      "bytes": 66910
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-client.ps1",
+      "sha256": "1d75533821effa84ff090a62d91ab35e2bb2ffc7e6cc94d825bb7a98ba1386f4",
+      "bytes": 5618
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-client.json",
+      "sha256": "55aac7a7e16073f8d853a7c38fbd8c9e33dcde1d72eca4fbd269f504605c52af",
+      "bytes": 923
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-client-r2.result.json",
+      "sha256": "c08171511e4616e540c8e87496884780fde1298dd26fd45bbd2191254307b45c",
+      "bytes": 395
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-first.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-first.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-second.stdout",
+      "sha256": "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67",
+      "bytes": 593
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-second.stderr",
+      "sha256": "b10558b24a623b3550eb8f193592a0b490111fff9ca33fd5b110b4d34b358c5f",
+      "bytes": 1071
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-diagnostic.stdout",
+      "sha256": "a221865dc1af9fe4f8e66d648c69b59290b51d9f309fe72d3054afad99361883",
+      "bytes": 418
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrent-diagnostic.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-concurrent-first.json",
+      "sha256": "88f58898db8daf883401d917a93b64df4d8345f83f5f4c1c7fd77d65d63224f9",
+      "bytes": 844
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-concurrent-first.stdout",
+      "sha256": "fde4c2a326252d8a754ad08af8580d65488a10f730812fa3ee1daa583a5acf67",
+      "bytes": 593
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-concurrent-first.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\startup-deadline-cli-concurrent-first-git-trace.jsonl",
+      "sha256": "45687de003da546c31d6fd823a6cc0764fda85f00b9ee71b94665a035e1f4030",
+      "bytes": 135380
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrency-initial\\concurrent-client.ps1",
+      "sha256": "dbe549d6992e96bc746e67ffadeda1e5d527ea427312fd4e3047f7423ba1ac88",
+      "bytes": 5572
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrency-initial\\concurrent-client.json",
+      "sha256": "07838131ea8896a9a48b4866845cedf9003ad071483c6be01b8c967ede23066e",
+      "bytes": 928
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrency-initial\\concurrent-client.result.json",
+      "sha256": "5d8600dcf29713c0c99ad54fa5cea863eced06042dde358c1abab8df11ec1c64",
+      "bytes": 403
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrency-initial\\startup-deadline-cli-concurrent-first.json",
+      "sha256": "a551b3aa9396113725230f1333a3eb54290d56c4b976f80b10dc471d2bbc0d7d",
+      "bytes": 835
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\concurrency-initial\\startup-deadline-cli-concurrent-first-git-trace.jsonl",
+      "sha256": "a3eb6d78415343e722b251fd131982cd38a1707f30578babf94e4c6fec05b4ed",
+      "bytes": 67690
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\exit-code-control.ps1",
+      "sha256": "d8d86c5c44e6516e2758748373073c8e6c5261130dc343b98ee8b6a806abcb17",
+      "bytes": 449
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\exit-code-control.json",
+      "sha256": "a15001594101d12eea15ffc5084ab79680686769176a11744f0bb34c0a0ec6e4",
+      "bytes": 70
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\reconcile.py",
+      "sha256": "627e97368463c5e9f6adafaec80519580e0391f2660c4321ed7fc7d2874da17d",
+      "bytes": 3439
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\reconciled-controls.json",
+      "sha256": "0fd33b0b72c27e446aee9b85373aef299d46252a7050fb7c223a96383fed1aab",
+      "bytes": 1864
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\reconciled-controls.result.json",
+      "sha256": "41f090ff5535c17c88194dafc23ac4dffbdd7f790b7e71d2955114483009c074",
+      "bytes": 381
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\integrity.ps1",
+      "sha256": "640c38e12a18df6f84dd85ae9a6ef1499d288019d59660f532e466a83a84c6eb",
+      "bytes": 3708
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\integrity.json",
+      "sha256": "431441e24b9bd52dad32393d8f2c2bc20dfad402c369c2bdc5fab73047f63e8c",
+      "bytes": 41697
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\integrity.result.json",
+      "sha256": "5a7d9887762f3b6451a06064a90c9a439bb22c0fb6a597b46ae08adc1f25b56d",
+      "bytes": 387
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\final-matrix-20261020\\delivery-before.json",
+      "sha256": "95b99b9541b7df81011a3deccd44eb63a48cb0b5f0499ba301ca8723772a7a42",
+      "bytes": 418349
+    }
+  ]
+}

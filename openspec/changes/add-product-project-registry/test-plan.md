@@ -1,5 +1,7 @@
 # План приёмки
 
+Текущий итог G3.7 — [единая матрица AC и блокеров, 2026-10-20](evidence/g3-final-qualification-2026-10-20.md). Full G3/AC-39 не принят; нижеследующие исходные результаты сохранены с их собственной датой/source/scope. Новая матрица не переименовывает failed cold/harness observations в общий pass.
+
 ## Статус и правила доказательства
 
 G2 реализован и проверен; source G3.0–6 реализованы в указанной ниже границе. После failed live criteria 2026-10-19 три MCP отдельно разрешённо обновлены на dev-ermakov: на 2026-10-20 attested BookStack/Mantis/СППР builds активны, 29 live scope/compatibility controls passed. G3 целиком не принят; актуальная граница — последний раздел этого плана. Installed migration, G4 и публикация workflow/каталога не начаты. Таблица сохраняет критерии, её непроверенные installed/live части не объявляются принятыми. Ранняя инвентаризация — baseline, не приёмка изменения. OpenSpec validate проверяет документы, не рабочую систему.
@@ -461,3 +463,9 @@ Focused PS5.1 batch **101/0/0 за 292.577 s**: SourceQualificationFixture 179.2
 В read-only финальном validator первоначально использовано copyRoot верхнего result вместо claim.copyRoot; исходный script/наблюдение сохранены, исправлена только ссылка на owner field и тот же audit прошёл без повторения native операции. Отдельный parent hash harness под PS7 выдал WinPSCompat warning; реальные helper select/restore и критические inspectors/validators выполнялись в PS5.1 и independently подтвердили hashes. Рекламируемые console.log update не материализовались, как и раньше; evidence использует существующие transcript и terminal statuses. UI tools имеют nonblocking windows-mcp/uvx warning; native client activation и UI qualification не заявляются.
 
 Full G3/AC-39, остальные live source/client/platform controls, default live-seed currentness, release asset availability и registry population AC-36–38 остаются отдельными условиями. Memory G5/AC-43 и release population AC-44 не закрыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция, registry/workflow/component публикация не выполнялись.
+
+## Итоговая матрица и доступные проверки G3.7, 2026-10-20
+
+[Единая матрица AC, доказательств, блокеров и продолжений](evidence/g3-final-qualification-2026-10-20.md), [canonical JSON](evidence/g3-final-qualification-2026-10-20.json): source d94ab139, 12 live Code/Graph controls/48 client-file checks passed; 96 actions/8 brokers classified. Обе family получили 20 warm + publisher/change/offline observations. Bounded two-process same-user serialization, доступная диагностика и stalled-origin continuation подтверждены с сохранёнными failed harness records и exact trace-prefix reconciliation. Actual MCP client activation и full G3/AC-39 не приняты.
+
+PM4 median/p95 1.771/2.003 s, PM5 1.644/2.321 s превышают engineering цели. Первый cold CLI имел exit 0/main reached, но переписал два ignored receipts: failed no-write assertion остаётся открытым. Namespace declaration остаётся unverified; private Codex trust объясняет discovery failure, но не заменяет actual tool call/reload. Отсутствующие platform/PM4/terminal stands, отложенный Gate 6, raw seed currentness, component distribution и release population сохранены отдельными условиями. Проверки не меняют requirements/runtime; Gate 6/G4/рабочая миграция/публикация не выполнялись. Delivery/Targeted/registration — только existing ledger.
