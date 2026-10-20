@@ -23,136 +23,374 @@
   "codeGraph": {
     "checks": 12,
     "allPassed": true,
-    "readOnlyToolCalls": 8,
+    "readOnlyToolCalls": 16,
     "results": [
       {
-        "family": "pm4corp",
-        "role": "code",
-        "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
-        "serverInfo": {
-          "name": "FastMCP-b4ed",
-          "version": "2.14.7"
+        "family": "PM5",
+        "selectedBinding": {
+          "productId": "g3-pm5corp",
+          "projectId": "g3-pm5corp",
+          "requiredCapability": "product-project-registry-v1",
+          "schemaVersion": 1
         },
-        "checks": [
+        "catalogRevision": "c439e57310c9198999686820ec5b09f6b7c12dac",
+        "endpointIntents": {
+          "code": {
+            "configId": "pm5corp",
+            "declaredVersion": null,
+            "hostId": "g3-dev-ermakov",
+            "namespace": null,
+            "readiness": "unverified",
+            "role": "code",
+            "scope": "whole-source",
+            "serverId": "code",
+            "sourceFingerprint": null,
+            "sourceId": "pm5corp-code",
+            "url": "http://dev-ermakov.itland.local:22100/mcp",
+            "viewId": ""
+          },
+          "graph": {
+            "configId": "pm5corp",
+            "declaredVersion": null,
+            "hostId": "g3-dev-ermakov",
+            "namespace": "default",
+            "readiness": "unverified",
+            "role": "graph",
+            "scope": "whole-source",
+            "serverId": "graph",
+            "sourceFingerprint": null,
+            "sourceId": "pm5corp-graph",
+            "url": "http://dev-ermakov.itland.local:22101/mcp/",
+            "viewId": ""
+          }
+        },
+        "localNegativeControls": [
           {
-            "name": "handshake-and-tools",
-            "passed": true
+            "case": "unknown-hostId",
+            "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.hostId is unknown/ambiguous",
+            "rejected": true
           },
           {
-            "name": "bounded-functional-read",
-            "passed": true
+            "case": "unknown-serverId",
+            "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.serverId is unknown/ambiguous",
+            "rejected": true
+          },
+          {
+            "case": "unknown-configId",
+            "error": "CATALOG_INVALID: sources.pm5corp-code.endpoint.serverId is unknown/ambiguous",
+            "rejected": true
+          },
+          {
+            "case": "wrong-declared-namespace",
+            "expectedNamespace": "g3-wrong-namespace",
+            "mismatchDetectedByRuntime": false,
+            "observedNamespace": "default",
+            "ready": false,
+            "state": "unverified"
           }
-        ]
+        ],
+        "code": {
+          "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+          "nativeProjectId": "code-20d3eae87f48",
+          "generation": "20261019T230814Z-aca520f1",
+          "namespacePublished": false,
+          "release": {
+            "version": "1.0.0",
+            "build_digest": null,
+            "index_layout": {
+              "min": 3,
+              "max": 3
+            },
+            "source": "manifest_file",
+            "pinned": false
+          }
+        },
+        "graph": {
+          "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+          "nativeProjectId": "pm5corp",
+          "namespace": "default",
+          "configurationRoot": "/app/code",
+          "activeGeneration": null,
+          "topLevelContext": {
+            "tool": "get_graph_project_status",
+            "mcp_namespace": null,
+            "project_id": null,
+            "correlation_id": "8ba54b3cdfca4908"
+          },
+          "readiness": {
+            "neo4j": true,
+            "lanes": {
+              "exact": null,
+              "fulltext": null,
+              "vector": null,
+              "hybrid": null,
+              "traversal": null
+            },
+            "state": "unknown",
+            "mode": {
+              "graph_only": false,
+              "embedding_provider": "ready",
+              "llm_provider": "no_api_key",
+              "vector_lane": {
+                "expected": true,
+                "reason": null
+              }
+            }
+          }
+        },
+        "runtimeAdmission": "unverified; intent resolver does not perform live source identity admission"
       },
       {
-        "family": "pm5corp",
-        "role": "code",
-        "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
-        "serverInfo": {
-          "name": "FastMCP-118d",
-          "version": "2.14.7"
+        "family": "PM4",
+        "selectedBinding": {
+          "productId": "g3-pm4corp",
+          "projectId": "g3-pm4corp",
+          "requiredCapability": "product-project-registry-v1",
+          "schemaVersion": 1
         },
-        "checks": [
-          {
-            "name": "handshake-and-tools",
-            "passed": true
+        "catalogRevision": "c439e57310c9198999686820ec5b09f6b7c12dac",
+        "endpointIntents": {
+          "code": {
+            "configId": "pm4corp",
+            "declaredVersion": null,
+            "hostId": "g3-dev-ermakov",
+            "namespace": null,
+            "readiness": "unverified",
+            "role": "code",
+            "scope": "whole-source",
+            "serverId": "code",
+            "sourceFingerprint": null,
+            "sourceId": "pm4corp-code",
+            "url": "http://dev-ermakov.itland.local:22200/mcp",
+            "viewId": ""
           },
-          {
-            "name": "bounded-functional-read",
-            "passed": true
+          "graph": {
+            "configId": "pm4corp",
+            "declaredVersion": null,
+            "hostId": "g3-dev-ermakov",
+            "namespace": "default",
+            "readiness": "unverified",
+            "role": "graph",
+            "scope": "whole-source",
+            "serverId": "graph",
+            "sourceFingerprint": null,
+            "sourceId": "pm4corp-graph",
+            "url": "http://dev-ermakov.itland.local:22201/mcp/",
+            "viewId": ""
           }
-        ]
-      },
-      {
-        "family": "pm4corp",
-        "role": "graph",
-        "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
-        "serverInfo": {
-          "name": "FastMCP-4993",
-          "version": "3.4.7"
         },
-        "checks": [
+        "localNegativeControls": [
           {
-            "name": "handshake-and-tools",
-            "passed": true
+            "case": "unknown-hostId",
+            "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.hostId is unknown/ambiguous",
+            "rejected": true
           },
           {
-            "name": "own-project",
-            "project": "pm4corp",
-            "passed": true
+            "case": "unknown-serverId",
+            "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.serverId is unknown/ambiguous",
+            "rejected": true
           },
           {
-            "name": "negative-project",
-            "project": "g3-final-unknown-project",
-            "passed": true
+            "case": "unknown-configId",
+            "error": "CATALOG_INVALID: sources.pm4corp-code.endpoint.serverId is unknown/ambiguous",
+            "rejected": true
           },
           {
-            "name": "negative-project",
-            "project": "pm5corp",
-            "passed": true
+            "case": "wrong-declared-namespace",
+            "expectedNamespace": "g3-wrong-namespace",
+            "mismatchDetectedByRuntime": false,
+            "observedNamespace": "default",
+            "ready": false,
+            "state": "unverified"
           }
-        ]
-      },
-      {
-        "family": "pm5corp",
-        "role": "graph",
-        "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
-        "serverInfo": {
-          "name": "FastMCP-f4ee",
-          "version": "3.4.7"
+        ],
+        "code": {
+          "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
+          "nativeProjectId": "code-20d3eae87f48",
+          "generation": "20261017T235843Z-d972befd",
+          "namespacePublished": false,
+          "release": {
+            "version": "1.0.0",
+            "build_digest": null,
+            "index_layout": {
+              "min": 3,
+              "max": 3
+            },
+            "source": "manifest_file",
+            "pinned": false
+          }
         },
-        "checks": [
-          {
-            "name": "handshake-and-tools",
-            "passed": true
+        "graph": {
+          "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
+          "nativeProjectId": "pm4corp",
+          "namespace": "default",
+          "configurationRoot": "/app/code",
+          "activeGeneration": null,
+          "topLevelContext": {
+            "tool": "get_graph_project_status",
+            "mcp_namespace": null,
+            "project_id": null,
+            "correlation_id": "cfc46790ffc64381"
           },
-          {
-            "name": "own-project",
-            "project": "pm5corp",
-            "passed": true
-          },
-          {
-            "name": "negative-project",
-            "project": "g3-final-unknown-project",
-            "passed": true
-          },
-          {
-            "name": "negative-project",
-            "project": "pm4corp",
-            "passed": true
+          "readiness": {
+            "neo4j": true,
+            "lanes": {
+              "exact": null,
+              "fulltext": null,
+              "vector": null,
+              "hybrid": null,
+              "traversal": null
+            },
+            "state": "unknown",
+            "mode": {
+              "graph_only": false,
+              "embedding_provider": "ready",
+              "llm_provider": "no_api_key",
+              "vector_lane": {
+                "expected": true,
+                "reason": null
+              }
+            }
           }
-        ]
+        },
+        "runtimeAdmission": "unverified; intent resolver does not perform live source identity admission"
       }
     ],
-    "internalModelUsage": "unknown; not measured",
-    "limits": [
-      "Endpoint/native project read controls only; full selected binding admission and active client context are not established.",
-      "serverInfo is framework identity; application build is not inferred from it."
-    ]
+    "internalModelUsage": "Two direct compact_search calls may use existing Qwen embedding backend/cache; internal request/token usage not measured. Native stats/fulltext tests do not request model generation.",
+    "limits": "Protocol/read/negative subset only; business binding admission and exact source/index version open."
   },
   "clients": {
     "fileRoleChecks": 48,
     "allFileChecksPassed": true,
     "codexVersion": "codex-cli 0.163.0-alpha.10.2",
-    "privateTrustDiscovery": [
-      {
-        "mode": "untrusted",
-        "exitCode": 1,
-        "effectiveUrl": "",
-        "matches": false,
-        "stderr": "Error: No MCP server named '1c-code-metadata-mcp' found."
+    "actualMcpToolCall": true,
+    "nativeCodex": {
+      "exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\896a0166b774037a\\codex.exe",
+      "executableSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+      "version": "0.163.0-alpha.10.2",
+      "projectRoots": [
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM4"
+      ],
+      "positiveFamilies": [
+        "PM5",
+        "PM4"
+      ],
+      "toolCountPerFamily": {
+        "code": 28,
+        "graph": 54
       },
-      {
-        "mode": "trusted",
-        "exitCode": 0,
-        "effectiveUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
-        "matches": true,
-        "stderr": ""
-      }
-    ],
-    "globalAndProjectConfigUnchanged": true,
-    "actualMcpToolCall": false,
-    "limits": "Private-home trust/configuration discovery only; no real user trust, reload, authenticated session, or actual MCP tool invocation"
+      "safeCallsPerFamily": 4,
+      "toolCallingSurface": "Installed Codex app-server mcpServer/tool/call, thread-scoped native connections; no LLM turn",
+      "freshContextPassed": true,
+      "reloadPassed": true,
+      "reloadPhases": [
+        {
+          "phase": "before-edit",
+          "codeGeneration": "20261019T230814Z-aca520f1",
+          "graphProjects": [
+            "pm5corp"
+          ]
+        },
+        {
+          "phase": "physical-override-without-reload",
+          "codeGeneration": "20261019T230814Z-aca520f1",
+          "graphProjects": [
+            "pm5corp"
+          ]
+        },
+        {
+          "phase": "reload-existing-thread",
+          "codeGeneration": "20261017T235843Z-d972befd",
+          "graphProjects": [
+            "pm4corp"
+          ]
+        },
+        {
+          "phase": "reload-new-thread",
+          "codeGeneration": "20261017T235843Z-d972befd",
+          "graphProjects": [
+            "pm4corp"
+          ]
+        },
+        {
+          "phase": "restore-new-thread",
+          "codeGeneration": "20261019T230814Z-aca520f1",
+          "graphProjects": [
+            "pm5corp"
+          ]
+        }
+      ],
+      "unicodePathRoundTrips": [
+        {
+          "log": "codex-PM4-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM4",
+          "exactFixturePath": true
+        },
+        {
+          "log": "codex-PM5-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+          "exactFixturePath": true
+        },
+        {
+          "log": "codex-reload-r2-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+          "exactFixturePath": true
+        },
+        {
+          "log": "codex-reload-r2-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+          "exactFixturePath": true
+        },
+        {
+          "log": "codex-reload-r2-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+          "exactFixturePath": true
+        },
+        {
+          "log": "codex-reload-rpc.jsonl",
+          "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\Проект клиента PM5",
+          "exactFixturePath": true
+        }
+      ],
+      "globalConfigUnchangedDuringInitialRuns": true,
+      "testConfigBytesRestored": true,
+      "projectAndReceiptsUnchanged": true,
+      "limits": "No current desktop/IDE frontend or production project activation claim; no scope/readiness inferred from transport, tool count, authStatus or isError alone."
+    },
+    "inventory": {
+      "observedUtc": "2026-10-20T20:18:52.036311+00:00",
+      "commands": {
+        "codex.exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\896a0166b774037a\\codex.exe",
+        "opencode": null,
+        "claude": null,
+        "kilo": null,
+        "kimi": null,
+        "qwen": null,
+        "command-code": null,
+        "zcode": null,
+        "mimocode": null,
+        "pi": null,
+        "code.cmd": "C:\\Users\\xment\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+        "cursor.cmd": "C:\\Users\\xment\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd"
+      },
+      "opencodeDesktop": {
+        "path": "C:\\Users\\xment\\AppData\\Local\\Programs\\@opencode-aidesktop\\OpenCode.exe",
+        "name": "@opencode-ai/desktop",
+        "version": "1.18.11",
+        "standaloneCliDiscovered": false,
+        "main": "./out/main/index.js"
+      },
+      "extensions": [
+        {
+          "path": "C:\\Users\\xment\\.vscode\\extensions\\kilocode.kilo-code-7.8.12-win32-x64",
+          "name": "kilo-code",
+          "version": "7.8.12"
+        }
+      ],
+      "limits": "Installed executable/extension inventory only. Codex native activation is separately exercised; Desktop/IDE presence, static files and unsupported diagnostic surfaces are not treated as tool activation. No clients installed, no real profiles reconfigured or frontend sessions started."
+    },
+    "limits": "Only installed Codex core/API on new private PM4/PM5 fixtures; desktop/IDE frontend and remaining 11 adapters unverified."
   },
   "startup": {
     "sourceBase": "4faae104a8242f92fa69a112721c7038d41e357e",
@@ -518,12 +756,12 @@
     {
       "id": "SOURCE_BINDING",
       "owner": "existing registry/source readiness",
-      "state": "full selected binding/namespace/version proof unverified"
+      "state": "Fresh tuple/metadata controls and native calls recorded; live namespace admission absent, Code source/build identity and Graph active generation insufficient for exact version."
     },
     {
       "id": "CLIENT_ACTIVATION",
       "owner": "existing client adapter and user client context",
-      "state": "actual project tools/reload/new-context unverified"
+      "state": "Native Codex core/API PM4/PM5 safe tools and reload passed. Actual desktop/IDE frontend and remaining 11 adapters unverified; source readiness separate."
     },
     {
       "id": "STARTUP_COST",
@@ -1113,5 +1351,151 @@
     "G4": "not started",
     "workingMigration": "not started",
     "publication": "not started"
+  },
+  "snapshotBeforeSourceClientQualification": {
+    "codeGraph": {
+      "checks": 12,
+      "allPassed": true,
+      "readOnlyToolCalls": 8,
+      "results": [
+        {
+          "family": "pm4corp",
+          "role": "code",
+          "endpoint": "http://dev-ermakov.itland.local:22200/mcp",
+          "serverInfo": {
+            "name": "FastMCP-b4ed",
+            "version": "2.14.7"
+          },
+          "checks": [
+            {
+              "name": "handshake-and-tools",
+              "passed": true
+            },
+            {
+              "name": "bounded-functional-read",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "family": "pm5corp",
+          "role": "code",
+          "endpoint": "http://dev-ermakov.itland.local:22100/mcp",
+          "serverInfo": {
+            "name": "FastMCP-118d",
+            "version": "2.14.7"
+          },
+          "checks": [
+            {
+              "name": "handshake-and-tools",
+              "passed": true
+            },
+            {
+              "name": "bounded-functional-read",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "family": "pm4corp",
+          "role": "graph",
+          "endpoint": "http://dev-ermakov.itland.local:22201/mcp/",
+          "serverInfo": {
+            "name": "FastMCP-4993",
+            "version": "3.4.7"
+          },
+          "checks": [
+            {
+              "name": "handshake-and-tools",
+              "passed": true
+            },
+            {
+              "name": "own-project",
+              "project": "pm4corp",
+              "passed": true
+            },
+            {
+              "name": "negative-project",
+              "project": "g3-final-unknown-project",
+              "passed": true
+            },
+            {
+              "name": "negative-project",
+              "project": "pm5corp",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "family": "pm5corp",
+          "role": "graph",
+          "endpoint": "http://dev-ermakov.itland.local:22101/mcp/",
+          "serverInfo": {
+            "name": "FastMCP-f4ee",
+            "version": "3.4.7"
+          },
+          "checks": [
+            {
+              "name": "handshake-and-tools",
+              "passed": true
+            },
+            {
+              "name": "own-project",
+              "project": "pm5corp",
+              "passed": true
+            },
+            {
+              "name": "negative-project",
+              "project": "g3-final-unknown-project",
+              "passed": true
+            },
+            {
+              "name": "negative-project",
+              "project": "pm4corp",
+              "passed": true
+            }
+          ]
+        }
+      ],
+      "internalModelUsage": "unknown; not measured",
+      "limits": [
+        "Endpoint/native project read controls only; full selected binding admission and active client context are not established.",
+        "serverInfo is framework identity; application build is not inferred from it."
+      ]
+    },
+    "clients": {
+      "fileRoleChecks": 48,
+      "allFileChecksPassed": true,
+      "codexVersion": "codex-cli 0.163.0-alpha.10.2",
+      "privateTrustDiscovery": [
+        {
+          "mode": "untrusted",
+          "exitCode": 1,
+          "effectiveUrl": "",
+          "matches": false,
+          "stderr": "Error: No MCP server named '1c-code-metadata-mcp' found."
+        },
+        {
+          "mode": "trusted",
+          "exitCode": 0,
+          "effectiveUrl": "http://dev-ermakov.itland.local:22100/mcp?g3-fixture=1",
+          "matches": true,
+          "stderr": ""
+        }
+      ],
+      "globalAndProjectConfigUnchanged": true,
+      "actualMcpToolCall": false,
+      "limits": "Private-home trust/configuration discovery only; no real user trust, reload, authenticated session, or actual MCP tool invocation"
+    }
+  },
+  "sourceClientQualification": {
+    "evidence": "g3-source-client-qualification-2026-10-20.json",
+    "sha256": "674c5a347fe0e0d30db2e6a6b929a68b7c070e9ded092d4a8c3a6f9bc0cbf8e8",
+    "sourceCommit": "8f54de3cd998d5452652fe40c0b5ceeeb543c8ff",
+    "status": "PARTIAL_NATIVE_CODEX_PASSED_SOURCE_ADMISSION_AND_OTHER_CLIENTS_OPEN",
+    "registryAC08": "partial",
+    "registryAC20AC26": "Codex core/API subset passed",
+    "fullG3": "open",
+    "memoryAC43G5": "open"
   }
 }
