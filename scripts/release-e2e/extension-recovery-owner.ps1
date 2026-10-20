@@ -142,6 +142,7 @@ function Invoke-E2EInterruptedExtensionRecovery {
     if (-not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) { return }
     $script:checkpoint = ConvertTo-E2EHashtable (Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json)
     if (-not $checkpoint.Contains('extensionRecovery') -or [string]$checkpoint.extensionRecovery.status -in @('recovered', 'completed')) { return }
+    Assert-E2ESourceSnapshotDatabase
     $context = Get-E2EExtensionRecoveryContext -Record $checkpoint
     $compatibility = { param($ctx, $record, $owned) Assert-E2EExtensionRecoveryCompatibility -Record $record -Ownership $owned }
     if ([string]$checkpoint.extensionRecovery.status -eq 'declared') {

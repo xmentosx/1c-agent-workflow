@@ -718,7 +718,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
 
             # A frozen qualification copy has a restored branch DB, not a live
             # source DB. Its branch-only scope must pass the public runner while
-            # full/seed/recovery admission retains the original prerequisite.
+            # full/seed and active recovery retain the original prerequisite.
             $sourceDatabase = Join-Path $sourceSnapshot '1Cv8.1CD'
             $sourceDatabaseBytes = [IO.File]::ReadAllBytes($sourceDatabase)
             Remove-Item -LiteralPath $sourceDatabase
@@ -735,17 +735,47 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
                 @($frozenSummary.resumedStages) | Should -Not -Contain 'seed-parallel'
                 Test-Path -LiteralPath $sourceDatabase | Should -BeFalse
                 $headBeforeRefusal = (& git -C $worktreeRoot rev-parse HEAD).Trim()
+                $recoveryCheckpointPath = Join-Path $preferredRunRoot 'checkpoint.json'
+                $recoveryCheckpointBytes = [IO.File]::ReadAllBytes($recoveryCheckpointPath)
+                try {
+                    foreach ($recoveryStatus in @('absent', 'recovered', 'completed')) {
+                        $noOpCheckpoint = [Text.Encoding]::UTF8.GetString($recoveryCheckpointBytes) | ConvertFrom-Json
+                        $noOpCheckpoint.PSObject.Properties.Remove('extensionRecovery')
+                        if ($recoveryStatus -ne 'absent') {
+                            $noOpCheckpoint | Add-Member -NotePropertyName extensionRecovery -NotePropertyValue @{ status = $recoveryStatus }
+                        }
+                        [IO.File]::WriteAllText($recoveryCheckpointPath, ($noOpCheckpoint | ConvertTo-Json -Depth 32), [Text.UTF8Encoding]::new($false))
+                        $checkpointHashBefore = (Get-FileHash -LiteralPath $recoveryCheckpointPath -Algorithm SHA256).Hash
+                        $noOpOutputPath = Join-Path $tempRoot ('no-op-recovery-' + $recoveryStatus + '.json')
+                        & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot 'scripts\invoke-release-e2e.ps1') `
+                            -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $noOpOutputPath -RecoverInterruptedExtensionOnly
+                        $LASTEXITCODE | Should -Be 0
+                        (Get-FileHash -LiteralPath $recoveryCheckpointPath -Algorithm SHA256).Hash | Should -BeExactly $checkpointHashBefore
+                        Test-Path -LiteralPath $noOpOutputPath | Should -BeFalse
+                        Test-Path -LiteralPath $sourceDatabase | Should -BeFalse
+                        (& git -C $worktreeRoot rev-parse HEAD).Trim() | Should -BeExactly $headBeforeRefusal
+                    }
+                } finally { [IO.File]::WriteAllBytes($recoveryCheckpointPath, $recoveryCheckpointBytes) }
                 foreach ($scope in @('all','seed-parallel','recovery')) {
                     $scopeArguments = @()
                     if ($scope -eq 'seed-parallel') { $scopeArguments += @('-Capabilities','seed-parallel') }
-                    if ($scope -eq 'recovery') { $scopeArguments += '-RecoverInterruptedExtensionOnly' }
+                    if ($scope -eq 'recovery') {
+                        $scopeArguments += '-RecoverInterruptedExtensionOnly'
+                        $activeRecoveryCheckpoint = [Text.Encoding]::UTF8.GetString($recoveryCheckpointBytes) | ConvertFrom-Json
+                        $activeRecoveryCheckpoint.PSObject.Properties.Remove('extensionRecovery')
+                        $activeRecoveryCheckpoint | Add-Member -NotePropertyName extensionRecovery -NotePropertyValue @{ status = 'sealed' }
+                        [IO.File]::WriteAllText($recoveryCheckpointPath, ($activeRecoveryCheckpoint | ConvertTo-Json -Depth 32), [Text.UTF8Encoding]::new($false))
+                    }
                     $previousPreference = $ErrorActionPreference
                     $ErrorActionPreference = 'Continue'
                     try {
                         $missingSourceOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot 'scripts\invoke-release-e2e.ps1') `
                             -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot ('missing-source-'+$scope+'.json')) @scopeArguments 2>&1
                         $missingSourceExit = $LASTEXITCODE
-                    } finally { $ErrorActionPreference = $previousPreference }
+                    } finally {
+                        $ErrorActionPreference = $previousPreference
+                        if ($scope -eq 'recovery') { [IO.File]::WriteAllBytes($recoveryCheckpointPath, $recoveryCheckpointBytes) }
+                    }
                     $missingSourceExit | Should -Not -Be 0
                     ($missingSourceOutput -join [Environment]::NewLine) | Should -Match 'Dedicated E2E source snapshot does not contain 1Cv8.1CD'
                     (& git -C $worktreeRoot rev-parse HEAD).Trim() | Should -BeExactly $headBeforeRefusal

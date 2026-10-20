@@ -127,9 +127,8 @@ function Assert-E2ESourceSnapshotDatabase {
         throw "Dedicated E2E source snapshot does not contain 1Cv8.1CD: $sourceSnapshotPath"
     }
 }
-# Keep the existing recovery-only admission unchanged. Ordinary qualification
-# resolves its capability scope before requiring a live source database.
-if ($RecoverInterruptedExtensionOnly) { Assert-E2ESourceSnapshotDatabase }
+# Recovery resolves its checkpoint before admitting an active restore. Ordinary
+# qualification resolves its capability scope before requiring a source DB.
 if (-not $HelperPath) {
     $HelperPath = Join-Path $worktreePath ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
 }
