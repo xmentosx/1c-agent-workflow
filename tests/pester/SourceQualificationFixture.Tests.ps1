@@ -10,7 +10,9 @@
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('config','user.name','Tests')|Out-Null
         Invoke-RepositoryGit -RepositoryRoot $project -Arguments @('config','user.email','tests@example.invalid')|Out-Null
         Write-Utf8Text -Path (Join-Path $project '.agent-1c/project.json') -Value '{"aiRules":{"tools":["kilocode"]}}'
-        $published=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('rev-parse','refs/remotes/origin/develop')).stdout.Trim()
+        # A source candidate can predate the current published tip. Its sealed
+        # N-1 fixture must use a published ancestor of that candidate too.
+        $published=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('merge-base','HEAD','refs/remotes/origin/develop')).stdout.Trim()
         $ignore=(Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('show',($published+':templates/gitignore.append'))).stdout
         Write-Utf8Text -Path (Join-Path $project '.gitignore') -Value $ignore
         Write-Utf8Text -Path (Join-Path $project '.agent-1c/dependency-lock.json') -Value ('{"dependencies":{"workflowPackage":{"commit":"'+$published+'"}}}')
@@ -283,6 +285,12 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         @($continued.workflowUpdateAdmission.master.receipts).Count|Should -Be 2
         @($continued.workflowUpdateAdmission.branch.receipts).Count|Should -Be 1
         (Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop).sha256|Should -BeExactly $first.sha256
+        $configPath=Join-Path $seed.project '.agent-1c/release-e2e.json'
+        $configSha=(Get-FileHash -LiteralPath $configPath).Hash
+        foreach($alias in @($seed.project.Replace('\','/'),($seed.project.Replace('\','/')+'/./'))){
+            (Get-SourceE2EFixtureCapsule -ProjectRoot $alias -Phase Develop).sha256|Should -BeExactly $first.sha256
+            (Get-FileHash -LiteralPath $configPath).Hash|Should -BeExactly $configSha
+        }
         (Get-FileHash -LiteralPath $first.path).Hash|Should -BeExactly $capsuleSha
         (Get-FileHash -LiteralPath $dt).Hash|Should -BeExactly $dtSha
         (Read-QualificationFixtureJson -Path $first.path).workflowCommit|Should -BeExactly $manifest.workflowCommit

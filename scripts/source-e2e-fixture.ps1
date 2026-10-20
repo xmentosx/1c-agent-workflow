@@ -279,6 +279,7 @@ function Get-SourceFixtureWorkflowUpdateProof {
 
 function Get-SourceE2EFixtureCapsule {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='', [switch]$Recapture,[switch]$AcknowledgeWorkflowUpdate)
+    $ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
     if($Recapture -and $AcknowledgeWorkflowUpdate){throw 'FIXTURE_CAPTURE_OPTIONS_CONFLICT: acknowledge preserves the capsule; recapture replaces it'}
     $configPath=Join-Path $ProjectRoot '.agent-1c/release-e2e.json'
     $original=Read-Utf8Text -Path $configPath
