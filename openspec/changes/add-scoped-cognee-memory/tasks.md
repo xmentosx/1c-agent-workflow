@@ -104,3 +104,10 @@ G5/AC-43/AC-44 и full G3 остаются открытыми. G1/Q1–Q7/D9/G2,
 - [ ] Существующая installed dependency AC-43/G5: registry live binding admission/source version, остальные native frontend/11 adapters и original journeys/stands открыты. Native Q1–Q7/D9/G2 не переоткрываются и не переносятся автоматически на adapter.
 
 AC-44 использует то же будущее registry release population. Шесть областей/canonical home/ai_rules_1c/optional OpenViking прежние. Cognee calls 0; G4, Gate 6 fix/run, рабочая миграция и публикация не выполнялись.
+
+## План зависимости: Code/Graph source identity
+
+- [x] Согласовать документы с [подготовленным registry checkpoint](../add-product-project-registry/design.md#checkpoint-g3-привязка-codegraph-и-версия-источника): один владелец expected/observed, раздельные binding/indexed version/client activation, unknown provenance без вторых probes/manifest/state. Это выполненное уточнение планирования, не approval реализации или native pass.
+- [ ] В отдельно разрешённом G5 применить тот же будущий registry proof AC-08-a–h/20/26 в existing consumer acceptance 6.1–6.3: unknown версии не запрещает независимые заметки, dependent claim остаётся кандидатом; endpoint/generation не меняют IDs/home/grants; remember/recall не вызывают Code/Graph. Полный G3 не добавляется как условие старта G4; G1/G2/D9 и отдельное разрешение кода прежние.
+
+Код checkpoint, G4, Gate 6, рабочая миграция, серверные deploy/reindex и публикация не начаты этой редакцией. Приёмка AC-43/G5/44 остаётся открытой; canonical release population и matrix только у registry owner.

@@ -268,4 +268,16 @@ Focused 101/0/0 за 292.577 s плюс перекрывающийся ownership
 
 ## Dependency source/client qualification, 2026-10-20
 
+Следующее уточнение зависимости — [checkpoint Code/Graph](#зависимость-checkpoint-codegraph-и-версии-источника) ниже: только план, не закрытие source-version/live admission и не разрешение G4.
+
 [Registry-owned result](../add-product-project-registry/evidence/g3-source-client-qualification-2026-10-20.md) подтверждает native Codex core/API PM4/PM5 и reload без LLM turns, а не full source readiness/версии или активацию всех клиентов. Memory не получает probe/admission/cache: используются прежние owners/pinned context, unverified не становится ready из-за tool availability. Шесть областей/canonical home/ai_rules_1c/optional OpenViking прежние; G5/AC-43/AC-44 открыты, G4 не начинался.
+
+## Зависимость: checkpoint Code/Graph и версии источника
+
+Канонический [архитектурный checkpoint и план](../add-product-project-registry/design.md#checkpoint-g3-привязка-codegraph-и-версия-источника), [проверки AC-08-a–h](../add-product-project-registry/test-plan.md#план-проверки-привязки-codegraph-и-версии-источника) принадлежат реестру. Статус — подготовлен, отдельного разрешения реализации нет; registry live identity/version gaps остаются открытыми. Memory change не создаёт копию этого плана, manifest активного индекса или второй verifier.
+
+Память потребляет business IDs и применимость из одного applied registry context, а доказательства происхождения — с фактическим source/revision/provenance. Binding, indexed version и native client activation различаются; registry SHA, build сервера MCP и generation индекса не становятся друг другом или новой product/dataset identity. Смена endpoint/generation не создаёт новую продуктовую область и не даёт новых grants/home/applicability.
+
+Неизвестная indexed version не запрещает независимые task/workspace/developer/project/product/organization заметки. Утверждение, зависящее от неподтверждённого Code/Graph source, остаётся непроверенным кандидатом со своим origin; нельзя объявлять его доказанным для выбранного продукта/версии или автоматически обобщать в общий home. Обычная проверка применения знания и native Cognee currentness/grants сохраняются независимо. Ни Code/Graph ready, ни его отказ не означают готовность/неисправность Cognee.
+
+Memory adapter не запрашивает Code/Graph при remember/recall/startup, не включает их в обязательные prerequisites всех шести областей и не повторяет registry diagnostic. Изменений fork-owned recall-first/correction-capture/query budgets/Memory line и optional OpenViking нет; новый always-on текст/tool surface и Cognee calls этой planning работы — 0. Применимый G1, qualified G2, approved D9 и отдельное разрешение G4 сохраняются условиями начала памяти; full G3 остаётся отдельной installed dependency G5, а не новым условием начала G4. Registry AC-36–38/39, memory AC-43/G5/44 остаются открытыми. Gate 6, G4, рабочая миграция, deploy/reindex и публикация этим checkpoint не разрешаются.
