@@ -230,6 +230,10 @@ notice, explaining the extra checks, their possible cost, and that preparation
 for a working infobase or a direct request runs them. Completed and reused proof
 show its actual result and receipt; absent evidence never implies a skipped or
 passed check. The notice adds no native invocation or baseline storage.
+If a later verification fails, retain the platform outcome and receipt in the
+failure report with overall status `failed` and the original error. Do not present
+an earlier successful verification as the current result; rethrow the original
+failure even if rendering the report also fails.
 
 Preparation requires the complete `/CheckModules`, extension applicability when
 applicable, and `/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient

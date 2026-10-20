@@ -40,8 +40,16 @@ Describe "Local quality gate contract" {
         $oneActionImpact.fallback | Should -BeFalse
         @($oneActionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1")
 
-        $twoActions = $oneAction.
-            Replace('"vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus} }', '"vibecoding1c-mcp-status" { if($CatalogAction){Invoke-ItlProductProjectRecovery status}else{Show-Vibecoding1cMcpStatus | Out-Null} }')
+        # Registry dispatch may grow additional branches; mutate the same status
+        # leaf instead of assuming an obsolete spelling of the whole action.
+        $statusAst = [Management.Automation.Language.Parser]::ParseInput($oneAction, [ref]$null, [ref]$null)
+        $statusCommands = @($statusAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Show-Vibecoding1cMcpStatus'
+        }, $true))
+        $statusCommands.Count | Should -Be 1
+        $statusSpan = $statusCommands[0].Extent
+        $twoActions = $oneAction.Remove($statusSpan.StartOffset, $statusSpan.EndOffset - $statusSpan.StartOffset).
+            Insert($statusSpan.StartOffset, ($statusSpan.Text + ' | Out-Null'))
         $twoActions | Should -Not -Be $oneAction
         $actionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $twoActions -BaselineText $entrypoint
         $actionImpact.fallback | Should -BeFalse

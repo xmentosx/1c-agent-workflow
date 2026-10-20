@@ -52,6 +52,13 @@ staged-документа заменено проверкой результат
 Отказы при изменении исходников, неизвестных файлах, executable в docs и
 незавершённой Git-операции сохранены; общий failed verification не становится passed.
 
+Первый интеграционный Targeted выявил несовместимую fixture в
+`LocalTargetedSelection`: registry G2 расширил dispatch `vibecoding1c-mcp-status`,
+поэтому замена прежней полной строки не меняла entrypoint. Теперь AST находит
+единственный прежний status-вызов и добавляет тот же `Out-Null`; утверждения о
+двух named actions, точных четырёх selected suites и fallback сохранены.
+Исходный red сохранён в `build/test-results/conflict-resolution-red/worker-14.*`.
+
 ## Непроверенная приёмка
 
 В этом worktree нет `.dev.env` и настроенного disposable E2E stand. Наличие установленных платформ 1С не определяет разрешённую ИБ и не заменяет stand. Полные native сценарии A3/A5, file/server journeys, native OpenCode API и обнаружение командами свежего клиентского контекста остаются непроверенными. Для них нужен отдельный disposable stand; пользовательский PM5 не использован как тестовый. Задача 3.1 остаётся открытой, change не архивируется. Это ограничение не подменяется Pester, успешным транспортом или регистрацией source candidate.
