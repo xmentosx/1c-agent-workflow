@@ -420,8 +420,24 @@
       "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner.log"
     },
     {
-      "sha256": "f33e9e4af09d1148fd62203c665ed3cffb0d0522b3aed5e99df0fbcc661d9dac",
-      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner.json"
+      "sha256": "82f52548b10f14241bf7438d2935e6a049a57ac2ee1919157ad41d2fc4cfa1d0",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt2\\check-summary.json"
+    },
+    {
+      "sha256": "c3ae561d0b5f5b209d09b6392dd63e5b612f307e80cad5adfa071b7a3cf5a962",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\registration-attempt2\\test-selection.json"
+    },
+    {
+      "sha256": "c95498b8e5846494b5f531365e053f7ae085ecad5cb23c43566f2cb482a25386",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\register-attempt2.log"
+    },
+    {
+      "sha256": "7727bc2b57fb89b64010c5df01a1c3603abe9b360a6f068b6c5edf821a39b47a",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner-rebased.log"
+    },
+    {
+      "sha256": "c36e686ef8ccbb9cb6879c7e9e61f38247fcaa49b9cfcdfd14fc68cb72d06de9",
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner-rebased.json"
     }
   ],
   "openSpecValidation": {
@@ -452,5 +468,32 @@
     "executedGroups": 9,
     "durationMs": 617698,
     "nativeRuntimeUnchanged": true
+  },
+  "replacedOperatorArtifact": {
+    "originalSha256": "f33e9e4af09d1148fd62203c665ed3cffb0d0522b3aed5e99df0fbcc661d9dac",
+    "reason": "The follow-up focused run overwrote this diagnostic JSON. Original 2.81 s result remains in registrationAttempt1.focused and its unchanged selection-owner.log; the new focused JSON has a distinct retained path.",
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\selection-owner.json"
+  },
+  "registrationAttempt2": {
+    "durationMs": 1082089,
+    "skipped": 0,
+    "sourceHead": "1c028bac8a009da6f798269742a105835062e973",
+    "candidateCommit": "7d81bc7e70ed2e62277343a40b735fdc59a9090c",
+    "failed": 0,
+    "registration": "not committed: concurrent checkconfig-production queue moved candidate to 5d68733d and conflicted only in SourceQualityCatalog",
+    "reused": 8,
+    "passed": 1396,
+    "groups": 62,
+    "budgetStatus": "over-target",
+    "executed": 54,
+    "gateStatus": "passed"
+  },
+  "integrationContinuation": {
+    "qualifiedHistoryRef": "refs/heads/codex/g3-legacy-caller-qualified-20261020",
+    "focusedSeconds": 3.02,
+    "focusedPassed": 1,
+    "metadataConflict": "Both explicit consumers and existing numeric/budget assertions retained; no Gate 6 runtime edited by this task",
+    "base": "5d68733d61cea6cc9c3a7eaa7612310e90efc491",
+    "rebasedRuntimeCommit": "89e730df"
   }
 }
