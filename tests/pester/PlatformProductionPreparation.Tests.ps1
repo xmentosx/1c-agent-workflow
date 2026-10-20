@@ -3,7 +3,7 @@
     function Invoke-PlatformPurposeFixture {
         param([string]$Case,[string]$Extension='',[string]$Purpose='production',
             [ValidateSet('development','executed','reused','legacy')][string]$ReportPreparation='development',
-            [switch]$VerificationFails,[switch]$ReportFails)
+            [switch]$VerificationFails,[switch]$ReportFails,[switch]$FinalRestoreFails)
         $root = Join-Path $TestDrive ('Проверка с пробелом ' + [guid]::NewGuid().ToString('N'))
         [IO.Directory]::CreateDirectory($root) | Out-Null
         & {
@@ -104,9 +104,17 @@
                     function Read-DevBranchState { $script:reportState }
                     function Get-DevBranchKind { 'configuration' }
                     function Get-ExportPath { $root }
-                    function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
-                    function Restore-ConfigDumpInfoLoadSnapshot {}
-                    function Remove-ConfigDumpInfoLoadSnapshot {}
+                    $script:dumpLock=$null; $script:dumpSnapshot=$null; $script:recoveryCompleted=$false
+                    if ($FinalRestoreFails) {
+                        # Use the real snapshot/restore/remove owners. Only the native
+                        # verification boundary acquires a lock after its first restore.
+                        [IO.File]::WriteAllText((Join-Path $root 'ConfigDumpInfo.xml'),'исходный курсор')
+                        function Register-OneCFileRestorationDuty { param($Snapshot) $script:dumpSnapshot=$Snapshot }
+                    } else {
+                        function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+                        function Restore-ConfigDumpInfoLoadSnapshot {}
+                        function Remove-ConfigDumpInfoLoadSnapshot {}
+                    }
                     function Invoke-DevBranchVanessaRuntimeRelease {}
                     function Assert-VanessaVerificationPreflight {}
                     function Test-ItlFullVerificationProofEligible { $true }
@@ -130,14 +138,18 @@
                         return $script:reportPreparation
                     }
                     function Invoke-ItlVerificationCycle {
+                        if ($FinalRestoreFails) {
+                            $script:dumpLock=[IO.File]::Open((Join-Path $root 'ConfigDumpInfo.xml'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+                        }
                         if ($script:verificationFails) { throw 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.' }
                     }
-                    function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+                    function Complete-PendingDevBranchRefreshAfterVerifiedRecovery { $script:recoveryCompleted=$true }
                     function Get-VerificationState {
                         [pscustomobject]@{status='passed';effectiveStatus=$(if($script:reportPartial){'partial'}else{'passed'});isFreshPassed=(-not $script:reportPartial);assessmentIssues=$(if($script:reportPartial){@('event-log proof missing')}else{@()})}
                     }
                     if ($ReportFails) { function Set-RunUserReport { throw 'REPORT_RENDER_FAILED' } }
                     try { Invoke-DevBranchCheck 3>$null 6>$null } catch { $failure=$_.Exception.Message; $failureId=$_.FullyQualifiedErrorId }
+                    finally { if ($null -ne $script:dumpLock) { $script:dumpLock.Dispose() } }
                 }
                 'legacy-report' {
                     $proof=[pscustomobject]@{purpose='production';status='accepted-with-preexisting-findings';receiptPath=(Join-Path $root 'legacy-receipt.json')}
@@ -147,7 +159,18 @@
                 $lines=[Collections.Generic.List[string]]::new(); $lines.Add('## Результат ветки')
                 Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $(if($null -ne $second){$second}else{$proof}) 6>$null
             }
-            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;failureId=$failureId;preparation=$script:reportPreparation;report=$script:RunUserReport;firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
+            $snapshotRetained=$false; $cursorRestored=$false
+            if ($FinalRestoreFails -and $null -ne $script:dumpSnapshot) {
+                $snapshotRetained=$script:dumpSnapshot.preserveBackup -and (Test-Path -LiteralPath $script:dumpSnapshot.backupPath)
+                $cursorRestored=[IO.File]::ReadAllText($script:dumpSnapshot.path) -ceq 'исходный курсор'
+                # The production owner must retain it on failure; the test owns
+                # removal only after observing its content and recovery status.
+                if ($snapshotRetained) {
+                    $snapshotRetained=[IO.File]::ReadAllText($script:dumpSnapshot.backupPath) -ceq 'исходный курсор'
+                    Remove-Item -LiteralPath $script:dumpSnapshot.backupPath -Force
+                }
+            }
+            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;failureId=$failureId;preparation=$script:reportPreparation;report=$script:RunUserReport;snapshotRetained=$snapshotRetained;cursorRestored=$cursorRestored;recoveryCompleted=$(if($Case -in @('check-report','partial-check-report')){$script:recoveryCompleted}else{$false});firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
         }
     }
 }
@@ -316,5 +339,21 @@ Describe 'Development versus explicit production preparation' {
         $r=Invoke-PlatformPurposeFixture check-report -VerificationFails -ReportFails
         $r.failure | Should -BeExactly 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.'
         $r.failureId | Should -BeExactly $r.failure
+    }
+    It 'reports failed and retains <Preparation> CheckConfig proof when final cursor restoration fails' -ForEach @(
+        @{Preparation='executed';Display='пройдена'}
+        @{Preparation='reused';Display='пройдена'}
+        @{Preparation='legacy';Display='допущена с прежними замечаниями'}
+    ) {
+        $r=Invoke-PlatformPurposeFixture check-report -ReportPreparation $Preparation -FinalRestoreFails
+        $r.failure | Should -Match 'ConfigDumpInfo rollback failed.*Recovery snapshot was preserved'
+        $r.report | Should -Match 'Результат: failed'
+        $r.report | Should -Match ([regex]::Escape($r.failure))
+        $r.report | Should -Match ('CheckConfig: '+$Display)
+        $r.report | Should -Match ([regex]::Escape($r.preparation.receiptPath))
+        $r.report | Should -Not -Match 'fresh passed|не выполнялась|previous-verification.html'
+        $r.snapshotRetained | Should -BeTrue
+        $r.cursorRestored | Should -BeTrue
+        $r.recoveryCompleted | Should -BeFalse
     }
 }

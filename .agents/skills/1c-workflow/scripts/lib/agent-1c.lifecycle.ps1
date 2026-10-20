@@ -13720,6 +13720,12 @@ function Set-DevBranchLifecyclePostMergeHeadCheckpoint {
     Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $Operation
     if ($PostMergeHead -cne $transaction.mergeCommit -and
         -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $PostMergeHead)) {
+        # Resume already admits linear task commits after a trusted checkpoint.
+        # Keep that anchor: a cursor commit after reviewed input work must not be
+        # falsely recorded as a direct helper-owned child of the merge.
+        if ($PostMergeHead -ceq (Resolve-DevBranchLifecyclePostMergeHead -State $State -Transaction $transaction -Operation $Operation)) {
+            return
+        }
         throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($transaction.mergeCommit)' postMergeHead='$PostMergeHead'."
     }
     Update-DevBranchState -State $State -Updates @{ pendingMergePostMergeHead = $PostMergeHead }
@@ -14120,11 +14126,15 @@ function Resume-DevBranchLifecycleMergeIfPresent {
 }
 
 function Get-RefreshGitInputScopes {
+    param([switch]$DeclaredOnly)
     # These are consumed by load, dependency setup and verification inventory.
     # Declared evidence inputs override the small independent-document scope.
-    $scopes = @('src', 'tests', 'features', '.agents', '.agent-1c', 'scripts', 'templates',
-        '.dev.env', '.gitignore', '.gitattributes', 'AGENTS.md', 'USER-RULES.md', 'LLM-RULES.md',
-        (Get-ExportPath), (Get-ExtensionsPath)) + @(Get-VerificationDeclaredInputScopes)
+    $scopes = @(Get-VerificationDeclaredInputScopes)
+    if (-not $DeclaredOnly) {
+        $scopes += @('src', 'tests', 'features', '.agents', '.agent-1c', 'scripts', 'templates',
+            '.dev.env', '.gitignore', '.gitattributes', 'AGENTS.md', 'USER-RULES.md', 'LLM-RULES.md',
+            (Get-ExportPath), (Get-ExtensionsPath))
+    }
     foreach ($catalogPath in @((Get-VerificationSuiteCatalogPaths) + (Get-YAxUnitSuiteCatalogPaths))) {
         if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) { continue }
         $catalog = Read-Utf8Text -Path $catalogPath | ConvertFrom-Json -ErrorAction Stop
@@ -14141,8 +14151,30 @@ function Get-RefreshGitInputScopes {
 }
 
 function Get-RefreshGitPathDisposition {
-    param([string[]]$Paths, [string]$Operation, [string]$Phase)
+    param([string[]]$Paths, [string]$Operation, [string]$Phase, [switch]$IncludeIgnoredDeclaredInputs)
     try {
+        if ($IncludeIgnoredDeclaredInputs) {
+            # Status omits ignored untracked inputs. Without a tracked Git identity
+            # they cannot be admitted as unchanged. Inspect only declared scopes;
+            # ordinary ignored runtime/reports remain outside this admission check.
+            $declaredScopes = @(Get-RefreshGitInputScopes -DeclaredOnly)
+            $prefixes = @(foreach ($scope in $declaredScopes) {
+                $prefix = (([string]$scope -replace '\\', '/') -replace '^(\./)+', '').TrimEnd('/')
+                $wildcardAt = $prefix.IndexOfAny([char[]]@('*', '?', '['))
+                if ($wildcardAt -ge 0) {
+                    $prefix = $prefix.Substring(0, $wildcardAt)
+                    $slash = $prefix.LastIndexOf('/')
+                    $prefix = if ($slash -ge 0) { $prefix.Substring(0, $slash) } else { '.' }
+                }
+                if ($prefix) { $prefix }
+            })
+            $prefixes = @($prefixes | Sort-Object -Unique)
+            if ($prefixes.Count -gt 0) {
+                $ignored = @(Get-GitPathList -Arguments (@('--literal-pathspecs', 'ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--') + $prefixes))
+                $Paths = @($Paths) + @(Get-LifecycleGitPathDisposition -Paths $ignored -InputScopes $declaredScopes -IndependentScopes @() |
+                    Where-Object { $_.kind -eq 'input' } | ForEach-Object { $_.path })
+            }
+        }
         return @(Get-LifecycleGitPathDisposition -Paths $Paths -InputScopes (Get-RefreshGitInputScopes) -IndependentScopes @('CONTEXT.md', 'docs', 'handoffs') | ForEach-Object {
             # Independent documents cannot turn executable files into a bypass.
             if ($_.kind -eq 'independent' -and [IO.Path]::GetExtension($_.path) -notin @('.md','.json')) { $_.kind = 'unknown' }
@@ -14168,12 +14200,12 @@ function Assert-RefreshGitInputs {
     }
     $changes = @(Get-LifecycleGitChanges)
     if ($StagedOnly) { $changes = @($changes | Where-Object { $_.status[0] -notin @(' ', '?') }) }
-    if ($changes.Count -eq 0) { return }
-    $paths = @($changes.path | Where-Object { $OwnedPaths -cnotcontains $_ } | Sort-Object -Unique)
-    $dispositions = @(Get-RefreshGitPathDisposition -Paths $paths -Operation $Operation -Phase $Phase)
+    $paths = @($changes | ForEach-Object { $_.path } | Where-Object { $OwnedPaths -cnotcontains $_ } | Sort-Object -Unique)
+    $dispositions = @(Get-RefreshGitPathDisposition -Paths $paths -Operation $Operation -Phase $Phase -IncludeIgnoredDeclaredInputs:(-not $StagedOnly))
     $blocked = @($dispositions | Where-Object { $_.kind -ne 'independent' })
     if ($blocked.Count -gt 0) {
         Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths @($blocked.path)
+        $script:RunRequiredAction += ' For ignored declared inputs, include the reviewed task-owned input in version control (correct its ignore rule or force-add that exact path), commit it, then repeat the same wrapper; do not commit independent reports.'
         throw "Git worktree is not clean. LIFECYCLE_GIT_INPUTS_CHANGED operation='$Operation' phase='$Phase' paths='$($blocked.path -join ', ')'. Follow requiredAction; independent documents are preserved."
     }
 }
@@ -20116,6 +20148,7 @@ function Invoke-DevBranchCheck {
     $scenarioLoopDiagnostic = $false
     $platformPreparation = $null
     try {
+    try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
@@ -20167,6 +20200,11 @@ function Invoke-DevBranchCheck {
             $VanessaFilterTags = $selectedTags
         }
     }
+    } finally {
+        try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
+    }
+    # Final restoration belongs to the checked operation. Only after it succeeds
+    # may recovery/repair be completed and a successful user report be emitted.
     $verifiedState = Read-DevBranchState -Name $DevBranchName
     Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
     if ($trigger -eq "repair") {
@@ -20194,8 +20232,6 @@ function Invoke-DevBranchCheck {
             Complete-ItlVerificationRepairFailure
         }
         throw $checkFailure
-    } finally {
-        try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }
 }
 
