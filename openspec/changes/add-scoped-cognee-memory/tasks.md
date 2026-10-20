@@ -1,5 +1,9 @@
 # Tasks
 
+Текущая dependency qualification — [одна registry-матрица G3/AC-39](../add-product-project-registry/evidence/g3-final-qualification-2026-10-20.md): свежие Code/Graph/file/startup/same-user concurrency subsets, явные cold/performance/stand/client ограничения. Memory installed AC-43/G5 и release AC-44 остаются открытыми; статусы G1/Q1–Q7/D9/G2 сохраняются. Этот результат не разрешает G4, рабочую миграцию или публикацию и не создаёт memory updater/второй журнал приёмки.
+
+В dependency-срезе подтверждены 12 live Code/Graph controls, 48 file/role checks, classification 96 actions/8 brokers и bounded same-user serialization/status. PM4/PM5 startup over-target и cold receipt writes не закрыты; private Codex trust discovery не actual tool activation. Полные implementation/installed checkbox памяти этим не закрываются, Cognee calls 0.
+
 Registry G3-CATALOG-LEGACY-ENROLLMENT исправлен без memory enrollment state. [Общий native proof](../add-product-project-registry/evidence/g3-catalog-enrollment-fix-2026-10-20.json) подтверждает исходный PM5 путь, настоящий foreground offer/later с новым caller и поздний select/restore без legacy enrollment; memory остаётся off. Focused batches и exact qualification boundary принадлежат registry; отдельный memory ledger/updater/input bridge не добавляются.
 
 Registry AC-39 целиком открыт: Gate 6 только read-only разобран, G3-LEGACY-CALLER-OFFER сохраняет непроверенное/неисполненное предложение при первом upgrade старого caller, остальные branch/source/client/stand journeys не подменяются accepted subset. [Актуальный test-plan](../add-product-project-registry/test-plan.md#итог-повтора-enrollment-2026-10-20) сохраняет исходные failure и ограничения. AC-43/G5 и AC-44 открыты; G1/Q1–Q7/D9/G2, шесть областей и обязательное наполнение registry 5.7 прежние. G4, рабочая миграция и публикация не начинаются.

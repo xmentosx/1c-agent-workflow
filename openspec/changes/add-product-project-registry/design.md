@@ -1,5 +1,7 @@
 # Design
 
+Квалификация G3.7 на 2026-10-20 сведена в [одну матрицу доказательств и остатка](evidence/g3-final-qualification-2026-10-20.md). Она не меняет архитектуру/checkpoint или критерии: current source/live/file/same-user subsets подтверждены в указанных границах, full AC-39 открыт. Over-target startup и cold receipt writes требуют анализа существующего owner без нового runtime FAIL; G4, рабочая миграция и публикация не разрешены. Полный selected binding/client/platform proof и выпускное наполнение остаются самостоятельными условиями.
+
 ## Context
 
 Мотивация и границы — в [proposal.md](proposal.md). Проверенные endpoints, дефекты фильтрации, отличие checkout от deployed source и ссылки на владельцев — в [inventory.md](inventory.md). Сейчас registry schema v2 выбирает endpoint по host/configuration; бизнес-проект, состав продукта и несколько проектов Mantis этим не выражаются. Клиентский writer уже владеет preflight, managed sections и receipts, но не даёт атомарность всех файлов. В существующем [dispatcher](../../../.agents/skills/1c-workflow/scripts/agent-1c.ps1) конфигурация читается до и после `Enter-Agent1cLifecycleOperation`, затем выполняется основная dispatch-фаза; автоматическую синхронизацию нужно включать в этот owner path, а не дублировать в каждой команде.
