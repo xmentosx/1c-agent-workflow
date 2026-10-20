@@ -239,15 +239,15 @@ Describe 'Explicit catalog setup and bootstrap keep one selected context' {
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
     }
-    It 'never asks in a captured lifecycle continuation even if its hidden console reports input available' {
+    It 'never reads from an unvalidated continuation even if its hidden console reports input available' {
         Mock Test-InteractiveInputAvailable {return $true}
         Mock Read-InitOptional {throw 'Hidden continuation cannot receive foreground input'}
         $script:LifecycleOperationIsContinuation=$true
-        try {Invoke-ItlProductProjectPostUpdateOffer} finally {$script:LifecycleOperationIsContinuation=$false}
+        try {Invoke-ItlProductProjectPostUpdateOffer -WarningAction SilentlyContinue} finally {$script:LifecycleOperationIsContinuation=$false}
         Should -Invoke Read-InitOptional -Times 0
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
     }
-    It 'offers association in the caller only after the exact post-copy terminal and retained snapshot proof' {
+    It 'verifies the exact child terminal and retained snapshot without a second parent offer' {
         $script:CatalogPendingRead=0
         Mock Get-WorkflowUpdatePendingSnapshot {
             $script:CatalogPendingRead++
@@ -257,11 +257,18 @@ Describe 'Explicit catalog setup and bootstrap keep one selected context' {
         Mock Invoke-Agent1cFreshProcess {return @{exitCode=0}}
         Mock Get-WorkflowUpdateCompletedSnapshot {return @{receipt=@{sourceCommit='exact-source';sourceRoot='exact-root'}}}
         Mock Assert-WorkflowDevelopmentBranchRolloutComplete {return $true}
-        Mock Invoke-ItlProductProjectPostUpdateOffer {
-            Should -Invoke Assert-WorkflowDevelopmentBranchRolloutComplete -Times 1 -Exactly
-        }
+        Mock Invoke-ItlProductProjectPostUpdateOffer {throw 'The child owns the first-upgrade offer'}
         Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot @{root='itl-workflow-update-rollback-catalog'} -Source @{commit='exact-source';root='exact-root'}
-        Should -Invoke Invoke-ItlProductProjectPostUpdateOffer -Times 1 -Exactly
+        Should -Invoke Assert-WorkflowDevelopmentBranchRolloutComplete -Times 1 -Exactly
+        Should -Invoke Invoke-ItlProductProjectPostUpdateOffer -Times 0 -Exactly
+    }
+    It 'does not repeat the intermediate parent hook after an empty child answer' {
+        Mock Test-InteractiveInputAvailable {return $true}
+        Mock Read-InitOptional {throw 'Duplicate parent offer'}
+        $script:LifecycleOperationTerminalWrittenByContinuation=$true
+        try {Invoke-ItlProductProjectPostUpdateOffer} finally {$script:LifecycleOperationTerminalWrittenByContinuation=$false}
+        Should -Invoke Read-InitOptional -Times 0
+        Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
     }
     It 'keeps package success separate from a failed association' {
         Mock Test-InteractiveInputAvailable {return $true}

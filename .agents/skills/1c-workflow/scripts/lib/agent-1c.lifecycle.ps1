@@ -8454,10 +8454,6 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
     } catch {
         throw "WORKFLOW_UPDATE_SNAPSHOT_CLEANUP_REQUIRED: post-copy completed, but its snapshot could not be finalized at '$($Snapshot.root)'. Preserve the receipt and repeat update-workflow for cleanup only. $($_.Exception.Message)"
     }
-    # The captured post-copy child has no foreground input channel. Ask only
-    # after its exact terminal proof and snapshot finalization, in its caller.
-    . Import-ItlProductProjectSetup
-    Invoke-ItlProductProjectPostUpdateOffer
 }
 
 function Get-WorkflowUpdateRootBusyReason {
@@ -9935,6 +9931,10 @@ function Update-WorkflowPackage {
         Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) | Out-Null
     } else {
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
+        # New code must also offer on the FIRST upgrade from a pre-catalog
+        # caller. Input remains with this operation's validated foreground owner.
+        . Import-ItlProductProjectSetup
+        Invoke-ItlProductProjectPostUpdateOffer
     }
 }
 

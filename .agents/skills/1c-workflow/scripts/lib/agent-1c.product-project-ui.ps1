@@ -172,20 +172,35 @@ function Save-ItlProductProjectInitBinding {
 function Invoke-ItlProductProjectPostUpdateOffer {
     # The updater has already completed its package receipt and commit. A
     # separate association outcome must never turn that success into failure.
-    if((Get-ItlProductProjectBinding) -or $script:LifecycleOperationIsContinuation -or -not (Test-InteractiveInputAvailable)){return}
+    if((Get-ItlProductProjectBinding) -or -not (Test-InteractiveInputAvailable)){return}
+    # Intermediate callers may still offer after the child. The existing flag
+    # suppresses a duplicate even after an empty answer (no saved defer).
+    if(-not $script:LifecycleOperationIsContinuation -and $script:LifecycleOperationTerminalWrittenByContinuation){return}
     $preferences=Read-ItlProductProjectSetting selection
     if((Get-ItlCatalogField $preferences 'associationOffer') -eq 'later'){return}
     try{
-        $answer=[string](Read-InitOptional 'Workflow updated. Associate this local project with the catalog: choose / new / later (empty keeps it unchanged)')
-        switch($answer.Trim().ToLowerInvariant()){
-            'later' {
-                $desired=ConvertTo-Vibecoding1cMcpHashtable $preferences;$desired['associationOffer']='later'
-                Set-ItlProductProjectSetting selection $desired $preferences
-                Write-Host 'Package update completed; catalog association explicitly deferred. Use catalog select when ready.'
+        $offer={
+            $answer=[string](Read-InitOptional 'Workflow updated. Associate this local project with the catalog: choose / new / later (empty keeps it unchanged)')
+            switch($answer.Trim().ToLowerInvariant()){
+                'later' {
+                    $desired=ConvertTo-Vibecoding1cMcpHashtable $preferences;$desired['associationOffer']='later'
+                    Set-ItlProductProjectSetting selection $desired $preferences
+                    Write-Host 'Package update completed; catalog association explicitly deferred. Use catalog select when ready.'
+                }
+                'choose' {Invoke-ItlProductProjectCommand select -AllowPrompt:$true}
+                'new' {Invoke-ItlProductProjectCommand select -ProjectId new -AllowPrompt:$true}
+                default {Write-Host 'Package update completed; catalog association unchanged. No consent or defer was recorded.'}
             }
-            'choose' {Invoke-ItlProductProjectCommand select -AllowPrompt:$true}
-            'new' {Invoke-ItlProductProjectCommand select -ProjectId new -AllowPrompt:$true}
-            default {Write-Host 'Package update completed; catalog association unchanged. No consent or defer was recorded.'}
         }
-    }catch{Write-Warning ('Package update completed; catalog association needs a separate continuation: '+$_.Exception.Message)}
+        if($script:LifecycleOperationIsContinuation){
+            . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
+            Invoke-ItlProductProjectCallerInput -Body $offer
+        }else{& $offer}
+    }catch{
+        $message='Package update completed; catalog association needs a separate continuation: '+$_.Exception.Message
+        # After detaching, Windows PowerShell's warning host may retain stale
+        # console handles. The preserved capture pipe remains the output owner.
+        if($script:LifecycleOperationIsContinuation){[Console]::Out.WriteLine('WARNING: '+$message);[Console]::Out.Flush()}
+        else{Write-Warning $message}
+    }
 }
