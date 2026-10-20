@@ -1,6 +1,7 @@
 """Offline review presentation regressions; never contact the provider."""
 import ast
 import asyncio
+import os
 from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -9,6 +10,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 import unittest
+from unittest.mock import patch
 
 from patch_mcp_server import patch_review_source
 from review_evidence import split_review, evidence_for_answer
@@ -196,6 +198,7 @@ if "--native" in sys.argv:
     sys.argv.remove("--native")
 
     class NativeModelTests(unittest.IsolatedAsyncioTestCase):
+        @patch.dict(os.environ, {"ONEC_AI_TOKEN": "offline-fixture"})
         async def test_real_review_result_serializes_evidence_without_network(self):
             from MCP_1copilot import mcp_server as server
             old = server._send_prompt
