@@ -21,7 +21,7 @@ class SplitTests(unittest.TestCase):
         self.assertEqual(proof["context"] + review, assembled)
         self.assertEqual(proof["assembled_sha256"], sha256(assembled.encode()).hexdigest())
 
-    def test_search_documents_and_intermediate_summary_are_separate(self):
+    def test_intermediate_findings_stay_in_the_main_answer(self):
         text = "Замечание: имя ф неинформативно."
         context = "ИТС: материал со ссылками\n\nПромежуточная выжимка\n\n"
         tools = [{"tool_name": "Fetch_ITS", "tool_call_id": "e1",
@@ -29,13 +29,53 @@ class SplitTests(unittest.TestCase):
         result = {"final_text": text, "full_text": "Промежуточная выжимка\n\n"+text, "tool_results": tools}
         before = deepcopy(result)
         review, proof = split_review(result, context+text, str.strip)
-        self.assertEqual(review, text)
-        self.assertEqual(proof["status"], "separated")
+        self.assertEqual(review, context+text)
+        self.assertEqual(proof["status"], "unseparated")
         self.assertNotIn("tool_results", proof)
         self.assertEqual(result, before)
         self.assert_lossless(context+text, review, proof)
         proof["context"] = "changed"
         self.assertEqual(result, before)
+
+    def test_documents_separate_when_final_contains_all_assistant_text(self):
+        final = "Ошибка в расчёте: замените сложение умножением."
+        assembled = "ИТС: исходный материал\n\n" + final
+        review, proof = split_review(
+            {"full_text": final, "final_text": final}, assembled, str.strip)
+        self.assertEqual(review, final)
+        self.assertEqual(proof["status"], "separated")
+        self.assert_lossless(assembled, review, proof)
+
+    def test_completion_acknowledgement_cannot_hide_earlier_review(self):
+        final = ("Code review завершён. Основные критические ошибки исправлены "
+                 "в приведённом выше варианте кода.")
+        findings = "Количество + Цена: нужно умножение.\n\nИсправленный код\n\n"
+        assembled = "Материалы ИТС\n\n" + findings + final
+        review, proof = split_review(
+            {"full_text": findings + final, "final_text": final}, assembled, str.strip)
+        self.assertEqual(review, assembled)
+        self.assertEqual(proof["status"], "unseparated")
+        self.assert_lossless(assembled, review, proof)
+
+    def test_missing_or_unknown_full_text_keeps_all_evidence_visible(self):
+        for full in (None, "", " \n ", 123, [], {"text": "Итог"}):
+            with self.subTest(full=full):
+                assembled = "Неатрибутированные замечания\n\nИтог"
+                review, proof = split_review(
+                    {"full_text": full, "final_text": "Итог"}, assembled, str.strip)
+                self.assertEqual(review, assembled)
+                self.assertEqual(proof["status"], "unseparated")
+                self.assert_lossless(assembled, review, proof)
+
+    def test_long_final_cannot_hide_short_earlier_finding(self):
+        final = "Подробный итог.\n" * 100
+        full = "Дополнительная ошибка.\n\n" + final
+        assembled = ("Документ\n\n" + full).strip()
+        review, proof = split_review(
+            {"full_text": full, "final_text": final}, assembled, str.strip)
+        self.assertEqual(review, assembled)
+        self.assertEqual(proof["status"], "unseparated")
+        self.assert_lossless(assembled, review, proof)
 
     def test_no_additional_context_does_not_duplicate_review(self):
         review, proof = split_review({"final_text": "Один вывод"}, "Один вывод", str.strip)
@@ -61,7 +101,8 @@ class SplitTests(unittest.TestCase):
 
     def test_existing_sanitization_and_unicode_are_preserved(self):
         sanitize = lambda value: value.replace("<think>private</think>", "").strip()
-        review, proof = split_review({"final_text": "<think>private</think>Ж🙂\r\n\tСтрока"},
+        review, proof = split_review({"final_text": "<think>private</think>Ж🙂\r\n\tСтрока",
+                                     "full_text": "<think>private</think>Ж🙂\r\n\tСтрока"},
                                      "ИТС\r\n\r\nЖ🙂\r\n\tСтрока", sanitize)
         self.assertEqual(review, "Ж🙂\r\n\tСтрока")
         self.assert_lossless("ИТС\r\n\r\nЖ🙂\r\n\tСтрока", review, proof)
@@ -72,7 +113,8 @@ class SplitTests(unittest.TestCase):
         self.assertNotIn("private", repr(proof))
 
     def test_plugins_and_truncation_verdict_do_not_destroy_original_proof(self):
-        review, proof = split_review({"final_text": "Исходный итог"}, "ИТС\n\nИсходный итог", str.strip)
+        review, proof = split_review({"final_text": "Исходный итог", "full_text": "Исходный итог"},
+                                     "ИТС\n\nИсходный итог", str.strip)
         for answer in ("Вердикт усечения\n"+review, "Текст plugin"):
             retained = evidence_for_answer(proof, review, answer)
             self.assertEqual(retained["review_text"], review)
@@ -125,7 +167,7 @@ def make_scope(hook=lambda value: value, result=None, failure=None):
         if failure is not None:
             raise failure
         return result if result is not None else {
-            "final_text": "Итог", "assembled": "ИТС\n\nИтог", "tool_results": [{"id": "source"}]}
+            "final_text": "Итог", "full_text": "Итог", "assembled": "ИТС\n\nИтог", "tool_results": [{"id": "source"}]}
     scope = dict(dataclass=dataclass, field=field, List=List, Dict=Dict, Any=Any, Optional=Optional,
         AnswerResult=AnswerResult, collect=collect, _sanitize_text=str.strip,
         extract_best_text=lambda r: r["assembled"], EmptyAnswerError=ValueError,
@@ -162,6 +204,30 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.answer, "Plugin changed review")
         self.assertEqual(result.review_evidence["review_text"], "Итог")
 
+    async def test_ambiguous_review_reaches_answer_and_plugin_proof_intact(self):
+        full = "Замечание и исправленный код.\n\nВсё исправлено выше."
+        assembled = "ИТС\n\n" + full
+        exchange = {"full_text": full, "final_text": "Всё исправлено выше.",
+                    "assembled": assembled, "tool_results": [{"id": "source"}]}
+        before = deepcopy(exchange)
+        for changed in (False, True):
+            seen = []
+            def hook(text):
+                seen.append(text)
+                return "Plugin verdict" if changed else text
+            scope, calls = make_scope(hook, result=exchange)
+            value = await scope["review_1c_code"]("код")
+            proof = value.review_evidence
+            self.assertEqual(seen, [assembled])
+            self.assertEqual(proof["status"], "unseparated")
+            self.assertEqual(proof["context"], "")
+            self.assertEqual(proof.get("review_text", value.answer), assembled)
+            self.assertEqual(proof["assembled_sha256"], sha256(assembled.encode()).hexdigest())
+            self.assertEqual(value.sources, ["source"])
+            self.assertEqual(value.truncation, ["evidence"])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(exchange, before)
+
     async def test_empty_answer_and_cancellation_remain_owned_by_existing_path(self):
         scope, _ = make_scope(result={"assembled": "", "final_text": ""})
         with self.assertRaises(ValueError):
@@ -176,7 +242,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         async def collect(owner, question, context):
             await asyncio.sleep(0)
             code = context["code"]
-            return {"final_text": code, "assembled": "Evidence "+code+"\n\n"+code}
+            return {"final_text": code, "full_text": code, "assembled": "Evidence "+code+"\n\n"+code}
         scope["collect"] = collect
         values = await asyncio.gather(scope["review_1c_code"]("А"), scope["review_1c_code"]("Б"))
         self.assertEqual([v.answer for v in values], ["А", "Б"])

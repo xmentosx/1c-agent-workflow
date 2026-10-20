@@ -8,16 +8,23 @@ from hashlib import sha256
 
 
 def split_review(result, assembled, sanitize):
-    """Select a nonempty final answer only if it is an exact assembled suffix.
+    """Separate only an exact suffix containing the complete assistant text.
 
-    Unknown layouts keep the complete legacy answer. Retrieved text alone is
-    never promoted to a final review. Never copy the exchange's reasoning field.
+    A final acknowledgement can refer to earlier findings in full_text. Do not
+    move those findings out of the main answer. Missing provenance and unknown
+    layouts keep the complete legacy answer, without semantic/length heuristics.
+    Retrieved text alone is never promoted to a final review. Never copy reasoning.
     """
     final = result.get("final_text")
     final = sanitize(final.strip()) if isinstance(final, str) and final.strip() else ""
-    if final and assembled.endswith(final):
+    full = result.get("full_text")
+    full = sanitize(full.strip()) if isinstance(full, str) and full.strip() else ""
+    if final and assembled == final:
+        # No text is moved out of the answer, so no provenance is needed.
+        review, context, status = final, "", "unchanged"
+    elif final and full == final and assembled.endswith(final):
         review, context = final, assembled[:-len(final)]
-        status = "separated" if context else "unchanged"
+        status = "separated"
     else:
         review, context, status = assembled, "", "unseparated"
     # The context already contains the legacy rendered tool evidence. Do not

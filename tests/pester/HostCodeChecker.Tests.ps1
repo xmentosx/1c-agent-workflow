@@ -8,7 +8,7 @@
 }
 
 Describe 'HostCodeChecker component regressions' {
-    It "separates completed review from ITS evidence without changing prompts or filtering findings" {
+    It "keeps ambiguous review complete and separates proven ITS evidence without filtering findings" {
         $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/codechecker-beta-overlay/test_review_evidence.py'
         $previousErrorActionPreference = $ErrorActionPreference
         try {
