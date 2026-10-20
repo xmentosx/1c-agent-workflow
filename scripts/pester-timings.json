@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "defaultSeconds": 1.0,
   "files": {
+    "LifecycleGitContinuation.Tests.ps1": 34,
     "HostSourceRuntime.Tests.ps1": 85.0,
     "SourceQualityCatalog.Tests.ps1": 153.0,
     "SourceDeliveryReplan.Tests.ps1": 57.0,

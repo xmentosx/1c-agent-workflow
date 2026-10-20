@@ -122,7 +122,7 @@
             }
         }
 
-        It 'keeps <Path> staged=<Staged> blocking without absorbing or losing foreign work' -TestCases @(
+        It 'preserves <Path> staged=<Staged> while admitting independent documents and blocking other inputs' -TestCases @(
             @{Path='CONTEXT.md'; Staged=$true},
             @{Path='docs/adr/0001 Решение.md'; Staged=$true},
             @{Path='src/cf/Related.bsl'; Staged=$false},
@@ -143,12 +143,23 @@
                     [IO.File]::WriteAllText($absolute, 'чужая работа', [Text.UTF8Encoding]::new($false))
                     if ($Staged) { Invoke-Git @('add', '--', $Path) }
                     $before = Get-CurrentCommit
-                    { Assert-DevBranchLifecyclePostMergeGitState -Operation 'refresh-dev-branch' } | Should -Throw '*REFRESH_POST_MERGE_WORKTREE_CHANGED*'
-                    $script:RunRequiredAction | Should -Be 'resolve-refresh-post-merge-worktree-then-repeat-same-itl-command'
+                    $indexBefore = @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--',$Path)) -join "`0"
+                    $independent = $Path -in @('CONTEXT.md','docs/adr/0001 Решение.md','docs/other.md')
+                    if ($independent) {
+                        { Assert-DevBranchLifecyclePostMergeGitState -Operation 'refresh-dev-branch' } | Should -Not -Throw
+                    } else {
+                        { Assert-DevBranchLifecyclePostMergeGitState -Operation 'refresh-dev-branch' } | Should -Throw '*LIFECYCLE_GIT_INPUTS_CHANGED*'
+                        $script:RunRequiredAction | Should -Match '^prepare-lifecycle-git:'
+                        $script:RunBlockerOwner.paths | Should -Contain $Path
+                    }
                     [IO.File]::ReadAllText($absolute) | Should -BeExactly 'чужая работа'
                     [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/ConfigDumpInfo.xml'), 'new cursor', [Text.UTF8Encoding]::new($false))
-                    { Complete-RefreshConfigDumpInfoPostcondition -Operation 'refresh-dev-branch' -LoadResult ([pscustomobject]@{currentCommit=$before}) } | Should -Throw
-                    if ($Staged -or $Path -eq 'src/cf/Related.bsl') {
+                    if ($independent) {
+                        { Complete-RefreshConfigDumpInfoPostcondition -Operation 'refresh-dev-branch' -LoadResult ([pscustomobject]@{currentCommit=$before}) } | Should -Not -Throw
+                    } else {
+                        { Complete-RefreshConfigDumpInfoPostcondition -Operation 'refresh-dev-branch' -LoadResult ([pscustomobject]@{currentCommit=$before}) } | Should -Throw
+                    }
+                    if ($Path -eq 'src/cf/Related.bsl') {
                         (Get-CurrentCommit) | Should -Be $before
                     } else {
                         # Existing recovery checkpoints the owned cursor even
@@ -156,6 +167,7 @@
                         @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD')) | Should -Be @('src/cf/ConfigDumpInfo.xml')
                     }
                     [IO.File]::ReadAllText($absolute) | Should -BeExactly 'чужая работа'
+                    (@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--',$Path)) -join "`0") | Should -BeExactly $indexBefore
                 }
             } finally {
                 $resolved = [IO.Path]::GetFullPath($fixture.root)
@@ -1420,7 +1432,7 @@
                 }
                 $result.message | Should -Match "^$expectedCode" -Because $case
                 if ($case -eq 'dirty-tree') {
-                    $result.requiredAction | Should -Be 'resolve-refresh-post-merge-worktree-then-repeat-same-itl-command'
+                    $result.requiredAction | Should -Match '^prepare-lifecycle-git:'
                 } else {
                     $result.requiredAction | Should -BeNullOrEmpty -Because $case
                 }
@@ -2288,6 +2300,7 @@
             function Assert-DevBranchExtensionInitialized {}
             function Assert-CleanGit {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40); branchCommit = ("b" * 40) } }
+            function Assert-RefreshGitInputs {}
             function Update-DevBranchState {
                 param([object]$State, [hashtable]$Updates)
                 foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
@@ -2335,6 +2348,7 @@
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ('a' * 40); branchCommit = ('b' * 40); repairPaths = @() } }
+            function Assert-RefreshGitInputs {}
             function Sync-DevBranchContextToDotEnv {}
             function Sync-AiRules1cManagedIgnoredFilesFromMain {}
             function Sync-WorkflowManagedDependencyLockEntries {}

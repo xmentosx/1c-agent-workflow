@@ -404,12 +404,14 @@ Describe 'Source quality catalog contracts' {
         $registrySetupConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
         $callerInputConsumer = 'tests/pester/ProductProjectCallerInput.Tests.ps1'
         $registryConsumers = @($registrySetupConsumers + @($callerInputConsumer))
+        $autonomyConsumer = 'tests/pester/LifecycleGitContinuation.Tests.ps1'
         # Keep the historical 57/80 cohort. The third registry consumer proves
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 1)
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 2)
+        @($selection.tests) | Should -Contain $autonomyConsumer
         foreach($test in $registryConsumers){@($selection.tests)|Should -Contain $test}
         $registryOwner=@($catalog.contracts|Where-Object id -eq 'product-project-setup')[0]
         @($registryOwner.tests|Sort-Object)|Should -Be $registrySetupConsumers
@@ -474,8 +476,8 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer}).Count | Should -Be 83
-        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 1)
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer}).Count | Should -Be 83
+        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 2)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -484,7 +486,11 @@ Describe 'Source quality catalog contracts' {
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
         $currentParallelSpanSeconds = 936.459
         $serialReleaseSeconds = 198.938
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve
+        # Retain the lifecycle owner's measured 33.218 seconds in the combined
+        # capacity model; no removed cohort, timeout change or cache assumption.
+        $autonomyObservedSeconds = 33.218
+        [double]$trackedTimings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)

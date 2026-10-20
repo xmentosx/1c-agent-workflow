@@ -1789,6 +1789,8 @@ Use this command only from the `master` workspace. Treat any text after the comm
 $extension
 Do not load a skill and do not use `read`, `glob`, `grep`, `bash`, or any other discovery tool. Your first and only action must be to call the `itl_create_dev_workspace` tool exactly once with `kind="$kind"` and the collected values. The tool creates and registers the native workspace, initializes ITL inside it, and moves this session there. Return its result verbatim.
 
+On a ``prepare-lifecycle-git:`` failure, read ``references/lifecycle-git-continuation.md`` in the 1c-workflow skill, perform agent-owned continuation and repeat the same tool. The one-call rule applies per attempt; do not create an external worktree.
+
 If `itl_create_dev_workspace` is not present in the current tool list, return exactly `ITL_OPENCODE_WORKSPACE_TOOL_UNAVAILABLE: run /itl-update-workflow, fully restart OpenCode Desktop, and retry this command.` and stop. Do not search for its implementation and do not create an external worktree. If the tool reports `OPENCODE_WORKSPACE_API_UNAVAILABLE`, return that result and stop.
 "@
     }

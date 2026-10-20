@@ -14115,44 +14115,76 @@ function Resume-DevBranchLifecycleMergeIfPresent {
     throw "LIFECYCLE_MERGE_STATE_MISMATCH operation='$Operation' stage='$($transaction.stage)' branchCommit='$($transaction.branchCommit)' targetCommit='$($transaction.targetCommit)' head='$head'."
 }
 
+function Get-RefreshGitInputScopes {
+    # These are consumed by load, dependency setup and verification inventory.
+    # Declared evidence inputs override the small independent-document scope.
+    $scopes = @('src', 'tests', 'features', '.agents', '.agent-1c', 'scripts', 'templates',
+        '.dev.env', '.gitignore', '.gitattributes', 'AGENTS.md', 'USER-RULES.md', 'LLM-RULES.md',
+        (Get-ExportPath), (Get-ExtensionsPath)) + @(Get-VerificationDeclaredInputScopes)
+    foreach ($catalogPath in @((Get-VerificationSuiteCatalogPaths) + (Get-YAxUnitSuiteCatalogPaths))) {
+        if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) { continue }
+        $catalog = Read-Utf8Text -Path $catalogPath | ConvertFrom-Json -ErrorAction Stop
+        # Legacy catalogs express their inputs on suites/groups instead of
+        # obligations. Reuse their owner/feature/input paths as bounded scopes.
+        foreach ($entry in @(@(Get-VerificationCatalogValue -Value $catalog -Name suites -Default @()) +
+            @(Get-VerificationCatalogValue -Value $catalog -Name groups -Default @()))) {
+            foreach ($field in @('ownerPaths', 'featurePaths', 'inputPaths')) {
+                $scopes += @(Get-VerificationCatalogValue -Value $entry -Name $field -Default @())
+            }
+        }
+    }
+    return @($scopes | Where-Object { $_ } | Sort-Object -Unique)
+}
+
+function Get-RefreshGitPathDisposition {
+    param([string[]]$Paths, [string]$Operation, [string]$Phase)
+    try {
+        return @(Get-LifecycleGitPathDisposition -Paths $Paths -InputScopes (Get-RefreshGitInputScopes) -IndependentScopes @('CONTEXT.md', 'docs', 'handoffs') | ForEach-Object {
+            # Independent documents cannot turn executable files into a bypass.
+            if ($_.kind -eq 'independent' -and [IO.Path]::GetExtension($_.path) -notin @('.md','.json')) { $_.kind = 'unknown' }
+            $_
+        })
+    } catch {
+        $catalogs = @(@(Get-VerificationSuiteCatalogPaths) + @(Get-YAxUnitSuiteCatalogPaths))
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths $catalogs
+        throw "LIFECYCLE_GIT_INPUTS_UNCLASSIFIED: inspect the verification catalogs in blockerOwner and repair their declared input scopes, then repeat the same wrapper. $($_.Exception.Message)"
+    }
+}
+
+function Assert-RefreshGitInputs {
+    param([string]$Operation, [string]$Phase, [string[]]$OwnedPaths = @(), [switch]$StagedOnly)
+
+    if ($Operation -notin @('refresh-dev-branch', 'refresh-dev-branch-lite')) {
+        Assert-CleanGit
+        return
+    }
+    try { Assert-DevBranchCheckpointGitState -Operation $Operation } catch {
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths @('<unfinished-git-operation>')
+        throw
+    }
+    $changes = @(Get-LifecycleGitChanges)
+    if ($StagedOnly) { $changes = @($changes | Where-Object { $_.status[0] -notin @(' ', '?') }) }
+    if ($changes.Count -eq 0) { return }
+    $paths = @($changes.path | Where-Object { $OwnedPaths -cnotcontains $_ } | Sort-Object -Unique)
+    $dispositions = @(Get-RefreshGitPathDisposition -Paths $paths -Operation $Operation -Phase $Phase)
+    $blocked = @($dispositions | Where-Object { $_.kind -ne 'independent' })
+    if ($blocked.Count -gt 0) {
+        Set-LifecycleGitContinuation -Operation $Operation -Phase $Phase -Paths @($blocked.path)
+        throw "Git worktree is not clean. LIFECYCLE_GIT_INPUTS_CHANGED operation='$Operation' phase='$Phase' paths='$($blocked.path -join ', ')'. Follow requiredAction; independent documents are preserved."
+    }
+}
+
 function Test-RefreshIndependentDocumentationPath {
     param([string]$Path, [string]$Operation)
-
-    # These placed-once project documents are not inputs or outputs of the
-    # post-merge load. Never extend this to source, rules, settings or staging.
-    return $Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite") -and
-        ($Path -ceq "CONTEXT.md" -or $Path -cmatch '^docs/adr/[^/]+\.md$')
+    if ($Operation -notin @('refresh-dev-branch','refresh-dev-branch-lite')) { return $false }
+    return (Get-RefreshGitPathDisposition -Paths @($Path) -Operation $Operation -Phase post-load).kind -eq 'independent'
 }
 
 function Assert-DevBranchLifecyclePostMergeGitState {
     param([string]$Operation, [string[]]$AllowedPaths = @(), [switch]$StagedOnly)
-
-    if ($Operation -notin @("refresh-dev-branch", "refresh-dev-branch-lite")) {
-        Assert-CleanGit
-        return
-    }
-    # Keep the index strict: a later cursor commit must not absorb another
-    # writer's staged work. Use NUL path lists, including for untracked ADRs.
-    $staged = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--"))
-    $unmerged = @(Get-DevBranchMergeUnmergedPaths)
-    $otherPaths = @(
-        if (-not $StagedOnly) {
-            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--")
-            Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--")
-        }
-    )
-    $unexpected = @(
-        @($staged | Where-Object { $AllowedPaths -cnotcontains $_ })
-        $unmerged
-        @($otherPaths | Where-Object {
-            $AllowedPaths -cnotcontains $_ -and
-            -not (Test-RefreshIndependentDocumentationPath -Path $_ -Operation $Operation)
-        })
-    ) | Sort-Object -Unique
-    if (@($unexpected).Count -gt 0) {
-        Set-RunFailureContext -Category "runner" -RequiredAction "resolve-refresh-post-merge-worktree-then-repeat-same-itl-command"
-        throw "Git worktree is not clean. REFRESH_POST_MERGE_WORKTREE_CHANGED operation='$Operation' paths='$($unexpected -join ', ')'. Preserve these changes and the pending merge. Inspect their owner and diff; finish an authorized related repair through its owner, then repeat the same ITL command. For another active writer, recommend waiting for its checkpoint and retrying; offer an explicitly agreed checkpoint of the named changes only when waiting cannot resolve it. Never discard, stash, or commit foreign work automatically."
-    }
+    # Retain the existing callers and narrow cursor/index scope; phase input
+    # classification has one owner, including both rename endpoints.
+    Assert-RefreshGitInputs -Operation $Operation -Phase post-merge -OwnedPaths $AllowedPaths -StagedOnly:$StagedOnly
 }
 
 function Assert-DevBranchLifecycleMergePostMerge {
@@ -14560,7 +14592,7 @@ function Initialize-DevBranchRuntime {
 function Get-DevWorkspacePlan {
     Require-Value "DevBranchName" $DevBranchName | Out-Null
     Assert-MasterWorktreeContext -Operation "get-dev-workspace-plan"
-    Assert-CleanGit
+    Assert-CleanGit -Operation $(if ($DevBranchKind -eq 'extension') { 'new-extension-dev-branch' } else { 'new-dev-branch' })
 
     $safe = ConvertTo-SafeName $DevBranchName
     $branch = if ($DevBranch) { $DevBranch } else { "itldev/$safe" }
@@ -16011,7 +16043,7 @@ function New-DevBranchCore {
     }
 
     Assert-MasterWorktreeContext -Operation "new development branch"
-    Assert-CleanGit
+    Assert-CleanGit -Operation $(if ($DevBranchKind -eq 'extension') { 'new-extension-dev-branch' } else { 'new-dev-branch' })
     Assert-DevBranchUnsafeActionProtectionPromptAvailable
     Checkout-Master
 
@@ -16194,7 +16226,7 @@ function New-ExtensionDevBranch {
     $state = Get-PreparedExtensionDevBranchState
     if ($state) {
         Assert-MasterWorktreeContext -Operation "resume extension development branch provisioning"
-        Assert-CleanGit
+        Assert-CleanGit -Operation new-extension-dev-branch
         # The delegated initializer obtains its own target admission. It must
         # never wait for that target while this parent holds the master lock.
         Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
@@ -19070,6 +19102,10 @@ function Invoke-RefreshDevBranchCore {
     $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot
     try {
         $state = Invoke-DevBranchDefaultMcpSetup -State $state
+        $refreshOwnedPaths = @()
+        if (Test-RefreshManagedDependencyLockChange) { $refreshOwnedPaths += '.agent-1c/dependency-lock.json' }
+        if (Assert-RefreshTrackedKiloConfigChange -Snapshot $trackedKiloSnapshot) { $refreshOwnedPaths += [string]$trackedKiloSnapshot.repoPath }
+        Assert-RefreshGitInputs -Operation $OperationName -Phase before-load -OwnedPaths $refreshOwnedPaths
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
         $updates = @{}
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates

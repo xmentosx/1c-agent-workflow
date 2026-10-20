@@ -92,6 +92,7 @@ Do not introduce a different launcher or arbitrary runtime-source override.
 
 Choose the report or supplement under the boundaries above and set `$reportPath`
 to its actual path.
+Install/update excludes root `/handoffs/` from untracked Git status; existing tracked reports remain tracked. See [Git continuation](lifecycle-git-continuation.md) for an older installation or a lifecycle Git blocker.
 Finish or cancel the owned operation before editing files it may still load.
 After authorization, capture the original files **before editing**:
 

@@ -284,6 +284,13 @@
             $expectedRendered[$key].maxBytes += 1030
         }
 
+        # Lifecycle Git continuation adds two on-demand routes per surface:
+        # +518 UTF-8 bytes (+496 for native OpenCode master). These are additive
+        # to the retained refresh/result deltas above; no contract is removed.
+        foreach ($key in $expectedRendered.Keys) {
+            $expectedRendered[$key].maxBytes += $(if ($key -eq 'master/opencode') { 496 } else { 518 })
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {
