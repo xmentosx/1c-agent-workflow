@@ -1,7 +1,9 @@
 ﻿BeforeAll {
     $helper = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
     function Invoke-PlatformPurposeFixture {
-        param([string]$Case,[string]$Extension='',[string]$Purpose='production')
+        param([string]$Case,[string]$Extension='',[string]$Purpose='production',
+            [ValidateSet('development','executed','reused','legacy')][string]$ReportPreparation='development',
+            [switch]$VerificationFails,[switch]$ReportFails)
         $root = Join-Path $TestDrive ('Проверка с пробелом ' + [guid]::NewGuid().ToString('N'))
         [IO.Directory]::CreateDirectory($root) | Out-Null
         & {
@@ -45,7 +47,7 @@
             $fp = (Get-ConfigSourceFingerprint $root).fingerprint
             $target=Join-Path $root 'ИБ'
             $params=@{InfoBasePath=$target;InfoBaseKind='file';SourceFingerprint=$fp;ExtensionName=$Extension;User='';Password=''}
-            $failure='';$proof=$null;$second=$null
+            $failure='';$failureId='';$proof=$null;$second=$null;$script:reportPreparation=$null
             switch ($Case) {
                 'development' { $proof=Invoke-DesignerGate6CheckLadder @params -CheckProfile development }
                 'production' { $proof=Invoke-DesignerGate6CheckLadder @params -CheckProfile production }
@@ -96,7 +98,8 @@
                 { $_ -in @('check-report','partial-check-report') } {
                     $script:VerificationTrigger='command'; $script:ExplicitVerificationComponent=''
                     $script:DevBranchName='fixture'; $script:reportPartial=($Case -eq 'partial-check-report')
-                    $script:reportState=[pscustomobject]@{devBranch='itldev/fixture';lastVerificationSkippedComponents=@('event-log')}
+                    $script:reportMode=$ReportPreparation; $script:verificationFails=[bool]$VerificationFails
+                    $script:reportState=[pscustomobject]@{devBranch='itldev/fixture';lastVerificationSkippedComponents=@('event-log');lastVerifiedReportPath='previous-verification.html'}
                     function Assert-ItlVerificationRepairScope {}
                     function Read-DevBranchState { $script:reportState }
                     function Get-DevBranchKind { 'configuration' }
@@ -111,14 +114,30 @@
                     function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
                     function Update-DevBranchBase {
                         param([switch]$PassThruPlatformPreparation)
-                        if ($PassThruPlatformPreparation) { Confirm-ProductionPlatformCheck -ExportPath $root }
+                        if (-not $PassThruPlatformPreparation) { return }
+                        if ($script:reportMode -eq 'legacy') {
+                            $script:reportPreparation=[pscustomobject]@{purpose='production';status='accepted-with-preexisting-findings';receiptPath=(Join-Path $root 'legacy-receipt.json')}
+                        } elseif ($script:reportMode -eq 'development') {
+                            $script:reportPreparation=Confirm-ProductionPlatformCheck -ExportPath $root
+                        } else {
+                            $script:ResultPurpose='production'
+                            $preparationArgs=@{ExportPath=$root;SourceFingerprint=$fp;InfoBaseKind='file';InfoBasePath=$target;LoadedBaseIdentity='loaded-1';User='';Password=''}
+                            $script:reportPreparation=Confirm-ProductionPlatformCheck @preparationArgs
+                            if ($script:reportMode -eq 'reused') {
+                                $script:reportPreparation=Confirm-ProductionPlatformCheck @preparationArgs -Evidence $script:reportPreparation.evidence
+                            }
+                        }
+                        return $script:reportPreparation
                     }
-                    function Invoke-ItlVerificationCycle {}
+                    function Invoke-ItlVerificationCycle {
+                        if ($script:verificationFails) { throw 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.' }
+                    }
                     function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
                     function Get-VerificationState {
                         [pscustomobject]@{status='passed';effectiveStatus=$(if($script:reportPartial){'partial'}else{'passed'});isFreshPassed=(-not $script:reportPartial);assessmentIssues=$(if($script:reportPartial){@('event-log proof missing')}else{@()})}
                     }
-                    Invoke-DevBranchCheck 6>$null
+                    if ($ReportFails) { function Set-RunUserReport { throw 'REPORT_RENDER_FAILED' } }
+                    try { Invoke-DevBranchCheck 3>$null 6>$null } catch { $failure=$_.Exception.Message; $failureId=$_.FullyQualifiedErrorId }
                 }
                 'legacy-report' {
                     $proof=[pscustomobject]@{purpose='production';status='accepted-with-preexisting-findings';receiptPath=(Join-Path $root 'legacy-receipt.json')}
@@ -128,7 +147,7 @@
                 $lines=[Collections.Generic.List[string]]::new(); $lines.Add('## Результат ветки')
                 Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $(if($null -ne $second){$second}else{$proof}) 6>$null
             }
-            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;report=$script:RunUserReport;firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
+            [pscustomobject]@{calls=@($script:calls.ToArray());proof=$proof;second=$second;failure=$failure;failureId=$failureId;preparation=$script:reportPreparation;report=$script:RunUserReport;firstCount=$(if(Get-Variable firstCount -ErrorAction SilentlyContinue){$firstCount}else{0})}
         }
     }
 }
@@ -253,6 +272,7 @@ Describe 'Development versus explicit production preparation' {
     }
     It 'includes the notice in the actual final development check report' {
         $r=Invoke-PlatformPurposeFixture check-report
+        $r.failure | Should -BeNullOrEmpty
         $r.calls.Count | Should -Be 0
         $r.report | Should -Match '## Проверка доработок'
         $r.report | Should -Match 'Результат: fresh passed'
@@ -260,9 +280,41 @@ Describe 'Development versus explicit production preparation' {
     }
     It 'preserves partial verification and missing obligations alongside the notice' {
         $r=Invoke-PlatformPurposeFixture partial-check-report
+        $r.failure | Should -BeNullOrEmpty
         $r.report | Should -Match 'Результат: partial'
         $r.report | Should -Match 'Пропущенные компоненты: event-log'
         $r.report | Should -Match 'event-log proof missing'
         $r.report | Should -Not -Match 'fresh passed'
+    }
+    It 'retains the <Preparation> CheckConfig result when later verification fails' -ForEach @(
+        @{Preparation='executed';Display='пройдена'}
+        @{Preparation='reused';Display='пройдена'}
+        @{Preparation='legacy';Display='допущена с прежними замечаниями'}
+    ) {
+        $r=Invoke-PlatformPurposeFixture check-report -ReportPreparation $Preparation -VerificationFails
+        $r.failure | Should -BeExactly 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.'
+        $r.failureId | Should -BeExactly $r.failure
+        $r.report | Should -Match 'Результат: failed'
+        $r.report | Should -Match ([regex]::Escape($r.failure))
+        $r.report | Should -Match ('CheckConfig: ' + $Display)
+        $r.report | Should -Match ([regex]::Escape($r.preparation.receiptPath))
+        $r.report | Should -Not -Match 'fresh passed|не выполнялась|Для запуска напишите|previous-verification.html'
+        if ($Preparation -eq 'legacy') {
+            $r.report | Should -Not -Match 'CheckConfig: пройдена'
+            $r.calls.Count | Should -Be 0
+        } else { $r.calls | Should -Be @('/CheckModules','/CheckConfig') }
+    }
+    It 'retains the development skip notice without turning a later failure into success' {
+        $r=Invoke-PlatformPurposeFixture check-report -VerificationFails
+        $r.failure | Should -BeExactly 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.'
+        $r.report | Should -Match 'Результат: failed'
+        ([regex]::Matches($r.report,'Полная проверка конфигурации .* не выполнялась')).Count | Should -Be 1
+        $r.report | Should -Not -Match 'fresh passed|CheckConfig: пройдена|previous-verification.html'
+        $r.calls.Count | Should -Be 0
+    }
+    It 'preserves the original verification error even if failure reporting also fails' {
+        $r=Invoke-PlatformPurposeFixture check-report -VerificationFails -ReportFails
+        $r.failure | Should -BeExactly 'FOLLOWING_VERIFICATION_FAILED: YAxUnit regression failed.'
+        $r.failureId | Should -BeExactly $r.failure
     }
 }

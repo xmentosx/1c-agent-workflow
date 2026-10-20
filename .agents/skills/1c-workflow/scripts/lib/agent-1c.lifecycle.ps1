@@ -10764,22 +10764,26 @@ function Add-PlatformPreparationRunUserReportLines {
 }
 
 function Write-DevBranchVerificationRunUserReport {
-    param([object]$State, [AllowNull()][object]$PlatformPreparation)
+    param([object]$State, [AllowNull()][object]$PlatformPreparation, [AllowNull()][object]$Failure = $null)
 
-    $verification = Get-VerificationState -State $State
+    $verification = if ($null -eq $Failure) { Get-VerificationState -State $State } else { $null }
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('## Проверка доработок')
     Add-RunUserReportLine -Lines $lines -Label 'Ветка' -Value (Get-StateValue -State $State -Name 'devBranch' -Default '')
-    $status = if ([bool](Get-StateValue -State $verification -Name 'isFreshPassed' -Default $false)) { 'fresh passed' } else {
+    $status = if ($null -ne $Failure) { 'failed' } elseif ([bool](Get-StateValue -State $verification -Name 'isFreshPassed' -Default $false)) { 'fresh passed' } else {
         [string](Get-StateValue -State $verification -Name 'effectiveStatus' -Default (Get-StateValue -State $verification -Name 'status' -Default 'unknown'))
     }
     Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $status
-    $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
-    if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
-    $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
-    if ($issues.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Незавершённые проверки' -Value ($issues -join '; ') }
-    $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
-    if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
+    if ($null -ne $Failure) {
+        Add-RunUserReportLine -Lines $lines -Label 'Ошибка' -Value $Failure.Exception.Message
+    } else {
+        $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
+        if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
+        $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+        if ($issues.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Незавершённые проверки' -Value ($issues -join '; ') }
+        $reportPath = [string](Get-StateValue -State $State -Name 'lastVerifiedReportPath' -Default '')
+        if ($reportPath) { Add-RunUserReportLine -Lines $lines -Label 'Отчёт проверки' -Value $reportPath }
+    }
     Write-AndSetRunUserReport -Lines $lines -PlatformPreparation $PlatformPreparation
 }
 
@@ -20026,6 +20030,7 @@ function Invoke-DevBranchCheck {
     $repairAttemptConsumed = $false
     $repairVerificationPassed = $false
     $scenarioLoopDiagnostic = $false
+    $platformPreparation = $null
     try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
@@ -20093,10 +20098,18 @@ function Invoke-DevBranchCheck {
     }
     Write-DevBranchVerificationRunUserReport -State $verifiedState -PlatformPreparation $platformPreparation
     } catch {
+        $checkFailure = $_
+        if ($null -ne $platformPreparation) {
+            try {
+                Write-DevBranchVerificationRunUserReport -State $state -PlatformPreparation $platformPreparation -Failure $checkFailure
+            } catch {
+                Write-Warning "Could not render the verification failure report: $($_.Exception.Message)" -WarningAction Continue
+            }
+        }
         if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
             Complete-ItlVerificationRepairFailure
         }
-        throw
+        throw $checkFailure
     } finally {
         try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }
