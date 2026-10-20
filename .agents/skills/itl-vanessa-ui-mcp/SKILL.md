@@ -46,6 +46,8 @@ For an unknown interaction, optionally record the shortest action with `user_act
 
 ## Failure Handling
 
+For connection/cleanup failures, use the existing facade owner in [local MCP recovery](../1c-workflow/references/mcp.md#availability-recovery-and-return-to-work) before fallback; do not request a manual reset. Recovery does not replay an unknown UI action.
+
 If a call fails, report the structured facade error and its log path when present. Classify facade/backend/TestClient/path/unsafe-action failures as runner infrastructure and keep a previously passing feature unchanged. Treat syntax, unsupported-step, assertion, and product-behavior failures separately; do not relabel them as runner failures. Ignore stale or foreign-instance evidence. Then use static analysis only as an explicitly labelled diagnostic fallback: it cannot prove the missing runtime behavior.
 
 Run `/itl-check` as the only Vanessa Automation verification gate after configuration or test changes. Diagnose its current run from `status.json`, JUnit, error files, fresh event-log report/entries, `vanessa.log`, and TestClient `/Out`, in that order; `/Out` is supplementary because Enterprise may leave it empty. A screenshot is supplementary: capture the intended TestManager window before cleanup, never an arbitrary active window, and do not substitute it for structured results. Never ask the user to click through an ordinary automated run. Do not delete, skip, filter, or weaken a core assertion merely to make verification green.

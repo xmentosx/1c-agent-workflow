@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.23"
+const version = "0.4.24"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -110,6 +110,9 @@ func run(args []string) error {
 	if *surface == "gateway" {
 		addGatewayTools(server, rt)
 	} else {
+		server.AddTool(ownerRecoveryDefinition(), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return rt.call(ctx, req)
+		})
 		for _, definition := range catalog.Data.Tools {
 			tool := definition
 			server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

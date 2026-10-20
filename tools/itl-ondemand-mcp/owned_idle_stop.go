@@ -56,7 +56,11 @@ func (b *powershellBroker) StopOwnedIdle(ctx context.Context, expected *backendI
 	})
 	info, err := b.invoke(ctx, "stop", nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "ITL_ONDEMAND_IDLE_CHILD_ACTIVE:") {
+		if strings.Contains(err.Error(), "ITL_ONDEMAND_IDLE_CHILD_ACTIVE:") ||
+			strings.Contains(err.Error(), "ITL_ONDEMAND_STOP_UNCONFIRMED:") {
+			// A lifecycle drain may have already removed the registration and
+			// leases. This is not a cleanup receipt: continue through the existing
+			// signed stop, which proves retained process/port/lease cleanup.
 			return errIdleChildActive
 		}
 		return err

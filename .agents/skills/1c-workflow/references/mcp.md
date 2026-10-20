@@ -108,8 +108,16 @@ do not claim automatic attachment or demand an application restart on every refr
 Local workflow-owned MCP: do not settle for working indefinitely without it.
 Distinguish normal stopped on-demand backends from a failed facade/tool call;
 catalog resolution alone does not start 1C. Use the family's existing recovery
-below, reconcile wrong/missing client entries with `sync-client-mcp -Client`,
-then repeat the original tool operation. Keep project/worktree/infobase scope,
+below. For an exposed Vanessa or ROCTUP facade with a connection/cleanup failure,
+call `call_tool(name="itl_recover_connection", arguments={})` without asking for
+a manual reset. Its existing owner confirms cleanup, including its retained
+guard, and verifies a usable connection within at most one minute. Before a new
+normal call the facade also reconciles its pending cleanup automatically.
+Recovery never replays a previous operation: resume a safe read after success;
+inspect the effects of an unknown modifying call before deciding to issue it
+again. Preserve a failed recovery's concrete owner/identity/port error and evidence;
+do not loop unchanged attempts. Reconcile wrong/missing client entries with
+`sync-client-mcp -Client` and the owning client's supported reconnect. Keep project/worktree/infobase scope,
 guards and owned-process cleanup. A workflow defect follows
 [workflow-incidents.md](workflow-incidents.md): prepare the smallest owner repair,
 use already authorized local repair scope, preserve failed evidence, and resume

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "facadeVersion": "0.4.23",
+  "facadeVersion": "0.4.24",
   "minimumFacadeVersion": "0.4.17",
   "families": {
     "roctup": {
