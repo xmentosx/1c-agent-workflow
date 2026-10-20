@@ -18,6 +18,76 @@ Describe 'Explicit catalog setup and bootstrap keep one selected context' {
         Mock Read-InitBaseConfigurationVersion {throw 'Unexpected PM4/PM5 question'}
     }
     AfterEach {Remove-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue}
+    It 'keeps select restore later and pending catalog records out of legacy MCP enrollment' -Tag CatalogLegacyEnrollment {
+        $path=Get-Vibecoding1cMcpSelectionPath
+        Mock Get-Vibecoding1cMcpSelectionCompleteness {throw 'Catalog preferences triggered legacy readiness'}
+        $candidate=Select-ItlProductProjectCandidate five
+        $null=Invoke-ItlProductProjectAssociation $candidate
+        @((Read-Utf8Text $path|ConvertFrom-Json).PSObject.Properties.Name)|Should -Be @('productProject')
+        (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'catalog association').preserved|Should -BeTrue
+        $null=Invoke-ItlProductProjectRecovery restore
+        Test-Path -LiteralPath $path|Should -BeFalse
+        (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'restored association').preserved|Should -BeTrue
+        Mock Test-InteractiveInputAvailable {return $true}
+        Mock Read-InitOptional {return 'later'}
+        Invoke-ItlProductProjectPostUpdateOffer
+        (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'explicit later').preserved|Should -BeTrue
+        $before=Read-ItlProductProjectSetting selection
+        $desired=ConvertTo-ItlCatalogCanonicalValue $before
+        $desired['pendingCatalogRecords']=@(@{collection='projects';record=@{projectId='pending';productId='pm5';name='Pending'};status='unsubmitted'})
+        Set-ItlProductProjectSetting selection $desired $before
+        (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'retained draft').preserved|Should -BeTrue
+        (Read-ItlProductProjectSetting selection).associationOffer|Should -Be later
+        Should -Invoke Get-Vibecoding1cMcpSelectionCompleteness -Times 0
+    }
+    It 'preserves the native legacy body and its integrity failure across catalog apply and restore' -Tag CatalogLegacyEnrollment {
+        $path=Get-Vibecoding1cMcpSelectionPath
+        $legacy=@{schemaVersion=1;servers=@(@{id='code';enabled=$true;provider='remote';configId='original'});updatedAt='unchanged-native-time';custom=@{keep='exact'}}
+        Write-Vibecoding1cMcpJsonFile $path $legacy
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
+        $raw=ConvertTo-ItlCatalogCanonicalValue (Read-Utf8Text $path|ConvertFrom-Json)
+        $raw.Remove('productProject')
+        (Get-ItlCatalogHash $raw)|Should -Be (Get-ItlCatalogHash $legacy)
+        Set-ItlProductProjectSetting selection $null @{associationOffer='later'}
+        (Get-ItlCatalogHash (Read-Utf8Text $path|ConvertFrom-Json))|Should -Be (Get-ItlCatalogHash $legacy)
+        Mock Get-Vibecoding1cMcpSelectionCompleteness {return [pscustomobject]@{isComplete=$false;reasons=@('configured endpoint unavailable')}}
+        Mock Get-Vibecoding1cMcpSelectedClientConfigNames {return @('1c-code-metadata-mcp')}
+        Mock Get-Vibecoding1cMcpReadyClientConfigNames {return @()}
+        {Invoke-AiRules1cManagedMcpConfigReconcile}|Should -Throw '*ITL_MCP_RECONCILE_INTEGRITY_FAILED*'
+        Should -Invoke Get-Vibecoding1cMcpSelectionCompleteness -Times 1
+    }
+    It 'retains legacy presence for an existing empty native selection file' -Tag CatalogLegacyEnrollment {
+        $path=Get-Vibecoding1cMcpSelectionPath
+        Write-Vibecoding1cMcpJsonFile $path @{}
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
+        Test-Vibecoding1cMcpLegacySelectionPresent|Should -BeTrue
+        Set-ItlProductProjectSetting selection $null @{associationOffer='later'}
+        Test-Path -LiteralPath $path|Should -BeTrue
+        Test-Vibecoding1cMcpLegacySelectionPresent|Should -BeTrue
+    }
+    It 'does not suppress corrupt native selection as catalog-only' -Tag CatalogLegacyEnrollment {
+        $path=Get-Vibecoding1cMcpSelectionPath
+        Write-Utf8TextAtomic $path '{broken'
+        {Invoke-AiRules1cManagedMcpConfigReconcile}|Should -Throw
+    }
+    It 'inherits only catalog preferences without probing or starting legacy MCP in an unbound branch' -Tag CatalogLegacyEnrollment {
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
+        $sourceBytes=Read-Utf8Text (Get-Vibecoding1cMcpSelectionPath)
+        $branch=Join-Path $TestDrive ('Catalog-only branch '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $branch '.agent-1c'))
+        [IO.File]::WriteAllText((Join-Path $branch '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}',[Text.UTF8Encoding]::new($false))
+        $script:ProjectRoot=$branch;$script:ConfigPath=Join-Path $branch '.agent-1c/project.json'
+        Read-ProjectConfig
+        Mock Get-Vibecoding1cMcpSelectionCompleteness {throw 'Unexpected legacy inheritance probe'}
+        Mock Start-Vibecoding1cMcp {throw 'Unexpected legacy MCP start'}
+        Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $root
+        (Read-Utf8Text (Get-Vibecoding1cMcpSelectionPath))|Should -BeExactly $sourceBytes
+        (Read-Utf8Text (Join-Path $root '.agent-1c/mcp/vibecoding1c-selection.json'))|Should -BeExactly $sourceBytes
+        Test-Vibecoding1cMcpLegacySelectionPresent|Should -BeFalse
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        Should -Invoke Get-Vibecoding1cMcpSelectionCompleteness -Times 0
+        Should -Invoke Start-Vibecoding1cMcp -Times 0
+    }
     It 'selects <Project> and derives <Family> without repeating MCP or family questions' -ForEach @(@{Project='four';Family='PM4'},@{Project='five';Family='PM5'}) {
         $candidate=Select-ItlProductProjectCandidate -ProjectId $Project -AllowPrompt:$true
         $candidate.context.baseConfigurationVersion|Should -Be $Family

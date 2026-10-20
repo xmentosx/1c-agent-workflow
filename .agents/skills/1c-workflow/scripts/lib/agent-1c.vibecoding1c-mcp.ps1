@@ -551,6 +551,16 @@ function Get-Vibecoding1cMcpDefaultLocalScope {
     return "project"
 }
 
+function Test-Vibecoding1cMcpLegacySelectionPresent {
+    $path=Get-Vibecoding1cMcpSelectionPath
+    if(-not (Test-Path -LiteralPath $path -PathType Leaf)){return $false}
+    $saved=ConvertTo-Vibecoding1cMcpHashtable (Read-Vibecoding1cMcpJsonFile -Path $path)
+    # Catalog preferences share the file, but do not enroll its legacy MCP
+    # body. All historical native files (including an empty object) retain
+    # their existing selection/readiness semantics.
+    return -not ($saved.Contains('productProject') -and $saved.Count -eq 1)
+}
+
 function Read-Vibecoding1cMcpSelection {
     $path = Get-Vibecoding1cMcpSelectionPath
     $defaultConfigId = [string](Get-EnvValue -Name "VIBECODING1C_MCP_CONFIG_ID" -Default (Get-ConfigValue -Path "vibecoding1cMcp.remoteConfigId" -Default ""))
@@ -3206,6 +3216,10 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
         if(Get-ConfigValue -Path productProject -Default $null){
             . Import-ItlProductProject
             Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext;Start-Vibecoding1cMcp -AllowPrompt:$false}
+            return
+        }
+        if(-not (Test-Vibecoding1cMcpLegacySelectionPresent)){
+            Write-Host 'Inherited catalog preferences without legacy MCP setup; existing client connections are preserved.'
             return
         }
         $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry

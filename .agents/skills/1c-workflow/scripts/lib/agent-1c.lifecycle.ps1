@@ -5660,11 +5660,8 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     param([string]$Operation = "MCP reconcile", [switch]$PlanOnly)
 
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
-    $selection = Read-Vibecoding1cMcpSelection
-    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
-    $selectionPath = Get-Vibecoding1cMcpSelectionPath
-    if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("vibecoding1c MCP selection file is missing")
+    if (-not (Test-Vibecoding1cMcpLegacySelectionPresent)) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("legacy vibecoding1c MCP selection is missing; catalog-only preferences do not enable legacy setup")
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
@@ -5672,6 +5669,8 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             pruned = @()
         }
     }
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
 
     try {
         $selectedClientNames = @(Get-Vibecoding1cMcpSelectedClientConfigNames)
@@ -9016,7 +9015,7 @@ function Invoke-WorkflowPackageFilePostCopyCore {
 
         # Capture refreshed client configs in the same post-copy checkpoint.
         # Ready/committed continuations must keep their already recorded bytes.
-        if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
+        if (Test-Vibecoding1cMcpLegacySelectionPresent) {
             $mcpRegistryRefreshed = $false
             try {
                 Refresh-Vibecoding1cMcpRegistry
