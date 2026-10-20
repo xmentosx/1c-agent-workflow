@@ -14,6 +14,18 @@
 - **WHEN** изменилось название проекта или адрес его MCP, но стабильный project ID прежний
 - **THEN** прежняя проектная память остаётся связанной с ним; новая область из названия/URL не создаётся
 
+### Requirement: Доказательства Code/Graph потребляются без второй проверки
+
+Память SHALL использовать registry-owned раздельные observations binding, indexed source version и client activation, сохраняя их происхождение и границы. Registry SHA, MCP build и index generation SHALL NOT заменять productId, dataset identity или доказательство indexed revision. Memory consumer SHALL NOT добавлять Code/Graph probes на remember/recall/startup, собственный source manifest/verifier либо обязательную доступность Code/Graph для всех шести областей. Unknown source/version SHALL NOT запрещать независимые заметки или изменять Cognee grants/currentness; зависящее от такого source утверждение SHALL оставаться непроверенным кандидатом до достаточного evidence и SHALL NOT объявляться общим доказанным знанием выбранного продукта/версии. Смена source/generation SHALL NOT расширять applicability/read set/home.
+
+#### Scenario: Версия источника не подтверждена
+- **WHEN** Code/Graph даёт полезное чтение, но его active indexed revision не доказана
+- **THEN** память сохраняет unknown provenance без придуманной версии; независимые заметки допустимы, а основанный на этом чтении вывод не получает подтверждение для выбранной версии или автоматическое обобщение
+
+#### Scenario: Endpoint продукта изменился
+- **WHEN** business productId прежний, а registry owner применил другой endpoint/generation и сообщил необходимость client reload
+- **THEN** datasets и grants не меняются из-за endpoint; память не делает собственный probe и не объявляет старое evidence проверкой нового источника
+
 ### Requirement: Раздельный допуск основы и runtime памяти
 
 Зависимая реализация G4 SHALL начинаться только после применимого native G1, квалифицированного интерфейса G2 и отдельного одобрения границы D9/разрешения кода. G2 qualification SHALL опираться на действительные reader/resolver/publisher и consumer fixture, а не документы/mock. Pure G2 SHALL оставаться независимым от Cognee/D9; installed G3 SHALL отдельно владеть association/startup/applied snapshot/recovery. Память SHALL потреблять revision, provenance, выбранную применимость/home/read candidates и hashes settings/knowledge из одного resolver, не создавать второй business resolver/updater. Ни один из этих допусков SHALL NOT объявляться installed приёмкой G5.

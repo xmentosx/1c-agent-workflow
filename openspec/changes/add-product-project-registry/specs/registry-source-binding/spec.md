@@ -22,6 +22,14 @@
 
 Binding SHALL различать бизнес-ID, endpoint host/server/configuration, native namespace и наблюдаемую generation/revision. Готовность SHALL подтверждаться MCP handshake и безопасным функциональным чтением с ожидаемым контекстом; доступность URL или запись в registry недостаточны. Утверждение о версии исходников SHALL иметь соответствующее доказательство, а не только строку версии registry.
 
+Для Code/Graph система SHALL раздельно сообщать совпадение источника, доказанность indexed revision/configuration version и фактическую активацию в клиенте. Expected binding SHALL происходить из одного effective applied snapshot с overrides/disabled; observed identity SHALL происходить из метаданных активного индекса и scoped read, не echo запроса. Native namespace SHALL проверяться там, где существует; отсутствие такого понятия у Code SHALL NOT заменяться придуманным namespace. Explicit selected-project proof Graph SHALL отличаться от неподтверждённого top-level context.
+
+Обычный проект SHALL NOT требовать pin/profile на каждый релиз. Явно заданный pin SHALL проверяться; без pin система SHALL показывать наблюдаемую indexed revision, не обещать её совпадение с последним Git/mount/local workspace. Source content fingerprint/revision и версия конфигурации SHALL быть связаны владельцем индекса с фактически проиндексированными bytes и их охватом. Generation, текущий Configuration.xml, registry declaration, версия MCP/SDK или Git HEAD без учёта dirty input SHALL NOT заменять это доказательство. При смене active revision между metadata/read точное утверждение SHALL оставаться unverified до согласованного observation.
+
+Metadata и functional read SHALL различать фактический index/source layer; exact indexed claim SHALL требовать согласованного revision stamp обоих ответов. Live file/XML fallback SHALL сохранять своё provenance и SHALL NOT доказывать версию индекса. Недостаточность stamp SHALL оставлять claim unverified, без скрытого дополнительного полного сканирования исходников.
+
+Pure G2 resolver и routine startup/status SHALL NOT получать новые MCP probes. Проверка SHALL выполняться через существующие MCP metadata/call/diagnostic owners по запросу, без нового tool/service/coordinator/persistent readiness state. Старые/неполные metadata SHALL оставлять соответствующий факт unverified. Mismatch SHALL исключать источник из evidence выбранного продукта и требовать continuation только зависимой операции; недоступность вспомогательного MCP SHALL NOT блокировать независимые init/update/branch/restore или выдавать ложный pass. Source/scope repair SHALL сохранять overrides/disabled, использовать прежний sync/reload owner и повторный read; автоматические deploy/reindex/смена продукта или pin SHALL NOT выполняться.
+
 #### Scenario: Одинаковый внутренний ID
 - **WHEN** два endpoints возвращают `code-20d3eae87f48`
 - **THEN** они остаются разными источниками по полному binding; один внутренний ID не объединяет бизнес-проекты
@@ -29,6 +37,26 @@ Binding SHALL различать бизнес-ID, endpoint host/server/configura
 #### Scenario: Неожиданный namespace
 - **WHEN** endpoint доступен, но возвращает другой источник, чем выбранный
 - **THEN** роль не объявляется готовой; показывается ожидаемый и фактический binding без подмены соседним endpoint
+
+#### Scenario: Версия mount новее активного индекса
+- **WHEN** publisher читает новую Configuration.xml или Git revision, а сервер обслуживает прежний индекс
+- **THEN** current-source declaration и observed indexed revision показаны раздельно; индекс не объявляется обновлённым и не переиндексируется автоматически
+
+#### Scenario: Одна Version и разные исходники
+- **WHEN** два активных индекса имеют одинаковую строку версии конфигурации, но разные проиндексированные bytes
+- **THEN** evidence различает content revisions и охват; одинаковая Version, native ID или Git HEAD не подтверждают равенство содержимого
+
+#### Scenario: Pin и обычная актуальная линия
+- **WHEN** явный профиль требует ревизию A, а активный индекс подтверждает B
+- **THEN** работа по pinned источнику не объявляется успешной; независимая локальная работа доступна, pin не изменяется молча, а обычный проект без pin не получает обязательного version prompt
+
+#### Scenario: Недостаточная metadata старого сервера
+- **WHEN** ожидаемый scope подтверждён, но сервер не связывает active index с source revision
+- **THEN** binding и полезное scoped read могут быть подтверждены отдельно, точная версия остаётся unverified; исходная независимая команда продолжается без нового общего runtime барьера
+
+#### Scenario: Настройки записаны, клиент ещё использует старый источник
+- **WHEN** consumer подтверждает новый endpoint, а уже открытый клиент не выполнил reload
+- **THEN** client activation остаётся unverified до native вызова в его контексте; штатный reload и повторное scoped read проверяют переход, applied marker не выдаётся за live proof
 
 ### Requirement: Соблюдение области документации
 
