@@ -130,3 +130,11 @@ Gate 6, остальные source/client/platform controls, full G3 и обяз�
 - [x] Повторить исходные owner suites (133/0/0/0), paired 20 warm на прежних PM4/PM5 roots и полные 23 observations/family, cold CLI и same-user concurrency/status, 48 file/role controls и preservation. [Точные результаты, расходы, failures и пределы](evidence/g3-startup-repair-2026-10-20.md).
 
 Это subset задач 4.1/4.3/4.6/5.1/5.5, не их полная installed приёмка. Финальные warm median/p95 укладываются в цели 1/2 s; величина ускорения под общей нагрузкой ограниченно сопоставима, p95 выше paired baseline. First-CLI no-write control passed, включая bytes/mtime обеих квитанций. AC-39, memory AC-43/G5/AC-44 и остальная единая матрица открыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. RegisterChange единолично владеет mandatory Targeted и queue outcome.
+
+## Code/Graph и native client subset, 2026-10-20
+
+- [x] Выполнить четыре свежих Code/Graph handshakes, 16 safe direct tool calls, own/unknown/foreign Graph scope, duplicate Code ID и native metadata/generation, шесть unknown tuple controls и wrong namespace. [Результат](evidence/g3-source-client-qualification-2026-10-20.md).
+- [x] Через установленный Codex app-server выполнить native tools в новых PM4/PM5 roots и reload/restore с foreign negative; Unicode cwd exact, LLM turns 0. Повторить 48 file-role controls отдельно.
+- [ ] Остаток существующих 2.1/5.3/5.4/AC-08/20/26: live expected/observed admission и источник/версия; native frontend и остальные 11 adapters unverified. Полная приёмка и поддержка не ослаблены.
+
+Private synthetic catalog не release population. Full G3/AC-39, memory AC-43/G5/AC-44 открыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. Mandatory Targeted/queue outcome принадлежит existing delivery ledger.

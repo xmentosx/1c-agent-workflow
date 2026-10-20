@@ -97,3 +97,10 @@ Registry owner закрыл G3-LEGACY-CALLER-OFFER на исходном пер�
 - [x] Получить зависимый source/synthetic native repeat без переноса на full installed AC: 133 owner cases, paired/полные PM4/PM5 warm цели, первый cold no-write bytes/mtime, concurrency/status и 48 file checks passed, исходные failures сохранены.
 
 G5/AC-43/AC-44 и full G3 остаются открытыми. G1/Q1–Q7/D9/G2, шесть областей/canonical home/ai_rules_1c/optional OpenViking не меняются. G4, Gate 6 fix/run, миграция рабочих проектов и публикация не выполнялись. Квалификация и delivery принадлежат прежним registry/source owners; второго журнала не добавлено.
+
+## Dependency Code/Graph/native clients, 2026-10-20
+
+- [x] Учесть [registry qualification](../add-product-project-registry/evidence/g3-source-client-qualification-2026-10-20.md): native Codex PM4/PM5 safe tools и reload/restore, 48 file-role checks и сохранённые failures/границы. Memory proof/updater/admission не добавлены.
+- [ ] Существующая installed dependency AC-43/G5: registry live binding admission/source version, остальные native frontend/11 adapters и original journeys/stands открыты. Native Q1–Q7/D9/G2 не переоткрываются и не переносятся автоматически на adapter.
+
+AC-44 использует то же будущее registry release population. Шесть областей/canonical home/ai_rules_1c/optional OpenViking прежние. Cognee calls 0; G4, Gate 6 fix/run, рабочая миграция и публикация не выполнялись.
