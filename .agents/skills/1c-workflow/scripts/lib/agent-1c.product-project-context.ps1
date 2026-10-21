@@ -191,16 +191,18 @@ function Resolve-ItlProductProjectEndpointIntent {
     }
     $address=$null
     if(-not [Uri]::TryCreate($url,[UriKind]::Absolute,[ref]$address) -or $address.Scheme -notin @('http','https') -or $address.UserInfo -or $address.Fragment){throw 'CATALOG_SOURCE_URL_INVALID: the registry must publish an HTTP MCP URL without embedded credentials or fragments.'}
-    $declaredIdentity=Get-ItlCatalogField $candidate 'sourceIdentity' @{}
     $sourceBinding=Get-ItlCatalogField $Source 'binding' @{}
-    $expectedIdentity=[ordered]@{
-        sourceKey=(Get-ItlCatalogField $sourceBinding 'sourceKey' (Get-ItlCatalogField $declaredIdentity 'sourceKey'))
-        nativeProjectId=(Get-ItlCatalogField $sourceBinding 'nativeProjectId' (Get-ItlCatalogField $declaredIdentity 'nativeProjectId'))
-        namespace=(Get-ItlCatalogField $Source 'namespace')
-        pin=(Get-ItlCatalogField $sourceBinding 'versionPin' @{})
-        requireSourceKey=[bool](Get-ItlCatalogField $sourceBinding 'sourceKey')
+    $hostEntry=@($Registry.hosts|Where-Object {$_.hostId -ceq $Source.endpoint.hostId})[0]
+    $configuration=@((Get-ItlCatalogField $hostEntry 'configurations' @())|Where-Object {(Get-ItlCatalogField $_ 'id') -ceq (Get-ItlCatalogField $Source.endpoint 'configId')})|Select-Object -First 1
+    $published=[ordered]@{provenance='registry';configurationName=$null;configurationVersion=$null;indexedAt=$null;indexStatus=$null;publishedAt=(Get-ItlCatalogField $hostEntry 'publishedAt' (Get-ItlCatalogField $hostEntry 'hostPublishedAt'))}
+    foreach($field in @('configurationName','configurationVersion','indexedAt')){
+        $value=Get-ItlCatalogField $candidate $field
+        if(-not $value){$value=Get-ItlCatalogField $configuration $field}
+        $published[$field]=$value
     }
-    return [ordered]@{sourceId=$Source.sourceId;role=$Source.role;hostId=$Source.endpoint.hostId;serverId=$id;configId=(Get-ItlCatalogField $Source.endpoint 'configId');namespace=(Get-ItlCatalogField $Source 'namespace');viewId=$viewId;url=$url;scope='whole-source';readiness='unverified';expectedIdentity=$expectedIdentity;declaredVersion=(Get-ItlCatalogField $candidate 'configurationVersion');sourceFingerprint=(Get-ItlCatalogField $candidate 'sourceFingerprint')}
+    $published.indexStatus=Get-ItlCatalogField $configuration 'nightlyIndexStatus'
+    $scope=[ordered]@{nativeProjectId=(Get-ItlCatalogField $sourceBinding 'nativeProjectId' (Get-ItlCatalogField (Get-ItlCatalogField $candidate 'sourceIdentity' @{}) 'nativeProjectId'));namespace=(Get-ItlCatalogField $Source 'namespace')}
+    return [ordered]@{sourceId=$Source.sourceId;role=$Source.role;hostId=$Source.endpoint.hostId;serverId=$id;configId=(Get-ItlCatalogField $Source.endpoint 'configId');namespace=$scope.namespace;viewId=$viewId;url=$url;scope='whole-source';readiness='unverified';expectedScope=$scope;registry=$published;versionPin=(Get-ItlCatalogField $sourceBinding 'versionPin' @{});declaredVersion=$published.configurationVersion;sourceFingerprint=(Get-ItlCatalogField $candidate 'sourceFingerprint')}
 }
 
 function Resolve-ItlProductProjectRuntimeContext {
@@ -305,9 +307,22 @@ function Test-ItlProductProjectPreviewAlreadyApplied {
     return (Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)) -ceq (Get-ItlCatalogHash $Chosen.preferences)
 }
 
+function Get-ItlProductProjectSourceSummary {
+    param([object]$Context)
+    return @(foreach($role in @('code','graph')){
+        $resolved=Get-ItlCatalogField $Context.roles $role
+        if((Get-ItlCatalogField $resolved 'resolution') -ne 'resolved'){continue}
+        $source=Get-ItlCatalogField $resolved 'source'
+        $origin=Get-ItlCatalogField $source 'origin'
+        $usage=Get-ItlCatalogField $resolved 'usage'
+        $status=if(-not $origin -or -not $usage){'incomplete'}elseif($usage -eq 'project' -and (Get-ItlCatalogField $origin 'projectId') -cne $Context.projectId){'needs-review'}else{'declared'}
+        [ordered]@{role=$role;sourceId=$source.sourceId;origin=$origin;usage=$usage;limitations=(Get-ItlCatalogField $resolved 'limitations');descriptionStatus=$status;registry=(Get-ItlCatalogField (Get-ItlCatalogField $Context.endpointIntents $role) 'registry');nativeReadiness='unverified'}
+    })
+}
+
 function Show-ItlProductProjectPreview {
     param([object]$Preview)
-    [pscustomobject]@{project=$Preview.context.projectName;product=$Preview.context.productName;catalogRevision=$Preview.context.catalogRevision;changes=@($Preview.changes|Select-Object client,name,status);activeClientContext='unverified';integrationState='intent-unverified'}
+    [pscustomobject]@{project=$Preview.context.projectName;product=$Preview.context.productName;projectDifferences=(Get-ItlCatalogField $Preview.context 'projectContext');sources=@(Get-ItlProductProjectSourceSummary $Preview.context);catalogRevision=$Preview.context.catalogRevision;changes=@($Preview.changes|Select-Object client,name,status);activeClientContext='unverified';integrationState='intent-unverified'}
 }
 
 function Resolve-ItlProductProjectPreviewDecision {
@@ -421,7 +436,7 @@ function Initialize-ItlProductProjectContext {
 function Get-ItlProductProjectResolvedHash {
     param([object]$Context)
     $projection=[ordered]@{}
-    foreach($field in @('catalogRevision','projectId','productId','profileId','roles','links','knowledgeContext','settingsHash','knowledgeHash','endpointIntents','baseConfigurationVersion','projectName','productName','catalogPublication','inputGitObjectIds')){$projection[$field]=Get-ItlCatalogField $Context $field}
+    foreach($field in @('catalogRevision','projectId','productId','profileId','roles','links','projectContext','knowledgeContext','settingsHash','knowledgeHash','endpointIntents','baseConfigurationVersion','projectName','productName','catalogPublication','inputGitObjectIds')){$projection[$field]=Get-ItlCatalogField $Context $field}
     return Get-ItlCatalogHash $projection
 }
 

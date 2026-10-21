@@ -1,0 +1,613 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-REGISTRY-SOURCE-MODEL-20261021",
+  "observedUtc": "2026-10-21T07:42:42.646149+00:00",
+  "status": "SOURCE_ALIGNMENT_PASSED_CUSTOM_NATIVE_PASSED_PROF_NATIVE_TRANSPORT_UNVERIFIED_FULL_G3_OPEN",
+  "baseCommit": "b747fa8f64eb910269b1d9d40c5e8a11fd6d31d5",
+  "runtimeInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "bytes": 32626
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "0f5a2e78610a57511888bf057fb3140ef05f390384f76c89b66f62a1aca26731",
+      "bytes": 46683
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+      "sha256": "41715ce25935946ca898892da7d5ad241cdd061659b0ea0448e88ba7f903a3ff",
+      "bytes": 18330
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+      "sha256": "6650f571091d276c6832ff130bd8b657f7245c3e347b67c88e8cdf7dcd040184",
+      "bytes": 9747
+    },
+    {
+      "path": "templates/product-project-registry/schemas/catalog.schema.json",
+      "sha256": "f1e12ce10b8ad9eb067e1e05180efd2828f31684afd692d29da3d12a7981cba2",
+      "bytes": 10900
+    },
+    {
+      "path": "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1",
+      "sha256": "167b24cb41a2be70b1eaa46c065f695635b567ed56d5d1303c7d160aabc7d50b",
+      "bytes": 301055
+    },
+    {
+      "path": "tests/pester/ProductProjectContext.Tests.ps1",
+      "sha256": "2574972f6a22be7636d9463721d203240eba4d283ed438ab62dd41a0720dc1fb",
+      "bytes": 31915
+    },
+    {
+      "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "sha256": "88296513279e92009f99173097e40b7b8bf0b3d196d9e9cd8e42103423043b1a",
+      "bytes": 31583
+    },
+    {
+      "path": "tests/pester/HostTooling.Tests.ps1",
+      "sha256": "8be57adaaeb2556169362c43980a1cb2fdc8449b456d0a420905057fd5b31674",
+      "bytes": 375322
+    },
+    {
+      "path": "tests/pester/HostNativeTransport.Tests.ps1",
+      "sha256": "dd2773382fb7b6e41e642c921fbfb8f5aae24ce450ad36413a787e0bc6d93a42",
+      "bytes": 3487
+    },
+    {
+      "path": "tests/quality-contracts.json",
+      "sha256": "bbf973c35f399e8d2dbd74d71effd061b9e49eb42df0adeef7822a8141877dc5",
+      "bytes": 93528
+    }
+  ],
+  "deletedCandidateFiles": [
+    "vibecoding1c-mcp-host/code-source-identity/Dockerfile",
+    "vibecoding1c-mcp-host/code-source-identity/README.md",
+    "vibecoding1c-mcp-host/code-source-identity/patch.py",
+    "vibecoding1c-mcp-host/code-source-identity/source_identity.py",
+    "vibecoding1c-mcp-host/code-source-identity/test_source_identity.py"
+  ],
+  "registryMetadata": {
+    "provenance": "existing local published technical registry; no refresh/reindex",
+    "configurationName": "УправлениеПроектамиКОРП",
+    "configurationVersion": "5.0.3.66",
+    "indexedAt": "2026-10-21T02:14:46.4006997+03:00",
+    "publishedAt": "2026-10-21T02:17:02.9317436+03:00",
+    "indexStatus": null,
+    "claim": "published registry state, not fresh proof of exact per-response source revision",
+    "retainedCache": {
+      "cachePath": "C:\\Users\\xment\\AppData\\Local\\ITL\\MCP\\vibecoding1c\\registry\\registry.json",
+      "cacheRefreshed": false,
+      "cacheSha256": "D7ED53396CD1B05613B1457E796A80672C1DC6EDBA340A384D60B7A5401C078D",
+      "provenance": "Retained published technical registry, not fresh index attestation"
+    }
+  },
+  "tests": [
+    {
+      "run": "focused",
+      "passed": 314,
+      "failed": 0,
+      "skipped": 0,
+      "executedWorkers": 6,
+      "reusedWorkers": 0,
+      "workerSpanMs": 104627,
+      "runtimeIdentity": "f3d24011b8471e17822320b34c878dfacc1719e378f096c9bdc24c90c2c7e24a",
+      "files": [
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\HostTooling.Tests.ps1"
+          ],
+          "passed": 171,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\HostNativeTransport.Tests.ps1"
+          ],
+          "passed": 3,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectApply.Tests.ps1"
+          ],
+          "passed": 46,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1"
+          ],
+          "passed": 22,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectRegistry.Tests.ps1"
+          ],
+          "passed": 40,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectSetup.Tests.ps1"
+          ],
+          "passed": 32,
+          "failed": 0,
+          "execution": "executed"
+        }
+      ]
+    },
+    {
+      "run": "public-context",
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "executedWorkers": 1,
+      "reusedWorkers": 0,
+      "workerSpanMs": 38445,
+      "runtimeIdentity": "f3d24011b8471e17822320b34c878dfacc1719e378f096c9bdc24c90c2c7e24a",
+      "files": [
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectSetup.Tests.ps1"
+          ],
+          "passed": 33,
+          "failed": 0,
+          "execution": "executed"
+        }
+      ]
+    },
+    {
+      "run": "compact-context",
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0,
+      "executedWorkers": 2,
+      "reusedWorkers": 0,
+      "workerSpanMs": 49082,
+      "runtimeIdentity": "f3d24011b8471e17822320b34c878dfacc1719e378f096c9bdc24c90c2c7e24a",
+      "files": [
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1"
+          ],
+          "passed": 22,
+          "failed": 0,
+          "execution": "executed"
+        },
+        {
+          "path": [
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectSetup.Tests.ps1"
+          ],
+          "passed": 33,
+          "failed": 0,
+          "execution": "executed"
+        }
+      ]
+    }
+  ],
+  "startup": [
+    {
+      "family": "PM4",
+      "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Матрица startup PM4 98a4afe5f8b344af95c82b769ea390bb",
+      "samplesPerPhase": 20,
+      "before": {
+        "medianSeconds": 0.45773394999999995,
+        "p95Seconds": 0.5092266
+      },
+      "after": {
+        "medianSeconds": 0.64145475,
+        "p95Seconds": 0.6849782999999999
+      },
+      "medianDeltaSeconds": 0.18372080000000002,
+      "oneFetchPerOperation": true,
+      "protectedBytesAndMtimeUnchanged": true,
+      "withinOneTwoSecondTargets": true
+    },
+    {
+      "family": "PM5",
+      "stand": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Матрица startup PM5 4f851777b99844e59ab31ca661b07cd1",
+      "samplesPerPhase": 20,
+      "before": {
+        "medianSeconds": 0.430341,
+        "p95Seconds": 0.45003309999999996
+      },
+      "after": {
+        "medianSeconds": 0.6620457,
+        "p95Seconds": 0.6916061
+      },
+      "medianDeltaSeconds": 0.23170469999999999,
+      "oneFetchPerOperation": true,
+      "protectedBytesAndMtimeUnchanged": true,
+      "withinOneTwoSecondTargets": true
+    }
+  ],
+  "native": {
+    "executable": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe",
+    "sha256": "00c0f1e4099246fddcd67ec620ca8ed50827c7d70e113b7224f7a2933cf2d67c",
+    "version": "codex-cli 0.163.0-alpha.11",
+    "custom": {
+      "status": "passed",
+      "roles": [
+        "code",
+        "graph"
+      ],
+      "elapsedSeconds": 9.82750009999927,
+      "negativeEndpointAndNamespace": "offline comparator replays, not new actual endpoint calls",
+      "protectedBytesAndMtimeUnchanged": true,
+      "protectedFileCount": 20
+    },
+    "prof": {
+      "status": "unverified",
+      "reason": "native handshake failures first Graph, then Code",
+      "contextAndOwnerTests": "passed; not native read acceptance",
+      "protectedBytesAndMtimeUnchanged": true
+    },
+    "rawRpcCounts": [
+      {
+        "log": "source-native-CUSTOM-rpc.jsonl",
+        "toolCallsAttempted": 4,
+        "toolCallsReturned": 4,
+        "llmTurnRequests": 0
+      },
+      {
+        "log": "source-native-PROF-rpc.jsonl",
+        "toolCallsAttempted": 0,
+        "toolCallsReturned": 0,
+        "llmTurnRequests": 0
+      },
+      {
+        "log": "source-native-repeat-PROF-rpc.jsonl",
+        "toolCallsAttempted": 3,
+        "toolCallsReturned": 2,
+        "llmTurnRequests": 0
+      },
+      {
+        "log": "source-native-retry2-PROF-rpc.jsonl",
+        "toolCallsAttempted": 1,
+        "toolCallsReturned": 0,
+        "llmTurnRequests": 0
+      }
+    ],
+    "globalConfigUnchanged": true,
+    "llmTurns": 0,
+    "limits": "Installed Codex app-server core/API only; no desktop frontend, other client native acceptance, fresh reload or installed 1C lifecycle claim"
+  },
+  "contextCost": {
+    "selectedContextBytes": {
+      "CUSTOM": 1339,
+      "PROF": 1301
+    },
+    "observationSummaryBytes": 682,
+    "encoding": "UTF-8 compact JSON",
+    "tokenCount": "unknown; no tokenizer/model invoked",
+    "alwaysOnRulesDelta": 0,
+    "toolSchemasDelta": 0,
+    "newStartupMcpCalls": 0,
+    "newStartupLlmCalls": 0,
+    "newStartupEmbeddingCalls": 0,
+    "serverInternalUsage": "not instrumented; not claimed zero"
+  },
+  "preserved": {
+    "oldStandsAndFailedCopies": true,
+    "capsule": true,
+    "sourceHistory": true,
+    "workingProjectsUntouched": true
+  },
+  "excluded": [
+    "Gate 6 fix/run",
+    "G4/Cognee implementation",
+    "working-project migration",
+    "publication/push",
+    "Code/Graph deploy/reindex"
+  ],
+  "open": [
+    "fresh PROF native read after endpoint recovery",
+    "fresh native reload on current client/runtime",
+    "other clients/frontends/platforms and installed AC-39",
+    "real catalog/settings/functionality/source-origin population AC-36-38",
+    "memory consumer G4/G5/AC-43/44"
+  ],
+  "delivery": "Existing source-delivery queue product-project-registry-g2 owns final commit/Targeted/registration; this file does not claim publication.",
+  "harnessLimits": [
+    "First private catalog missed config ID; retained and replaced by a separate v2 fixture.",
+    "Fixture console summary field was wrong after both associations succeeded; fixtures.json and receipts were retained.",
+    "PROF relation alone did not select MCP: fixture was corrected to explicit source binding, without runtime changes or implicit inheritance.",
+    "Old Codex binary no longer present; fresh local CLI version/hash and generated method schemas verified before calls.",
+    "Initial final-test selection had wrong property; failed discovery retained, then original two suites executed with tests[] contract."
+  ],
+  "rawReferences": [
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/create-native-fixtures.ps1",
+      "sha256": "9cf1a7241b48eaf9ea58940b124224538c6b44c380f01629ec02ade6faef3709",
+      "bytes": 5850
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/create-native-fixtures.log",
+      "sha256": "561d786debf4c7cc6d0ef41c674dde0759eb9e67fe6de721b4af5e204d58019d",
+      "bytes": 697
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/create-native-fixtures-v2.log",
+      "sha256": "1db99d0a649d967aa9a7f5e4e57dd60cbce7ce568d158c3789ad216cce626238",
+      "bytes": 1508
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/complete-prof-fixture.ps1",
+      "sha256": "f744875ff483cb6c266688a3af802fcaceab53d2dfad26c629879cddd89239db",
+      "bytes": 1940
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/complete-prof-fixture.log",
+      "sha256": "95969345a3d7f8cf12fad14c3f4cbebf42661dbf14a1f2c299151284e8b871ac",
+      "bytes": 552
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/complete-prof-fixture-second.log",
+      "sha256": "3a9d90027595e9ac3a2189253f049c2e025a70a0d58139e5e90284f3c10b766b",
+      "bytes": 483
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/fixtures.json",
+      "sha256": "d7af11960664bb5cde9ea1963e9218c11fe58fd652b35f7e3333ba98964a1f36",
+      "bytes": 39979
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/capture-native.py",
+      "sha256": "29313131fd18dc4a3c399a6d155440e671a0895dfab77ff8253b95b45f3018c4",
+      "bytes": 3974
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/capture-native-prof.py",
+      "sha256": "4d35db3298810a7b47e53e86a908454fc7196d72ecac6679d0189a03c0f5eb10",
+      "bytes": 4025
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/capture-native-prof-retry2.py",
+      "sha256": "ea49704fb2fa68163399b03b45d42fdf2dde8998d6cdf976c6583be7a62ee8b0",
+      "bytes": 4032
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture.log",
+      "sha256": "070ba6c222183d9c7c87b0bf20f602b395de39ae4e08ac0a290322d04fb82be5",
+      "bytes": 907
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-current-client.log",
+      "sha256": "01b755a1650d339d5340bed2ed4723dcf2bce31ab76d874b18621484000c92ab",
+      "bytes": 944
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof.log",
+      "sha256": "abe40ae74c9b72a1c45857a381ddee36a6ace7befd0fbb0e98974e53f068b33a",
+      "bytes": 3642
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof-retry2.log",
+      "sha256": "b04d62fbfe1efc33c377d779ce0f20f662e43b48ff1b66b049108721942ff7e4",
+      "bytes": 3659
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture.json",
+      "sha256": "dd5cf36fd22db6ada4582e2825bcd49d3ea702a52631e487e5e08260eb37a636",
+      "bytes": 322191
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof.json",
+      "sha256": "5c6a27fe3b98668b0cba0ebd505f11004da7f007da88e04c2e7f18f55e7017b5",
+      "bytes": 3995
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-capture-prof-retry2.json",
+      "sha256": "c37f90dd2f56254ce574166ee3efbf549e3a97ab6f5626b3290220f6bbbd8791",
+      "bytes": 4012
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/observations-CUSTOM.json",
+      "sha256": "9dee1ea072ea95badd7087fc71e5ea6c80b66b436b288991fb0b2d17f78caf5a",
+      "bytes": 53585
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-comparison.json",
+      "sha256": "c2d0e64b29dd259ff6dae59b12d36013cf553b28c144142a501e6d76c2de9b22",
+      "bytes": 20533
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/evaluate-native.ps1",
+      "sha256": "77915ebf502ac35b064c3447d9bd7d684e1b348dfe8155e618361fc0124578d6",
+      "bytes": 4689
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/native-comparison-compact.log",
+      "sha256": "9a8c87114286be072777187a61b5ffb83136f917aa1a58907b281ff4ff462ada",
+      "bytes": 302
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/profile.ps1",
+      "sha256": "163288c07df519fe124d4387ff3e8804a541ce2f9808ebdf14e113cb8aac2a2e",
+      "bytes": 5971
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/measure-startup.ps1",
+      "sha256": "03e4f9458d159c7f70a71d03f2d2c66f1f855877411ff51e5d64eb3b21764759",
+      "bytes": 558
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/fixture-prefix.ps1",
+      "sha256": "fd292fda0c26c44416fe7d7174876d865a1bbea18aff96e1462d8a3182bf8670",
+      "bytes": 7089
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/summarize.py",
+      "sha256": "43720bdb9d0e7f7725c109df065f40adc8e4cffa17a984af59a904543c704b95",
+      "bytes": 9210
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/focused-selection.json",
+      "sha256": "4089407064fedad343a18dd55cd8fdc4ab739774aac23b93feac6d871812348f",
+      "bytes": 350
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/public-context-selection.json",
+      "sha256": "3bed93190f43c03bc001aa7e61d9e3e87e464a41ed47c753ba75f0c5614fac7a",
+      "bytes": 98
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/compact-context-selection.json",
+      "sha256": "5619212271a05b09572c3a2d9b024faf08b1d6d220aeae296b8c1b4b292c7a67",
+      "bytes": 149
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/focused/pester-shards/summary.json",
+      "sha256": "3921275eea360779e18208c5f3795f059cebca8d1680516547068aaaac1ab68d",
+      "bytes": 14997
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/focused/junit.xml",
+      "sha256": "9789a4c8bfd3192c7b5e9334fe9ab91758d1418d572bb9cc841a0b0984d3d204",
+      "bytes": 109294
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/public-context/pester-shards/summary.json",
+      "sha256": "3a029a152247172c2846e054826c8860450152c12dbfe55cc43465410ca05999",
+      "bytes": 4281
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/public-context/junit.xml",
+      "sha256": "d40c741831fe15054a9e7bd1813224ef6e80d81adaf2a1bcc6588322e2547af5",
+      "bytes": 12647
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/compact-context/pester-shards/summary.json",
+      "sha256": "3dffb9b40539da205d39e3676d6ce7a63802508a891fadc325712515ce9ac809",
+      "bytes": 6470
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/compact-context/junit.xml",
+      "sha256": "9ceb0118d6c0a848df8ff7e16e40a8083209ec9be07f9b98ff26f88235a66f97",
+      "bytes": 21609
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/compact-context-final.log",
+      "sha256": "4efcaaadb3887bf317dd0926e122274190abe9be4d1fda5a21f651bc239ad1b8",
+      "bytes": 6608
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/add-product-project-registry-validate.log",
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/add-scoped-cognee-memory-validate.log",
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891",
+      "bytes": 44
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/codex-protocol/v2/McpServerToolCallParams.json",
+      "sha256": "7039a7583a1cbf38e9e0f5fe6398ff3711acd4d654b81b0be562514087fce6ba",
+      "bytes": 380
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/codex-protocol/v2/ListMcpServerStatusParams.json",
+      "sha256": "30b978c6502b37c9f0002aeba241f41c91d4c6adf0f92d89242b62ffde415a2d",
+      "bytes": 1223
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/codex-protocol/v2/ThreadStartParams.json",
+      "sha256": "80a40a7fac15b4bf70efb7f893fb353acc0a0d30c68f54aee4f01923deca85de",
+      "bytes": 13453
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/codex-protocol/v1/InitializeParams.json",
+      "sha256": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+      "bytes": 2401
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-CUSTOM-rpc.jsonl",
+      "sha256": "c7c9a0ca00ebb11b8fc25f92aac603a4d8aa1f88b1a036155a2e91b92445ffe9",
+      "bytes": 236686
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-PROF-rpc.jsonl",
+      "sha256": "274cc8bc9bdc2e045a4fdd671c4c13cb852e3c7ec3886753965e1b3eeee5a632",
+      "bytes": 5208
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-repeat-PROF-rpc.jsonl",
+      "sha256": "4af9818eb5bdc829d2702b8f95f850be37dc6763546c5c08b3f1de6fb55a74cb",
+      "bytes": 177473
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-retry2-PROF-rpc.jsonl",
+      "sha256": "02a703549dcfe78c91b381b6193298e0b1bee834b5994c4c58951b62a56dc585",
+      "bytes": 202085
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-CUSTOM-stderr.txt",
+      "sha256": "bc30842bcd921f7d27b601d366a828d924cec67ac10f0429df89db4b68f31e11",
+      "bytes": 5588
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-PROF-stderr.txt",
+      "sha256": "bcf1d522fb91d05a5fc60c7e02c2ad1124b18e48c74dbf77afb442f48d952889",
+      "bytes": 216
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-repeat-PROF-stderr.txt",
+      "sha256": "0ec42c8ca149455cbd242f5a01e9653020a97417cd2d6bdf4e24cd200a3ef4db",
+      "bytes": 28164
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/source-native-retry2-PROF-stderr.txt",
+      "sha256": "37c4025a1fe375dd80df226fe4464436300260440d4c8c6b3a9c960c2660040a",
+      "bytes": 28747
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM4-before.json",
+      "sha256": "85a125c9af60af6700001a0507729d1c1efdf9d3d25f9c9d7deedca44b268df5",
+      "bytes": 2578
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM4-after.json",
+      "sha256": "2d81aa93fb45dd080a89773aaa44b4c73cfb9f0b635bbe8646db7f2f294de296",
+      "bytes": 2508
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM4-stand.json",
+      "sha256": "db46bec59a95638ef9b4d0c5d058d64767cae8001d271ef491d7a6b25de58706",
+      "bytes": 3116
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM5-before.json",
+      "sha256": "1275ee5b3d62578cd72c779fa16ce2b9ce8e486c07b5cfc2a70337458b492b30",
+      "bytes": 2566
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM5-after.json",
+      "sha256": "68d9378f0b171134550e32c9181ecbc92f0db9fd55a54c2c0aaedafa3d4731da",
+      "bytes": 2505
+    },
+    {
+      "path": "build/test-results/g3/registry-source-model-20261021/paired-PM5-stand.json",
+      "sha256": "9d310bec1a0bc4caa21e52def77928d7e270a303e0f2e3ff0623c832cb8f0bfe",
+      "bytes": 3116
+    },
+    {
+      "path": "build/test-results/g3/source-client-qualification-20261020/codex-native.py",
+      "sha256": "f78764280e354ea4fe4b1f6499017890b9f4d135bde34f11fae9d60eb859ead4",
+      "bytes": 6246
+    },
+    {
+      "path": "build/test-results/g3/qualify-native.py",
+      "sha256": "dff2c21fe87c66d4c7172ee8aa50374a8c84806c0c6ef891d0676e8327a5b64e",
+      "bytes": 7728
+    }
+  ]
+}

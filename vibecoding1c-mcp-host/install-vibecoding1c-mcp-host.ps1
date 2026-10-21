@@ -2388,13 +2388,6 @@ function Resolve-ServerEnv {
         $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
-    if ($ConfigState -and [string](Get-ObjectValue -Object $Server -Name 'id' -Default '') -eq 'code' -and
-        (Get-ObjectValue -Object $Server -Name 'sourceIdentityContractVersion' -Default 0) -eq 1) {
-        # Captured by the optional native generation metadata, never read as a
-        # current index fact. Existing vendor images ignore this extra variable.
-        $sourceKey=Get-HostSourceIdentityKey (Get-HostId -Config $Config) ([string]$ConfigState.configId)
-        if ($sourceKey) { $values['ITL_SOURCE_KEY'] = $sourceKey }
-    }
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "code" -and
         (Test-ModernHostServer -Server $Server)) {
         # Beta defaults to text-only replies; keep the stable dict/list transport contract.
@@ -5358,13 +5351,6 @@ function ConvertTo-RegistryConfigurations {
     return @($configurations)
 }
 
-function Get-HostSourceIdentityKey {
-    param([string]$HostId,[string]$ConfigId)
-    $key=$HostId+'/'+$ConfigId
-    if ($HostId -and $ConfigId -and $key -cmatch '^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}$') { return $key }
-    return $null
-}
-
 function ConvertTo-RegistryServers {
     param(
         [object]$State,
@@ -5411,11 +5397,9 @@ function ConvertTo-RegistryServers {
             indexedAt = [string](Get-ObjectValue -Object $server -Name "indexedAt" -Default "")
             indexInputFingerprint = [string](Get-ObjectValue -Object $server -Name "indexInputFingerprint" -Default "")
             sourceIdentity = [ordered]@{
-                contractVersion = 1
                 hostId = $HostId
                 serverId = $id
                 configId = [string](Get-ObjectValue -Object $server -Name 'configId' -Default '')
-                sourceKey = $(if ($id -in @('code','graph')) { Get-HostSourceIdentityKey $HostId ([string](Get-ObjectValue -Object $server -Name 'configId' -Default '')) } else { $null })
                 nativeProjectId = $(if ($id -eq 'graph') { [string](Get-ObjectValue -Object $server -Name 'configId' -Default '') } else { $null })
                 observedGeneration = $null
                 observedAt = $null

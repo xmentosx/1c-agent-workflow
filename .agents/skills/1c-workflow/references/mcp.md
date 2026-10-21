@@ -200,26 +200,31 @@ the installed project's infobase. Search is top-k; use `list_sppr_relations`
 continuations for complete stored relations and `read_sppr_object` for fields.
 `sppr_index_status` reports freshness and extraction/vector gaps without scanning.
 
-## Optional product source observation
+## Product and MCP source context
 
-For an explicit Code/Graph qualification, the existing
-`-Action vibecoding1c-mcp-status` accepts
-`-CatalogAction context -CatalogRecordPath <observation.json>`.
-It reads a bounded UTF-8 record and adds `sourceObservations`; it performs no
-network calls or settings writes. Without the record, ordinary context output
-is unchanged. The record has `schemaVersion=1`, the applied `catalogRevision`
-and `settingsHash`, and optional `roles.code` / `roles.graph` containing endpoint,
-checkedAt and raw correlated metadata/read request-response exchanges.
+`-Action vibecoding1c-mcp-status -CatalogAction context` reads the applied
+selection without network calls or settings writes. It shows the current project,
+its declared differences, and selected Code/Graph sources with explicit origin,
+usage, limitations and configuration/index information from registry. Preview
+uses the same source summary. Missing origin/usage is shown as incomplete; it is
+never inferred from a server name or configuration version.
 
-Report binding, indexed version, client activation and backend build separately.
-Code uses `stats.data.sourceIdentity` plus a scoped structural read with existing
-`include_provenance=true`; exact proof requires a coherent native index stamp.
-Graph v2 selected-project status/fulltext context can prove scope while its
-indexed version remains unknown. HTTP proof alone does not establish native
-client activation. Missing metadata is unverified; continue with local code or
-use existing sync/reload and repeat the scoped read. Do not deploy, reindex or
-change the product automatically. Observations apply to their captured time and
-session and are never a currentness cache or a Startup requirement.
+A customized project can explicitly use a typical base product. Its changes
+require project/local evidence. PROF can explicitly use CORP as a reference;
+apply the target product's knowledge-area rules and exclusions before claiming
+a function is available. `own` means an explicit connection, not ownership of
+its code. Source version is not automatically the local project's version.
+
+For an explicit connection check, add `-CatalogRecordPath <observation.json>`.
+The bounded UTF-8 record has `schemaVersion=1`, applied `catalogRevision` and
+`settingsHash`, and optional `roles.code`/`roles.graph` with endpoint, checkedAt
+and raw correlated read exchanges; metadata exchanges are optional. The helper
+compares the actual selected endpoint and supported native selectors. Code needs
+no sourceKey/index stamp. Graph can use selected-project/fulltext context without
+an active revision. Registry versions and client activation are separate facts;
+HTTP proof alone does not establish native activation. Use existing sync/reload
+and a scoped read for a stale connection, or continue with local code. No server
+patch/reindex, automatic product substitution or Startup probe is introduced.
 
 ## Vanessa UI MCP
 
