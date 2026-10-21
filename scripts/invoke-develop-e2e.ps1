@@ -55,6 +55,7 @@ foreach ($requestedJourney in $requestedJourneys) {
 }
 $freshRoot = ""
 $freshBranchRoot = ""
+$freshWorktreeLease = $null
 $staleStandCleanup = $null
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
@@ -588,6 +589,7 @@ try {
             [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
             Get-BranchWorktree -Root $freshRoot -Name $branchName
         }
+        $freshWorktreeLease = Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot -BranchPath $freshBranchRoot
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "missing-suite-recovery" -Operation {
             [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
         })
@@ -631,6 +633,8 @@ try {
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "close-and-cleanup" -Operation {
             [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
+            Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease
+            $freshWorktreeLease = $null
             [void](Invoke-DevelopProcess -Name 'fresh-source-seed-unchanged' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
                 '-Action','Capture','-Phase','Develop','-ProjectRoot',$freshSeedProjectRoot,'-AgentTarget',$AgentTarget,
                 '-OutputPath',(Join-Path $outputRoot 'fresh-source-seed-confirmation.json')) -TimeoutSeconds 180)
@@ -742,6 +746,8 @@ try {
     }
     $payload['fixtureCopyCleanup']=$copyCleanup
     Write-QualificationFixtureJson -Path $OutputPath -Value $payload
+    try { Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease }
+    catch { Write-Warning "Fresh journey worktree retained: $($_.Exception.Message)" }
 }
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }
