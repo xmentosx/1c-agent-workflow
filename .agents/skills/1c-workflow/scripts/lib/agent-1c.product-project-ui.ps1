@@ -102,19 +102,24 @@ function Invoke-ItlProductProjectAssociation {
 }
 
 function Invoke-ItlProductProjectCommand {
-    param([ValidateSet('list','preview','select','create','sync','context')][string]$Mode,[string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [string]$Decision='', [int]$Limit=10,[bool]$AllowPrompt=$false)
+    param([ValidateSet('list','preview','select','create','sync','context')][string]$Mode,[string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [string]$Decision='', [int]$Limit=10,[bool]$AllowPrompt=$false,[switch]$AsJson)
     if($Mode -eq 'context'){
         $applied=Read-ItlProductProjectRecord applied
-        if(-not $applied){return [pscustomobject]@{status='unbound';continuation='Use catalog select/preview explicitly.'}}
-        $context=$applied.context
-        $sourceObservations=$null
-        if($RecordPath){
-            . (Join-Path $PSScriptRoot 'agent-1c.product-source-evidence.ps1')
-            $sourceObservations=Read-ItlProductSourceObservations $context $RecordPath
+        if(-not $applied){$report=[pscustomobject]@{status='unbound';continuation='Use catalog select/preview explicitly.'}}
+        else {
+            $context=$applied.context
+            $sourceObservations=$null
+            if($RecordPath){
+                . (Join-Path $PSScriptRoot 'agent-1c.product-source-evidence.ps1')
+                $sourceObservations=Read-ItlProductSourceObservations $context $RecordPath
+            }
+            $integrationDefaults=@{mantisSearch=(Get-ItlProductProjectIntegrationIntent $context mantis-search);mantisCreateRoutes=(Get-ItlCatalogField (Get-ItlCatalogField (Get-ItlCatalogField $context.links 'mantis') 'value') 'createRoutes' @{});sppr=(Get-ItlProductProjectIntegrationIntent $context sppr-exact)}
+            $report=[pscustomobject]@{projectDifferences=(Get-ItlCatalogField $context 'projectContext');sources=@(Get-ItlProductProjectSourceSummary $context);project=$context.projectName;projectId=$context.projectId;product=$context.productName;productId=$context.productId;catalogRevision=$applied.catalogRevision;publication=(Get-ItlCatalogField $context 'catalogPublication');roles=@($context.roles.Keys|ForEach-Object {@{role=$_;mode=$context.roles[$_].mode;resolution=$context.roles[$_].resolution;sourceId=(Get-ItlCatalogField $context.roles[$_].source 'sourceId');nativeReadiness='unverified'}});links=$context.links;integrationDefaults=$integrationDefaults;nativeRoleOverrides=(Get-ItlCatalogField $context 'nativeRoleOverrides' @{});clientOverrideCount=@(Get-ItlCatalogKeys (Get-ItlCatalogField $context 'nativeClientOverrides' @{})).Count;activeClientContext='unverified'}
+            if($RecordPath){$report|Add-Member -NotePropertyName sourceObservations -NotePropertyValue $sourceObservations}
         }
-        $integrationDefaults=@{mantisSearch=(Get-ItlProductProjectIntegrationIntent $context mantis-search);mantisCreateRoutes=(Get-ItlCatalogField (Get-ItlCatalogField (Get-ItlCatalogField $context.links 'mantis') 'value') 'createRoutes' @{});sppr=(Get-ItlProductProjectIntegrationIntent $context sppr-exact)}
-        $report=[pscustomobject]@{projectDifferences=(Get-ItlCatalogField $context 'projectContext');sources=@(Get-ItlProductProjectSourceSummary $context);project=$context.projectName;projectId=$context.projectId;product=$context.productName;productId=$context.productId;catalogRevision=$applied.catalogRevision;publication=(Get-ItlCatalogField $context 'catalogPublication');roles=@($context.roles.Keys|ForEach-Object {@{role=$_;mode=$context.roles[$_].mode;resolution=$context.roles[$_].resolution;sourceId=(Get-ItlCatalogField $context.roles[$_].source 'sourceId');nativeReadiness='unverified'}});links=$context.links;integrationDefaults=$integrationDefaults;nativeRoleOverrides=(Get-ItlCatalogField $context 'nativeRoleOverrides' @{});clientOverrideCount=@(Get-ItlCatalogKeys (Get-ItlCatalogField $context 'nativeClientOverrides' @{})).Count;activeClientContext='unverified'}
-        if($RecordPath){$report|Add-Member -NotePropertyName sourceObservations -NotePropertyValue $sourceObservations}
+        # The public CLI must not let PowerShell collapse nested source details.
+        # Internal consumers keep the same DTO; serialize only on explicit output.
+        if($AsJson){return ($report|ConvertTo-Json -Depth 20 -Compress)}
         return $report
     }
     Invoke-Vibecoding1cMcpRegistryOperation {

@@ -203,7 +203,10 @@ continuations for complete stored relations and `read_sppr_object` for fields.
 ## Product and MCP source context
 
 `-Action vibecoding1c-mcp-status -CatalogAction context` reads the applied
-selection without network calls or settings writes. It shows the current project,
+selection without network calls or settings writes. The CLI emits compact UTF-8
+JSON, including nested values; no extra serialization pipeline is needed.
+Internal `Invoke-ItlProductProjectCommand context` callers keep the object result.
+It shows the current project,
 its declared differences, and selected Code/Graph sources with explicit origin,
 usage, limitations and configuration/index information from registry. Preview
 uses the same source summary. Missing origin/usage is shown as incomplete; it is
