@@ -5,8 +5,8 @@ client settings, fetch a registry or call Cognee. G3 owns those integrations.
 
 `schemas/` contains version-1 JSON Schema contracts. The PowerShell 5.1 validator
 evaluates the vocabulary used by these package-owned files: local definitions,
-type, properties/required/additionalProperties, enum, pattern/minLength,
-items/minItems/uniqueItems and minimum. Reference integrity, cycles, role matching,
+type, properties/required/additionalProperties, enum, pattern/minLength/maxLength,
+items/minItems/maxItems/uniqueItems, minProperties and minimum. Reference integrity, cycles, role matching,
 canonical home and Mantis subsets/routes are checked by the same catalog owner.
 Unknown optional metadata survives reading; it is not a new policy language.
 Catalog IDs are lowercase stable business identifiers. Rename changes `name`.
@@ -63,3 +63,30 @@ The versioned schemas/pilot files are source inputs, not a published catalog.
 Do not copy source-only AGENTS/OpenSpec into installed projects. Deployment,
 client support canary, native bindings, installed migration and memory G4/G5
 remain separate work.
+
+## Explicit project and source differences
+
+Optional `sources[].origin` declares `productId` and, for a project's own source,
+`projectId`. IDs must reference the same catalog. `projects[].customizations`
+and `roles.<role>.limitations` use `{summary, references?}`: summary is at most
+512 characters, with up to eight references of at most 512 characters each.
+These are human-maintained facts, not a feature classifier or a second catalog.
+The existing `customized` boolean remains separate and absent values remain
+unknown; old records are read without automatic backfill or migration.
+
+`roles.<role>.usage` is `project`, `base-product` or `reference-product`.
+Usage/limitations can override an inherited connection while `inherit` continues
+to the lower sourceId. `disabled` still stops binding resolution. `own` selects
+a connection and does not prove that its code belongs to the current project.
+A custom CORP project can select typical CORP as a base; PROF can select CORP as
+a reference with target-product exclusions. Missing or contradictory origin/use
+is visible for review and does not silently choose another product/source.
+
+The pure result carries `projectContext`; role sources carry their declared
+origin, usage and limitations. Settings and knowledge hashes retain their
+separate purposes: project notes enter knowledgeHash, connection usage enters
+settingsHash. Preview/context expose only the selected source summary. Runtime
+configuration name/version/index status come from existing registry fields;
+no backend patch, new sourceKey or per-response index stamp is required. The
+existing applicability resolver filters CORP-only knowledge for PROF; no whole
+map or documents are automatically injected into agent instructions.

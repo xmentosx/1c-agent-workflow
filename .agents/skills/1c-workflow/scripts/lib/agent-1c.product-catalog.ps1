@@ -88,6 +88,8 @@ function Assert-ItlCatalogSchemaValue {
     if ($type -eq 'array') {
         $min = Get-ItlCatalogField $Schema 'minItems'
         if ($null -ne $min -and $Value.Count -lt $min) { throw "CATALOG_INVALID: $Path needs at least $min items" }
+        $max = Get-ItlCatalogField $Schema 'maxItems'
+        if ($null -ne $max -and $Value.Count -gt $max) { throw "CATALOG_INVALID: $Path exceeds maxItems" }
         $seen = @{}
         for ($i = 0; $i -lt $Value.Count; $i++) {
             if (Get-ItlCatalogField $Schema 'uniqueItems' $false) {
@@ -158,6 +160,7 @@ function Assert-ItlProductCatalog {
     foreach ($pair in @(@('catalog', $Catalog), @('product-relations', $Relations))) {
         $schema = Get-Content -LiteralPath (Join-Path $SchemaRoot ($pair[0] + '.schema.json')) -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-ItlCatalogSchemaValue $pair[1] $schema $schema $pair[0]
+        if ($pair[0] -eq 'catalog') { $catalogSchema = $schema }
     }
     if ((Get-ItlCatalogField $Registry 'schemaVersion') -ne 2) { throw 'CATALOG_INVALID: registry.schemaVersion must be 2' }
     $products = Get-ItlCatalogIndex @($Catalog.products) 'productId' 'products'
@@ -176,6 +179,14 @@ function Assert-ItlProductCatalog {
         Assert-ItlCatalogSettings $record $sources $instances 'catalog'
     }
     foreach ($source in @($Catalog.sources)) {
+        $origin = Get-ItlCatalogField $source 'origin'
+        if ($origin) {
+            if (-not $products.ContainsKey($origin.productId)) { throw "CATALOG_INVALID: sources.$($source.sourceId).origin.productId is unknown" }
+            $originProject = Get-ItlCatalogField $origin 'projectId'
+            if ($originProject -and (-not $projects.ContainsKey($originProject) -or $projects[$originProject].productId -cne $origin.productId)) {
+                throw "CATALOG_INVALID: sources.$($source.sourceId).origin.projectId is unknown or belongs to another product"
+            }
+        }
         $endpoint = $source.endpoint
         $hosts = @((Get-ItlCatalogField $Registry 'hosts' @()))
         if (-not $hosts.Count) { throw 'CATALOG_INVALID: business sources require registry schema-v2 hosts' }
@@ -216,7 +227,7 @@ function Assert-ItlProductCatalog {
         $max = Get-ItlCatalogField $range 'maxVersion'
         if ($min -and $max -and [version]$min -gt [version]$max) { throw "CATALOG_INVALID: knowledgeAreas.$areaId.versionRange is reversed" }
     }
-    return [pscustomobject]@{ products = $products; projects = $projects; profiles = $profiles; sources = $sources; instances = $instances }
+    return [pscustomobject]@{ products = $products; projects = $projects; profiles = $profiles; sources = $sources; instances = $instances; schema = $catalogSchema }
 }
 
 function Assert-ItlCatalogBusinessData {
@@ -352,20 +363,36 @@ function Resolve-ItlProductContext {
         $productProfile = $index.profiles[$ProfileId]
     }
     Assert-ItlCatalogSettings $Overrides $index.sources $index.instances 'overrides'
+    $overrideRoles=Get-ItlCatalogField $Overrides 'roles' @{}
+    foreach($role in @(Get-ItlCatalogKeys $overrideRoles)){
+        $entry=Get-ItlCatalogField $overrideRoles $role
+        foreach($field in @('usage','limitations')){
+            if((Get-ItlCatalogKeys $entry) -contains $field){Assert-ItlCatalogSchemaValue (Get-ItlCatalogField $entry $field) $index.schema.definitions.role.properties.$field $index.schema "overrides.roles.$role.$field"}
+        }
+    }
     $layers = @(@{ name = 'local'; value = $Overrides }, @{ name = 'project'; value = $project }, @{ name = 'profile'; value = $productProfile }, @{ name = 'product'; value = $product })
     $roles = [ordered]@{}
     foreach ($role in @('code', 'graph', 'productDocs')) {
-        $result = [ordered]@{ mode = 'inherit'; resolution = 'deferred'; provenance = $null; source = $null }
+        $result = [ordered]@{ mode = 'inherit'; resolution = 'deferred'; provenance = $null; source = $null; usage = $null; limitations = $null }
         foreach ($layer in $layers) {
             $entry = Get-ItlCatalogField (Get-ItlCatalogField $layer.value 'roles') $role
-            if ($null -eq $entry -or $entry.mode -eq 'inherit') { continue }
+            if ($null -eq $entry) { continue }
+            if ($null -eq $result.usage) { $result.usage = Get-ItlCatalogField $entry 'usage' }
+            if ($null -eq $result.limitations) { $result.limitations = Get-ItlCatalogField $entry 'limitations' }
+            if ($entry.mode -eq 'inherit') { continue }
             $result.mode = $entry.mode
             $result.provenance = $layer.name
             if ($entry.mode -eq 'disabled') { $result.resolution = 'disabled' }
             else {
                 $result.resolution = 'resolved'
                 $source = $index.sources[$entry.sourceId]
-                $result.source = [ordered]@{ sourceId = $source.sourceId; role = $source.role; endpoint = $source.endpoint; namespace = (Get-ItlCatalogField $source 'namespace'); binding = (Get-ItlCatalogField $source 'binding') }
+                $origin = Get-ItlCatalogField $source 'origin'
+                $sourceOrigin = $null
+                if ($origin) {
+                    $originProject = Get-ItlCatalogField $origin 'projectId'
+                    $sourceOrigin = [ordered]@{productId=$origin.productId;productName=$index.products[$origin.productId].name;projectId=$originProject;projectName=$(if($originProject){$index.projects[$originProject].name}else{$null})}
+                }
+                $result.source = [ordered]@{ sourceId = $source.sourceId; role = $source.role; endpoint = $source.endpoint; namespace = (Get-ItlCatalogField $source 'namespace'); binding = (Get-ItlCatalogField $source 'binding'); origin = $sourceOrigin }
             }
             break
         }
@@ -388,9 +415,10 @@ function Resolve-ItlProductContext {
         $areas += [ordered]@{ areaId = $areaId; status = $applicability.status; reason = $applicability.reason; memoryHomeProductId = $canonicalHome; requiresProducts = @((Get-ItlCatalogField $area 'requiresProducts' @())); conditions = @((Get-ItlCatalogField $area 'conditions' @())); versionRange = (Get-ItlCatalogField $area 'versionRange') }
         if ($canonicalHome -and $applicability.status -eq 'applicable') { $readProducts += $canonicalHome }
     }
+    $projectContext = [ordered]@{customized=(Get-ItlCatalogField $project 'customized');customizations=(Get-ItlCatalogField $project 'customizations')}
     $settings = [ordered]@{ projectId = $ProjectId; productId = $product.productId; profileId = $ProfileId; roles = $roles; links = $links }
-    $knowledge = [ordered]@{ productId = $product.productId; productVersion = $ProductVersion; conditionValues = $Conditions; knowledgeAreas = $areas; productReadCandidates = @(Get-ItlCatalogSortedUnique $readProducts) }
-    return [pscustomobject]@{ projectId = $ProjectId; productId = $product.productId; profileId = $ProfileId; catalogRevision = $Snapshot.catalogRevision; inputGitObjectIds = $Snapshot.inputGitObjectIds; roles = $roles; links = $links; knowledgeContext = $knowledge; settingsHash = (Get-ItlCatalogHash $settings); knowledgeHash = (Get-ItlCatalogHash $knowledge) }
+    $knowledge = [ordered]@{ projectContext = $projectContext; productId = $product.productId; productVersion = $ProductVersion; conditionValues = $Conditions; knowledgeAreas = $areas; productReadCandidates = @(Get-ItlCatalogSortedUnique $readProducts) }
+    return [pscustomobject]@{ projectContext = $projectContext; projectId = $ProjectId; productId = $product.productId; profileId = $ProfileId; catalogRevision = $Snapshot.catalogRevision; inputGitObjectIds = $Snapshot.inputGitObjectIds; roles = $roles; links = $links; knowledgeContext = $knowledge; settingsHash = (Get-ItlCatalogHash $settings); knowledgeHash = (Get-ItlCatalogHash $knowledge) }
 }
 
 function Assert-ItlCatalogConditions {

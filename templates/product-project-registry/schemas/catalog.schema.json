@@ -23,7 +23,10 @@
           },
           "baseConfigurationVersion": {
             "type": "string",
-            "enum": ["PM4", "PM5"]
+            "enum": [
+              "PM4",
+              "PM5"
+            ]
           },
           "roles": {
             "$ref": "#/definitions/roles"
@@ -73,6 +76,9 @@
           },
           "links": {
             "$ref": "#/definitions/links"
+          },
+          "customizations": {
+            "$ref": "#/definitions/notes"
           }
         },
         "required": [
@@ -179,12 +185,6 @@
                 "type": "string",
                 "minLength": 1
               },
-              "sourceKey": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160,
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$"
-              },
               "nativeProjectId": {
                 "type": "string",
                 "minLength": 1,
@@ -193,9 +193,22 @@
               "versionPin": {
                 "type": "object",
                 "properties": {
-                  "revisionKind": { "type": "string", "enum": ["code-source-inventory-sha256", "content-sha256"] },
-                  "revision": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                  "configurationVersion": { "type": "string", "minLength": 1, "maxLength": 128 }
+                  "revisionKind": {
+                    "type": "string",
+                    "enum": [
+                      "code-source-inventory-sha256",
+                      "content-sha256"
+                    ]
+                  },
+                  "revision": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "configurationVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
                 },
                 "minProperties": 1,
                 "additionalProperties": false
@@ -205,6 +218,9 @@
               "mode"
             ],
             "additionalProperties": true
+          },
+          "origin": {
+            "$ref": "#/definitions/origin"
           }
         },
         "required": [
@@ -277,6 +293,17 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "usage": {
+          "type": "string",
+          "enum": [
+            "project",
+            "base-product",
+            "reference-product"
+          ]
+        },
+        "limitations": {
+          "$ref": "#/definitions/notes"
         }
       },
       "required": [
@@ -374,6 +401,50 @@
         "projectIds"
       ],
       "additionalProperties": true
+    },
+    "notes": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "minItems": 0,
+          "maxItems": 8,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        }
+      },
+      "required": [
+        "productId"
+      ],
+      "additionalProperties": false
     }
   }
 }

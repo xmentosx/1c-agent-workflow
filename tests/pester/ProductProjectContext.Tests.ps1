@@ -25,22 +25,23 @@
         $script:Config=[pscustomobject]@{productProject=[pscustomobject]$binding}
         $previousRegistry=[Environment]::GetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH','Process')
     }
-    It 'compares captured source proof without connecting, applying settings or conflating client activation' {
-        $snapshot.catalog.sources[0].Remove('namespace')
-        $snapshot.catalog.sources[0].binding=@{mode='dedicated';sourceKey='a/corp'}
+    It 'uses registry versions and a successful legacy Code read without requiring index stamps' {
+        $snapshot.registry.hosts[0].configurations[0].configurationName='PM5 CORP'
+        $snapshot.registry.hosts[0].configurations[0].configurationVersion='5.0.3.59'
+        $snapshot.registry.hosts[0].configurations[0].nightlyIndexStatus='succeeded'
+        $snapshot.registry.hosts[0].configurations[0].indexedAt='2026-10-21T00:00:00Z'
         $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
-        $source=@{contractVersion=1;sourceKey='a/corp';nativeProjectId='same-native-id';namespace=$null;generation='g1';layer='index';stamp=('b'*64);indexedSource=@{revisionKind='content-sha256';revision=('c'*64);configurationVersion='5.0.1';extent=@('configuration');provenance='active-index-manifest'}}
-        function New-SourceExchange($id,$name,$payload){return @{request=@{id=$id;method='tools/call';params=@{name=$name;arguments=@{module_path='CommonModules/Модуль с пробелом/Ext/Module.bsl'}}};response=@{id=$id;result=@{isError=$false;structuredContent=$payload}}}}
-        $observation=@{checkedAt='2026-10-21T00:00:00Z';endpoint=$context.endpointIntents.code.url;transport='external-probe';metadata=(New-SourceExchange 1 stats @{status='success';data=@{sourceIdentity=$source}});read=(New-SourceExchange 2 get_module_structure @{status='success';data=@{name='Модуль с пробелом'};sourceIdentity=$source})}
+        $context.endpointIntents.code.registry.configurationVersion|Should -Be '5.0.3.59'
+        $context.endpointIntents.code.registry.provenance|Should -Be registry
+        $context.projectContext.customized|Should -BeNullOrEmpty
+        function New-Exchange($id,$name,$payload){@{request=@{id=$id;method='tools/call';params=@{name=$name;arguments=@{module_path='CommonModules/Модуль с пробелом/Ext/Module.bsl'}}};response=@{id=$id;result=@{isError=$false;structuredContent=$payload}}}}
+        $observation=@{checkedAt='2026-10-21T00:00:00Z';endpoint=$context.endpointIntents.code.url;transport='external-probe';metadata=(New-Exchange 1 stats @{status='success';data=@{project_id='same-native-id';configurationVersion='other-current-file'}});read=(New-Exchange 2 get_module_structure @{status='success';data=@{name='Модуль с пробелом'}})}
         $before=Get-ItlCatalogHash $context
         $proof=Compare-ItlProductSourceObservation $context code $observation
         $proof.binding|Should -Be matched
-        $proof.indexedVersion|Should -Be matched
         $proof.clientActivation|Should -Be unverified
-        $proof.build|Should -Be unverified
-        $thin=ConvertTo-ItlCatalogCanonicalValue ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
-        $thin.read.response.result.structuredContent.sourceIdentity=@{contractVersion=1;generation='g1';layer='index';stamp=('b'*64)}
-        (Compare-ItlProductSourceObservation $context code $thin).indexedVersion|Should -Be matched
+        $proof.Contains('registry')|Should -BeFalse # Already present once in the selected source context.
+        $proof.Contains('indexedVersion')|Should -BeFalse
         $observation.transport='native-client'
         $observation.client=@{serverName='1c-code-metadata-mcp';sessionId='private-thread';loadedEndpoint=$observation.endpoint;requestIds=@(1,2)}
         (Compare-ItlProductSourceObservation $context code $observation).clientActivation|Should -Be unverified
@@ -49,62 +50,118 @@
             $call.request.params=@{threadId='private-thread';server='1c-code-metadata-mcp';tool=$call.request.params.name;arguments=$call.request.params.arguments}
         }
         (Compare-ItlProductSourceObservation $context code $observation).clientActivation|Should -Be matched
+        $observation.Remove('metadata')
+        (Compare-ItlProductSourceObservation $context code $observation).binding|Should -Be matched
+        (Compare-ItlProductSourceObservation $context code $observation).clientActivation|Should -Be matched
+        $context.endpointIntents.code.versionPin=@{configurationVersion='5.0.3.60'}
+        $pinned=Compare-ItlProductSourceObservation $context code $observation
+        $pinned.binding|Should -Be matched
+        $pinned.versionConstraint|Should -Be mismatch
+        $context.endpointIntents.code.versionPin=@{}
         (Get-ItlCatalogHash $context)|Should -BeExactly $before
-        $foreign=ConvertTo-Vibecoding1cMcpHashtable ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
-        $foreign.metadata.response.result.structuredContent.data.sourceIdentity.sourceKey='a/foreign'
-        $wrong=Compare-ItlProductSourceObservation $context code $foreign
-        $wrong.binding|Should -Be mismatch
-        $wrong.indexedVersion|Should -Be unverified
-        $wrong.clientActivation|Should -Be matched
-        $foreign.endpoint='http://wrong.invalid/mcp'
-        (Compare-ItlProductSourceObservation $context code $foreign).reason|Should -Be endpoint-mismatch
-        $context.endpointIntents.code.expectedIdentity.pin=@{configurationVersion='5.0.2'}
-        (Compare-ItlProductSourceObservation $context code $observation).indexedVersion|Should -Be mismatch
-        $context.endpointIntents.code.expectedIdentity.pin=@{}
-        $raced=ConvertTo-Vibecoding1cMcpHashtable ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
-        $raced.read.response.result.structuredContent.sourceIdentity.generation='g2'
-        (Compare-ItlProductSourceObservation $context code $raced).indexedVersion|Should -Be unverified
-        $raced.read.response.result.structuredContent.sourceIdentity.generation='g1'
-        $raced.read.response.result.structuredContent.sourceIdentity.layer='live-file'
-        (Compare-ItlProductSourceObservation $context code $raced).indexedVersion|Should -Be unverified
-        $raced.read.response.result.isError=$true
-        (Compare-ItlProductSourceObservation $context code $raced).binding|Should -Be unverified
-        $legacy=ConvertTo-ItlCatalogCanonicalValue ($observation|ConvertTo-Json -Depth 30|ConvertFrom-Json)
-        $legacy.metadata.response.result.structuredContent.data.Remove('sourceIdentity')
-        (Compare-ItlProductSourceObservation $context code $legacy).reason|Should -Be native-identity-unavailable
         $path=Join-Path $TestDrive 'наблюдение с пробелом.json'
         @{schemaVersion=1;catalogRevision=$context.catalogRevision;settingsHash=$context.settingsHash;roles=@{code=$observation}}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $path -Encoding UTF8
         (Read-ItlProductSourceObservations $context $path).roles.code.binding|Should -Be matched
         $context.catalogRevision='d'*40
         (Read-ItlProductSourceObservations $context $path).status|Should -Be unverified
+        $observation.endpoint='http://wrong.invalid/mcp'
+        (Compare-ItlProductSourceObservation $context code $observation).binding|Should -Be mismatch
+        $observation.endpoint=$context.endpointIntents.code.url
+        $observation.read.response.result.isError=$true
+        (Compare-ItlProductSourceObservation $context code $observation).binding|Should -Be unverified
     }
-    It 'keeps explicit source pins and source scope in package schema rather than guessed product versions' {
-        $snapshot.catalog.sources[0].binding=@{mode='dedicated';sourceKey='a/corp';nativeProjectId='same-native-id';versionPin=@{configurationVersion='5.0.1'}}
-        $null=Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry
-        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
-        $context.endpointIntents.code.expectedIdentity.pin.configurationVersion|Should -Be '5.0.1'
-        $snapshot.catalog.sources[0].binding.versionPin=@{}
-        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*at least 1 properties*'
-        $snapshot.catalog.sources[0].binding.versionPin=@{configurationVersion=('x'*129)}
-        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*maxLength*'
-    }
-    It 'accepts the supported Graph selected scope without inventing a revision from inherited data' {
-        $snapshot.catalog.sources[1].binding=@{mode='dedicated';nativeProjectId='pm5corp'}
+    It 'accepts supported Graph scope with inherited data and rejects an actual wrong selector' {
+        $snapshot.catalog.sources[1].binding=@{mode='dedicated';nativeProjectId='pm5corp';sourceKey='retained-optional-legacy-key'}
         $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
         $observation=@{checkedAt='2026-10-21T00:00:00Z';endpoint=$context.endpointIntents.graph.url;transport='external-probe'}
         $meta=@{contract_version='2.0';context=@{project_id=$null;mcp_namespace=$null};data=@{project_id='pm5corp';mcp_namespace='default';is_accessible=$true;active_generation=$null;ingestion_state='inherited'}}
         $read=@{contract_version='2.0';context=@{project_id='pm5corp';mcp_namespace='default'};returned=1;text='bounded fulltext fixture'}
         $observation.metadata=@{request=@{id=1;method='tools/call';params=@{name='get_graph_project_status';arguments=@{project_id='pm5corp'}}};response=@{id=1;result=@{structuredContent=$meta}}}
         $observation.read=@{request=@{id=2;method='tools/call';params=@{name='search_code';arguments=@{project_id='pm5corp';search_type='fulltext'}}};response=@{id=2;result=@{structuredContent=$read}}}
-        $proof=Compare-ItlProductSourceObservation $context graph $observation
-        $proof.binding|Should -Be matched
-        $proof.indexedVersion|Should -Be unverified
-        $proof.clientActivation|Should -Be unverified
+        (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be matched
         $read.context.mcp_namespace='wrong'
         (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be mismatch
         $read.context.mcp_namespace='default'
-        $context.endpointIntents.graph.expectedIdentity.requireSourceKey=$true
-        (Compare-ItlProductSourceObservation $context graph $observation).reason|Should -Be sourceKey-unavailable
+        $observation.read.request.params.arguments.project_id='foreign'
+        (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be mismatch
+        $observation.read.request.params.arguments.project_id='pm5corp'
+        $observation.Remove('metadata')
+        (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be matched
+        $read.returned=0
+        (Compare-ItlProductSourceObservation $context graph $observation).binding|Should -Be unverified
+    }
+    It 'keeps explicit registry version pins optional and rejects empty or oversized constraints' {
+        $snapshot.catalog.sources[0].binding=@{mode='dedicated';versionPin=@{configurationVersion='5.0.1'}}
+        $null=Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry
+        (Resolve-ItlProductProjectRuntimeContext $snapshot $binding).endpointIntents.code.versionPin.configurationVersion|Should -Be '5.0.1'
+        $snapshot.catalog.sources[0].binding.versionPin=@{}
+        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*at least 1 properties*'
+        $snapshot.catalog.sources[0].binding.versionPin=@{configurationVersion=('x'*129)}
+        {Assert-ItlProductCatalog $snapshot.catalog $snapshot.relations $snapshot.registry}|Should -Throw '*maxLength*'
+    }
+    It 'shows custom project differences and the explicitly selected typical source without mutating business IDs' {
+        $snapshot.catalog.sources[0].origin=@{productId='corp'}
+        $snapshot.catalog.projects[0].customized=$true
+        $snapshot.catalog.projects[0].customizations=@{summary='Клиентский расчёт с доработками';references=@('https://docs.invalid/customer')}
+        $snapshot.catalog.projects[0].roles=@{code=@{mode='inherit';usage='base-product';limitations=@{summary='Типовой источник не описывает доработки'}}}
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $context.projectId|Should -Be development
+        $context.roles.code.source.origin.productId|Should -Be corp
+        $context.roles.code.usage|Should -Be base-product
+        $context.projectContext.customizations.summary|Should -Be 'Клиентский расчёт с доработками'
+        $summary=@(Get-ItlProductProjectSourceSummary $context)|Where-Object role -eq code
+        $summary.origin.productName|Should -Be 'PM5 CORP'
+        $summary.descriptionStatus|Should -Be declared
+        $summary.limitations.summary|Should -Be 'Типовой источник не описывает доработки'
+        $preview=Show-ItlProductProjectPreview @{context=$context;changes=@()}
+        $preview.projectDifferences.customized|Should -BeTrue
+        $preview.sources[0].usage|Should -Be base-product
+        $initialSettings=$context.settingsHash;$initialKnowledge=$context.knowledgeHash
+        $snapshot.catalog.projects[0].customizations.summary='Уточнённый расчёт'
+        $changed=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $changed.settingsHash|Should -Be $initialSettings
+        $changed.knowledgeHash|Should -Not -Be $initialKnowledge
+        (Get-ItlProductProjectResolvedHash $changed)|Should -Not -Be (Get-ItlProductProjectResolvedHash $context)
+    }
+    It 'allows PROF to use CORP while the existing applicability owner excludes CORP-only functionality' {
+        $snapshot.catalog.products+=@(@{productId='prof';name='PM5 PROF';baseConfigurationVersion='PM5'})
+        $snapshot.catalog.projects[0].productId='prof'
+        $snapshot.catalog.projects[0].roles=@{code=@{mode='own';sourceId='code';usage='reference-product';limitations=@{summary='Проверять доступность по карте ПРОФ'}}}
+        $snapshot.catalog.sources[0].origin=@{productId='corp'}
+        $snapshot.relations.knowledgeAreas=@{common=@{title='Common';availableIn=@('corp','prof');memoryHomeProductId='corp'};removed=@{title='CORP only';availableIn=@('corp')}}
+        $binding.productId='prof'
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $context.productId|Should -Be prof
+        $context.roles.code.source.origin.productId|Should -Be corp
+        (@(Get-ItlProductProjectSourceSummary $context)|Where-Object role -eq code).descriptionStatus|Should -Be declared
+        $note=@{origin=@{source='registry-source';revision=$snapshot.catalogRevision};evidence=@(@{source='registry-source';revision=$snapshot.catalogRevision;result='read'});applicability=@{knowledgeAreas=@('removed');verificationState='verified'}}
+        (Resolve-ItlProductKnowledge $snapshot prof $note).status|Should -Be not-applicable
+        $note.applicability.knowledgeAreas=@('common')
+        (Resolve-ItlProductKnowledge $snapshot prof $note).status|Should -Be applicable
+    }
+    It 'does not infer absent source origin or usage and keeps disabled overrides' {
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        (@(Get-ItlProductProjectSourceSummary $context)|Where-Object role -eq code).descriptionStatus|Should -Be incomplete
+        $context.roles.code.source.origin|Should -BeNullOrEmpty
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding -Overrides @{roles=@{code=@{mode='disabled'}}}
+        @($context.endpointIntents.Keys)|Should -Not -Contain code
+        @((Get-ItlProductProjectSourceSummary $context)|Where-Object role -eq code).Count|Should -Be 0
+    }
+    It 'validates explicit origin references and bounded notes in catalog and private overrides' {
+        $snapshot.catalog.sources[0].origin=@{productId='missing'}
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding}|Should -Throw '*origin.productId*'
+        $snapshot.catalog.sources[0].origin=@{productId='corp';projectId='missing'}
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding}|Should -Throw '*origin.projectId*'
+        $snapshot.catalog.sources[0].origin=@{productId='corp';projectId='development'}
+        $snapshot.catalog.projects[0].customizations=@{summary=('x'*513)}
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding}|Should -Throw '*maxLength*'
+        $snapshot.catalog.projects[0].customizations=@{summary='Declared';references=@(1..9|ForEach-Object {'ref-'+$_})}
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding}|Should -Throw '*maxItems*'
+        $snapshot.catalog.projects[0].Remove('customizations')
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding -Overrides @{roles=@{code=@{mode='inherit';usage='guessed'}}}}|Should -Throw '*unsupported value*'
+        {Resolve-ItlProductProjectRuntimeContext $snapshot $binding -Overrides @{roles=@{code=@{mode='inherit';limitations=@{summary=('x'*513)}}}}}|Should -Throw '*maxLength*'
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding -Overrides @{roles=@{code=@{mode='inherit';usage='project'}}}
+        (@(Get-ItlProductProjectSourceSummary $context)|Where-Object role -eq code).descriptionStatus|Should -Be declared
     }
     AfterEach {
         [Environment]::SetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH',$previousRegistry,'Process')

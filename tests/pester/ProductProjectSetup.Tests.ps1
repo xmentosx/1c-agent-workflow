@@ -18,6 +18,37 @@
         Mock Read-InitBaseConfigurationVersion {throw 'Unexpected PM4/PM5 question'}
     }
     AfterEach {Remove-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue}
+    It 'exposes applied project and registry source differences without network or state writes' {
+        $snapshot.registry.hosts=@(@{hostId='source';configurations=@(@{id='typical';configurationName='PM5 CORP';configurationVersion='5.0.3.59';indexedAt='2026-10-21T00:00:00Z';nightlyIndexStatus='succeeded'});servers=@(@{id='code';scope='project';configId='typical';family='vibecoding1c';url='http://source.invalid:22100/mcp'})})
+        $snapshot.catalog.sources=@(@{sourceId='typical-code';role='code';endpoint=@{hostId='source';serverId='code';configId='typical'};origin=@{productId='pm5'}})
+        $snapshot.catalog.products[1].roles=@{code=@{mode='own';sourceId='typical-code'}}
+        $snapshot.catalog.projects[1].customized=$true
+        $snapshot.catalog.projects[1].customizations=@{summary='Расчёт заказчика';references=@('https://docs.invalid/customer')}
+        $snapshot.catalog.projects[1].roles=@{code=@{mode='inherit';usage='base-product';limitations=@{summary='Типовой MCP не содержит доработок'}}}
+        $candidate=Select-ItlProductProjectCandidate five
+        $null=Invoke-ItlProductProjectAssociation $candidate
+        $protected=@($script:ConfigPath,(Get-ItlProductProjectPath applied),(Get-ItlProductProjectPath operation),(Get-ItlManagedMcpStatePath),(Get-Vibecoding1cMcpSelectionPath))+@(Get-ItlClientMcpConfigPaths codex)
+        $before=@{};foreach($path in $protected){$before[$path]=Get-ItlMcpFileState $path}
+        Mock Read-ItlProductProjectSnapshot {throw 'Context must not refresh registry'}
+        $report=Invoke-ItlProductProjectCommand context
+        $report.projectId|Should -Be five
+        $report.productId|Should -Be pm5
+        $report.projectDifferences.customizations.summary|Should -Be 'Расчёт заказчика'
+        $report.sources[0].usage|Should -Be base-product
+        $report.sources[0].registry.configurationVersion|Should -Be '5.0.3.59'
+        $report.sources[0].registry.provenance|Should -Be registry
+        $report.sources[0].origin.productId|Should -Be pm5
+        $report.sources[0].nativeReadiness|Should -Be unverified
+        $path=Join-Path $root 'наблюдение MCP с пробелом.json'
+        $ctx=$candidate.context
+        $read=@{request=@{id=2;method='tools/call';params=@{name='get_module_structure';arguments=@{module_path='CommonModules/Модуль/Ext/Module.bsl'}}};response=@{id=2;result=@{structuredContent=@{status='success';data=@{name='Модуль'}}}}}
+        @{schemaVersion=1;catalogRevision=$ctx.catalogRevision;settingsHash=$ctx.settingsHash;roles=@{code=@{endpoint=$ctx.endpointIntents.code.url;checkedAt='2026-10-21T00:00:00Z';transport='external-probe';read=$read}}}|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $path -Encoding UTF8
+        $proof=Invoke-ItlProductProjectCommand context -RecordPath $path
+        $proof.sourceObservations.roles.code.binding|Should -Be matched
+        $proof.sourceObservations.roles.code.clientActivation|Should -Be unverified
+        foreach($file in $protected){(Get-ItlMcpFileState $file)|Should -BeExactly $before[$file]}
+        Should -Invoke Read-ItlProductProjectSnapshot -Times 0
+    }
     It 'keeps select restore later and pending catalog records out of legacy MCP enrollment' -Tag CatalogLegacyEnrollment {
         $path=Get-Vibecoding1cMcpSelectionPath
         Mock Get-Vibecoding1cMcpSelectionCompleteness {throw 'Catalog preferences triggered legacy readiness'}

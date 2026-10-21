@@ -1079,8 +1079,8 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/HostNativeTransport.Tests.ps1",
-      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "vibecoding1c-mcp-host/code-source-identity/*", "tests/python/test_host_index_snapshot.py"],
-      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1", "vibecoding1c-mcp-host/code-source-identity/*"],
+      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/index-snapshot.py", "tests/python/test_host_index_snapshot.py"],
+      "reuseInputPaths": ["scripts/host-test-runtime.ps1", "vibecoding1c-mcp-host/*.ps1"],
       "tests": ["tests/pester/HostNativeTransport.Tests.ps1"]
     },
     {
