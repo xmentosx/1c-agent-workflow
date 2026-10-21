@@ -14,17 +14,25 @@
 - **WHEN** изменилось название проекта или адрес его MCP, но стабильный project ID прежний
 - **THEN** прежняя проектная память остаётся связанной с ним; новая область из названия/URL не создаётся
 
-### Requirement: Доказательства Code/Graph потребляются без второй проверки
+### Requirement: Контекст проекта и MCP-источника потребляется из реестра
 
-Память SHALL использовать registry-owned раздельные observations binding, indexed source version и client activation, сохраняя их происхождение и границы. Registry SHA, MCP build и index generation SHALL NOT заменять productId, dataset identity или доказательство indexed revision. Memory consumer SHALL NOT добавлять Code/Graph probes на remember/recall/startup, собственный source manifest/verifier либо обязательную доступность Code/Graph для всех шести областей. Unknown source/version SHALL NOT запрещать независимые заметки или изменять Cognee grants/currentness; зависящее от такого source утверждение SHALL оставаться непроверенным кандидатом до достаточного evidence и SHALL NOT объявляться общим доказанным знанием выбранного продукта/версии. Смена source/generation SHALL NOT расширять applicability/read set/home.
+Память SHALL получать из одного registry-owned effective context бизнес-проект и его базовый продукт, явно заданные доработки/ограничения, происхождение и назначение выбранных MCP-источников, название/версию их конфигураций и сведения об индексации из registry.json. Source productId/projectId SHALL NOT заменять IDs текущего проекта, dataset/home или grants. Карта функциональности и отличия проекта SHALL задаваться в реестрах, SHALL NOT извлекаться автоматически из ответов MCP; memory consumer SHALL NOT дублировать business resolver.
 
-#### Scenario: Версия источника не подтверждена
-- **WHEN** Code/Graph даёт полезное чтение, но его active indexed revision не доказана
-- **THEN** память сохраняет unknown provenance без придуманной версии; независимые заметки допустимы, а основанный на этом чтении вывод не получает подтверждение для выбранной версии или автоматическое обобщение
+Отсутствие generation/hash/stamp конкретного ответа Code/Graph или исходников Graph SHALL NOT быть условием отказа G3/G4/G5 либо основанием объявлять все сведения MCP непроверенными. Доработка этих серверов и обязательный новый протокол их metadata SHALL NOT требоваться. Версия registry SHALL сохраняться как версия MCP-источника с provenance; она SHALL NOT объявляться версией клиентских доработок. Достаточность evidence SHALL определяться утверждением, применимостью и подтверждёнными отличиями проекта, без обязательного побайтного attestation каждого ответа.
 
-#### Scenario: Endpoint продукта изменился
-- **WHEN** business productId прежний, а registry owner применил другой endpoint/generation и сообщил необходимость client reload
-- **THEN** datasets и grants не меняются из-за endpoint; память не делает собственный probe и не объявляет старое evidence проверкой нового источника
+Remember/recall/startup памяти SHALL NOT добавлять Code/Graph probes, новый manifest/verifier/cache, fetch или обязательную доступность этих MCP для всех шести областей. Изменение endpoint/версии источника SHALL NOT само менять dataset IDs/home/grants или обобщать существующие записи. Native Cognee currentness/grants, policy и budgets SHALL сохраняться независимо; этот отказ от source stamp SHALL NOT ослаблять проверку актуальной записи в Cognee.
+
+#### Scenario: Доработанный проект и типовой источник
+- **WHEN** проект на PM5 КОРП имеет собственные доработки, но явно использует типовой MCP как базовый источник
+- **THEN** evidence подписано типовым источником и его registry версией; вывод о доработке требует основания из проекта, а общий факт может использоваться по подтверждённой карте без обязательного server revision stamp
+
+#### Scenario: ПРОФ читает КОРП
+- **WHEN** PM5 ПРОФ использует явно выбранный MCP PM5 КОРП и получен факт об исключённой в ПРОФ области
+- **THEN** факт не объявляется применимым к ПРОФ и не получает автоматическое обобщение/доступ; общий факт разрешённой области использует прежний canonical home/read set, без копирования datasets
+
+#### Scenario: Endpoint источника изменился
+- **WHEN** applied registry context обновил endpoint или опубликованную версию источника при прежних business IDs
+- **THEN** память потребляет тот же owner result без собственного probe, прежние записи сохраняют origin/evidence и не выдаются за автоматически перепроверенные на новой версии
 
 ### Requirement: Раздельный допуск основы и runtime памяти
 
