@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-21T21:33:44.250430+00:00",
+  "sourceBase": "8e4b1961f75a4ef5d4f0894070c7adece6faf434",
+  "status": "passed-bounded-native-cursor-reads-reload-authorized-profile",
+  "finding": {
+    "id": "G3-CURSOR-NATIVE-AGENT-AUTH",
+    "status": "closed-in-qualified-scope",
+    "scope": "User-authorized signed-in default profile, installed Cursor 3.26.16, exact original PROF root. Original signed-out private 3.25.9 profile is not retroactively accepted."
+  },
+  "scope": {
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+    "businessProjectId": "qual-prof",
+    "productId": "qual-pm5prof",
+    "mcpSource": "Intentional typical PM5 CORP; existing registry/applied context and endpoints unchanged",
+    "codeConfiguredUrl": "http://dev-ermakov.itland.local:22100/mcp",
+    "graphConfiguredUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+    "configurationVersionAuthority": "registry/applied context; no version inferred from Code release.version; registry freshness not independently requalified in this two-call slice"
+  },
+  "client": {
+    "version": "3.26.16",
+    "distro": "d5c0e77a0214208f36b56d42e8e787de88d02ea4",
+    "exeSha256": "2c772f7a71767a31cd44d013066995a8d98125cad0b9cecfcccf3ef698806cdd",
+    "profileChangeExplicitlyAuthorized": true,
+    "credentialsCopied": false,
+    "oldInstalledVersion": "3.25.9",
+    "oldPrivateProfilePreserved": true,
+    "oldEvidenceUnchanged": true,
+    "versionTransition": "3.26.16 detected on authorized-profile launch after old instances exited; cause of the installed version change was not investigated, no explicit updater/deployment command was run; EXE stable from new launch through cleanup"
+  },
+  "nativeAcceptance": {
+    "authenticatedUi": "Settings Log Out visible, Login overlay absent; actual native Agent tools succeeded",
+    "selectedMcpTools": {
+      "code": 28,
+      "graph": 54
+    },
+    "calls": [
+      {
+        "namespace": "project-0-Контекст клиента PROF-1c-code-metadata-mcp",
+        "toolName": "stats",
+        "mcpDetails": {
+          "description": "Read the current 1C code metadata index statistics for the open client configuration."
+        },
+        "arguments": {}
+      },
+      {
+        "namespace": "project-0-Контекст клиента PROF-1c-graph-metadata-mcp",
+        "toolName": "list_graph_projects",
+        "mcpDetails": {
+          "description": "List the graph metadata projects available for the open client configuration."
+        },
+        "arguments": {}
+      }
+    ],
+    "toolParts": [
+      {
+        "id": "call-5f1f2289-f1e4-4a7f-b200-8cb0fbfbc954-0\nfc_4b133705-31c4-9738-b312-b48a73ea02ac_0",
+        "status": "completed"
+      },
+      {
+        "id": "call-5f1f2289-f1e4-4a7f-b200-8cb0fbfbc954-1\nfc_4b133705-31c4-9738-b312-b48a73ea02ac_1",
+        "status": "completed"
+      }
+    ],
+    "code": {
+      "status": "success",
+      "identity": [
+        {
+          "name": "УправлениеПроектамиКОРП",
+          "path": "/app/code",
+          "role": "main",
+          "marker": "/app/code/Configuration.xml"
+        }
+      ],
+      "serverRelease": "1.0.0",
+      "configurationVersion": "not present in stats payload"
+    },
+    "graph": {
+      "contractVersion": "2.0",
+      "total": 1,
+      "items": [
+        {
+          "project_id": "pm5corp",
+          "mcp_namespace": "default",
+          "status": "ready",
+          "is_accessible": true,
+          "active_generation": null,
+          "ingestion_state": "inherited"
+        }
+      ],
+      "envelopeNamespace": null
+    },
+    "reload": {
+      "method": "native Developer: Reload Window via ordinary command palette",
+      "sameRoot": true,
+      "signedInUiRetained": true,
+      "projectToolsEnabledAfterReload": true,
+      "sameToolIdsStatusesSummariesAndPayloads": true,
+      "additionalQualificationUserTurns": 0
+    },
+    "completedTurn": {
+      "type": "turn_ended",
+      "status": "success"
+    }
+  },
+  "preservation": {
+    "paths": 19,
+    "existing": 16,
+    "absent": 3,
+    "physicalClientConfigFiles": 11,
+    "logicalClientFormats": 12,
+    "comparison": "exists/SHA256/bytes/actual mtimeNs",
+    "changed": [],
+    "exeStableSinceNewLaunch": true,
+    "projectSourceSwitches": "Both initially Disabled in authorized profile; temporarily enabled and restored to Disabled through normal UI",
+    "commonMcpUi": "Computer Use 9 tools and Origin 31 tools unchanged; custom configuration and global auto-run not edited",
+    "workspaceCleanup": "Initial restored IDE folder returned; draft blank and no qualification user turn in working folder",
+    "ownedProcessCount": 30,
+    "remainingOwned": 0,
+    "cleanup": "Native Browser.close; two conhost helpers observed immediately after close then exited normally; no process termination"
+  },
+  "costs": {
+    "qualificationUserTurns": 1,
+    "actualMcpToolCalls": 2,
+    "modelUi": "Grok 4.7 High Fast",
+    "workedUiSeconds": 12,
+    "inputOutputCacheReasoningTokens": "not exposed/measured in this slice",
+    "providerRequestsIncludingTitle": "not measured",
+    "billing": "not measured",
+    "additionalModelTurnForReload": 0,
+    "automaticProtocolSchemasBackgroundTraffic": "not measured, including restored initial workspace before PROF selection",
+    "newWorkflowAlwaysOnRules": 0,
+    "newWorkflowToolSchemas": 0,
+    "newWorkflowStartupProbes": 0,
+    "memoryCalls": 0,
+    "pairedG3ContextDelta": "not measured; budgets unchanged"
+  },
+  "instrumentation": {
+    "oldProfileRetry": "User initially reported sign-in, but original private UI remained signed out after native reload. User confirmed another window and explicitly authorized using that profile. No failed login proof overwritten.",
+    "rootSelection": "Normal IDE Open Folder picker with exact Unicode roundtrip; CLI requests did not establish root and were not accepted as proof. No qualification prompt submitted until PROF title/root confirmed.",
+    "draft": "One UI helper typed an unsubmitted File: Open Folder draft in restored initial workspace before command palette was ready. It was never submitted; final return to that folder verified blank draft/no canary.",
+    "reloadProbes": [
+      "First probe ran with work group collapsed; expanded through normal UI",
+      "Intermediate projection omitted summary; same original projection proves exact equality. Original failed observations retained."
+    ],
+    "support": "No account/profile mapping or auth store, private enablement API, overlay bypass, header spoof or direct MCP substitute"
+  },
+  "remainingOpen": [
+    "Full registry G3/AC39/tasks3.4/5.4-5.6 and remaining clients/CUSTOM/installed/platform/cost matrix",
+    "Mandatory release population AC36-38",
+    "Memory consumer4.2/AC43/G5/44; G4 not started",
+    "Original private 3.25.9 signed-in acceptance not claimed"
+  ],
+  "boundaries": [
+    "Gate 6 not run or repaired",
+    "No G4/Cognee implementation",
+    "No working-project migration",
+    "No publication/push/PR",
+    "No Code/Graph patches, deployment or reindex",
+    "Six scopes/home/grants/ai_rules_1c/optional OpenViking unchanged"
+  ],
+  "historicalEvidenceSha256": "c3bdf9db452ca47651b422bc86049cb67b1f649688554735b9c93e1dd87ac01b",
+  "rawRefs": [
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/preservation-before.json",
+      "sha256": "b908ed210d77a89ac7d184218ed59b33f04131a1bb6e5f1e103ae220684b8391",
+      "bytes": 7070
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/after-native-reload.json",
+      "sha256": "3ab4592a6575142b63f01e16089ac6ccff08ab24911cddcf3438dc05e0805a54",
+      "bytes": 1958
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/after-native-reload.png",
+      "sha256": "036368ebd0062a715ade5620e30cbba13646ff13a0b94ea00e1b2b85872bb0a6",
+      "bytes": 33943
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/cursor-launch.json",
+      "sha256": "e02a360f3d77bbbd420fba4513f69d24d095d6d61857f44b7d073c76007b5401",
+      "bytes": 994
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/client-version.json",
+      "sha256": "9abaa3d163f0e632a764cc772035a34b17b4a1eb484f747cdef0a26339289cb8",
+      "bytes": 106
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/native-folder-picker.json",
+      "sha256": "3d908879b69e65883ab00c7fb97af45ae5f34211f5c2cd1e7ccf23510b3fea66",
+      "bytes": 419
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/prof-root-ui-result.json",
+      "sha256": "7a32017c985e67f9fa9ea7e525c2f7eef19a21107ce2b96afb02fb2fe111a37a",
+      "bytes": 1550
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/settings-open-ui-result.json",
+      "sha256": "2801dd0ae394add827b91e00548d8477e73b0039f1a0be8b1b2b6b5e3debed2d",
+      "bytes": 4445
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/mcp-view-result.json",
+      "sha256": "33e1935639b09db9bb347ab413da7d7151303fa6975d5b04344045e50e9c9c23",
+      "bytes": 2261
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/ready-mcp-view-result.json",
+      "sha256": "ef86b5c204b28b71d4db5296ad4f7c2c0b9ddc56214a68b04fb0e456535f4b28",
+      "bytes": 2283
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/native-canary-prompt-request.json",
+      "sha256": "7d084df7b5aaf91168cd0061aed264877dcd274484a0049b662b5da76fcec7a2",
+      "bytes": 790
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/canary-progress-result.json",
+      "sha256": "787c3b805d516abc1469d89ff52c20c7606e9cb16e492f548d73932fbb81c46f",
+      "bytes": 3631
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/native-agent-transcript.jsonl",
+      "sha256": "5fd6f1258cb32d714dfcf6d51f08eb3184bcb821f246f11ffc44246672145b09",
+      "bytes": 2181
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/tool-payloads-result.json",
+      "sha256": "64c912a4f7a311ce624e79fd34206b0efbb85c95ad93a09be2d73107c4ab5ff5",
+      "bytes": 13725
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/accepted-tool-payloads.json",
+      "sha256": "20ee12040e7d49542a23597171e60bc71b852f61f7299ae028a5426ba09ed51a",
+      "bytes": 23218
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/native-signed-in-reload-result.json",
+      "sha256": "adb984aa21456bec9a8f1ed8fb5a1135fed7ba7c7f3242065f43930550910892",
+      "bytes": 382
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reloaded-mcp-assertions-result.json",
+      "sha256": "61603ebe1998c9732d50890276fd8f32ba99f12fef5f46046646d53ca85be098",
+      "bytes": 716
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reloaded-work-expanded-result.json",
+      "sha256": "19fd952db5a7d827ea2bfc3ca1fed409dbf822bb013771cc921fdcf7bab2ac5c",
+      "bytes": 805
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reloaded-native-tools-result.json",
+      "sha256": "a8ff64e04289373eb3a1d999e89bfd97f77175fe3b76ae97459146d548842c48",
+      "bytes": 335
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reloaded-native-payloads-result.json",
+      "sha256": "99769c329e1ffd0dfe081be5c884fbd148b3928c148bf2e7a708e79fb08a1fa3",
+      "bytes": 13525
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reloaded-tool-payloads-exact-result.json",
+      "sha256": "64c912a4f7a311ce624e79fd34206b0efbb85c95ad93a09be2d73107c4ab5ff5",
+      "bytes": 13725
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/reload-acceptance.json",
+      "sha256": "6a0e9ae5728aaa8546dd38b8a3f54fe08537296a31f0af80e0fb460d800deab0",
+      "bytes": 372
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/restored-mcp-settings-result.json",
+      "sha256": "9965aa9fe58bf2272da59d814092ba4f2386174a8f868d6a56e721976292e4bf",
+      "bytes": 588
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/initial-folder-final-state-result.json",
+      "sha256": "54580422fd45c2b0e13d18daaa713a8ccc2cfc671972edf7402035c1c334e676",
+      "bytes": 419
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/preservation-final.json",
+      "sha256": "a5402ea4f666be314c9660a924631d8e2c5b59c8e583aaafb80213da18aaf37f",
+      "bytes": 7141
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/scoped-native-catalog.log",
+      "sha256": "3f9648dc9c265c9e561c1687652c32bacb75f31a78a29ae2995f18e978a39a6d",
+      "bytes": 8689
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/owned-processes-before-close.json",
+      "sha256": "0bbc6f75c47d48d4fe49b3731ad3e49f4f7426623aa363ebb41391fb6f42d7bc",
+      "bytes": 3860
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/cleanup.json",
+      "sha256": "07496a5607e94365037183e4efb9c9335dee7e1c519ad17bc7fbafa2512c454c",
+      "bytes": 474
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/authorized-profile/cleanup-final.json",
+      "sha256": "e3eb1066b0f832b4e21fa6982ada6730491a409331a9ddfae7bd6ca12f52aecb",
+      "bytes": 191
+    }
+  ],
+  "delivery": {
+    "owner": "common Git source-delivery Status ledger",
+    "scope": "source-only qualification documentation; local commit/RegisterChange does not publish or complete full G3"
+  }
+}
