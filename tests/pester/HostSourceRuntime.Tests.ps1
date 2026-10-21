@@ -6,7 +6,7 @@
         $root=Join-Path $TestDrive ('Среда с пробелом '+[guid]::NewGuid().ToString('N'))
         $hostRoot=Join-Path $root 'vibecoding1c-mcp-host'
         New-Item -ItemType Directory -Force -Path $hostRoot | Out-Null
-        foreach($file in @('install-vibecoding1c-mcp-host.ps1','beta-cutover.ps1','index-snapshot.ps1','sppr-host.ps1')){
+        foreach($file in @('install-vibecoding1c-mcp-host.ps1','beta-cutover.ps1','index-snapshot.ps1','sppr-host.ps1','owner-repair.ps1')){
             Copy-Item -LiteralPath (Join-Path $RepoRoot ('vibecoding1c-mcp-host/'+$file)) -Destination $hostRoot
         }
         New-Item -ItemType Directory -Force -Path (Join-Path $hostRoot 'sppr-mcp') | Out-Null

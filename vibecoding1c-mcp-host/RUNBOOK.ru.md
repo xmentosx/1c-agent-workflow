@@ -741,6 +741,22 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stable-cutover -ConfigPath .\host.config.json -ServerId code -ConfigId pm4corp -ReleaseManifest releases/2026-09-28-stable/vibecoding1c-mcp.manifest.json
 ```
 
+Для Code/Graph с image-specific repair versioned manifest задаёт `ownerRepair`:
+точный `image`, SHA `proofSha256` и `fixtureSha256`, hashes всех `files`.
+Файлы находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
+Code содержит `driver.py` и `main.py`; Graph — `run.py`, `score_floor.py`,
+`common_forms.py`. Proof schema 1 закрепляет host и исходную изолированную
+квалификацию без сети и live indices. Для Code обязательны воспроизведённый
+negative control и оба сценария crash/resume/selective repair. Graph требует
+все native fulltext (13), commonForms (14), combined (3) tests без ошибок,
+падений и skips. SHA fixtures закреплён в manifest вместе с SHA самого proof.
+Отсутствующий либо изменённый proof/файл останавливает preflight до остановки
+старого сервера. Повторите исходную изолированную квалификацию под штатной
+maintenance lease, сохраните результаты и exact files, затем повторите
+`stable-preflight`. Resolver добавляет только фиксированные RO file mounts;
+start/reconcile проверяет фактические bind/RO/path. Другой image не может
+унаследовать repair. Cutover, snapshot и rollback остаются у прежнего owner.
+
 Для глобального сервера `ConfigId` не передаётся. Stable image закрепляется
 по digest; CodeChecker сохраняет проверяемый ITL logic overlay от pinned
 upstream. Разные main/Compose/env используют разные container identities,
@@ -777,6 +793,13 @@ preflight. Без `indexProfile` прежний stable сохраняет общ
 ключей прежних серверов и без вывода значений в журнал.
 
 По умолчанию переход сохраняет snapshot и прежний контракт отката, описанный ниже.
+При смене известного pinned stable Code/Graph image на другой pin владелец ждёт
+завершения native background tasks в том же бюджете готовности. HTTP 200 сам по
+себе не завершает ожидание; ошибка native lane сразу прерывает переход и запускает
+прежнее восстановление snapshot. После ожидания остаются прежние tools/schema,
+функциональные, source/coverage и публичные проверки. Новое опубликованное Code
+поколение допускается только с тем же project и полными прежними source identities.
+Этот путь не выбирает ForwardOnly и не меняет RAM, модели, reset или таймауты tools.
 Если оператор явно выбирает обязательный переход на новую версию без копий
 индекса, добавьте `-ForwardOnly` к `stable-cutover`. Он сохраняет точные mount/
 model bindings и reset=false, пропускает snapshot и разрешает серверу завершить
