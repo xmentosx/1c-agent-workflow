@@ -28,6 +28,72 @@ Describe 'Shared client MCP ownership' {
         $helperPath = Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
     }
 
+    It 'masks OpenCode imports in Kilo without renaming tools or editing OpenCode and user permission policy' {
+        $root=Join-Path $TestDrive 'Kilo и OpenCode с пробелом'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode","opencode"]}}',[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $endpoints=@(@{name='1c-code-metadata-mcp';url='https://code.invalid/mcp'},@{name='1c-graph-metadata-mcp';url='https://graph.invalid/mcp/'})
+            Write-ItlClientMcpEndpointSet @(@{client='opencode';owner='vibecoding1c';endpoints=$endpoints}) *> $null
+            $opencode=Join-Path $root 'opencode.json';$otherState=Get-ItlMcpFileState $opencode
+            Write-ItlClientMcpEndpoints -Client kilocode -Owner vibecoding1c -Endpoints $endpoints *> $null
+            $kilo=Join-Path $root '.kilo/kilo.json'
+            $config=Read-Utf8Text $kilo|ConvertFrom-Json
+            $config|Add-Member permission @{ '1c-code-metadata-mcp_*'='deny'; 'unrelated_*'='ask' }
+            $config.mcp.'1c-code-metadata-mcp'.enabled=$false
+            $config.mcp.'1c-code-metadata-mcp'|Add-Member headers @{Authorization='user-auth'}
+            Write-Utf8TextAtomic $kilo ($config|ConvertTo-Json -Depth 10)
+            $request=@{client='kilocode';owner='vibecoding1c';endpoints=$endpoints}
+            $before=Get-ItlMcpFileState $kilo
+            $null=Write-ItlClientMcpEndpointSet @($request) -PlanOnly
+            (Get-ItlMcpFileState $kilo)|Should -BeExactly $before
+            Write-ItlClientMcpEndpointSet @($request) *> $null
+            $entries=Read-ItlClientMcpEntries kilocode
+            @($entries.Keys).Count|Should -Be 4
+            $entries['1c-code-metadata-mcp'].enabled|Should -BeFalse
+            $entries['1c-code-metadata-mcp'].headers.Authorization|Should -BeExactly 'user-auth'
+            $entries['1c-graph-metadata-mcp'].enabled|Should -BeTrue
+            foreach($name in @('onec-code-metadata-mcp','onec-graph-metadata-mcp')){$entries[$name].enabled|Should -BeFalse}
+            $config=Read-Utf8Text $kilo|ConvertFrom-Json
+            $config.permission.'1c-code-metadata-mcp_*'|Should -BeExactly deny
+            $config.permission.'unrelated_*'|Should -BeExactly ask
+            (Get-ItlMcpFileState $opencode)|Should -BeExactly $otherState
+            $stateJson=Read-Utf8Text (Get-ItlManagedMcpStatePath)|ConvertFrom-Json
+            @($stateJson.lastWritten.'kilocode/vibecoding1c'.PSObject.Properties).Count|Should -Be 4
+            $before=Get-ItlMcpFileState $kilo
+            Write-ItlClientMcpEndpointSet @($request) -PreserveUserChanges *> $null
+            (Get-ItlMcpFileState $kilo)|Should -BeExactly $before
+            $config=Read-Utf8Text $kilo|ConvertFrom-Json;$config.mcp.'onec-code-metadata-mcp'.enabled=$true
+            Write-Utf8TextAtomic $kilo ($config|ConvertTo-Json -Depth 10)
+            Write-ItlClientMcpEndpointSet @($request) -PreserveUserChanges *> $null
+            (Read-ItlClientMcpEntries kilocode)['onec-code-metadata-mcp'].enabled|Should -BeTrue
+        }
+    }
+
+    It 'preserves a foreign Kilo alias while completing the selected primary setup and retaining explicit collision guards' {
+        $root=Join-Path $TestDrive 'Чужой alias с пробелом'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode","opencode"]}}',[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $path=Join-Path $root '.kilo/kilo.json';Write-Utf8TextAtomic $path '{"mcp":{"onec-code-metadata-mcp":{"type":"remote","url":"https://user.invalid","enabled":true}}}'
+            $before=Get-ItlMcpFileState $path
+            $warnings=@()
+            Write-ItlClientMcpEndpointSet @(@{client='opencode';owner='vibecoding1c';endpoints=@(@{name='1c-code-metadata-mcp';url='https://selected.invalid'})},@{client='kilocode';owner='vibecoding1c';endpoints=@(@{name='1c-code-metadata-mcp';url='https://selected.invalid'})}) -WarningVariable warnings *> $null
+            $entries=Read-ItlClientMcpEntries kilocode
+            $entries['onec-code-metadata-mcp'].url|Should -BeExactly 'https://user.invalid'
+            $entries['onec-code-metadata-mcp'].enabled|Should -BeTrue
+            $entries['1c-code-metadata-mcp'].url|Should -BeExactly 'https://selected.invalid'
+            @(Get-ItlManagedMcpOwnerKeys -Client kilocode -Owner vibecoding1c)|Should -Not -Contain 'onec-code-metadata-mcp'
+            ($warnings -join ' ')|Should -Match 'explicitly configured by another owner'
+            Test-Path -LiteralPath (Join-Path $root 'opencode.json')|Should -BeTrue
+            $before=Get-ItlMcpFileState $path
+            {Write-ItlClientMcpEndpointSet @(@{client='kilocode';owner='vibecoding1c';endpoints=@(@{name='onec-code-metadata-mcp';url='https://overwrite.invalid'})})}|Should -Throw '*CLIENT_MCP_USER_COLLISION*'
+            (Get-ItlMcpFileState $path)|Should -BeExactly $before
+        }
+    }
+
     It 'keeps facade and UI ownership outside a ready ai_rules default reconciliation' {
         $root=Join-Path $TestDrive 'Правила и отдельные владельцы MCP'
         [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c/mcp'))

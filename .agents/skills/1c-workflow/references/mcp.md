@@ -229,6 +229,20 @@ HTTP proof alone does not establish native activation. Use existing sync/reload
 and a scoped read for a stale connection, or continue with local code. No server
 patch/reindex, automatic product substitution or Startup probe is introduced.
 
+### Kilo and OpenCode in one project
+
+Kilo also reads root OpenCode config. ITL keeps Kilo's established `1c-*` names
+and permissions, and writes disabled `onec-*` import aliases through the same
+MCP owner. OpenCode files and unrelated MCP remain unchanged. An alias already
+explicitly configured in Kilo by another owner is preserved with a warning;
+verify actual activation before claiming that duplicates were removed.
+
+Kilo 7.8.15 gates its native `/experimental/mcp/call-tool` diagnostic API behind
+`KILO_EXPERIMENTAL_MCP_APPS`. A 404 there is not a Code/Graph failure. Native
+qualification uses the flag only in its private authenticated loopback `serve`
+process; normal agent calls, global client settings and MCP servers are unchanged.
+CLI/core proof does not qualify the VS Code frontend.
+
 ## Vanessa UI MCP
 
 Vanessa UI MCP is always branch-local and exposed as the stable logical server `itl-vanessa-ui`. The client sees compact `resolve_tool` and `call_tool`; its full verified catalog remains internal. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.

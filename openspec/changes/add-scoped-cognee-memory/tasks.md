@@ -113,3 +113,8 @@ AC-44 использует то же будущее registry release population.
 - [ ] В отдельно разрешённом G5 потребить тот же applied selected context и действующие AC-08-a–h/20/26 в existing consumer acceptance 6.1–6.3: custom → typical сохраняет project evidence, ПРОФ → КОРП фильтрует исключённую область; registry source version не заменяет project version/IDs/home/grants; отсутствие native stamp само по себе не делает факт candidate. Remember/recall/startup не вызывают Code/Graph.
 
 У registry owner отдельно остаётся future source alignment 2.1b и новые project/source acceptance сценарии. Исторический Code candidate не развёрнут и исключён из обязательной зависимости; Graph revision gap больше не blocker. AC-43/G5/44 и обязательное выпускное наполнение открыты. Gate 6, G4, рабочая миграция, server deploy/reindex и публикация не начинаются.
+
+## Registry dependency: Kilo owner repair, 2026-10-21
+
+- [x] Согласовать dependency с [registry-owned Kilo repair/native result](../add-product-project-registry/evidence/g3-kilo-native-fix-2026-10-21.md): aliases/API findings закрыты только для CLI/core; memory не получает alias mapping/flag/probe/дополнительного acceptance gate. 145/0/0 owner regressions и два actual source сценария не принимаются за реализацию consumer 4.2 или installed G5.
+- [ ] Существующий остаток AC-43/G5/44: full registry AC-39/latest installed/IDE/platform/cost, future memory consumer/native canary и обязательное release population AC-36–38. Six scopes/canonical home/ai_rules_1c/Q1–Q7/D9/G2 не меняются; Gate 6/G4/рабочая миграция/публикация не начинались.

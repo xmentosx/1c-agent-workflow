@@ -262,7 +262,8 @@ function New-ItlProductProjectPreview {
         $key="$($request.client)/$($request.owner)";$entries=Read-ItlClientMcpEntries $request.client
         $projection=@($plan.projections|Where-Object {$_.client -eq $request.client -and $_.owner -eq $request.owner})[0]
         $owned=@(Get-ItlManagedMcpOwnerKeys -Client $request.client -Owner $request.owner)
-        $names=@(@($owned)+@($request.endpoints|ForEach-Object {ConvertTo-ItlClientMcpKey $_.name $request.client})|Select-Object -Unique)
+        $plannedRequest=@($plan.requests|Where-Object {$_.client -eq $request.client -and $_.owner -eq $request.owner})[0]
+        $names=@(@($owned)+@($plannedRequest.endpoints|ForEach-Object {ConvertTo-ItlClientMcpKey $_.name $request.client})|Select-Object -Unique)
         $previousProof=Get-ItlCatalogField (Get-ItlCatalogField $applied 'proof' @{}) $key @{}
         $baseline=Get-ItlCatalogField $lastWritten $key @{}
         foreach($name in $names){
