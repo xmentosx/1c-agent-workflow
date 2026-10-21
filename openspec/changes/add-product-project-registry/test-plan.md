@@ -553,3 +553,19 @@ PS5.1/Pester 5.8.0 **60/60**, 0 failures/skips: Setup 38, Context 22. Пять �
 - После source apply OpenCode unchanged. Native CUSTOM first load добавил `$schema`/format metadata в два файла; сохранены exact before/after hashes и все прочие JSON values. Повторный новый native discovery подтвердил 2 connected/2 disabled и bytes+actual mtime всех 38 paths unchanged. Не заявляется whole-file equality через первичную клиентскую нормализацию.
 
 Full G3/AC-39, latest installed/IDE/platform/cost journeys и release population AC-36–38 остаются открытыми; consumer memory 4.2/AC-43/G5/44 не реализуется. G1/Q1–Q7/D9/G2/ai_rules_1c и шесть областей/canonical home прежние. Gate 6, G4, рабочая миграция, deploy/reindex/client upgrade и публикация не выполнялись.
+
+## Native Kilo VS Code / Cursor / OpenCode Desktop, 2026-10-21
+
+[Canonical report](evidence/g3-desktop-native-2026-10-21.md) / [JSON](evidence/g3-desktop-native-2026-10-21.json) уточняют existing AC-08/19/20/25/26 и tasks 3.4/5.4–5.6. Runtime bbd53203 unchanged, source registry/сервера не патчились. Проверен только исходный ПРОФ → КОРП Unicode root; прошлый CUSTOM CLI proof не становится CUSTOM IDE qualification.
+
+| Surface | Достаточное новое evidence | Непринятый остаток |
+|---|---|---|
+| Kilo VS Code | Видимый native MCP view, 2 connected/2 disabled после config Reload; actual Ask session Code stats и Graph list_graph_projects вернули полезные payload/pm5corp/default | Исходный status call с generation/operation_id строками `"null"` вернул generation_not_found и остаётся failed; raw inputs/outputs важнее model narration/part completed. Full model compatibility, полный window restart/installed journey не приняты |
+| Cursor | Native worker selected-origin connect/tools-list, 28 Code/54 Graph, common Computer Use preserved; Graph Reload и полный Developer: Reload Window сохранили catalogs | Login overlay перекрывает workbench. Программные backing UI controls/логи не дают visible signed-in user journey или real agent reads: G3-CURSOR-NATIVE-AGENT-AUTH open |
+| OpenCode Desktop | Renderer/штатный backend и receipt трёх public deep links подтверждены, exact target path сохранён | Остался Default Project `/`, target config/tools не активированы: G3-OPENCODE-DESKTOP-SELECTED-CONTEXT open. Повтор в коротком полном private profile не изолирует cause первого failure и не заменяет original selected-root acceptance |
+
+Критерии не ослабляются: API/part completed, discovered tool name, backend launch или приём deep link по отдельности не являются semantic tool/selected-context pass. Native status/get_graph_project_status не получает mcp_namespace как выдуманный аргумент; scope подтверждается source/result, optional generation не заполняется строкой `"null"`. Graph readable inherited state без active_generation допустим по действующему registry-only контракту. Приватный Kilo GUI/model процесс имел MCP Apps flag=1, использовал обычный Ask tool path; flag-off вариант отдельно не квалифицирован.
+
+Cost control: Kilo 2 user turns/4 provider requests/3 tools (2 positive + 1 semantic rejection). Counters input 50 327, cache read 145 728, output 432, reasoning 697, reported cost 0 для Auto Free. Это существующий client canary, не paired G3 added-context measurement/биллинг. Cursor/OpenCode model requests 0; automatic protocol/embedding counts не измерены. Private OpenCode updater download 126 269 464 bytes не установлен; EXE/version SHA прежние. Fresh 12 files SHA+actual mtime passed, отдельно 19 paths совпали с historical baseline; все owned processes закрыты. Нулевых LLM calls для этого среза не заявляется; новые workflow always-on/schema/startup probes и memory calls — 0.
+
+Full AC-39/paired installed cost, AC-36–38 и memory 4.2/AC-43/G5/44 остаются открытыми. G1/Q1–Q7/D9/G2/ai_rules_1c/шесть областей/canonical home прежние. Gate 6/G4/рабочая миграция/публикация не выполнялись; mandatory registration proof принадлежит source-delivery ledger.

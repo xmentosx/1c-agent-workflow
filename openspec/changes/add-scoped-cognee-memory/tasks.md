@@ -118,3 +118,10 @@ AC-44 использует то же будущее registry release population.
 
 - [x] Согласовать dependency с [registry-owned Kilo repair/native result](../add-product-project-registry/evidence/g3-kilo-native-fix-2026-10-21.md): aliases/API findings закрыты только для CLI/core; memory не получает alias mapping/flag/probe/дополнительного acceptance gate. 145/0/0 owner regressions и два actual source сценария не принимаются за реализацию consumer 4.2 или installed G5.
 - [ ] Существующий остаток AC-43/G5/44: full registry AC-39/latest installed/IDE/platform/cost, future memory consumer/native canary и обязательное release population AC-36–38. Six scopes/canonical home/ai_rules_1c/Q1–Q7/D9/G2 не меняются; Gate 6/G4/рабочая миграция/публикация не начинались.
+
+## Native desktop dependency qualification, 2026-10-21
+
+- [x] Согласовать existing AC-15/20/25/35/43 с [одним registry desktop report](../add-product-project-registry/evidence/g3-desktop-native-2026-10-21.md): Kilo visible frontend/Code/Graph read subset, Cursor worker-only behind login, OpenCode selected-context failure; semantic generation-null error и реальные native token counters сохранены.
+- [ ] Существующая AC-43/G5 dependency остаётся открытой: G3-CURSOR-NATIVE-AGENT-AUTH (signed-in visible UX/scoped reads), G3-OPENCODE-DESKTOP-SELECTED-CONTEXT (тот же Unicode root/native catalogs/reads), остальные installed/platform/CUSTOM/cost controls. Registry G3/AC-39 и release population AC-36–38/AC-44 не закрыты.
+
+Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, credential storage или acceptance ledger нет. Native active_generation=null не возвращает backend patch в обязательный план. Шесть областей/home/grants/ai_rules_1c/G1/Q1–Q7/D9/G2 прежние; Gate 6, рабочая миграция и публикация не затронуты.
