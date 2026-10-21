@@ -8,7 +8,7 @@ BeforeAll {
         @{path='scripts/invoke-develop-e2e.ps1';names=@('Read-CompactSummary','Invoke-DevelopUpgradeRefresh')},
         @{path='scripts/check.ps1';names=@('Get-DevelopE2EIdentitySha256')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1';names=@('Write-ConfigLoadRejectionEvidence')},
-        @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1';names=@('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Set-RunResultArtifacts')},
+        @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1';names=@('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Set-RunResultArtifacts','Read-DesignerBatchStrictUtf8Text')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1';names=@('Test-OneCNativeOperationJournalReleased')}
     )) {
         $tokens=$null; $errors=$null
@@ -63,7 +63,7 @@ BeforeAll {
         $receiptPath=(Get-ChildItem -LiteralPath $logs -Filter '1c-gate6-rejection-*.json').FullName
         return @{Root=$root;Expected=[pscustomobject]@{sourcePath='src/cf/CommonModules/Reproducer/Ext/Module.bsl';
             sourceSha256=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant();diagnostic=$diagnostic};
-            Result=[pscustomobject]@{exitCode=1;stdout=$stdout};Receipt=$receiptPath;Summary=$summary;Failure=$failure;Log=$log;Source=$source}
+            Result=[pscustomobject]@{exitCode=1;stdout=$stdout;stderr=(Join-Path $root 'stderr.log')};Receipt=$receiptPath;Summary=$summary;Failure=$failure;Log=$log;Source=$source}
     }
     function Assert-FixtureRejection([hashtable]$Fixture) {
         Assert-DevelopConfigurationRejection -ProcessResult $Fixture.Result -Expected $Fixture.Expected -Root $Fixture.Root -BranchName fixture
@@ -112,6 +112,73 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
     It 'rejects a successful refresh instead of silently losing the negative reproducer' {
         $fixture=New-RejectionFixture; $fixture.Result.exitCode=0
         { Assert-FixtureRejection $fixture } | Should -Throw '*UNEXPECTED_RESULT*'
+    }
+    It 'requires explicit production refusal before ordinary refresh on a purpose-aware helper' {
+        $fixture=New-RejectionFixture
+        $helper=Join-Path $fixture.Root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper))
+        [IO.File]::WriteAllText($helper,'param([string]$ResultPurpose)')
+        $fixture.Summary.action='check-dev-branch';Write-RejectionJson $fixture.Result.stdout $fixture.Summary
+        $ok=Join-Path $fixture.Root 'refresh-ok.json';Write-RejectionJson $ok @{action='refresh-dev-branch';status='succeeded'}
+        $script:negativeResult=$fixture.Result;$script:ordinaryResult=[pscustomobject]@{exitCode=0;stdout=$ok}
+        $script:actions=[Collections.Generic.List[string]]::new()
+        Mock Invoke-InstalledAction {
+            $script:actions.Add($Action)
+            if($Action -ceq 'check-dev-branch'){
+                $AdditionalArguments | Should -Be @('-ResultPurpose','production','-ConfigLoadMode','Full')
+                $AllowFailure | Should -BeTrue
+                return $script:negativeResult
+            }
+            $AdditionalArguments | Should -Be @('-ConfigLoadMode','Full')
+            return $script:ordinaryResult
+        }
+        $proof=Invoke-DevelopConfigurationRejectionScenario -Root $fixture.Root -BranchName fixture -Expected $fixture.Expected
+        @($script:actions) | Should -Be @('check-dev-branch','refresh-dev-branch')
+        $proof.productionAction | Should -BeExactly 'check-dev-branch'
+        $proof.developmentRefresh | Should -BeExactly 'succeeded'
+    }
+    It 'never refreshes after unexpected production success' {
+        $fixture=New-RejectionFixture
+        $helper=Join-Path $fixture.Root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper));[IO.File]::WriteAllText($helper,'param([string]$ResultPurpose)')
+        $fixture.Result.exitCode=0;$script:negativeResult=$fixture.Result
+        Mock Invoke-InstalledAction {return $script:negativeResult}
+        {Invoke-DevelopConfigurationRejectionScenario -Root $fixture.Root -BranchName fixture -Expected $fixture.Expected} | Should -Throw '*UNEXPECTED_RESULT*'
+        Should -Invoke Invoke-InstalledAction -Times 0 -ParameterFilter {$Action -eq 'refresh-dev-branch'}
+    }
+    It 'preserves the legacy refresh refusal on a helper without the purpose parameter' {
+        $fixture=New-RejectionFixture;$script:refreshResult=$fixture.Result
+        (Invoke-DevelopConfigurationRejectionScenario -Root $fixture.Root -BranchName fixture -Expected $fixture.Expected).status | Should -BeExactly 'passed'
+        $script:refreshArguments | Should -Be @('-ConfigLoadMode','Full')
+    }
+    It 'checks the exact finding in the hashed native log with all declared diagnostic artifacts' {
+        $fixture=New-RejectionFixture
+        $receipt=Get-Content $fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+        $diagnostic='Reproducer '+(-join [char[]](0x041F,0x0440,0x043E,0x0435,0x043A,0x0442))+': incorrect reference MissingProperty'
+        [IO.File]::WriteAllText($fixture.Log,$diagnostic,[Text.UTF8Encoding]::new($false))
+        $fixture.Expected.diagnostic=$diagnostic
+        $receipt.artifacts[1].sha256=(Get-FileHash $fixture.Log -Algorithm SHA256).Hash.ToLowerInvariant()
+        foreach($field in @('diagnostics','legacyContextAssessment')){
+            $path=Join-Path $fixture.Root ($field+'.json');Write-RejectionJson $path @{kind=$field}
+            $sha=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $value=if($field -ceq 'diagnostics'){@{path=$path;sha256=$sha}}else{@{evidencePath=$path;evidenceSha256=$sha}}
+            $receipt | Add-Member -NotePropertyName $field -NotePropertyValue $value -Force
+            $receipt.artifacts+=@{path=$path;sha256=$sha}
+        }
+        Write-RejectionJson $fixture.Receipt $receipt
+        (Assert-FixtureRejection $fixture).status | Should -BeExactly 'passed'
+        $receipt.artifacts+=@{path=$fixture.Log;sha256=(Get-FileHash $fixture.Log -Algorithm SHA256).Hash.ToLowerInvariant()}
+        Write-RejectionJson $fixture.Receipt $receipt
+        {Assert-FixtureRejection $fixture} | Should -Throw '*NATIVE_PROOF_MISSING*'
+    }
+    It 'rejects failed development continuation after a proven production refusal' {
+        $fixture=New-RejectionFixture
+        $helper=Join-Path $fixture.Root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper));[IO.File]::WriteAllText($helper,'param([string]$ResultPurpose)')
+        $fixture.Summary.action='check-dev-branch';Write-RejectionJson $fixture.Result.stdout $fixture.Summary
+        $script:negativeResult=$fixture.Result
+        Mock Invoke-InstalledAction {return $script:negativeResult}
+        {Invoke-DevelopConfigurationRejectionScenario -Root $fixture.Root -BranchName fixture -Expected $fixture.Expected} | Should -Throw '*upgrade-refresh-branch failed*'
     }
     It 'rejects another finding or changed source bytes' {
         $fixture=New-RejectionFixture; $fixture.Expected.diagnostic='Another incorrect reference MissingProperty'
