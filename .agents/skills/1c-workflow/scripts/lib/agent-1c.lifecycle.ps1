@@ -2673,6 +2673,22 @@ function Invoke-GuardedCfeExtensionApply {
     return [pscustomobject]@{ logPath = [string]$script:LastLogPath; gate6Evidence = $evidence }
 }
 
+function Write-ConfigLoadRootScopeDiagnostic {
+    param([string]$ListFilePath)
+
+    if ([string]::IsNullOrWhiteSpace($ListFilePath)) { return }
+    try {
+        foreach ($entry in (Read-Utf8Lines -Path $ListFilePath)) {
+            if ($entry.Trim().Replace('\', '/') -imatch '^(?:\./)?Configuration\.xml$') {
+                Write-Warning 'PARTIAL_CONFIG_ROOT_SCOPE: -listFile contains Configuration.xml. Designer may read related metadata outside the explicit list; list-scoped validation does not guarantee the same native scope. Follow the original Designer error. If the workflow stops, correct the reported source defect and repeat the same command. Keep the root file when required; existing load-mode and fallback rules apply.'
+                return
+            }
+        }
+    } catch {
+        # Advisory output must not replace the original failure or interrupt recovery.
+    }
+}
+
 function Invoke-ConfigLoadWithFallback {
     param(
         [string]$InfoBasePath,
@@ -2772,6 +2788,7 @@ function Invoke-ConfigLoadWithFallback {
             # A lost journal ACK after native success is not a failed partial
             # load and must never trigger a second native mutation.
             if ($partialNativeSucceeded) { throw }
+            Write-ConfigLoadRootScopeDiagnostic -ListFilePath $ListFilePath
             if ($script:ConfigLoadAfterEditableBoundary) {
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot -Failure $_
                 throw

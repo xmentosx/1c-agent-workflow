@@ -1,6 +1,64 @@
 ﻿BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $helperPath = Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    function Invoke-RootScopeLoadFixture {
+        param([string]$Root,[string]$LoadMode='Partial',[string]$Entry='Configuration.xml',
+            [string]$NativeFailureMode='partial',[switch]$WarningFailure)
+        $source = Join-Path $Root 'src/cf'
+        New-Item -ItemType Directory -Force -Path $source | Out-Null
+        $cursor = Join-Path $source 'ConfigDumpInfo.xml'
+        $original = [Text.UTF8Encoding]::new($false).GetBytes("исходный курсор`r`n")
+        [IO.File]::WriteAllBytes($cursor,$original)
+        $list = Join-Path $Root 'список загрузки.txt'
+        if ($Entry -ne '<missing>') {
+            [IO.File]::WriteAllText($list,($Entry + "`r`nCatalogs/Выбранный.xml`r`n"),[Text.UTF8Encoding]::new($false))
+        }
+        & {
+            . $helperPath -ProjectRoot $Root -Action help *> $null
+            $script:rootScopeCalls = [Collections.Generic.List[object]]::new()
+            $script:rootScopeWarnings = [Collections.Generic.List[string]]::new()
+            $script:rootScopeNativeFailure = [IO.InvalidDataException]::new('Unknown metadata type CatalogRef.UnlistedMissingDependency in Catalogs/Вне списка.xml')
+            function Get-PlatformPath { 'fixture-1cv8.exe' }
+            function Write-Warning {
+                param([string]$Message)
+                $script:rootScopeWarnings.Add($Message)
+                if ($WarningFailure -and $Message.StartsWith('PARTIAL_CONFIG_ROOT_SCOPE:')) { throw 'Diagnostic output unavailable' }
+            }
+            function Invoke-Designer {
+                param($InfoBasePath,$InfoBaseKind,$User,$Password,$NativeEffectContract,$RestorationDuty,[string[]]$DesignerArgs)
+                $operation = $DesignerArgs[0]
+                $script:rootScopeCalls.Add([pscustomobject]@{
+                    operation=$operation; args=@($DesignerArgs); cursor=[IO.File]::ReadAllBytes($cursor)
+                })
+                $script:LastLogPath = Join-Path $script:ProjectRoot ("root-scope-$($script:rootScopeCalls.Count).log")
+                $log = if ($NativeFailureMode -eq 'modules' -and $operation -eq '/CheckModules') { 'Не найден метод исходной конфигурации.' } else { 'Ошибок: 0; предупреждений: 0' }
+                [IO.File]::WriteAllText($script:LastLogPath,$log,[Text.UTF8Encoding]::new($false))
+                if ($operation -eq '/DumpIB') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]](1,2,3)) }
+                if ($operation -eq '/LoadConfigFromFiles') {
+                    $script:LastNativeProcessStarted = $true
+                    [IO.File]::WriteAllText($cursor,'измененный курсор',[Text.UTF8Encoding]::new($false))
+                    if ($NativeFailureMode -eq 'all' -or ($NativeFailureMode -eq 'partial' -and $DesignerArgs -contains '-partial')) {
+                        throw $script:rootScopeNativeFailure
+                    }
+                }
+                $index = [Array]::IndexOf($DesignerArgs,'/DumpResult')
+                if ($index -ge 0) { [IO.File]::WriteAllText($DesignerArgs[$index+1],'0',[Text.UTF8Encoding]::new($false)) }
+            }
+            $result = $null
+            $errorRecord = $null
+            try {
+                $result = Invoke-ConfigLoadWithFallback -InfoBasePath 'C:\База 1С' -InfoBaseKind file `
+                    -AbsoluteExportPath $source -ListFilePath $list -FileCount 2 -SourceFingerprint 'fixture-source' `
+                    -ContentKind configuration -RequireGate6 -Mode $LoadMode -User '' -Password ''
+            } catch { $errorRecord = $_ }
+            [pscustomobject]@{
+                result=$result; error=$errorRecord; nativeFailure=$script:rootScopeNativeFailure
+                calls=@($script:rootScopeCalls.ToArray()); warnings=@($script:rootScopeWarnings.ToArray())
+                originalCursor=$original; finalCursor=[IO.File]::ReadAllBytes($cursor)
+                listText=$(if(Test-Path -LiteralPath $list){[IO.File]::ReadAllText($list)}else{''})
+            }
+        }
+    }
     function Invoke-PinnedYAxDesignerFixture {
         param([string]$Root,[string]$Problem='',[string]$Drift='',[string]$Scope='')
         New-Item -ItemType Directory -Force -Path $Root | Out-Null
@@ -107,6 +165,67 @@
                     ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
             }
         }
+    }
+}
+
+Describe 'Partial root-list load diagnostics' {
+    It 'preserves the native error, database restoration and exact cursor for root entry <Entry>' -ForEach @(
+        @{Entry='Configuration.xml'}, @{Entry='.\CONFIGURATION.XML'}, @{Entry='./Configuration.xml'}
+    ) {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive ('Отказ загрузки '+[guid]::NewGuid().ToString('N'))) -Entry $Entry
+        [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
+        $actual.error.Exception.Message | Should -Match 'Catalogs/Вне списка.xml'
+        @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        $actual.calls[1].args | Should -Contain '-partial'
+        $actual.calls[1].args | Should -Contain '-listFile'
+        $actual.finalCursor | Should -Be $actual.originalCursor
+        $actual.listText | Should -Be ($Entry+"`r`nCatalogs/Выбранный.xml`r`n")
+    }
+
+    It 'keeps one checked full fallback after a real Auto partial failure' {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive 'Авто загрузка') -LoadMode Auto
+        $actual.error | Should -BeNullOrEmpty
+        $actual.result.loadModeUsed | Should -Be 'full-fallback'
+        @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB','/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        $actual.calls[1].args | Should -Contain '-listFile'
+        $actual.calls[4].args | Should -Not -Contain '-listFile'
+        $actual.calls[4].cursor | Should -Be $actual.originalCursor
+    }
+
+    It 'keeps successful <Mode> loading silent and checked' -ForEach @(@{Mode='Partial'},@{Mode='Full'}) {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive ('Успех '+$Mode)) -LoadMode $Mode -NativeFailureMode ''
+        $actual.error | Should -BeNullOrEmpty
+        $actual.result.loadModeUsed | Should -Be $Mode.ToLowerInvariant()
+        $actual.warnings | Should -HaveCount 0
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/CheckConfig','/UpdateDBCfg')
+        ($actual.calls[1].args -contains '-listFile') | Should -Be ($Mode -eq 'Partial')
+    }
+
+    It 'preserves a check rejection without full fallback after the editable load succeeded' {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive 'Отказ проверки модулей') -LoadMode Auto -NativeFailureMode modules
+        $actual.error.Exception.Message | Should -Match 'GATE6_CHECK_FAILED.*modules.*Не найден метод'
+        @($actual.warnings | Where-Object { $_ -like 'PARTIAL_CONFIG_ROOT_SCOPE:*' }) | Should -HaveCount 1
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/CheckModules','/RestoreIB')
+        $actual.finalCursor | Should -Be $actual.originalCursor
+    }
+
+    It 'does not infer a root scope from <Entry> or change recovery' -ForEach @(
+        @{Entry='Catalogs/Configuration.xml'}, @{Entry='Catalogs/Выбранный.xml'}, @{Entry='<missing>'}
+    ) {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')+' Без корня')) -Entry $Entry
+        [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
+        $actual.warnings | Should -HaveCount 0
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        $actual.finalCursor | Should -Be $actual.originalCursor
+    }
+
+    It 'cannot replace the native failure or interrupt restoration if advisory output throws' {
+        $actual = Invoke-RootScopeLoadFixture -Root (Join-Path $TestDrive 'Сбой вывода диагностики') -WarningFailure
+        [object]::ReferenceEquals($actual.error.Exception,$actual.nativeFailure) | Should -BeTrue
+        @($actual.calls.operation) | Should -Be @('/DumpIB','/LoadConfigFromFiles','/RestoreIB')
+        $actual.finalCursor | Should -Be $actual.originalCursor
     }
 }
 
