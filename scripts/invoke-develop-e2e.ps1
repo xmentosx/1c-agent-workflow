@@ -55,6 +55,7 @@ foreach ($requestedJourney in $requestedJourneys) {
 }
 $freshRoot = ""
 $freshBranchRoot = ""
+$freshWorktreeLease = $null
 $staleStandCleanup = $null
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
@@ -508,11 +509,9 @@ try {
         [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
-        $refreshResult = Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName `
-            -ExpectedConfigurationRejection $expectedConfigurationRejection
         if ($positiveStandRoot) {
-            $journeys.upgrade.configurationRejection = Assert-DevelopConfigurationRejection -ProcessResult $refreshResult `
-                -Expected $standConfig.developConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
+            $journeys.upgrade.configurationRejection = Invoke-DevelopConfigurationRejectionScenario `
+                -Expected $expectedConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
             $positiveOutput = Join-Path $outputRoot 'upgrade-positive/develop-e2e-summary.json'
             $positiveArguments = @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
                 '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade')
@@ -527,6 +526,7 @@ try {
             }
             $journeys.upgrade.positiveJourney = [ordered]@{path=$positiveOutput;sha256=(Get-FileHash -LiteralPath $positiveOutput -Algorithm SHA256).Hash.ToLowerInvariant();summary=$positive}
         } else {
+            [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName)
             if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
                 [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
             }
@@ -589,6 +589,7 @@ try {
             [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
             Get-BranchWorktree -Root $freshRoot -Name $branchName
         }
+        $freshWorktreeLease = Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot -BranchPath $freshBranchRoot
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "missing-suite-recovery" -Operation {
             [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
         })
@@ -632,6 +633,8 @@ try {
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "close-and-cleanup" -Operation {
             [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
+            Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease
+            $freshWorktreeLease = $null
             [void](Invoke-DevelopProcess -Name 'fresh-source-seed-unchanged' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
                 '-Action','Capture','-Phase','Develop','-ProjectRoot',$freshSeedProjectRoot,'-AgentTarget',$AgentTarget,
                 '-OutputPath',(Join-Path $outputRoot 'fresh-source-seed-confirmation.json')) -TimeoutSeconds 180)
@@ -743,6 +746,8 @@ try {
     }
     $payload['fixtureCopyCleanup']=$copyCleanup
     Write-QualificationFixtureJson -Path $OutputPath -Value $payload
+    try { Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease }
+    catch { Write-Warning "Fresh journey worktree retained: $($_.Exception.Message)" }
 }
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }

@@ -16,6 +16,74 @@ BeforeAll {
 }
 
 Describe 'Source delivery post-success cleanup' {
+    It 'preserves Git metadata and launcher bytes with locked <LockedRelativePath>, then completes cleanup after release' -TestCases @(
+        @{ LockedRelativePath='1Cv8.1CD' },
+        @{ LockedRelativePath='1Cv8Log/1Cv8.lgf' }
+    ) {
+        param([string]$LockedRelativePath)
+        . (Join-Path $RepoRoot 'scripts/develop-e2e-cleanup.ps1')
+        $root = Join-Path $TestDrive ('fresh cleanup ' + [char]0x0416)
+        $main = Join-Path $root 'd-a1b2c3d4'; $branch = "$main-develop-golden"
+        New-CleanupRepository -Root $main
+        & git -C $main worktree add --quiet -b itldev/develop-golden $branch
+        $databaseRoot = Join-Path $branch '.agent-1c/infobases/dev-branches/develop-golden'
+        New-Item -ItemType Directory -Force -Path $databaseRoot | Out-Null
+        $database = Join-Path $databaseRoot '1Cv8.1CD'
+        [IO.File]::WriteAllText($database, 'diagnostic database placeholder')
+        $launcher = Join-Path $root 'ibases.v8i'
+        [IO.File]::WriteAllText($launcher, '[preserve launcher bytes]', [Text.UTF8Encoding]::new($false))
+        $launcherHash = (Get-FileHash -LiteralPath $launcher).Hash
+        $pointer = [IO.File]::ReadAllText((Join-Path $branch '.git'), [Text.Encoding]::UTF8)
+        $lockedFile = Join-Path $databaseRoot $LockedRelativePath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockedFile) | Out-Null
+        if (-not (Test-Path -LiteralPath $lockedFile)) { [IO.File]::WriteAllText($lockedFile, 'diagnostic journal placeholder') }
+        $held = [IO.File]::Open($lockedFile, 'Open', 'ReadWrite', 'None')
+        try {
+            { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher } | Should -Throw '*FRESH_JOURNEY_IN_USE*'
+            (& git -C $branch rev-parse --show-toplevel).Replace('/', '\') | Should -Be $branch
+            $LASTEXITCODE | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $branch '.git'), [Text.Encoding]::UTF8) | Should -BeExactly $pointer
+            (Get-FileHash -LiteralPath $launcher).Hash | Should -Be $launcherHash
+        } finally { $held.Dispose() }
+        $result = Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher
+        $result.removedProjects | Should -Be 1
+        Test-Path -LiteralPath $main | Should -BeFalse
+        Test-Path -LiteralPath $branch | Should -BeFalse
+    }
+
+    It 'protects a fresh worktree between lifecycle commands with its native Git lock and releases only its own lock' {
+        . (Join-Path $RepoRoot 'scripts/develop-e2e-cleanup.ps1')
+        $root = Join-Path $TestDrive 'fresh owner'; $main = Join-Path $root 'd-1234abcd'; $branch = "$main-develop-golden"
+        New-CleanupRepository -Root $main
+        & git -C $main worktree add --quiet -b itldev/develop-golden $branch
+        $launcher = Join-Path $root 'ibases.v8i'
+        [IO.File]::WriteAllText($launcher, '[preserve launcher bytes]')
+        $lease = Lock-DevelopE2EFreshWorktree -ProjectRoot $main -BranchPath $branch
+        try {
+            # The previously published cleanup uses one --force. Native Git must
+            # preserve the worktree even before that executor gains the guard.
+            $legacyRemove = Invoke-RepositoryGit -RepositoryRoot $main -Arguments @('worktree','remove','--force','--',$branch) -AllowFailure
+            $legacyRemove.exitCode | Should -Not -Be 0
+            { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher } | Should -Throw '*FRESH_JOURNEY_IN_USE*'
+            (& git -C $branch rev-parse --show-toplevel).Replace('/', '\') | Should -Be $branch
+            $LASTEXITCODE | Should -Be 0
+            [IO.File]::ReadAllText($launcher) | Should -BeExactly '[preserve launcher bytes]'
+            $foreign = [pscustomobject]@{projectRoot=$main;branchPath=$branch;reason='another owner'}
+            { Unlock-DevelopE2EFreshWorktree -Lease $foreign } | Should -Throw '*ownership changed*'
+            @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $main | Where-Object { $_.locked }).Count | Should -Be 1
+        } finally { Unlock-DevelopE2EFreshWorktree -Lease $lease }
+        (Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher).removedProjects | Should -Be 1
+        Unlock-DevelopE2EFreshWorktree -Lease $lease # Owning close/cleanup may already have removed the project.
+    }
+
+    It 'holds fresh protection from branch creation through the complete original journey and releases it in the terminal path' {
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/invoke-develop-e2e.ps1') -Raw -Encoding UTF8
+        $text.IndexOf('Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot') | Should -BeGreaterThan $text.IndexOf('Name "create-dev-branch"')
+        $text.IndexOf('Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot') | Should -BeLessThan $text.IndexOf('Name "missing-suite-recovery"')
+        $text | Should -Match '(?s)fresh-close.*?Unlock-DevelopE2EFreshWorktree.*?Remove-DevelopE2EFreshProject'
+        $text | Should -Match '(?s)finally \{.*?Write-QualificationFixtureJson -Path \$OutputPath -Value \$payload\s+try \{ Unlock-DevelopE2EFreshWorktree'
+    }
+
     It 'removes only exact generated delivery candidate worktrees' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup repo ' + [guid]::NewGuid().ToString('N'))
         $id = [guid]::NewGuid().ToString('N'); $candidate = Join-Path ([IO.Path]::GetTempPath()) "itl-source-publish-develop-$id"; $keep = Join-Path ([IO.Path]::GetTempPath()) ('user-worktree-' + [guid]::NewGuid().ToString('N'))
