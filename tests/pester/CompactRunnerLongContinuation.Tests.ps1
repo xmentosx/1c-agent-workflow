@@ -81,7 +81,8 @@ if ($fixture.mode -eq 'orphan') {
     [IO.File]::WriteAllText((Join-Path $fixture.root 'descendant-pid.txt'),[string]$owned.Id,[Text.Encoding]::ASCII)
 }
 Start-Sleep -Seconds $fixture.seconds
-Copy-Item -LiteralPath $fixture.external -Destination (Join-Path $fixture.root 'observed-external.json')
+. (Join-Path $fixture.root 'ContinuationStatusSnapshot.TestSupport.ps1')
+Copy-TestContinuationStatusSnapshot -SourcePath $fixture.external -DestinationPath (Join-Path $fixture.root 'observed-external.json')
 if ($fixture.mode -eq 'streaming') {
     $log=Read-Utf8Text -Path $RunLogPath
     $errorReadStream=[IO.FileStream]::new((Join-Path $fixture.root 'native-stderr.txt'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
@@ -113,6 +114,7 @@ if ($fixture.mode -eq 'cleanup') { Start-Sleep -Seconds 4 }
 exit 0
 '@
                 [IO.File]::WriteAllText((Join-Path $scripts 'agent-1c.ps1'),$parent,[Text.UTF8Encoding]::new($true))
+                Copy-Item -LiteralPath (Join-Path $context.RepoRoot 'tests/pester/ContinuationStatusSnapshot.TestSupport.ps1') -Destination $root -ErrorAction Stop
                 [IO.File]::WriteAllText((Join-Path $root 'child.ps1'),$child,[Text.UTF8Encoding]::new($true))
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS',$(if($DefaultStale){$null}else{'1'}),'Process')
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS',$(if($DefaultStale){$null}else{'2'}),'Process')

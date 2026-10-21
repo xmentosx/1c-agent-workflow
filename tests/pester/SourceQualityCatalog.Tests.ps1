@@ -397,6 +397,7 @@ Describe 'Source quality catalog contracts' {
         $splitReleaseConsumers = @('DevelopManifestContinuation','ReleaseAdmission','ReleaseOrchestration' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+        $snapshotConsumer = 'tests/pester/ContinuationStatusSnapshot.Tests.ps1'
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
@@ -408,9 +409,21 @@ Describe 'Source quality catalog contracts' {
         # Keep the historical 57/80 cohort. The third registry consumer proves
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 2)
+        # The concurrent snapshot regression is another explicit addition.
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 3)
+        @($selection.tests) | Should -Contain $snapshotConsumer
+        $snapshotOwner = @($catalog.contracts | Where-Object id -eq 'compact-helper-continuation-inputs')[0]
+        @($snapshotOwner.tests) | Should -Contain $snapshotConsumer
+        @($snapshotOwner.paths) | Should -Contain 'tests/pester/ContinuationStatusSnapshot.TestSupport.ps1'
+        @(Get-QualityContractReuseInputPaths -Contract $snapshotOwner) | Should -Contain 'tests/pester/ContinuationStatusSnapshot.TestSupport.ps1'
+        $snapshotSelection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/pester/ContinuationStatusSnapshot.TestSupport.ps1')
+        @($snapshotSelection.tests) | Should -Be @(
+            'tests/pester/CompactRunnerFreshContinuation.Tests.ps1',
+            'tests/pester/CompactRunnerLongContinuation.Tests.ps1',
+            'tests/pester/CompactRunnerRouting.Tests.ps1',
+            $snapshotConsumer)
         @($selection.tests) | Should -Contain $autonomyConsumer
         foreach($test in $registryConsumers){@($selection.tests)|Should -Contain $test}
         $registryOwner=@($catalog.contracts|Where-Object id -eq 'product-project-setup')[0]
@@ -465,7 +478,10 @@ Describe 'Source quality catalog contracts' {
         # Named production-purpose/proof-final-result.json: 16 cases, 11.239s;
         # reserve 17s including rounded setup cost, without changing watchdogs.
         $productionPreparationSeconds = 17.0
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds
+        # continuation-status-snapshot/focused.json: four cases, 23.52s;
+        # reserve 30s without rewriting the historical cohort measurements.
+        $snapshotSeconds = 30.0
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -476,8 +492,8 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer}).Count | Should -Be 83
-        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 2)
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 83
+        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 3)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -490,7 +506,7 @@ Describe 'Source quality catalog contracts' {
         # capacity model; no removed cohort, timeout change or cache assumption.
         $autonomyObservedSeconds = 33.218
         [double]$trackedTimings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
