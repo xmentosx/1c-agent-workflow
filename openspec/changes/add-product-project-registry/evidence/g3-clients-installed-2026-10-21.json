@@ -1,0 +1,980 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-CLIENTS-INSTALLED-20261021",
+  "observedUtc": "2026-10-21T11:55:10.380133+00:00",
+  "status": "partial-qualified-full-G3-open",
+  "sourceCommit": "73f44caf65061bd290e0540b2952d3b72fc4f135",
+  "unchangedRuntimeSource": "f53b9247ae9ebefb42e6f0b39d34d6e9b8800a63",
+  "unchangedRuntimeInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "bytes": 32626
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "0f5a2e78610a57511888bf057fb3140ef05f390384f76c89b66f62a1aca26731",
+      "bytes": 46683
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+      "sha256": "41715ce25935946ca898892da7d5ad241cdd061659b0ea0448e88ba7f903a3ff",
+      "bytes": 18330
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+      "sha256": "6650f571091d276c6832ff130bd8b657f7245c3e347b67c88e8cdf7dcd040184",
+      "bytes": 9747
+    },
+    {
+      "path": "templates/product-project-registry/schemas/catalog.schema.json",
+      "sha256": "f1e12ce10b8ad9eb067e1e05180efd2828f31684afd692d29da3d12a7981cba2",
+      "bytes": 10900
+    },
+    {
+      "path": "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1",
+      "sha256": "167b24cb41a2be70b1eaa46c065f695635b567ed56d5d1303c7d160aabc7d50b",
+      "bytes": 301055
+    },
+    {
+      "path": "tests/pester/ProductProjectContext.Tests.ps1",
+      "sha256": "2574972f6a22be7636d9463721d203240eba4d283ed438ab62dd41a0720dc1fb",
+      "bytes": 31915
+    },
+    {
+      "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "sha256": "88296513279e92009f99173097e40b7b8bf0b3d196d9e9cd8e42103423043b1a",
+      "bytes": 31583
+    },
+    {
+      "path": "tests/pester/HostTooling.Tests.ps1",
+      "sha256": "8be57adaaeb2556169362c43980a1cb2fdc8449b456d0a420905057fd5b31674",
+      "bytes": 375322
+    },
+    {
+      "path": "tests/pester/HostNativeTransport.Tests.ps1",
+      "sha256": "dd2773382fb7b6e41e642c921fbfb8f5aae24ce450ad36413a787e0bc6d93a42",
+      "bytes": 3487
+    },
+    {
+      "path": "tests/quality-contracts.json",
+      "sha256": "bbf973c35f399e8d2dbd74d71effd061b9e49eb42df0adeef7822a8141877dc5",
+      "bytes": 93528
+    }
+  ],
+  "previousNativeResult": "g3-prof-native-reload-2026-10-21.json",
+  "platform": {
+    "os": "Windows 11 Home",
+    "build": 26300,
+    "elevated": false,
+    "windows10ServerTerminal": "unverified-no-stand"
+  },
+  "fileChecks": {
+    "passed": 48,
+    "clients": 12,
+    "roles": [
+      "code",
+      "graph"
+    ],
+    "families": [
+      "PM4",
+      "PM5"
+    ],
+    "scope": "file-parsing-not-native-activation"
+  },
+  "clientMatrix": [
+    {
+      "client": "codex",
+      "fileChecks": 4,
+      "nativeScope": "reused-prior-native-core-api-tools-and-reload-subset",
+      "remaining": "desktop-and-full-installed-unverified"
+    },
+    {
+      "client": "kilocode",
+      "fileChecks": 4,
+      "nativeScope": "native-connected-and-two-reconnect-cycles",
+      "remaining": "functional-tools-404-and-multiclient-aliases-and-ide-unverified"
+    },
+    {
+      "client": "opencode",
+      "fileChecks": 4,
+      "nativeScope": "desktop-1.18.11-inventory-only",
+      "remaining": "no-standalone-cli-discovered-native-desktop-unverified"
+    },
+    {
+      "client": "cursor",
+      "fileChecks": 4,
+      "nativeScope": "desktop-3.25.9-inventory-only",
+      "remaining": "native-ide-unverified"
+    },
+    {
+      "client": "cline",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "extension-not-found-in-inspected-roots"
+    },
+    {
+      "client": "claude-code",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-extension-not-found-in-inspected-locations"
+    },
+    {
+      "client": "kimi",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-extension-not-found-in-inspected-locations"
+    },
+    {
+      "client": "qwen",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-extension-not-found-in-inspected-locations"
+    },
+    {
+      "client": "command-code",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-not-found-on-path"
+    },
+    {
+      "client": "zcode",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-not-found-on-path"
+    },
+    {
+      "client": "mimocode",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-not-found-on-path"
+    },
+    {
+      "client": "pi",
+      "fileChecks": 4,
+      "nativeScope": "file-only",
+      "remaining": "cli-not-found-on-path"
+    }
+  ],
+  "kilo": {
+    "version": "7.8.15",
+    "exe": "C:\\Users\\xment\\.vscode\\extensions\\kilocode.kilo-code-7.8.15-win32-x64\\bin\\kilo.exe",
+    "sha256": "c171387724dd935d6fe8ca9b162383ac0aa41e9a04af97ca3ea1d5c4c4a79b2f",
+    "privateProfiles": true,
+    "newInstall": false,
+    "llmTurns": 0,
+    "reconnect": {
+      "passedCycles": 2,
+      "elapsedSeconds": 4.060445400002209,
+      "toolCalls": 0,
+      "configReloadQualified": false
+    },
+    "effectiveAliases": {
+      "onec-code-metadata-mcp": {
+        "type": "remote",
+        "url": "http://dev-ermakov.itland.local:22100/mcp",
+        "enabled": true
+      },
+      "onec-graph-metadata-mcp": {
+        "type": "remote",
+        "url": "http://dev-ermakov.itland.local:22101/mcp/",
+        "enabled": true
+      },
+      "1c-code-metadata-mcp": {
+        "type": "remote",
+        "url": "http://dev-ermakov.itland.local:22100/mcp",
+        "enabled": true,
+        "timeout": 300000
+      },
+      "1c-graph-metadata-mcp": {
+        "type": "remote",
+        "url": "http://dev-ermakov.itland.local:22101/mcp/",
+        "enabled": true,
+        "timeout": 300000
+      }
+    },
+    "distinctPhysicalEndpoints": 2,
+    "nativeConfigNormalization": {
+      "files": [
+        ".kilo/kilo.json",
+        "opencode.json"
+      ],
+      "field": "$schema",
+      "value": "https://app.kilo.ai/config.json",
+      "mcpEntriesPreserved": true
+    },
+    "functionalToolAttempts": {
+      "codeStats": 2,
+      "localApiHttpStatus": 404,
+      "error": "NotFound",
+      "graphReached": false,
+      "semanticSuccess": false,
+      "cause": "unestablished-client-qualification-interface-blocker"
+    },
+    "ownedServersStopped": true
+  },
+  "installed": {
+    "scope": "legacy-installed-owner-recovery-and-native-discovery-subset-not-latest-install",
+    "workflow": "b4338057d74f88f2577daff6a828602170c7512f",
+    "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+    "roots": [
+      {
+        "root": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project",
+        "head": "9f7f2e637c62bde39df0b50b7dd49ea9fb790c87",
+        "clean": true,
+        "unboundAfterRecovery": true
+      },
+      {
+        "root": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch",
+        "head": "df9f63f00c2f3d627aec16b7cab1c1754f6f87c0",
+        "clean": true,
+        "unboundAfterRecovery": true
+      }
+    ],
+    "stepsExitZero": [
+      "preview",
+      "select",
+      "context",
+      "branch-context",
+      "native-kilo-list",
+      "failure-recovery-restore"
+    ],
+    "originalRunStatus": "failed-harness-count-assertion-retained",
+    "validation": {
+      "status": "passed-installed-owner-recovery-and-native-discovery-subset",
+      "installedWorkflow": "b4338057d74f88f2577daff6a828602170c7512f",
+      "rootsClean": true,
+      "trackedHeadsAndLocksPreserved": true,
+      "descriptorAndDependencyBytesRestored": true,
+      "dbSha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "dbBytes": 3295928320,
+      "branchStayedUnbound": true,
+      "nativeKiloConnectedRoles": 2,
+      "otherConnectedMcp": [
+        "agent-browser",
+        "itl-roctup-data",
+        "itl-vanessa-ui"
+      ],
+      "totalConnected": 5,
+      "clientConfig": {
+        "originalBytesPreservedExceptNativeSchemaLine": true,
+        "addedSchema": "https://app.kilo.ai/config.json",
+        "schemaLineBytes": 52,
+        "exactWholeFileByteRestore": false,
+        "actor": "native Kilo config normalization during discovery; source writer has no such URL",
+        "ownedEndpointsRemoved": true
+      },
+      "managedReceipt": {
+        "byteIdentical": false,
+        "catalogOwnerEmpty": true,
+        "operationStatus": "restored"
+      },
+      "sourceRunOriginallyFailed": true,
+      "reason": "Harness expected total MCP count=2 and whole client file byte equality despite required preservation of common MCP and a native client metadata edit. The same captured run is validated, without removing common MCP or deleting the client edit. Exact descriptor/lock/branch/DB checks remain mandatory.",
+      "gate6Run": false,
+      "llmTurns": 0
+    },
+    "afterRestoreNative": {
+      "status": "passed",
+      "connected": [
+        "agent-browser",
+        "itl-roctup-data",
+        "itl-vanessa-ui"
+      ],
+      "selectedCodeGraphAbsent": true,
+      "newNativeProcess": true,
+      "elapsedSeconds": 9.836555300000327,
+      "protectedFiles": 4,
+      "bytesAndMtimeUnchanged": true,
+      "llmTurns": 0
+    },
+    "noInitUpdateNewBranchDowngradeOneCLaunch": true
+  },
+  "findings": [
+    {
+      "id": "G3-CONTEXT-CLI-OUTPUT",
+      "type": "confirmed-source-presentation-defect",
+      "tasks": [
+        "3.5",
+        "5.4",
+        "5.6"
+      ],
+      "ac": [
+        "AC-08",
+        "AC-13",
+        "AC-20",
+        "AC-39"
+      ],
+      "actual": "Default stdout collapses nested source/project/observation values",
+      "stdoutBytes": 842,
+      "missingValues": [
+        "qual-pm5corp",
+        "reference-product",
+        "5.0.3.66",
+        "Synthetic PROF restriction"
+      ],
+      "dtoCorrect": true,
+      "continuation": "Same public context piped to ConvertTo-Json -Depth 20",
+      "continuationBytes": 7725,
+      "nextOwnerStep": "bounded-default-renderer-and-real-child-stdout-regression-no-second-resolver"
+    },
+    {
+      "id": "G3-KILO-MULTICLIENT-ALIASES",
+      "type": "confirmed-client-interoperability-finding",
+      "actual": "Native Kilo imports project-local OpenCode aliases as well as Kilo aliases: 4 names / 2 endpoints",
+      "workloadPreserved": true,
+      "tokenImpact": "unmeasured",
+      "nextOwnerStep": "owner-local-client-interoperability-with-custom-settings-preserved-not-delete-other-client-file"
+    },
+    {
+      "id": "G3-KILO-TOOLS-API-404",
+      "type": "qualification-interface-blocker-cause-unestablished",
+      "actual": "Advertised native call-tool API returns local 404 for Code stats",
+      "serverDefectProven": false,
+      "nextOwnerStep": "supported-native-tool-path-then-read-negative-scope-reload-same-workload"
+    }
+  ],
+  "preservation": {
+    "freshContext": {
+      "status": "passed",
+      "observedUtc": "2026-10-21T11:32:09.646708+00:00",
+      "exitCode": 0,
+      "elapsedSeconds": 3.6760036000014225,
+      "protectedPaths": 20,
+      "bytesAndActualMtimeNsUnchanged": true,
+      "priorHashOnlyStateDifferences": [
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\opencode.json",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.kilo\\kilo.json"
+      ],
+      "oldProofCorrection": "Get-ItlMcpFileState records SHA only, not mtime. Previous all-20-mtime claims were not established. Explicit Codex config mtime proof remains valid; this run captures actual before/after stat timestamps.",
+      "newMcpCalls": 0,
+      "llmTurns": 0,
+      "stdoutBytes": 842
+    },
+    "oldEvidenceCorrection": {
+      "hashOnlyHelper": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1:Get-ItlMcpFileState",
+      "reports": [
+        "g3-registry-source-model-2026-10-21.json",
+        "g3-prof-native-reload-2026-10-21.json"
+      ],
+      "all20MtimePreviouslyProven": false,
+      "previousBytesProofRetained": true,
+      "explicitCodexConfigMtimeProofRetained": true,
+      "startupReceiptTimestampProofUnchanged": true,
+      "oldJsonImmutable": true
+    },
+    "gate6ArtifactsUnchanged": 7,
+    "capsule": {
+      "capsulePath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+      "gate6Run": false,
+      "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "utc": "2026-10-21T11:47:50.5658607Z",
+      "activeNativeOneCForFixture": 0,
+      "expectedCapsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "publication": false,
+      "memoryRun": false
+    },
+    "database": {
+      "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    },
+    "oldStandsAndFailedCopiesPreserved": true,
+    "personalConfigHashes": {
+      "scope": "compared-with-earlier-observed-interval-not-before-first-call-profile-baseline",
+      "after": {
+        "utc": "2026-10-21T11:47:50.2819474Z",
+        "checks": [
+          {
+            "sha256": "929cd21dd893cf35d2dca8a67a085e707dac58a5844bc46810c65a1fe9628a6a",
+            "path": "C:/Users/xment/.config/kilo/kilo.jsonc"
+          },
+          {
+            "sha256": "fd9af2d8390b79cb3dc451494c9f64e88c668aecb78299eca649beb022a1c03e",
+            "path": "C:/Users/xment/.claude.json"
+          }
+        ]
+      }
+    }
+  },
+  "harnessFailures": [
+    {
+      "artifact": "installed-result.json",
+      "scope": "compact-lifecycle-wrapper-rejected-catalog-before-installed-writes"
+    },
+    {
+      "artifact": "stopped-source-harness.json",
+      "scope": "owned-source-harness-stalled-before-useful-action-result-cause-unknown",
+      "exactScriptAndCreationTimeVerified": true,
+      "noLifecycleOrOneCProcessStopped": true
+    },
+    {
+      "artifact": "direct-installed-result.json",
+      "scope": "unnormalized-PSModulePath-GetFileHash-missing-nonUTF8-rejected-before-installed-actions"
+    },
+    {
+      "artifact": "normalized-installed-result.json",
+      "scope": "retained-failed-total2-assertion-correctly-preserve-common3-and-native-schema-edit",
+      "validator": "installed-recovery-validation.json",
+      "uninterruptedJourneyPassed": false
+    }
+  ],
+  "costs": {
+    "newLlmTurns": 0,
+    "newCogneeCalls": 0,
+    "newAlwaysOnInstructions": 0,
+    "contextCliSeconds": 3.6760036000014225,
+    "contextJsonBytes": 7725,
+    "installedNativeSchemaBytesRetained": 52,
+    "tokenCount": "unmeasured",
+    "backendUsage": "not-instrumented",
+    "startupAndPesterSuitesRerun": false,
+    "fullInstalledCostProof": "open"
+  },
+  "remaining": [
+    "default-cli-context-presentation",
+    "kilo-multiclient-aliases",
+    "kilo-native-functional-tools-and-ide",
+    "other-client-frontends",
+    "latest-installed-init-update-branch-recovery-downgrade-journeys",
+    "PM4-installed-stand",
+    "Windows10-Server-terminal-stands",
+    "full-installed-paired-cost",
+    "registry-AC-39",
+    "release-population-AC-36-38",
+    "memory-consumer-4.2-G4-AC-43-G5-44"
+  ],
+  "excluded": [
+    "Gate6-run-or-fix",
+    "G4",
+    "working-project-migration",
+    "publication",
+    "Code-Graph-patches",
+    "server-deploy-reindex",
+    "client-installation",
+    "workflow-runtime-fixes"
+  ],
+  "delivery": "existing-source-delivery-RegisterChange-and-Status-only-not-second-ledger",
+  "rawReferences": [
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/check-client-files.ps1",
+      "sha256": "f1addf878f6b7d9b12abb884b0c41ced90a17e87d3f0904622921372f871de8c",
+      "bytes": 1499
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-files.json",
+      "sha256": "d0a0aa96ba4cf090e720f3ac49b72e694f3586c76d033683bcb17d46b934fcf5",
+      "bytes": 5955
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-files.log",
+      "sha256": "73cd5e6bad5fb8494fa7ca130ef7f3458809c6f25262616179004a7fed5e317e",
+      "bytes": 114
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-interfaces.json",
+      "sha256": "6baa0354c5aea005f80114170c19f5ddf4e5b836e3340ad79851c09728a731c1",
+      "bytes": 19471
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-interfaces.log",
+      "sha256": "6baa0354c5aea005f80114170c19f5ddf4e5b836e3340ad79851c09728a731c1",
+      "bytes": 19471
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-inventory.json",
+      "sha256": "c262d24b23604a122ff9a0f2585d9a5a96132a8c3a0b0d43be2546f1c6679fe1",
+      "bytes": 1486
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-inventory.log",
+      "sha256": "2e16f683ee475145cee1fe3e91ca25fc5c4e5cd4313f6149a04526c13c29f7cb",
+      "bytes": 1304
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/client-inventory.py",
+      "sha256": "ef87bce1549e1bafdf39fafdf3020c23ed346b4fbb9436b89fde684cbc7af7f8",
+      "bytes": 1708
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-json-output.json",
+      "sha256": "da99b2918e37c66571b3f4440c6824c346a842b455ee9d1bdea00347d48f37f7",
+      "bytes": 7725
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-preservation.json",
+      "sha256": "e6fc810e2595ce030292bd41db8da647ef73f2eb90d7b1bdd605872f712e4fcb",
+      "bytes": 14934
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-preservation.log",
+      "sha256": "f3af246c70f947495628ed594c1dc10b8fb3c21e7d600c29963589f827a506b7",
+      "bytes": 902
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-preservation.py",
+      "sha256": "13f4a61d3fdb576dbc1516b549afb3bb0811d76d4cb5862793791791e675ff58",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-preservation.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/context-preservation.stdout.log",
+      "sha256": "1bccc628d6db5cfdf5f8beb5d40e4ffbad83511c8572999c0841970fbcdf3c5b",
+      "bytes": 842
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/direct-installed-result.json",
+      "sha256": "91bbdbcb4278ada5c1542ff094ac83177d169c7e8dbb49ffbeb94556d9e840da",
+      "bytes": 3130
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/direct-installed.log",
+      "sha256": "914c6be0e87050fda894ab427f5d4f2e490039bf904e727bd963255e200ccf1e",
+      "bytes": 3094
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/file-fixtures.json",
+      "sha256": "5c9ea9181bdf040667ed97bf128436373b84d9440b6221c5ce962ed9dacee6cb",
+      "bytes": 32137
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/final-safety-scope.json",
+      "sha256": "c21d3c26d29669bae8eb43b21e4a1379054303667bde616d2831d42db2033cfd",
+      "bytes": 477
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/gate6-artifact-preservation.json",
+      "sha256": "7f51065aefb2cb360da1371286ce3be94e44997b5059f8588e7a506b6a6d95e8",
+      "bytes": 2319
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/inspect-clients.py",
+      "sha256": "749e8a4f47e551a62e19611ae6ed19c2ed9d9405e19013ab32965199a941be10",
+      "bytes": 2289
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed test catalog/catalog/catalog.json",
+      "sha256": "4b21d71ccfb47886d0603ecb7dd8de640e6a6fe4c727ba799f3685c70b051680",
+      "bytes": 2648
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed test catalog/catalog/product-relations.json",
+      "sha256": "60d63ef29366b9e964a2677a882acce7c57f3eaaae2f656be49a7c622af46f1d",
+      "bytes": 54
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed test catalog/registry.json",
+      "sha256": "d15bb695d691208db21b1b33aef6ff18060e8e8f7d9a8d05d0bc54966d860cdb",
+      "bytes": 2010
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-before.json",
+      "sha256": "e1ae8f4d2e6462e0deb2cfc49962a83caa127937f7e752583b42ca0618975da9",
+      "bytes": 4700
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-catalog.log",
+      "sha256": "24525f1c6ce6b46bd3c8a625bfae09155ae82773afcd86dabc5a1990280aeecd",
+      "bytes": 1536
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-catalog.ps1",
+      "sha256": "4dba800e08c53dae063c53cfe8998b25d2f71778e17028a0839a4d963499dc69",
+      "bytes": 8148
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-native-utf8.py",
+      "sha256": "47fcee1f25ba783cc45632e84a50a302c71ef8d82b0bf8b4be3dea95de9210d2",
+      "bytes": 4826
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-native.py",
+      "sha256": "ae5bf96a861b3c2ade140b245f60a0bfb2efbf420fe015341f82ac87721395b9",
+      "bytes": 4774
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-preview/vibecoding1c-mcp-status-b8dc39b5e7654a12881dfd6c4147da9b.stderr.log",
+      "sha256": "62beb576754a741c844110742cb8b5afdd202ee52f430cb99ba3e6dda2c5339d",
+      "bytes": 1808
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-preview/vibecoding1c-mcp-status-b8dc39b5e7654a12881dfd6c4147da9b.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-recovery-validation-current.log",
+      "sha256": "f948249fb73ccc154e71af35932e3b649b9befd8b8ac92c86221213c1a71ded1",
+      "bytes": 1295
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-recovery-validation.json",
+      "sha256": "5895dc0135bb55535e0956e4b0728d006575548fd29a974c6613a9924d2885a8",
+      "bytes": 1424
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-recovery-validation.log",
+      "sha256": "f03b2953c065f9394809b35c14f09e8d861df9850edf029a27a7a55213ba70e1",
+      "bytes": 1324
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed-result.json",
+      "sha256": "6ac281806394add28b75abdb1471ec49fa06cb66119d9a42dde0529d82e33d96",
+      "bytes": 1381
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed2 test catalog/catalog/catalog.json",
+      "sha256": "4b21d71ccfb47886d0603ecb7dd8de640e6a6fe4c727ba799f3685c70b051680",
+      "bytes": 2648
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed2 test catalog/catalog/product-relations.json",
+      "sha256": "60d63ef29366b9e964a2677a882acce7c57f3eaaae2f656be49a7c622af46f1d",
+      "bytes": 54
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/Installed2 test catalog/registry.json",
+      "sha256": "d15bb695d691208db21b1b33aef6ff18060e8e8f7d9a8d05d0bc54966d860cdb",
+      "bytes": 2010
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed2-catalog.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/installed2-catalog.ps1",
+      "sha256": "55f2d530e059e3f27cdd6fda55859aaaeff13ce78abbeaac876b07f11a197b70",
+      "bytes": 8413
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-after-restore.json",
+      "sha256": "e97e18307ea495c7a62f8322af9efe8ef05620eabe2039d98c58a911cd9b61af",
+      "bytes": 2559
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-after-restore.log",
+      "sha256": "a781ef25adc19f696fd28e5d45901197602533c59c17f7c2a7dbfddfa5d50b11",
+      "bytes": 255
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-after-restore.py",
+      "sha256": "33531879ee8ceaf8965fda69c25d986f7db2a01706a4d87ffd457f58b78f7c72",
+      "bytes": 1911
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-after-restore.stderr.log",
+      "sha256": "5ffd561502139fe2fee15a84a01e1fd95753b6d85bfb5634063041b98467ba7f",
+      "bytes": 6
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-after-restore.stdout.log",
+      "sha256": "72f7c43b87c63169c5f6379019406d75afa0384329cf3a647bea5e8e7b0435cd",
+      "bytes": 1740
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-detail-native-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-detail-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-detail-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-help.json",
+      "sha256": "6285849043cbd16244fd4b90c422f1fa8622723503f54ad8fb06a3db45a64889",
+      "bytes": 9082
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-help.log",
+      "sha256": "30b13484ca4b7c2ed3dc66a9ac1714543f2804508d961a8bc1cdc994bce94118",
+      "bytes": 8628
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-help.py",
+      "sha256": "924bf77b5e568932d6788d0d9137b9d25dec84bc5590935798d7221f7a439d72",
+      "bytes": 1099
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-list.json",
+      "sha256": "d71dee0c044587e29740bfa909a7c9be73618854585576831f5cfbfac715fc25",
+      "bytes": 1127
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-list.log",
+      "sha256": "1d47aeafe126c801ebfc633c1fda68ab5f0cd20f5bba4344b08fe56bad4e13ba",
+      "bytes": 1129
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-list.py",
+      "sha256": "feedd19c14b27d8cb434ccc4893e1e9ce3cdececa4d9a11bb2ed5f80630ea3a2",
+      "bytes": 1149
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native-detail.json",
+      "sha256": "83b17e7c2fbc609ae199e97f1d925dd476537af07ea174dfdb34341e5c4542db",
+      "bytes": 5100
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native-detail.log",
+      "sha256": "909417b93504f2ee32df187ce1f42122573b399d769cbd1df280f7471d36a9ee",
+      "bytes": 2930
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native-detail.py",
+      "sha256": "82c0cbe8d8e502993af33fbf51447d9a7619d5d61b8534909471a87f87d1caea",
+      "bytes": 6160
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native.json",
+      "sha256": "486284201fd380e1af3d382ce7bbba9fe505dbc9faccdad785df33d3b9ee47b5",
+      "bytes": 5053
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native.log",
+      "sha256": "7a7da8908387c16006f5a8648b6504e5d4b85ec9dd1967d41dfae32f064e2c10",
+      "bytes": 2902
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-native.py",
+      "sha256": "1dfa88ff100b12fffc50689a7a51140a20b30ac28f9d1cb1f4e17ba0dde275e5",
+      "bytes": 5941
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect.json",
+      "sha256": "7d4702ac38abbedf7c5fecb1f1527ac19d7932eaab954769755688e302250be8",
+      "bytes": 8056
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect.log",
+      "sha256": "924f07bf8e46fbd8ffbc8833ab5d4aeb449d1115f005bb4f451009adf7bbcd5f",
+      "bytes": 1339
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-reconnect.py",
+      "sha256": "4c8a0fe483b1c7407a42416fc5d1ead46f1e0b4d514f14d240fd2177ead57b7a",
+      "bytes": 6063
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/kilo-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/memory-status.json",
+      "sha256": "003d5fde98dec547369ad9c282d99b859804c6969b1dac98ff41cc058693d43c",
+      "bytes": 4370
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-branch-context.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-branch-context.stdout.log",
+      "sha256": "154c977f2fd4d5511da698b89697d26163facd2c3ca8e349a4c2519f82865d0b",
+      "bytes": 156
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-context.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-context.stdout.log",
+      "sha256": "b237881247a1704059ea4eafd6c919854ed35482b8332f6b79d29b2012915409",
+      "bytes": 612
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-failure-restore.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-failure-restore.stdout.log",
+      "sha256": "5bad61c822d8fc719922d29f096a95a18eb7824b8d493b2138e911ee39a248d9",
+      "bytes": 324
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-after-recovery.json",
+      "sha256": "afcd3df671b7766a9f56e2c01d3abb04c6b2eb4868bf8d4e069dd6ad37a9abd2",
+      "bytes": 4782
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-before.json",
+      "sha256": "42026ca4fc62790e87dfec63685a964229da9027916ba52c2495d031cab68cc9",
+      "bytes": 4782
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-before.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-before.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-bound.json",
+      "sha256": "f6c87a592de21abb7600305da2d552ab3724c80c92a955768e6c4cea2054d5bc",
+      "bytes": 5170
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-bound.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-bound.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-kilo-list.stderr.log",
+      "sha256": "65782e9d61e50f6acfb73369876497e577576a158fe78ed4a2938cc87a10da6e",
+      "bytes": 7
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-kilo-list.stdout.log",
+      "sha256": "fab9a5730d73d7715233a07ca1ba6aad787d0d5b31fa1fb5b60877262fc321f5",
+      "bytes": 1963
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed-result.json",
+      "sha256": "63d51fa480067580dff45f133d53a3eee10c4e0771e6fe36d2884953156b3148",
+      "bytes": 11483
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-installed.log",
+      "sha256": "a10aaef09892f1fc7fd6a3f12ebe5ced4d95c7150eb2f3d854eacd805aad9983",
+      "bytes": 10154
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-preview.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-preview.stdout.log",
+      "sha256": "c3b51ea5033a1f432c222e1a134ffc7fe6dbae7f767439e49646988a94d9b128",
+      "bytes": 873
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-select.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/normalized-select.stdout.log",
+      "sha256": "64711f4f2d662af49d40097d6f09c11d5fe2b6d422f8e771572dba24e0f0e0b3",
+      "bytes": 675
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/opencode-main.js",
+      "sha256": "58d6323ba912337aad7d5ab4718df99275faae05c1afe57c5f0ba673d2f37f9d",
+      "bytes": 154143
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/openspec-list.json",
+      "sha256": "d0615684a2295733d44822ee7629d3448811c5c07e6444266b914f1372e10244",
+      "bytes": 2324
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/personal-config-hashes-after.json",
+      "sha256": "11cc9f881634e18990d32e711d650945eed60effdbd1267f924b09301b027773",
+      "bytes": 366
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/platform-editor-versions.json",
+      "sha256": "7563aacfe6873795f3664f5717ec7bd29142c9134d29bdd929f30eb2314d8232",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/read-context-json.ps1",
+      "sha256": "0dc7a965d290b4b370876b9b9fac6dc8d3be291716e08e8742402804251161d3",
+      "bytes": 568
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/registry-apply.json",
+      "sha256": "e98d7a9a1e2ab59c19f89e6f6c6d97688027610f37a078cb984b9ab02e6c587d",
+      "bytes": 36545
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/registry-status.json",
+      "sha256": "1fbacce1604ce145c5e3a4e3a2e342d2f12dd7b295931cfe6e09c9e4452b9af7",
+      "bytes": 4450
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/run-context-preservation.ps1",
+      "sha256": "ab90620a0355d66be4dac6d280d86a278e4ab071ea2755d94f8be95eb44cb820",
+      "bytes": 429
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/run-installed-native.ps1",
+      "sha256": "67701d3efadc8a9ae51be06b5b9c2358b01dd968d8b4256c66c6fcd0a566d7f5",
+      "bytes": 430
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/second-installed-before.json",
+      "sha256": "e1ae8f4d2e6462e0deb2cfc49962a83caa127937f7e752583b42ca0618975da9",
+      "bytes": 4700
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/stand-snapshot.ps1",
+      "sha256": "880271706e556f88a34167bec2068c6b286c706299becaf67d78fd07dc93071c",
+      "bytes": 2196
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/stopped-source-harness.json",
+      "sha256": "0e307acd021e48ed523ceb8c7e227d72d19cca3a6b4f2105b74282b0c449dade",
+      "bytes": 1080
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/summarize.py",
+      "sha256": "98de749a4e9675de5369960488a79c94cbac24c830ddccd5b2b98015d4102a9b",
+      "bytes": 11574
+    },
+    {
+      "path": "build/test-results/g3/clients-installed-20261021/validate-results.py",
+      "sha256": "9fef941d33eda90f25ed256bd166506e648745b2854ff7d3f1bc131ba94f58e3",
+      "bytes": 3450
+    }
+  ]
+}

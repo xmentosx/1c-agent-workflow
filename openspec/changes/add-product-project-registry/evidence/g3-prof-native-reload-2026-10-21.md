@@ -41,3 +41,7 @@
 В проверенной области сняты fresh native ПРОФ transport/read/reload gaps AC-08-a/c/d и AC-20/26. Не заявлены Codex desktop/IDE frontend, остальные 11 native adapters, полный installed 1C journey/AC-39, отдельный PM4 installed stand и Windows 10/Server terminal matrix. Real release population продуктов/проектов/настроек/source origin/карты функций AC-36–38 остаётся обязательным.
 
 Память потребляет тот же registry result в будущем consumer. G1/Q1–Q7/D9/G2, шесть областей/canonical home/grants/ai_rules_1c/optional OpenViking не меняются; G4/G5/AC-43/44 не приняты. Gate 6 не исправлялся/не запускался; working migration, server deployment/reindex и публикация/push не выполнялись.
+
+## Коррекция all-20 timestamp claim
+
+[Последующая client/installed qualification](g3-clients-installed-2026-10-21.md#сохранность-стоимость-и-исправление-прежнего-evidence-claim) показала, что общий guard 20 protected paths использовал hash-only `Get-ItlMcpFileState`: bytes доказаны, все 20 mtime этим guard не доказаны. Historical JSON сохранён; отдельный explicit Python byte+mtime restore Codex config и независимые Startup receipt timestamp controls остаются действительными. Новый context invocation явно проверил actual mtime_ns/SHA всех 20 paths. Kilo позднее изменил два config metadata поля — это отдельный сохранённый client finding, не часть Codex reload run и не runtime repair.
