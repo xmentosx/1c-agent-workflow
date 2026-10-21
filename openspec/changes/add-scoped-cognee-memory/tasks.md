@@ -122,11 +122,16 @@ AC-44 использует то же будущее registry release population.
 ## Native desktop dependency qualification, 2026-10-21
 
 - [x] Согласовать existing AC-15/20/25/35/43 с [одним registry desktop report](../add-product-project-registry/evidence/g3-desktop-native-2026-10-21.md): Kilo visible frontend/Code/Graph read subset, Cursor worker-only behind login, OpenCode selected-context failure; semantic generation-null error и реальные native token counters сохранены.
-- [ ] Существующая AC-43/G5 dependency остаётся открытой: G3-CURSOR-NATIVE-AGENT-AUTH и G3-OPENCODE-DESKTOP-PROVIDER-403 (actual scoped reads), остальные installed/platform/CUSTOM/cost controls. Selected-context blocker закрыт [одним registry report](../add-product-project-registry/evidence/g3-opencode-selected-context-2026-10-21.md) только для original PROF root/native connected MCP/renderer reload; полный registry G3/AC-39 и release population AC-36–38/AC-44 не закрыты.
+- [ ] Существующая AC-43/G5 dependency остаётся открытой: G3-CURSOR-NATIVE-AGENT-AUTH, остальные installed/platform/CUSTOM/cost controls, future memory consumer/native canary. OpenCode selected-context и provider-403 закрыты в bounded native scope [единым registry follow-up](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md) на отдельной 1.19.3/original PROF root; полные registry G3/AC-39/release population AC-36–38/AC-44 не закрыты.
 
 Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, credential storage или acceptance ledger нет. Native active_generation=null не возвращает backend patch в обязательный план. Шесть областей/home/grants/ai_rules_1c/G1/Q1–Q7/D9/G2 прежние; Gate 6, рабочая миграция и публикация не затронуты.
 
 ## OpenCode selected-context dependency follow-up
 
 - [x] Согласовать existing AC-15/20/25/35/43: причиной воспроизведённого зависания проверки был незавершённый Windows picker, отсутствующий в Electron capture. Обычный выбор exact root, selected session и native frontend scoped /path, /mcp после reload passed; 19 protected paths и EXE прежние. Исправление source-only qualification не создаёт memory bridge/probe/state.
-- [ ] Сохранить actual read dependency: native provider 403, tools 0; connection не заменяет полезные payloads. Повтор при доступном разрешённом provider принадлежит registry qualification, не future memory startup/remember/recall. Consumer 4.2/G4 не реализован, Gate 6/рабочая миграция/публикация не затронуты.
+- [x] Сохранить first provider 403 и проверить [native read continuation](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md): на отдельной official 1.19.3 тот же root/provider/model/prompt дал два actual Code/Graph payloads и scoped reload. Это registry qualification subset; consumer 4.2/G4 не реализован, installed/provider/platform matrix остаётся открытой. Gate 6/рабочая миграция/публикация не затронуты.
+
+## Provider owner repair dependency
+
+- [x] Согласовать existing AC-15/20/25/35/43 с [registry-only evidence](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md): 1.18.11 version local/403 сохранён, vendor 1.19.3 и actual stats/list_graph_projects/reload passed. 19 fresh paths unchanged (16 existing/3 absent; 12 client formats/11 physical files), семь owned processes закрыты; input/cache costs не названы memory delta.
+- [ ] Full registry G3/AC-39/installed/model/platform/CUSTOM/cost и memory 4.2/AC-43/G5/44 остаются открытыми. Квалификационный vendor release не становится memory provider/новым startup gate. Gate 6/G4/рабочая миграция/публикация не начинались.

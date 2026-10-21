@@ -165,7 +165,14 @@ Native first-load CUSTOM `$schema`/format exceptions двух файлов со�
 
 ## OpenCode Desktop: остаток после selected-context repair
 
-- [x] Subset 5.5: fresh 19-path before/after guard исходного PROF root, все 12 client files/receipts/context, SHA/bytes/actual mtimeNs прежние; EXE прежний, семь owned processes штатно закрыты. Предыдущие artifacts/profile failures сохранены.
-- [ ] **G3-OPENCODE-DESKTOP-PROVIDER-403**: native Big Pickle отверг единственный canary до tools (HTTP 403, non-retryable). Сохранить этот отказ; при доступном разрешённом provider повторить actual scoped stats/list_graph_projects на том же root без обхода auth, смены workload или прямого shell MCP substitute. Native MCP connection не закрывает actual payload/tool-schema приёмку.
+- [x] Subset 5.5: fresh 19-path before/after guard исходного PROF root, все 12 client formats и receipts/context, SHA/bytes/actual mtimeNs прежние; EXE прежний, семь owned processes штатно закрыты. Предыдущие artifacts/profile failures сохранены.
+- [x] **G3-OPENCODE-DESKTOP-PROVIDER-403**, subset 3.4/5.4/5.6: [vendor build repair и actual native reads](evidence/g3-opencode-provider-repair-2026-10-21.md). У 1.18.11 встроенная версия local; отдельный подписанный release 1.19.3 имеет корректную версию и на том же PROF root/provider/model/prompt выполнил ровно stats({}) и list_graph_projects({}) с полезными payloads. Scoped reload passed; старые 403/EXE/profile сохранены, основная установка 1.18.11 не обновлялась. Это bounded native proof, не installed matrix.
 
 Это уточнение прежнего остатка native reads, не новый runtime gate. Полные G3/AC-39/3.4/5.4–5.6 и memory 4.2/AC-43/G5/44 открыты. Gate 6/G4/рабочая миграция/публикация не выполнялись.
+
+## OpenCode provider: завершённый native subset
+
+- [x] Сверить native session version/tool inputs/payloads и reload: Desktop 1.19.3, original PROF root, Code success/КОРП source и Graph accessible pm5corp/default; свежие 19 paths unchanged. Уточнение счёта: 12 client formats представлены 11 physical client files; 19 guards включают 16 существующих и 3 отсутствующих пути, а не 19 существующих файлов.
+- [x] Сохранить first 403 и exact source/version/artifact proof в [едином registry report](evidence/g3-opencode-provider-repair-2026-10-21.md); посчитать новый canary: 1 turn/3 streams (title + 2 build)/2 tools, input 56619/cache read 56887/output458/reasoning507/reported cost0; без заявления нулевого billing/G3 delta. Семь owned processes закрыты.
+
+Full 3.4/5.4–5.6/AC-39, остальные clients/CUSTOM/installed/platform, Cursor auth и release population AC-36–38 остаются открытыми. Memory consumer 4.2/AC-43/G5/44 не реализован; Gate 6/G4/рабочая миграция/публикация не затронуты.
