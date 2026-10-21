@@ -5045,6 +5045,27 @@ services:
             function Get-HostDefaultVolumeEntries { return @() }
             function Test-HostServerNeedsEmbedding { return $false }
             @(Resolve-ServerVolumes -Config $config -Server $server).Count | Should -Be 3
+            $compose="services:`n  mcp-app:`n    volumes:`n      - existing:/app/data`n    environment:`n      KEEP: unchanged`n  neo4j:`n    volumes:`n      - retained:/data`n"
+            $changed=Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $compose
+            $changed | Should -Match 'KEEP: unchanged'
+            $changed | Should -Match 'retained:/data'
+            ([regex]::Matches($changed,'read_only: true')).Count | Should -Be 3
+            ([regex]::Matches($changed,'create_host_path: false')).Count | Should -Be 3
+            foreach($file in $mounts){$changed | Should -Match ([regex]::Escape((ConvertTo-Json -InputObject $file.host -Compress)))}
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $changed}|Should -Throw '*already exists*'
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText ($compose.Replace('mcp-app:','another:'))}|Should -Throw '*declared mcp-app volumes*'
+            $null=New-Item -ItemType Directory -Path (Join-Path $repairState 'bases/fixture/graph-beta/neo4j-data'),(Join-Path $repairState 'bases/fixture/graph-beta/mcp-state') -Force
+            Write-Text -Path (Join-Path $repairState 'graph.yml') -Value $compose
+            function Get-DistributionRoot {return $repairState}
+            function Assert-BetaProjectVolumesReady {}
+            function Get-HostEmbeddingSettings {return @{mode='openai'}}
+            function Resolve-ServerEnv {return @{OPENAI_EMBEDDING_MODEL='unchanged';OPENAI_EMBEDDING_API_BASE='https://example.test/v1';OPENAI_EMBEDDING_API_KEY='fixture-only'}}
+            $script:OwnerComposeCalls=0
+            function Invoke-DockerCommandChecked {param($Arguments) $script:OwnerComposeCalls++;$generated=Read-Text -Path $Arguments[4];([regex]::Matches($generated,'read_only: true')).Count|Should -Be 3}
+            $server.channel='stable';$server.manifestPath='releases/fixture/vibecoding1c-mcp.manifest.json';$server.composePath='graph.yml';$server.neo4jImage='neo4j@sha256:fixture'
+            $runtime=[pscustomobject]@{name='fixture';containerName='candidate';composeProject='fixture';image=$image;hostPort=1234;url='http://fixture/mcp'}
+            Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState @{configId='fixture'}
+            $script:OwnerComposeCalls | Should -Be 2
             foreach($suite in $proof.nativeSuites){
                 foreach($key in @('failures','errors','skipped')){
                     $suite[$key]=1;Save-GraphOwnerTestProof

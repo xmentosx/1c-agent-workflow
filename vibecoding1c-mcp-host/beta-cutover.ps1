@@ -485,7 +485,11 @@ function Get-BetaCutoverContext {
     if ($freshGlobalIndex) { Assert-FreshGlobalIndexTarget -Config $Config -Old $old -Server $betaServer -Runtime $runtime }
     if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
     $oldImage = [string](Get-ObjectValue -Object $old -Name "image" -Default "")
-    [void]@(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $betaServer)
+    $ownerMounts = @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $betaServer)
+    if ($ownerMounts.Count -gt 0 -and [bool](Get-ObjectValue -Object $betaServer -Name 'compose' -Default $false)) {
+        $sourceCompose = Join-Path (Get-DistributionRoot -Config $Config) ([string]$betaServer.composePath)
+        [void](Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $betaServer -ComposeText (Read-Text -Path $sourceCompose))
+    }
     $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and $oldImage -cne [string]$runtime.image
     return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; retainedVersionChange = $retainedVersionChange; nativeEndpoint = [bool]$NativeEndpoint }
 }

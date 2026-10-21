@@ -57,3 +57,21 @@ function Assert-QualifiedHostOwnerRepairMounts {
         if ([IO.Path]::GetFullPath($actual) -ine [IO.Path]::GetFullPath([string]$file.host)) { throw 'Qualified Code owner is mounted from another file; preserve the runtime and restore the exact qualified mount before retrying.' }
     }
 }
+
+function Set-QualifiedHostOwnerRepairComposeText {
+    param([object]$Config, [object]$Server, [string]$ComposeText)
+    $files = @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $Server)
+    if ($files.Count -eq 0) { return $ComposeText }
+    $pattern = '(?ms)^  mcp-app:\r?\n.*?(?=^  [a-zA-Z0-9_-]+:|\z)'
+    $services = [regex]::Matches($ComposeText, $pattern)
+    if ($services.Count -ne 1 -or [regex]::Matches($services[0].Value, '(?m)^    volumes:\r?$').Count -ne 1) { throw 'Qualified Graph owner needs the declared mcp-app volumes; reconcile the versioned compose and repeat stable-preflight.' }
+    $entries = ''
+    foreach ($file in $files) {
+        if ($services[0].Value.Contains([string]$file.container)) { throw 'Qualified owner target already exists in compose; reconcile its exact mount before retrying.' }
+        # JSON strings are valid YAML scalars. Escape Compose interpolation too.
+        $source = ConvertTo-Json -InputObject ([string]$file.host).Replace('$','$$') -Compress
+        $entries += "      - type: bind`n        source: $source`n        target: $($file.container)`n        read_only: true`n        bind:`n          create_host_path: false`n"
+    }
+    $service = [regex]::Replace($services[0].Value, '(?m)^    volumes:\r?\n', [System.Text.RegularExpressions.MatchEvaluator]{param($match) $match.Value+$entries})
+    return $ComposeText.Substring(0,$services[0].Index)+$service+$ComposeText.Substring($services[0].Index+$services[0].Length)
+}

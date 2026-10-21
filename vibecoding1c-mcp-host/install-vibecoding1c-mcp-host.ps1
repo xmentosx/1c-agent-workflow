@@ -2705,6 +2705,7 @@ function Start-ComposeServer {
         $envValues["EMBEDDING_API_BASE"] = [string]$envValues["OPENAI_EMBEDDING_API_BASE"]
         $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
     }
+    $composeText = Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $Server -ComposeText $composeText
     Write-Text -Path $targetCompose -Value $composeText
     if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
         Initialize-HostPrivateFile -LiteralPath $envFilePath
