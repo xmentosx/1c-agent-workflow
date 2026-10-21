@@ -6,6 +6,8 @@
 
 Последующий [Code/Graph и native client result](g3-source-client-qualification-2026-10-20.md), source `8f54de3c`, обновляет AC-08/20/26: native Codex core/API PM4/PM5 и reload passed, live source admission/точная версия и остальные frontend/11 adapters остаются открытыми. Требования не ослаблены, runtime не менялся.
 
+По действующей registry/source модели [fresh native ПРОФ → КОРП/reload](g3-prof-native-reload-2026-10-21.md), source `f53b9247`, прошёл actual tools/negative endpoint/foreign scope/new thread/byte+mtime restore. Старые handshake failures сохранены; нынешние Code/Graph доступны, точная инфраструктурная причина прежних connect отказов неизвестна. Это уточняет AC-08/20/26 только для указанного core/API subset; full frontend/platform/installed/AC-39 и выпускное наполнение остаются открытыми.
+
 | Критерии | Подтверждённая граница | Остаток / следующий шаг у существующего владельца |
 |---|---|---|
 | AC-01–03, 05–07, 27–29, 35 | G2 reader/schema/resolver/publisher и consumer fixture квалифицированы; pure G2 завершён | Не приписывать этим fixtures live readiness, grants или installed migration |
