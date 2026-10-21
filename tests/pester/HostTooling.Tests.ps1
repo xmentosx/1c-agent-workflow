@@ -4510,6 +4510,86 @@ services:
         }
     }
 
+    It "waits through a retained <ServerId> version migration while rejecting errors and an unfinished index" -Tag StableMigration -TestCases @(@{ServerId='graph'},@{ServerId='code'}) {
+        param($ServerId)
+        $targetId=$ServerId
+        $configPath=Join-Path $TestDrive 'миграция с пробелом.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $context=@{serverId=$targetId;configId='pm4';retainedVersionChange=$true;runtime=@{hostPort=18000;url='http://native/mcp'}}
+            $script:MigrationPolls=0
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                $script:MigrationPolls++
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20
+            $script:MigrationPolls|Should -Be 2
+            function Get-BetaConfigurationIndexActivity { return @{running=$true;phase='background_tasks'} }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 0}|Should -Throw '*not ready within 0 seconds*'
+            function Get-BetaConfigurationIndexActivity { throw 'Graph background task form_xml failed' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*form_xml failed*'
+            function Get-BetaConfigurationIndexActivity { throw 'Code indexing failed: native failure' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*native failure*'
+        }
+    }
+
+    It "retains cold rollback and all post-index checks during a stable Graph migration: <Fails>" -Tag StableMigration -TestCases @(@{Fails=$false},@{Fails=$true}) {
+        param($Fails)
+        $configPath=Join-Path $TestDrive 'stable migration rollback.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:MigrationEvents=@();$script:MigrationStarted=$false;$script:MigrationPolls=0
+            $context=[pscustomobject]@{serverId='graph';configId='pm4';retainedIndex=$true;retainedVersionChange=$true;freshProjectIndex=$false;configState=@{};old=@{containerName='old';directUrl='http://old/mcp'};betaServer=@{id='graph';neo4jImage='same'};runtime=@{id='graph';name='itl-pm4-graph';containerName='new';image='new@sha256:fixture';hostPort=18000;url='http://native/mcp';endpointMode='direct'}}
+            function Get-HostDirectEndpointProof { param($Config,$Server,[switch]$Refresh);return @{status='matched';qualified_url=[string]$Server.url} }
+            function Enter-McpHostMaintenanceLock { return @{acquired=$true} }
+            function Exit-McpHostMaintenanceLock { $script:MigrationEvents+='unlock' }
+            function Invoke-BetaPreflight { return @{context=$context;oldTools=@();oldIndexActivity=@{running=$false}} }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-DockerImageAvailable {}
+            function Stop-StableForBetaCutover { $script:MigrationEvents+='stop' }
+            function Save-RetainedIndexSnapshot { $script:MigrationEvents+='snapshot';$context|Add-Member -NotePropertyName snapshotReady -NotePropertyValue $true }
+            function Start-ComposeServer { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='start';$script:MigrationStarted=$true }
+            function Set-ForwardCutoverTarget { throw 'Snapshot migration must not become forward-only' }
+            function Restore-StableAfterBetaFailure { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='restore' }
+            function Wait-HostMcpReadyConnection { return @{} }
+            function Close-HostMcpConnection {}
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                if(-not $script:MigrationStarted){return @{running=$false}}
+                $script:MigrationPolls++
+                if($Fails -and $script:MigrationPolls -eq 2){throw 'Graph background task form_xml failed'}
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            function Get-HostMcpToolsList { return @() }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs);$script:MigrationEvents+=('tools-'+$CheckOutputs.IsPresent) }
+            function Get-HostServerFunctionalHealth { $script:MigrationEvents+='health';return @{status='qualified'} }
+            function Enable-ToolsListProxyForRuntime {}
+            function Update-HostStateServers { $script:MigrationEvents+='state' }
+            function Publish-Registry { $script:MigrationEvents+='publish' }
+            if($Fails){
+                {Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'}|Should -Throw '*form_xml failed*'
+                $script:MigrationEvents|Should -Contain 'restore'
+                $script:MigrationEvents|Should -Not -Contain 'publish'
+            }else{
+                Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'
+                $script:MigrationEvents|Should -Contain 'tools-False'
+                $script:MigrationEvents|Should -Contain 'tools-True'
+                $script:MigrationEvents|Should -Contain 'health'
+                $script:MigrationEvents|Should -Contain 'publish'
+                $script:MigrationEvents|Should -Not -Contain 'restore'
+            }
+            ($script:MigrationEvents -join ',')|Should -Match '^stop,snapshot,start,'
+            $context.forwardOnly|Should -BeFalse
+            $script:MigrationPolls|Should -BeGreaterOrEqual 2
+        }
+    }
+
     It "waits through Docs HTTP 200 indexing and qualifies only the completed native corpus" -Tag ForwardCutover {
         $configPath = Join-Path $TestDrive 'docs readiness.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
@@ -4898,6 +4978,131 @@ services:
         }
     }
 
+    It "binds qualified Code repairs to the exact image, native fixture, host and two read-only files" -Tag HostOwnerRepair {
+        $configPath=Join-Path $TestDrive 'repair config.json'
+        $repairState=Join-Path $TestDrive 'ремонт Code с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
+            $root=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
+            $null=New-Item -ItemType Directory -Path $root -Force
+            $hashes=[ordered]@{}
+            foreach($n in @('driver','main')){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true})}
+            $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            $server=@{id='code';image=$image;ownerRepair=$spec}
+            function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-CodeOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            $mounts.Count|Should -Be 2
+            @($mounts|Where-Object readOnly -eq $true).Count|Should -Be 2
+            $mounts.container|Should -Contain '/app/src/main.py'
+            $mounts.container|Should -Contain '/app/src/index_generation/driver.py'
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            foreach($binding in $script:OwnerMounts){$path=[string]$binding.Source;$binding.Source='/run/desktop/mnt/host/'+$path.Substring(0,1).ToLowerInvariant()+'/'+$path.Substring(3).Replace('\','/')}
+            Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-BetaProjectVolumes { return @() }
+            Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-HostLocalValues { return @{} }
+            function Get-HostDefaultVolumeEntries { return @() }
+            function Test-HostServerNeedsEmbedding { return $false }
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count|Should -Be 2
+            $script:OwnerMounts[0].RW=$true
+            {Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
+            $script:OwnerMounts[0].RW=$false
+            $script:OwnerMounts[0].Source=Join-Path $root 'another.py'
+            {Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*another file*'
+            foreach($change in @(@{key='network';value='host'},@{key='host';value='another'},@{key='negativeControlReproduced';value=$false},@{key='liveIndexMounted';value=$true})){
+                $previous=$proof[$change.key];$proof[$change.key]=$change.value;Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*wrong native invariant or scope*'
+                $proof[$change.key]=$previous
+            }
+            Save-CodeOwnerTestProof
+            $proof.regression[0].modules=1;Save-CodeOwnerTestProof
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+            $proof.regression[0].modules=2;Save-CodeOwnerTestProof
+            $server.image='comol/1c_code_metadata_mcp@sha256:'+('c'*64)
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*another image*'
+            $server.image=$image
+            [IO.File]::AppendAllText((Join-Path $root 'driver.py'),'changed')
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*file changed: driver*'
+            @(Get-QualifiedHostOwnerRepairMounts -Config @{} -Server @{id='code';image='legacy'}).Count|Should -Be 0
+        }
+    }
+
+    It "requires all thirty original native Graph tests and mounts both repairs through the existing resolver and cutover" -Tag HostOwnerRepair {
+        $configPath=Join-Path $TestDrive 'graph repair config.json'
+        $repairState=Join-Path $TestDrive 'ремонт Graph с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_graph_metadata@sha256:'+('a'*64)
+            $root=Join-Path $repairState ('repairs\owner\graph\'+('a'*64))
+            $null=New-Item -ItemType Directory -Path $root -Force
+            $hashes=[ordered]@{}
+            foreach($n in @('run','score_floor','common_forms')){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;fixtureSha256=('b'*64);files=$hashes;nativeSuites=@(@{name='fulltext';tests=13;failures=0;errors=0;skipped=0;native=$true},@{name='commonForms';tests=14;failures=0;errors=0;skipped=0;native=$true},@{name='combined';tests=3;failures=0;errors=0;skipped=0;native=$true})}
+            $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            $server=@{id='graph';image=$image;ownerRepair=$spec}
+            function Save-GraphOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-GraphOwnerTestProof
+            $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
+            ($mounts.container|Sort-Object) | Should -Be @('/app/common_forms.py','/app/run.py','/app/score_floor.py')
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            function Get-BetaProjectVolumes { return @() }
+            Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-HostLocalValues { return @{} }
+            function Get-HostDefaultVolumeEntries { return @() }
+            function Test-HostServerNeedsEmbedding { return $false }
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count | Should -Be 3
+            $compose="services:`n  mcp-app:`n    volumes:`n      - existing:/app/data`n    environment:`n      KEEP: unchanged`n  neo4j:`n    volumes:`n      - retained:/data`n"
+            $changed=Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $compose
+            $changed | Should -Match 'KEEP: unchanged'
+            $changed | Should -Match 'retained:/data'
+            ([regex]::Matches($changed,'read_only: true')).Count | Should -Be 3
+            ([regex]::Matches($changed,'create_host_path: false')).Count | Should -Be 3
+            foreach($file in $mounts){$changed | Should -Match ([regex]::Escape((ConvertTo-Json -InputObject $file.host -Compress)))}
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText $changed}|Should -Throw '*already exists*'
+            {Set-QualifiedHostOwnerRepairComposeText -Config $config -Server $server -ComposeText ($compose.Replace('mcp-app:','another:'))}|Should -Throw '*declared mcp-app volumes*'
+            $null=New-Item -ItemType Directory -Path (Join-Path $repairState 'bases/fixture/graph-beta/neo4j-data'),(Join-Path $repairState 'bases/fixture/graph-beta/mcp-state') -Force
+            Write-Text -Path (Join-Path $repairState 'graph.yml') -Value $compose
+            function Get-DistributionRoot {return $repairState}
+            function Assert-BetaProjectVolumesReady {}
+            function Get-HostEmbeddingSettings {return @{mode='openai'}}
+            function Resolve-ServerEnv {return @{OPENAI_EMBEDDING_MODEL='unchanged';OPENAI_EMBEDDING_API_BASE='https://example.test/v1';OPENAI_EMBEDDING_API_KEY='fixture-only'}}
+            $script:OwnerComposeCalls=0
+            function Invoke-DockerCommandChecked {param($Arguments) $script:OwnerComposeCalls++;$generated=Read-Text -Path $Arguments[4];([regex]::Matches($generated,'read_only: true')).Count|Should -Be 3}
+            $server.channel='stable';$server.manifestPath='releases/fixture/vibecoding1c-mcp.manifest.json';$server.composePath='graph.yml';$server.neo4jImage='neo4j@sha256:fixture'
+            $runtime=[pscustomobject]@{name='fixture';containerName='candidate';composeProject='fixture';image=$image;hostPort=1234;url='http://fixture/mcp'}
+            Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState @{configId='fixture'}
+            $script:OwnerComposeCalls | Should -Be 2
+            foreach($suite in $proof.nativeSuites){
+                foreach($key in @('failures','errors','skipped')){
+                    $suite[$key]=1;Save-GraphOwnerTestProof
+                    {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+                    $suite[$key]=0
+                }
+                $suite.native=$false;Save-GraphOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+                $suite.native=$true
+            }
+            $proof.nativeSuites[1].tests=13;Save-GraphOwnerTestProof
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+            $proof.nativeSuites[1].tests=14;Save-GraphOwnerTestProof
+            $script:OwnerMounts[0].RW=$true
+            {Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
+            $script:OwnerMounts[0].RW=$false
+            [IO.File]::AppendAllText((Join-Path $root 'score_floor.py'),'changed')
+            {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*file changed: score_floor*'
+        }
+    }
+
     It "prepares stable from an accepted beta without selecting a fresh generation or changing model" -Tag StableCutover {
         $configPath = Join-Path $TestDrive 'stable-context.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
@@ -4919,6 +5124,11 @@ services:
             $context = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
             $context.retainedIndex | Should -BeTrue
             $context.freshProjectIndex | Should -BeFalse
+            $context.retainedVersionChange | Should -BeFalse
+            $old.image = 'old@sha256:' + ('b' * 64)
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeTrue
+            $old.image = $context.runtime.image
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeFalse
             $context.runtime.hostPort | Should -Be 1
             $context.runtime.url | Should -Be 'http://host:1/mcp'
             $script:StableFixtureEnv.RESET_CACHE = 'true'
