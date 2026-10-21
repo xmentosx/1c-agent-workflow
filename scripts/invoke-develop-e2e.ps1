@@ -508,11 +508,9 @@ try {
         [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
-        $refreshResult = Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName `
-            -ExpectedConfigurationRejection $expectedConfigurationRejection
         if ($positiveStandRoot) {
-            $journeys.upgrade.configurationRejection = Assert-DevelopConfigurationRejection -ProcessResult $refreshResult `
-                -Expected $standConfig.developConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
+            $journeys.upgrade.configurationRejection = Invoke-DevelopConfigurationRejectionScenario `
+                -Expected $expectedConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
             $positiveOutput = Join-Path $outputRoot 'upgrade-positive/develop-e2e-summary.json'
             $positiveArguments = @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
                 '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade')
@@ -527,6 +525,7 @@ try {
             }
             $journeys.upgrade.positiveJourney = [ordered]@{path=$positiveOutput;sha256=(Get-FileHash -LiteralPath $positiveOutput -Algorithm SHA256).Hash.ToLowerInvariant();summary=$positive}
         } else {
+            [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName)
             if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
                 [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
             }
