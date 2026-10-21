@@ -1,0 +1,1752 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-21T13:29:51.197740+00:00",
+  "sourceBase": "4ef768b924141de17ef215da6e106b42137e2c49",
+  "status": "passed-bounded-source-and-native-cli-core",
+  "findings": {
+    "G3-KILO-MULTICLIENT-ALIASES": {
+      "status": "closed-bounded",
+      "cause": "Kilo deep-merges root OpenCode aliases with Kilo primary names",
+      "fix": "Existing Kilo writer owns disabled imported-alias overlays, prepared preview and existing baseline/restore; keep OpenCode and primary names/permissions",
+      "foreignOverride": "Preserve physical foreign Kilo alias, WARN and continue primary setup; no duplicate-free claim for that override; explicit collision guard unchanged"
+    },
+    "G3-KILO-TOOLS-API-404": {
+      "status": "closed-native-procedure",
+      "cause": "Kilo 7.8.15 experimental local call-tool route is gated by MCP Apps flag",
+      "fix": "Process-only KILO_EXPERIMENTAL_MCP_APPS=1 in authenticated isolated loopback native serve; no client/backend patch",
+      "scope": "Native CLI/core API, not IDE frontend"
+    }
+  },
+  "sourceInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+      "sha256": "800aa53c1f70c387e962ec0d4e1a7860b2107e1c401a55149b583be1b1042e4c",
+      "bytes": 169963
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "06a5d04c563fb1e9c6b40106efab5513c2e9f44397f509c5eb642231f898c53a",
+      "bytes": 46814
+    },
+    {
+      "path": ".agents/skills/1c-workflow/references/mcp.md",
+      "sha256": "93d4e137ebc76050f56f5a074a407cc7901212f34f990b8bcbe0f8c15b58d26d",
+      "bytes": 26782
+    },
+    {
+      "path": "tests/pester/MultiClientMcpOwnership.Tests.ps1",
+      "sha256": "39a425e9de36b9010b3f26cb4c4dccffa2c5492a166e6c7d2e460ecda3c689ed",
+      "bytes": 56341
+    },
+    {
+      "path": "tests/pester/ProductProjectApply.Tests.ps1",
+      "sha256": "9a1cc73238a2b9f842686c395a08db7f6ec02cee2357f035b6a6dde08e77789b",
+      "bytes": 40343
+    },
+    {
+      "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "sha256": "a79654e1978aa2913aebf88f2e42b004d824072e5f5da8a5edbd52fd0fc586f3",
+      "bytes": 39471
+    },
+    {
+      "path": "tests/pester/ProductProjectContext.Tests.ps1",
+      "sha256": "2574972f6a22be7636d9463721d203240eba4d283ed438ab62dd41a0720dc1fb",
+      "bytes": 31915
+    }
+  ],
+  "publicApply": {
+    "status": "passed",
+    "observedUtc": "2026-10-21T12:53:40.484731+00:00",
+    "results": [
+      {
+        "family": "CUSTOM",
+        "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+        "args": [
+          "powershell.exe",
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+          "-ProjectRoot",
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+          "-Action",
+          "vibecoding1c-mcp-write-client-config",
+          "-Client",
+          "kilocode"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 10.77946140000131,
+        "before": {
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.cursor\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567746523337900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\vibecoding1c-selection.json": {
+            "exists": true,
+            "sha256": "92e2ecff552adac1f0d5be195f0c683e393bc9f2283b9943e59d4863bb6b1b3d",
+            "bytes": 303,
+            "mtimeNs": 1792567748511940300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\client-managed.json": {
+            "exists": true,
+            "sha256": "63e51fab15db78e17c04dca2c990bec2595f3befa6dbff522eabe3b2905ab965",
+            "bytes": 7800,
+            "mtimeNs": 1792567748288287400
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.mimocode\\mimocode.json": {
+            "exists": true,
+            "sha256": "3ec4130d1e831c371dca7c5eb49bff061b4b31450febbddb7205385d270dd46b",
+            "bytes": 981,
+            "mtimeNs": 1792567747987934500
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\opencode.json": {
+            "exists": true,
+            "sha256": "d9e9b8506448e283d16fb1b88a16d5d27162bb44e810567c1e09d2b425895549",
+            "bytes": 341,
+            "mtimeNs": 1792567745980149200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\project.json": {
+            "exists": true,
+            "sha256": "b73d43f99631943159af55be414f0fc30bbf5d02113df0ca450d0629b233ff7d",
+            "bytes": 994,
+            "mtimeNs": 1792567748452564300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.cline\\mcp.json": {
+            "exists": true,
+            "sha256": "d76e89f6c2a5430e28be2457a1d1056df1f450489b953cd77b5a988043c505f8",
+            "bytes": 966,
+            "mtimeNs": 1792567747486759300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.qwen\\settings.json": {
+            "exists": true,
+            "sha256": "f800cbb150808177c4792a8e6179a09ef210730e4ab2015b4acb69175d74b447",
+            "bytes": 813,
+            "mtimeNs": 1792567746985150200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.kimi-code\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567746750309100
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\product-context-operation.json": {
+            "exists": true,
+            "sha256": "c52a63b0eabc24824aeb29274dcc76c19e242c4ac04ce18f7b919b326da6f57d",
+            "bytes": 122367,
+            "mtimeNs": 1792567748642099100
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567745670386000
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.codex\\config.toml": {
+            "exists": true,
+            "sha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11",
+            "bytes": 388,
+            "mtimeNs": 1792567745445763300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.opencode\\opencode.json": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.kilo\\kilo.json": {
+            "exists": true,
+            "sha256": "2df2bf4c1eedd99170b01feb982616e22d0e494f09cf720001eaf82c85b49c61",
+            "bytes": 1114,
+            "mtimeNs": 1792567746235195300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.zcode\\config.json": {
+            "exists": true,
+            "sha256": "a5a4d7c9227c8d7002ba266498ffb3b2fddeea6f4c498bc559a7af72461829ff",
+            "bytes": 1102,
+            "mtimeNs": 1792567747737803700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.opencode\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\product-context-applied.json": {
+            "exists": true,
+            "sha256": "a9994ca8eb2e27108317015084b769508992a8ce9d5dc13c7018219e450d70d3",
+            "bytes": 59898,
+            "mtimeNs": 1792567748636099900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.pi\\mcp.json": {
+            "exists": true,
+            "sha256": "5f1c4f69caabddeb8fb22aeb200779198075a928fecb2f32d7e897f6ee175075",
+            "bytes": 1131,
+            "mtimeNs": 1792567748254153400
+          }
+        },
+        "after": {
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.cursor\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567746523337900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\vibecoding1c-selection.json": {
+            "exists": true,
+            "sha256": "0d42883b57fb8a97c7a3c761536ecdf59c85d3561ded1339059e2a0b5984e3a9",
+            "bytes": 303,
+            "mtimeNs": 1792587208899433700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\client-managed.json": {
+            "exists": true,
+            "sha256": "f6e6c048f86ee1a951c7b8081b2b1ce6dde017c351929b68fc763258979cf529",
+            "bytes": 8254,
+            "mtimeNs": 1792587208779527200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.mimocode\\mimocode.json": {
+            "exists": true,
+            "sha256": "3ec4130d1e831c371dca7c5eb49bff061b4b31450febbddb7205385d270dd46b",
+            "bytes": 981,
+            "mtimeNs": 1792567747987934500
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\opencode.json": {
+            "exists": true,
+            "sha256": "d9e9b8506448e283d16fb1b88a16d5d27162bb44e810567c1e09d2b425895549",
+            "bytes": 341,
+            "mtimeNs": 1792567745980149200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\project.json": {
+            "exists": true,
+            "sha256": "b73d43f99631943159af55be414f0fc30bbf5d02113df0ca450d0629b233ff7d",
+            "bytes": 994,
+            "mtimeNs": 1792567748452564300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.cline\\mcp.json": {
+            "exists": true,
+            "sha256": "d76e89f6c2a5430e28be2457a1d1056df1f450489b953cd77b5a988043c505f8",
+            "bytes": 966,
+            "mtimeNs": 1792567747486759300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.qwen\\settings.json": {
+            "exists": true,
+            "sha256": "f800cbb150808177c4792a8e6179a09ef210730e4ab2015b4acb69175d74b447",
+            "bytes": 813,
+            "mtimeNs": 1792567746985150200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.kimi-code\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567746750309100
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\product-context-operation.json": {
+            "exists": true,
+            "sha256": "77ee7091cbcbae925016fb49da3af577a778ac2fa6515f29468ab1417efb67b1",
+            "bytes": 238059,
+            "mtimeNs": 1792587209012071700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567745670386000
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.codex\\config.toml": {
+            "exists": true,
+            "sha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11",
+            "bytes": 388,
+            "mtimeNs": 1792567745445763300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.opencode\\opencode.json": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.kilo\\kilo.json": {
+            "exists": true,
+            "sha256": "cb30b6be856a6dd82a2285ec237c3f0262973b8774b793d551b9d8c34b0cb352",
+            "bytes": 2227,
+            "mtimeNs": 1792587206586516100
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.zcode\\config.json": {
+            "exists": true,
+            "sha256": "a5a4d7c9227c8d7002ba266498ffb3b2fddeea6f4c498bc559a7af72461829ff",
+            "bytes": 1102,
+            "mtimeNs": 1792567747737803700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.opencode\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.agent-1c\\mcp\\product-context-applied.json": {
+            "exists": true,
+            "sha256": "4e24bb9727c97081b489ee57312db770af2ab20c3262465ccfac2ed48a282492",
+            "bytes": 60686,
+            "mtimeNs": 1792587208995536500
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.pi\\mcp.json": {
+            "exists": true,
+            "sha256": "5f1c4f69caabddeb8fb22aeb200779198075a928fecb2f32d7e897f6ee175075",
+            "bytes": 1131,
+            "mtimeNs": 1792567748254153400
+          }
+        },
+        "changed": [
+          ".agent-1c\\mcp\\vibecoding1c-selection.json",
+          ".agent-1c\\mcp\\client-managed.json",
+          ".agent-1c\\mcp\\product-context-operation.json",
+          ".kilo\\kilo.json",
+          ".agent-1c\\mcp\\product-context-applied.json"
+        ],
+        "opencodeBytesAndMtimePreserved": true,
+        "primaryEntriesAndPolicyPreserved": true,
+        "physicalAliases": {
+          "1c-code-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22100/mcp",
+            "enabled": true,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "1c-graph-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22101/mcp/",
+            "enabled": true,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "onec-code-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22100/mcp",
+            "enabled": false,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "onec-graph-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22101/mcp/",
+            "enabled": false,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          }
+        }
+      },
+      {
+        "family": "PROF",
+        "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+        "args": [
+          "powershell.exe",
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+          "-ProjectRoot",
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+          "-Action",
+          "vibecoding1c-mcp-write-client-config",
+          "-Client",
+          "kilocode"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 10.624264900001435,
+        "before": {
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.cursor\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567893373162400
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\vibecoding1c-selection.json": {
+            "exists": true,
+            "sha256": "0d42883b57fb8a97c7a3c761536ecdf59c85d3561ded1339059e2a0b5984e3a9",
+            "bytes": 303,
+            "mtimeNs": 1792567895620583200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\client-managed.json": {
+            "exists": true,
+            "sha256": "63e51fab15db78e17c04dca2c990bec2595f3befa6dbff522eabe3b2905ab965",
+            "bytes": 7800,
+            "mtimeNs": 1792567895429674600
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.mimocode\\mimocode.json": {
+            "exists": true,
+            "sha256": "3ec4130d1e831c371dca7c5eb49bff061b4b31450febbddb7205385d270dd46b",
+            "bytes": 981,
+            "mtimeNs": 1792567895099299400
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\opencode.json": {
+            "exists": true,
+            "sha256": "899018f5398640211d62eaba709d34d6e415871cfca01a83809ba70557bf4f32",
+            "bytes": 515,
+            "mtimeNs": 1792580478735735600
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\project.json": {
+            "exists": true,
+            "sha256": "628a8c0830e889b88305aa1019a8cd8d8474f35df02fb8e05754f0e311948eec",
+            "bytes": 992,
+            "mtimeNs": 1792567752667735300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.cline\\mcp.json": {
+            "exists": true,
+            "sha256": "d76e89f6c2a5430e28be2457a1d1056df1f450489b953cd77b5a988043c505f8",
+            "bytes": 966,
+            "mtimeNs": 1792567894511475800
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.qwen\\settings.json": {
+            "exists": true,
+            "sha256": "f800cbb150808177c4792a8e6179a09ef210730e4ab2015b4acb69175d74b447",
+            "bytes": 813,
+            "mtimeNs": 1792567893909397000
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.kimi-code\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567893637317900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\product-context-operation.json": {
+            "exists": true,
+            "sha256": "15382c82b8d6ca101c944724b10272ec1bbdbb098f089d3a3a76d0077c2097c7",
+            "bytes": 175186,
+            "mtimeNs": 1792567895778969000
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567892455984200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.codex\\config.toml": {
+            "exists": true,
+            "sha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11",
+            "bytes": 388,
+            "mtimeNs": 1792567892183699500
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.opencode\\opencode.json": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.kilo\\kilo.json": {
+            "exists": true,
+            "sha256": "6fd3e1268cecf17fadd1b96ffd0752ef46113d4f4b52ca58307594659485fd25",
+            "bytes": 1163,
+            "mtimeNs": 1792580478785677100
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.zcode\\config.json": {
+            "exists": true,
+            "sha256": "a5a4d7c9227c8d7002ba266498ffb3b2fddeea6f4c498bc559a7af72461829ff",
+            "bytes": 1102,
+            "mtimeNs": 1792567894814272700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.opencode\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\product-context-applied.json": {
+            "exists": true,
+            "sha256": "8a2fe9aa6f455ae53cff35670e7b1b8f67ee323e96a90187da4bda6dd9f2cb26",
+            "bytes": 59380,
+            "mtimeNs": 1792567895753566900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.pi\\mcp.json": {
+            "exists": true,
+            "sha256": "5f1c4f69caabddeb8fb22aeb200779198075a928fecb2f32d7e897f6ee175075",
+            "bytes": 1131,
+            "mtimeNs": 1792567895378864800
+          }
+        },
+        "after": {
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.cursor\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567893373162400
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\vibecoding1c-selection.json": {
+            "exists": true,
+            "sha256": "0d42883b57fb8a97c7a3c761536ecdf59c85d3561ded1339059e2a0b5984e3a9",
+            "bytes": 303,
+            "mtimeNs": 1792567895620583200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\client-managed.json": {
+            "exists": true,
+            "sha256": "f6e6c048f86ee1a951c7b8081b2b1ce6dde017c351929b68fc763258979cf529",
+            "bytes": 8254,
+            "mtimeNs": 1792587219488714600
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.mimocode\\mimocode.json": {
+            "exists": true,
+            "sha256": "3ec4130d1e831c371dca7c5eb49bff061b4b31450febbddb7205385d270dd46b",
+            "bytes": 981,
+            "mtimeNs": 1792567895099299400
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\opencode.json": {
+            "exists": true,
+            "sha256": "899018f5398640211d62eaba709d34d6e415871cfca01a83809ba70557bf4f32",
+            "bytes": 515,
+            "mtimeNs": 1792580478735735600
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\project.json": {
+            "exists": true,
+            "sha256": "628a8c0830e889b88305aa1019a8cd8d8474f35df02fb8e05754f0e311948eec",
+            "bytes": 992,
+            "mtimeNs": 1792567752667735300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.cline\\mcp.json": {
+            "exists": true,
+            "sha256": "d76e89f6c2a5430e28be2457a1d1056df1f450489b953cd77b5a988043c505f8",
+            "bytes": 966,
+            "mtimeNs": 1792567894511475800
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.qwen\\settings.json": {
+            "exists": true,
+            "sha256": "f800cbb150808177c4792a8e6179a09ef210730e4ab2015b4acb69175d74b447",
+            "bytes": 813,
+            "mtimeNs": 1792567893909397000
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.kimi-code\\mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567893637317900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\product-context-operation.json": {
+            "exists": true,
+            "sha256": "fc5ff469c3dd803d90c9f436e8e23fa9615b57014e721384846afd59890f0d34",
+            "bytes": 236329,
+            "mtimeNs": 1792587219650923300
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.mcp.json": {
+            "exists": true,
+            "sha256": "a326ace2aaf0a7c9b4cfba1ddecb725115e74146ae5e7046530b4e56bc32449d",
+            "bytes": 946,
+            "mtimeNs": 1792567892455984200
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.codex\\config.toml": {
+            "exists": true,
+            "sha256": "31cab0477a797c21801a3b3d41471e5984f000bde12fffbe37a7be6c29b83c11",
+            "bytes": 388,
+            "mtimeNs": 1792567892183699500
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.opencode\\opencode.json": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.kilo\\kilo.json": {
+            "exists": true,
+            "sha256": "e1c03fd7d0bd806a16f2ac7f88de48cafb22f72a9c62771cc3e67bb426a869de",
+            "bytes": 2279,
+            "mtimeNs": 1792587217603164900
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.zcode\\config.json": {
+            "exists": true,
+            "sha256": "a5a4d7c9227c8d7002ba266498ffb3b2fddeea6f4c498bc559a7af72461829ff",
+            "bytes": 1102,
+            "mtimeNs": 1792567894814272700
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.opencode\\opencode.jsonc": {
+            "exists": false
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.agent-1c\\mcp\\product-context-applied.json": {
+            "exists": true,
+            "sha256": "959da2193545f48aa34c924dec3818807026366d6e676a4878d20e659463f849",
+            "bytes": 60168,
+            "mtimeNs": 1792587219633355600
+          },
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF\\.pi\\mcp.json": {
+            "exists": true,
+            "sha256": "5f1c4f69caabddeb8fb22aeb200779198075a928fecb2f32d7e897f6ee175075",
+            "bytes": 1131,
+            "mtimeNs": 1792567895378864800
+          }
+        },
+        "changed": [
+          ".agent-1c\\mcp\\client-managed.json",
+          ".agent-1c\\mcp\\product-context-operation.json",
+          ".kilo\\kilo.json",
+          ".agent-1c\\mcp\\product-context-applied.json"
+        ],
+        "opencodeBytesAndMtimePreserved": true,
+        "primaryEntriesAndPolicyPreserved": true,
+        "physicalAliases": {
+          "1c-code-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22100/mcp",
+            "enabled": true,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "1c-graph-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22101/mcp/",
+            "enabled": true,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "onec-code-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22100/mcp",
+            "enabled": false,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          },
+          "onec-graph-metadata-mcp": {
+            "type": "remote",
+            "url": "http://dev-ermakov.itland.local:22101/mcp/",
+            "enabled": false,
+            "timeout": 300000,
+            "managedBy": "vibecoding1c-mcp",
+            "family": "vibecoding1c"
+          }
+        }
+      }
+    ]
+  },
+  "nativeRuns": [
+    {
+      "family": "CUSTOM",
+      "utc": "2026-10-21T13:04:39.448829+00:00",
+      "exe": "C:\\Users\\xment\\.vscode\\extensions\\kilocode.kilo-code-7.8.15-win32-x64\\bin\\kilo.exe",
+      "sha256": "c171387724dd935d6fe8ca9b162383ac0aa41e9a04af97ca3ea1d5c4c4a79b2f",
+      "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+      "resolvedMcp": {
+        "onec-code-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "enabled": false,
+          "timeout": 300000
+        },
+        "onec-graph-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "enabled": false,
+          "timeout": 300000
+        },
+        "1c-code-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "enabled": true,
+          "timeout": 300000
+        },
+        "1c-graph-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "enabled": true,
+          "timeout": 300000
+        }
+      },
+      "mcpStatus": {
+        "onec-code-metadata-mcp": {
+          "status": "disabled"
+        },
+        "onec-graph-metadata-mcp": {
+          "status": "disabled"
+        },
+        "1c-code-metadata-mcp": {
+          "status": "connected"
+        },
+        "1c-graph-metadata-mcp": {
+          "status": "connected"
+        }
+      },
+      "firstPairSeconds": 10.072881699998106,
+      "negativeScope": [
+        {
+          "project": "pm4corp",
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        },
+        {
+          "project": "g3-unknown-project",
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        }
+      ],
+      "disabledAliasNotCallable": true,
+      "reconnect": [
+        "1c-code-metadata-mcp",
+        "1c-graph-metadata-mcp"
+      ],
+      "afterReloadStatus": {
+        "onec-code-metadata-mcp": {
+          "status": "disabled"
+        },
+        "onec-graph-metadata-mcp": {
+          "status": "disabled"
+        },
+        "1c-code-metadata-mcp": {
+          "status": "connected"
+        },
+        "1c-graph-metadata-mcp": {
+          "status": "connected"
+        }
+      },
+      "reloadAndActualReads": true,
+      "toolCalls": 8,
+      "llmTurns": 0,
+      "scope": {
+        "project_id": "pm5corp",
+        "mcp_namespace": "default"
+      },
+      "limits": "Bundled Kilo native server and actual MCP tools through installed SDK route; not VS Code webview/frontend or all G3 acceptance",
+      "mcpAppsFlag": "process-only:1",
+      "ownedServerStopped": true
+    },
+    {
+      "family": "PROF",
+      "utc": "2026-10-21T12:57:56.164634+00:00",
+      "exe": "C:\\Users\\xment\\.vscode\\extensions\\kilocode.kilo-code-7.8.15-win32-x64\\bin\\kilo.exe",
+      "sha256": "c171387724dd935d6fe8ca9b162383ac0aa41e9a04af97ca3ea1d5c4c4a79b2f",
+      "cwd": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+      "resolvedMcp": {
+        "onec-code-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "enabled": false,
+          "timeout": 300000
+        },
+        "onec-graph-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "enabled": false,
+          "timeout": 300000
+        },
+        "1c-code-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22100/mcp",
+          "enabled": true,
+          "timeout": 300000
+        },
+        "1c-graph-metadata-mcp": {
+          "type": "remote",
+          "url": "http://dev-ermakov.itland.local:22101/mcp/",
+          "enabled": true,
+          "timeout": 300000
+        }
+      },
+      "mcpStatus": {
+        "onec-code-metadata-mcp": {
+          "status": "disabled"
+        },
+        "onec-graph-metadata-mcp": {
+          "status": "disabled"
+        },
+        "1c-code-metadata-mcp": {
+          "status": "connected"
+        },
+        "1c-graph-metadata-mcp": {
+          "status": "connected"
+        }
+      },
+      "firstPairSeconds": 12.436929899999086,
+      "negativeScope": [
+        {
+          "project": "pm4corp",
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        },
+        {
+          "project": "g3-unknown-project",
+          "error": {
+            "code": "project_not_accessible",
+            "message": "Project is not registered or not accessible in this scope. Call list_graph_projects to see the projects available in this MCP installation."
+          }
+        }
+      ],
+      "disabledAliasNotCallable": true,
+      "reconnect": [
+        "1c-code-metadata-mcp",
+        "1c-graph-metadata-mcp"
+      ],
+      "afterReloadStatus": {
+        "onec-code-metadata-mcp": {
+          "status": "disabled"
+        },
+        "onec-graph-metadata-mcp": {
+          "status": "disabled"
+        },
+        "1c-code-metadata-mcp": {
+          "status": "connected"
+        },
+        "1c-graph-metadata-mcp": {
+          "status": "connected"
+        }
+      },
+      "reloadAndActualReads": true,
+      "toolCalls": 8,
+      "llmTurns": 0,
+      "scope": {
+        "project_id": "pm5corp",
+        "mcp_namespace": "default"
+      },
+      "limits": "Bundled Kilo native server and actual MCP tools through installed SDK route; not VS Code webview/frontend or all G3 acceptance",
+      "mcpAppsFlag": "process-only:1",
+      "ownedServerStopped": true
+    }
+  ],
+  "preservation": {
+    "status": "passed",
+    "observedUtc": "2026-10-21T13:23:08.863090+00:00",
+    "firstNative": [
+      {
+        "family": "CUSTOM",
+        "paths": 19,
+        "exactBytesMtimePaths": 17,
+        "nativeSchemaExceptions": [
+          {
+            "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\opencode.json",
+            "actor": "native Kilo first-load schema normalization",
+            "field": "$schema",
+            "fileByteDelta": 174,
+            "allOtherBytesExact": false,
+            "allOtherJsonValuesExact": true,
+            "reconstructedBefore": {
+              "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\kilo-native-fix-20261021\\Reconstruct OpenCode source v2\\opencode.json",
+              "sha256": "d9e9b8506448e283d16fb1b88a16d5d27162bb44e810567c1e09d2b425895549",
+              "bytes": 341
+            },
+            "before": {
+              "exists": true,
+              "sha256": "d9e9b8506448e283d16fb1b88a16d5d27162bb44e810567c1e09d2b425895549",
+              "bytes": 341,
+              "mtimeNs": 1792567745980149200
+            },
+            "after": {
+              "exists": true,
+              "sha256": "899018f5398640211d62eaba709d34d6e415871cfca01a83809ba70557bf4f32",
+              "bytes": 515,
+              "mtimeNs": 1792587864893829300
+            }
+          },
+          {
+            "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM\\.kilo\\kilo.json",
+            "actor": "native Kilo first-load schema normalization",
+            "field": "$schema",
+            "fileByteDelta": 49,
+            "allOtherBytesExact": true,
+            "allOtherJsonValuesExact": true,
+            "reconstructedBefore": null,
+            "before": {
+              "exists": true,
+              "sha256": "cb30b6be856a6dd82a2285ec237c3f0262973b8774b793d551b9d8c34b0cb352",
+              "bytes": 2227,
+              "mtimeNs": 1792587206586516100
+            },
+            "after": {
+              "exists": true,
+              "sha256": "ae4b211d29ddea387b8a7bb76036f19b25500ad00b9391ec1466cc88cb917d19",
+              "bytes": 2276,
+              "mtimeNs": 1792587864941452200
+            }
+          }
+        ],
+        "projectId": "qual-custom",
+        "productId": "qual-pm5corp",
+        "catalogRevision": "8326bfd2650d24f99cdad4fce1593fad784b91b6"
+      },
+      {
+        "family": "PROF",
+        "paths": 19,
+        "exactBytesMtimePaths": 19,
+        "nativeSchemaExceptions": [],
+        "projectId": "qual-prof",
+        "productId": "qual-pm5prof",
+        "catalogRevision": "8326bfd2650d24f99cdad4fce1593fad784b91b6"
+      }
+    ],
+    "knownSchemaAdditions": 2,
+    "freshDiscovery": {
+      "exitCode": 0,
+      "elapsedSeconds": 3.6212014999982785,
+      "connected": 2,
+      "disabled": 2,
+      "protectedPaths": 38,
+      "bytesAndActualMtimeNsUnchanged": true,
+      "newNativeProcess": true,
+      "llmTurns": 0
+    }
+  },
+  "focusedTests": {
+    "status": "passed",
+    "passed": 145,
+    "failed": 0,
+    "skipped": 0,
+    "pesterVersion": "5.8.0",
+    "runtimeIdentity": {
+      "schemaVersion": 1,
+      "powerShellVersion": "5.1.26100.9711",
+      "powerShellEdition": "Desktop",
+      "platform": "Win32NT",
+      "osVersion": "Microsoft Windows NT 10.0.26300.0",
+      "processBits": 64,
+      "executablePath": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "executableSha256": "60c9b29843624dd8af6b6a7b26147753be6aeef65098b9a503cc50850afe410f",
+      "enginePath": "C:\\WINDOWS\\Microsoft.Net\\assembly\\GAC_MSIL\\System.Management.Automation\\v4.0_3.0.0.0__31bf3856ad364e35\\System.Management.Automation.dll",
+      "engineSha256": "ebb29e9f3a50e108cf44e27ee6a32ef431dcce37b0adb0cf97a3516a48922a5c",
+      "pesterVersion": "5.8.0",
+      "pesterManifestPath": "C:\\Users\\xment\\OneDrive\\Документы\\WindowsPowerShell\\Modules\\Pester\\5.8.0\\Pester.psd1",
+      "pesterModuleInputCount": 19,
+      "pesterModuleInputsSha256": "d18150b83f206a10f1f9494bff06971e6ff047df3bf56e499bf2422410ac4f68",
+      "identitySha256": "f3d24011b8471e17822320b34c878dfacc1719e378f096c9bdc24c90c2c7e24a"
+    },
+    "suites": [
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\MultiClientMcpOwnership.Tests.ps1",
+        "passed": 36,
+        "failed": 0,
+        "skipped": 0,
+        "inputDigest": "eeb47c4d238af2f098537fcbc6dcc368b7f07d3e33c11be1b3dc046825dc6ba8"
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectApply.Tests.ps1",
+        "passed": 48,
+        "failed": 0,
+        "skipped": 0,
+        "inputDigest": "ce356d5ad059776c28e81a9a60e379604df0989a846465aeda42bbb9ef07f43e"
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectContext.Tests.ps1",
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "inputDigest": "7a9dbf370c97295ab3272827fd441d73bd6bab883d48919f358cf2bfdfbf00bb"
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\ProductProjectSetup.Tests.ps1",
+        "passed": 39,
+        "failed": 0,
+        "skipped": 0,
+        "inputDigest": "64fa357fddd87a7175e7229ce93490bd1489df3010590386c4564d59da7deac3"
+      }
+    ],
+    "earlierFailedHarness": "Retained initial parse/indexing checks, overstrong JSON ordering check, old-fixture baseline and schema-only byte validator; no assertion weakening of actual workload or ownership"
+  },
+  "costs": {
+    "acceptedFinalBackendCalls": 16,
+    "positiveReads": 12,
+    "negativeGraphCalls": 4,
+    "disabledAliasLocal404Attempts": 2,
+    "mechanismProbeBackendCalls": 8,
+    "allNewBackendCalls": 24,
+    "allNewLocalToolApiAttempts": 26,
+    "llmTurns": 0,
+    "firstPairSeconds": [
+      10.072881699998106,
+      12.436929899999086
+    ],
+    "pairBudgetSeconds": 20,
+    "newStartupProbes": 0,
+    "newAlwaysOnRules": 0,
+    "newToolSchemas": 0,
+    "exactTokens": "not measured",
+    "backendEmbeddingUsage": "not instrumented",
+    "startupBenchmark": "not performed in this slice"
+  },
+  "upstreamReferences": [
+    {
+      "url": "https://kilo.ai/docs/getting-started/settings",
+      "use": "Official documented OpenCode/Kilo config merge"
+    },
+    {
+      "url": "https://github.com/Kilo-Org/kilocode/pull/14956",
+      "use": "Draft corroborates flag-off 404; not proof of installed fix"
+    },
+    {
+      "url": "https://kilo.ai/docs/automate/mcp/using-in-kilo-code",
+      "use": "Official native MCP use"
+    },
+    {
+      "url": "https://kilo.ai/docs/contributing/architecture/cli-runtime",
+      "use": "CLI/core scope differs from IDE frontend"
+    }
+  ],
+  "unchangedBoundaries": {
+    "fullG3AC39": "open",
+    "registryReleasePopulationAC36to38": "open",
+    "memoryConsumer4_2_G4_AC43_G5_AC44": "not started/open",
+    "Gate6": "not run or changed",
+    "workingMigration": "not started",
+    "publication": "not started",
+    "clientUpgrade": "none",
+    "serverDeployOrReindex": "none",
+    "oldStandsAndFailedCopies": "preserved; original synthetic multi-client roots reused",
+    "ai_rules_1c": "unchanged",
+    "sixScopesCanonicalHomeGrants": "unchanged",
+    "Q1toQ7D9G2": "not reopened"
+  },
+  "rawRefs": [
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/junit.xml",
+      "sha256": "c4b5896c5b6fa17d9193c77016a41b87bfd11e1ed33e8edfdf3a0a925828828f",
+      "bytes": 55125
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/runtime-1a7e109aca12495c98b8586481305737.json",
+      "sha256": "e09004235cee2838e9bfe2a95edfe5fdf6551e1c04ea221834c849cc03b29362",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/runtime-1a7e109aca12495c98b8586481305737.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/runtime-1a7e109aca12495c98b8586481305737.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/summary.json",
+      "sha256": "3ad79b0315b4fda4c633469b1adafd151d2c3a60d6e916e6ffe109b7c5382c39",
+      "bytes": 16384
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-1.plan.json",
+      "sha256": "bf41580fcb8b81fb7ca083abe146d94d296467f00c0a36f3e480967bc6692d50",
+      "bytes": 2460
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-1.result.json",
+      "sha256": "eb7a3e39ff9c02d8ddb4b00b5f90ac9320bdcc4cea3c93d24b712ec172cc2882",
+      "bytes": 2328
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-1.stdout.log",
+      "sha256": "f8c9ee47d6becd9b54a9ab05bf6a9b6b1ffe501c9df1f3935e8d1975796c1d18",
+      "bytes": 4159
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-1.xml",
+      "sha256": "77b55302756c63c350e1d1462931858c9cb928b5ba001ac56ca4b0f934789946",
+      "bytes": 13715
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-2.plan.json",
+      "sha256": "f712da7b61d235003f46081b280555f92ba17a28b2d387ed6b5e1c705ef0874c",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-2.result.json",
+      "sha256": "6675a4d8da1ef45ed44400b18ef9dd53e330447ed29f8482329b7c659a3f5d6b",
+      "bytes": 2324
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-2.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-2.stdout.log",
+      "sha256": "480079f9080aebe0eb4f6b23bc701e0821e8e034c198aae67d2133a998dfdf55",
+      "bytes": 6833
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-2.xml",
+      "sha256": "f80b7883e2eba2e5b758497f005e03c6c50ff091d4abc47dbe4f73f8566e64f7",
+      "bytes": 18207
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-3.plan.json",
+      "sha256": "c37f64b3f55b260a28a81d66c32d1da9b22fa02a7258f38b6e7c024124697ef6",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-3.result.json",
+      "sha256": "d18200925ed0ad4edf67a2227ebfd08b89c09573bf88479125242de53e4dec9f",
+      "bytes": 2325
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-3.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-3.stdout.log",
+      "sha256": "f27de5b03e6d8fc8bc56ead1704b4fb6d00ad78a02c26eca6a5fd9470aad4fd2",
+      "bytes": 2819
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-3.xml",
+      "sha256": "f745815fdba0e2075880651a927738e6a2e823040d0d2e05e5bb856f390db276",
+      "bytes": 9228
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-4.plan.json",
+      "sha256": "4431d799fbe107a4b5662fe94c9bb14506261d13b982e102a13c32e66ab3b9fa",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-4.result.json",
+      "sha256": "4b9a926bb33f545d44f9d3a79fcb3bbf4b9dbb56dd1be72bd7d331a5ef513a59",
+      "bytes": 2324
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-4.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-4.stdout.log",
+      "sha256": "0bba7f4df4a16b973ddb4906c5bf369f01cb55c037aff055235e0c0d00b29212",
+      "bytes": 13045
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/pester-shards/worker-4.xml",
+      "sha256": "6ec45284518fba58d803c6fe326b3e0a93ab6ddef1c4d0118c5795ef17d20499",
+      "bytes": 14881
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted/selection.json",
+      "sha256": "4f112ebdc5aaa0ed2afb766b2126dac9eb32a4f3eae73104105d3d4c69077477",
+      "bytes": 234
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/accepted.log",
+      "sha256": "d66a02c8b35e82164d894511324fc06a126027611e1a720ba7ddb46a1732aa42",
+      "bytes": 16624
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/apply-CUSTOM.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/apply-CUSTOM.stdout.log",
+      "sha256": "f7c487e81a998ed455a3783bbeda257568cadec4543ed6f260db78c7c335d915",
+      "bytes": 1034
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/apply-PROF.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/apply-PROF.stdout.log",
+      "sha256": "f7c487e81a998ed455a3783bbeda257568cadec4543ed6f260db78c7c335d915",
+      "bytes": 1034
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/apply-public.py",
+      "sha256": "6f0e4f15d0eb9088fab6f50540cbb909411c7ebe5653b61d0734e1718b56dee1",
+      "bytes": 3213
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/build-evidence.py",
+      "sha256": "10ed5e002023262a5837e14132acd35a41dc054e2d0c401ca380f9f3000eeede",
+      "bytes": 6163
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/check-flag.py",
+      "sha256": "8a839a263827b90cf45abeb4bcb81bacf370a3892849b89b82ec2e1a25cf1653",
+      "bytes": 6279
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/check-preservation.py",
+      "sha256": "fd18da6c44a037e07ad9788119dcbde69285c413df4b48b8e3cefc0a40f121d0",
+      "bytes": 3674
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/config.ts",
+      "sha256": "3126e79f4bab9a46383e03ce57233558335c0cb160c9feadda5adf40d22599e6",
+      "bytes": 54094
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/finalize-specs.py",
+      "sha256": "14ef0ea44d27d57d633d62c86d3ca148d9b56e7222222591abf667d0a8d07376",
+      "bytes": 19321
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-CUSTOM-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-CUSTOM-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-CUSTOM-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-CUSTOM.json",
+      "sha256": "cadd1cb0c063a4e38631df9335b27fe95936835a22338204f9f5a04452db45f1",
+      "bytes": 70061
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-PROF-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-PROF-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-PROF-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/fixed-PROF.json",
+      "sha256": "9eafb7ceefb29fbbe1c6ee821861b2107fe6a721bf1ec4b9ba7b477f95e71803",
+      "bytes": 70015
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/flag-on.json",
+      "sha256": "f8314272022a18c68c5e67a33608f32efbd543b580db508c614959466ce11731",
+      "bytes": 53089
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/flag-on.log",
+      "sha256": "86ac1dcdf3b0328a72f277b7180c42fbc3db2c9ac40e310448da23b75df5a5b5",
+      "bytes": 1167
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/junit.xml",
+      "sha256": "965ed57250cbaa537bc1de2160132cd8dfd51c5c02f68238ea66b5b20c972d02",
+      "bytes": 36725
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/runtime-a0990b342004479295ed1cc0d4e7d845.json",
+      "sha256": "aa40c4633e66bc36864660b4d8702c3dc649cacf8eaebb8383e3d9b50afafc38",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/runtime-a0990b342004479295ed1cc0d4e7d845.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/runtime-a0990b342004479295ed1cc0d4e7d845.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/summary.json",
+      "sha256": "c0fca95247d51c99f714d4bc7c975fb104edd88429cf33d71ba8d9db16918160",
+      "bytes": 13744
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-1.plan.json",
+      "sha256": "05dbcbccd0aa6074487240ac0b020108b280bb7bff9e97ab2526f717c53e9c42",
+      "bytes": 2460
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-1.result.json",
+      "sha256": "331f6b3175eb5a0f19d3d156679ef6fb8cc545129b48fa1398f3dff8198a43a6",
+      "bytes": 2376
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-1.stderr.log",
+      "sha256": "63f236e329fd3f80adfd78e5dab7b33f7a51d91621729861b87b759bbb267530",
+      "bytes": 55
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-1.stdout.log",
+      "sha256": "53c0b343b67c36e1b19202acb2dda6bacf03fd73bcdbd4e3dd34510378af7b2a",
+      "bytes": 2742
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-1.xml",
+      "sha256": "2d728f2405d5783e4b4a7238b13bbdc3027eff71740d3f5e0736b761cefcf2ff",
+      "bytes": 252
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-2.plan.json",
+      "sha256": "82f94ddc9cdd67c5de4942462cd35e1467a2cba0a756733c19321caba4119c24",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-2.result.json",
+      "sha256": "4936bb50ff4e4ddc04ab73659ff85735194428c90ccc87602c5cb0de5ba2e1f7",
+      "bytes": 2374
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-2.stderr.log",
+      "sha256": "d85e7063e9a90fbb5dd2eef2f0d58a184ff780eac18326523e4b64d4d9af6f5b",
+      "bytes": 55
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-2.stdout.log",
+      "sha256": "d3203c8d8b14be3e4ac33df162c0c4e2d64aecc3e8c4d0803f6da18050caadc3",
+      "bytes": 11074
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-2.xml",
+      "sha256": "b84bc2403c86ac76ee998463efa39eeecf664630b5f2f48026dc1f7766afcd24",
+      "bytes": 22575
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-3.plan.json",
+      "sha256": "e4ecacfcff6fcb2772f43931852d08aa432fb9a881cb458a74340a5f96a1c723",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-3.result.json",
+      "sha256": "583faa41f0e36d09b5c6afba789f41b40edaaaa38b021cd029633341c7c44d74",
+      "bytes": 2323
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-3.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-3.stdout.log",
+      "sha256": "4c3a74c509e1aa65ae4a496e4ccde761955f449f4319c540567b639e451953fb",
+      "bytes": 11622
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/pester-shards/worker-3.xml",
+      "sha256": "2f94c4f9003d7263bd1a8873e9facaf8288da0115e20ab12b8249435e8fa07ab",
+      "bytes": 14524
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused/selection.json",
+      "sha256": "613c7d98d5bd4201dcc6cd03b598e3db2e49690e1cefbdc261719392234910c4",
+      "bytes": 181
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/junit.xml",
+      "sha256": "7fce9fe16e5922e7caf1be732c973817ff66aacb273621013d065889ca738406",
+      "bytes": 32275
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/runtime-6368aa14d8fe4e0ca920b2239847d074.json",
+      "sha256": "9eb6821e989368624c2f5666f6479a7450b1ffa126c3035ee9e464d733a3f08b",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/runtime-6368aa14d8fe4e0ca920b2239847d074.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/runtime-6368aa14d8fe4e0ca920b2239847d074.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/summary.json",
+      "sha256": "ff2a3cc52ca5f5204743cfa1172cff58b5cb7f224522985c23398697be06f614",
+      "bytes": 10037
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-1.plan.json",
+      "sha256": "1814255c683467cee0a05204fc82f8b11900a7ed139c69a415d9cd9277d858ce",
+      "bytes": 2460
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-1.result.json",
+      "sha256": "0db22ef1548af0235663b1fa9393adcc32909f03aef3091b8f08ce02ebd38ee2",
+      "bytes": 2337
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-1.stdout.log",
+      "sha256": "f8fdf0d05978eb5529349e5d1905af5e35bfd5630e7f244444088b9764dd4e6f",
+      "bytes": 4134
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-1.xml",
+      "sha256": "36d7d826d6bf84709a203d7139cd51fa32f65ab5a1f50cdfbeb851a8d334bb37",
+      "bytes": 13687
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-2.plan.json",
+      "sha256": "8b8d2d67f63c81a2ab13f1632a1a329c4811d45261e4fba8603ff9505fe1f829",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-2.result.json",
+      "sha256": "ab6b93b4245de8de80e797dbd1a4e4e1fbad14597780bf3ae291687a339b6aa2",
+      "bytes": 2384
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-2.stderr.log",
+      "sha256": "d85e7063e9a90fbb5dd2eef2f0d58a184ff780eac18326523e4b64d4d9af6f5b",
+      "bytes": 55
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-2.stdout.log",
+      "sha256": "b017197b7ecaec390977cbad68c884b6285ef4b0a4346cc74a8fe701af64ba71",
+      "bytes": 16547
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/pester-shards/worker-2.xml",
+      "sha256": "09eec4babc41c227ad70a3d99aaad0af47742d65ab80ec1f6663aaca9c7c125e",
+      "bytes": 18962
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected/selection.json",
+      "sha256": "74f1238f11001c0087fcb2a9e598ff2ebb40e0a5f6ecbd516daf43ef04c11065",
+      "bytes": 130
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-corrected.log",
+      "sha256": "fb50737abcb9025f136f058cc957a5ac63ffc12e79e606994e1d38714b54b22d",
+      "bytes": 1271
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/junit.xml",
+      "sha256": "701dda603889f1a31cbc56b7bc7472e5f248a24a1ed260c26f1421e351b0ca0c",
+      "bytes": 62955
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/runtime-76b8fb406422486cabf52c1a339bf3bc.json",
+      "sha256": "7b07da5fc8b85ac0482260dece135dcdd6f9ba7b8863a3736caf81ba18b13907",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/runtime-76b8fb406422486cabf52c1a339bf3bc.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/runtime-76b8fb406422486cabf52c1a339bf3bc.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/summary.json",
+      "sha256": "6b1eba02235170fff4aeab346e1e101459665c6e57411c1c55c26a3d1cdd21b6",
+      "bytes": 17166
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-1.plan.json",
+      "sha256": "20aee650a4b8617ff91158381ad83a4df9979d32aab7bd92a910d4741e10f7c0",
+      "bytes": 2460
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-1.result.json",
+      "sha256": "30f4f3a4ab133426cf28bfcad70dbdb548828cedb70308e9655b8234f1b8baba",
+      "bytes": 2384
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-1.stderr.log",
+      "sha256": "500564c315c6937430d6c32aef2f89218f07dde33698be174afb97ac4f16f12b",
+      "bytes": 55
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-1.stdout.log",
+      "sha256": "15d1783c8a3dbea7c76a1c02516356f2e93adc097a879aede2da97609321918d",
+      "bytes": 8431
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-1.xml",
+      "sha256": "b1f1d2b541116f434fb4b850b24eb0adb542b1e195ce8c60c003d9a42bf0367a",
+      "bytes": 18018
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-2.plan.json",
+      "sha256": "b559272d93685db29696693a7f1bbd3053ef50714238e75b57b186e41668c9fa",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-2.result.json",
+      "sha256": "124df4c82436f4baf194569d85a28947063e841f919f4a547470a18b65ed41d5",
+      "bytes": 2329
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-2.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-2.stdout.log",
+      "sha256": "7912f51079dbc5f8d78e4702e9bb3a34b37ec360d8933b5aedefd5e26eede404",
+      "bytes": 6843
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-2.xml",
+      "sha256": "a3bc698b3514f1b99de666e5fa017722d72fef7378c73f6823f28fe67ed706bf",
+      "bytes": 18207
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-3.plan.json",
+      "sha256": "c6da674c88a3047c20c617295692fc9828e79ee876a3052bb3d6fb7d0665b988",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-3.result.json",
+      "sha256": "5319f4cf422c082890625f43b88f320af88e6f686640ae301c0a3e5f483bab1b",
+      "bytes": 2331
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-3.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-3.stdout.log",
+      "sha256": "98fdfc9e84fa943e6caf920f32032b4297768bb37fe48850fe98787cdbd637a1",
+      "bytes": 2821
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-3.xml",
+      "sha256": "d64de5cc123f899a4ba45055b11d9f349a023c1c795676e7e4b71ed326730e16",
+      "bytes": 9228
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-4.plan.json",
+      "sha256": "6df0d2f4ae4fb7da6adaa8532cdb766b3588584f1ef89bf39cc98daa902b612a",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-4.result.json",
+      "sha256": "70b644273426b2dfdf4e374900599a1ca4402af33bc2366b068a3598a8fc9745",
+      "bytes": 2380
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-4.stderr.log",
+      "sha256": "8622c621ae32552f5ebdde5103ac0e941e6544f9639289708f043031d9700358",
+      "bytes": 55
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-4.stdout.log",
+      "sha256": "51676d0e906973881e3a906e6e6049c90e11293775ecce8987235b610613672a",
+      "bytes": 16071
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/pester-shards/worker-4.xml",
+      "sha256": "1a8bc0909435f0e78f69e575f5d6656512e432a4540ec6ad4411ca85fd7b4a05",
+      "bytes": 18408
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final/selection.json",
+      "sha256": "4f112ebdc5aaa0ed2afb766b2126dac9eb32a4f3eae73104105d3d4c69077477",
+      "bytes": 234
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused-final.log",
+      "sha256": "926499aa81fd970fe207bf45cb7a039b9e5ce5ef787f288d5959ff581c6dc0e1",
+      "bytes": 1883
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/focused.log",
+      "sha256": "5dc499986a6e0f429737e5ddd9c4d5a9641db53ce9c6f2c34cd72c339a4ef42a",
+      "bytes": 1813
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/kilo-detail-native-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/kilo-detail-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/kilo-detail-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe-native-api.json",
+      "sha256": "be29a7280fe2d27c913552323900c9cb7f3157fd6a4ff105a6a33203e28b7f5b",
+      "bytes": 23974
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe-server.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe-server.stdout.log",
+      "sha256": "ae24a57d74aa2928484e0e93a561c5aad0074549ae2fd8334c2832cc7d209f6c",
+      "bytes": 48
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe-v2.log",
+      "sha256": "f47a370c0a58f8177ef1a4de20ba90bb64dccd7734458611c95470ac40d30d12",
+      "bytes": 1171
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe.json",
+      "sha256": "2be869da0fe56074be63976c731259ee2658f65f2ab572d543079f0baea3b8df",
+      "bytes": 53091
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/mask-probe.log",
+      "sha256": "d97158cfd8760532e5b9a72631453df61be798fc90d98d1224c29c1578092e3e",
+      "bytes": 805
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/native-fixed-CUSTOM.log",
+      "sha256": "d0cebc80d25acc81994c17d3c8a5a60539c3c1f0bb35c48ec748a809fabd0b05",
+      "bytes": 2041
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/native-fixed-PROF.log",
+      "sha256": "ce073285944034619abc4ab451cbbe88ddcdd493d7f0ce2671b90a1f4ce38193",
+      "bytes": 2037
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/native-fixed.py",
+      "sha256": "13a6d330d428176e35fec428703f4766563bea50f0240aa2474237d5c34c994f",
+      "bytes": 8777
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/native-preservation.json",
+      "sha256": "a5367b77c77a1525b7e32aae03828273b5aeea0f9be0593a3eb1beea30722bc6",
+      "bytes": 31178
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/normalized-discovery.stderr.log",
+      "sha256": "5ffd561502139fe2fee15a84a01e1fd95753b6d85bfb5634063041b98467ba7f",
+      "bytes": 6
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/normalized-discovery.stdout.log",
+      "sha256": "ce53e91c2c235449dee8b0314a86d5479048d5b2de84ae54de98fcd52576f79e",
+      "bytes": 445
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/preservation-final.log",
+      "sha256": "8f26c702a3fce86452d789849a8ceaf0e4d4232b917970f406ab48189a3ca095",
+      "bytes": 2430
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/preservation.log",
+      "sha256": "da2d8ac273cf7f841931444c8344de2aa479dddbfea6d4ad8eecc8ea3b45225c",
+      "bytes": 559
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/probe-mask.py",
+      "sha256": "bb7b8d9bf7c35cbeda846ab0a8e8772aded236e3fb406cc55f5955559fc2b1b6",
+      "bytes": 6414
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/public-apply.json",
+      "sha256": "f9743e3becd818355d974f452cdc2f3c22836b8e906ac6f56c7346af40eb3239",
+      "bytes": 34700
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/public-apply.log",
+      "sha256": "dff297f190b06469eee699481a9ab2eb086f76dcf669e6699b27e756e01f3e38",
+      "bytes": 515
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/Reconstruct OpenCode source v2/opencode.json",
+      "sha256": "d9e9b8506448e283d16fb1b88a16d5d27162bb44e810567c1e09d2b425895549",
+      "bytes": 341
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/reconstruct-opencode.ps1",
+      "sha256": "ed68947bca6c56245e4be9ef5ed14dc476bb64dc40bb055407e2d553cb17f75d",
+      "bytes": 1260
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/reconstructed-opencode-v2.json",
+      "sha256": "cbce89eacc602c82c02aef2e809df76f798d4bc40d80835f4b16e3894e008e3b",
+      "bytes": 308
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/reconstructed-opencode.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/run-apply.ps1",
+      "sha256": "95fd4e083f923c02d8be23d434ad811e6b6a5c937451925de0cd6504c7e9877b",
+      "bytes": 338
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/junit.xml",
+      "sha256": "807929c1e84081d116d2a478677b56ede033cb22db433d07977d385a2e809696",
+      "bytes": 14773
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/runtime-237c234065ca40019c63e281c188fc97.json",
+      "sha256": "61b7a6fe68d07ba3c2a92eff93188d85d5b3ba3248b3bf5ccb89e31db781f43e",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/runtime-237c234065ca40019c63e281c188fc97.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/runtime-237c234065ca40019c63e281c188fc97.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/summary.json",
+      "sha256": "81e2be8ed3464d0c3a2bcccccd63c287fecf3464471b9538ae82b34333e6ef81",
+      "bytes": 6263
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/worker-1.plan.json",
+      "sha256": "6272ea02d20418f7bec35aa86c0c6e27f9dfc4fbac4e1232a9a37001d622317a",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/worker-1.result.json",
+      "sha256": "828d9d20f9066839479d4ae6e36852b22cbe3414afd79db04009c0baa45f0e6e",
+      "bytes": 2334
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/worker-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/worker-1.stdout.log",
+      "sha256": "a916f64d0b1e56ced6211a191540bd7cae184416a02af3574660067f266e8471",
+      "bytes": 13046
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/pester-shards/worker-1.xml",
+      "sha256": "5b85d39d17e54969ffb7854b3f8dc6cc3fd8f74fbe209a0d749cb73a670b003b",
+      "bytes": 14881
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof/selection.json",
+      "sha256": "baa06ad4bec39ead50b8478b82c3b7e12c247b0a3d08d024961adc890216adea",
+      "bytes": 75
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/setup-legacy-proof.log",
+      "sha256": "c194b44427daf55b76f4a1667e3e6865e86a93af05f37523b048479ed0c11cd1",
+      "bytes": 6493
+    },
+    {
+      "path": "build/test-results/g3/kilo-native-fix-20261021/upstream-revision.json",
+      "sha256": "a91689083edd946973bfb9285939b71f0d22481c449f2c1ae1eea20a0a799137",
+      "bytes": 89
+    }
+  ],
+  "delivery": "Local commit and existing source-delivery RegisterChange/Status ledger; no duplicate OpenSpec gate ledger"
+}

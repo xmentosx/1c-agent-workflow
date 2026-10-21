@@ -113,6 +113,30 @@
         Read-ItlProductProjectRecord applied|Should -BeNullOrEmpty
         (Read-Utf8Text $script:ConfigPath)|Should -Not -Match 'productProject'
     }
+    It 'previews the imported alias masks as additions to an otherwise unchanged legacy Kilo receipt' {
+        $snapshot.registry.hosts=@(@{hostId='source';configurations=@(@{id='typical'});servers=@(@{id='code';scope='project';configId='typical';family='vibecoding1c';url='http://source.invalid:22100/mcp'})})
+        $snapshot.catalog.sources=@(@{sourceId='typical-code';role='code';endpoint=@{hostId='source';serverId='code';configId='typical'}})
+        $snapshot.catalog.products[1].roles=@{code=@{mode='own';sourceId='typical-code'}}
+        $script:Config.aiRules.tools=@('kilocode')
+        Write-Utf8TextAtomic $script:ConfigPath ($script:Config|ConvertTo-Json -Depth 10)
+        $candidate=Select-ItlProductProjectCandidate five
+        $null=Invoke-ItlProductProjectAssociation $candidate
+        $endpoints=@((New-ItlProductProjectPreview $candidate.context @('kilocode')).requests[0].endpoints)
+        # Model the old writer/receipt, without changing the selected context.
+        Write-ItlClientMcpEndpoints -Client kilocode -Owner vibecoding1c -Endpoints $endpoints *> $null
+        $statePath=Get-ItlManagedMcpStatePath
+        $legacyState=Read-Utf8Text $statePath|ConvertFrom-Json
+        $legacyState.lastWritten.'kilocode/vibecoding1c'.PSObject.Properties.Remove('onec-code-metadata-mcp')
+        Write-Utf8TextAtomic $statePath ($legacyState|ConvertTo-Json -Depth 20)
+        $applied=Read-ItlProductProjectRecord applied
+        $applied.proof=Get-ItlProductProjectClientProof @(@{client='kilocode';owner='vibecoding1c';endpoints=$endpoints})
+        Write-ItlProductProjectRecord applied $applied
+        $preview=New-ItlProductProjectPreview $candidate.context @('kilocode')
+        $additions=@($preview.changes|Where-Object name -eq 'onec-code-metadata-mcp')
+        $additions.Count|Should -Be 1 -Because ($preview.changes|ConvertTo-Json -Depth 4 -Compress)
+        $additions[0].status|Should -BeExactly addition
+        Test-ItlProductProjectPreviewClientChanges $preview|Should -BeTrue
+    }
     It 'keeps select restore later and pending catalog records out of legacy MCP enrollment' -Tag CatalogLegacyEnrollment {
         $path=Get-Vibecoding1cMcpSelectionPath
         Mock Get-Vibecoding1cMcpSelectionCompleteness {throw 'Catalog preferences triggered legacy readiness'}

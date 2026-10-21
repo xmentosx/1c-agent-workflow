@@ -70,3 +70,7 @@ Registry 3.5/5.2/5.4–5.6 и full AC-39 открыты. Memory consumer 4.2/G4,
 ## Последующее закрытие CLI presentation
 
 [Owner repair/repeat](g3-context-cli-output-2026-10-21.md) закрыл G3-CONTEXT-CLI-OUTPUT compact UTF-8 JSON на status/select context; internal DTO прежний. Сохранённый здесь JSON pipeline workaround больше не нужен публичной команде — повторная сериализация даст JSON-строку. Actual guard keys этого report — 19, хотя summary называл 20; follow-up вычисляет count и подтверждает SHA/mtime 19 paths на каждом из двух прежних roots. Исходные JSON/failures не переписаны. Kilo aliases/API/full G3 и остальные ограничения остаются открытыми.
+
+## Последующее исправление Kilo findings
+
+[Отдельный owner repair и native repeat](g3-kilo-native-fix-2026-10-21.md) закрыл G3-KILO-MULTICLIENT-ALIASES и G3-KILO-TOOLS-API-404 в bundled CLI/core области. Исходные 4-connected/404 records этого report/JSON неизменны; они не являются текущим остатком после указанного повтора. IDE/latest installed/platform acceptance и полный G3 по-прежнему открыты.

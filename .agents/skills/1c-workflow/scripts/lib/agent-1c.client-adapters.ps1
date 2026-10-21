@@ -1023,6 +1023,9 @@ function ConvertTo-ItlClientMcpEntry {
     } else {
         [ordered]@{ type = "http"; url = $endpoint.url }
     }
+    if ($Client -eq 'kilocode') {
+        $entry['enabled'] = [bool](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name 'enabled' -Default $true)
+    }
     if ($Owner -eq "vibecoding1c") {
         $entry["managedBy"] = "vibecoding1c-mcp"
         $entry["family"] = "vibecoding1c"
@@ -1070,6 +1073,7 @@ function Write-ItlClientMcpEndpoints {
                 env = $environment
                 startupTimeoutSeconds = $startupTimeout
                 toolTimeoutSeconds = $toolTimeout
+                enabled = [bool](Get-Vibecoding1cMcpObjectValue -Object $_ -Name 'enabled' -Default $true)
             }
         }
     })
@@ -1360,6 +1364,25 @@ function Write-ItlClientMcpEndpointSet {
         $ownerKey = "$($request.client)/$($request.owner)"
         $owned = @(Get-ItlManagedMcpOwnerKeys -Client $request.client -Owner $request.owner)
         $entries = Read-ItlClientMcpEntries -Client $request.client
+        if ($request.client -eq 'kilocode' -and $request.owner -eq 'vibecoding1c' -and
+            (ConvertTo-Vibecoding1cMcpHashtable (Get-Vibecoding1cMcpObjectValue $request 'restoreEntries' @{})).Count -eq 0) {
+            # Kilo deep-merges root OpenCode config. Keep Kilo's established tool
+            # names/permission keys and mask only their imported OpenCode aliases.
+            # These are ordinary owned entries in the same preflight/receipt/undo.
+            $requestedNames = @($request.endpoints | ForEach-Object { [string]$_.name })
+            $preservedNames = @(Get-Vibecoding1cMcpObjectValue $request 'preserveOwnedKeys' @())
+            foreach ($endpoint in @($request.endpoints)) {
+                $alias = ConvertTo-ItlClientMcpKey -Name ([string]$endpoint.name) -Client opencode
+                if ($alias -ceq [string]$endpoint.name -or $alias -in $requestedNames -or $alias -in $preservedNames) { continue }
+                if ($entries.Contains($alias) -and $alias -notin $owned) {
+                    if (-not $PlanOnly) { Write-Warning "Kilo import alias '$alias' is explicitly configured by another owner; it was preserved. Review it in Kilo before accepting duplicate-free native activation." }
+                    continue
+                }
+                $mask = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint
+                $mask['name'] = $alias; $mask['enabled'] = $false
+                $request['endpoints'] = @($request.endpoints) + @([pscustomobject]$mask)
+            }
+        }
         $adapter = Get-ItlClientAdapter -Client $request.client
         if ($adapter.mcpFormat -eq 'toml') {
             $path = Join-Path $script:ProjectRoot $adapter.mcpPath

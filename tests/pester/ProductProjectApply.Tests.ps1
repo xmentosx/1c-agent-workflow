@@ -40,6 +40,19 @@
         (Read-ItlClientMcpEntries $Client).Contains('added') | Should -BeFalse
         Test-Path -LiteralPath (Get-ItlProductProjectPath applied) | Should -BeFalse
     }
+    It 'restores Kilo alias masks and the exact prior native entries for <AlreadyMasked>' -ForEach @(@{AlreadyMasked=$false},@{AlreadyMasked=$true}) {
+        $old=@(@{name='1c-code-metadata-mcp';url='https://old.invalid/mcp'})
+        if($AlreadyMasked){Write-ItlClientMcpEndpointSet @(@{client='kilocode';owner='vibecoding1c';endpoints=$old}) *> $null}
+        else {Write-ItlClientMcpEndpoints -Client kilocode -Owner vibecoding1c -Endpoints $old *> $null}
+        $before=Read-Utf8Text (Join-Path $root '.kilo/kilo.json')
+        $null=Invoke-ItlProductProjectClientApply $context @(@{client='kilocode';owner='vibecoding1c';endpoints=@(@{name='1c-code-metadata-mcp';url='https://new.invalid/mcp'},@{name='1c-graph-metadata-mcp';url='https://graph.invalid/mcp/'})})
+        (Read-ItlClientMcpEntries kilocode)['onec-code-metadata-mcp'].enabled|Should -BeFalse
+        (Read-ItlClientMcpEntries kilocode)['onec-graph-metadata-mcp'].enabled|Should -BeFalse
+        (Invoke-ItlProductProjectClientApply -Mode restore).status|Should -Be restored
+        # JSON member ordering is not part of the native settings contract.
+        # Compare every native field, including the disabled masks, not only URLs.
+        (Get-ItlCatalogHash (Read-Utf8Text (Join-Path $root '.kilo/kilo.json')|ConvertFrom-Json))|Should -BeExactly (Get-ItlCatalogHash ($before|ConvertFrom-Json))
+    }
     It 'keeps JSONC comments and unrelated later edits through restore' {
         $path=Join-Path $root 'opencode.jsonc'
         Write-Utf8TextAtomic $path "{`n // Авторский комментарий`n `"theme`": `"old`",`n `"mcp`": {}`n}`n"
