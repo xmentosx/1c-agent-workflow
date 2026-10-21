@@ -5,9 +5,69 @@
         . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
         . (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
         $freshSourceHelper = if ($env:ITL_TEST_FRESH_BASELINE_ROOT) { Join-Path $env:ITL_TEST_FRESH_BASELINE_ROOT '.agents/skills/1c-workflow/scripts/agent-1c.ps1' } else { $context.HelperPath }
+        $defaultFreshReceiptsRoot = Join-Path $context.RepoRoot ('build/test-results/local/fresh-continuation/' + [guid]::NewGuid().ToString('N'))
+        function Save-FreshCompactFixtureEvidence {
+            param([Collections.IDictionary]$Fixture, [object]$Failure = $null)
+            if (-not $Fixture.receiptRoot) {
+                $base = if ($env:ITL_TEST_FRESH_RECEIPTS_ROOT) { $env:ITL_TEST_FRESH_RECEIPTS_ROOT } else { $defaultFreshReceiptsRoot }
+                $Fixture.receiptRoot = [IO.Path]::GetFullPath((Join-Path $base (Split-Path -Leaf $Fixture.root)))
+            }
+            $destination = $Fixture.receiptRoot
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            $utf8 = [Text.UTF8Encoding]::new($false)
+            [IO.File]::WriteAllText((Join-Path $destination 'process-result.json'), ($Fixture.result | ConvertTo-Json -Depth 6), $utf8)
+            if ($null -ne $Fixture.result) {
+                [IO.File]::WriteAllText((Join-Path $destination 'stdout.txt'), [string]$Fixture.result.stdout, $utf8)
+                [IO.File]::WriteAllText((Join-Path $destination 'stderr.txt'), [string]$Fixture.result.stderr, $utf8)
+            }
+            $runs = Join-Path $Fixture.root '.agent-1c/runs'
+            if (Test-Path -LiteralPath $runs) { Copy-Item -LiteralPath $runs -Destination $destination -Recurse -Force -ErrorAction Stop }
+            $copies = @{
+                'lifecycle.json' = Join-Path $Fixture.root '.agent-1c/locks/lifecycle-operation.json'
+                'native-stderr.txt' = Join-Path $Fixture.root 'native-stderr.txt'
+                'parent.ps1' = Join-Path $Fixture.root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+                'child.ps1' = Join-Path $Fixture.root 'child.ps1'
+            }
+            if ($null -ne $Fixture.summary) {
+                foreach ($entry in @{ 'status.json'='statusPath'; 'console.log'='logPath' }.GetEnumerator()) {
+                    $property = $Fixture.summary.PSObject.Properties[$entry.Value]
+                    if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) { $copies[$entry.Key] = [string]$property.Value }
+                }
+            }
+            foreach ($name in $copies.Keys) {
+                if (Test-Path -LiteralPath $copies[$name] -PathType Leaf) {
+                    Copy-Item -LiteralPath $copies[$name] -Destination (Join-Path $destination $name) -Force -ErrorAction Stop
+                }
+            }
+            $sources = @(foreach ($path in @($Fixture.sourceHelper, (Join-Path $Fixture.sourceDirectory 'lib/agent-1c.core.ps1'),
+                (Join-Path $Fixture.sourceDirectory 'lib/agent-1c.lifecycle.ps1'), (Join-Path $Fixture.sourceDirectory 'lib/agent-1c.vanessa.ps1'),
+                (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'),
+                (Join-Path $context.RepoRoot 'tests/pester/CompactRunnerFreshContinuation.Tests.ps1'))) {
+                [ordered]@{path=$path; sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}
+            })
+            $metadata = [ordered]@{schemaVersion=1; scenario=$Fixture.scenario; fixtureRoot=$Fixture.root; arguments=$Fixture.arguments
+                runtime=[string]$PSVersionTable.PSVersion; sources=$sources
+                failure=$(if ($null -ne $Failure) { [ordered]@{message=$Failure.Exception.Message; id=$Failure.FullyQualifiedErrorId; stack=$Failure.ScriptStackTrace} } else { $null })}
+            [IO.File]::WriteAllText((Join-Path $destination 'scenario.json'), ($metadata | ConvertTo-Json -Depth 8), $utf8)
+            $assets = @(Get-ChildItem -LiteralPath $destination -File -Recurse | Where-Object Name -ne 'manifest.json' | ForEach-Object {
+                [ordered]@{path=$_.FullName.Substring($destination.TrimEnd('\').Length+1).Replace('\','/'); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}
+            })
+            [IO.File]::WriteAllText((Join-Path $destination 'manifest.json'), ($assets | ConvertTo-Json -Depth 4), $utf8)
+        }
+        function Get-FreshCompactFixtureDiagnostic {
+            param([Collections.IDictionary]$Fixture)
+            $status = $Fixture.status | Select-Object status,exitCode,stage,errorMessage | ConvertTo-Json -Compress
+            $lifecycle = $Fixture.lifecycle | Select-Object status,exitCode,errorMessage | ConvertTo-Json -Compress
+            $details = "evidence=$($Fixture.receiptRoot); status=$status; lifecycle=$lifecycle; stderr=$($Fixture.result.stderr); stdout=$($Fixture.result.stdout)"
+            if ($details.Length -gt 8000) { $details = $details.Substring(0,8000) + ' [full output in evidence]' }
+            return $details
+        }
         function Invoke-FreshCompactFixture {
             param([string]$Mode = 'success', [int]$SilentSeconds = 4, [switch]$DefaultStale, [int]$OperationSeconds = 45, [switch]$LegacyNested)
             $root = Join-Path ([IO.Path]::GetTempPath()) ('itl fresh ожидание с пробелом ' + [guid]::NewGuid().ToString('N'))
+            $fixtureEvidence = @{root=$root;receiptRoot='';result=$null;summary=$null;status=$null;lifecycle=$null;arguments=@()
+                sourceHelper=$freshSourceHelper;sourceDirectory=(Split-Path -Parent $freshSourceHelper)
+                scenario=@{mode=$Mode;silentSeconds=$SilentSeconds;operationSeconds=$OperationSeconds;defaultStale=[bool]$DefaultStale;legacyNested=[bool]$LegacyNested}}
             $oldEnvironment = @{}
             foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
             try {
@@ -135,6 +195,8 @@ exit 0
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_OPERATION_TIMEOUT_SECONDS',[string]$OperationSeconds,'Process')
                 $roundTrip=(Join-Path $root 'параметр с пробелом')+'\'
                 $fixtureSource=if($Mode -eq 'catalog-input'){$context.HelperPath}else{$freshSourceHelper}
+                $fixtureEvidence.sourceHelper=$fixtureSource
+                $fixtureEvidence.sourceDirectory=Split-Path -Parent $fixtureSource
                 $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$fixtureSource,'-Mode',$Mode,'-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip)
                 if($LegacyNested) {
                     $legacyText=@(& git -C $context.RepoRoot show 'c6c829b61c8d31a9f52d7a64ed762c5b5b93b2d7:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') -join "`n"
@@ -151,26 +213,42 @@ exit 0
                     $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$freshSourceHelper,'-Mode','nested','-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip,'-LegacyFunctionPath',$legacyPath)
                 }
                 if(-not $DefaultStale){$invokeArgs+='-ShortHeartbeat'}
+                $fixtureEvidence.arguments=@($invokeArgs)
                 Push-Location $root
                 try {
                     $timer=[Diagnostics.Stopwatch]::StartNew()
                     $native=Invoke-ItlNativeProcessCapture -FilePath 'powershell.exe' -Arguments (@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $scripts 'run-itl-command.ps1'))+$invokeArgs) -WorkingDirectory $root -TimeoutSeconds ($OperationSeconds+15)
                     $result=@{exitCode=$native.exitCode;stdout=$native.stdout;stderr=$native.stderr;combinedText=($native.stdout+"`n"+$native.stderr)}
+                    $fixtureEvidence.result=$result
                     $timer.Stop()
                 } finally { Pop-Location }
                 $summary=($result.stdout -join "`n") | ConvertFrom-Json
+                $fixtureEvidence.summary=$summary
                 $status=Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $fixtureEvidence.status=$status
                 $lifecycle=Get-Content -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-operation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ($env:ITL_TEST_FRESH_RECEIPTS_ROOT) {
-                    $receiptRoot=Join-Path $env:ITL_TEST_FRESH_RECEIPTS_ROOT (Split-Path -Leaf $root)
-                    New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
-                    Copy-Item -LiteralPath $summary.logPath -Destination (Join-Path $receiptRoot 'console.log')
-                    Copy-Item -LiteralPath $summary.statusPath -Destination (Join-Path $receiptRoot 'status.json')
-                    Copy-Item -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-operation.json') -Destination (Join-Path $receiptRoot 'lifecycle.json')
-                    if(Test-Path -LiteralPath (Join-Path $root 'native-stderr.txt')){Copy-Item -LiteralPath (Join-Path $root 'native-stderr.txt') -Destination (Join-Path $receiptRoot 'native-stderr.txt')}
+                $fixtureEvidence.lifecycle=$lifecycle
+                $fixtureEvidence.elapsed=$timer.Elapsed.TotalSeconds
+                $fixtureEvidence.roundTrip=$roundTrip
+                # Snapshot before returning to assertions: every finally cleanup
+                # can then remove its fixture without destroying the cause.
+                Save-FreshCompactFixtureEvidence -Fixture $fixtureEvidence
+                return $fixtureEvidence
+            } catch {
+                $failure=$_
+                $failure.Exception.Data['fixtureRoot']=$root
+                try {
+                    Save-FreshCompactFixtureEvidence -Fixture $fixtureEvidence -Failure $failure
+                    $failure.Exception.Data['evidenceRoot']=$fixtureEvidence.receiptRoot
+                    if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop}
+                } catch {
+                    # Failed evidence capture must retain the original fixture
+                    # and must not replace the original process/parse failure.
+                    $failure.Exception.Data['fixtureRoot']=$root
+                    $failure.Exception.Data['evidenceError']=$_.Exception.Message
                 }
-                return @{root=$root;result=$result;summary=$summary;status=$status;lifecycle=$lifecycle;elapsed=$timer.Elapsed.TotalSeconds;roundTrip=$roundTrip}
-            } catch { if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}; throw }
+                throw $failure
+            }
             finally { foreach($name in $oldEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$oldEnvironment[$name],'Process')} }
         }
         function Remove-FreshCompactFixture { param($Fixture) Remove-Item -LiteralPath $Fixture.root -Recurse -Force }
@@ -209,13 +287,95 @@ exit 0
     It 'preserves a native nonzero continuation result and exact terminal failure fields' {
         $fixture=Invoke-FreshCompactFixture -Mode failure
         try {
-            $fixture.result.exitCode | Should -Be 7
+            $fixture.result.exitCode | Should -Be 7 -Because (Get-FreshCompactFixtureDiagnostic -Fixture $fixture)
             $fixture.status.status | Should -Be 'failed'
             $fixture.status.exitCode | Should -Be 7
             $fixture.status.errorMessage | Should -Be 'Проверяемый отказ ветки'
             $fixture.status.stage | Should -Be 'fixture.actual-terminal'
             $fixture.lifecycle.exitCode | Should -Be 7
         } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'retains original process and child evidence after a controlled assertion failure and cleanup without opt-in' {
+        $previousReceiptsRoot = $env:ITL_TEST_FRESH_RECEIPTS_ROOT
+        $assertionFailure = $null
+        $fixture = $null
+        try {
+            $env:ITL_TEST_FRESH_RECEIPTS_ROOT = $null
+            $fixture = Invoke-FreshCompactFixture -Mode failure
+            $fixture.receiptRoot.StartsWith($defaultFreshReceiptsRoot, [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+            $expected = @{}
+            foreach ($relative in @('status.json','console.log')) {
+                $path = if ($relative -eq 'status.json') { $fixture.summary.statusPath } else { $fixture.summary.logPath }
+                $expected[$relative] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            }
+            $expected['lifecycle.json'] = (Get-FileHash -LiteralPath (Join-Path $fixture.root '.agent-1c/locks/lifecycle-operation.json') -Algorithm SHA256).Hash
+            $originalRuns = Join-Path $fixture.root '.agent-1c/runs'
+            $privateStatuses = @(Get-ChildItem -LiteralPath $originalRuns -Recurse -File -Filter 'status.json.fresh-*.json')
+            $privateStatuses.Count | Should -BeGreaterThan 0
+            foreach ($file in $privateStatuses) {
+                $relative = 'runs/' + $file.FullName.Substring($originalRuns.Length+1).Replace('\','/')
+                $expected[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            }
+            try {
+                # The original Mode=failure still returns 7. Deliberately fail
+                # a separate assertion, then exercise the ordinary finally.
+                $fixture.result.exitCode | Should -Be 0 -Because (Get-FreshCompactFixtureDiagnostic -Fixture $fixture)
+            } catch { $assertionFailure = $_ }
+            finally { Remove-FreshCompactFixture $fixture }
+
+            $assertionFailure | Should -Not -BeNullOrEmpty
+            $assertionFailure.Exception.Message | Should -Match '(?s)Expected 0.*got 7'
+            $assertionFailure.Exception.Message | Should -Match ([regex]::Escape($fixture.receiptRoot))
+            $assertionFailure.Exception.Message | Should -Match 'Проверяемый отказ ветки'
+            Test-Path -LiteralPath $fixture.root | Should -BeFalse
+            foreach ($relative in $expected.Keys) {
+                (Get-FileHash -LiteralPath (Join-Path $fixture.receiptRoot $relative) -Algorithm SHA256).Hash | Should -BeExactly $expected[$relative]
+            }
+            $saved = Get-Content -LiteralPath (Join-Path $fixture.receiptRoot 'process-result.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $saved.exitCode | Should -Be 7
+            $saved.stdout | Should -BeExactly $fixture.result.stdout
+            $saved.stderr | Should -BeExactly $fixture.result.stderr
+            [IO.File]::ReadAllText((Join-Path $fixture.receiptRoot 'stdout.txt')) | Should -BeExactly $fixture.result.stdout
+            [IO.File]::ReadAllText((Join-Path $fixture.receiptRoot 'stderr.txt')) | Should -BeExactly $fixture.result.stderr
+            $scenario = Get-Content -LiteralPath (Join-Path $fixture.receiptRoot 'scenario.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $scenario.scenario.mode | Should -BeExactly 'failure'
+            $sourceIdentity=@($scenario.sources | Where-Object path -CEQ $fixture.sourceHelper)
+            $sourceIdentity | Should -HaveCount 1
+            $sourceIdentity[0].sha256 | Should -BeExactly (Get-FileHash -LiteralPath $fixture.sourceHelper -Algorithm SHA256).Hash.ToLowerInvariant()
+            foreach ($asset in (Get-Content -LiteralPath (Join-Path $fixture.receiptRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json)) {
+                (Get-FileHash -LiteralPath (Join-Path $fixture.receiptRoot $asset.path) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $asset.sha256
+            }
+            [IO.File]::ReadAllText((Join-Path $fixture.receiptRoot 'native-stderr.txt')) | Should -Match 'UTF8 stderr: Кириллица с пробелом'
+        } finally {
+            $env:ITL_TEST_FRESH_RECEIPTS_ROOT = $previousReceiptsRoot
+            if ($null -ne $fixture -and (Test-Path -LiteralPath $fixture.root)) { Remove-FreshCompactFixture $fixture }
+        }
+    }
+
+    It 'retains the original response and failure when compact output is <Defect> before assertions' -ForEach @(
+        @{Defect='malformed JSON'; Response='not JSON: исходный отказ'},
+        @{Defect='missing runner paths'; Response='{"unexpected":"нет путей статуса"}'}
+    ) {
+        $previousReceiptsRoot=$env:ITL_TEST_FRESH_RECEIPTS_ROOT
+        try {
+            $env:ITL_TEST_FRESH_RECEIPTS_ROOT=$null
+            Mock Invoke-ItlNativeProcessCapture { [pscustomobject]@{exitCode=1;stdout=$Response;stderr='исходный stderr'} }
+            $failure=try {Invoke-FreshCompactFixture -Mode failure; $null} catch {$_}
+            $failure | Should -Not -BeNullOrEmpty
+            $receiptRoot=[string]$failure.Exception.Data['evidenceRoot']
+            $receiptRoot.StartsWith($defaultFreshReceiptsRoot,[StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+            Test-Path -LiteralPath ([string]$failure.Exception.Data['fixtureRoot']) | Should -BeFalse
+            $saved=Get-Content -LiteralPath (Join-Path $receiptRoot 'process-result.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $saved.exitCode | Should -Be 1
+            $saved.stdout | Should -BeExactly $Response
+            $saved.stderr | Should -BeExactly 'исходный stderr'
+            $scenario=Get-Content -LiteralPath (Join-Path $receiptRoot 'scenario.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            $scenario.failure.message | Should -BeExactly $failure.Exception.Message
+            $scenario.failure.id | Should -BeExactly $failure.FullyQualifiedErrorId
+            Test-Path -LiteralPath (Join-Path $receiptRoot 'parent.ps1') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $receiptRoot 'child.ps1') | Should -BeTrue
+        } finally { $env:ITL_TEST_FRESH_RECEIPTS_ROOT=$previousReceiptsRoot }
     }
 
     It 'forwards terminal before child cleanup without replacing it with running' {
