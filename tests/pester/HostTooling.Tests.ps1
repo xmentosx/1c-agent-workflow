@@ -4494,6 +4494,86 @@ services:
         }
     }
 
+    It "waits through a retained <ServerId> version migration while rejecting errors and an unfinished index" -Tag StableMigration -TestCases @(@{ServerId='graph'},@{ServerId='code'}) {
+        param($ServerId)
+        $targetId=$ServerId
+        $configPath=Join-Path $TestDrive 'миграция с пробелом.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $context=@{serverId=$targetId;configId='pm4';retainedVersionChange=$true;runtime=@{hostPort=18000;url='http://native/mcp'}}
+            $script:MigrationPolls=0
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                $script:MigrationPolls++
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20
+            $script:MigrationPolls|Should -Be 2
+            function Get-BetaConfigurationIndexActivity { return @{running=$true;phase='background_tasks'} }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 0}|Should -Throw '*not ready within 0 seconds*'
+            function Get-BetaConfigurationIndexActivity { throw 'Graph background task form_xml failed' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*form_xml failed*'
+            function Get-BetaConfigurationIndexActivity { throw 'Code indexing failed: native failure' }
+            {Wait-BetaFreshIndexReady -Context $context -TimeoutSeconds 20}|Should -Throw '*native failure*'
+        }
+    }
+
+    It "retains cold rollback and all post-index checks during a stable Graph migration: <Fails>" -Tag StableMigration -TestCases @(@{Fails=$false},@{Fails=$true}) {
+        param($Fails)
+        $configPath=Join-Path $TestDrive 'stable migration rollback.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:MigrationEvents=@();$script:MigrationStarted=$false;$script:MigrationPolls=0
+            $context=[pscustomobject]@{serverId='graph';configId='pm4';retainedIndex=$true;retainedVersionChange=$true;freshProjectIndex=$false;configState=@{};old=@{containerName='old';directUrl='http://old/mcp'};betaServer=@{id='graph';neo4jImage='same'};runtime=@{id='graph';name='itl-pm4-graph';containerName='new';image='new@sha256:fixture';hostPort=18000;url='http://native/mcp';endpointMode='direct'}}
+            function Get-HostDirectEndpointProof { param($Config,$Server,[switch]$Refresh);return @{status='matched';qualified_url=[string]$Server.url} }
+            function Enter-McpHostMaintenanceLock { return @{acquired=$true} }
+            function Exit-McpHostMaintenanceLock { $script:MigrationEvents+='unlock' }
+            function Invoke-BetaPreflight { return @{context=$context;oldTools=@();oldIndexActivity=@{running=$false}} }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-DockerImageAvailable {}
+            function Stop-StableForBetaCutover { $script:MigrationEvents+='stop' }
+            function Save-RetainedIndexSnapshot { $script:MigrationEvents+='snapshot';$context|Add-Member -NotePropertyName snapshotReady -NotePropertyValue $true }
+            function Start-ComposeServer { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='start';$script:MigrationStarted=$true }
+            function Set-ForwardCutoverTarget { throw 'Snapshot migration must not become forward-only' }
+            function Restore-StableAfterBetaFailure { $context.snapshotReady|Should -BeTrue;$script:MigrationEvents+='restore' }
+            function Wait-HostMcpReadyConnection { return @{} }
+            function Close-HostMcpConnection {}
+            function Invoke-WebRequest { return @{StatusCode=200;Content='{}'} }
+            function Start-Sleep {}
+            function Get-BetaConfigurationIndexActivity {
+                if(-not $script:MigrationStarted){return @{running=$false}}
+                $script:MigrationPolls++
+                if($Fails -and $script:MigrationPolls -eq 2){throw 'Graph background task form_xml failed'}
+                return @{running=($script:MigrationPolls -eq 1);phase='background_tasks'}
+            }
+            function Get-HostMcpToolsList { return @() }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs);$script:MigrationEvents+=('tools-'+$CheckOutputs.IsPresent) }
+            function Get-HostServerFunctionalHealth { $script:MigrationEvents+='health';return @{status='qualified'} }
+            function Enable-ToolsListProxyForRuntime {}
+            function Update-HostStateServers { $script:MigrationEvents+='state' }
+            function Publish-Registry { $script:MigrationEvents+='publish' }
+            if($Fails){
+                {Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'}|Should -Throw '*form_xml failed*'
+                $script:MigrationEvents|Should -Contain 'restore'
+                $script:MigrationEvents|Should -Not -Contain 'publish'
+            }else{
+                Invoke-BetaCutover -Config @{} -TargetServerId graph -TargetConfigId pm4 -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json'
+                $script:MigrationEvents|Should -Contain 'tools-False'
+                $script:MigrationEvents|Should -Contain 'tools-True'
+                $script:MigrationEvents|Should -Contain 'health'
+                $script:MigrationEvents|Should -Contain 'publish'
+                $script:MigrationEvents|Should -Not -Contain 'restore'
+            }
+            ($script:MigrationEvents -join ',')|Should -Match '^stop,snapshot,start,'
+            $context.forwardOnly|Should -BeFalse
+            $script:MigrationPolls|Should -BeGreaterOrEqual 2
+        }
+    }
+
     It "waits through Docs HTTP 200 indexing and qualifies only the completed native corpus" -Tag ForwardCutover {
         $configPath = Join-Path $TestDrive 'docs readiness.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
@@ -4903,6 +4983,11 @@ services:
             $context = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
             $context.retainedIndex | Should -BeTrue
             $context.freshProjectIndex | Should -BeFalse
+            $context.retainedVersionChange | Should -BeFalse
+            $old.image = 'old@sha256:' + ('b' * 64)
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeTrue
+            $old.image = $context.runtime.image
+            (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeFalse
             $context.runtime.hostPort | Should -Be 1
             $context.runtime.url | Should -Be 'http://host:1/mcp'
             $script:StableFixtureEnv.RESET_CACHE = 'true'

@@ -483,7 +483,9 @@ function Get-BetaCutoverContext {
     }
     if ($freshGlobalIndex) { Assert-FreshGlobalIndexTarget -Config $Config -Old $old -Server $betaServer -Runtime $runtime }
     if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
-    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; nativeEndpoint = [bool]$NativeEndpoint }
+    $oldImage = [string](Get-ObjectValue -Object $old -Name "image" -Default "")
+    $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and $oldImage -cne [string]$runtime.image
+    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; retainedVersionChange = $retainedVersionChange; nativeEndpoint = [bool]$NativeEndpoint }
 }
 
 function Assert-FreshGlobalIndexTarget {
@@ -745,7 +747,8 @@ function Wait-BetaFreshIndexReady {
     $freshProjectIndex = [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)
     $freshGlobalIndex = [bool](Get-ObjectValue -Object $Context -Name "freshGlobalIndex" -Default $false)
     $forwardIndex = [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false) -and $Context.serverId -in @("code", "graph")
-    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex -and -not $freshGlobalIndex -and -not $forwardIndex) { return }
+    $versionChange = [bool](Get-ObjectValue -Object $Context -Name "retainedVersionChange" -Default $false)
+    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex -and -not $freshGlobalIndex -and -not $forwardIndex -and -not $versionChange) { return }
     $url = "http://localhost:$($Context.runtime.hostPort)/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $lastError = ""
@@ -772,7 +775,7 @@ function Wait-BetaFreshIndexReady {
                         if ([long]$ready.index_pending.count -ne 0 -or $ready.retrieval.templates_collection.embedding_identity_matches -ne $true -or $ready.retrieval.memories_collection.embedding_identity_matches -ne $true) { throw "Templates Qwen vector collections are not fully indexed." }
                     }
                 }
-                if ($freshProjectIndex -or $forwardIndex) {
+                if ($freshProjectIndex -or $forwardIndex -or $versionChange) {
                     $activity = Get-BetaConfigurationIndexActivity -ServerId $Context.serverId -Url ([string]$Context.runtime.url)
                     if ($activity.running) { throw "Beta index is still running ($($activity.phase))." }
                 }
@@ -799,7 +802,7 @@ function Wait-BetaCandidateReady {
     $deadline = (Get-Date).AddSeconds($budgetSeconds)
     $connection = Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10
     Close-HostMcpConnection -Connection $connection
-    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false) -or [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false)) {
+    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false) -or [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false) -or [bool](Get-ObjectValue -Object $Context -Name "retainedVersionChange" -Default $false)) {
         [int][Math]::Max(1, [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
     } else { 7200 }
     Wait-BetaFreshIndexReady -Context $Context -TimeoutSeconds $freshIndexBudgetSeconds
@@ -1063,7 +1066,10 @@ function Invoke-BetaCutover {
                     $source = New-BetaCodeSourceContext -ContainerName $context.runtime.containerName
                 }
                 Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex -Source $source
-                if ($retainedIndex) { Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -AllowNewGeneration:$ForwardOnly }
+                if ($retainedIndex) {
+                    $allowNewGeneration = $ForwardOnly -or [bool](Get-ObjectValue -Object $context -Name "retainedVersionChange" -Default $false)
+                    Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -AllowNewGeneration:$allowNewGeneration
+                }
             }
             $qualifiedCandidateUrl = Resolve-HostRuntimeMcpUrl -Config $Config -Runtime $context.runtime
             if ([string](Get-ObjectValue -Object $context.runtime -Name 'endpointMode' -Default '') -eq 'direct') {
