@@ -16,7 +16,11 @@ BeforeAll {
 }
 
 Describe 'Source delivery post-success cleanup' {
-    It 'preserves Git metadata and launcher bytes when a Cyrillic-path fresh database is locked, then completes cleanup after release' {
+    It 'preserves Git metadata and launcher bytes with locked <LockedRelativePath>, then completes cleanup after release' -TestCases @(
+        @{ LockedRelativePath='1Cv8.1CD' },
+        @{ LockedRelativePath='1Cv8Log/1Cv8.lgf' }
+    ) {
+        param([string]$LockedRelativePath)
         . (Join-Path $RepoRoot 'scripts/develop-e2e-cleanup.ps1')
         $root = Join-Path $TestDrive ('fresh cleanup ' + [char]0x0416)
         $main = Join-Path $root 'd-a1b2c3d4'; $branch = "$main-develop-golden"
@@ -30,7 +34,10 @@ Describe 'Source delivery post-success cleanup' {
         [IO.File]::WriteAllText($launcher, '[preserve launcher bytes]', [Text.UTF8Encoding]::new($false))
         $launcherHash = (Get-FileHash -LiteralPath $launcher).Hash
         $pointer = [IO.File]::ReadAllText((Join-Path $branch '.git'), [Text.Encoding]::UTF8)
-        $held = [IO.File]::Open($database, 'Open', 'ReadWrite', 'None')
+        $lockedFile = Join-Path $databaseRoot $LockedRelativePath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockedFile) | Out-Null
+        if (-not (Test-Path -LiteralPath $lockedFile)) { [IO.File]::WriteAllText($lockedFile, 'diagnostic journal placeholder') }
+        $held = [IO.File]::Open($lockedFile, 'Open', 'ReadWrite', 'None')
         try {
             { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $root -LauncherListPath $launcher } | Should -Throw '*FRESH_JOURNEY_IN_USE*'
             (& git -C $branch rev-parse --show-toplevel).Replace('/', '\') | Should -Be $branch

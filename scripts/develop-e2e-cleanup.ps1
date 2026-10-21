@@ -304,7 +304,7 @@ function Remove-DevelopE2EFreshProject {
             if (@($registered | Where-Object { $_.locked }).Count -gt 0) { throw "FRESH_JOURNEY_IN_USE: Git worktree is locked: $branchResolved" }
         }
         $databaseRoot = Join-Path $branchResolved '.agent-1c/infobases'
-        foreach ($database in @(Get-ChildItem -LiteralPath $databaseRoot -Filter '*.1CD' -File -Recurse -ErrorAction SilentlyContinue)) {
+        foreach ($database in @(Get-ChildItem -LiteralPath $databaseRoot -File -Recurse -ErrorAction SilentlyContinue)) {
             $probe = $null
             try { $probe = [IO.File]::Open($database.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None) }
             catch { throw "FRESH_JOURNEY_IN_USE: database cannot be exclusively opened; preserve the worktree and retry cleanup after its owner exits: $($database.FullName)" }
