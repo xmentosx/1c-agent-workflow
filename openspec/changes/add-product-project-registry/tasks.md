@@ -159,6 +159,13 @@ Native first-load CUSTOM `$schema`/format exceptions двух файлов со�
 - [x] Subset 5.4/5.6: Cursor native worker handshake/discovery (28/54 tools, selected origins, общий Computer Use сохранён), Graph Reload и полный Reload Window. Это backing workbench/worker evidence за login overlay, **не visible signed-in UI/agent acceptance**.
 - [x] Subset 5.5: native Kilo canary usage сохранён по 4 provider requests; fresh 12-file SHA/mtime guard и отдельный historical 19-path compare passed, все owned GUI/backend processes закрыты, EXE SHA прежние. Первый OpenCode fixture failure, updater download и выбранный root retained; расход не назван G3 delta без paired baseline.
 - [ ] **G3-CURSOR-NATIVE-AGENT-AUTH**: обычный вход в отдельный тестовый профиль, visible MCP workflow и реальные scoped agent reads. Не копировать credentials и не объявлять программно исследованный backing UI пройденным user journey.
-- [ ] **G3-OPENCODE-DESKTOP-SELECTED-CONTEXT**: определить причину отсутствующего выбранного root в native Desktop 1.18.11, повторить тот же Unicode path штатным owner-supported входом и проверить actual MCP catalogs/reads. Direct MCP/default project/неподдерживаемая route injection не заменяют этот proof.
+- [x] **G3-OPENCODE-DESKTOP-SELECTED-CONTEXT**, subset 3.4/5.4/5.6: [причина и повтор на исходном PROF root](evidence/g3-opencode-selected-context-2026-10-21.md). Завершён отдельный Windows picker того же native PID; selected session directory, два connected MCP и scoped frontend GET после renderer reload passed. Runtime/client/server patches не потребовались; первоначальный long-profile failure сохранён.
 
 Полные 3.4/5.4/5.5/5.6/AC-39 и memory 4.2/AC-43/G5/44 остаются открытыми; остальные clients/platform/installed/CUSTOM journeys и release population AC-36–38 прежние. Kilo GUI/model проверен с process-only MCP Apps flag, flag-off вариант отдельно не повторялся. Gate 6 не запускался/не исправлялся; G4, рабочая миграция, установка новых client/server builds и публикация не выполнялись.
+
+## OpenCode Desktop: остаток после selected-context repair
+
+- [x] Subset 5.5: fresh 19-path before/after guard исходного PROF root, все 12 client files/receipts/context, SHA/bytes/actual mtimeNs прежние; EXE прежний, семь owned processes штатно закрыты. Предыдущие artifacts/profile failures сохранены.
+- [ ] **G3-OPENCODE-DESKTOP-PROVIDER-403**: native Big Pickle отверг единственный canary до tools (HTTP 403, non-retryable). Сохранить этот отказ; при доступном разрешённом provider повторить actual scoped stats/list_graph_projects на том же root без обхода auth, смены workload или прямого shell MCP substitute. Native MCP connection не закрывает actual payload/tool-schema приёмку.
+
+Это уточнение прежнего остатка native reads, не новый runtime gate. Полные G3/AC-39/3.4/5.4–5.6 и memory 4.2/AC-43/G5/44 открыты. Gate 6/G4/рабочая миграция/публикация не выполнялись.
