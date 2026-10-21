@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config")]
     [string]$Action = "status",
@@ -2487,7 +2487,7 @@ function Resolve-ServerVolumes {
             $volumes += [pscustomobject]@{ host = $hostPath; container = $to }
         }
     }
-    $volumes += @(Get-QualifiedCodeOwnerRepairMounts -Config $Config -Server $Server)
+    $volumes += @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $Server)
     return $volumes
 }
 
@@ -5674,7 +5674,7 @@ function Show-HostStatus {
     }
 }
 
-. (Join-Path $PSScriptRoot "code-owner-repair.ps1")
+. (Join-Path $PSScriptRoot "owner-repair.ps1")
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 . (Join-Path $PSScriptRoot "sppr-host.ps1")
 $config = Read-HostConfig

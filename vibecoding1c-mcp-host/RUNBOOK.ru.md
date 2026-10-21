@@ -741,17 +741,21 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stable-cutover -ConfigPath .\host.config.json -ServerId code -ConfigId pm4corp -ReleaseManifest releases/2026-09-28-stable/vibecoding1c-mcp.manifest.json
 ```
 
-Для Code с image-specific repair versioned manifest задаёт `codeOwnerRepair`:
-точный `image`, SHA `proofSha256` и `fixtureSha256`, hashes обоих `files.driver`
-и `files.main`. Файлы `driver.py`, `main.py`, `qualification.json` находятся в
-`<stateRoot>/repairs/code-owner/<image-digest>`. Proof schema 1 закрепляет host,
-isolated/network=none/liveIndexMounted=false, воспроизведённый negative control
-и оба исходных сценария crash/resume/selective repair. Отсутствующий либо
-изменённый proof/файл останавливает preflight до остановки старого сервера.
-Повторите исходную изолированную квалификацию под штатной maintenance lease,
-сохраните оба результата и exact files, затем повторите `stable-preflight`.
-Resolver добавляет только два RO file mounts; start/reconcile проверяет их
-фактические bind/RO/path. Другой image не может унаследовать этот repair.
+Для Code/Graph с image-specific repair versioned manifest задаёт `ownerRepair`:
+точный `image`, SHA `proofSha256` и `fixtureSha256`, hashes всех `files`.
+Файлы находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
+Code содержит `driver.py` и `main.py`; Graph — `run.py`, `score_floor.py`,
+`common_forms.py`. Proof schema 1 закрепляет host и исходную изолированную
+квалификацию без сети и live indices. Для Code обязательны воспроизведённый
+negative control и оба сценария crash/resume/selective repair. Graph требует
+все native fulltext (13), commonForms (14), combined (3) tests без ошибок,
+падений и skips. SHA fixtures закреплён в manifest вместе с SHA самого proof.
+Отсутствующий либо изменённый proof/файл останавливает preflight до остановки
+старого сервера. Повторите исходную изолированную квалификацию под штатной
+maintenance lease, сохраните результаты и exact files, затем повторите
+`stable-preflight`. Resolver добавляет только фиксированные RO file mounts;
+start/reconcile проверяет фактические bind/RO/path. Другой image не может
+унаследовать repair. Cutover, snapshot и rollback остаются у прежнего owner.
 
 Для глобального сервера `ConfigId` не передаётся. Stable image закрепляется
 по digest; CodeChecker сохраняет проверяемый ITL logic overlay от pinned
