@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config")]
     [string]$Action = "status",

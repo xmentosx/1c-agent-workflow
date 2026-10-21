@@ -1,4 +1,4 @@
-# Stateless validation and mounts; cutover owns admission, replacement and rollback.
+﻿# Stateless validation and mounts; cutover owns admission, replacement and rollback.
 function Get-QualifiedHostOwnerRepairMounts {
     param([object]$Config, [object]$Server)
     $spec = Get-ObjectValue -Object $Server -Name 'ownerRepair' -Default $null

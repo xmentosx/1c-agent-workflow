@@ -1,4 +1,4 @@
-. (Join-Path $PSScriptRoot "index-snapshot.ps1")
+﻿. (Join-Path $PSScriptRoot "index-snapshot.ps1")
 
 function Get-BetaProjectIndexSettings {
     param([object]$Config, [object]$Server)

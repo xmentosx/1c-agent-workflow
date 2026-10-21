@@ -1,4 +1,4 @@
-Describe "1C workflow standalone host tooling checks" {
+﻿Describe "1C workflow standalone host tooling checks" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
