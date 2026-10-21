@@ -2487,6 +2487,7 @@ function Resolve-ServerVolumes {
             $volumes += [pscustomobject]@{ host = $hostPath; container = $to }
         }
     }
+    $volumes += @(Get-QualifiedCodeOwnerRepairMounts -Config $Config -Server $Server)
     return $volumes
 }
 
@@ -5673,6 +5674,7 @@ function Show-HostStatus {
     }
 }
 
+. (Join-Path $PSScriptRoot "code-owner-repair.ps1")
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 . (Join-Path $PSScriptRoot "sppr-host.ps1")
 $config = Read-HostConfig

@@ -120,6 +120,7 @@ function Assert-BetaProjectContainerMounts {
             throw "Beta container '$container' must mount owned Linux volume '$($volume.name)' at '$($volume.container)'. Refusing a different generation or Windows bind."
         }
     }
+    Assert-QualifiedCodeOwnerRepairMounts -Config $Config -Server $Server -Runtime $Runtime
 }
 
 function Get-BetaCodeDatabasePath {
@@ -484,6 +485,7 @@ function Get-BetaCutoverContext {
     if ($freshGlobalIndex) { Assert-FreshGlobalIndexTarget -Config $Config -Old $old -Server $betaServer -Runtime $runtime }
     if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
     $oldImage = [string](Get-ObjectValue -Object $old -Name "image" -Default "")
+    [void]@(Get-QualifiedCodeOwnerRepairMounts -Config $Config -Server $betaServer)
     $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and $oldImage -cne [string]$runtime.image
     return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; retainedVersionChange = $retainedVersionChange; nativeEndpoint = [bool]$NativeEndpoint }
 }

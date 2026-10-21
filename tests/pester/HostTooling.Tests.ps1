@@ -4962,6 +4962,62 @@ services:
         }
     }
 
+    It "binds qualified Code repairs to the exact image, native fixture, host and two read-only files" -Tag CodeOwnerRepair {
+        $configPath=Join-Path $TestDrive 'repair config.json'
+        $repairState=Join-Path $TestDrive 'ремонт Code с пробелом'
+        @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config=Read-HostConfig
+            $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
+            $root=Join-Path $repairState ('repairs\code-owner\'+('a'*64))
+            $null=New-Item -ItemType Directory -Path $root -Force
+            $hashes=[ordered]@{}
+            foreach($n in @('driver','main')){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true})}
+            $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            $server=@{id='code';image=$image;codeOwnerRepair=$spec}
+            function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
+            Save-CodeOwnerTestProof
+            $mounts=@(Get-QualifiedCodeOwnerRepairMounts -Config $config -Server $server)
+            $mounts.Count|Should -Be 2
+            @($mounts|Where-Object readOnly -eq $true).Count|Should -Be 2
+            $mounts.container|Should -Contain '/app/src/main.py'
+            $mounts.container|Should -Contain '/app/src/index_generation/driver.py'
+            $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
+            function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
+            Assert-QualifiedCodeOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            foreach($binding in $script:OwnerMounts){$path=[string]$binding.Source;$binding.Source='/run/desktop/mnt/host/'+$path.Substring(0,1).ToLowerInvariant()+'/'+$path.Substring(3).Replace('\','/')}
+            Assert-QualifiedCodeOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-BetaProjectVolumes { return @() }
+            Assert-BetaProjectContainerMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            function Get-HostLocalValues { return @{} }
+            function Get-HostDefaultVolumeEntries { return @() }
+            function Test-HostServerNeedsEmbedding { return $false }
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count|Should -Be 2
+            $script:OwnerMounts[0].RW=$true
+            {Assert-QualifiedCodeOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
+            $script:OwnerMounts[0].RW=$false
+            $script:OwnerMounts[0].Source=Join-Path $root 'another.py'
+            {Assert-QualifiedCodeOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*another file*'
+            foreach($change in @(@{key='network';value='host'},@{key='host';value='another'},@{key='negativeControlReproduced';value=$false},@{key='liveIndexMounted';value=$true})){
+                $previous=$proof[$change.key];$proof[$change.key]=$change.value;Save-CodeOwnerTestProof
+                {Get-QualifiedCodeOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*wrong native invariant or scope*'
+                $proof[$change.key]=$previous
+            }
+            Save-CodeOwnerTestProof
+            $proof.regression[0].modules=1;Save-CodeOwnerTestProof
+            {Get-QualifiedCodeOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original native regression did not pass*'
+            $proof.regression[0].modules=2;Save-CodeOwnerTestProof
+            $server.image='comol/1c_code_metadata_mcp@sha256:'+('c'*64)
+            {Get-QualifiedCodeOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*another image*'
+            $server.image=$image
+            [IO.File]::AppendAllText((Join-Path $root 'driver.py'),'changed')
+            {Get-QualifiedCodeOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*file changed: driver*'
+            @(Get-QualifiedCodeOwnerRepairMounts -Config @{} -Server @{id='code';image='legacy'}).Count|Should -Be 0
+        }
+    }
+
     It "prepares stable from an accepted beta without selecting a fresh generation or changing model" -Tag StableCutover {
         $configPath = Join-Path $TestDrive 'stable-context.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
