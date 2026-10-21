@@ -8,6 +8,8 @@
 
 По действующей registry/source модели [fresh native ПРОФ → КОРП/reload](g3-prof-native-reload-2026-10-21.md), source `f53b9247`, прошёл actual tools/negative endpoint/foreign scope/new thread/byte+mtime restore. Старые handshake failures сохранены; нынешние Code/Graph доступны, точная инфраструктурная причина прежних connect отказов неизвестна. Это уточняет AC-08/20/26 только для указанного core/API subset; full frontend/platform/installed/AC-39 и выпускное наполнение остаются открытыми.
 
+**Последний срез:** [оставшиеся клиенты и installed PM5](g3-clients-installed-2026-10-21.md), source `73f44caf`, runtime f53b9247 unchanged. Новые results/findings и актуальный остаток приведены ниже; исходная таблица и JSON сохраняют историческую границу, включая отменённый позднее exact-index criterion.
+
 | Критерии | Подтверждённая граница | Остаток / следующий шаг у существующего владельца |
 |---|---|---|
 | AC-01–03, 05–07, 27–29, 35 | G2 reader/schema/resolver/publisher и consumer fixture квалифицированы; pure G2 завершён | Не приписывать этим fixtures live readiness, grants или installed migration |
@@ -61,3 +63,17 @@
 5. Отдельно перед первым выпуском выполнить release population AC-36–38 и проверить доступность locked component через обычный delivery путь. Прежний HEAD 404 для этого клиента и exact-SHA source-build recovery не являются публикацией/Release proof компонента.
 
 G1/Q1–Q7/D9/G2 не переоткрываются. Memory change потребляет эту же матрицу для своей installed зависимости AC-43/G5; AC-44 использует одно выпускное наполнение. G4, миграция рабочих проектов и публикация требуют отдельного разрешения и здесь не выполняются.
+
+## Актуализация client/installed матрицы, 2026-10-21
+
+| Критерии | Новая подтверждённая граница | Открытый остаток |
+|---|---|---|
+| AC-08/13/20, task 3.5 | DTO source origin/usage/version/limitations корректен; explicit same-helper JSON pipeline проверен | G3-CONTEXT-CLI-OUTPUT: default child stdout сворачивает nested значения. Нужен bounded renderer и child stdout regression у context owner |
+| AC-20/26 | Kilo bundled CLI 7.8.15 native connected и 2 disconnect/connect цикла; 48/48 file checks отдельно | Functional API 404, Graph tools не достигнуты; native frontend/reload не приняты. Codex core/API proof сохраняет прежнюю область |
+| AC-20/25 | Исходный multi-client workload воспроизведён | G3-KILO-MULTICLIENT-ALIASES: 4 connected aliases / 2 endpoints через OpenCode import. Token/schema impact неизвестен; не удалять чужой config ради pass |
+| AC-14/16/18/26/31–33 | Installed b4338057 preview/select/context, branch unbound, native selected2 + common3, owned failure restore и новый процесс common3 only; DB/HEAD/descriptor/lock сохранены | Legacy installed recovery subset, не latest source install/uninterrupted journey. Native `$schema` edit и changed empty-owner receipt явно сохранены; whole-file equality не заявлена. Полные latest init/update/branch/downgrade открыты |
+| AC-19/20 | Win11 non-elevated; OpenCode Desktop/Cursor/VS Code inventory подтверждён | Frontend activation unverified, прочие CLI/расширения не найдены в проверенных местах; PM4 installed / Win10 / Server terminal stands отсутствуют. Поддержка прежняя |
+| AC-20/25 | Новые explicit SHA+mtime_ns guards 20 context paths и 4 post-restore files passed | Прежний all-20 guard двух reports был hash-only; JSON facts сохранены с MD correction. Codex config/Startup receipt explicit timestamps остаются valid. 3.676 s diagnostic CLI не Startup benchmark; full installed cost открыт |
+| AC-21/39, memory AC-43/G5/44 | Обе OpenSpec используют один [report/JSON](g3-clients-installed-2026-10-21.md) | Full G3 не принят; шесть областей/ai_rules_1c/G1/Q/D9/G2 прежние, release population AC-36–38 отдельно обязателен |
+
+Сначала у существующих owners закрываются CLI presentation и Kilo interoperability/functional native proof, затем остальные доступные frontends и актуальные installed/platform journeys в разрешённой области. Отсутствие source Graph, stamp/generation и Code patch не является prerequisite. Исходные failed harness records сохранены и отделены от product findings; проверки не меняли multi-client workload или обязательные DB/lock/HEAD assertions. Семь Gate 6 artifacts/capsule unchanged. Gate 6 не запускался/не исправлялся; G4, рабочая миграция, server deploy/reindex и публикация не выполнялись. Это порядок остатка, не разрешение реализации.
