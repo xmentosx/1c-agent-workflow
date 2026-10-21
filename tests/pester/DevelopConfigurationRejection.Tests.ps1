@@ -68,6 +68,18 @@ BeforeAll {
     function Assert-FixtureRejection([hashtable]$Fixture) {
         Assert-DevelopConfigurationRejection -ProcessResult $Fixture.Result -Expected $Fixture.Expected -Root $Fixture.Root -BranchName fixture
     }
+    function Add-BoundedRejectionStatus([hashtable]$Fixture) {
+        $receipt=Get-Content -LiteralPath $Fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.failure += ' ' + ('Original native finding remains rejected. ' * 40)
+        Write-RejectionJson $Fixture.Receipt $receipt
+        $Fixture.Summary.error=$receipt.failure.Substring(0,1397)+'...'
+        Write-RejectionJson $Fixture.Result.stdout $Fixture.Summary
+        $terminal=[pscustomobject]@{projectRoot=$Fixture.Root;action=$Fixture.Summary.action;status='failed';exitCode=1;
+            logPath=$Fixture.Summary.logPath;resultPath=$Fixture.Receipt;error=$Fixture.Summary.error;errorMessage=$receipt.failure}
+        $statusPath=Join-Path (Split-Path -Parent $Fixture.Summary.logPath) 'status.json'
+        Write-RejectionJson $statusPath $terminal
+        return @{Path=$statusPath;Status=$terminal}
+    }
 }
 
 Describe 'Configuration finding is a negative workflow acceptance, never a positive verification' {
@@ -103,6 +115,44 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         [IO.File]::WriteAllText($fixture.Summary.logPath,'Parent console: continuing through the current helper.')
         $fixture.Summary.resultPath | Should -BeExactly $fixture.Receipt
         (Assert-FixtureRejection $fixture).status | Should -BeExactly 'passed'
+    }
+    It 'binds a 1400-character compact error to the full current terminal failure and native receipt' {
+        $fixture=New-RejectionFixture
+        $fixture.Summary.action='check-dev-branch'
+        $bound=Add-BoundedRejectionStatus $fixture
+        $fixture.Summary.error.Length | Should -Be 1400
+        $bound.Status.errorMessage.Length | Should -BeGreaterThan 1400
+        $proof=Assert-DevelopConfigurationRejection -ProcessResult $fixture.Result -Expected $fixture.Expected -Root $fixture.Root -BranchName fixture -ExpectedAction 'check-dev-branch'
+        $proof.status | Should -BeExactly 'passed'
+        $proof.proof.failure | Should -BeExactly $bound.Status.errorMessage
+        $fixture.Summary.status | Should -BeExactly 'failed'
+    }
+    It 'refuses bounded errors without the current terminal status' {
+        $fixture=New-RejectionFixture
+        $bound=Add-BoundedRejectionStatus $fixture
+        Remove-Item -LiteralPath $bound.Path
+        {Assert-FixtureRejection $fixture} | Should -Throw '*ROLLBACK_UNPROVEN*'
+    }
+    It 'refuses bounded errors with a different terminal <field>' -ForEach @(
+        @{field='projectRoot';value='C:\another project'},@{field='action';value='another-action'},
+        @{field='status';value='succeeded'},@{field='exitCode';value=0},
+        @{field='logPath';value='C:\another console.log'},@{field='resultPath';value='C:\another receipt.json'},
+        @{field='error';value='another display failure'},@{field='errorMessage';value='another full failure'}
+    ) {
+        $fixture=New-RejectionFixture
+        $bound=Add-BoundedRejectionStatus $fixture
+        $bound.Status.$field=$value;Write-RejectionJson $bound.Path $bound.Status
+        {Assert-FixtureRejection $fixture} | Should -Throw '*ROLLBACK_UNPROVEN*'
+    }
+    It 'retains rollback and native hash requirements with a bounded error' {
+        $fixture=New-RejectionFixture
+        [void](Add-BoundedRejectionStatus $fixture)
+        $receipt=Get-Content -LiteralPath $fixture.Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
+        $receipt.cursorRestored=$false;Write-RejectionJson $fixture.Receipt $receipt
+        {Assert-FixtureRejection $fixture} | Should -Throw '*ROLLBACK_UNPROVEN*'
+        $receipt.cursorRestored=$true;Write-RejectionJson $fixture.Receipt $receipt
+        [IO.File]::AppendAllText($fixture.Log,' changed')
+        {Assert-FixtureRejection $fixture} | Should -Throw '*ARTIFACT_CHANGED*'
     }
     It 'refuses a console marker without a current structured result artifact' {
         $fixture=New-RejectionFixture

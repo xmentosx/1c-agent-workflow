@@ -32,9 +32,27 @@ function Assert-DevelopConfigurationRejection {
         throw 'DEVELOP_NEGATIVE_RECEIPT_TARGET_CHANGED'
     }
     $receipt = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $failure = [string]$summary.error
+    if ([string]$receipt.failure -cne $failure) {
+        # Compact output bounds error text. Bind its full terminal message to
+        # this same console and receipt instead of treating truncation as a
+        # failed rollback. The public failure and its display budget stay intact.
+        $statusPath = Join-Path (Split-Path -Parent $console) 'status.json'
+        try { $terminal = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw 'DEVELOP_NEGATIVE_ROLLBACK_UNPROVEN: the current terminal status is required for a bounded error.' }
+        if ([string]$terminal.projectRoot -ine [IO.Path]::GetFullPath($Root) -or
+            [string]$terminal.action -cne $ExpectedAction -or [string]$terminal.status -cne 'failed' -or
+            [string]$terminal.exitCode -cne [string]$ProcessResult.exitCode -or
+            [string]$terminal.logPath -ine $console -or [string]$terminal.resultPath -ine $path -or
+            [string]$terminal.error -cne $failure -or
+            [string]$terminal.errorMessage -cne [string]$receipt.failure) {
+            throw 'DEVELOP_NEGATIVE_ROLLBACK_UNPROVEN: the bounded error must identify this exact terminal failure and receipt.'
+        }
+        $failure = [string]$terminal.errorMessage
+    }
     if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.kind -cne 'itl-gate6-rejection' -or
         [string]$receipt.projectRoot -ine [IO.Path]::GetFullPath($Root) -or
-        [string]$receipt.failure -cne [string]$summary.error -or
+        [string]$receipt.failure -cne $failure -or
         $receipt.applyStarted -ne $false -or $receipt.snapshotRestored -ne $true -or $receipt.cursorRestored -ne $true -or
         $receipt.nativeOperationsReleased -ne $true -or
         [string]$receipt.snapshotSha256 -notmatch '^[a-f0-9]{64}$' -or
@@ -64,7 +82,7 @@ function Assert-DevelopConfigurationRejection {
         $requiredCount++
     }
     if (@($receipt.artifacts).Count -ne $requiredCount -or
-        [string]$summary.error -notmatch '; result=(.+?); log=(.+?); diagnostics=') { throw 'DEVELOP_NEGATIVE_NATIVE_PROOF_MISSING' }
+        $failure -notmatch '; result=(.+?); log=(.+?); diagnostics=') { throw 'DEVELOP_NEGATIVE_NATIVE_PROOF_MISSING' }
     if([string]$receipt.artifacts[0].path -ine $Matches[1] -or
         [string]$receipt.artifacts[1].path -ine $Matches[2]){throw 'DEVELOP_NEGATIVE_NATIVE_PROOF_MISSING'}
     if(-not (Read-DesignerBatchStrictUtf8Text -Path ([string]$receipt.artifacts[1].path)).Contains($diagnostic)) {
