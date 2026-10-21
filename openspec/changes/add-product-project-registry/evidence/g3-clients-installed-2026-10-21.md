@@ -66,3 +66,7 @@ VS Code 1.142.0 и расширения Kilo 7.8.12/7.8.15 присутству�
 Приоритет продолжения у существующих owners: исправить default context presentation; разобрать Kilo project-local alias interoperability с сохранением исходного workload и custom settings; квалифицировать functional native Kilo API/frontend и остальные доступные frontends; затем актуальные installed journeys и отсутствующие PM4/Windows 10/Server terminal stands. Отсутствие готового стенда не отменяет поддержку. Это перечень остатка, не разрешение кода, установки клиентов или миграции.
 
 Registry 3.5/5.2/5.4–5.6 и full AC-39 открыты. Memory consumer 4.2/G4, installed AC-43/G5 и AC-44 не реализованы/не приняты. Шесть областей, canonical home, Q1–Q7/D9/G2 и ai_rules_1c не меняются; Kilo aliases/schema не становятся business IDs или памятью. Обязательное выпускное наполнение registry 5.7/AC-36–38 прежнее. **Gate 6 не запускался и не исправлялся; G4, рабочая миграция и публикация не начинались.**
+
+## Последующее закрытие CLI presentation
+
+[Owner repair/repeat](g3-context-cli-output-2026-10-21.md) закрыл G3-CONTEXT-CLI-OUTPUT compact UTF-8 JSON на status/select context; internal DTO прежний. Сохранённый здесь JSON pipeline workaround больше не нужен публичной команде — повторная сериализация даст JSON-строку. Actual guard keys этого report — 19, хотя summary называл 20; follow-up вычисляет count и подтверждает SHA/mtime 19 paths на каждом из двух прежних roots. Исходные JSON/failures не переписаны. Kilo aliases/API/full G3 и остальные ограничения остаются открытыми.

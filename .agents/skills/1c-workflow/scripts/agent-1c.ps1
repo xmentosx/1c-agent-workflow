@@ -568,11 +568,11 @@ try {
         "complete-one-off-proof" { Complete-VerificationOneOffProof -EvidencePath $VerificationEvidencePath | ConvertTo-Json -Depth 8 -Compress }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
-        "vibecoding1c-mcp-status" { if($CatalogAction -eq 'status'){Invoke-ItlProductProjectRecovery status}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable)}else{Show-Vibecoding1cMcpStatus} }
+        "vibecoding1c-mcp-status" { if($CatalogAction -eq 'status'){Invoke-ItlProductProjectRecovery status}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable) -AsJson:($CatalogAction -eq 'context')}else{Show-Vibecoding1cMcpStatus} }
         "context-benchmark" { Invoke-KiloContextBenchmark }
         "vibecoding1c-mcp-start" { Start-Vibecoding1cMcp }
         "vibecoding1c-mcp-stop" { Stop-Vibecoding1cMcp }
-        "vibecoding1c-mcp-select" { if($CatalogAction -in @('status','resume','restore','cancel','restore-compatible')){Invoke-ItlProductProjectRecovery $CatalogAction}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable)}else{Set-Vibecoding1cMcpSelection} }
+        "vibecoding1c-mcp-select" { if($CatalogAction -in @('status','resume','restore','cancel','restore-compatible')){Invoke-ItlProductProjectRecovery $CatalogAction}elseif($CatalogAction){Invoke-ItlProductProjectCommand $CatalogAction -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -Decision $CatalogDecision -Limit $CatalogLimit -AllowPrompt:(Test-InteractiveInputAvailable) -AsJson:($CatalogAction -eq 'context')}else{Set-Vibecoding1cMcpSelection} }
         "vibecoding1c-mcp-refresh-registry" { Refresh-Vibecoding1cMcpRegistry }
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }

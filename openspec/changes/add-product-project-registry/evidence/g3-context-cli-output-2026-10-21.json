@@ -1,0 +1,603 @@
+{
+  "schemaVersion": 1,
+  "id": "G3-CONTEXT-CLI-OUTPUT-20261021",
+  "observedUtc": "2026-10-21T12:15:27.596403+00:00",
+  "status": "passed-presentation-subset-full-G3-open",
+  "sourceBase": "9f8663dda5b7ecf7efa621b069ba939f885cf6ad",
+  "owner": "existing product-project UI and public agent entrypoints",
+  "sourceInputs": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+      "sha256": "916118abc9f0db509817ab7fac1ac67f336a94cdb34217bcdc6c1a7f19493caf",
+      "bytes": 42566
+    },
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+      "sha256": "54e2b3d9b4576db53510848c5c9ec65914940d07fe9e96229646b55bcddcaedf",
+      "bytes": 18432
+    },
+    {
+      "path": ".agents/skills/1c-workflow/references/mcp.md",
+      "sha256": "53fbdfb3693478d7a4a9bbe7035a705fb33c6fa9b295bbd7e51f81d413826383",
+      "bytes": 25969
+    },
+    {
+      "path": "tests/pester/ProductProjectSetup.Tests.ps1",
+      "sha256": "44624f9172237838bd7b6ee9e2c1aa46347c0ce32b3ee8a206ad884a0209ad30",
+      "bytes": 37447
+    }
+  ],
+  "change": {
+    "publicFormat": "compact-UTF8-JSON",
+    "entrypoints": [
+      "vibecoding1c-mcp-status",
+      "vibecoding1c-mcp-select"
+    ],
+    "catalogAction": "context",
+    "internalDtoPreserved": true,
+    "unboundJson": true,
+    "newPublicFlag": false,
+    "newState": false,
+    "newResolver": false,
+    "newRuntimeBarrier": false
+  },
+  "originalDefect": {
+    "status": "reproduced-two-original-roots",
+    "preservedResult": "g3-clients-installed-2026-10-21.json"
+  },
+  "qualification": [
+    {
+      "scenario": "CUSTOM",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+      "protectedUniquePaths": 19,
+      "bytesAndActualMtimeNsUnchanged": true,
+      "originalStdoutBytes": 838,
+      "cases": [
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+            "-Action",
+            "vibecoding1c-mcp-status",
+            "-CatalogAction",
+            "context",
+            "-CatalogRecordPath",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\observations-CUSTOM.json"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 2.5836644999981218,
+          "stdoutBytes": 3071,
+          "jsonReadable": true,
+          "withObservation": true,
+          "stdout": "after-CUSTOM-0.stdout.log",
+          "stderr": "after-CUSTOM-0.stderr.log"
+        },
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+            "-Action",
+            "vibecoding1c-mcp-status",
+            "-CatalogAction",
+            "context"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 2.5563312000012957,
+          "stdoutBytes": 2367,
+          "jsonReadable": true,
+          "withObservation": false,
+          "stdout": "after-CUSTOM-1.stdout.log",
+          "stderr": "after-CUSTOM-1.stderr.log"
+        },
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента CUSTOM",
+            "-Action",
+            "vibecoding1c-mcp-select",
+            "-CatalogAction",
+            "context",
+            "-CatalogRecordPath",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\observations-CUSTOM.json"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 3.128851900000882,
+          "stdoutBytes": 3071,
+          "jsonReadable": true,
+          "withObservation": true,
+          "stdout": "after-CUSTOM-2.stdout.log",
+          "stderr": "after-CUSTOM-2.stderr.log"
+        }
+      ],
+      "visibleSources": [
+        {
+          "role": "code",
+          "sourceId": "typical-pm5-code",
+          "origin": {
+            "productId": "qual-pm5corp",
+            "productName": "Qualification PM5 CORP",
+            "projectId": null,
+            "projectName": null
+          },
+          "usage": "base-product",
+          "limitations": {
+            "summary": "Typical source only; inspect project changes in local code."
+          },
+          "descriptionStatus": "declared",
+          "registry": {
+            "configurationName": "УправлениеПроектамиКОРП",
+            "configurationVersion": "5.0.3.66",
+            "indexStatus": null,
+            "indexedAt": "2026-10-21T02:14:46.4006997+03:00",
+            "provenance": "registry",
+            "publishedAt": "2026-10-21T02:17:02.9317436+03:00"
+          },
+          "nativeReadiness": "unverified"
+        },
+        {
+          "role": "graph",
+          "sourceId": "typical-pm5-graph",
+          "origin": {
+            "productId": "qual-pm5corp",
+            "productName": "Qualification PM5 CORP",
+            "projectId": null,
+            "projectName": null
+          },
+          "usage": "base-product",
+          "limitations": {
+            "summary": "Typical source only; inspect project changes in local code."
+          },
+          "descriptionStatus": "declared",
+          "registry": {
+            "configurationName": "УправлениеПроектамиКОРП",
+            "configurationVersion": "5.0.3.66",
+            "indexStatus": null,
+            "indexedAt": "2026-10-21T02:14:46.4006997+03:00",
+            "provenance": "registry",
+            "publishedAt": "2026-10-21T02:17:02.9317436+03:00"
+          },
+          "nativeReadiness": "unverified"
+        }
+      ],
+      "visibleProject": "qual-custom",
+      "visibleProduct": "qual-pm5corp",
+      "visibleDifferences": {
+        "customizations": {
+          "summary": "Synthetic project modification: validate local implementation separately."
+        },
+        "customized": true
+      },
+      "savedObservationOnly": true,
+      "newNativeCalls": 0
+    },
+    {
+      "scenario": "PROF",
+      "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+      "protectedUniquePaths": 19,
+      "bytesAndActualMtimeNsUnchanged": true,
+      "originalStdoutBytes": 842,
+      "cases": [
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+            "-Action",
+            "vibecoding1c-mcp-status",
+            "-CatalogAction",
+            "context",
+            "-CatalogRecordPath",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\observations-PROF.json"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 2.717566800001805,
+          "stdoutBytes": 3036,
+          "jsonReadable": true,
+          "withObservation": true,
+          "stdout": "after-PROF-0.stdout.log",
+          "stderr": "after-PROF-0.stderr.log"
+        },
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+            "-Action",
+            "vibecoding1c-mcp-status",
+            "-CatalogAction",
+            "context"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 2.4785584999990533,
+          "stdoutBytes": 2332,
+          "jsonReadable": true,
+          "withObservation": false,
+          "stdout": "after-PROF-1.stdout.log",
+          "stderr": "after-PROF-1.stderr.log"
+        },
+        {
+          "args": [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1",
+            "-ProjectRoot",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\registry-source-model-20261021\\Контекст клиента PROF",
+            "-Action",
+            "vibecoding1c-mcp-select",
+            "-CatalogAction",
+            "context",
+            "-CatalogRecordPath",
+            "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\prof-native-reload-20261021\\observations-PROF.json"
+          ],
+          "exitCode": 0,
+          "elapsedSeconds": 3.006300100001681,
+          "stdoutBytes": 3036,
+          "jsonReadable": true,
+          "withObservation": true,
+          "stdout": "after-PROF-2.stdout.log",
+          "stderr": "after-PROF-2.stderr.log"
+        }
+      ],
+      "visibleSources": [
+        {
+          "role": "code",
+          "sourceId": "typical-pm5-code",
+          "origin": {
+            "productId": "qual-pm5corp",
+            "productName": "Qualification PM5 CORP",
+            "projectId": null,
+            "projectName": null
+          },
+          "usage": "reference-product",
+          "limitations": {
+            "summary": "Synthetic PROF restriction: CORP-only functions require applicability check."
+          },
+          "descriptionStatus": "declared",
+          "registry": {
+            "configurationName": "УправлениеПроектамиКОРП",
+            "configurationVersion": "5.0.3.66",
+            "indexStatus": null,
+            "indexedAt": "2026-10-21T02:14:46.4006997+03:00",
+            "provenance": "registry",
+            "publishedAt": "2026-10-21T02:17:02.9317436+03:00"
+          },
+          "nativeReadiness": "unverified"
+        },
+        {
+          "role": "graph",
+          "sourceId": "typical-pm5-graph",
+          "origin": {
+            "productId": "qual-pm5corp",
+            "productName": "Qualification PM5 CORP",
+            "projectId": null,
+            "projectName": null
+          },
+          "usage": "reference-product",
+          "limitations": {
+            "summary": "Synthetic PROF restriction: CORP-only functions require applicability check."
+          },
+          "descriptionStatus": "declared",
+          "registry": {
+            "configurationName": "УправлениеПроектамиКОРП",
+            "configurationVersion": "5.0.3.66",
+            "indexStatus": null,
+            "indexedAt": "2026-10-21T02:14:46.4006997+03:00",
+            "provenance": "registry",
+            "publishedAt": "2026-10-21T02:17:02.9317436+03:00"
+          },
+          "nativeReadiness": "unverified"
+        }
+      ],
+      "visibleProject": "qual-prof",
+      "visibleProduct": "qual-pm5prof",
+      "visibleDifferences": {
+        "customizations": null,
+        "customized": false
+      },
+      "savedObservationOnly": true,
+      "newNativeCalls": 0
+    }
+  ],
+  "regressions": {
+    "runtime": "Windows PowerShell 5.1.26100.9711",
+    "pester": "5.8.0",
+    "passed": 60,
+    "failed": 0,
+    "skipped": 0,
+    "setup": 38,
+    "context": 22,
+    "newChildCases": 5,
+    "junitAggregateSuiteSeconds": 84.462,
+    "junitTimeIsWall": false,
+    "unselectedCatalogExcluded": true,
+    "externalProbeNotNativeActivation": true
+  },
+  "preservation": {
+    "actualUniquePathsPerRoot": 19,
+    "total": 38,
+    "shaAndMtimeNs": true,
+    "previousSummaryCountCorrection": {
+      "reported": 20,
+      "actualUniqueKeys": 19,
+      "rawJsonPreserved": true
+    },
+    "otherClientsSchemaEditsPreserved": true,
+    "noInstalledStandWrites": true
+  },
+  "costs": {
+    "compactWithObservationBytes": [
+      3071,
+      3036
+    ],
+    "compactWithoutObservationBytes": [
+      2367,
+      2332
+    ],
+    "brokenBeforeBytes": [
+      838,
+      842
+    ],
+    "profPriorPrettyJsonWorkaroundBytes": 7725,
+    "tokenCount": "unmeasured",
+    "newAlwaysOnRules": 0,
+    "newToolSchemas": 0,
+    "newMcpCalls": 0,
+    "newLlmCalls": 0,
+    "newEmbeddingCalls": 0,
+    "newStartupFetch": 0,
+    "measurement": "single diagnostic runs, not Startup benchmark",
+    "budgetsUnchanged": true
+  },
+  "remaining": [
+    "full-task-3.5-preview-installed-population",
+    "Kilo-multiclient-aliases",
+    "Kilo-functional-API-404",
+    "other-frontends-clients",
+    "latest-installed-platform-journeys",
+    "registry-AC-39",
+    "registry-release-population-AC-36-38",
+    "memory-consumer-4.2-AC-43-G5-44"
+  ],
+  "excluded": [
+    "Gate6-run-or-fix",
+    "G4",
+    "working-project-migration",
+    "publication",
+    "server-deploy-reindex",
+    "Code-Graph-changes"
+  ],
+  "delivery": "existing RegisterChange/Status ledger only",
+  "rawReferences": [
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-0.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-0.stdout.log",
+      "sha256": "9f246328bdb5ebef3adb3b69973f6407d64c81731dc5f0c0c77b21ff5b9fd846",
+      "bytes": 3071
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-1.stdout.log",
+      "sha256": "ab1c6db744cd57429a48734330f640f806e4d6763ccf5ce641fdbbb96f57661e",
+      "bytes": 2367
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-2.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-CUSTOM-2.stdout.log",
+      "sha256": "9f246328bdb5ebef3adb3b69973f6407d64c81731dc5f0c0c77b21ff5b9fd846",
+      "bytes": 3071
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-0.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-0.stdout.log",
+      "sha256": "af06173dbb4d809a58f4cec592877c82253f0c7399e2f2c9e17f8515321c70f4",
+      "bytes": 3036
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-1.stdout.log",
+      "sha256": "5955ecf2bd21cd98db5f6654dfb8fbe20e39e0d9530da9337dca77436ed8198e",
+      "bytes": 2332
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-2.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after-PROF-2.stdout.log",
+      "sha256": "af06173dbb4d809a58f4cec592877c82253f0c7399e2f2c9e17f8515321c70f4",
+      "bytes": 3036
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after.json",
+      "sha256": "1e2ce36355028dffac84e80cafbcd97b2f1868183bee77020daa87cd97b182ce",
+      "bytes": 67855
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/after.log",
+      "sha256": "16219e73349e63a64a906b4a0b427881328304ed00fc08a4c8c2e3c29a9186c7",
+      "bytes": 96
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before-CUSTOM-0.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before-CUSTOM-0.stdout.log",
+      "sha256": "4303ecda27e34efd52f1870e18d6b71ecc8395f3e02a3c8e8ec91c2fa0f210f4",
+      "bytes": 838
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before-PROF-0.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before-PROF-0.stdout.log",
+      "sha256": "1bccc628d6db5cfdf5f8beb5d40e4ffbad83511c8572999c0841970fbcdf3c5b",
+      "bytes": 842
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before.json",
+      "sha256": "1245bafe2072892e539ad20bd379bcc9571fb1dad6113cf6867fc83ba4e5f4e4",
+      "bytes": 33115
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/before.log",
+      "sha256": "337b563602a710e064a5040e5343242e01f4d5c66caf12807c8ba778d17bfaeb",
+      "bytes": 116
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/check-context.py",
+      "sha256": "7b7ac55f59169cecbed806765dbca03158c610658b5b15e67745f0b1c8f13d69",
+      "bytes": 4698
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/junit.xml",
+      "sha256": "48dfe17cf3448d24655e9bf9edc97af195eb14722371d42f20d0920b160cabc1",
+      "bytes": 23377
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/runtime-49425f2dae394c389a4b833d2a3ca4ef.json",
+      "sha256": "c660e01a938ed8253fb527e266238af63aa7a0447afd3ca07b660eadb7abef0b",
+      "bytes": 1422
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/runtime-49425f2dae394c389a4b833d2a3ca4ef.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/runtime-49425f2dae394c389a4b833d2a3ca4ef.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/summary.json",
+      "sha256": "b706b19ecae7afb706f9490b9247835d2918c343ea5f0b7cede6d07829a8fa59",
+      "bytes": 9629
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-1.plan.json",
+      "sha256": "ebdbf287cafa40456d17727ff945a55466009344a212bac37097140d1d40c1d9",
+      "bytes": 2458
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-1.result.json",
+      "sha256": "1bf9fc7a58048c3f4742e85316121a7fd99637f2833bd6ce935af433d69ce693",
+      "bytes": 2327
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-1.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-1.stdout.log",
+      "sha256": "b6ccc820254869d55feef42b30cef966f70df01acdf1d48fe956837cb701a980",
+      "bytes": 2821
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-1.xml",
+      "sha256": "1aeeea156aba8f484869dae78b713e3d244b18cb171d1fd4e3a71fe53a8a24ba",
+      "bytes": 9228
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-2.plan.json",
+      "sha256": "3d30dfd2d89a4bb65812d881db977206814a4b4da76db6d07038954c29756b80",
+      "bytes": 2456
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-2.result.json",
+      "sha256": "90db837e70fbe23031925560911c979f926de12fcecfae66a7d63d831647f9f6",
+      "bytes": 2326
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-2.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-2.stdout.log",
+      "sha256": "c84ee759debbbedd2ba34b1eb15365f55db22194c84a4515b9403b2bf86a7962",
+      "bytes": 11627
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/pester-shards/worker-2.xml",
+      "sha256": "f71cf5722b420defc390163e35b58a6dbd02924519be02530a2f16fe04e703ee",
+      "bytes": 14523
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused/selection.json",
+      "sha256": "6fe22aea21482aa01748d382ab4747a5935b13740e06a5f316b5c8819b0cd481",
+      "bytes": 128
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/focused.log",
+      "sha256": "51ead4cef06d30010054145cb0b153cd78205c07cc7a66f65d6326dd76a28af2",
+      "bytes": 9859
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/run-check.ps1",
+      "sha256": "8c42a1ed4c02f98a09e83fbfb38d0cf746d3eb15597731e4452162e3de20d569",
+      "bytes": 368
+    },
+    {
+      "path": "build/test-results/g3/context-cli-output-20261021/summarize.py",
+      "sha256": "d4533d84747cb0989f19d634937511fd7e9707ffc859c1b41fddfa7f76480029",
+      "bytes": 4925
+    }
+  ]
+}

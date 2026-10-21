@@ -1,5 +1,6 @@
 ﻿Describe 'Explicit catalog setup and bootstrap keep one selected context' {
     BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
         $HelperPath=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         function New-SetupCatalogFixture {
@@ -7,7 +8,7 @@
         }
     }
     BeforeEach {
-        $root=Join-Path $TestDrive ('Local project '+[guid]::NewGuid().ToString('N'))
+        $root=Join-Path $TestDrive ('Local project данные '+[guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}',[Text.UTF8Encoding]::new($false))
         . $HelperPath -ProjectRoot $root -Action help *> $null
@@ -48,6 +49,69 @@
         $proof.sourceObservations.roles.code.clientActivation|Should -Be unverified
         foreach($file in $protected){(Get-ItlMcpFileState $file)|Should -BeExactly $before[$file]}
         Should -Invoke Read-ItlProductProjectSnapshot -Times 0
+    }
+    It 'prints nested <Scenario> context as UTF-8 JSON through the actual <EntryAction> child CLI' -ForEach @(
+        @{Scenario='custom';EntryAction='vibecoding1c-mcp-status'},
+        @{Scenario='prof';EntryAction='vibecoding1c-mcp-status'},
+        @{Scenario='custom';EntryAction='vibecoding1c-mcp-select'},
+        @{Scenario='prof';EntryAction='vibecoding1c-mcp-select'}
+    ) {
+        $snapshot.catalog.products[1].name='PM5 КОРП'
+        $snapshot.registry.hosts=@(@{hostId='typical';configurations=@(@{id='corp';configurationName='УправлениеПроектамиКОРП';configurationVersion='5.0.3.59';indexedAt='2026-10-21T00:00:00Z';nightlyIndexStatus='succeeded'});servers=@(
+            @{id='code';scope='project';configId='corp';family='vibecoding1c';url='http://source.invalid:22100/mcp'},
+            @{id='graph';scope='project';configId='corp';family='vibecoding1c';url='http://source.invalid:22101/mcp/'}
+        )})
+        $snapshot.catalog.sources=@('code','graph'|ForEach-Object {@{sourceId=('typical-'+$_);role=$_;endpoint=@{hostId='typical';serverId=$_;configId='corp'};origin=@{productId='pm5'}}})
+        $usage=if($Scenario -eq 'custom'){'base-product'}else{'reference-product'}
+        $limitations=if($Scenario -eq 'custom'){'Типовой MCP не содержит доработок'}else{'Проверять исключённые функции по карте ПРОФ'}
+        $snapshot.catalog.projects[1].roles=@{code=@{mode='own';sourceId='typical-code';usage=$usage;limitations=@{summary=$limitations}};graph=@{mode='own';sourceId='typical-graph';usage=$usage;limitations=@{summary=$limitations}}}
+        $snapshot.catalog.projects[1].name='Проект с пробелом '+$Scenario
+        $snapshot.catalog.projects[1].customized=($Scenario -eq 'custom')
+        if($Scenario -eq 'custom'){$snapshot.catalog.projects[1].customizations=@{summary='Расчёт заказчика';references=@('https://docs.invalid/customer')}}
+        else {$snapshot.catalog.products+=@{productId='prof';name='PM5 ПРОФ';baseConfigurationVersion='PM5'};$snapshot.catalog.projects[1].productId='prof'}
+        $snapshot.catalog.projects[0].name='UNSELECTED_PROJECT_MUST_NOT_LEAK'
+        $candidate=Select-ItlProductProjectCandidate five
+        $null=Invoke-ItlProductProjectAssociation $candidate
+        $ctx=$candidate.context
+        $read=@{request=@{id=2;method='tools/call';params=@{name='get_module_structure';arguments=@{module_path='CommonModules/Модуль/Ext/Module.bsl'}}};response=@{id=2;result=@{structuredContent=@{status='success';data=@{name='Модуль'}}}}}
+        $recordPath=Join-Path $root 'наблюдение MCP с пробелом.json'
+        Write-Utf8TextAtomic $recordPath (@{schemaVersion=1;catalogRevision=$ctx.catalogRevision;settingsHash=$ctx.settingsHash;roles=@{code=@{endpoint=$ctx.endpointIntents.code.url;checkedAt='2026-10-21T00:00:00Z';transport='external-probe';read=$read}}}|ConvertTo-Json -Depth 20)
+        $protected=@($script:ConfigPath,(Get-ItlProductProjectPath applied),(Get-ItlProductProjectPath operation),(Get-ItlManagedMcpStatePath),(Get-Vibecoding1cMcpSelectionPath))
+        $before=@{};foreach($path in $protected){$before[$path]=@{sha=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;mtime=(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks}}
+        $probe=Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot',$root,'-Action',$EntryAction,'-CatalogAction','context','-CatalogRecordPath',$recordPath)
+        $probe.exitCode|Should -Be 0 -Because $probe.combinedText
+        $text=$probe.stdout -join [Environment]::NewLine
+        $text|Should -Not -Match 'System.Collections|UNSELECTED_PROJECT_MUST_NOT_LEAK'
+        $report=$text|ConvertFrom-Json -ErrorAction Stop
+        $report.project|Should -BeExactly ('Проект с пробелом '+$Scenario)
+        $report.productId|Should -BeExactly $candidate.binding.productId
+        $report.projectDifferences.customized|Should -Be ($Scenario -eq 'custom')
+        if($Scenario -eq 'custom'){$report.projectDifferences.customizations.summary|Should -BeExactly 'Расчёт заказчика';$report.projectDifferences.customizations.references|Should -Be @('https://docs.invalid/customer')}
+        @($report.sources).Count|Should -Be 2
+        foreach($source in $report.sources){
+            $source.origin.productId|Should -BeExactly pm5
+            $source.origin.productName|Should -BeExactly 'PM5 КОРП'
+            $source.usage|Should -BeExactly $usage
+            $source.limitations.summary|Should -BeExactly $limitations
+            $source.registry.configurationName|Should -BeExactly 'УправлениеПроектамиКОРП'
+            $source.registry.configurationVersion|Should -BeExactly '5.0.3.59'
+            $source.registry.indexedAt|Should -BeExactly '2026-10-21T00:00:00Z'
+            $source.registry.provenance|Should -BeExactly registry
+            $source.nativeReadiness|Should -BeExactly unverified
+        }
+        $report.sourceObservations.roles.code.binding|Should -BeExactly matched
+        $report.sourceObservations.roles.code.clientActivation|Should -BeExactly unverified
+        $report.activeClientContext|Should -BeExactly unverified
+        foreach($path in $protected){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash|Should -BeExactly $before[$path].sha;(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks|Should -Be $before[$path].mtime}
+    }
+    It 'prints unbound context as JSON without creating an association' {
+        $probe=Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot',$root,'-Action','vibecoding1c-mcp-status','-CatalogAction','context')
+        $probe.exitCode|Should -Be 0 -Because $probe.combinedText
+        $report=($probe.stdout -join [Environment]::NewLine)|ConvertFrom-Json -ErrorAction Stop
+        $report.status|Should -BeExactly unbound
+        $report.continuation|Should -BeExactly 'Use catalog select/preview explicitly.'
+        Read-ItlProductProjectRecord applied|Should -BeNullOrEmpty
+        (Read-Utf8Text $script:ConfigPath)|Should -Not -Match 'productProject'
     }
     It 'keeps select restore later and pending catalog records out of legacy MCP enrollment' -Tag CatalogLegacyEnrollment {
         $path=Get-Vibecoding1cMcpSelectionPath
