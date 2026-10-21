@@ -135,3 +135,10 @@ Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, cred
 
 - [x] Согласовать existing AC-15/20/25/35/43 с [registry-only evidence](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md): 1.18.11 version local/403 сохранён, vendor 1.19.3 и actual stats/list_graph_projects/reload passed. 19 fresh paths unchanged (16 existing/3 absent; 12 client formats/11 physical files), семь owned processes закрыты; input/cache costs не названы memory delta.
 - [ ] Full registry G3/AC-39/installed/model/platform/CUSTOM/cost и memory 4.2/AC-43/G5/44 остаются открытыми. Квалификационный vendor release не становится memory provider/новым startup gate. Gate 6/G4/рабочая миграция/публикация не начинались.
+
+## Cursor auth dependency follow-up
+
+- [x] Согласовать existing AC-15/20/25/35/43 с [одним registry report](../add-product-project-registry/evidence/g3-cursor-auth-qualification-2026-10-21.md): same installed client/profile/PROF root, visible signed-out UI, worker Code/Graph connection/tools28/54; fresh19 unchanged, окно оставлено для пользовательского входа. Это зависимость квалификации, не memory implementation или auth-state owner.
+- [ ] G3-CURSOR-NATIVE-AGENT-AUTH: обычный sign-in, visible native Agent tools/actual stats/list_graph_projects payloads/reload и cleanup по registry plan. До этого full registry AC-39 и memory4.2/AC-43/G5/44 не закрываются; account credentials/private switches не добавляются в business registry или memory.
+
+Gate 6/G4/рабочая миграция/публикация не затронуты. Six scopes/home/grants/ai_rules_1c и mandatory release population AC-36–38 прежние.
