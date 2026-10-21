@@ -313,3 +313,9 @@ Cursor worker/discovery/reload подтверждены за login overlay, visi
 ### Vendor/provider boundary
 
 [Owner repair](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md) относится к qualification client: сохранённые 1.18.11/failed profile, отдельная неизменённая 1.19.3 и original PROF workload. Нет memory-owned client updater, header override, credential storage или requirement использовать Big Pickle. Native project_id/Graph namespace/provider version не определяют business scope, canonical home или grants; config version остаётся registry/applied context. Code/Graph/backend patches и exact generation stamp не возвращаются в обязательный план. Actual memory consumer и его G5 proof по-прежнему впереди.
+
+### Cursor account boundary остаётся у native client
+
+[Один registry-owned auth report](../add-product-project-registry/evidence/g3-cursor-auth-qualification-2026-10-21.md) подтвердил Login overlay на прежнем test profile/PROF root при connected Code/Graph worker и 28/54 tools. Account session и Agent permission не выводятся из generated config/endpoint/tool-list; native reads пока не выполнены. Штатный пользовательский вход и последующая qualification continuation принадлежат клиенту. Memory не добавляет credential/account registry, private switch mapper, auth probe или обход overlay; provider/profile identities не становятся scope/home/grants.
+
+Consumer4.2/AC-43/G5/44 и registry G3/AC-39/installed/platform/cost/release population AC-36–38 открыты. 0 новых LLM/tool turns не означает измеренный schema/context cost; MCP automatic traffic отдельно не измерен. Window retention для входа не является cleanup success. Ai_rules_1c/шесть областей/canonical home/optional OpenViking прежние; Gate 6/G4/рабочая миграция/публикация не выполнялись.
