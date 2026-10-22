@@ -231,6 +231,25 @@
         Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
     }
 
+    It 'retires the sealed branch patch while preserving business staging and later bytes' {
+        $receipt = New-SealedFixturePatch
+        $product = Join-Path $script:ProjectRoot 'product.txt'
+        Set-FixtureText $product 'staged business bytes'
+        Invoke-Git @('add','--','product.txt')
+        $businessIndex = (Get-GitOutput @('rev-parse',':product.txt')).Trim()
+        Set-FixtureText $product 'unstaged business bytes'
+        $head = Get-CurrentCommit
+        $plan = Get-WorkflowPatchRetirementPlan -Operation 'update-workflow-branch'
+        Start-WorkflowPatchRetirement $plan
+        Complete-WorkflowPatchRetirement $plan
+        Get-CurrentCommit | Should -Be $head
+        (Get-GitOutput @('rev-parse',':product.txt')).Trim() | Should -Be $businessIndex
+        Read-Utf8Text $product | Should -Be 'unstaged business bytes'
+        Read-Utf8Text $script:target | Should -BeExactly "original: Кириллица`r`n"
+        (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
+        Test-Path -LiteralPath (Join-Path (Split-Path -Parent $receipt.reportPath) 'patch.json') | Should -BeTrue
+    }
+
     It 'resumes retirement after an interruption between file restoration and completion' {
         New-SealedFixturePatch | Out-Null
         $plan = Get-WorkflowPatchRetirementPlan -Operation 'refresh-dev-branch-lite'
@@ -239,6 +258,151 @@
         Start-WorkflowPatchRetirement $resumed
         Complete-WorkflowPatchRetirement $resumed
         Read-Utf8Text $script:target | Should -BeExactly "original: Кириллица`r`n"
+    }
+
+    It 'continues persisted branch retirement after <Phase> with Tamper=<Tamper>' -ForEach @(
+        @{Phase='copying';Tamper='';Failure=''},
+        @{Phase='copy-complete';Tamper='';Failure=''},
+        @{Phase='post-copy-failed';Tamper='';Failure=''},
+        @{Phase='branch-commit-ready';Tamper='';Failure=''},
+        @{Phase='copy-complete';Tamper='project';Failure='WORKFLOW_UPDATE_RECONCILIATION_REQUIRED'},
+        @{Phase='copy-complete';Tamper='receipt';Failure='WORKFLOW_PATCH_CHANGED_AFTER_PLAN'},
+        @{Phase='copy-complete';Tamper='source';Failure='WORKFLOW_UPDATE_SOURCE_CHANGED'}
+    ) {
+        Set-FixtureText (Join-Path $script:ProjectRoot '.agent-1c/project.json') '{"aiRules":{"tools":["codex"]}}'
+        Invoke-Git @('add','--','.agent-1c/project.json')
+        Invoke-Git @('commit','-qm','configure fixture client')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $script:ProjectRoot -Action help -SkipAiRules *> $null
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+        $receipt = New-SealedFixturePatch
+        $candidate = Join-Path $TestDrive ('Точный исходник ' + [guid]::NewGuid().ToString('N'))
+        foreach ($relative in @('install-agent-1c-workflow.ps1','AGENT-INSTALL.md',
+            '.agents/skills/1c-workflow/scripts/agent-1c.ps1','.agents/skills/1c-workflow-fast/SKILL.md',
+            '.agents/skills/product-docs/SKILL.md','.agents/skills/itl-roctup-1c-data/SKILL.md',
+            '.agents/skills/itl-vanessa-ui-mcp/SKILL.md','.agents/skills/itl-remote-runner/SKILL.md',
+            '.agents/skills/itl-remote-agent/SKILL.md','.agents/skills/itl-performance/SKILL.md','templates/USER-RULES.append.md')) {
+            Set-FixtureText (Join-Path $candidate $relative) 'exact fixture source'
+        }
+        Set-FixtureText (Join-Path $candidate $script:patchPath) 'incoming package bytes'
+        New-LocalPatchCopyCandidateFixture -FixtureRoot $TestDrive -IncomingRoot $candidate -PackageSourceRoot $RepoRoot | Out-Null
+        $commandTemplates = '.agents/skills/1c-workflow/kilo-command-templates'
+        Copy-Item -LiteralPath (Join-Path $RepoRoot "$commandTemplates/dev") -Destination (Join-Path $candidate $commandTemplates) -Recurse
+        # Populate the authoritative copier inventory, so a copying-phase retry
+        # uses normal preflight/copy rather than stubbing out missing assets.
+        foreach ($relative in @(Get-WorkflowPackageCopyDirectoryPaths)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $candidate $relative))) {
+                Set-FixtureText (Join-Path $candidate "$relative/fixture.txt") 'exact managed directory fixture'
+            }
+        }
+        foreach ($relative in @(Get-WorkflowPackageCopyFilePaths)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $candidate $relative))) {
+                Set-FixtureText (Join-Path $candidate $relative) 'exact managed file fixture'
+            }
+        }
+        Invoke-GitAt -Root $candidate -Arguments @('init','-q','-b','develop')
+        Invoke-GitAt -Root $candidate -Arguments @('config','user.email','fixture@example.invalid')
+        Invoke-GitAt -Root $candidate -Arguments @('config','user.name','Interruption fixture')
+        Invoke-GitAt -Root $candidate -Arguments @('add','--all')
+        Invoke-GitAt -Root $candidate -Arguments @('commit','-qm','exact source')
+        $source = [pscustomobject]@{root=$candidate;repo='fixture-workflow';ref='develop';source='path';
+            commit=(Get-GitOutputAt -Root $candidate -Arguments @('rev-parse','HEAD')).Trim()}
+        $product = Join-Path $script:ProjectRoot 'product.txt'
+        Set-FixtureText $product 'staged business bytes'
+        Invoke-Git @('add','--','product.txt')
+        $businessIndex = (Get-GitOutput @('rev-parse',':product.txt')).Trim()
+        Set-FixtureText $product 'later unstaged business bytes'
+        $plan = Get-WorkflowPatchRetirementPlan -Operation 'update-workflow-branch' -Source $source
+        Start-WorkflowPatchRetirement $plan
+        # Match the real copier's directory-level inventory, including the
+        # patched file, so interrupted-copy recovery exercises its real guard.
+        $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.agents/skills/1c-workflow','.agent-1c/dependency-lock.json') `
+            -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared `
+            -Details @{localPatchRetirement=(Get-WorkflowPatchRetirementBinding $plan)}
+        if ($Phase -eq 'copying') { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase copying }
+        Copy-WorkflowManagedDirectory -SourceRoot $candidate -RelativePath '.agents/skills/1c-workflow'
+        Update-WorkflowPackageLockEntry -Source $source | Out-Null
+        if ($Phase -eq 'branch-commit-ready') {
+            $commitPlan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @('.agents/skills/1c-workflow','.agent-1c/dependency-lock.json')
+            Save-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot -Plan $commitPlan
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase $Phase
+            # Git already committed; retirement and terminal cleanup have not
+            # run. The next process has no in-memory plan or exception handler.
+            Apply-WorkflowBranchCommitPlan -Plan $commitPlan -PendingMergeState ([pscustomobject]@{}) | Out-Null
+        } elseif ($Phase -ne 'copying') {
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase $Phase
+        }
+        $activePath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'
+        $originalActiveBytes = [IO.File]::ReadAllBytes($activePath)
+        $originalTargetBytes = [IO.File]::ReadAllBytes($script:target)
+        $originalSourceBytes = [IO.File]::ReadAllBytes((Join-Path $candidate $script:patchPath))
+        switch ($Tamper) {
+            'project' { Set-FixtureText $script:target 'additional user edit after interruption' }
+            'receipt' {
+                $changedReceipt = Read-WorkflowPatchReceipt
+                $changedReceipt.reportPath += '.changed'
+                Write-WorkflowPatchReceipt $changedReceipt
+            }
+            'source' { Set-FixtureText (Join-Path $candidate $script:patchPath) 'changed exact source' }
+        }
+        $headBeforeResume = Get-CurrentCommit
+        $targetHashBeforeResume = (Get-FileHash -LiteralPath $script:target).Hash
+        $activeHashBeforeResume = (Get-FileHash -LiteralPath $activePath).Hash
+        $sourcePath = Join-Path $TestDrive ('source-' + [guid]::NewGuid().ToString('N') + '.json')
+        Set-FixtureText $sourcePath ($source | ConvertTo-Json)
+        $resumeScript = Join-Path $TestDrive ('resume-' + [guid]::NewGuid().ToString('N') + '.ps1')
+        Set-FixtureText $resumeScript @'
+param($RepositoryRoot,$Root,$SourcePath)
+$ErrorActionPreference='Stop'
+. (Join-Path $RepositoryRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $Root -Action help -SkipAiRules *> $null
+function Get-WorkflowUpdateWorktreeInventory {
+    [pscustomobject]@{kind='development';root=$Root;branch='itldev/test';eligibility='eligible';reason='';conflictPaths=@();head=(Get-CurrentCommit);installedWorkflowCommit='';continuation='repeat update-workflow'}
+}
+function Assert-WorkflowUpdateDevelopmentBranchRoot {}
+function Read-DevBranchState { [pscustomobject]@{devBranch='itldev/test';worktreePath=$Root} }
+function Invoke-WorkflowPackageFilePostCopy { [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()} }
+function Enable-WorkflowExecutionGuardForCurrentRoot {}
+function Set-ItlOnDemandMcpSemanticReloadRequiredAction {}
+. (Join-Path $RepositoryRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+function Get-WorkflowFixArchiveRoot { Join-Path $Root '.agent-1c/snapshots/fix-archive' }
+# Redirect only optional shared-archive IO. Completion still executes the real
+# source function, before the real update owner retains its terminal snapshot.
+$stepDispatcher=(Get-Command Invoke-WorkflowLocalPatchStep).ScriptBlock
+function Invoke-WorkflowLocalPatchStep {
+    param($Step,$Operation,$Plan,[string]$TargetCommit='',$Source=$null)
+    if($Step -eq 'Complete'){Complete-WorkflowPatchRetirement -Plan $Plan}
+    else { & $stepDispatcher @PSBoundParameters }
+}
+$source=Get-Content -LiteralPath $SourcePath -Raw -Encoding UTF8 | ConvertFrom-Json
+$result=Invoke-WorkflowDevelopmentBranchRollout -Source $source
+if($result.roots[0].status -ne 'completed'){throw ($result.roots[0].reason)}
+'FRESH_PROCESS_RECOVERY_COMPLETED'
+'@
+        $plan = $null
+        $result = Invoke-TestPowerShellFile -FilePath $resumeScript -Arguments @('-RepositoryRoot',$RepoRoot,'-Root',$script:ProjectRoot,'-SourcePath',$sourcePath)
+        if ($Failure) {
+            $result.exitCode | Should -Not -Be 0
+            $result.combinedText | Should -Match $Failure
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'retiring'
+            Get-WorkflowUpdatePendingSnapshot | Should -Not -BeNullOrEmpty
+            Get-CurrentCommit | Should -BeExactly $headBeforeResume
+            (Get-FileHash -LiteralPath $script:target).Hash | Should -BeExactly $targetHashBeforeResume
+            (Get-FileHash -LiteralPath $activePath).Hash | Should -BeExactly $activeHashBeforeResume
+            # Exact restoration of only the injected drift must permit the
+            # original command; no receipt edit bypass or weaker gate is used.
+            [IO.File]::WriteAllBytes($activePath, $originalActiveBytes)
+            [IO.File]::WriteAllBytes($script:target, $originalTargetBytes)
+            [IO.File]::WriteAllBytes((Join-Path $candidate $script:patchPath), $originalSourceBytes)
+            $result = Invoke-TestPowerShellFile -FilePath $resumeScript -Arguments @('-RepositoryRoot',$RepoRoot,'-Root',$script:ProjectRoot,'-SourcePath',$sourcePath)
+        }
+        $result.exitCode | Should -Be 0 -Because $result.combinedText
+        $result.combinedText | Should -Match 'FRESH_PROCESS_RECOVERY_COMPLETED'
+        (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
+        Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        Read-Utf8Text $script:target | Should -BeExactly 'incoming package bytes'
+        Test-Path -LiteralPath (Join-Path (Split-Path -Parent $receipt.reportPath) 'patch.json') | Should -BeTrue
+        (Get-GitOutput @('rev-parse',':product.txt')).Trim() | Should -BeExactly $businessIndex
+        Read-Utf8Text $product | Should -BeExactly 'later unstaged business bytes'
     }
 
     It 'restores the working workaround after preparation fails without rewriting history' {

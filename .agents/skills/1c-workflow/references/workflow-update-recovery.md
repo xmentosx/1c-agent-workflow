@@ -69,6 +69,10 @@ guard strict and supplies this continuation:
    candidate checkout must still exist, clean and unchanged. A newer clean source
    can supply the executing helper through `scripts/update-installed-workflow.ps1`;
    recovery records both identities and keeps the old package payload pinned.
+   When a verified committed legacy payload predates the cutover entrypoint,
+   the clean exact executor supplies its existing cutover owner without copying
+   files into that payload. Snapshot, source and live-runtime checks still run;
+   a missing entrypoint in a modern candidate remains an error.
    The existing post-copy owner continues, commits, retains terminal proof and
    reports branch rollout separately. `WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING`
    means that recovery completed the old update: repeat the same source-side
@@ -95,6 +99,20 @@ the same branch lease, then installs the requested new package. Both candidate
 checkouts must remain clean and exact. Business staging, a pending merge and its
 original lifecycle record stay with their existing owner; repeat that original
 business command separately after the package update.
+
+A sealed temporary branch patch is retired through the existing patch owner
+only for a confirmed package replacement. Its paths must cover every workflow
+write conflict; the branch lease revalidates the plan before any write. Foreign
+edits remain blocked. Before package copying succeeds, failure restores the
+patch; after copying, the preserved patch archive and update snapshot own the
+continuation. Unrelated business bytes and staging are retained.
+The branch update receipt binds the retiring patch's exact receipt before
+copying; Git state stays with the update owner's existing commit plan. After a
+process interruption, that binding resumes the existing update transaction
+without reapplying the old patch over new package
+bytes. Retirement completes before the pending update snapshot is retained as
+completed; changed receipts, sources or project bytes still require their
+existing exact-state reconciliation.
 
 For a stopped `fork-dev-branch`, repeat the original fork command from its source
 branch. The fork owner retains its original business anchor and immutable base

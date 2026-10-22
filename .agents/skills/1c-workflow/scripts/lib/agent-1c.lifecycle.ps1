@@ -7408,7 +7408,7 @@ function Assert-WorkflowPackageUpdateContext {
 }
 
 function Invoke-WorkflowLocalPatchStep {
-    param([ValidateSet('Plan','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan,
+    param([ValidateSet('Plan','Bind','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan,
         [string]$TargetCommit = '', [object]$Source = $null)
     if ($Step -eq 'Plan') {
         if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'))) { return }
@@ -7416,6 +7416,7 @@ function Invoke-WorkflowLocalPatchStep {
     . (Join-Path $PSScriptRoot 'agent-1c.local-patch.ps1')
     switch ($Step) {
         'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation -TargetCommit $TargetCommit -Source $Source }
+        'Bind' { Get-WorkflowPatchRetirementBinding -Plan $Plan }
         'Retire' { Start-WorkflowPatchRetirement -Plan $Plan }
         'Complete' { Complete-WorkflowPatchRetirement -Plan $Plan }
         'Undo' { Undo-WorkflowPatchRetirement -Plan $Plan }
@@ -7443,8 +7444,32 @@ function Assert-WorkflowSourceAiRulesInstallable {
 }
 
 function Enable-WorkflowExecutionGuardForCurrentRoot {
-    $cutoverPath = Join-Path $script:ProjectRoot '.agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1'
-    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) { throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING' }
+    $relative = '.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1'
+    $cutoverPath = Join-Path $script:ProjectRoot $relative
+    $executorRoot = Get-FullPathNormalized (Join-Path $script:Agent1cScriptRoot '../../../..')
+    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) {
+        # A newer exact executor may finish an immutable pre-cutover payload.
+        # Use that executor's same guard owner; never repair the installed tree
+        # or treat a missing file in a modern candidate as legacy compatibility.
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $pending -or [string]$pending.receipt.phase -notin @('master-committed', 'branch-commit-ready')) {
+            throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING'
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+        if (Test-Path -LiteralPath (Join-Path ([string]$pending.receipt.sourceRoot) $relative) -PathType Leaf) {
+            throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING'
+        }
+    }
+    if ((Get-FullPathNormalized $script:ProjectRoot) -cne $executorRoot) {
+        # The validated source helper owns this transition even when its payload
+        # is a different exact published commit. Keep guard code with its caller.
+        Assert-WorkflowSourceOutsideProject -SourceRoot $executorRoot
+        $executorCommit = (Get-GitOutputAt -Root $executorRoot -Arguments @('rev-parse', 'HEAD')).Trim()
+        Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$executorRoot;sourceCommit=$executorCommit})
+        $cutoverPath = Join-Path $executorRoot $relative
+        if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) { throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING' }
+    }
     # The legacy entrypoint owns the per-root generation marker and live
     # runtime check. Its old cross-worktree package-copy mode is not invoked.
     & $cutoverPath -ProjectRoot $script:ProjectRoot | Out-Null
@@ -8482,7 +8507,9 @@ function Get-WorkflowUpdateRootRuntimeBusyReason {
     # the existing runtime owner must classify/stop it before a retry.
     $runtimeRoot = Join-Path $Root '.agent-1c/mcp/ondemand'
     if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return '' }
-    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop | Select-Object -ExpandProperty FullName)) {
+    # VAParams is the runtime owner's launch input, not a process-state record.
+    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop |
+        Where-Object { $_.Name -notlike '*.VAParams.json' } | Select-Object -ExpandProperty FullName)) {
         try { $runtimeState = Read-Utf8Text -Path $statePath | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "WORKFLOW_UPDATE_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether a runtime process is active; inspect it through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
         foreach ($field in @('pid', 'testClientPid')) {
@@ -9300,7 +9327,7 @@ function Assert-WorkflowUpdateDevelopmentBranchRoot {
 }
 
 function Invoke-WorkflowDevelopmentBranchUpdate {
-    param([Parameter(Mandatory = $true)][object]$Source)
+    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null)
 
     Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
     if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
@@ -9336,7 +9363,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
                 $hadOverride = Test-Path Env:ITL_WORKFLOW_SOURCE_PATH
                 try {
                     $env:ITL_WORKFLOW_SOURCE_PATH = [string]$recordedSource.root
-                    Invoke-WorkflowDevelopmentBranchUpdate -Source $recordedSource | Out-Null
+                    Invoke-WorkflowDevelopmentBranchUpdate -Source $recordedSource -LocalPatchPlan $LocalPatchPlan | Out-Null
                 } finally {
                     if ($hadOverride) {$env:ITL_WORKFLOW_SOURCE_PATH=$previousOverride} else {Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}
                 }
@@ -9377,7 +9404,13 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         $snapshot = New-WorkflowUpdateRollbackSnapshot `
             -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths) `
             -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
-        try { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared -Details @{ dependencyPlan=$dependencyPlan } }
+        try {
+            $snapshotDetails = @{ dependencyPlan=$dependencyPlan }
+            if ($null -ne $LocalPatchPlan) {
+                $snapshotDetails.localPatchRetirement = Invoke-WorkflowLocalPatchStep -Step Bind -Plan $LocalPatchPlan
+            }
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared -Details $snapshotDetails
+        }
         catch {
             Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
             throw
@@ -9439,6 +9472,9 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
     $result = Apply-WorkflowBranchCommitPlan -Plan $plan -PendingMergeState $state
     Enable-WorkflowExecutionGuardForCurrentRoot
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation 'update-workflow' | Out-Null
+    # Keep the pending transaction (and its retirement binding) until the patch
+    # owner completes. A new process can resume even after the branch commit.
+    Invoke-WorkflowLocalPatchStep -Step Complete -Plan $LocalPatchPlan
     Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-complete
     Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot | Out-Null
     return [pscustomobject]@{ status = 'completed'; commit = [string]$result.commit }
@@ -9531,6 +9567,18 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         $status = [string]$item.eligibility
         $reason = [string]$item.reason
         $commit = ''
+        if ($status -eq 'blocked' -and $reason -eq 'workflow-write-set-conflict') {
+            try {
+                $patchPlan = Invoke-InProjectContext -Root ([string]$item.root) -ScriptBlock {
+                    Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
+                }
+                if ($null -ne $patchPlan -and -not $patchPlan.preserve -and @($item.conflictPaths).Count -gt 0 -and
+                    @($item.conflictPaths | Where-Object { $_ -cnotin $patchPlan.paths }).Count -eq 0) {
+                    $status = 'eligible'
+                    $reason = ''
+                }
+            } catch { $reason = $_.Exception.Message }
+        }
         $earlier = @()
         if ($null -ne $prior) {
             $earlier = @($prior.roots | Where-Object { [string]$_.root -ceq [string]$item.root -and
@@ -9564,7 +9612,33 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                     $reason = $runtimeBusy
                 } else {
                     $updated = Invoke-InProjectContext -Root $branchRoot -ScriptBlock {
-                        Invoke-WorkflowDevelopmentBranchUpdate -Source $Source
+                        # Revalidate under the branch lease. The existing patch
+                        # owner preserves exact before/after bytes and staging.
+                        $branchPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
+                        if ($null -ne $branchPatchPlan -and $branchPatchPlan.preserve) {
+                            throw 'WORKFLOW_PATCH_PACKAGE_UNCHANGED: the recorded local patch remains active; preserve it and select a confirmed replacement package.'
+                        }
+                        try {
+                            if (-not (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false)) {
+                                Invoke-WorkflowLocalPatchStep -Step Retire -Plan $branchPatchPlan
+                            }
+                            $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan
+                            $branchResult
+                        } catch {
+                            $branchError = $_
+                            if (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false) {
+                                # Leave the exact interrupted transaction with
+                                # its owner; never reapply a patch over new bytes.
+                                throw $branchError
+                            }
+                            $installedCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
+                            if ($installedCommit -ceq [string]$Source.commit) {
+                                Invoke-WorkflowLocalPatchStep -Step Complete -Plan $branchPatchPlan
+                            } else {
+                                Invoke-WorkflowLocalPatchStep -Step Undo -Plan $branchPatchPlan
+                            }
+                            throw $branchError
+                        }
                     }
                     $status = [string]$updated.status
                     $commit = [string]$updated.commit

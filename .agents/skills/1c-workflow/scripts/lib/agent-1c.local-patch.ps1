@@ -157,6 +157,28 @@ function Get-WorkflowPatchRetirementPlan {
     param([string]$Operation, [string]$TargetCommit = '', [object]$Source = $null)
     $receipt = Read-WorkflowPatchReceipt
     if ($null -eq $receipt -or $receipt.phase -eq 'retired') { return $null }
+    if ($Operation -eq 'update-workflow-branch' -and $receipt.phase -eq 'retiring') {
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        $binding = Get-ConfigValueFromObject -Object $pending -Path 'receipt.localPatchRetirement' -Default $null
+        if ($null -ne $binding) {
+            $activePath = Resolve-WorkflowPatchPath -RelativePath '.agent-1c/snapshots/workflow-incidents/active.json' -Receipt
+            if ([string]$binding.id -cne [string]$receipt.id -or
+                (Get-WorkflowPatchHash ([IO.File]::ReadAllBytes($activePath))) -cne [string]$binding.receiptSha256) {
+                throw 'WORKFLOW_PATCH_CHANGED_AFTER_PLAN: preserve the patch receipt and update snapshot; restore their exact recorded pairing before repeating update-workflow.'
+            }
+            # The update owner validates its exact source/current bytes before
+            # continuation. A copying phase uses its existing before/candidate
+            # recovery instead of the post-copy path-state assertion.
+            Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
+            if ([string]$pending.receipt.phase -ne 'copying') {
+                Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+            }
+            return [pscustomobject]@{
+                preserve=$false; receipt=$receipt; paths=@($receipt.files | ForEach-Object { [string]$_.path })
+                operation=$Operation; resuming=$true
+            }
+        }
+    }
     if ($TargetCommit -or $null -ne $Source) {
         $change = Get-WorkflowPatchPackageChange -Receipt $receipt -TargetCommit $TargetCommit -Source $Source
         if ($change -ne 'changed') {
@@ -202,6 +224,23 @@ function Get-WorkflowPatchRetirementPlan {
         if ($others.Count) { throw "WORKFLOW_PATCH_UNRELATED_EDITS: update-workflow preserves other tracked changes: $($others -join ', ')" }
     }
     return [pscustomobject]@{ preserve=$false; receipt=$receipt; paths=$paths; indexBlobs=$indices; headBlobs=$heads; operation=$Operation }
+}
+
+function Get-WorkflowPatchRetirementBinding {
+    param([object]$Plan)
+    if ($null -eq $Plan -or $Plan.receipt.phase -ne 'retiring') { return $null }
+    $activePath = Resolve-WorkflowPatchPath -RelativePath '.agent-1c/snapshots/workflow-incidents/active.json' -Receipt
+    $receiptHash = Get-WorkflowPatchHash ([IO.File]::ReadAllBytes($activePath))
+    # Compare in the current runtime: Windows PowerShell and newer PowerShell
+    # format JSON differently. The binding still hashes the exact on-disk bytes.
+    $actualReceipt = Read-Utf8Text -Path $activePath | ConvertFrom-Json -ErrorAction Stop
+    if (($actualReceipt | ConvertTo-Json -Depth 12 -Compress) -cne ($Plan.receipt | ConvertTo-Json -Depth 12 -Compress)) {
+        throw 'WORKFLOW_PATCH_CHANGED_AFTER_PLAN: preserve the changed patch receipt; restore the exact retiring receipt before repeating update-workflow.'
+    }
+    return [pscustomobject]@{
+        id=[string]$Plan.receipt.id
+        receiptSha256=$receiptHash
+    }
 }
 
 function Start-WorkflowPatchRetirement {

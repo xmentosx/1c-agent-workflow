@@ -52,7 +52,9 @@ function Test-CutoverOwnedProcess([object]$State, [string]$PidField, [string]$St
 function Assert-NoActiveCutoverRuntime([string]$Root) {
     $runtimeRoot = Join-Path (Get-CutoverFullPath $Root) '.agent-1c\mcp\ondemand'
     if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }
-    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop | Select-Object -ExpandProperty FullName)) {
+    # The on-demand owner also writes <instance>.VAParams.json as launch input.
+    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop |
+        Where-Object { $_.Name -notlike '*.VAParams.json' } | Select-Object -ExpandProperty FullName)) {
         try { $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "EXECUTION_GUARD_CUTOVER_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether an owned runtime is active. Preserve it and inspect through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
         foreach ($entry in @(

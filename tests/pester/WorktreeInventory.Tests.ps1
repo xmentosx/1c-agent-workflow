@@ -201,3 +201,63 @@ Describe 'Git worktree inventory for workflow rollout' {
         @($ambiguousInventory | Where-Object kind -eq 'master')[0].eligibility | Should -Be 'eligible'
     }
 }
+
+Describe 'Sealed branch patch retirement through the rollout owner' {
+    BeforeEach {
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $branchRoot = Join-Path $root 'Ветка с пробелом'
+        New-Item -ItemType Directory -Force -Path $branchRoot | Out-Null
+        . $helperPath -ProjectRoot $root -Action help *> $null
+        $script:conflicts = @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+        $script:patchSteps = @()
+        $source = [pscustomobject]@{root='C:\exact candidate';repo='repo';ref='develop';commit=('c'*40);source='path'}
+        Mock Get-WorkflowUpdateWorktreeInventory {
+            [pscustomobject]@{kind='development';root=$branchRoot;branch='itldev/test';eligibility='blocked';reason='workflow-write-set-conflict';conflictPaths=$script:conflicts;head=('a'*40);installedWorkflowCommit=('b'*40);continuation='fixture continuation'}
+        }
+        Mock Invoke-InProjectContext { param($Root,$ScriptBlock) & $ScriptBlock }
+        Mock Ensure-Agent1cLifecycleLocksIgnored {}
+        Mock Get-WorkflowUpdateRootRuntimeBusyReason { '' }
+        Mock Invoke-WorkflowLocalPatchStep {
+            param($Step)
+            $script:patchSteps += $Step
+            if ($Step -eq 'Plan') { [pscustomobject]@{preserve=$false;paths=@('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')} }
+        }
+        Mock Invoke-WorkflowDevelopmentBranchUpdate {
+            param($Source, $LocalPatchPlan)
+            $LocalPatchPlan.paths | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+            Invoke-WorkflowLocalPatchStep -Step Complete -Plan $LocalPatchPlan
+            [pscustomobject]@{status='completed';commit=('d'*40)}
+        }
+        Mock Get-DependencyLockEntry { @{commit=('b'*40)} }
+    }
+
+    It 'revalidates under the lease and retires through the existing owner' {
+        $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        $result.roots[0].status | Should -Be 'completed'
+        $script:patchSteps | Should -Be @('Plan','Plan','Retire','Complete')
+        Should -Invoke Invoke-WorkflowDevelopmentBranchUpdate -Times 1 -Exactly
+    }
+
+    It 'preserves an additional workflow edit outside the sealed patch' {
+        $script:conflicts += '.agents/skills/1c-workflow/scripts/foreign.ps1'
+        $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        $result.roots[0].status | Should -Be 'blocked'
+        $script:patchSteps | Should -Be @('Plan')
+        Should -Invoke Invoke-WorkflowDevelopmentBranchUpdate -Times 0 -Exactly
+    }
+
+    It 'returns the patch through its owner when the candidate was not installed' {
+        Mock Invoke-WorkflowDevelopmentBranchUpdate { throw 'copy fixture failure' }
+        $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        $result.roots[0].status | Should -Be 'blocked'
+        $script:patchSteps | Should -Be @('Plan','Plan','Retire','Undo')
+    }
+
+    It 'retains the patch archive once copying succeeded and post-copy needs recovery' {
+        Mock Invoke-WorkflowDevelopmentBranchUpdate { throw 'post-copy fixture failure' }
+        Mock Get-DependencyLockEntry { @{commit=('c'*40)} }
+        $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        $result.roots[0].status | Should -Be 'blocked'
+        $script:patchSteps | Should -Be @('Plan','Plan','Retire','Complete')
+    }
+}
