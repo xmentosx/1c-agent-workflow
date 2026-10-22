@@ -320,3 +320,22 @@ Native G1/Q1–Q7/D9/G2 не переоткрываются; перед буду
 [Единый registry result](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.md) и [exact proof](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.json) уточняют исторический открытый startup/cold срез выше. Owner-local причины исправлены и повторены исходные source/synthetic controls: 133/0/0/0, обе PM4/PM5 warm серии в целях, cold main/offline/no-write bytes+mtime, nested pinned SHA, новые/изменённые inputs, same-user concurrency/status и 48 parsed role checks passed. Median улучшилась умеренно; более высокий paired p95 и промежуточный PM5 over-target сохранены. Full installed cost/context proof этим не закрывается.
 
 AC-43/G5 потребляет тот же pinned registry context без собственной startup сети/кэша/квитанции. Cognee/LLM calls и always-on/tool schema delta 0; native Q1–Q7/D9/G2 не переоткрываются. Шесть областей, canonical home, ai_rules_1c и optional OpenViking прежние. Full G3/AC-39, G5/AC-43 и release AC-44/registry AC-36–38 открыты вместе с остатком общей матрицы. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. Source-delivery ledger владеет обязательным Targeted/регистрацией.
+
+## Dependency Code/Graph и native client activation, 2026-10-20
+
+[Один registry result](../add-product-project-registry/evidence/g3-source-client-qualification-2026-10-20.md) и [exact proof](../add-product-project-registry/evidence/g3-source-client-qualification-2026-10-20.json) уточняют прежнее отсутствие actual tool call: установленный Codex app-server вызвал Code/Graph tools в новых PM4/PM5 контекстах, foreign negative/reload/byte restore прошли, turn/start 0. File-only 48/48 — отдельный subset. Это не desktop/IDE frontend proof; остальные 11 adapters, live business-source admission и точная версия unverified.
+
+AC-43/G5/AC-44 и full registry AC-39/AC-36–38 открыты. Source readiness не выводится из tools; memory не добавляет probe/cache/ledger. Failed harness сохранены, требования/бюджеты/поддержка прежние. G1/Q1–Q7/D9/G2, шесть областей/canonical home/ai_rules_1c/optional OpenViking не меняются; Cognee calls 0. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+## План приёмки зависимости Code/Graph source identity
+
+[Registry checkpoint](../add-product-project-registry/design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) и [AC-08-a–h](../add-product-project-registry/test-plan.md#план-проверки-привязки-codegraph-и-версии-источника) — единый план источников и их будущий proof. Здесь уточняются existing memory AC-15/17/20/35/43, без дублирования live qualification и без нового prerequisite начала G4. Статус всех следующих runtime проверок — **не выполнены**; подготовлен только checkpoint, код/серверы/клиенты не менялись.
+
+| Existing AC | Проверка в отдельно разрешённом consumer/G5 | Ожидаемый результат |
+|---|---|---|
+| AC-15/17/35/43 | One applied context с раздельными binding/indexed version/client activation, old/null metadata и stale client | Потребляется registry result со своим checked-at/provenance; availability/applied marker не превращаются в source-version proof. Native Cognee readiness/grants проверяются отдельно; full G3 не становится условием начала G4 |
+| AC-15/20/35 | Тот же business product/project при другой generation/endpoint и при unknown source revision | Нет новых dataset IDs/home/grants/applicability или автоматической миграции заметок; неизвестная версия не угадана, old evidence не переписано |
+| AC-20/43 | Независимая заметка при недоступном Code/Graph и dependent product-version claim из непроверенного source | Независимая операция проходит прежние memory policy/grants; dependent claim остаётся кандидатом с origin/ограничением и не повышается в общий home как подтверждённый факт. Scope/права и correction policy не ослаблены |
+| AC-35/43 | Instrumented remember/recall/startup с отсутствующим Code/Graph | Дополнительные Code/Graph probes, fetch, source cache/manifest/verifier = 0. Recall/query/card budgets, six scopes и fork-owned triggers неизменны; нет нового always-on текста/tool surface |
+
+Регистрация документации не закрывает эти AC, full registry AC-08/39, memory AC-43/G5/44 или обязательное наполнение registry AC-36–38. Native Q1–Q7/G1 и D9/G2 не переоткрываются. Cognee/OpenViking и controlled ai_rules_1c не дорабатываются этим уточнением. Gate 6, G4, рабочая миграция, deploy/reindex и публикация не запускались.

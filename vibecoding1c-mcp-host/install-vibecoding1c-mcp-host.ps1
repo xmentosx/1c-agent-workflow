@@ -2487,6 +2487,7 @@ function Resolve-ServerVolumes {
             $volumes += [pscustomobject]@{ host = $hostPath; container = $to }
         }
     }
+    $volumes += @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $Server)
     return $volumes
 }
 
@@ -2704,6 +2705,7 @@ function Start-ComposeServer {
         $envValues["EMBEDDING_API_BASE"] = [string]$envValues["OPENAI_EMBEDDING_API_BASE"]
         $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
     }
+    $composeText = Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $Server -ComposeText $composeText
     Write-Text -Path $targetCompose -Value $composeText
     if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
         Initialize-HostPrivateFile -LiteralPath $envFilePath
@@ -5673,6 +5675,7 @@ function Show-HostStatus {
     }
 }
 
+. (Join-Path $PSScriptRoot "owner-repair.ps1")
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 . (Join-Path $PSScriptRoot "sppr-host.ps1")
 $config = Read-HostConfig

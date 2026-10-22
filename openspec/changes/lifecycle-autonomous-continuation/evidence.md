@@ -59,6 +59,35 @@ staged-документа заменено проверкой результат
 двух named actions, точных четырёх selected suites и fallback сохранены.
 Исходный red сохранён в `build/test-results/conflict-resolution-red/worker-14.*`.
 
+## Исправления финального ревью: ignored input и ошибка восстановления
+
+Обе исходные ошибки воспроизведены до изменения runtime: ignored declared JSON
+проходил при пустом Git status, а настоящая блокировка `ConfigDumpInfo.xml`
+давала исключение при уже сформированном `fresh passed` отчёте (executed,
+reused и legacy). Четыре новые регрессии были red.
+
+Refresh дополнительно читает ignored untracked пути только в объявленных
+verification scopes через общий NUL/UTF-8 Git helper. Такой вход не имеет
+проверенной Git identity: требуется review и локальный коммит точного входа,
+без автоматического добавления отчётов и без нового baseline-хранилища.
+Schema-2 и legacy, Unicode/пробелы, обычные ignored отчёты и повторное изменение
+уже tracked входа покрыты отдельной регрессией. Полный refresh/refresh-lite
+повторяется после коммита того же входа без изменения исходного target;
+чужие index/unstaged bytes и failed verification сохраняются.
+Эта приёмка выявила прежний отказ cursor-checkpoint после линейного task commit.
+Владелец checkpoint теперь оставляет прежний trusted anchor и использует
+существующий `Resolve-DevBranchLifecyclePostMergeHead`; правила helper-owned
+child, точных merge parents и допустимого линейного продолжения не расширены.
+
+Финальные restore/remove snapshot выполняются внутри общего обработчика ошибки,
+до завершения recovery/repair и до успешного отчёта. Ошибка восстановления
+показывает `failed` и фактический результат/receipt `CheckConfig`; recovery
+не завершается, исходная backup-копия сохраняется. Регрессии используют реальные
+snapshot/restore/remove и файловую блокировку, без запуска 1С. Прежние проверки
+ошибок следующих verification-компонентов и ошибки рендера отчёта сохранены.
+До дополнительных интеграционных сценариев оба owner-набора прошли 48/48;
+окончательный exact-tree результат принадлежит регистрационному Targeted.
+
 ## Непроверенная приёмка
 
 В этом worktree нет `.dev.env` и настроенного disposable E2E stand. Наличие установленных платформ 1С не определяет разрешённую ИБ и не заменяет stand. Полные native сценарии A3/A5, file/server journeys, native OpenCode API и обнаружение командами свежего клиентского контекста остаются непроверенными. Для них нужен отдельный disposable stand; пользовательский PM5 не использован как тестовый. Задача 3.1 остаётся открытой, change не архивируется. Это ограничение не подменяется Pester, успешным транспортом или регистрацией source candidate.

@@ -33,6 +33,8 @@ G2 завершён; checkpoint G3 одобрен пользователем, so
 
 ## 2. Соблюдение источников у владельцев MCP
 
+Продолжение 2.1 конкретизировано в [checkpoint Code/Graph](design.md#checkpoint-g3-привязка-codegraph-и-версия-источника) и [AC-08-a–h](test-plan.md#план-проверки-привязки-codegraph-и-версии-источника). Checkpoint подготовлен, его реализация не начата; отдельное согласование/разрешение кода ещё требуется. Последовательность остаётся внутри G3.2/3.7: source/metadata contract → index/publisher owners → existing consumer comparator/continuation → live/native replay → cost/evidence. Нет новой очереди, сервиса, startup probe или разрешения deploy. Задачи 2.1/3.4/3.5/5.3/5.5/5.6 остаются открытыми до соответствующего proof; подготовка плана не закрывает их.
+
 - [ ] 2.1 Добавить достаточную publication/probe identity существующих code/graph sources без переопределения business IDs внутренним project_id. Проверка: одинаковые native IDs различимы полным binding; wrong namespace не ready; составной source честно целый (AC-08). Live 2026-10-20: четыре PM4/PM5 Code/Graph internal/public container proofs и functional reads passed, Graph positive/unknown/cross-product controls passed. Image digests, native IDs/generations и mounted XML versions сохранены; full selected binding/wrong expected namespace admission всё ещё не квалифицированы. Graph inherited data без active generation не подтверждает точную версию индекса; SDK version не application build (test-plan, продолжение G3).
 - [x] 2.2 Исправить BookStack selectors и общую проверку cache/semantic/live/read paths, сохранив существующие retrieval функции. Проверка: исходные nonexistent book и book_id=-1 reproducer fixtures, чужая page, валидный scoped результат (AC-09).
 - [x] 2.3 Добавить server-bound view маршрут существующего BookStack MCP, его bounded metadata/identity и штатную publication descriptor. Проверка: filters только сужают view, read_page не расширяет область, global URL совместим, canonical name прежний (AC-09, AC-20).
@@ -130,3 +132,11 @@ Gate 6, остальные source/client/platform controls, full G3 и обяз�
 - [x] Повторить исходные owner suites (133/0/0/0), paired 20 warm на прежних PM4/PM5 roots и полные 23 observations/family, cold CLI и same-user concurrency/status, 48 file/role controls и preservation. [Точные результаты, расходы, failures и пределы](evidence/g3-startup-repair-2026-10-20.md).
 
 Это subset задач 4.1/4.3/4.6/5.1/5.5, не их полная installed приёмка. Финальные warm median/p95 укладываются в цели 1/2 s; величина ускорения под общей нагрузкой ограниченно сопоставима, p95 выше paired baseline. First-CLI no-write control passed, включая bytes/mtime обеих квитанций. AC-39, memory AC-43/G5/AC-44 и остальная единая матрица открыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. RegisterChange единолично владеет mandatory Targeted и queue outcome.
+
+## Code/Graph и native client subset, 2026-10-20
+
+- [x] Выполнить четыре свежих Code/Graph handshakes, 16 safe direct tool calls, own/unknown/foreign Graph scope, duplicate Code ID и native metadata/generation, шесть unknown tuple controls и wrong namespace. [Результат](evidence/g3-source-client-qualification-2026-10-20.md).
+- [x] Через установленный Codex app-server выполнить native tools в новых PM4/PM5 roots и reload/restore с foreign negative; Unicode cwd exact, LLM turns 0. Повторить 48 file-role controls отдельно.
+- [ ] Остаток существующих 2.1/5.3/5.4/AC-08/20/26: live expected/observed admission и источник/версия; native frontend и остальные 11 adapters unverified. Полная приёмка и поддержка не ослаблены.
+
+Private synthetic catalog не release population. Full G3/AC-39, memory AC-43/G5/AC-44 открыты. Gate 6 не исправлялся/не запускался; G4, рабочая миграция и публикация не начинались. Mandatory Targeted/queue outcome принадлежит existing delivery ledger.

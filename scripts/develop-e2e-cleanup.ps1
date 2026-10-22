@@ -296,6 +296,20 @@ function Remove-DevelopE2EFreshProject {
         $branchResolved = [IO.Path]::GetFullPath($BranchPath)
         $expectedBranchLeaf = (Split-Path -Leaf $resolved) + "-*"
         if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) { throw "Refusing to remove unexpected fresh journey branch path: $branchResolved" }
+        # Git can unregister a worktree before discovering a locked database.
+        # Refuse before launcher/Git mutations, and respect the journey owner's
+        # native Git lock across the gaps between lifecycle commands.
+        if (Test-Path -LiteralPath $resolved -PathType Container) {
+            $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolved | Where-Object { [string]::Equals([string]$_.path, $branchResolved, [StringComparison]::OrdinalIgnoreCase) })
+            if (@($registered | Where-Object { $_.locked }).Count -gt 0) { throw "FRESH_JOURNEY_IN_USE: Git worktree is locked: $branchResolved" }
+        }
+        $databaseRoot = Join-Path $branchResolved '.agent-1c/infobases'
+        foreach ($database in @(Get-ChildItem -LiteralPath $databaseRoot -File -Recurse -ErrorAction SilentlyContinue)) {
+            $probe = $null
+            try { $probe = [IO.File]::Open($database.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None) }
+            catch { throw "FRESH_JOURNEY_IN_USE: database cannot be exclusively opened; preserve the worktree and retry cleanup after its owner exits: $($database.FullName)" }
+            finally { if ($probe) { $probe.Dispose() } }
+        }
         [void](Remove-DevelopE2ELauncherRegistration -FreshProjectsRoot $FreshProjectsRoot -Path $resolved -BranchPath $branchResolved -LauncherListPath $LauncherListPath)
         if ((Test-Path -LiteralPath $resolved -PathType Container) -and (Test-Path -LiteralPath $branchResolved -PathType Container)) {
             $remove = Invoke-RepositoryGit -RepositoryRoot $resolved -Arguments @('worktree', 'remove', '--force', '--', $branchResolved) -AllowFailure
@@ -399,15 +413,37 @@ function Get-DevelopE2ERegisteredWorktrees {
     foreach ($token in $tokens) {
         if ($token -like "worktree *") {
             if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
-            $current = [ordered]@{ path = [IO.Path]::GetFullPath($token.Substring(9)); branch = "" }
+            $current = [ordered]@{ path = [IO.Path]::GetFullPath($token.Substring(9)); branch = ""; locked = $false; lockReason = '' }
             continue
         }
         if ($null -ne $current -and $token -like "branch *") {
             $current.branch = $token.Substring(7)
         }
+        if ($null -ne $current -and ($token -eq 'locked' -or $token -like 'locked *')) {
+            $current.locked = $true
+            if ($token.Length -gt 6) { $current.lockReason = $token.Substring(7) }
+        }
     }
     if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
     return @($records | ForEach-Object { $_ })
+}
+
+function Lock-DevelopE2EFreshWorktree {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [Parameter(Mandatory = $true)][string]$BranchPath)
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $ProjectRoot | Where-Object { [string]::Equals([string]$_.path, [IO.Path]::GetFullPath($BranchPath), [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -ne 1 -or $registered[0].locked) { throw "Fresh journey requires one unlocked owned worktree: $BranchPath" }
+    $reason = 'ITL Develop fresh journey ' + [guid]::NewGuid().ToString('N')
+    [void](Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('worktree','lock','--reason',$reason,'--',$BranchPath))
+    return [pscustomobject]@{ projectRoot=$ProjectRoot; branchPath=$BranchPath; reason=$reason }
+}
+
+function Unlock-DevelopE2EFreshWorktree {
+    param([object]$Lease)
+    if (-not $Lease -or -not (Test-Path -LiteralPath $Lease.projectRoot -PathType Container)) { return }
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $Lease.projectRoot | Where-Object { [string]::Equals([string]$_.path, [IO.Path]::GetFullPath($Lease.branchPath), [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -eq 0) { return } # The owning close-dev-branch removed it.
+    if ($registered.Count -ne 1 -or -not $registered[0].locked -or $registered[0].lockReason -cne $Lease.reason) { throw "Fresh journey Git lock ownership changed; preserve the worktree: $($Lease.branchPath)" }
+    [void](Invoke-RepositoryGit -RepositoryRoot $Lease.projectRoot -Arguments @('worktree','unlock','--',$Lease.branchPath))
 }
 
 function Remove-DevelopE2EStaleStandWorktrees {

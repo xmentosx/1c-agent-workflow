@@ -107,6 +107,48 @@
         }
     }
 
+    It 'blocks ignored declared input and resumes both refresh wrappers after its reviewed commit' {
+        foreach ($catalog in @(
+            '{"schemaVersion":2,"obligations":[{"inputPaths":["handoffs/данные с пробелом.json"]}]}',
+            '{"schemaVersion":1,"suites":[{"inputPaths":["handoffs/данные*.json"]}]}'
+        )) {
+            $root=New-ContinuationRepository (Join-Path $TestDrive ('Ignored входы с пробелом '+[guid]::NewGuid().ToString('N')))
+            New-Item -ItemType Directory -Force -Path (Join-Path $root 'tests'),(Join-Path $root 'handoffs') | Out-Null
+            [IO.File]::AppendAllText((Join-Path $root '.gitignore'),"/handoffs/`n",[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'tests/verification-suites.branch.json'),$catalog,[Text.UTF8Encoding]::new($false))
+            & git -C $root add --all
+            & git -C $root commit -qm catalog
+            [IO.File]::WriteAllText((Join-Path $root 'handoffs/отчёт.md'),'independent report',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'handoffs/diagnostic.log'),'ignored diagnostic',[Text.UTF8Encoding]::new($false))
+            & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                foreach ($operation in @('refresh-dev-branch','refresh-dev-branch-lite')) {
+                    { Assert-RefreshGitInputs -Operation $operation -Phase before-load } | Should -Not -Throw
+                }
+                $inputPath='handoffs/данные с пробелом.json'
+                [IO.File]::WriteAllText((Join-Path $root $inputPath),'{"значение":2}',[Text.UTF8Encoding]::new($false))
+                $before=(Get-FileHash -LiteralPath (Join-Path $root $inputPath)).Hash
+                @(Get-LifecycleGitChanges) | Should -HaveCount 0
+                foreach ($operation in @('refresh-dev-branch','refresh-dev-branch-lite')) {
+                    { Assert-RefreshGitInputs -Operation $operation -Phase before-load } | Should -Throw '*LIFECYCLE_GIT_INPUTS_CHANGED*'
+                    $script:RunBlockerOwner.paths | Should -Contain $inputPath
+                    $script:RunBlockerOwner.paths | Should -Not -Contain 'handoffs/отчёт.md'
+                    $script:RunRequiredAction | Should -Match 'ignored declared inputs.*version control'
+                }
+                # The ordinary task-owned Git continuation establishes a reviewed
+                # input, without creating a separate baseline or committing reports.
+                & git -C $root add -f -- $inputPath
+                & git -C $root commit -qm 'reviewed declared input' -- $inputPath
+                foreach ($operation in @('refresh-dev-branch','refresh-dev-branch-lite')) {
+                    { Assert-RefreshGitInputs -Operation $operation -Phase before-load } | Should -Not -Throw
+                }
+                (Get-FileHash -LiteralPath (Join-Path $root $inputPath)).Hash | Should -BeExactly $before
+                [IO.File]::WriteAllText((Join-Path $root $inputPath),'{"значение":3}',[Text.UTF8Encoding]::new($false))
+                { Assert-RefreshGitInputs -Operation refresh-dev-branch -Phase before-load } | Should -Throw '*LIFECYCLE_GIT_INPUTS_CHANGED*'
+            }
+        }
+    }
+
     It 'treats legacy catalog ownership as phase input and preserves rename source endpoints' {
         $root=New-ContinuationRepository (Join-Path $TestDrive 'Переименование и legacy с пробелом')
         New-Item -ItemType Directory -Force -Path (Join-Path $root 'tests') | Out-Null
@@ -192,13 +234,22 @@
         }
     }
 
-    It 'runs <requestedOperation> through post-load with documents appearing during dependencies, or rejects changed inputs: <inputChange>' -ForEach @(
-        @{ requestedOperation='refresh-dev-branch'; inputChange=$false },
-        @{ requestedOperation='refresh-dev-branch-lite'; inputChange=$false },
-        @{ requestedOperation='refresh-dev-branch'; inputChange=$true },
-        @{ requestedOperation='refresh-dev-branch-lite'; inputChange=$true }
+    It 'runs <requestedOperation> through post-load with documents appearing during dependencies, or rejects changed inputs: <inputChange>, ignored: <ignoredInput>' -ForEach @(
+        @{ requestedOperation='refresh-dev-branch'; inputChange=$false; ignoredInput=$false },
+        @{ requestedOperation='refresh-dev-branch-lite'; inputChange=$false; ignoredInput=$false },
+        @{ requestedOperation='refresh-dev-branch'; inputChange=$true; ignoredInput=$false },
+        @{ requestedOperation='refresh-dev-branch-lite'; inputChange=$true; ignoredInput=$false },
+        @{ requestedOperation='refresh-dev-branch'; inputChange=$true; ignoredInput=$true },
+        @{ requestedOperation='refresh-dev-branch-lite'; inputChange=$true; ignoredInput=$true }
     ) {
-        $root=New-ContinuationRepository (Join-Path $TestDrive ('Refresh после merge с пробелом '+$requestedOperation+$inputChange))
+        $root=New-ContinuationRepository (Join-Path $TestDrive ('Refresh после merge с пробелом '+$requestedOperation+$inputChange+$ignoredInput))
+        if ($ignoredInput) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $root 'tests'),(Join-Path $root 'handoffs') | Out-Null
+            [IO.File]::AppendAllText((Join-Path $root '.gitignore'),"/handoffs/`n",[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'tests/verification-suites.branch.json'),'{"schemaVersion":2,"obligations":[{"inputPaths":["handoffs/данные.json"]}]}',[Text.UTF8Encoding]::new($false))
+            & git -C $root add --all
+            & git -C $root commit -qm 'declared ignored scope'
+        }
         & git -C $root checkout -qb itldev/test
         [IO.File]::WriteAllText((Join-Path $root 'branch.txt'),'branch',[Text.UTF8Encoding]::new($false))
         & git -C $root commit -qam branch
@@ -215,6 +266,8 @@
             . $HelperPath -ProjectRoot $root -Action help *> $null
             $LifecyclePhase='post-merge'; $DevBranchName='test'
             $script:LoadCalls=0
+            $script:IgnoredInputCreated=$false
+            $script:LastPostMergeHead=$mergeCommit
             $script:ContinuationState=[pscustomobject]@{
                 devBranch='itldev/test'; devBranchKind='configuration'; devBranchName='test'; safeDevBranchName='test'
                 worktreePath=$root; devBranchInfoBasePath=(Join-Path $root '.agent-1c/fixture-base'); infoBaseKind='file'
@@ -226,6 +279,9 @@
             function Read-DevBranchState { $script:ContinuationState }
             function Update-DevBranchState {
                 param($State,[hashtable]$Updates)
+                if ($Updates.ContainsKey('pendingMergePostMergeHead') -and $Updates.pendingMergePostMergeHead) {
+                    $script:LastPostMergeHead=$Updates.pendingMergePostMergeHead
+                }
                 foreach($key in $Updates.Keys){$State|Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force}
             }
             function Assert-DevelopmentBranchWorktreeContext {}
@@ -239,7 +295,12 @@
                 Invoke-Git @('add','--','CONTEXT.md')
                 [IO.File]::WriteAllText((Join-Path $root 'CONTEXT.md'),'unstaged docs',[Text.UTF8Encoding]::new($false))
                 [IO.File]::WriteAllText((Join-Path $root 'docs/adr/новое решение.md'),'new docs',[Text.UTF8Encoding]::new($false))
-                if($inputChange){[IO.File]::WriteAllText((Join-Path $root 'src/cf/Configuration.xml'),'changed during dependencies',[Text.UTF8Encoding]::new($false))}
+                if($ignoredInput) {
+                    if (-not $script:IgnoredInputCreated) {
+                        [IO.File]::WriteAllText((Join-Path $root 'handoffs/данные.json'),'{"значение":2}',[Text.UTF8Encoding]::new($false))
+                        $script:IgnoredInputCreated=$true
+                    }
+                } elseif($inputChange){[IO.File]::WriteAllText((Join-Path $root 'src/cf/Configuration.xml'),'changed during dependencies',[Text.UTF8Encoding]::new($false))}
                 $script:DocumentIndex=@(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','CONTEXT.md')) -join "`0"
             }
             function Get-RoctupMcpEnabled { $false }
@@ -273,6 +334,21 @@
                 $script:LoadCalls | Should -Be 0
                 $script:ContinuationState.pendingMergeOperation | Should -BeExactly $requestedOperation
                 $script:RunBlockerOwner.phase | Should -Be 'before-load'
+                if ($ignoredInput) {
+                    $script:RunBlockerOwner.paths | Should -Contain 'handoffs/данные.json'
+                    $inputHash=(Get-FileHash -LiteralPath (Join-Path $root 'handoffs/данные.json')).Hash
+                    Invoke-Git @('add','-f','--','handoffs/данные.json')
+                    Invoke-Git @('commit','--only','-qm','reviewed declared input','--','handoffs/данные.json')
+                    { Invoke-RefreshDevBranchCore -OperationName $requestedOperation } | Should -Not -Throw
+                    $script:LoadCalls | Should -Be 1
+                    $script:ContinuationState.pendingMergeOperation | Should -BeNullOrEmpty
+                    $script:ContinuationState.lastRefreshMasterCommit | Should -BeExactly $targetCommit
+                    $script:ContinuationState.lastVerificationStatus | Should -Be 'failed'
+                    $script:LastPostMergeHead | Should -BeExactly $mergeCommit
+                    (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction ([pscustomobject]@{operation=$requestedOperation;mergeCommit=$mergeCommit}) -CandidateHead (Get-CurrentCommit)) | Should -BeFalse
+                    (Get-FileHash -LiteralPath (Join-Path $root 'handoffs/данные.json')).Hash | Should -BeExactly $inputHash
+                    @(Get-GitPathList -Arguments @('diff-tree','--no-commit-id','--name-only','-r','-z','HEAD')) | Should -Be @('src/cf/ConfigDumpInfo.xml')
+                }
             }else{
                 $failure | Should -BeNullOrEmpty
                 $script:LoadCalls | Should -Be 1
