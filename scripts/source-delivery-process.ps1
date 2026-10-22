@@ -171,10 +171,23 @@ function Start-DeliveryProcess {
         [Parameter(Mandatory = $true)][string]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$StandardOutputPath,
-        [Parameter(Mandatory = $true)][string]$StandardErrorPath
+        [Parameter(Mandatory = $true)][string]$StandardErrorPath,
+        [string]$FilePath = 'powershell.exe',
+        [Collections.IDictionary]$EnvironmentOverrides = $null
     )
     if ($env:OS -ne "Windows_NT") {
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru
+        $previousEnvironment = @{}
+        try {
+            if ($EnvironmentOverrides) {
+                foreach ($key in $EnvironmentOverrides.Keys) {
+                    $previousEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+                    [Environment]::SetEnvironmentVariable($key, $EnvironmentOverrides[$key], 'Process')
+                }
+            }
+            $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru
+        } finally {
+            foreach ($key in $previousEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key, $previousEnvironment[$key], 'Process') }
+        }
         $null = $process.Handle
         return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]::Zero }
     }
@@ -396,7 +409,7 @@ public static class ItlDeliveryProcessJob
         return handle;
     }
 
-    private static IntPtr CreateEnvironmentWithout(string excludedName)
+    private static IntPtr CreateEnvironmentWithout(string excludedName, IDictionary overrides = null)
     {
         SortedDictionary<string, string> variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
@@ -405,6 +418,10 @@ public static class ItlDeliveryProcessJob
             if (!String.Equals(name, excludedName, StringComparison.OrdinalIgnoreCase))
                 variables[name] = Convert.ToString(entry.Value);
         }
+        if (overrides != null)
+            foreach (DictionaryEntry entry in overrides)
+                if (entry.Value == null) variables.Remove(Convert.ToString(entry.Key));
+                else variables[Convert.ToString(entry.Key)] = Convert.ToString(entry.Value);
         StringBuilder block = new StringBuilder();
         foreach (KeyValuePair<string, string> variable in variables)
             block.Append(variable.Key).Append('=').Append(variable.Value).Append('\0');
@@ -413,6 +430,11 @@ public static class ItlDeliveryProcessJob
     }
 
     public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath)
+    {
+        return Start(executable, arguments, workingDirectory, standardOutputPath, standardErrorPath, resetPowerShellModulePath, null);
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath, IDictionary environmentOverrides)
     {
         AssertAtomicJobListSupport();
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
@@ -463,9 +485,14 @@ public static class ItlDeliveryProcessJob
             startupInfo.lpAttributeList = attributeList;
             StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
             UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED;
-            if (resetPowerShellModulePath)
+            if (resetPowerShellModulePath && environmentOverrides == null)
             {
                 environment = CreateEnvironmentWithout("PSModulePath");
+                creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+            }
+            else if (environmentOverrides != null)
+            {
+                environment = CreateEnvironmentWithout(resetPowerShellModulePath ? "PSModulePath" : null, environmentOverrides);
                 creationFlags |= CREATE_UNICODE_ENVIRONMENT;
             }
             if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, creationFlags, environment, workingDirectory, ref startupInfo, out processInformation))
@@ -584,6 +611,15 @@ public static class ItlDeliveryProcessJob
         }
     }
 
+    public static UInt32 GetActiveProcessCount(IntPtr job)
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information;
+        UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION));
+        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out information, length, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Delivery process job accounting query failed.");
+        return information.ActiveProcesses;
+    }
+
     public static void Close(IntPtr job)
     {
         if (job != IntPtr.Zero && !CloseHandle(job))
@@ -593,10 +629,15 @@ public static class ItlDeliveryProcessJob
 '@
     }
     $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
+    $executablePath = if ($FilePath -eq 'powershell.exe') { $powershellPath } else { (Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
     # Native CreateProcess would pass PowerShell Core's PSModulePath through
     # unchanged. Omit it so Windows PowerShell rebuilds its own module roots.
-    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
-    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core" -and [IO.Path]::GetFileName($executablePath) -ieq 'powershell.exe'
+    $started = if ($null -ne $EnvironmentOverrides) {
+        [ItlDeliveryProcessJob]::Start($executablePath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell, $EnvironmentOverrides)
+    } else {
+        [ItlDeliveryProcessJob]::Start($executablePath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
+    }
     try {
         $process = $started.Process
         $null = $process.Handle

@@ -148,7 +148,9 @@ $supervisorPath = $localSupervisor
 $supervisorCommit = ""
 $bootstrapSupervisor = $true
 try {
-    $requestedChannel = if ($Action -in @("RegisterChange", "Plan", "PublishDevelop")) { "develop" } else { "master" }
+    $requestedChannel = if ($Action -eq 'Cleanup') {
+        if ($CleanupChannel -eq 'Master') { 'master' } else { 'develop' }
+    } elseif ($Action -in @("RegisterChange", "Plan", "PublishDevelop")) { "develop" } else { "master" }
     $selectedChannel = $requestedChannel
     $recordedSupervisor = ""
     $transferFrozenReplan = $false

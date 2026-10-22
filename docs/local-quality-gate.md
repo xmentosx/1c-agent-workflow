@@ -757,6 +757,13 @@ SHA проверяются до удаления. Housekeeping failure не от
 `-Action Cleanup`; явный стабильный канал выбирается только через
 `-Action Cleanup -CleanupChannel Master`. Ref-only cleanup очереди и promotion
 refs остаётся у authority-supervisor и не делегируется канальному executor.
+Shim закрепляет supervisor выбранного Cleanup-канала уже до передачи параметров.
+Lease сравнивает время запуска владельца как точный UTC instant, включая ticks:
+материализация JSON в DateTime не меняет identity, а другое время, PID или id
+по-прежнему блокирует удаление refs.
+На Windows read-only `ls-remote` cleanup-probe использует существующий process
+job owner: быстрый выход Git не оставляет потомка, удерживающего вывод. Прежние
+deadline и no-prompt environment сохраняются, environment задаётся только ребёнку.
 
 Release-runner и cleanup используют `release-artifact-paths.ps1` для capability
 generations в `.agent-1c/runs/release-e2e-capabilities/<run>/<generation>`;

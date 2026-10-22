@@ -360,6 +360,53 @@ function Get-DeliveryDispositionGroups {
     })
 }
 
+function Invoke-DeliveryJobLsRemote {
+    param([Diagnostics.ProcessStartInfo]$StartInfo, [int]$TimeoutMilliseconds)
+    $token = 'itl-ls-remote-' + [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ($token + '.stdout.log')
+    $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ($token + '.stderr.log')
+    $process = $null; $job = [IntPtr]::Zero; $priorError = ''
+    try {
+        $environment = @{}
+        foreach ($key in $StartInfo.EnvironmentVariables.Keys) { $environment[$key] = $StartInfo.EnvironmentVariables[$key] }
+        $started = Start-DeliveryProcess -FilePath $StartInfo.FileName -ArgumentList $StartInfo.Arguments `
+            -WorkingDirectory $script:Root -StandardOutputPath $stdoutPath -StandardErrorPath $stderrPath `
+            -EnvironmentOverrides $environment
+        $process = $started.process; $job = [IntPtr]$started.jobHandle
+        $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+        while (-not $process.WaitForExit([Math]::Max(1, [Math]::Min(100, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)))) {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                [void](Stop-DeliveryProcessJobAndWait -JobHandle $job -Process $process -TimeoutMilliseconds 5000)
+                return [pscustomobject]@{ status='timed-out'; exitCode=-1; stdout=''; stderr="ls-remote exceeded ${TimeoutMilliseconds}ms" }
+            }
+        }
+        # The root can exit before its handle-holding descendants. Membership
+        # was assigned before execution, so completion never depends on polling
+        # a parent PID that may already have disappeared or been reused.
+        while ([ItlDeliveryProcessJob]::GetActiveProcessCount($job) -gt 0) {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                [void](Stop-DeliveryProcessJobAndWait -JobHandle $job -Process $process -TimeoutMilliseconds 5000)
+                return [pscustomobject]@{ status='timed-out'; exitCode=-1; stdout=''; stderr="ls-remote output drain exceeded ${TimeoutMilliseconds}ms" }
+            }
+            Start-Sleep -Milliseconds 25
+        }
+        return [pscustomobject]@{
+            status='completed'; exitCode=[int]$process.ExitCode
+            stdout=[IO.File]::ReadAllText($stdoutPath, [Text.Encoding]::UTF8)
+            stderr=[IO.File]::ReadAllText($stderrPath, [Text.Encoding]::UTF8)
+        }
+    } catch {
+        $priorError = $_.Exception.Message
+        return [pscustomobject]@{ status='start-failed'; exitCode=-1; stdout=''; stderr=$priorError }
+    } finally {
+        try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError }
+        finally {
+            if ($process) { $process.Dispose() }
+            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Invoke-DeliveryBoundedLsRemote {
     param([int]$TimeoutMilliseconds = 15000)
     $arguments = @('-C', $script:Root, '-c', 'core.quotepath=false', '-c', 'credential.interactive=never', 'ls-remote', '--exit-code', '--refs', $script:Remote, 'refs/heads/develop', 'refs/heads/master')
@@ -377,6 +424,9 @@ function Invoke-DeliveryBoundedLsRemote {
     $startInfo.EnvironmentVariables['GCM_INTERACTIVE'] = 'Never'
     $startInfo.EnvironmentVariables['SSH_ASKPASS_REQUIRE'] = 'never'
     $startInfo.EnvironmentVariables['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes -o ConnectTimeout=5'
+    if ($env:OS -eq 'Windows_NT') {
+        return Invoke-DeliveryJobLsRemote -StartInfo $startInfo -TimeoutMilliseconds $TimeoutMilliseconds
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
