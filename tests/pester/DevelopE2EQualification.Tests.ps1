@@ -96,9 +96,28 @@ Describe "Develop E2E journey qualification router" {
             return $tree
         }
         function Find-AncestorFixtureProof {
-            param([object]$Fixture,[string]$Tree)
+            param([object]$Fixture,[string]$Tree,[object]$StaticProof=$null)
             $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $Fixture.root -Journey fresh -Catalog $Fixture.catalog -ExternalBinding $Fixture.external
-            Get-DevelopE2EAncestorQualification -RepositoryRoot $Fixture.root -Tree $Tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs
+            Get-DevelopE2EAncestorQualification -RepositoryRoot $Fixture.root -Tree $Tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs -StaticProof $StaticProof
+        }
+        function New-CurrentStaticFixtureProof {
+            param([object]$Fixture)
+            . (Join-Path $context.RepoRoot 'scripts/develop-static-qualification.ps1')
+            $commit = (& git -C $Fixture.root rev-parse HEAD).Trim()
+            $tree = (& git -C $Fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $root = Join-Path $Fixture.root '.git/qualification'
+            New-Item -ItemType Directory -Force -Path $root | Out-Null
+            $junit = Join-Path $root 'pester.xml'
+            [IO.File]::WriteAllText($junit, '<testsuites tests="1" failures="0" errors="0" />')
+            $tests = @(Get-ChildItem -LiteralPath (Join-Path $Fixture.root 'tests/pester') -File -Filter '*.Tests.ps1' | ForEach-Object { 'tests/pester/' + $_.Name })
+            $q = @{schemaVersion=4;kind='itl-workflow-full-qualification';status='passed';reusable=$false
+                repository=@{commit=$commit;tree=$tree;worktreeClean=$true};result=@{passed=1;failed=0;skipped=0}
+                pesterInputs=@{schemaVersion=1;kind='itl-pester-input-identity';reusable=$false;runtimeIdentityStatus='known';runtimeIdentitySha256=('a'*64);files=@($tests|ForEach-Object{@{path=$_;digest=''}})}
+                inventory=@{tests=@($tests|ForEach-Object{@{path=$_}})};junit=@{sha256=(Get-FileHash -LiteralPath $junit).Hash.ToLowerInvariant()}
+                stages=@('pester','git-diff-check','static-tracked-state','ai-rules-compatibility'|ForEach-Object{@{name=$_;status='passed'}})}
+            $path = Join-Path $root 'full.json'
+            Write-Utf8Json -Path $path -Value $q
+            return Save-DevelopE2ECurrentStaticProof -QualificationPath $path -Commit $commit -Tree $tree
         }
     }
 
@@ -121,6 +140,90 @@ Describe "Develop E2E journey qualification router" {
         $before = Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml'
         [IO.File]::WriteAllText($transport, "<Configuration />`n", [Text.UTF8Encoding]::new($false))
         Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml' | Should -Not -BeExactly $before
+    }
+
+    It 'defers the original fail-fast route until current static proof and then reuses the unchanged native journey' {
+        $f = New-AncestorJourneyFixture
+        [IO.File]::AppendAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# test-only repair')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static support repair'
+        $commit = (& git -C $f.root rev-parse HEAD).Trim(); $tree = (& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        Get-ExactTargetedRunProof -RepositoryRoot $f.root -Commit $commit -Tree $tree | Should -BeNullOrEmpty
+        $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+        $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Ensure-DevelopE2ERoute'},$true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $repoRoot=$f.root;$qualityCatalog=$f.catalog;$E2EProjectRoot=$f.root;$AgentTarget='kilocode'
+        $script:developQualificationRoot=Join-Path $f.root '.git/current';New-Item -ItemType Directory -Force -Path $script:developQualificationRoot|Out-Null
+        $script:developRulesSource=$f.root;$script:developCurrentStaticProof=$null;$script:developAncestorRoutes=@{};$script:stages=@()
+        $script:releaseContext=$null;$script:aiRulesRelease=$null
+        function Invoke-GateStage {}
+        function Add-ReusedStage {}
+        function Get-DevelopE2EIdentitySha256 {}
+        Mock Get-DevelopE2EIdentitySha256 {'a'*64};Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+        Mock Get-DevelopE2EInputIdentity {$f.inputs}
+        Mock Invoke-GateStage {throw 'Native journey must not execute for matching inputs'}
+        Mock Add-ReusedStage {}
+        $plan=[pscustomobject]@{journeys=@('fresh')}
+        Ensure-DevelopE2ERoute -Journey fresh -Plan $plan -DeferForStatic | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $script:developQualificationRoot 'develop-e2e-fresh.json') | Should -BeFalse
+        $script:developAncestorRoutes.Count | Should -Be 0
+        $script:developCurrentStaticProof=New-CurrentStaticFixtureProof -Fixture $f
+        $script:developCurrentStaticProof | Should -Not -BeNullOrEmpty
+        $path=Ensure-DevelopE2ERoute -Journey fresh -Plan $plan
+        (Get-FileHash -LiteralPath $path).Hash | Should -BeExactly $f.reportSha
+        $record=$script:developAncestorRoutes.fresh.continuation
+        $record.proofKind | Should -BeExactly 'owner-input-static'
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeTrue
+        # Replacing the mutable Full report must not corrupt immutable provenance.
+        [IO.File]::WriteAllText((Join-Path $f.root '.git/qualification/full.json'), '{}')
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeTrue
+        [IO.File]::AppendAllText($record.staticProof.junitPath, 'altered')
+        Test-RecordedWorkflowContinuation -Record $record -Commit $commit -Tree $tree | Should -BeFalse
+        Should -Invoke Invoke-GateStage -Times 0 -Exactly
+    }
+
+    It 'keeps static continuation closed for failed, incomplete, foreign and tampered proof and newer native failures' {
+        $f=New-AncestorJourneyFixture
+        [IO.File]::AppendAllText((Join-Path $f.root 'tests/pester/Fixture.Tests.ps1'), '# static repair')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'test repair'
+        $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        $proof=New-CurrentStaticFixtureProof -Fixture $f
+        Test-WorkflowCurrentStaticProof -Proof $proof -Commit $f.commit -Tree $tree | Should -BeFalse
+        $q=Get-Content -LiteralPath $proof.path -Raw|ConvertFrom-Json
+        foreach($fault in @('failed','inventory','stage','dirty','tree')) {
+            $bad=$q|ConvertTo-Json -Depth 16|ConvertFrom-Json
+            switch($fault){
+                failed {$bad.result.failed=1}
+                inventory {$bad.inventory.tests=@()}
+                stage {$bad.stages=@($bad.stages|Where-Object name -ne 'static-tracked-state')}
+                dirty {$bad.repository.worktreeClean=$false}
+                tree {$bad.repository.tree='0'*40}
+            }
+            Write-Utf8Json -Path $proof.path -Value $bad
+            $proof.sha256=(Get-FileHash -LiteralPath $proof.path).Hash.ToLowerInvariant()
+            Test-WorkflowCurrentStaticProof -Proof $proof -Commit $commit -Tree $tree | Should -BeFalse -Because $fault
+        }
+        Write-Utf8Json -Path $proof.path -Value $q;$proof.sha256=(Get-FileHash -LiteralPath $proof.path).Hash.ToLowerInvariant()
+        $args=@{RepositoryRoot=$f.root;Tree=$tree;Journey='fresh';IdentitySha256=('a'*64);StandStateSha256=('c'*64);InputIdentity=$f.inputs;StaticProof=$proof}
+        Get-DevelopE2EAncestorQualification @args | Should -Not -BeNullOrEmpty
+        # The legacy envelope also hashes admission receipts. Its historical
+        # identity stays intact; complete current owner inputs authorize reuse.
+        $args.IdentitySha256='f'*64
+        $continued=Get-DevelopE2EAncestorQualification @args
+        $continued.report.identitySha256 | Should -BeExactly ('a'*64)
+        $f.external.environment='changed environment'
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
+        $f.external.environment='e'*64
+        $run=@{schemaVersion=3;mode='Develop';status='failed';commit=$commit;tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');stages=@(@{name='develop-e2e-fresh';status='failed'});journeyInputIdentities=@{fresh=$f.inputs}}
+        Write-Utf8Json -Path (Join-Path $f.root '.git/itl/runs/new-develop-failure.json') -Value $run
+        Get-DevelopE2EAncestorQualification @args | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath (Join-Path $f.root '.git/itl/runs/new-develop-failure.json')
+        [IO.File]::AppendAllText($f.runtime, '# changed native runtime')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
+        & git -C $f.root restore -- .
+        [IO.File]::WriteAllText((Join-Path $f.root 'unowned-input.txt'), 'unknown dependency')
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown input'
+        $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim();$proof=New-CurrentStaticFixtureProof -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $proof | Should -BeNullOrEmpty
     }
 
     It 'continues a real Git ancestor after a Release-only budget change and preserves original report bytes' {
@@ -261,14 +364,17 @@ Describe "Develop E2E journey qualification router" {
         Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
     }
 
-    It 'roundtrips complete ancestor provenance through the actual current qualification writer and reader' {
+    It 'roundtrips complete ancestor provenance through the actual writer and reader (static=<UseCurrentStatic>)' -TestCases @(@{UseCurrentStatic=$false},@{UseCurrentStatic=$true}) {
+        param($UseCurrentStatic)
         $f=New-AncestorJourneyFixture
         $f.catalog.budgets.releaseHardSeconds=15540
         Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'Release-only budget'
-        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $static=$null
+        if($UseCurrentStatic){$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim();$static=New-CurrentStaticFixtureProof -Fixture $f}
+        else{$tree=Publish-AncestorFixtureTargeted -Fixture $f}
         $commit=(& git -C $f.root rev-parse HEAD).Trim()
-        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree -StaticProof $static
         $proof | Should -Not -BeNullOrEmpty
         $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$t,[ref]$e)
         foreach($name in @('Get-RelativeRepositoryPath','Test-DevelopQualification')){
@@ -295,7 +401,8 @@ Describe "Develop E2E journey qualification router" {
         [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $canonicalReport -IdentitySha256 ('a'*64) -JourneyRecords $records -Plan $plan)
         (Get-FileHash -LiteralPath $canonicalReport).Hash | Should -BeExactly $canonicalSha
         (Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64)).reuseKind | Should -BeExactly 'exact-commit'
-        $saved.journeys.fresh.continuation.targetedRunSha256='0'*64
+        if($UseCurrentStatic){$saved.journeys.fresh.continuation.staticProof.sha256='0'*64}
+        else{$saved.journeys.fresh.continuation.targetedRunSha256='0'*64}
         Write-Utf8Json -Path $developQualificationFullPath -Value $saved
         Test-DevelopQualification -Commit $commit -Tree $tree -ExpectedIdentitySha256 ('a'*64) -ExpectedStandStateSha256 ('c'*64) | Should -BeNullOrEmpty
         (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
@@ -335,6 +442,42 @@ Describe "Develop E2E journey qualification router" {
             $before=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported -Verbose
             $before | Should -Not -BeNullOrEmpty
             @($before.inventory.external.artifacts.Values | Where-Object {$_ -cne $sha}) | Should -HaveCount 0
+            # Exercise the normal recursive positive-stand binding, not only an
+            # injected ExternalBinding. Fresh consumes that stand as a seed,
+            # while configuration rejection executes only in upgrade.
+            $positive=Join-Path $f.root ('.git/positive ' + (Get-NonAsciiFixtureSegment))
+            Write-Utf8Json -Path (Join-Path $positive '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
+            Write-Utf8Json -Path (Join-Path $positive '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$positive}
+            Copy-Item -LiteralPath (Join-Path $f.root '.dev.env') -Destination (Join-Path $positive '.dev.env')
+            $configPath=Join-Path $f.root '.agent-1c/release-e2e.json'
+            $config=@{developWorktreePath=$f.root;developConfigurationRejection=@{positiveProjectRoot=$positive};qualificationFixtures=@{Develop=@{path='unchanged capsule';sha256=('a'*64);workflowUpdateAdmission=@{master=@{head=('b'*40)}}}}}
+            Write-Utf8Json -Path $configPath -Value $config
+            $rejection=Join-Path $f.root 'scripts/develop-configuration-rejection.ps1'
+            [IO.File]::WriteAllText($rejection, '# original rejection', [Text.UTF8Encoding]::new($true))
+            & git -C $f.root add scripts/develop-configuration-rejection.ps1; & git -C $f.root commit --quiet -m 'rejection fixture'
+            $normal=@{RepositoryRoot=$f.root;Catalog=$f.catalog;ProjectRoot=$f.root;AiRulesSource=$f.root;AgentTarget='kilocode';ArtifactBinding=$transported}
+            $normal.Catalog=Get-QualityContractCatalog -RepositoryRoot $context.RepoRoot
+            $fresh=Get-DevelopE2EInputIdentity @normal -Journey fresh
+            $upgrade=Get-DevelopE2EInputIdentity @normal -Journey upgrade
+            $fresh | Should -Not -BeNullOrEmpty; $upgrade | Should -Not -BeNullOrEmpty
+            [IO.File]::AppendAllText($rejection, '# receipt fix')
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            (Get-DevelopE2EInputIdentity @normal -Journey upgrade).fingerprint | Should -Not -BeExactly $upgrade.fingerprint
+            $config.qualificationFixtures.Develop.workflowUpdateAdmission.master.head='c'*40
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            $config.qualificationFixtures.Develop.sha256='d'*64
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            $config.qualificationFixtures.Develop.sha256='a'*64
+            $config['unknownRuntimeSetting']='unclassified'
+            Write-Utf8Json -Path $configPath -Value $config
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            $config.Remove('unknownRuntimeSetting');Write-Utf8Json -Path $configPath -Value $config
+            # Source fixtures, artifact bytes and external policy still bind fresh.
+            [IO.File]::AppendAllText((Join-Path $f.root 'scripts/source-e2e-manifest-repair.ps1'), '# shared repair')
+            & git -C $f.root add scripts/source-e2e-manifest-repair.ps1
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
             foreach($key in $keys){[Environment]::GetEnvironmentVariable($key,'Process') | Should -BeNullOrEmpty}
             [IO.File]::WriteAllBytes($clientPath,[byte[]](9,8,7))
             Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.root -AiRulesSource $f.root -AgentTarget kilocode -ArtifactBinding $transported | Should -BeNullOrEmpty

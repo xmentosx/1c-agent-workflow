@@ -132,6 +132,25 @@ function Get-DevelopStaticQualificationCacheMatch {
     return & $Validate $true
 }
 
+function Save-DevelopE2ECurrentStaticProof {
+    param([string]$QualificationPath, [string]$Commit, [string]$Tree)
+    # Called only after check.ps1 completes the current candidate's static gate.
+    # Freeze its bytes alongside the existing qualification artifacts: Release
+    # may later replace full.json/pester.xml without changing route provenance.
+    $junit = Join-Path (Split-Path -Parent $QualificationPath) 'pester.xml'
+    $sha = (Get-FileHash -LiteralPath $QualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $junitSha = (Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant()
+    $proof = [pscustomobject]@{path=$QualificationPath;sha256=$sha;junitPath=$junit;junitSha256=$junitSha}
+    if (-not (Test-WorkflowCurrentStaticProof -Proof $proof -Commit $Commit -Tree $Tree)) { return $null }
+    $root = Join-Path (Split-Path -Parent $QualificationPath) "journey-static/$sha"
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Copy-Item -LiteralPath $QualificationPath -Destination (Join-Path $root 'full.json') -Force
+    Copy-Item -LiteralPath $junit -Destination (Join-Path $root 'pester.xml') -Force
+    $proof.path = Join-Path $root 'full.json'; $proof.junitPath = Join-Path $root 'pester.xml'
+    if (-not (Test-WorkflowCurrentStaticProof -Proof $proof -Commit $Commit -Tree $Tree)) { return $null }
+    return $proof
+}
+
 function Write-WorkflowQualification {
     param(
         [string]$Commit,

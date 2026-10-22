@@ -277,6 +277,34 @@ function Get-WorkflowContinuationProof {
     }
 }
 
+function Test-WorkflowCurrentStaticProof {
+    param([object]$Proof, [string]$Commit, [string]$Tree)
+    try {
+        if (-not $Proof -or [string]$Proof.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            [string]$Proof.junitSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            (Get-FileHash -LiteralPath $Proof.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Proof.sha256 -or
+            (Get-FileHash -LiteralPath $Proof.junitPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Proof.junitSha256) { return $false }
+        $q = Get-Content -LiteralPath $Proof.path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$q.schemaVersion -ne 4 -or [string]$q.kind -cne 'itl-workflow-full-qualification' -or
+            [string]$q.status -cne 'passed' -or $q.repository.worktreeClean -isnot [bool] -or -not $q.repository.worktreeClean -or
+            [string]$q.repository.commit -cne $Commit -or [string]$q.repository.tree -cne $Tree -or
+            [int]$q.result.passed -le 0 -or [int]$q.result.failed -ne 0 -or [int]$q.result.skipped -ne 0 -or
+            [string]$q.junit.sha256 -cne [string]$Proof.junitSha256 -or
+            -not (Test-PesterInputIdentityRecord $q.pesterInputs)) { return $false }
+        if (@($q.stages | Where-Object { [string]$_.status -ceq 'failed' }).Count -gt 0) { return $false }
+        $tests = @($q.inventory.tests | Where-Object { [string]$_.path -like '*.Tests.ps1' } | ForEach-Object { [string]$_.path } | Sort-Object)
+        $inputs = @($q.pesterInputs.files | ForEach-Object { [string]$_.path } | Sort-Object)
+        if ($tests.Count -eq 0 -or ($tests -join "`n") -cne ($inputs -join "`n")) { return $false }
+        $passed = @($q.stages | Where-Object { [string]$_.status -ceq 'passed' } | ForEach-Object { [string]$_.name })
+        foreach ($name in @('pester','git-diff-check','static-tracked-state','ai-rules-compatibility')) {
+            if ($name -notin $passed) { return $false }
+        }
+        # This proves a completed static gate for this candidate, not permission
+        # to reuse its Pester pack. Nonreusable/unknown shards still run normally.
+        return $true
+    } catch { return $false }
+}
+
 function Test-RecordedWorkflowContinuation {
     param(
         [Parameter(Mandatory = $true)][object]$Record,
@@ -285,6 +313,10 @@ function Test-RecordedWorkflowContinuation {
     )
 
     try {
+        if ($Record.PSObject.Properties['proofKind'] -and [string]$Record.proofKind -ceq 'owner-input-static') {
+            if ([string]$Record.currentCommit -cne $Commit -or [string]$Record.currentTree -cne $Tree) { return $false }
+            return Test-WorkflowCurrentStaticProof -Proof $Record.staticProof -Commit $Commit -Tree $Tree
+        }
         $path = [string]$Record.targetedRunPath
         if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$Record.targetedRunSha256).ToLowerInvariant()) { return $false }

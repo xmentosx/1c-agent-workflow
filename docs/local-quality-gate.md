@@ -255,6 +255,26 @@ commit/tree должен иметь точный прошедший `Targeted` �
 отсутствующий/повреждённый Targeted record и изменение Develop-harness для
 Develop proof закрывают reuse. Это продолжение по fingerprint входов, а не
 эвристика «любой файл из tests безопасен».
+
+Для отдельного Develop journey точный Targeted может заменить полная static
+квалификация **текущего** commit/tree, выполненная штатным checker. При совпадении
+всего source inventory этого journey, baseline/stand, fork, runtime, среды и SHA
+артефактов ранний fail-fast откладывается до static; без подходящего proof
+сохраняется обычный native прогон. Writer сохраняет неизменяемые Full/JUnit
+байты, continuation привязывает их SHA, reader перепроверяет их вместе с
+текущими входами и более новыми падениями. Это не разрешение переиспользовать
+Pester pack с `reusable=false`: неизвестные и nonreusable shards выполняются
+обычным scheduler. Общий Full/Release continuation по scope по-прежнему требует
+Targeted; исключение принадлежит только Develop journey с полным совпадением
+его входов. Незавершённый static probe не записывается как пройденный этап.
+
+Fresh не включает upgrade-only `develop-configuration-rejection.ps1`, в том
+числе во вложенной identity положительного seed. Общие harness/fixture/runtime
+и фактическое состояние этого seed остаются входами fresh. Старые fingerprints
+не переписываются: новый контракт может потребовать один холодный прогон.
+Квитанции `qualificationFixtures.*.workflowUpdateAdmission` проверяет Capture
+перед каждым gate; они не входят в journey fingerprint. Дескрипторы капсул
+(включая path/SHA), прочие и неизвестные поля конфигурации остаются входами.
 В `release` явно включён один уже проверяемый managed-input:
 `.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1`.
 Для него сохраняются полная source lineage и точный passed Targeted. Изменение
