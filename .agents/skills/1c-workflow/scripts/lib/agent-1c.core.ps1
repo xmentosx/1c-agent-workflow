@@ -6503,9 +6503,8 @@ function Get-DesignerOwnedProcessInventory {
             $id = [int]$candidate.ProcessId
             if ($selected.ContainsKey($id)) { continue }
             $parentId = [int]$candidate.ParentProcessId
-            $output = if ($Scopes.Count -eq 0 -and $LogPath) { Get-OneCCommandLineSwitchPath -CommandLine ([string]$candidate.CommandLine) -SwitchNames @('Out') } else { '' }
-            $matchesLog = $output -and [IO.Path]::IsPathRooted($output) -and
-                [string]::Equals([IO.Path]::GetFullPath($output), $LogPath, [StringComparison]::OrdinalIgnoreCase)
+            $matchesLog = $Scopes.Count -eq 0 -and $LogPath -and
+                (Test-OneCCommandLineExactOutputPath -CommandLine ([string]$candidate.CommandLine) -ExpectedLogPath $LogPath)
             $matchedScopes = @($Scopes | Where-Object { Test-OneCNativeProcessInRunScopes -ProcessInfo $candidate -Scopes @($_) })
             $matchesScope = $matchedScopes.Count -gt 0
             if (-not ($Identities.Contains($id) -or $matchesScope -or ($Scopes.Count -eq 0 -and $matchesLog) -or $Identities.Contains($parentId))) { continue }

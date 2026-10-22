@@ -72,6 +72,56 @@ function Get-DesignerOwnedProcessInventory {
         }
     }
 
+    It 'keeps captured identities and rejects unusable Out paths through <enumerationMode> with scoped=<scoped>' -TestCases @(
+        @{enumerationMode='fallback';scoped=$false},@{enumerationMode='worker';scoped=$false},
+        @{enumerationMode='fallback';scoped=$true},@{enumerationMode='worker';scoped=$true}
+    ) {
+        param($enumerationMode,$scoped)
+        $result=& {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $base=Join-Path $TestDrive 'База с пробелом'
+            $log=Join-Path $TestDrive 'Точный вывод с пробелом.log'
+            $birth=[DateTime]::UtcNow.AddMinutes(-2)
+            $launcher=[pscustomobject]@{Id=34072;ProcessName='1cv8';StartTime=$birth}
+            function Get-Process {param($Id,$ErrorAction);return $launcher}
+            $prefix='1cv8.exe DESIGNER /F "'+$base+'" /Out '
+            # The quoted branch cannot consume this suffix; it yields an invalid
+            # path token. Such observations must not abort the whole inventory.
+            $bad=$prefix+'"'+$log+'" extra'
+            $script:InvalidOutputInventory=@(
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34072;ParentProcessId=10;CreationDate=$birth;CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34073;ParentProcessId=34072;CreationDate=$birth.AddSeconds(1);CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34074;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine=($prefix+'"'+$log+'" ')},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34075;ParentProcessId=20;CreationDate=$birth.AddSeconds(1);CommandLine=$bad},
+                [pscustomobject]@{Name='1cv8.exe';ProcessId=34076;ParentProcessId=20;CreationDate=$birth.AddHours(-1);CommandLine=($prefix+'"'+$log+'"')})
+            $token=Get-OneCCommandLineSwitchPath -CommandLine $bad -SwitchNames Out
+            $token.Contains('"') | Should -BeTrue
+            if($enumerationMode -eq 'fallback'){
+                function Receive-DesignerProcessEnumeration {param($ProbeState,$LogPath);return [pscustomobject]@{status='completed';processes=$script:InvalidOutputInventory}}
+            }else{
+                foreach($entry in $script:InvalidOutputInventory){$entry.CreationDate=$entry.CreationDate.ToString('o')}
+                $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:InvalidOutputInventory | ConvertTo-Json -Depth 6)))
+                function Start-Process {
+                    param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$PassThru)
+                    $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                    $inject="`$script:Inventory=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$encoded'))|ConvertFrom-Json;function Get-CimInstance{return `$script:Inventory};"
+                    $ArgumentList[-1]=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inject+$code))
+                    Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru
+                }
+            }
+            $state=New-DesignerInvocationProbeState -LauncherProcessId 34072 -SubProbeTimeoutSeconds 10
+            $state.invocationStartedAtUtc=$birth.ToString('o')
+            if($scoped){$state.ownedProcessScopes=@([pscustomobject]@{schemaVersion=1;role='native-invocation';kind='file';path=$base;mode='DESIGNER';logPath=$log;notBeforeUtc=$birth.ToString('o')})}
+            $deadline=[DateTime]::UtcNow.AddSeconds(12)
+            do{$state.nextProcessCheckAtUtc=[DateTime]::MinValue;$active=Get-DesignerInvocationProcessState -ProbeState $state -LogPath $log;if($active.querySucceeded){break};Start-Sleep -Milliseconds 50}while([DateTime]::UtcNow -lt $deadline)
+            [pscustomobject]@{active=$active;tracked=@($state.trackedProcessIds)}
+        }
+        $result.active.querySucceeded | Should -BeTrue
+        @($result.active.processIds) | Should -Be @(34072,34073,34074)
+        @($result.tracked) | Should -Not -Contain 34075
+        @($result.tracked) | Should -Not -Contain 34076
+    }
+
     It 'rejects an old child of a reused launcher PID through <enumerationMode> while retaining valid descendants' -TestCases @(@{enumerationMode='fallback'},@{enumerationMode='worker'}) {
         param($enumerationMode)
         $result = & {

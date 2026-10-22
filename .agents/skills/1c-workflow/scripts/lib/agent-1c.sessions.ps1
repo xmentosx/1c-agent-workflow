@@ -1289,15 +1289,29 @@ function Add-OneCNativeInvocationScope {
     $context.nativeOperationRecord.ownedProcessScopes = @($context.nativeOperationRecord.ownedProcessScopes) + @($scope)
 }
 
+function Test-OneCCommandLineExactOutputPath {
+    param([AllowNull()][string]$CommandLine, [AllowNull()][string]$ExpectedLogPath)
+    if (-not $ExpectedLogPath) { return $false }
+    $expected = [IO.Path]::GetFullPath($ExpectedLogPath)
+    $output = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @('Out')
+    if (-not $output) { return $false }
+    # A process command line is observation, not trusted path input. An invalid
+    # token proves no log ownership; held PID/birth and parent identities remain
+    # available to the inventory owner independently of this optional match.
+    try {
+        if (-not [IO.Path]::IsPathRooted($output)) { return $false }
+        $actual = [IO.Path]::GetFullPath($output)
+    } catch [ArgumentException] { return $false }
+    return [string]::Equals($actual, $expected, [StringComparison]::OrdinalIgnoreCase)
+}
+
 function Test-OneCNativeInvocationProcess {
     param([object]$ProcessInfo, [object]$Scope)
     $commandLine = [string](Get-StateValue -State $ProcessInfo -Name 'CommandLine' -Default '')
     $mode = [regex]::Match($commandLine, '^\s*(?:"[^"]+"|\S+)\s+(DESIGNER|ENTERPRISE|CREATEINFOBASE)(?=\s|$)', 'IgnoreCase')
     if (-not $mode.Success -or $mode.Groups[1].Value -ine $Scope.mode -or
         -not (Test-OneCCommandLineInfoBasePath -CommandLine $commandLine -InfoBaseKind $Scope.kind -InfoBasePath $Scope.path)) { return $false }
-    $output = Get-OneCCommandLineSwitchPath -CommandLine $commandLine -SwitchNames @('Out')
-    if (-not $output -or -not [IO.Path]::IsPathRooted($output) -or
-        -not [string]::Equals([IO.Path]::GetFullPath($output),$Scope.logPath,[StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if (-not (Test-OneCCommandLineExactOutputPath -CommandLine $commandLine -ExpectedLogPath $Scope.logPath)) { return $false }
     $creation = Get-StateValue -State $ProcessInfo -Name 'CreationDate' -Default $null
     $observedStart = if ($null -ne $creation) { ([datetime]$creation).ToUniversalTime().ToString('o') } else {
         [string](Get-StateValue -State $ProcessInfo -Name 'processStartTime' -Default '')
