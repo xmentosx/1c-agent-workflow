@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
-    [ValidateSet('update', 'status', 'restore', 'reconcile')][string]$Recovery = 'update',
+    [ValidateSet('update', 'status', 'restore', 'reconcile', 'legacy-status', 'legacy-copy')][string]$Recovery = 'update',
+    [string]$LegacySourceRoot = '',
     [string]$SnapshotId = '',
     [string]$ReconciliationFile = '',
     [string]$DependencySelectionFile = '',
@@ -48,6 +49,7 @@ try {
     if ($Recovery -ne 'update') { $arguments.WorkflowUpdateRecovery = $Recovery }
     if ($SnapshotId) { $arguments.WorkflowUpdateSnapshotId = $SnapshotId }
     if ($ReconciliationFile) { $arguments.WorkflowUpdateReconciliationFile = $ReconciliationFile }
+    if ($LegacySourceRoot) { $arguments.WorkflowUpdateLegacySourceRoot = $LegacySourceRoot }
     if ($DependencySelectionFile) { $arguments.DependencySelectionFile = [IO.Path]::GetFullPath($DependencySelectionFile) }
     if ($DependencyHotfixOnly) { $arguments.DependencyHotfixOnly = $true }
     & $helper @arguments
