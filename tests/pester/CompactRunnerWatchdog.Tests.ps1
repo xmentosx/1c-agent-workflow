@@ -279,8 +279,67 @@ exit 0
             $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
             $summary = ($result.stdout -join "`n") | ConvertFrom-Json
             $summary.stage | Should -Be 'runner.operation-timeout'
+            ($result.stderr -join "`n") | Should -Match 'ITL timeout extension: source=phase-budget:designer-wait\|running\|;'
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'does not add a delayed status read to the published phase budget' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl deadline задержка чтения ' + [guid]::NewGuid().ToString('N'))
+        $previousTimeout = $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            $runnerPath = Join-Path $scriptRoot 'run-itl-command.ps1'
+            Copy-RunnerFixture -Destination $runnerPath
+            # Preserve the first real status snapshot while reproducing a slow
+            # read/scheduled runner. Its remaining budget belongs to publication,
+            # not to the later instant at which the reader resumes.
+            $readHook = @'
+function Read-JsonFile {
+    param([string]$Path)
+    $observed = Read-JsonFileActual -Path $Path
+    if ($observed -and $observed.stage -eq 'designer-wait' -and -not (Test-Path -LiteralPath ($Path + '.delayed-read'))) {
+        [IO.File]::WriteAllText($Path + '.delayed-read', [string]$observed.updatedAt)
+        Start-Sleep -Seconds 3
+    }
+    return $observed
+}
+'@
+            $runnerText = [IO.File]::ReadAllText($runnerPath).Replace('function Read-JsonFile {', 'function Read-JsonFileActual {')
+            $runnerText = $runnerText.Replace('function Write-JsonFileAtomic {', ($readHook + "`nfunction Write-JsonFileAtomic {"))
+            [IO.File]::WriteAllText($runnerPath, $runnerText, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+for($i=0;$i -lt 20;$i++){
+    $now=Get-Date
+    $payload=[ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='designer-wait';stageDetail='waiting';liveness='running';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=3;exitCode=$null;errorMessage=''}
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+$payload.status='succeeded';$payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '2'
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('--', '-Action', 'check-dev-branch')
+            $watch.Stop()
+            $result.exitCode | Should -Not -Be 0
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 7 -Because $result.combinedText
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be 'runner.operation-timeout'
+            Test-Path -LiteralPath ($summary.statusPath + '.delayed-read') | Should -BeTrue
+            $phaseReport = @($result.stderr | Where-Object { $_ -match '^ITL timeout extension: source=phase-budget:' })
+            $phaseReport.Count | Should -Be 1
+            $deadlineMatch = [regex]::Match([string]$phaseReport[0], 'deadlineUtc=([^;]+);')
+            $deadlineMatch.Success | Should -BeTrue
+            $phaseDeadline = [DateTimeOffset]::Parse($deadlineMatch.Groups[1].Value)
+            $publishedAt = [DateTimeOffset]::Parse([IO.File]::ReadAllText($summary.statusPath + '.delayed-read'))
+            ($phaseDeadline - $publishedAt).TotalSeconds | Should -BeLessThan 3.2
+        } finally {
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = $previousTimeout
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

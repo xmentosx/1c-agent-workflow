@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-22T05:34:14.071081+00:00",
+  "sourceBase": "fc1df658864cffc751d2a2afe58bee135f0add62",
+  "status": "watchdog-owner-repair-verified-registration-through-existing-ledger",
+  "originalFailure": {
+    "test": "CompactRunnerWatchdog.Tests.ps1: does not slide the action deadline when a phase repeats its remaining budget",
+    "candidate": "b4979075b5a670ac0e23cc7af84b77c8b01fb722",
+    "elapsedSeconds": 8.5388752,
+    "thresholdLessThanSeconds": 7,
+    "causalLimit": "Original 8.54-second run did not retain a phase timing trace; its full startup/scheduling/cleanup attribution cannot be reconstructed."
+  },
+  "establishedCause": {
+    "owner": "compact run-itl-command phase budget reservation",
+    "before": "first observation used reader-now + remaining seconds; slow read/scheduling granted already elapsed time again",
+    "reproducer": "same 20x400ms helper, constant remaining3 and operation limit2, space+Cyrillic runner path; one retained first real status read delayed3 seconds",
+    "redElapsedSeconds": 8.1288965,
+    "after": "subtract existing Get-RunStatusFreshness.ageSeconds before once-per-phase deadline reservation; preserve expired candidate in the past, existing policy deadline/max cap/cleanup still apply",
+    "noNewOwnerStateOrCancellationAuthority": true
+  },
+  "acceptance": {
+    "originalFixtureAndThresholdUnchanged": true,
+    "originalTestStrengthened": "fresh phase still extends generic deadline; delayed-read test verifies deadline <= publication +3.2 sec and same overall <7 sec",
+    "focusedFinal": {
+      "result": "Passed",
+      "passed": 2,
+      "failed": 0,
+      "tests": [
+        {
+          "name": "does not slide the action deadline when a phase repeats its remaining budget",
+          "result": "Passed",
+          "durationSeconds": 5.2755043
+        },
+        {
+          "name": "does not add a delayed status read to the published phase budget",
+          "result": "Passed",
+          "durationSeconds": 5.156066699999999
+        }
+      ]
+    },
+    "ownerBatch": {
+      "status": "passed",
+      "passed": 23,
+      "failed": 0,
+      "skipped": 0,
+      "executedWorkers": 3,
+      "reusedWorkers": 0,
+      "workerSpanMs": 165752,
+      "runtimeIdentityStatus": "known",
+      "files": [
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\CompactRunnerLongContinuation.Tests.ps1",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\CompactRunnerWatchdog.Tests.ps1",
+        "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\tests\\pester\\CompactItlRunner.Tests.ps1"
+      ]
+    },
+    "positiveCompatibility": "full watchdog/compact runner and >120-second silent continuation; terminal success/failure and bounded60-second cleanup retained",
+    "diagnosticTimings": {
+      "beforeSoloSeconds": 5.1322998,
+      "afterSoloSeconds": 5.1170216,
+      "beforeFourParallelSeconds": [
+        6.1214089,
+        6.118063299999999,
+        6.1217748,
+        6.1227988
+      ],
+      "afterFourParallelSeconds": [
+        6.1177303,
+        6.1116905,
+        6.1144114,
+        6.1206873
+      ],
+      "interpretation": "diagnostic observations on this host, not a universal upper bound; original unfiltered Targeted remains required"
+    },
+    "intermediateTestRepairs": [
+      "First new assertion incorrectly forbade every phase extension; live logs proved a valid publication deadline may still extend the generic deadline. Replaced by direct publication-time assertion, original7-second threshold unchanged.",
+      "Should -Match does not populate caller Matches; fixed test parser with explicit regex Match. Intermediate failed artifacts retained.",
+      "First owner batch loaded the prior test-parser version; final exact-input batch is authoritative."
+    ]
+  },
+  "selectionAndCost": {
+    "existingContract": "lifecycle already selects CompactRunnerWatchdog and runner inputs; no selection exclusions, new suite or narrowed invalidation",
+    "newBehavioralTestCases": 1,
+    "selectedFocusedFiles": 3,
+    "productionDelta": "one subtraction from existing freshness; no new process/probe/schema/always-on text",
+    "reuse": "existing shard/runtime/input identities own reuse; no proof from old test-parser inputs accepted",
+    "budgets": "original <7, operation limit2, phase3, terminal cleanup60, generic watchdog120/global maximum unchanged"
+  },
+  "preservation": {
+    "cursorEvidenceUnchangedSha256": "887a6df970da3a6eae2ffb8d53c9b9cd3a67cc697ce7822f87a816cb816a846d",
+    "cursorNativeFinding": "closed only in authorized profile3.26.16 scope from fc1df658",
+    "foreignQueuesNotManuallyEdited": true,
+    "originalFailedCandidateAndArtifactsPreserved": true
+  },
+  "boundaries": [
+    "Gate 6 not repaired or run by this task",
+    "G4 and working-project migration not started",
+    "No workflow publication/push/PR",
+    "No source/helper processes terminated manually",
+    "Memory scopes/home/grants/ai_rules_1c unchanged"
+  ],
+  "rawRefs": [
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/red-summary.json",
+      "sha256": "03d6f265a32220f4b56d9d8624d2bb9b070d74c94afa2ad3d77b824ecd04f651",
+      "bytes": 598
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/red.xml",
+      "sha256": "3682b426802803d32a3d04afaaf8640bba9b03c11675617a188fd1088b709e48",
+      "bytes": 5921
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/green-summary.json",
+      "sha256": "2fb17003c553c898fe4e8c8dd7a012ef0fa2b7e8f159d469d0170a719cfab891",
+      "bytes": 616
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/green-publication-summary.json",
+      "sha256": "02d90459813c1328a11444d67c841d0125cff93f101b41de0c3979d44f815750",
+      "bytes": 607
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/green-final-summary.json",
+      "sha256": "b2db1e3a3d3747d9eb8bc456e44490bcae191c627521ef1fafae2177525699fc",
+      "bytes": 607
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/green-final.xml",
+      "sha256": "3ba7d73fd28ce2c8eb5e56acb731ef339df2172b3cc85999be9079ecc39a2694",
+      "bytes": 1944
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/before-diagnostic.json",
+      "sha256": "67d343e53036e685f25fbab1ce8b01eb4a055d3f1cb523f3285959033dcdad22",
+      "bytes": 9047633
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/after-diagnostic.json",
+      "sha256": "0f404f32590d4a2d89a801372f1242e1c5f443ea6d7f1735c7d82d37e3d0f4e5",
+      "bytes": 4333
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/owner-final/pester-shards/summary.json",
+      "sha256": "b046fda6f23b451fe2fb13399d229053809dbf7c895f37ada70208e41b3ea605",
+      "bytes": 13027
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/owner-final/pester.xml",
+      "sha256": "535cf66f7a2146491c7f6592bb569e5e9121b0088252e7ba1dc631b8c6523fe1",
+      "bytes": 10522
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-after-1-diagnostic.json",
+      "sha256": "d521698be5edd1e7bbd383217626bad3cff5247010690316ac6db34272bff1e0",
+      "bytes": 4344
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-after-2-diagnostic.json",
+      "sha256": "47cf8527c58012a0f63bd01ae7d2d53b75e54d81a56f3cdfe331bde1ea19acaf",
+      "bytes": 4344
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-after-3-diagnostic.json",
+      "sha256": "267032bd9582c6b7315a58bc738148ac26cb1c3f77b5d9b6b10e736437985a3c",
+      "bytes": 4413
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-after-4-diagnostic.json",
+      "sha256": "39119c8a5af698e0c2df4fd6572bd68360c83e447e545eeecba3a2907889e0e1",
+      "bytes": 4413
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-before-1-diagnostic.json",
+      "sha256": "1ba4aaff432947985b0c297922dc07e4c43c9615bf056cc133505a6fe2124b61",
+      "bytes": 4483
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-before-2-diagnostic.json",
+      "sha256": "6c9c22083d562dfe895acf6b9504b9788302b0bfb6e98d197e8719e364d1a241",
+      "bytes": 4492
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-before-3-diagnostic.json",
+      "sha256": "8d6216e1d7d95ef6c8bd8ba5e544f8c1966ccdc27c5a9ed22cd36c408ab196e9",
+      "bytes": 4483
+    },
+    {
+      "path": "build/test-results/g3/watchdog-repair-20261022/parallel-before-4-diagnostic.json",
+      "sha256": "5b54e3c40ee06864b09b7ea59492ffaf3b48b4d86c550bf97c27596811a4706a",
+      "bytes": 4483
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/registration-watchdog-worker-11.result.json",
+      "sha256": "59574a1580783d3f75dda7ec7d763bbcda645e03e8628e982bb4bba69ff416e1",
+      "bytes": 2366
+    },
+    {
+      "path": "build/test-results/g3/cursor-native-reads-20261022/registration-watchdog-worker-11.xml",
+      "sha256": "f9cef84df451f1a8c8cc0a101bf9e61eccaf809c6f534774783381d89d72659c",
+      "bytes": 11046
+    }
+  ],
+  "delivery": {
+    "owner": "scripts/source-delivery.ps1 RegisterChange and Status in common Git",
+    "requestedCommit": "fc1df658864cffc751d2a2afe58bee135f0add62",
+    "repairCommit": "descendant, preserves requested commit identity",
+    "registrationReceipt": "source-delivery ledger after owner repair; native/owner proof alone is not registered or publication"
+  }
+}
