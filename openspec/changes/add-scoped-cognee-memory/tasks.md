@@ -1,6 +1,6 @@
 # Tasks
 
-Актуальный registry dependency subset на runtime176bd2fa — [PM5 corrupt-cache/invalid-applied qualification](../add-product-project-registry/evidence/g3-pm5-cache-record-qualification-2026-10-22.md), 8 native controls passed. Это уточняет registry AC-16/17/26, не закрывает full G3/AC-39, consumer4.2/AC-43/G5/44 и не добавляет memory hook/cache/recovery. Остаток — в одном registry report; G4/Gate 6/рабочая миграция/публикация не начинались.
+Актуальный registry dependency subset 23.10 — [native отмена / public owned restore PM5](../add-product-project-registry/evidence/g3-pm5-interactive-recovery-2026-10-23.md). Эти subsets passed, но G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED открыт: completed resume не проверяет повреждённый marker. Full registry G3/AC-39 и memory4.2/AC-43/G5/44 не закрыты; память не вводит обходной updater/cache/recovery. G4/Gate6/рабочая миграция/публикация не начинались.
 
 Действующая [registry/source модель 2026-10-21](../add-product-project-registry/design.md#различия-проекта-и-подключённого-mcp-источника) заменяет прежний exact-index criterion. Code/Graph patches, source stamp и доступ к исходникам Graph не являются prerequisites памяти/G3. Исторические результаты ниже сохранены в своих границах; G4/AC-43/G5/44 не приняты и сейчас не реализуются.
 
