@@ -86,6 +86,7 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:DeliveryRequestedAiRulesSource = ''
         $script:developAncestorRoutes = @{}
         $script:developJourneyInputs = @{}
+        $script:developCurrentStaticProof = $null
         $script:sourceE2EArtifactBinding = $null
         $script:sourceE2EArtifactBindingPath = ''
     }
@@ -228,7 +229,8 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText($original, '{"repository":{"tree":"old"},"result":{"status":"passed"}}', [Text.UTF8Encoding]::new($true))
         $sha=Get-DeliveryFileSha256 -Path $original
         $binding=[pscustomobject]@{fingerprint=('d'*64)}
-        $ancestor=[pscustomobject]@{reportPath=$original;sha256=$sha;inputIdentity=$binding}
+        $script:developCurrentStaticProof=[pscustomobject]@{fixture='current static proof argument'}
+        $ancestor=[pscustomobject]@{reportPath=$original;sha256=$sha;inputIdentity=$binding;continuation=[pscustomobject]@{proofKind='owner-input-static'}}
         Mock Get-DevelopE2EIdentitySha256 { 'a'*64 }; Mock Get-DevelopE2EStandStateSha256 { 'c'*64 }
         Mock Restore-DevelopE2EQualification { $false }; Mock Get-DevelopE2EInputIdentity { $binding }
         Mock Get-DevelopE2EAncestorQualification { $ancestor }
@@ -238,6 +240,9 @@ Describe 'Delivery v3 immutable selective plan' {
         (Get-DeliveryFileSha256 -Path $route) | Should -BeExactly $sha
         (Get-Content -LiteralPath $route -Raw|ConvertFrom-Json).repository.tree | Should -BeExactly 'old'
         $script:developAncestorRoutes.fresh.inputIdentity.fingerprint | Should -BeExactly $binding.fingerprint
+        Should -Invoke Get-DevelopE2EAncestorQualification -Times 1 -Exactly -ParameterFilter {
+            $StaticProof -eq $script:developCurrentStaticProof -and -not $AllowPendingStatic
+        }
         Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
     }
 

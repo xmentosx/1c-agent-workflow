@@ -33,8 +33,9 @@ function Get-DevelopE2EInputIdentity {
         $patterns += @($projection.contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ })
         # Conservative source inventory; this is not an installed managed-copy policy.
         $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
-        $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/source-e2e-manifest-repair.ps1','scripts/develop-configuration-rejection.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
+        $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/source-e2e-manifest-repair.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
             'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1')
+        if ($Journey -eq 'upgrade') { $patterns += 'scripts/develop-configuration-rejection.ps1' }
         # Git inventory is unique. Ordinal ordering also stays identical between
         # the Core supervisor and its Windows PowerShell checker child.
         [string[]]$paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('ls-files','-z','--'))
@@ -57,7 +58,18 @@ function Get-DevelopE2EInputIdentity {
             foreach ($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
                 $physical = Join-Path $ProjectRoot $relative.Replace('/','\')
                 if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
-                $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+                $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } elseif ($relative -eq '.agent-1c/release-e2e.json') {
+                    $configInput = Get-Content -LiteralPath $physical -Raw -Encoding UTF8 | ConvertFrom-Json
+                    # Capture independently validates every admission before the
+                    # gate. Its receipt chain changes with installed workflow
+                    # commits, but does not change the immutable capsule input.
+                    if ($configInput.PSObject.Properties['qualificationFixtures']) {
+                        foreach ($descriptor in $configInput.qualificationFixtures.PSObject.Properties) {
+                            $descriptor.Value.PSObject.Properties.Remove('workflowUpdateAdmission')
+                        }
+                    }
+                    Get-DevelopE2ECanonicalJsonSha256 -Value $configInput
+                } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
             # UI policy affects installed behavior but is not in the older semantic dotenv projection.
             $ui = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*(?:AGENT_1C_)?UI_TESTING\s*=' })
@@ -101,7 +113,7 @@ function Get-DevelopE2EInputIdentity {
             $config = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
             if ($positiveRoot) {
-                $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey upgrade -Catalog $Catalog `
+                $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey $Journey -Catalog $Catalog `
                     -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding
                 if ($null -eq $positiveIdentity) { return $null }
                 $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
@@ -145,13 +157,13 @@ function Test-DevelopE2ENewerJourneyFailure {
 }
 
 function Get-DevelopE2EOwnerInputContinuation {
-    param([string]$RepositoryRoot, [string]$QualifiedCommit, [string]$CurrentCommit, [string]$CurrentTree)
+    param([string]$RepositoryRoot, [string]$QualifiedCommit, [string]$CurrentCommit, [string]$CurrentTree,
+        [object]$StaticProof = $null, [switch]$AllowPendingStatic)
     # Called only after exact complete journey input identity and cached report
     # integrity have matched. Keep this rule local to Develop route proof.
     $endpoint = Get-WorkflowContinuationEndpoint -RepositoryRoot $RepositoryRoot -QualifiedCommit $QualifiedCommit -CurrentCommit $CurrentCommit -CurrentTree $CurrentTree
     if (-not $endpoint) { return $null }
     $paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('diff','--name-only','-z',$QualifiedCommit,$CurrentCommit,'--'))
-    if ($paths.Count -eq 0) { return $null }
     $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
     $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $paths
     foreach ($path in @($selection.unknownPaths)) {
@@ -165,7 +177,18 @@ function Get-DevelopE2EOwnerInputContinuation {
         if (-not $approvedScope) { return $null }
     }
     $targeted = Get-ExactTargetedRunProof -RepositoryRoot $RepositoryRoot -Commit ([string]$endpoint.targetedCommit) -Tree ([string]$endpoint.targetedTree)
-    if (-not $targeted) { return $null }
+    if (-not $targeted) {
+        if ($StaticProof -and (Test-WorkflowCurrentStaticProof -Proof $StaticProof -Commit $CurrentCommit -Tree $CurrentTree)) {
+            return [pscustomobject]@{
+                qualifiedCommit=$QualifiedCommit; currentCommit=$CurrentCommit; currentTree=$CurrentTree
+                proofKind='owner-input-static'; paths=$paths; scopes=@('owner-input-exact'); staticProof=$StaticProof
+            }
+        }
+        # Discovery only: the caller must run the current candidate's complete
+        # static gate before it can consume this route. Never persist a probe.
+        if ($AllowPendingStatic) { return [pscustomobject]@{ proofKind='pending-current-static' } }
+        return $null
+    }
     return [pscustomobject]@{
         qualifiedCommit=$QualifiedCommit; currentCommit=$CurrentCommit; currentTree=$CurrentTree
         proofKind=[string]$endpoint.kind; targetedCommit=[string]$endpoint.targetedCommit; targetedTree=[string]$endpoint.targetedTree
@@ -176,8 +199,11 @@ function Get-DevelopE2EOwnerInputContinuation {
 }
 
 function Get-DevelopE2EAncestorQualification {
-    param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity)
-    if ($null -eq $InputIdentity) { return $null }
+    param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity,
+        [object]$StaticProof = $null, [switch]$AllowPendingStatic)
+    if ($null -eq $InputIdentity -or [string]$InputIdentity.fingerprint -cnotmatch '^[a-f0-9]{64}$' -or
+        (Get-DevelopE2ECanonicalJsonSha256 -Value $InputIdentity.inventory) -cne [string]$InputIdentity.fingerprint -or
+        -not $InputIdentity.inventory.external.complete -or [string]$InputIdentity.inventory.journey -cne $Journey) { return $null }
     if (-not (Get-Command Get-WorkflowContinuationProof -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'release-qualification.ps1') }
     $current = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
     $common = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
@@ -194,11 +220,13 @@ function Get-DevelopE2EAncestorQualification {
             $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $qualifiedTree = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse',"$([string]$report.repository.commit)^{tree}")).stdout.Trim()
             if ($qualifiedTree -cne [string]$report.repository.tree -or $qualifiedTree -cne [string]$manifest.identity.tree) { continue }
-            $expectedIdentity = if ($IdentitySha256) { $IdentitySha256 } else { [string]$report.identitySha256 }
-            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 $expectedIdentity -StandStateSha256 $StandStateSha256)) { continue }
+            # The complete owner fingerprint above binds current source and
+            # environment. Keep the historical envelope identity: its raw stand
+            # configuration also included admission receipts, which may advance.
+            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 ([string]$report.identitySha256) -StandStateSha256 $StandStateSha256)) { continue }
             $continuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
             if (-not $continuation -and [int]$InputIdentity.inventory.contract.schemaVersion -eq 2) {
-                $continuation = Get-DevelopE2EOwnerInputContinuation -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
+                $continuation = Get-DevelopE2EOwnerInputContinuation -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree -StaticProof $StaticProof -AllowPendingStatic:$AllowPendingStatic
             }
             if (-not $continuation) { continue }
             if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) { continue }

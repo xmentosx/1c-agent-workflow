@@ -119,6 +119,7 @@ $e2eReportPath = ""
 $developE2EReportPath = ""
 $developPlan = $null
 $script:developAncestorRoutes = @{}
+$script:developCurrentStaticProof = $null
 $script:developJourneyInputs = @{}
 $developScript = ""
 $developRulesSource = ""
@@ -211,7 +212,8 @@ function Ensure-DevelopE2ERoute {
     param(
         [Parameter(Mandatory = $true)][string]$Journey,
         [Parameter(Mandatory = $true)][object]$Plan,
-        [string]$Reason = "owner-selected public journey"
+        [string]$Reason = "owner-selected public journey",
+        [switch]$DeferForStatic
     )
     $routePath = Join-Path $script:developQualificationRoot ("develop-e2e-$Journey.json")
     $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
@@ -224,14 +226,18 @@ function Ensure-DevelopE2ERoute {
     }
 
     $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
-    $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity
+    $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity -StaticProof $script:developCurrentStaticProof -AllowPendingStatic:$DeferForStatic
+    if ($ancestor -and [string]$ancestor.continuation.proofKind -eq 'pending-current-static') {
+        Write-Host "Develop E2E ${Journey}: matching SHA-verified journey inputs; waiting for the current candidate's complete static proof."
+        return $null
+    }
     if ($ancestor) {
         # Preserve the historical report bytes and execution identity. The current
         # combined qualification owns the checked continuation, not a new execution.
         Copy-Item -LiteralPath $ancestor.reportPath -Destination $routePath -Force
         if (-not (Test-Path -LiteralPath $routePath -PathType Leaf) -or (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ancestor.sha256) { throw 'DEVELOP_E2E_CONTINUATION_CORRUPT' }
         $script:developAncestorRoutes[$Journey] = $ancestor
-        Add-ReusedStage -Name "develop-e2e-$Journey" -Reason 'SHA-verified ancestor journey with complete matching inputs and exact Targeted continuation' -Detail $routePath
+        Add-ReusedStage -Name "develop-e2e-$Journey" -Reason 'SHA-verified ancestor journey with complete matching inputs and exact candidate static continuation' -Detail $routePath
         return $routePath
     }
 
@@ -864,7 +870,7 @@ try {
         foreach ($journey in @($qualityCatalog.developJourneys.failFastOrder | ForEach-Object { [string]$_ })) {
             if (-not $canRunFailFast) { continue }
             if ($journey -notin @($developPlan.journeys | ForEach-Object { [string]$_ })) { continue }
-            [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester")
+            [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester" -DeferForStatic)
         }
     }
 
@@ -1047,6 +1053,7 @@ try {
         }
         if ($effectiveMode -eq "Develop" -and $existingQualification) {
             [void](Save-DevelopStaticQualification -RepositoryRoot $repoRoot -QualificationRoot (Split-Path -Parent $qualificationFullPath) -Tree $tree)
+            $script:developCurrentStaticProof = Save-DevelopE2ECurrentStaticProof -QualificationPath $qualificationFullPath -Commit $commit -Tree $tree
         }
     }
 
@@ -1128,9 +1135,10 @@ try {
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
             $ancestor = if ($script:developAncestorRoutes.ContainsKey($journey)) { $script:developAncestorRoutes[$journey] } else { $null }
             $evidenceTree = if ($ancestor) { [string]$ancestor.report.repository.tree } else { $tree }
-            if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $evidenceTree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
+            $routeIdentitySha256 = if ($ancestor) { [string]$ancestor.report.identitySha256 } else { $developIdentitySha256 }
+            if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $evidenceTree -Journey $journey -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
             $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $(if ($ancestor) { [string]$ancestor.report.repository.commit } else { $commit }); evidenceTree = $evidenceTree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if ($ancestor) { 'continued' } elseif (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
-            if ($ancestor) { $routeRecords[$journey]['inputIdentity'] = $ancestor.inputIdentity; $routeRecords[$journey]['continuation'] = $ancestor.continuation }
+            if ($ancestor) { $routeRecords[$journey]['identitySha256'] = $routeIdentitySha256; $routeRecords[$journey]['inputIdentity'] = $ancestor.inputIdentity; $routeRecords[$journey]['continuation'] = $ancestor.continuation }
         }
         if ($plannedJourneys.Count -gt 0) {
             foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
