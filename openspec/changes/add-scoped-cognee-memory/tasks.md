@@ -1,6 +1,6 @@
 # Tasks
 
-Актуальный registry dependency subset 23.10 — [native отмена / public owned restore PM5](../add-product-project-registry/evidence/g3-pm5-interactive-recovery-2026-10-23.md). Эти subsets passed, но G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED открыт: completed resume не проверяет повреждённый marker. Full registry G3/AC-39 и memory4.2/AC-43/G5/44 не закрыты; память не вводит обходной updater/cache/recovery. G4/Gate6/рабочая миграция/публикация не начинались.
+Актуальный registry dependency result — [completed resume repair и исходный PM5 repeat](../add-product-project-registry/evidence/g3-completed-resume-repair-2026-10-23.md). Named blocker закрыт в этой области: новый отказ имеет проверенный public restore → original command continuation; full registry AC-39 и consumer4.2/AC-43/G5/44 открыты. Memory не вводит свой updater/cache/recovery/probe. Ограничение параллельно изменившегося старого seed сохранено в одном registry report; G4/Gate6/рабочая миграция/публикация не начинались.
 
 Действующая [registry/source модель 2026-10-21](../add-product-project-registry/design.md#различия-проекта-и-подключённого-mcp-источника) заменяет прежний exact-index criterion. Code/Graph patches, source stamp и доступ к исходникам Graph не являются prerequisites памяти/G3. Исторические результаты ниже сохранены в своих границах; G4/AC-43/G5/44 не приняты и сейчас не реализуются.
 

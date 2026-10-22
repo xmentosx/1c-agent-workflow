@@ -163,7 +163,22 @@ function Invoke-ItlProductProjectClientApply {
         return [pscustomobject]@{status='cancelled';operationId=$operation.operationId}
     }
     if($Mode -in @('resume','restore')){
-        if($operation.status -eq 'completed' -and $Mode -eq 'resume'){return [pscustomobject]@{status=$(if(Get-ItlCatalogField $operation 'restoreCompatibility' $false){'compatible-restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision}}
+        if($operation.status -eq 'completed' -and $Mode -eq 'resume'){
+            $compatible=Get-ItlCatalogField $operation 'restoreCompatibility' $false
+            # A completed plan is not evidence that its applied marker still
+            # exists and is valid. Compatibility restore may intentionally
+            # retain an older marker or remove it altogether.
+            try{
+                $applied=Read-ItlProductProjectRecord applied
+                $expected=if($compatible){Get-ItlCatalogField (Get-ItlCatalogField $operation.beforeApplied 'compatibilityBaseline') 'applied'}else{@{operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision;contextHash=(Get-ItlCatalogHash $operation.context)}}
+                if($expected){
+                    if(-not $applied -or $applied.operationId -cne $expected.operationId -or $applied.catalogRevision -cne $expected.catalogRevision -or $applied.contextHash -cne $expected.contextHash){throw 'Applied marker does not match the completed operation outcome.'}
+                }elseif($applied){throw 'Compatibility restore expected no applied marker.'}
+            }catch{
+                throw 'CATALOG_COMPLETED_RESUME_NEEDS_RESTORE: the completed operation has no matching valid applied context. No files were changed. Inspect -Action vibecoding1c-mcp-status -CatalogAction status, then use -Action vibecoding1c-mcp-select -CatalogAction restore on the saved operation and repeat the original command.'
+            }
+            return [pscustomobject]@{status=$(if($compatible){'compatible-restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision}
+        }
         if($operation.status -in @('cancelled','restored')){return [pscustomobject]@{status=$operation.status;operationId=$operation.operationId}}
         if(-not $operation.prepared){$ExpectedInputStates=Get-ItlCatalogField $operation 'previewInputStates';$ExpectedOwnerState=[string](Get-ItlCatalogField $operation 'previewOwnerState' '')}
         foreach($settingPlan in @(Get-ItlProductProjectSettingPlans $operation)){
