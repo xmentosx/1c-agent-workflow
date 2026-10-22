@@ -144,3 +144,9 @@ Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, cred
 Canary1 user turn/2 tools/UI12 s, tokens/provider/title traffic/billing/paired delta не измерены; budgets прежние. Full registry G3/AC-39 и остальные installed/CUSTOM/platform/cost, mandatory release population AC-36–38 и memory4.2/G4/AC-43/G5/44 открыты. Gate 6/рабочая миграция/публикация не выполнялись; six scopes/home/grants/ai_rules_1c прежние.
 
 - [x] Согласовать dependency с [registry-owned watchdog repair](../add-product-project-registry/evidence/g3-watchdog-registration-repair-2026-10-22.md): existing runner phase deadline учитывает возраст публикации, исходный `<7 s`/workload сохранены; owner tests не заменяют source-delivery регистрацию. Memory не получает новый timeout owner/probe/schema; G4/4.2/AC-43/G5/44 и full G3/release population остаются открытыми.
+
+## Dependency текущего installed PM5, 2026-10-22
+
+- [x] Учесть [единый registry result](../add-product-project-registry/evidence/g3-pm5-current-package-2026-10-22.md): first legacy update на d109a95d/later, late association, private draft/отдельный select, exact restore и real partial/pinned resume. Новый stand/старые copies сохранены; memory off, Cognee calls0. Это installed dependency subset, не consumer4.2/G4 или полный AC-43/G5.
+- [x] Разделить 20+20 whole-CLI observations и memory paired costs: bound SHA+mtime пяти файлов прежние, baseline explicit-sync receipt mtime rewrite/failures сохранены; isolated Startup/remote/agent tokens/billing не доказаны. Нет нового memory startup probe/owner/ledger.
+- [ ] Существующий остаток AC-43/G5/44: full registry G3/AC-39, fresh/source DB/client/platform/conflict/cost criteria и обязательное AC-36–38 population, затем отдельно разрешённые consumer/native memory journeys. Q1–Q7/D9/G2/six scopes/home/grants/optional OpenViking прежние; Gate 6/G4/рабочая миграция/публикация не выполнялись.

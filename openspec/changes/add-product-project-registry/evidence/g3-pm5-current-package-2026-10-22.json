@@ -1,0 +1,1036 @@
+{
+  "schemaVersion": 1,
+  "observedUtc": "2026-10-22T14:55:51.242202+00:00",
+  "status": "qualified-current-installed-PM5-subset-full-G3-open",
+  "runtimeSource": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+  "qualificationCodeChange": false,
+  "aiRulesCommit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+  "scope": {
+    "platform": "Windows11 local terminal",
+    "client": "kilocode",
+    "admission": "explicit sealed Develop capsule; original live raw seed unavailable",
+    "roots": [
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "da9888c5b076af6590e39d282440c82cdb8cab19de0a6af4bce1dad4dcf7a298",
+        "bindingPresent": false,
+        "head": "5c0665bc90615edbf227761c0128e73a30f6fdcd"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "b92a24ce2864c092ab79635dc321b00bf0c23eeb42f9b448bf173fa22c29ce3d",
+        "bindingPresent": false,
+        "head": "b17b380ff17e64a49063eb6f77407a32ea2ac922"
+      }
+    ],
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "productionRegistryOrWorkingProjectMutation": false,
+    "serverChanges": false,
+    "nativeAgentToolReads": false
+  },
+  "firstUpgrade": {
+    "from": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+    "to": "d109a95dc1db95199bb3b2d4114b6cafddd05adb",
+    "exitCode": 0,
+    "terminal": "succeeded",
+    "durationMs": 318793,
+    "realInteractiveInput": "later",
+    "offerVisibleAfterPackageSuccess": true,
+    "noExternalResumeOrCallerPreUpgrade": true,
+    "bothRootsInstalledExactRuntime": true,
+    "memoryOptIn": false,
+    "optionalUiTools": "windows-mcp degraded: uv/uvx missing; not repaired or silently accepted as ready",
+    "caughtDiagnostic": "Transcript retains one caught ReadAllText sharing violation of temporary fresh-status. Whole same command continued and succeeded; not a repeated/established G3 product blocker."
+  },
+  "association": {
+    "status": "passed-captured-native-run-and-original-direct-select-restore",
+    "nativeSteps": [
+      {
+        "durationMs": 4303,
+        "stderrBytes": 0,
+        "stdoutBytes": 1213,
+        "arguments": [
+          "-CatalogAction",
+          "preview",
+          "-CatalogProjectId",
+          "pm5-core-development"
+        ],
+        "name": "current-preview",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-status"
+      },
+      {
+        "durationMs": 4910,
+        "stderrBytes": 0,
+        "stdoutBytes": 659,
+        "arguments": [
+          "-CatalogAction",
+          "select",
+          "-CatalogProjectId",
+          "pm5-core-development"
+        ],
+        "name": "current-select",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2449,
+        "stderrBytes": 0,
+        "stdoutBytes": 1949,
+        "arguments": [
+          "-CatalogAction",
+          "context"
+        ],
+        "name": "current-context",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-status"
+      },
+      {
+        "durationMs": 2979,
+        "stderrBytes": 0,
+        "stdoutBytes": 78,
+        "arguments": [
+          "-CatalogAction",
+          "context"
+        ],
+        "name": "current-branch-context",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "action": "vibecoding1c-mcp-status"
+      },
+      {
+        "durationMs": 5420,
+        "stderrBytes": 0,
+        "stdoutBytes": 1562,
+        "arguments": [
+          "-Client",
+          "kilocode"
+        ],
+        "name": "current-sync",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "sync-client-mcp"
+      },
+      {
+        "durationMs": 4170,
+        "stderrBytes": 0,
+        "stdoutBytes": 1073,
+        "arguments": [
+          "-Client",
+          "kilocode"
+        ],
+        "name": "current-sync-noop",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "sync-client-mcp"
+      },
+      {
+        "durationMs": 3810,
+        "stderrBytes": 0,
+        "stdoutBytes": 318,
+        "arguments": [
+          "-CatalogAction",
+          "restore"
+        ],
+        "name": "current-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 4394,
+        "stderrBytes": 0,
+        "stdoutBytes": 369,
+        "arguments": [
+          "-CatalogAction",
+          "restore-compatible"
+        ],
+        "name": "current-compatible-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 5222,
+        "stderrBytes": 0,
+        "stdoutBytes": 2093,
+        "arguments": [
+          "-CatalogAction",
+          "select",
+          "-CatalogProjectId",
+          "pm5-core-development"
+        ],
+        "name": "original-later-select",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 3674,
+        "stderrBytes": 0,
+        "stdoutBytes": 318,
+        "arguments": [
+          "-CatalogAction",
+          "restore"
+        ],
+        "name": "original-later-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      }
+    ],
+    "exactDescriptorLockHeadsAndCleanRootsRestored": true,
+    "foreignDisabledPreserved": true,
+    "sourceRunFailedHarness": true,
+    "restoreSemantics": "After sync, ordinary restore undoes that last operation and retains the prior binding. restore-compatible restores the initial association baseline. The unchanged original late select -> restore sequence was separately executed with exact byte/head/clean checks.",
+    "harnessFailuresRetained": true,
+    "originalFailedReport": "association-controls.json",
+    "memoryEnabled": false,
+    "savedLaterRetained": true
+  },
+  "fault": {
+    "status": "passed",
+    "gate6Run": false,
+    "memoryRun": false,
+    "publication": false,
+    "steps": [
+      {
+        "durationMs": 7438,
+        "stderrBytes": 328,
+        "stdoutBytes": 1867,
+        "arguments": [
+          "-CatalogAction",
+          "select",
+          "-CatalogProjectId",
+          "pm5-core-development"
+        ],
+        "name": "fault-select",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2752,
+        "stderrBytes": 297,
+        "stdoutBytes": 0,
+        "arguments": [
+          "-Client",
+          "kilocode"
+        ],
+        "name": "fault-pending-main",
+        "exitCode": 1,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "sync-client-mcp"
+      },
+      {
+        "durationMs": 2591,
+        "stderrBytes": 0,
+        "stdoutBytes": 415,
+        "arguments": [
+          "-CatalogAction",
+          "status"
+        ],
+        "name": "fault-status",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-status"
+      },
+      {
+        "durationMs": 3531,
+        "stderrBytes": 0,
+        "stdoutBytes": 324,
+        "arguments": [
+          "-CatalogAction",
+          "resume"
+        ],
+        "name": "fault-resume",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 3802,
+        "stderrBytes": 0,
+        "stdoutBytes": 318,
+        "arguments": [
+          "-CatalogAction",
+          "restore"
+        ],
+        "name": "fault-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      }
+    ],
+    "pinnedRevision": "deb4f82cd5aa9d107aefea7a0b8761022c36d8f9",
+    "newTip": "96ae1e8d982d908cbf8f8c904c168a16c16ddb72",
+    "operationId": "fb1dc82dd42d4fde8c5d1a8ea153c111",
+    "sameOperationAndPinnedRevision": true,
+    "mainBlocked": true,
+    "exactDescriptorAndLockRestore": true,
+    "limits": "Single installed client and real private-selection file fault; multi-client A/B foreign-write topology is not covered."
+  },
+  "customProject": {
+    "status": "passed",
+    "steps": [
+      {
+        "durationMs": 4589,
+        "stderrBytes": 0,
+        "stdoutBytes": 240,
+        "arguments": [
+          "-CatalogAction",
+          "create",
+          "-CatalogRecordPath",
+          "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\pm5-current-package-20261022\\custom-project-record.json"
+        ],
+        "name": "custom-create",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 5434,
+        "stderrBytes": 0,
+        "stdoutBytes": 2101,
+        "arguments": [
+          "-CatalogAction",
+          "select",
+          "-CatalogProjectId",
+          "qualification-pm5-custom"
+        ],
+        "name": "custom-select",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      },
+      {
+        "durationMs": 2490,
+        "stderrBytes": 0,
+        "stdoutBytes": 2158,
+        "arguments": [
+          "-CatalogAction",
+          "context"
+        ],
+        "name": "custom-context",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-status"
+      },
+      {
+        "durationMs": 3555,
+        "stderrBytes": 0,
+        "stdoutBytes": 369,
+        "arguments": [
+          "-CatalogAction",
+          "restore-compatible"
+        ],
+        "name": "custom-compatible-restore",
+        "exitCode": 0,
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "action": "vibecoding1c-mcp-select"
+      }
+    ],
+    "privateOnly": true,
+    "productionRegistryWrite": false,
+    "gate6Run": false,
+    "memoryRun": false,
+    "projectId": "qualification-pm5-custom",
+    "productId": "pm5-corp",
+    "publication": {
+      "baseRevision": "96ae1e8d982d908cbf8f8c904c168a16c16ddb72",
+      "localRecords": [
+        {
+          "collection": "projects",
+          "recordHash": "f240db0b0e53e526d274167c86b13482d25e0fb3e7f1043a78b7dd53b7c084d9",
+          "recordId": "qualification-pm5-custom",
+          "status": "prepared-request"
+        }
+      ],
+      "state": "local-pending"
+    },
+    "optionalMissingLinksDidNotPrompt": true,
+    "memoryOptIn": false
+  },
+  "timings": {
+    "status": "measured-with-baseline-receipt-write-observation",
+    "series": {
+      "unbound": {
+        "samples": 20,
+        "milliseconds": [
+          3978,
+          4546,
+          4456,
+          4344,
+          4665,
+          4450,
+          4299,
+          4090,
+          4105,
+          4276,
+          4054,
+          4665,
+          4231,
+          4345,
+          4253,
+          4341,
+          5148,
+          6004,
+          4926,
+          4580
+        ],
+        "medianMs": 4344.5,
+        "p95Ms": 5148,
+        "wholeCli": true,
+        "protectedChanges": {
+          ".agent-1c/mcp/client-managed.json": {
+            "before": {
+              "sha256": "38350b74348c5abdcf624cfa958e312af880b65ddc066e64ed20101501a77236",
+              "bytes": 1950,
+              "mtimeUtcTicks": 639282769946370741
+            },
+            "after": {
+              "sha256": "38350b74348c5abdcf624cfa958e312af880b65ddc066e64ed20101501a77236",
+              "bytes": 1950,
+              "mtimeUtcTicks": 639282770845006500
+            }
+          }
+        }
+      },
+      "bound": {
+        "samples": 20,
+        "milliseconds": [
+          4479,
+          4305,
+          4337,
+          4661,
+          5076,
+          4804,
+          4764,
+          4993,
+          4690,
+          4819,
+          4383,
+          4576,
+          5066,
+          4504,
+          4652,
+          5008,
+          4476,
+          4635,
+          4428,
+          4757
+        ],
+        "medianMs": 4656.5,
+        "p95Ms": 5066,
+        "wholeCli": true,
+        "protectedChanges": {}
+      }
+    },
+    "medianDeltaMs": 312.0,
+    "p95DeltaMs": -82,
+    "boundFiveFilesShaAndMtimeUnchanged": true,
+    "wholeCliNotIsolatedStartup": true,
+    "registryTransport": "private local Git, remote/offline transport not measured",
+    "agentTokensOrBilling": "unmeasured",
+    "harnessFailures": [
+      "Unbound no-write assertion failed: explicit sync refreshes client-managed mtime with identical content, before any G3 binding. Original failure retained, not accepted as no-write.",
+      "Bound series completed20 and preserved5files; final delta formatting failed because continuation script had no unbound member. Exact raw calls/guards/restoration retained and validated here."
+    ],
+    "fullInstalledCostAcceptance": false
+  },
+  "preservation": {
+    "databaseSha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+    "databaseBytes": 3295928320,
+    "businessTreesUnchanged": true,
+    "finalRootsEqualPostUpdateBaseline": true,
+    "oldProtectedFiles": 21,
+    "oldProtectedRoots": 4,
+    "oldStateUnchanged": true,
+    "capsuleArtifacts": 11,
+    "gate6ArtifactsUnchanged": 7,
+    "newStandPreserved": true
+  },
+  "nativeCommands": {
+    "capturedPublicCommandResults": 63,
+    "additionalTopLevelFirstUpgrade": 1,
+    "expectedFaultExits": [
+      "fault-select",
+      "fault-pending-main"
+    ],
+    "noLlmQualificationTurns": true
+  },
+  "harnessFailures": {
+    "preserved": true,
+    "notProductAcceptanceFailures": [
+      "PowerShell parse error before any action",
+      "dot-sourced fixture Phase shadowed control phase: zero-step pseudo-pass rejected",
+      "PSObject versus dictionary for synthetic foreign entry before native actions",
+      "private memoryOptIn is under productProject; continued existing bound state, not reselect/reset",
+      "Where-Object shorthand failed final snapshot matching; exact captured objects post-validated",
+      "restore after sync undoes that last operation, not the initial association; restore-compatible and unchanged direct select->restore were both tested",
+      "bound-only timing continuation had no unbound member for final delta formatting;20 raw calls,5-file guards and compatible restore completed",
+      "create prepares a record without association; actual unbound context retained, followed by explicit select"
+    ]
+  },
+  "remaining": {
+    "fullRegistryG3AndAC39": false,
+    "nativeFreshInitNewBranchRefreshDowngrade": "not qualified here; capsule restores one existing branch, original live seed/master database currentness unavailable. No substitute workload or Gate6 run.",
+    "otherInstalledScenarios": "Multi-client A/B foreign-write/conflict choices, remote/offline transport and full supported frontend matrix remain open.",
+    "platforms": "No dedicated PM4, Windows10/Server terminal stands supplied.",
+    "cost": "WholeCLI local-registry delta measured; isolated startup/remote/platform/agent tokens and billing remain unverified. Unbound explicit-sync receipt mtime rewrite observed.",
+    "releasePopulation": "Registry1.9-1.11/5.7 AC36-38 and memoryAC44 open; private synthetic record is not release data."
+  },
+  "boundaries": {
+    "gate6RunOrFix": false,
+    "G4Started": false,
+    "workingMigration": false,
+    "publicationOrPush": false,
+    "CodeGraphPatchedOrReindexed": false,
+    "CogneeCalls": 0
+  },
+  "delivery": {
+    "owner": "existing source-delivery RegisterChange/Status; documentation-only update",
+    "qualificationCommit": "new descendant of runtime source; installed runtime stays pinned d109a95d",
+    "fullG3OrReleaseNotImplied": true
+  },
+  "rawReferences": [
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/prepare-result.json",
+      "sha256": "6f0c7d242e17ecc07da964e619b8debcf2d48fa85f49d9de755c32f9192d0db7",
+      "bytes": 739
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/pm5-copy-receipt.json",
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e",
+      "bytes": 2145
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/before-update.json",
+      "sha256": "3fc96473bddce7a1553bbb978197f74dd8abd427d70bf6be4a089051a765024d",
+      "bytes": 2517
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/data-before-update.json",
+      "sha256": "cac38a6ca1ee6538acd6113d4c37a6b804bf7dcb2466c629ed2aff14a44fd1cf",
+      "bytes": 452
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/data-after-controls.json",
+      "sha256": "bf44e5d761a5e9bada7427126a6f69a0a793178c0860d1cead8e3fae4f655ca6",
+      "bytes": 368
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/first-current-foreground-update-result.json",
+      "sha256": "fcd7c0c9084771577c40c65e1303ab1293c6ba519353be207eea80d4e01f46cd",
+      "bytes": 550
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/first-current-foreground-update.transcript.txt",
+      "sha256": "b66e1a8b71c5f567f70ebec531128257087ada8738b633ca541c3ee1ee3a7b1d",
+      "bytes": 15812
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-validation.json",
+      "sha256": "758ea9d9debb7eecda23a65e2cacdda074a2edee89bd21608df73b3399bceb9a",
+      "bytes": 4799
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-before.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-after.json",
+      "sha256": "cc3e12310090539e8d1e89cd078949be3fd0b90146183f2b8994e4d149a6903a",
+      "bytes": 1343
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-controls.json",
+      "sha256": "6e540fbec0ebd8ad22255300032ebbcdf9b5bad23eeb6dd54029c5751a56f361",
+      "bytes": 5203
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/recovery-controls.json",
+      "sha256": "f9c523536cf09860b7d9b22f9222af6a2aa5ada460e70433f5d04cfd089bdf58",
+      "bytes": 2294
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/compatible-restored-roots.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/original-restored-roots.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-controls.json",
+      "sha256": "492f522f91277238b31ee657786bf4d0056262aa21955059f6688dfd0e0a33d9",
+      "bytes": 3938
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-before.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-after.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-controls.json",
+      "sha256": "c65911e104820f5a3a2661832c266cd12a157e818efc2f272b9e604f58ce31d1",
+      "bytes": 13749
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-bound-controls.json",
+      "sha256": "d8d5d866cf636a88dbb246bf8940a6c4c9d00906badeef115a70716361494ff9",
+      "bytes": 16807
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-validation.json",
+      "sha256": "d49c51fb716d50374dd935a17ac5fc7ce0ea5c66014e39f56fd85c323aec92a7",
+      "bytes": 2252
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-protected-before.json",
+      "sha256": "14dad5df2cd27a43485ec9a688a1eb1f2f9ba223af35fadade81b526afc6f2e0",
+      "bytes": 1358
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-protected-after.json",
+      "sha256": "4b8b3a8e4d7570b9e9962186bcdcc275bdf426c1f19cbaf447ff6718547e4731",
+      "bytes": 1358
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-protected-before.json",
+      "sha256": "47ac4e42d58153b24cfc9620b20d1c54bc64790e4183cd1c081234706e08aab1",
+      "bytes": 1710
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-protected-after.json",
+      "sha256": "47ac4e42d58153b24cfc9620b20d1c54bc64790e4183cd1c081234706e08aab1",
+      "bytes": 1710
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-controls.json",
+      "sha256": "6e2d9479b9d670dc9da2f839adc8d9c3f95ff0432a3230753a9c690a948e6478",
+      "bytes": 4106
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-context-decoded.json",
+      "sha256": "a31b63f6f732d94e3ee926bf76a405eb222f1c412276a5f54ebd37900bd61034",
+      "bytes": 5405
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-project-record.json",
+      "sha256": "f3e2aa115bf164b12e9fea4d68d89ba98ef30e19ae7b5bfe166939fee1421872",
+      "bytes": 173
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/final-roots.json",
+      "sha256": "318a7cbe54be4545c94114fb7c0bb227c8d8528b7fef6894230ad8fd4c3343e7",
+      "bytes": 1298
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/preserved-before.json",
+      "sha256": "ee74656428c6e86db56cc8a9b5368626fe2a234fa4fa6787d53ce681008a31bf",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/preserved-after.json",
+      "sha256": "2dc3041b5ebb68b60c4152364d58141c6323dc6d7382e22051a557d9f6c3940c",
+      "bytes": 9482
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/capsule-final-validation.json",
+      "sha256": "5bbc20af4c8fe54b21c6b0c7727739d9f53ea0666c3417a25af6cb40dba05faa",
+      "bytes": 3486
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-controls.ps1",
+      "sha256": "26fdcc04826cdd9824c182208d22b280bf0223b9049f585101cdcc7ab9ca9fbc",
+      "bytes": 7105
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-controls.ps1",
+      "sha256": "57136e6cdaf852dd0c03c55b43deab1c9bfc648ed1af5b43b09c744cb56ad626",
+      "bytes": 5925
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-controls.ps1",
+      "sha256": "b2c5a01a1144f24005d9679f7be068864a4a753dc0f0fa3ff7ca014fb6918e1e",
+      "bytes": 5433
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-bound-controls.ps1",
+      "sha256": "32dc18b2b56794625694491e912dd3c5e6f48351873a28ad9c0ae001cfde78a0",
+      "bytes": 5429
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-controls.ps1",
+      "sha256": "e1ae32f256d3dea9ebdfc78f67f94f96b34ab6555e04f35d6fe62f54ab443aa3",
+      "bytes": 4234
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/recovery-controls.ps1",
+      "sha256": "de959d3720234743a733cb899f7136605e909530e24740fb86df2a1f3dec4bf0",
+      "bytes": 3679
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-parser-failure.log",
+      "sha256": "cb8dfec203bc50260544de1208ec660dd5277ce92f6cd9de0ec6dfa3f865d726",
+      "bytes": 1818
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-shadowed-phase-not-accepted.log",
+      "sha256": "2674fd222639401be1227522c9604c22d4392a07dca10731fa108a452300e2b4",
+      "bytes": 269
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-controls.json.config-shape-failure",
+      "sha256": "80e76d2cb55abe3286e006420ce11f13da2434244403cf0e41ed528113e0f633",
+      "bytes": 464
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/association-controls.json.selection-envelope-failure",
+      "sha256": "9295c041e530961de64a4fb4352f40180d949aa459e9bade8b234e9bbba5e070",
+      "bytes": 2713
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-controls.json.before-separate-select",
+      "sha256": "13010bcc57d638d43774bd53e1bfe101f9f9bea79fa47a83f6be3a66c1515810",
+      "bytes": 1868
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-1-result.json",
+      "sha256": "a27ddce7d3330ec0283e355fc1bdf8efca70af1316a81d6457b111a78e43edbb",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-10-result.json",
+      "sha256": "92c3d9e096224261bdb6583ce276a7bf79be77a5d85ce6af780854137748f69c",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-11-result.json",
+      "sha256": "f46793ac45debf827af8e0494eca8af77f9915339f0d68285bc89282afb9c77b",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-12-result.json",
+      "sha256": "cd815107b3f45e18476b6d599a3057ae6a0e5487a48d2ea556e2f1d16654d876",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-13-result.json",
+      "sha256": "2eae80c6ff9c0bec84bc8fce8d753efb07d6c2f7ccdfe58c50cc98b0d1b5be27",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-14-result.json",
+      "sha256": "1f3bd6e690da7567d7155409a86c9876c1d9dd9568c0b41cf2b01527fcf95157",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-15-result.json",
+      "sha256": "6abdb262d932254ef06853ddb26b2b7622553274fcd35b5546e3cf7ff9920312",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-16-result.json",
+      "sha256": "3421f8e119da0b71dc7e05ce73955576a34eb910d8a1cfb3db6f6e2da3e12e06",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-17-result.json",
+      "sha256": "e39b9777b8896f94dc31b2023c3a8866385577a6eb980f7852b4d7570bf6b43f",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-18-result.json",
+      "sha256": "a4b52a8c7008fae0dab5743d1abb5275f46d9b0c9372f85d03285f1fc4c1cf66",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-19-result.json",
+      "sha256": "30a1cb2064ac5cf0f4fe1ebf9f3730fc326983d260eea4f275df718b650130a4",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-2-result.json",
+      "sha256": "de3038eee35aecce9a29c764cc24d6da378e323c9422e2a15d44e1fb942a5917",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-20-result.json",
+      "sha256": "1d1b7e939c7a5ed3ede5914bfaada8d1354b5398707aac5ce5999472a160faf3",
+      "bytes": 398
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-3-result.json",
+      "sha256": "74ccd6f07ee6e548ee0b0cc26dace30036293cb303d3713530991c55085ec7af",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-4-result.json",
+      "sha256": "161a941cba6dc26cca38ee7d8837de1eaac96d62491ff0a1516f6cd837aa0c03",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-5-result.json",
+      "sha256": "9d510878e27e048236d782285a7dd9ec51587c25d1d83d1aa1bc2e46ee242ca1",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-6-result.json",
+      "sha256": "4698a4b997128a1e7b3e25f3df16f738f09d9f3f265573c4440050ff85a029e8",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-7-result.json",
+      "sha256": "1d880b08313b3c55179869e81c66edb15d97774b29a2057de2efd7d62d8d961d",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-8-result.json",
+      "sha256": "5a9e737885d151b7188b021f383601e0afd581e296875e3c0ab3e8ee7b5a5e54",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warm-9-result.json",
+      "sha256": "83612db938ffb02e771f29231126bcd80530f7e7d59bebba5cef08a49b24f8a9",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/bound-warmup-result.json",
+      "sha256": "32d4fc07dbd329f58c32fcc4c8af646045d86433af7d62276d10b5c743ea13f9",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-branch-context-result.json",
+      "sha256": "ec0e0f6df18f31ffa2e6abdc2ff79bba190ff5a9a8a6dee00a26d873f4e7ce26",
+      "bytes": 418
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-compatible-restore-result.json",
+      "sha256": "5d1ba6d796ebcb1d04b68b03050da8f36fd84ef90bd16502f2be6f5edbf62abd",
+      "bytes": 435
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-context-result.json",
+      "sha256": "dd261d36ec88a28887df6bf26941cf3e5c2d6d9af0bde32a24cf4d1df357ce9e",
+      "bytes": 414
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-preview-result.json",
+      "sha256": "9c97a8bc3f2b144eda546eafdd98fbfd667323b2640670967272276a8694df97",
+      "bytes": 505
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-restore-result.json",
+      "sha256": "b7d0b188098443e8dafcba4b7f70ca7fddda26bbf9f59d64e7ee60cb499cb568",
+      "bytes": 413
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-select-result.json",
+      "sha256": "31c0dce6e16d35e071ce889a3cd958c0b814e3af076cb268387523e29f096e80",
+      "bytes": 502
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-sync-noop-result.json",
+      "sha256": "66dba87388294598b7a11311ab8bcc86f9799e928581bbb7ed8d605f9a076532",
+      "bytes": 402
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/current-sync-result.json",
+      "sha256": "28ef827e4f273de35af1c7b4238c03d41e2fa4bb7a04885cba6d078da67bc037",
+      "bytes": 397
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-compatible-restore-result.json",
+      "sha256": "89d7f0232830f79647a29ddcd1efcc3eb71a570bc94066934108d3f8c2ffda3b",
+      "bytes": 434
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-context-result.json",
+      "sha256": "7131bf8c179b709815e7fddf7445f0fd341994088696577ae1040eaf5c9457a7",
+      "bytes": 413
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-create-result.json",
+      "sha256": "bc665d84bf7252ab8dc518864a3db370aa4a4f41b6deb48758e58481bda7a037",
+      "bytes": 648
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/custom-select-result.json",
+      "sha256": "c9698419b558fec54079626f4cd81d3409b089e7038a6a287b238b82df54dcc1",
+      "bytes": 506
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-pending-main-result.json",
+      "sha256": "efc924bf2838cee372442470035e8afa59b6d8c11bf4dee4710a0337c26f15f2",
+      "bytes": 402
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-restore-result.json",
+      "sha256": "3f945fab8d7333da16434a24f29ba76f72fd36fa6f15a03c78d026245f69ad57",
+      "bytes": 411
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-resume-result.json",
+      "sha256": "d428616d953dabefbd1450ab00fbe3412b1e9840923f54dcdcf0a712ee3e11e4",
+      "bytes": 409
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-select-result.json",
+      "sha256": "c6b8a4b3aa5a78796825f842140e6ffaa3ce29362a80ec18b0f4b3e4a3fbb6ba",
+      "bytes": 503
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/fault-status-result.json",
+      "sha256": "48cfcfd94b2009d29f9a52ccc5b94533cc7fa9d48fc276b8176ab5bf54708fee",
+      "bytes": 409
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/original-later-restore-result.json",
+      "sha256": "06116345697fc158de09031ffa420bfbcf0ad6aa6b37ca12c473aed29df324fd",
+      "bytes": 420
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/original-later-select-result.json",
+      "sha256": "9a90b64438e0267f4d07eb79f8928daaf170f910364414af97fad306cf5eee8c",
+      "bytes": 510
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-1-result.json",
+      "sha256": "5c71d30c8494fdf1486d064651e0b085ab48b5590440d13c3914356d40c716e9",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-10-result.json",
+      "sha256": "4e713b3f172a8665a84ded869b41795c1bf575099ea93026e2ac0fe5d7717c45",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-11-result.json",
+      "sha256": "d1df1b2030d9c44105956c2bc247fc511448f72cccdeb09109f3c72bf4550134",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-12-result.json",
+      "sha256": "1af5361b7b84dd4bc8cbef6a0558ed6009cf3847007c8e7cbb524f171545c1dc",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-13-result.json",
+      "sha256": "152651e110f069e441c87e0a84347bbda765e847402cf1b8701431cb3ae6ee60",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-14-result.json",
+      "sha256": "ee63684f14cbe70cd5d7925562e8258eba3c3b159432b5955b24fed1433b242c",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-15-result.json",
+      "sha256": "4fe613dec91c249f50ba0150c7661d5e3f610c46e993d6dfeb40da4312ec27bc",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-16-result.json",
+      "sha256": "ae139bad3112974d3d720425f253ed715ef5274952a810c49166708da2bfb1c8",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-17-result.json",
+      "sha256": "4cac74f9d0c88d6b9c298d8455126648b38a6979289d7983f3e1e1b422c286d6",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-18-result.json",
+      "sha256": "5003a7a5dfd6492c403edefd6de15cccdb93b126081fe0bf836b8686f945bd6d",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-19-result.json",
+      "sha256": "abc7ef0b7513a35939a9eebe7d1148eb2a8c04e7cbaa598a12831f9373bf8f5b",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-2-result.json",
+      "sha256": "54d48290af1b3f3b8e5bc51673473e5e2c1ee2cf582d0fd3458baf273435a4c5",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-20-result.json",
+      "sha256": "bd8f7ea3b48f21127c7f33aabf25e55adff623aa61ad6b7b11157b75fe49a03c",
+      "bytes": 400
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-3-result.json",
+      "sha256": "272274e719da67f26b4ae5d4f5690476fdc69367299d8289de038399a6d085de",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-4-result.json",
+      "sha256": "aedff20f156f9fef81729b9eb955344832efe31aef8d4506f00b4e5475eb9db7",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-5-result.json",
+      "sha256": "eac4660648336c20c361d1e6e6e7715518ea6abe7095034bc85a45bc0f6a00aa",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-6-result.json",
+      "sha256": "07af19abb864102e048e164dfa51e68d910c5258fe923cadef86109b770f0d04",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-7-result.json",
+      "sha256": "d8d6a2e9441598263ce58efe75402987604e4f7d48dbfe97222815fbf9200ba3",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-8-result.json",
+      "sha256": "6d83ac8350caf68dff7580ba7ea68a14ff4a77033eed944ad636a28b6f2d101c",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warm-9-result.json",
+      "sha256": "61cca7a5a10a4798ac22f6c9b2c349cb7adc21da5eeee35239cf888e38c2782e",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/unbound-warmup-result.json",
+      "sha256": "617f596acadbbca94ffcf78becdfbcde3a510bed36c9dac8bc68b9f55473c5c1",
+      "bytes": 399
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-compatible-restore-result.json",
+      "sha256": "724751cd6c1f5257088386bbbf61c5185b5b59e576b636554b509341e34f6d90",
+      "bytes": 432
+    },
+    {
+      "path": "build/test-results/g3/pm5-current-package-20261022/warm-select-result.json",
+      "sha256": "2374ba0dfab78b52276b0c12812ff270c9f7625c6d3f476deb65edb968f25264",
+      "bytes": 500
+    }
+  ]
+}
