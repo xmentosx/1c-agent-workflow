@@ -112,6 +112,15 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     if scenario.get("diagnostics") is not None:
         context["diagnostics"] = scenario["diagnostics"]
     child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
+    from . import diagnostic_retention
+    diagnostic_owner = None
+    diagnostic_warning = None
+    try:
+        diagnostic_owner = diagnostic_retention.prepare(variables["workspace"])
+        if diagnostic_owner:
+            child_environment.update(TEMP=str(diagnostic_owner["temporary"]), TMP=str(diagnostic_owner["temporary"]))
+    except Exception as error:
+        diagnostic_warning = str(error)  # Auxiliary retention cannot block the measurement.
     if execution_guard:
         child_context = execution_guard.context()
         context["executionContext"] = child_context["encoded"]
@@ -443,6 +452,14 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         write_json(run / "result.json", result)
         persist_progress()
         report(run, result)
+        try:
+            retention = ({"status": "warning", "error": diagnostic_warning} if diagnostic_warning else
+                         diagnostic_retention.complete(diagnostic_owner, result, run))
+        except Exception as error:
+            retention = {"status": "warning", "error": str(error)}
+        # Separate evidence: never rewrite the terminal result hashed by enrollment.
+        with contextlib.suppress(OSError):
+            write_json(run / "artifact-retention.json", retention)
     return result
 
 

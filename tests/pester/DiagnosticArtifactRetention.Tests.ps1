@@ -26,6 +26,45 @@
 }
 
 Describe 'Producer-owned diagnostic retention' {
+    It 'runs the real completion command without Codex, honors env disablement, and removes only expired files' {
+        $f = New-DiagnosticFixture 'Штатный вызов'
+        & git -C $f.root init --quiet
+        $LASTEXITCODE | Should -Be 0
+        Set-DiagnosticFixtureAge $f 8
+        $fresh = 'build/case-temp/v8_AB_2.tmp'
+        [IO.File]::WriteAllText((Join-Path $f.root $fresh), 'fresh')
+        $completion = @{status='completed';cleanupConfirmed=$true;producer='itl-performance';kind='native-temp';disposablePaths=@($fresh);retainedPaths=@('build/answer.raw.json')}
+        [IO.File]::WriteAllText((Join-Path $f.root 'build/completion.json'), ($completion | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $envFile = Join-Path $f.root '.dev.env'
+        [IO.File]::WriteAllText($envFile, 'ITL_ARTIFACT_CLEANUP_ENABLED=false')
+        $arguments = @('-Action', 'clean-artifacts', '-ProjectRoot', $f.root, '-CleanupDiagnosticsOnly', '-DiagnosticCompletionPath', 'build/completion.json')
+        $disabled = Invoke-TestPowerShellFile -FilePath $context.HelperPath -Arguments $arguments
+        $disabled.exitCode | Should -Be 0 -Because $disabled.combinedText
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $f.manifest) -Filter '*.json').Count | Should -Be 1
+        [IO.File]::WriteAllText($envFile, "ITL_ARTIFACT_CLEANUP_ENABLED=true`nITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS=7")
+        $enabled = Invoke-TestPowerShellFile -FilePath $context.HelperPath -Arguments $arguments
+        $enabled.exitCode | Should -Be 0 -Because $enabled.combinedText
+        (Test-Path -LiteralPath $f.path) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $f.root $fresh)) | Should -BeTrue
+        (Test-Path -LiteralPath (Join-Path $f.root 'build/answer.raw.json')) | Should -BeTrue
+    }
+
+    It 'enrolls a terminal producer completion in bounded batches and applies the existing age policy' {
+        $f = New-DiagnosticFixture 'Завершение производителя'
+        $completion = @{status='failed';cleanupConfirmed=$true;producer='itl-performance';kind='native-temp';disposablePaths=@($f.relative);retainedPaths=@('build/answer.raw.json')}
+        $receipt = Join-Path $f.root 'build/completion.json'
+        [IO.File]::WriteAllText($receipt, ($completion | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $registered = @(Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath 'build/completion.json')
+        $registered.Count | Should -Be 1
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 0
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+        $completion.cleanupConfirmed = $false
+        [IO.File]::WriteAllText($receipt, ($completion | ConvertTo-Json))
+        { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath 'build/completion.json' } | Should -Throw '*cleanup*'
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
     It 'retains unknown files and fresh registrations; deletes the exact aged disposable and keeps original evidence' {
         $f = New-DiagnosticFixture 'Возраст'
         @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 0

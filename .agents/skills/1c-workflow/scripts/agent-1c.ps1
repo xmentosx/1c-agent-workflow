@@ -23,6 +23,7 @@ param(
     [switch]$DisableProjectTestsSafeMode,
     [switch]$CleanupDryRun,
     [switch]$CleanupDiagnosticsOnly,
+    [string]$DiagnosticCompletionPath = "",
     [switch]$ConfirmBranchDeletion,
     [string]$PeerDevBranchName,
     [string]$BranchSyncRequestPath,
@@ -280,6 +281,9 @@ function Add-Agent1cReexecArgument {
 function Get-Agent1cReexecArguments {
     $arguments = [System.Collections.Generic.List[string]]::new()
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "CleanupDryRun" -Value $CleanupDryRun
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "CleanupDiagnosticsOnly" -Value $CleanupDiagnosticsOnly
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DiagnosticCompletionPath" -Value $DiagnosticCompletionPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value (Resolve-Agent1cFullPath -Path $ProjectRoot)
     Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecChangeId" -Value $OpenSpecChangeId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecArchiveSkipSpecs" -Value $OpenSpecArchiveSkipSpecs
@@ -596,6 +600,9 @@ try {
             if ($CleanupDiagnosticsOnly) {
                 $policy = Get-ItlArtifactRetentionPolicy
                 if ($policy.enabled) {
+                    if ($DiagnosticCompletionPath -and -not $CleanupDryRun) {
+                        Complete-ItlDiagnosticArtifacts -ProjectRoot $script:ProjectRoot -CompletionPath $DiagnosticCompletionPath | Out-Null
+                    }
                     $cleanup = Invoke-ItlDiagnosticArtifactCleanup -ProjectRoot $script:ProjectRoot -MinimumAgeDays $policy.diagnosticDays -ProtectedPaths (Get-ItlArtifactProtectedPaths) -DryRun:$CleanupDryRun
                     Write-Host "ITL disposable diagnostics: candidates=$($cleanup.entries.Count), removedBytes=$($cleanup.removedBytes), retainedErrors=$($cleanup.failed.Count), dryRun=$([bool]$CleanupDryRun)."
                     foreach ($issue in $cleanup.failed) { Write-Warning "ITL diagnostic retained: $($issue.path): $($issue.error)" }
