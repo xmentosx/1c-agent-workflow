@@ -1403,7 +1403,10 @@ function Write-ItlClientMcpEndpointSet {
         $protected = @()
         foreach ($name in @(@($owned) + @($request.endpoints | ForEach-Object { ConvertTo-ItlClientMcpKey -Name $_.name -Client $request.client }) | Select-Object -Unique)) {
             $signature = Get-StringSha256 -Value (Get-ItlMcpOwnedSemanticSignature -Container $entries -Names @($name))
-            if ($protectLegacy -and $name -notin $accepted -and (($baseline.Contains($name) -and $baseline[$name] -cne $signature) -or
+            # A retired key can have a historical baseline but no current owner
+            # or entry. Re-adding that absent key cannot overwrite a user edit.
+            # A manual deletion still has an owner and must remain protected.
+            if ($protectLegacy -and $name -notin $accepted -and (($baseline.Contains($name) -and $baseline[$name] -cne $signature -and ($name -in $owned -or $entries.Contains($name))) -or
                 ($entries.Contains($name) -and -not $baseline.Contains($name)))) {
                 $protected += $name
                 $protected += ConvertTo-ItlClientMcpKey -Name $name -Client $request.client

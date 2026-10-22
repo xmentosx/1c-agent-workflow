@@ -4,6 +4,8 @@
 
 Разбор задержки Startup и лишних квитанций принадлежит registry owner: [контракт и повторные проверки](../add-product-project-registry/evidence/g3-startup-repair-2026-10-20.md). Memory consumer использует тот же pinned operation context; reuse checked applied projection после refresh/SHA/input проверки не добавляет memory cache, updater, refresh или provider probe. Unchanged single-client sync сохраняет project-wide proofs остальных клиентов. Полный G5/AC-43 не закрывается этим source/synthetic subset; engineering цели Startup, шесть областей, требования canonical home и выпускного наполнения прежние.
 
+Registry-owned [re-enable/defer repair и original PM5 proof](../add-product-project-registry/evidence/g3-owned-mcp-defer-repair-2026-10-22.md) сохраняет прежние ownership/collision guards и пользовательский defer при ordinary reuse applied revision. Будущий memory consumer использует тот же контекст и решение, без собственной коррекции MCP, baseline store или updater. Это bounded dependency result; full G3/AC-39 и memory4.2/AC-43/G5/44, release population и остальные ограничения остаются открытыми.
+
 ## Context
 
 Мотивация и границы — [proposal.md](proposal.md); проверенные исходники и точный снимок зависимой постановки — [context-sources.md](context-sources.md). Это новый потребитель change `add-product-project-registry`, а не его замена. В baseline уже есть MCP selection/client writer, reset с фазами и controlled fork; шесть scoped datasets и их привязка ещё не реализованы. Managed clause fork пока не квалифицирует новые providers и называет общий templates project-scoped вопреки ITL host policy.

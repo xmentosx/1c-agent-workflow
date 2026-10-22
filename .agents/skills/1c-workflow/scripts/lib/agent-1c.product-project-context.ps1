@@ -338,6 +338,11 @@ function Resolve-ItlProductProjectPreviewDecision {
     }
     if($Decision -eq 'defer' -and -not $Preview.applied){throw 'CATALOG_DEFER_BASELINE_MISSING: first association has no applied baseline; cancel it or select the project explicitly after resolving local settings.'}
     $preferences=ConvertTo-ItlCatalogCanonicalValue $Preview.preferences
+    # An ordinary writer consumes the applied view pinned by startup. That
+    # projection is not a new decision about the deferred registry update.
+    $defer=Get-ItlCatalogField $preferences 'defer'
+    $retainPinnedDefer=-not $Decision -and $Preview.applied -and $defer -and
+        $defer.catalogRevision -ceq $Preview.context.catalogRevision -and $defer.catalogRevision -ceq $Preview.applied.catalogRevision
     $overrides=ConvertTo-Vibecoding1cMcpHashtable (Get-ItlCatalogField $preferences 'clientOverrides' @{})
     foreach($change in @($Preview.changes)){
         $key="$($change.client)/$($change.owner)"
@@ -347,7 +352,7 @@ function Resolve-ItlProductProjectPreviewDecision {
     }
     $preferences['clientOverrides']=$overrides
     if($Decision -eq 'defer'){$preferences['defer']=@{settingsIntentHash=$Preview.settingsIntentHash;knowledgeHash=$Preview.context.knowledgeHash;catalogRevision=$Preview.applied.catalogRevision}}
-    elseif($preferences.Contains('defer')){$preferences.Remove('defer')}
+    elseif($preferences.Contains('defer') -and -not $retainPinnedDefer){$preferences.Remove('defer')}
     $requests=@(foreach($original in $Preview.requests){
         $request=ConvertTo-ItlCatalogCanonicalValue $original;$key="$($request.client)/$($request.owner)"
         $owned=@(Get-ItlManagedMcpOwnerKeys -Client $request.client -Owner $request.owner)

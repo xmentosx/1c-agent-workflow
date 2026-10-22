@@ -116,6 +116,49 @@ Describe 'Shared client MCP ownership' {
         }
     }
 
+    It 're-adds an owner-retired absent endpoint with its historical baseline through <Client>' -Tag 'G3OwnedReenable' -ForEach @(
+        @{Client='codex'},@{Client='claude-code'},@{Client='opencode'},@{Client='kilocode'},@{Client='cursor'},@{Client='kimi'},@{Client='qwen'},@{Client='command-code'},@{Client='cline'},@{Client='zcode'},@{Client='mimocode'},@{Client='pi'}) {
+        $caseClient=$Client
+        $root=Join-Path $TestDrive ('Retired MCP данные '+$Client)
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),('{"aiRules":{"tools":["'+$Client+'"]}}'),[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $name='1c-graph-metadata-mcp';$key=ConvertTo-ItlClientMcpKey $name $caseClient
+            $request=@{client=$caseClient;owner='vibecoding1c';endpoints=@(@{name=$name;url='https://selected.invalid/mcp'})}
+            Write-ItlClientMcpEndpointSet @($request) *> $null
+            Write-ItlClientMcpEndpointSet @(@{client=$caseClient;owner='vibecoding1c';endpoints=@()}) -PreserveUserChanges *> $null
+            (Read-ItlClientMcpEntries $caseClient).Contains($key)|Should -BeFalse
+            @(Get-ItlManagedMcpOwnerKeys -Client $caseClient -Owner vibecoding1c)|Should -Not -Contain $key
+            # Keep the real legacy receipt; neither migration nor deletion of it
+            # is needed to introduce an absent, no-longer-owned setting again.
+            $baselines=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlManagedMcpState).lastWritten
+            (ConvertTo-Vibecoding1cMcpHashtable $baselines["$caseClient/vibecoding1c"]).Contains($key)|Should -BeTrue
+            Write-ItlClientMcpEndpointSet @($request) -PreserveUserChanges *> $null
+            $entry=(Read-ItlClientMcpEntries $caseClient)[$key]
+            (Get-Vibecoding1cMcpObjectValue $entry 'url' (Get-Vibecoding1cMcpObjectValue $entry 'httpUrl'))|Should -Be 'https://selected.invalid/mcp'
+        }
+    }
+
+    It 'keeps a manual deletion protected while the endpoint remains owned' -Tag 'G3OwnedReenable' {
+        $root=Join-Path $TestDrive 'User deletion данные'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["claude-code"]}}',[Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $request=@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://selected.invalid'})}
+            Write-ItlClientMcpEndpointSet @($request) *> $null
+            $path=Join-Path $root '.mcp.json';$value=Read-Utf8Text $path|ConvertFrom-Json
+            $value.mcpServers.PSObject.Properties.Remove('code')
+            Write-Utf8TextAtomic $path (($value|ConvertTo-Json -Depth 20)+[Environment]::NewLine)
+            $before=Get-ItlMcpFileState $path
+            Write-ItlClientMcpEndpointSet @($request) -PreserveUserChanges *> $null
+            (Read-ItlClientMcpEntries claude-code).Contains('code')|Should -BeFalse
+            (Get-ItlMcpFileState $path)|Should -BeExactly $before
+            @(Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner vibecoding1c)|Should -Contain 'code'
+        }
+    }
+
     It 'updates proven default URLs and adds SPPR while preserving overrides for <Client>' -ForEach @(
         @{Client='claude-code'}, @{Client='codex'}, @{Client='opencode'}
     ) {
