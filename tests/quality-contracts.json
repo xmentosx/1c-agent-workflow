@@ -868,6 +868,20 @@
       "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"]
     },
     {
+      "id": "diagnostic-artifact-retention",
+      "owner": "producer-marked disposable diagnostic retention",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/DiagnosticArtifactRetention.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1",
+        ".agents/skills/1c-workflow/references/artifact-retention.md",
+        "tests/pester/DiagnosticArtifactRetention.Tests.ps1"
+      ],
+      "tests": ["tests/pester/DiagnosticArtifactRetention.Tests.ps1"]
+    },
+    {
       "id": "lifecycle",
       "owner": "project and branch lifecycle",
       "gate": "targeted",
@@ -1221,7 +1235,7 @@
     "fallbackContract": "lifecycle",
     "commonTests": ["tests/pester/Agent1cEntrypoint.Tests.ps1"],
     "owners": {
-      "core": { "tests": ["tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"] },
+      "core": { "tests": ["tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1", "tests/pester/DiagnosticArtifactRetention.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1"] },
       "bootstrap": { "tests": ["tests/pester/BootstrapUpdate.Tests.ps1"] },
       "openspec": { "tests": ["tests/pester/OpenSpecCliRuntime.Tests.ps1"] },
       "tooling": { "tests": ["tests/pester/ToolingReadiness.Tests.ps1"] },

@@ -121,6 +121,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ITL_RECOVERY_ARCHIVE_KEEP_COUNT` | Последние архивы восстановления на ветку/контур | целое 1–3650, default `2` | user |
 | `ITL_RUN_ARTIFACT_KEEP_COUNT` | Минимум завершённых прогонов каждого типа | целое 1–3650, default `3` | user |
 | `ITL_RUNTIME_ARTIFACT_RETENTION_DAYS` | Минимальный возраст лишних завершённых прогонов | дни 1–3650, default `7` | user |
+| `ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS` | Минимальный возраст расходных файлов завершённых диагностик с manifest производителя; оригиналы и активные файлы сохраняются | дни 1–3650, default `7` | user |
 | `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
 ## Веб-публикация
