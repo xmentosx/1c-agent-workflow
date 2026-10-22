@@ -9234,6 +9234,13 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         Update-AgentGuidanceBridge
 
         Install-ItlUiTools -BestEffort
+        # Catalog-only selection does not enter the legacy MCP refresh below.
+        # Reconcile it inside file post-copy, after snapshot validation, using
+        # this operation's pinned registry and existing client-set writer.
+        if (Get-ConfigValue -Path productProject -Default $null) {
+            . Import-ItlProductProject
+            Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces
+        }
         Sync-ItlClientSurfaces
         foreach ($client in @(Get-AgentTargets)) {
             Sync-ItlClientUserEnvironment -Client $client

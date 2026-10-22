@@ -208,3 +208,10 @@ Full 3.4/5.4–5.6/AC-39, остальные clients/CUSTOM/installed/platform, 
 - [x] Реальная multi-client запись A → lock fault B → owned foreign edit → main blocked/status → resume/restore refuse без потери bytes → actor reverses только свой URL → same ID/SHA resume при новом private tip → owned restore с unrelated edit passed. Исходные failures/receipts не удалены; 98/0/0 complete owner batch.
 - [x] 10 warm commands: семь SHA+mtime stable, whole median 4.0405/p95 4.283 s. Actual offline bound/unbound no-cache safety повторён; DB/21 protected files/четыре старых roots/11 capsule artifacts прежние, business trees untouched. Deadline/whole capture/child lifetime разделены; full Startup/cleanup/token cost не принят.
 - [ ] Existing full 3.1–5.6/AC-39, остальные first-pass/fresh/live source/PM4/platform/terminal/frontend/interactive/cache/cost критерии и release population 5.7/AC-36–38 открыты. Memory G4/G5 не начинались; Gate 6, рабочая миграция и публикация не выполнялись.
+
+
+## Follow-up: first-update post-copy Startup, 2026-10-22
+
+- [x] Исправить duplicate catalog startup в fresh update child существующим phase classifier; сохранить guard, ordinary/pre-copy/broker/recovery поведение. Регрессия actual entrypoint red→green и 159/0/0 final owner batch с сохранёнными предыдущими failures/retries: [report/JSON](evidence/g3-post-copy-startup-repair-2026-10-22.md).
+- [x] На том же PM5 root штатно восстановить old-runtime / bound / absent-unowned endpoints + stale baseline, сохранить Kilo→Cursor/topology и выполнить первый normal update без recovery/retry. Проверить physical endpoints, foreign bytes, main+sibling/fork, DB/capsule/old failed snapshot и Gate 6 evidence.
+- [ ] Остальные 3.1–5.6/full G3/AC-39 first-pass/fresh/live-source/PM4/platform/terminal/frontend/cache/cost и mandatory population 5.7/AC-36–38 остаются открытыми. G4, рабочая миграция и публикация не начинались.
