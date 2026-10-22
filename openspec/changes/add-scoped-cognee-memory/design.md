@@ -326,3 +326,7 @@ Fresh19 unchanged, 30 owned processes штатно закрыты. Canary1 user 
 ### Registry dependency: fresh update Startup owner
 
 [Registry-owned fix и original PM5 first-pass](../add-product-project-registry/evidence/g3-post-copy-startup-repair-2026-10-22.md) устраняют независимый catalog startup до проверки post-copy snapshot: существующие phase classifier и update file post-copy сохраняют единственного владельца client reconciliation. Memory не вводит свой update hook/state/probe или recovery. Один first update на исходном old-runtime Kilo+Cursor root прошёл без дополнительных recovery/retry, прежний failed результат сохранён. Это bounded dependency proof; full registry G3/AC-39, AC-36–38 и consumer4.2/G4/AC-43/G5/44 открыты. Шесть областей/canonical home/grants/Q1–Q7/D9/optional OpenViking/ai_rules_1c прежние; Gate 6, рабочая миграция и публикация не выполнялись.
+
+### Registry dependency: completed plan и actual applied
+
+[Registry-owned repair/proof](../add-product-project-registry/evidence/g3-completed-resume-repair-2026-10-23.md) подтверждает actual marker перед success completed resume и предоставляет tested existing restore continuation при invalid/missing/mismatch. Memory consumer не принимает completed plan как отдельный источник контекста и не создаёт свой repair/cache/probe. Canonical registry context/шесть областей/home/ai_rules_1c прежние; full registry G3/AC-39, consumer4.2/G4/AC-43/G5/44 и выпускное наполнение открыты. Scope не включает Gate6, рабочую миграцию или публикацию.

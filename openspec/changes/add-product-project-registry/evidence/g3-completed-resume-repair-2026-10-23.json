@@ -1,0 +1,1195 @@
+{
+  "date": "2026-10-23",
+  "blocker": "G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED",
+  "status": "closed-in-original-PM5-subset-full-G3-open",
+  "sourceBase": "9c7ad07d18258a5fb8ff6464b04eb1b5be1094f2",
+  "qualifiedImplementation": {
+    "runtimeSha": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4",
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+    "sourceRoot": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow",
+    "commit": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+    "beforeRuntimeSha": "dc98e56f9085a5339b248e70f84c8c187d68ec3773a5003702c4d72b95f58cba"
+  },
+  "identity": {
+    "testSha": "be92b00bc175209aaa1d5419ca7e4a752d535cba34d5473d02a49d7761847420",
+    "memoryOptIn": false,
+    "database": {
+      "bytes": 3295928320,
+      "unchanged": true,
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD"
+    },
+    "replayRootsStable": true,
+    "runtimeSha": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4",
+    "sourceImplementation": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+    "bothInstalledRuntimeEqual": true,
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1"
+  },
+  "implementation": {
+    "owner": "existing product-project apply/recovery",
+    "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+    "normalCompletedResume": "Read current applied with existing root/schema/hash/revision checks, then match operation ID, catalog revision and context hash to the completed plan.",
+    "compatibilityCompletedResume": "Match the expected original marker of compatibilityBaseline.applied, including legitimate absence.",
+    "failure": "CATALOG_COMPLETED_RESUME_NEEDS_RESTORE; no writes, retain status and public pinned restore continuation.",
+    "notChanged": [
+      "partial resume",
+      "restored/cancelled shortcuts",
+      "startup",
+      "MCP servers",
+      "schemas/state owners/locks",
+      "ai_rules_1c"
+    ]
+  },
+  "tests": {
+    "initialRed": {
+      "stage": "red",
+      "durationMs": 14123,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 1,
+      "notRun": 49,
+      "failed": 7
+    },
+    "redWithCorrectOriginalMarkerFixture": {
+      "stage": "red-valid-original",
+      "durationMs": 13193,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 1,
+      "notRun": 49,
+      "failed": 7
+    },
+    "focusedGreen": {
+      "stage": "green",
+      "durationMs": 14226,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 8,
+      "notRun": 49,
+      "failed": 0
+    },
+    "fullOwners": {
+      "stage": "owners-final",
+      "durationMs": 170378,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1",
+        "tests/pester/ProductProjectContext.Tests.ps1",
+        "tests/pester/ProductProjectSetup.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 122,
+      "notRun": 0,
+      "failed": 0
+    }
+  },
+  "nativeUpdate": {
+    "exitCode": 0,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-update-logs\\update-workflow-476782cc76af43df819a708ade497e36.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-update-logs\\update-workflow-476782cc76af43df819a708ade497e36.stderr.log",
+    "durationMs": 422363
+  },
+  "nativeResult": {
+    "blocker": "G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED",
+    "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+    "operationId": "dc919c895fcb4fb4b9d738ff31665050",
+    "originalCommandExit": 0,
+    "memoryCalls": 0,
+    "invalidResumeNoWrites": true,
+    "restoreStatus": "restored",
+    "beforeAppliedId": "b08bbfa5ba4542ceb8bd8f929f1c45fc",
+    "llmTurns": 0,
+    "restoredId": "b08bbfa5ba4542ceb8bd8f929f1c45fc",
+    "invalidResumeExit": 1,
+    "nativeCodeGraphCalls": 0,
+    "passed": true,
+    "continuation": "public owned restore",
+    "validResumeNoOp": true,
+    "receiptBackupCopies": 0,
+    "status": "closed-in-original-PM5-subset",
+    "pinnedRevision": "c29e72af12049b8227ac836e26f283220c2ab5b3"
+  },
+  "nativeSteps": [
+    {
+      "durationMs": 8616,
+      "stderrBytes": 0,
+      "stdoutBytes": 663,
+      "arguments": [
+        "-CatalogAction",
+        "select",
+        "-CatalogProjectId",
+        "pm5-core-development"
+      ],
+      "name": "prepare-same-project",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3756,
+      "stderrBytes": 0,
+      "stdoutBytes": 264,
+      "arguments": [
+        "-CatalogAction",
+        "resume"
+      ],
+      "name": "valid-completed-resume",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3618,
+      "stderrBytes": 203,
+      "stdoutBytes": 0,
+      "arguments": [],
+      "name": "main-before-resume",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 3196,
+      "stderrBytes": 0,
+      "stdoutBytes": 424,
+      "arguments": [
+        "-CatalogAction",
+        "status"
+      ],
+      "name": "invalid-status",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 3622,
+      "stderrBytes": 401,
+      "stdoutBytes": 0,
+      "arguments": [
+        "-CatalogAction",
+        "resume"
+      ],
+      "name": "completed-resume-rejected",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 3366,
+      "stderrBytes": 203,
+      "stdoutBytes": 0,
+      "arguments": [],
+      "name": "main-after-rejected-resume",
+      "exitCode": 1,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    },
+    {
+      "durationMs": 5246,
+      "stderrBytes": 0,
+      "stdoutBytes": 318,
+      "arguments": [
+        "-CatalogAction",
+        "restore"
+      ],
+      "name": "owned-restore",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-select"
+    },
+    {
+      "durationMs": 2727,
+      "stderrBytes": 0,
+      "stdoutBytes": 2157,
+      "arguments": [
+        "-CatalogAction",
+        "context"
+      ],
+      "name": "restored-context",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-status"
+    },
+    {
+      "durationMs": 5801,
+      "stderrBytes": 0,
+      "stdoutBytes": 477,
+      "arguments": [],
+      "name": "original-command-after-restore",
+      "exitCode": 0,
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "action": "vibecoding1c-mcp-write-client-config"
+    }
+  ],
+  "afterUpdateRoots": [
+    {
+      "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619",
+      "bindingPresent": true,
+      "head": "5713df721980130a4dc26bcb978fa53f3dd5d58f"
+    },
+    {
+      "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+      "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "469ab61ebe6c3517ef53a6a78a85bc2753d566e61fd5deb7ce741518f8dc4012",
+      "bindingPresent": false,
+      "head": "9f633264b46277e3d28bc7ae06816a32f9b90424"
+    }
+  ],
+  "afterReplayRoots": [
+    {
+      "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+      "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619",
+      "bindingPresent": true,
+      "head": "5713df721980130a4dc26bcb978fa53f3dd5d58f"
+    },
+    {
+      "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+      "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "untracked": [],
+      "dirty": [],
+      "lockSha": "469ab61ebe6c3517ef53a6a78a85bc2753d566e61fd5deb7ce741518f8dc4012",
+      "bindingPresent": false,
+      "head": "9f633264b46277e3d28bc7ae06816a32f9b90424"
+    }
+  ],
+  "clientBytes": {
+    "passed": true,
+    "historicalStrictByteAssertion": "Previous qualification retained an owned-property-order mismatch; current entireFileByteEqual results are reported separately.",
+    "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+    "clients": [
+      {
+        "path": ".kilo/kilo.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 4,
+        "otherEntryCount": 4,
+        "maskedSha256": "bf761569ee7fac5203fc1315a37c53675476b06f74d5c0be55d5601d6bbeee5a"
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": true,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 2,
+        "otherEntryCount": 5,
+        "maskedSha256": "e5e32f5bdb24706771b178d46172d600bf8b516fdd8cb8fff2d89354e05087b1"
+      }
+    ]
+  },
+  "preservation": {
+    "externalCommitTime": "2026-10-23T00:54:24+03:00",
+    "externalWorkflow": "350e92d5665af1da850211f4b20080a4d9ab6fe5",
+    "movedRoot": "D:\\Git\\itl-workflow-e2e-pm5",
+    "protectedFilesStable": true,
+    "strictOriginalRootCheck": "failed-retained-not-waived",
+    "unchangedRootCount": 3,
+    "externalChangesRestoredOrCleaned": false,
+    "externalCommitPredatesOurUpdate": true,
+    "files": [
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+        "sha256": "c801f456323309cf009e392e3652dd3d78930ddc6e19a8eafe196745aa0f769b",
+        "unchanged": true
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+        "unchanged": true
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+        "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+        "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+        "unchanged": true
+      }
+    ],
+    "wholePriorRootsStable": false,
+    "ownUpdateStartUtc": "2026-10-22T21:57:52.0217381Z",
+    "ownInvocationRoots": "current C:\\itlj fixture only",
+    "gate6Artifacts": 7,
+    "note": "Current owned fixture acceptance and immutable failed/capsule artifacts are separate from this failed global-root immutability assertion.",
+    "roots": [
+      {
+        "root": "D:\\Git\\itl-workflow-e2e-pm5",
+        "beforeHead": "4e540b3cada85eb6d711c383d22ee368c306e045",
+        "head": "6de621e48689c9cce297d0fc3419449fa1d7c31d",
+        "stable": false
+      },
+      {
+        "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "beforeHead": "cc49bc30bda0223877eda0287bf810cf8329c60c",
+        "head": "cc49bc30bda0223877eda0287bf810cf8329c60c",
+        "stable": true
+      },
+      {
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "beforeHead": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "stable": true
+      },
+      {
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "beforeHead": "1db160699bc69643e5d7f926139846b009f2f754",
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "stable": true
+      }
+    ]
+  },
+  "capsule": {
+    "artifactHashes": [
+      {
+        "path": "branch.env",
+        "sha256": "b1d10c2976413c7141aef4e75ddfb9f5c9d40496aca57893aa57af887bf8d703"
+      },
+      {
+        "path": "infobase.dt",
+        "sha256": "faefe7b1ce594dae2d18fe3f7b7f0697ace80eaba4e4ff9e432ad672cb97179c"
+      },
+      {
+        "path": "master.env",
+        "sha256": "aa9e8198b55cfb1a11c10773c570e1d238a0714f2dfda5dec8d37703dcf3d976"
+      },
+      {
+        "path": "release-e2e.json",
+        "sha256": "7ec92eaa9244c8556c2be46d32e4c65d3da28ad8f8dc7f4c6d5ff7d07402d788"
+      },
+      {
+        "path": "source.bundle",
+        "sha256": "997cb11daa09dddb29f0e6549624976ec0cba9c518af733b55bd35e41132d6d7"
+      },
+      {
+        "path": "state.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-baselines/workflow-release-e2e-preflight.json",
+        "sha256": "e4d05b00b678997db7628c03b63a3adb909b7097ddc97d70542c94c8dee73eda"
+      },
+      {
+        "path": "context/branch/.agent-1c/event-log-cursors/workflow-release-e2e-preflight.pending.json",
+        "sha256": "a2c3ac883aaeb9ca64cb8e59a2037c467fe1aacb699aabe93a958a42d8227c5d"
+      },
+      {
+        "path": "context/branch/.agent-1c/runs/auto-update/5260e8441e3e48a783bb5466740139f7.result.json",
+        "sha256": "56e6e2efc950169946c7315e73817c532ad1d84e3dc4f6bec5658afef67ad090"
+      },
+      {
+        "path": "context/master/.agent-1c/branch-seed/d36790cc833a54009c15b29614df6fce67f9ab2ad0e89758b54c739541b40692/event-log-baseline.json",
+        "sha256": "85c9dbd8d4ee398fa71b151abc7988b544dbd3c9605de018e9e252c5093ba614"
+      },
+      {
+        "path": "context/master/.agent-1c/event-log-signature-cache/6313c6efc6c4ba7874c0d0e4c78c3aba397f7695b8e99fe4bb266f679a925b19.json",
+        "sha256": "115820bab388c127818eaf131dd73ad033202797c85ed57b5430fff6851e36e7"
+      }
+    ],
+    "approvedExplicitSnapshotAdmission": true,
+    "artifactsVerified": 11,
+    "originalRawSeedCurrentness": "unavailable",
+    "capsuleUnchanged": true,
+    "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "liveSeedAdmissionBypassed": false,
+    "observedUtc": "2026-10-22T22:08:35.512334Z",
+    "manifestPath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json"
+  },
+  "originalEvidencePreservation": {
+    "observedUtc": "2026-10-22T22:03:02.9970016Z",
+    "allUnchanged": true,
+    "previousReport": "g3-pm5-interactive-recovery-2026-10-23.json",
+    "verifiedFiles": 128
+  },
+  "cost": {
+    "newAlwaysOnBytes": 0,
+    "newToolSchemaBytes": 0,
+    "newGuardReads": "one local applied record on explicit completed resume; no registry refresh/probe",
+    "directNativeCodeGraphCalls": 0,
+    "cogneeCalls": 0,
+    "testClientLlmTurns": 0,
+    "validResumeMs": 3756,
+    "guardRefusalMs": 3622,
+    "guardRefusalOutputUtf8Bytes": 401,
+    "limit": "Single whole-CLI captures, not paired Startup/token overhead; existing update background traffic was not counted."
+  },
+  "harnessFailuresRetained": [
+    "Initial compatibility=true fixture inherited an earlier empty baseline; corrected to a valid original marker without earlier compatibilityBaseline, assertions retained.",
+    "Initial owner-batch runner used += on Pester.StringArrayOption and stopped before tests; final runner assigns a plain path array.",
+    "Copied byte-analysis metadata initially referred to the historical ordering failure; initial JSON/script retained and corrected read-only metadata reports current whole-file equality true."
+  ],
+  "remaining": [
+    "full G3/AC-39 and other installed/client/platform/terminal/paired cost/transport-cleanup criteria",
+    "cooperative cancellation and broader restored/cancelled/missing-operation recovery states not qualified by this fix",
+    "strict original-root immutability assertion remains failed because an older seed was independently updated before our isolated update",
+    "mandatory release population AC-36-38",
+    "memory4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "Gate6 fix/run",
+    "G4 implementation",
+    "working-project migration",
+    "workflow/catalog publication",
+    "remote server changes",
+    "client upgrades"
+  ],
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\after-update-roots.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-final-docs-source-status.json",
+      "bytes": 158592,
+      "sha256": "d06daae07559b48bf33f250be3bdfc0c2e4efc40e54605c936ce4b827398ebd8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update-files.json",
+      "bytes": 1913,
+      "sha256": "1c7a788c27eb08dcac3046a0b6509c5ec83ccaf5ad785b4aa94f06987be72a8f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update-roots.json",
+      "bytes": 1297,
+      "sha256": "c61f5076f0f80fced19a5ffe58cd897182e8ffe5ba591c0e8d9078c3a91db368"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update.runtime.ps1",
+      "bytes": 25253,
+      "sha256": "dc98e56f9085a5339b248e70f84c8c187d68ec3773a5003702c4d72b95f58cba"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-input.json",
+      "bytes": 452,
+      "sha256": "b5984c1831067661a8e5ad462984d29724aef3c771bb35c04b5a02941461ade9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-native-update.json",
+      "bytes": 544,
+      "sha256": "ef590ee7d845869a28db1854ac8691676a285472b6ab5466ac081c0aba334287"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "f825b60608c5d39b6e4b24f0146e03cbb7dc7a7a5c9bafae4d2ebaaa50eacbc9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\client-byte-analysis.initial-metadata.json",
+      "bytes": 877,
+      "sha256": "e1c3cde3f1bdf466515c2519fe4a7b0edf74601dc119e9f07c5bba557c88c332"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\client-byte-analysis.json",
+      "bytes": 908,
+      "sha256": "6799c8f8fdd3e470780836493fbca49e633060a93fadbdfddeb262e3d1aaa7c3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\common.ps1",
+      "bytes": 1917,
+      "sha256": "e1c573a385427d7fffdfeab6ee260941277d7fd8156ac138c3adf8b572b43047"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\completed-resume-rejected-result.json",
+      "bytes": 422,
+      "sha256": "b123d77aff721084741926c989026339a3c3526114ec914a0ddd7267fb7f63cf"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\completed-resume-rejected.stderr.log",
+      "bytes": 401,
+      "sha256": "a7742b09f15ee7f569be7cf29cdd5a3e51f7fdc1b7fec45c06601764ebb10ef7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\completed-resume-rejected.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\driver-functions.ps1",
+      "bytes": 2658,
+      "sha256": "892052a28cf0a20f9ada401788207a0b299e519486d30658fb88e948d21b6514"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\green.json",
+      "bytes": 257,
+      "sha256": "e2179a7188fc5e256ec3a49ae21795fa5fa8f6873174835b90a52dbc5863c99a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\green.log",
+      "bytes": 1429,
+      "sha256": "db6039fc5f92d0f66405361cc4dca5c1e1ba5ea32d577763cccbd68b737c4022"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\green.xml",
+      "bytes": 7666,
+      "sha256": "76ca045046c538b1fbf99cddbf379e9b38fe7da5263d01866182ba7af02c6ee0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\identity-database.json",
+      "bytes": 782,
+      "sha256": "2efb06919cfb62b8c6a52ae79fb520a5a555d9cb0580381d5762273e60d323ad"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\invalid-status-result.json",
+      "bytes": 411,
+      "sha256": "8c29dcba5ade6327936f10b052bd7c0b73f4c6080b2c007cdd619431294806b9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\invalid-status.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\invalid-status.stdout.log",
+      "bytes": 424,
+      "sha256": "e82cae1604ee1272752675255fc7c9e9faa3f0030f4c9f4ab7a51840fbd63d1a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-after-rejected-resume-result.json",
+      "bytes": 365,
+      "sha256": "ef6571fa4b3953ead21c2bfd0cf79bbf7bcd1ce1d1b0c5b5c082e7eab85a980f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-after-rejected-resume.stderr.log",
+      "bytes": 203,
+      "sha256": "c266f85c73ab1315b07b9d451f99e2b40f59cac5660c2982ce7d6a6f68db8464"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-after-rejected-resume.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-before-resume-result.json",
+      "bytes": 357,
+      "sha256": "72e7509474f7e6b1cdaedb09a02612c13bd28fe1e73cac4d4f892ec88060713c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-before-resume.stderr.log",
+      "bytes": 203,
+      "sha256": "c266f85c73ab1315b07b9d451f99e2b40f59cac5660c2982ce7d6a6f68db8464"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\main-before-resume.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\native-after-roots.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\native-before-roots.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\native-replay.ps1",
+      "bytes": 4596,
+      "sha256": "e638b456fb17fbd1bb2ce77e70c5dc5271e07d370caf3fcebe003a8196b75920"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\native-result.json",
+      "bytes": 821,
+      "sha256": "581e50da498d1561f0a4255cd9c683b9ddae1e2fc332821455a1478e96c7ebeb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\native-steps.json",
+      "bytes": 4159,
+      "sha256": "c5d51fa3b1eec1ccd4a27c132659cd3d60ef96bf3b8cef8bfb55c6f718ff45f5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\original-command-after-restore-result.json",
+      "bytes": 369,
+      "sha256": "3df987be2c5d54b757ce62c5f8f776d6ab3a8b5cb861a85888cba39139af75b7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\original-command-after-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\original-command-after-restore.stdout.log",
+      "bytes": 477,
+      "sha256": "7db0af074e7266ee749dea015f851d26aa6366c03678b381a36112f33a034bb3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\original-evidence-preservation.json",
+      "bytes": 171,
+      "sha256": "8d0e6c89651e15cbfefd944e725025cdb15cea984c15180dae5e776a8408fa91"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owned-restore-result.json",
+      "bytes": 411,
+      "sha256": "4c162a6fd4420f72e6307e84885241107f460c894d7ab56081a28df574d873e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owned-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owned-restore.stdout.log",
+      "bytes": 318,
+      "sha256": "174b3192d983ce91b5234fd539289d76ccc3e3daf3f22cf9fdcf24fef77d6bba"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owner-green.log",
+      "bytes": 587,
+      "sha256": "58e1de583157e9745abbfed149aefa6ef53f063a633969b3af305c9b05fefc38"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owners-final.json",
+      "bytes": 397,
+      "sha256": "0d060f610f8b23450f565e74a71b04ece80b41d510baeb561ff7c67d153c97ad"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owners-final.log",
+      "bytes": 24812,
+      "sha256": "b260fcb2482d304d0eccb7effd2936b7d9358f7189e69f2cdbc93e966accf59a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\owners-final.xml",
+      "bytes": 51603,
+      "sha256": "d00d7246ece1a5353175e37e869ab94f9aee464c87705dab9fcf673c981546ae"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\pm5-copy-receipt.json",
+      "bytes": 2145,
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\prepare-same-project-result.json",
+      "bytes": 508,
+      "sha256": "8f8b750c8fe2473402862f3ebb44eed394fe3e3b6f2998a154658b04d045c839"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\prepare-same-project.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\prepare-same-project.stdout.log",
+      "bytes": 663,
+      "sha256": "055579c8dabb3168081406633a87251ab265d0db8d30d9586cbd916fdfcff046"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\preservation-audit.json",
+      "bytes": 9945,
+      "sha256": "5e074c109eca36d3a91e69d7809ad03691677ff6a7ecec979b015cb179b6c219"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\preservation-audit.ps1",
+      "bytes": 2607,
+      "sha256": "8d21aacea5a29c9892dbdcd5213eef54bb0a553386863c9f719e124f16309961"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\preserve.ps1",
+      "bytes": 3489,
+      "sha256": "05e32d00fca53c7886dfd9e7a5d4b467f135528e52cc2dc0d82550c842344789"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\preserved-before.json",
+      "bytes": 15062,
+      "sha256": "9aab63b47b8760f49e6a81f24e1d15fd65c3fcd0532be752ab155641db5aa3d3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\protected-roots-observation.json",
+      "bytes": 5079,
+      "sha256": "edf4284f240eef39b56564a7dc22909e8ef46d7b546a7ab25db5eb1ea27afbb8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before-files.json",
+      "bytes": 1913,
+      "sha256": "b7e707147728f54390f61aa947af8a1830ae8e084a15c7889b7893e3f07982a3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged-files.json",
+      "bytes": 1913,
+      "sha256": "d2b3ccf4300f41d824a514b10982f50faa20524d44246e8e7d0d4957bc75c3ee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final-files.json",
+      "bytes": 1913,
+      "sha256": "dfd2108bafba5926db127098014e5e9e99744afc08035df87335e7200f9d448e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared-files.json",
+      "bytes": 1913,
+      "sha256": "26e8a5fcaf2e1debd0c22b63c44b00f28558fb11f8d15ff89e232241f046230b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored-files.json",
+      "bytes": 1913,
+      "sha256": "dfd2108bafba5926db127098014e5e9e99744afc08035df87335e7200f9d448e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red-valid-original.json",
+      "bytes": 270,
+      "sha256": "08f6c998ac00dda6397d3cdb4005bb619e069e3721c8aefcfba339acb2e685d9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red-valid-original.log",
+      "bytes": 5217,
+      "sha256": "82aa630885368f38ab921948ec61316aa59feb5a77997f57da7cb7119b581b2a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red-valid-original.xml",
+      "bytes": 12724,
+      "sha256": "bbb274af616d8850ca977f11786ca81e41e83c1f5fab4a0a5292107c5897f73b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red.json",
+      "bytes": 255,
+      "sha256": "06d6e685313b330fa877981dc8941853ed3aa9743a1203d22766fb179e413c5c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red.log",
+      "bytes": 4985,
+      "sha256": "71ec67cad575d35dd4d6d9438bd21d9f3cd00374dd6a467bc830b0fc842fd92a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\red.xml",
+      "bytes": 12493,
+      "sha256": "e7cf11eba97c1d6e1fb4e0909750801225bf85cd07eaff006bcd7f6d95265ffc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\restored-context-result.json",
+      "bytes": 415,
+      "sha256": "569af83b978d41137bf5c7190d9947b02e29893b8618312ee7a285fdf383002a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\restored-context.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\restored-context.stdout.log",
+      "bytes": 2157,
+      "sha256": "7489533582e00e8926ed3d0a14b2b06985086755ee18b103c27e76e8b0ebb6b6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\run-tests.ps1",
+      "bytes": 1293,
+      "sha256": "86fdf136d660244638cc7f8aeb13261188e9282d83ff3dac4856549d9995f805"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\source-status.ps1",
+      "bytes": 871,
+      "sha256": "08f374c23b1dfbfa8799a106f692b41d50c944212ae5cc01a7c410c51f0a7d28"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\support.ps1",
+      "bytes": 1258,
+      "sha256": "7bd0cfdfe74599e812b3c63ab47ee33bbc10faad7957b233a16eda9a9d2683e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\update.ps1",
+      "bytes": 1515,
+      "sha256": "3cf85659d3bbe13604236aa48d3b78a95162e1a79a0fe122cfbdcead1ebef98e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\valid-completed-resume-result.json",
+      "bytes": 419,
+      "sha256": "e9d5e2aa5bd6cb25f850c74bae61a0d1bfa26630915b51aa815ca80d281677fe"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\valid-completed-resume.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\valid-completed-resume.stdout.log",
+      "bytes": 264,
+      "sha256": "2b3e5b05ad8d6f03686263324107bdf455b3e0591269caa7c672524c634b0b34"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\verify-capsule.ps1",
+      "bytes": 769,
+      "sha256": "37d43a6f360f279d4aa5996323027704a65890068fc87b05efde489b4925d70a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\verify-client-bytes.initial-metadata.py",
+      "bytes": 2589,
+      "sha256": "b3a83e2e2711fece6f577596e59cd3f7f7c4abf7cb40c8476ee0e5e8816700ee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\verify-client-bytes.py",
+      "bytes": 2653,
+      "sha256": "9d7e356857ecb70b266e1fa611af68dd8edf3a4b07c611ec175fad93e5abc32d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "152159d8b2535bf8034a068802e3832857e10779fee0ae0a052099900fdaad41"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43332,
+      "sha256": "784d47eaacb254e6f323687ba4b4a7b158b1d80821947a513b826370990155ed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "b3afb07f47b56dee2c5cb47273eefeb27015d2f2a5a3e3f6fb3397f0516740c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\before-update\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-update-logs\\update-workflow-476782cc76af43df819a708ade497e36.stderr.log",
+      "bytes": 4374,
+      "sha256": "3344f1011e16d626ff390644fe08b6368866050af9ef09a1e1198180083420d8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\candidate-update-logs\\update-workflow-476782cc76af43df819a708ade497e36.stdout.log",
+      "bytes": 1714,
+      "sha256": "dc819c1d2b75d96b0f47e32749e21c75e2348b18fde52afc5fd2c0bb588e9789"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "e5838aca24b338d5b03f51e7b5f0ca7cbcdf150a4268729307ab82ac8538292f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "b3afb07f47b56dee2c5cb47273eefeb27015d2f2a5a3e3f6fb3397f0516740c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43333,
+      "sha256": "e714f21ca7b44d287cdf4cca37a806d405f7f3aabad05c523d062ee10c723853"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137210,
+      "sha256": "f27b4a876775a0dbdf851b85c8e66eed66f51aa742115787d6f860438fa3f06e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-prepared\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43333,
+      "sha256": "4ab46f5cd890134e05a950a515f79ee381f19eacabbda167c87c4948cc31a8be"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137210,
+      "sha256": "f27b4a876775a0dbdf851b85c8e66eed66f51aa742115787d6f860438fa3f06e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-damaged\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "207dd2b6b2f8b7f15309df0eec0cc13b292cd4cfdadb83e6280eff3021081849"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "aee7e93ce30a14f4b1d37601c07f120ffb79b4874a8c6eec2e18e2309fa61c60"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-restored\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "207dd2b6b2f8b7f15309df0eec0cc13b292cd4cfdadb83e6280eff3021081849"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "aee7e93ce30a14f4b1d37601c07f120ffb79b4874a8c6eec2e18e2309fa61c60"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completed-resume-repair-20261023\\recovery-final\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    }
+  ],
+  "validation": {
+    "strictPriorRoots": "failed-retained; earlier different seed update; see preservation-audit",
+    "openSpecCli": "1.13.1",
+    "registration": "owned by source-delivery ledger",
+    "rawSha": "verified",
+    "memoryStrict": "passed",
+    "registryStrict": "passed",
+    "unicodeRoot": "exact round trip",
+    "qualifiedRuntimeAndTestInputs": "unchanged"
+  }
+}

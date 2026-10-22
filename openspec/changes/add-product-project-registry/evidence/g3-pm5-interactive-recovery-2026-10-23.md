@@ -1,5 +1,7 @@
 # G3: интерактивная отмена и штатное восстановление PM5, 2026-10-23
 
+Последующий [owner repair и original PM5 repeat](g3-completed-resume-repair-2026-10-23.md) закрыл named blocker в указанной области. Ниже сохранён исходный failed срез на runtime176bd2fa; его JSON/raw results не переписаны.
+
 **Ctrl+C / пустой ответ и public owned restore прошли в указанной области; обнаружен открытый G3-CATALOG-COMPLETED-RESUME-INVALID-APPLIED. Полный G3 / AC-39 открыт.** [JSON с identities, native steps и SHA evidence](g3-pm5-interactive-recovery-2026-10-23.json). [Предыдущий срез](g3-pm5-cache-record-qualification-2026-10-22.md) проверял только invalid-applied admission и idle cancel; они не выдаются за нынешний native proof.
 
 Source `3cfbf0fd30cc7b086dcdb07a6f06ac3b84903b2f`, installed runtime `176bd2fa6b8d107d33df2b92600e0c14d365ee45`, ai_rules_1c r43 / `987320be139b4ac0d28f1f5b0f2515f63c7f140f`. Три runtime SHA source=installed подтверждены. Main `C:\itlj\g3-pm5-current-20261022\q Проект\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\project`, sibling `branch` в прежнем parent: PM5 КОРП / `pm5-core-development`, Kilo+Cursor; Windows PowerShell5.1, без elevation. Код/пакет/правила не менялись.

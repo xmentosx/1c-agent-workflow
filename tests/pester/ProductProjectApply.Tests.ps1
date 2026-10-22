@@ -510,6 +510,71 @@
         $diagnostic=Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @('-ProjectRoot',$root,'-Action','vibecoding1c-mcp-status','-CatalogAction','status')
         $diagnostic.exitCode|Should -Be 0
     }
+    It 'resumes a valid completed operation without writes or another registry read' -Tag G3CompletedResume {
+        $result=Invoke-ItlProductProjectClientApply $context $requests
+        $paths=@((Get-ItlProductProjectPath applied),(Get-ItlProductProjectPath operation))+@(Get-ItlClientMcpConfigPaths codex)+@(Get-ItlClientMcpConfigPaths claude-code)
+        $before=@(foreach($path in $paths){@{path=$path;state=(Get-ItlMcpFileState $path);ticks=(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks}})
+        Mock Write-ItlProductProjectRecord {throw 'unexpected completed receipt write'}
+        Mock Write-ItlClientMcpEndpointSet {throw 'unexpected completed client write'}
+        Mock Read-ItlProductProjectSnapshot {throw 'unexpected completed registry read'}
+        $resumed=Invoke-ItlProductProjectRecovery resume
+        $resumed.status|Should -Be configured
+        $resumed.operationId|Should -BeExactly $result.operationId
+        $after=@(foreach($path in $paths){@{path=$path;state=(Get-ItlMcpFileState $path);ticks=(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks}})
+        (Get-ItlCatalogHash $after)|Should -BeExactly (Get-ItlCatalogHash $before)
+        Should -Invoke Write-ItlProductProjectRecord -Times 0 -Exactly
+        Should -Invoke Write-ItlClientMcpEndpointSet -Times 0 -Exactly
+        Should -Invoke Read-ItlProductProjectSnapshot -Times 0 -Exactly
+    }
+    It 'rejects a completed resume with <Damage> applied state and restores the durable prior context' -Tag G3CompletedResume -ForEach @(
+        @{Damage='hash'},@{Damage='missing'},@{Damage='operation'},@{Damage='revision'},@{Damage='context'}) {
+        $null=Invoke-ItlProductProjectClientApply $context $requests
+        $previous=Read-ItlProductProjectRecord applied
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.knowledgeHash='knowledge-next'
+        $result=Invoke-ItlProductProjectClientApply $changed @()
+        $path=Get-ItlProductProjectPath applied
+        $applied=Read-ItlProductProjectRecord applied
+        switch($Damage){
+            hash {$applied.contextHash=('0'*64)}
+            operation {$applied.operationId='another-completed-operation'}
+            revision {$applied.catalogRevision=('b'*40);$applied.context.catalogRevision=('b'*40);$applied.contextHash=Get-ItlCatalogHash $applied.context}
+            context {$applied.context.knowledgeHash='another-valid-context';$applied.contextHash=Get-ItlCatalogHash $applied.context}
+        }
+        if($Damage -eq 'missing'){Remove-Item -LiteralPath $path}else{Write-ItlProductProjectRecord applied $applied}
+        $paths=@($path,(Get-ItlProductProjectPath operation))+@(Get-ItlClientMcpConfigPaths codex)+@(Get-ItlClientMcpConfigPaths claude-code)
+        $before=@(foreach($p in $paths){@{path=$p;state=(Get-ItlMcpFileState $p);ticks=$(if(Test-Path -LiteralPath $p){(Get-Item -LiteralPath $p).LastWriteTimeUtc.Ticks}else{$null})}})
+        {Invoke-ItlProductProjectRecovery resume}|Should -Throw '*CATALOG_COMPLETED_RESUME_NEEDS_RESTORE*CatalogAction restore*'
+        $after=@(foreach($p in $paths){@{path=$p;state=(Get-ItlMcpFileState $p);ticks=$(if(Test-Path -LiteralPath $p){(Get-Item -LiteralPath $p).LastWriteTimeUtc.Ticks}else{$null})}})
+        (Get-ItlCatalogHash $after)|Should -BeExactly (Get-ItlCatalogHash $before)
+        (Read-ItlProductProjectRecord operation).operationId|Should -BeExactly $result.operationId
+        (Invoke-ItlProductProjectRecovery status).operationId|Should -BeExactly $result.operationId
+        (Invoke-ItlProductProjectRecovery restore).status|Should -Be restored
+        (Get-ItlCatalogHash (Read-ItlProductProjectRecord applied))|Should -BeExactly (Get-ItlCatalogHash $previous)
+    }
+    It 'validates the expected original marker when resuming completed compatibility restore with <OriginalMarker>' -Tag G3CompletedResume -ForEach @(
+        @{OriginalMarker=$false},@{OriginalMarker=$true}) {
+        if($OriginalMarker){
+            $null=Invoke-ItlProductProjectClientApply $context $requests
+            # A valid pre-association marker without an earlier compatibility
+            # baseline becomes the actual original marker of the next apply.
+            $original=Read-ItlProductProjectRecord applied;$original.Remove('compatibilityBaseline')
+            Write-ItlProductProjectRecord applied $original
+        }
+        $next=ConvertTo-ItlCatalogCanonicalValue $context;$next.knowledgeHash='knowledge-next'
+        $null=Invoke-ItlProductProjectClientApply $next $requests
+        (Invoke-ItlProductProjectRecovery restore-compatible).status|Should -Be compatible-restored
+        $before=Get-ItlMcpFileState (Get-ItlProductProjectPath applied)
+        (Invoke-ItlProductProjectRecovery resume).status|Should -Be compatible-restored
+        (Get-ItlMcpFileState (Get-ItlProductProjectPath applied))|Should -BeExactly $before
+        if($OriginalMarker){
+            $record=Read-ItlProductProjectRecord applied;$record.contextHash=('0'*64)
+            Write-ItlProductProjectRecord applied $record
+        }else{
+            $operation=Read-ItlProductProjectRecord operation
+            Write-ItlProductProjectRecord applied @{schemaVersion=1;projectRoot=$root;operationId='unexpected';catalogRevision=$operation.context.catalogRevision;context=$operation.context;contextHash=(Get-ItlCatalogHash $operation.context)}
+        }
+        {Invoke-ItlProductProjectRecovery resume}|Should -Throw '*CATALOG_COMPLETED_RESUME_NEEDS_RESTORE*'
+    }
     It 'keeps diagnostics available for a damaged applied record without deleting state' {
         $null=Invoke-ItlProductProjectClientApply $context $requests
         $path=Get-ItlProductProjectPath applied
