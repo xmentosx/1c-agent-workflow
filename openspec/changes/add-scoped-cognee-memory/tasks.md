@@ -163,3 +163,9 @@ Canary1 user turn/2 tools/UI12 s, tokens/provider/title traffic/billing/paired d
 
 - [x] Учесть existing AC-15/20/25/35/43 dependency по [одному registry report/JSON](../add-product-project-registry/evidence/g3-owned-mcp-defer-repair-2026-10-22.md): оба named blockers исправлены в прежних writer/decision owners; original PM5 двух клиентов, defer persistence, actual partial/foreign edit/pinned recovery passed. 98/0/0 owner tests, warm/offline preservation и DB/capsule proof не становятся consumer4.2/G4 или full memory canary.
 - [ ] Full G3/AC-39/first-pass/other installed/platform/frontend/cost и обязательное release population AC-36–38 остаются зависимостями memory4.2/AC-43/G5/44. Memory off/Cognee calls0; нет отдельного updater/state/probe/rollback path. Six scopes/home/grants/G1/Q1–Q7/D9/G2/optional OpenViking/ai_rules_1c прежние; Gate 6/рабочая миграция/публикация не выполнялись.
+
+
+## Dependency: first-update Startup follow-up, 2026-10-22
+
+- [x] Согласовать existing registry dependency с [одним report/JSON](../add-product-project-registry/evidence/g3-post-copy-startup-repair-2026-10-22.md): fresh post-copy startup не пишет до snapshot guard; original PM5 first update, оба клиента и сохранность passed, guard negatives сохранены. Memory opt-in false/Cognee calls0; отдельного memory updater/probe нет.
+- [ ] Full registry G3/AC-39/remaining installed/platform/cost и mandatory AC-36–38 population, затем отдельно разрешённые memory4.2/G4/AC-43/G5/44 остаются открытыми. Six scopes/home/grants/Q1–Q7/D9/optional OpenViking/ai_rules_1c прежние; Gate 6/рабочая миграция/публикация не начинались.

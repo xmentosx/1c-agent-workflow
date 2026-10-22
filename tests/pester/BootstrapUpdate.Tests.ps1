@@ -1860,7 +1860,7 @@ exit 0
         $sourceAgentsText | Should -Match "repeat the same bootstrap command"
     }
 
-    It "splits workflow update into pre-copy reexec and post-copy new-code processing" {
+    It "splits workflow update into pre-copy reexec and post-copy new-code processing" -Tag G3PostCopyCatalog {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-workflow-reexec-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -1893,7 +1893,7 @@ exit 0
                 function Get-AiRulesBaselineTarget { param([string]$TemplateRoot); [pscustomobject]@{isConfigured=$true;repo='repo';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
                 function Sync-AiRules1cCheckout { [pscustomobject]@{root='C:\fork';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
                 function Get-AiRulesCandidateInstallInventory { param([object]$Checkout,[string[]]$Tools); @() }
-                function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json') }
+                function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json','.kilo/kilo.json') }
                 function Copy-WorkflowManagedDirectory {
                     param($SourceRoot, $RelativePath)
                     if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }
@@ -1914,6 +1914,27 @@ exit 0
                 try { Update-WorkflowPackage *> $null } catch { $preError = $_.Exception.Message }
                 $preCopyCalls = $script:copyCalls
 
+                # Pure catalog association has no legacy MCP selection. Its
+                # refresh still belongs after the real snapshot check and must
+                # be captured before the post-copy commit checkpoint.
+                $savedGetConfig = ${function:Get-ConfigValue}
+                function Get-ConfigValue {
+                    param([string]$Path,$Default)
+                    if ($Path -eq 'productProject') { return @{projectId='fixture';productId='corp'} }
+                    & $savedGetConfig @PSBoundParameters
+                }
+                function Import-ItlProductProject {}
+                function Get-ItlProductProjectBinding { Get-ConfigValue -Path productProject -Default $null }
+                $script:catalogCalls = 0
+                $script:catalogOrder = 0
+                function Initialize-ItlProductProjectContext {
+                    param($Decision,[switch]$AllowPrompt,[switch]$IncludeClientSurfaces)
+                    if (-not $IncludeClientSurfaces) { throw 'Catalog update omitted client surfaces' }
+                    Assert-WorkflowUpdateSnapshotCurrentState -Pending (Get-WorkflowUpdatePendingSnapshot)
+                    $script:catalogCalls++
+                    $script:postCalls++;$script:catalogOrder=$script:postCalls
+                    Write-Utf8TextAtomic (Join-Path $script:ProjectRoot '.kilo/kilo.json') '{"mcp":{"catalog-code":{"url":"https://fixture.invalid/mcp"}}}'
+                }
                 function Assert-MasterWorktreeContext {}
                 function Ensure-GitIgnore { $script:postCalls++ }
                 function Update-AgentGuidanceBridge { $script:postCalls++ }
@@ -1928,7 +1949,7 @@ exit 0
                 function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
                 function Install-ItlUiTools { $script:postCalls++ }
-                function Sync-ItlClientSurfaces { $script:postCalls++ }
+                function Sync-ItlClientSurfaces { $script:postCalls++;$script:clientSurfaceOrder=$script:postCalls }
                 function Get-ItlActiveClient { "kilocode" }
                 function Sync-ItlClientUserEnvironment { param([string]$Client); $script:postCalls++ }
                 function Invoke-CavemanPolicyTransition { $script:postCalls++ }
@@ -1960,6 +1981,10 @@ exit 0
                     cleanCalls = $script:cleanCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
+                    catalogCalls = $script:catalogCalls
+                    catalogOrder = $script:catalogOrder
+                    clientSurfaceOrder = $script:clientSurfaceOrder
+                    catalogConfig = $(if(Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.kilo/kilo.json')){Read-Utf8Text (Join-Path $script:ProjectRoot '.kilo/kilo.json')})
                     dependencySyncOrder = $script:dependencySyncOrder
                     yaxunitInstallOrder = $script:yaxunitInstallOrder
                     roctupOrder = $script:roctupOrder
@@ -1991,6 +2016,9 @@ exit 0
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
+            $result.catalogCalls | Should -Be 1
+            $result.catalogOrder | Should -BeLessThan $result.clientSurfaceOrder
+            $result.catalogConfig | Should -Match 'catalog-code'
             $result.dependencySyncOrder | Should -BeLessThan $result.yaxunitInstallOrder
             $result.yaxunitInstallOrder | Should -BeLessThan $result.roctupOrder
             $result.roctupOrder | Should -BeLessThan $result.vanessaSyncOrder

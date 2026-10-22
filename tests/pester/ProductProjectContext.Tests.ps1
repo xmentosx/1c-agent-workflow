@@ -246,6 +246,32 @@
         (Get-ItlProductProjectStartupDisposition 'vibecoding1c-mcp-select' 'restore')|Should -Be explicit-recovery
         (Get-ItlProductProjectStartupDisposition 'update-workflow' '' '' 'restore')|Should -Be explicit-recovery
     }
+    It 'keeps catalog startup under the update owner in the fresh post-copy dispatcher' -Tag G3PostCopyStartup -ForEach @(
+        @{Case='normal update';Requested='update-workflow';Phase='';Expected=1},
+        @{Case='pre-copy update';Requested='update-workflow';Phase='pre-copy';Expected=1},
+        @{Case='fresh post-copy';Requested='update-workflow';Phase='post-copy';Expected=0},
+        @{Case='ordinary action';Requested='sync-client-mcp';Phase='';Expected=1}
+    ) {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'),[ref]$tokens,[ref]$errors)
+        # Execute the actual entrypoint startup block so a missing dispatcher
+        # argument cannot hide behind a passing classifier-only regression.
+        $startup=$ast.Find({param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if(-not $InternalOnDemandOperation -and -not $CatalogAction')},$true)
+        $startup|Should -Not -BeNullOrEmpty
+        $script:ProjectRoot=$TestDrive
+        $Action=$Requested;$LifecyclePhase=$Phase
+        $InternalOnDemandOperation='';$CatalogAction='';$WorkflowUpdateRecovery='';$CatalogDecision=''
+        function Import-ItlProductProject {}
+        function Initialize-ItlProductProjectContext {param($Decision,[switch]$AllowPrompt,[switch]$IncludeClientSurfaces)}
+        Mock Initialize-ItlProductProjectContext {}
+        Mock Read-ProjectConfig {}
+        Mock Test-InteractiveInputAvailable {return $false}
+        try {
+            & ([scriptblock]::Create($startup.Extent.Text))
+            Should -Invoke Initialize-ItlProductProjectContext -Times $Expected -Exactly
+            Should -Invoke Read-ProjectConfig -Times $Expected -Exactly
+        } finally {Remove-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue}
+    }
     It 'reads all catalog inputs from one SHA and shares it through nested consumers after the tip moves' {
         $root=Join-Path $TestDrive 'Pinned registry'
         [void][IO.Directory]::CreateDirectory((Join-Path $root 'catalog'))

@@ -526,7 +526,7 @@ try {
     if(-not $InternalOnDemandOperation -and -not $CatalogAction -and -not $WorkflowUpdateRecovery -and
         ((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/mcp/product-context-operation.json')))){
         . Import-ItlProductProject
-        if((Get-ItlProductProjectStartupDisposition $Action $CatalogAction $InternalOnDemandOperation $WorkflowUpdateRecovery) -eq 'project-operation'){
+        if((Get-ItlProductProjectStartupDisposition $Action $CatalogAction $InternalOnDemandOperation $WorkflowUpdateRecovery $LifecyclePhase) -eq 'project-operation'){
             if(-not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){$script:ItlMcpRegistryOperation=@{attempted=$false;snapshot=$null;error=$null};$script:CatalogRegistryOperationOwned=$true}
             Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces:($Action -eq 'sync-client-mcp')
             Read-ProjectConfig
