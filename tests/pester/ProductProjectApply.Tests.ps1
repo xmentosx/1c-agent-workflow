@@ -402,6 +402,43 @@
         (Read-ItlProductProjectSetting selection).defer.settingsIntentHash|Should -Be $preview.settingsIntentHash
         $decision.deferred|Should -BeTrue
     }
+    It 'preserves defer through the ordinary MCP writer on the pinned applied context until an explicit registry decision' -Tag 'G3PinnedDefer' {
+        $snapshot=New-StartupCatalogFixture
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $path=Join-Path $root '.codex/config.toml'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('source.invalid','manual.invalid'))
+        $snapshot.catalogRevision=('b'*40)
+        $snapshot.registry.hosts[0].servers[0].url='https://changed.invalid/mcp'
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext -Decision defer}
+        $preferences=Get-ItlCatalogHash (Read-ItlProductProjectSetting selection)
+        $codeKey=ConvertTo-ItlClientMcpKey '1c-code-metadata-mcp' codex
+        $protected=@($path,$script:ConfigPath,(Get-ItlProductProjectPath applied),(Get-ItlProductProjectPath operation),(Get-ItlManagedMcpStatePath),(Get-Vibecoding1cMcpSelectionPath))
+        $before=@{};foreach($file in $protected){$before[$file]=@{state=(Get-ItlMcpFileState $file);ticks=(Get-Item -LiteralPath $file).LastWriteTimeUtc.Ticks}}
+        1..2|ForEach-Object {
+            Invoke-Vibecoding1cMcpRegistryOperation {
+                Initialize-ItlProductProjectContext
+                Write-Vibecoding1cMcpClientConfig -Client codex
+            }
+            (Get-ItlCatalogHash (Read-ItlProductProjectSetting selection))|Should -BeExactly $preferences
+            (Read-ItlProductProjectSetting selection).defer.catalogRevision|Should -Be ('a'*40)
+            (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('a'*40)
+            (Read-ItlClientMcpEntries codex)[$codeKey].url|Should -Be 'https://manual.invalid/mcp'
+            foreach($file in $protected){
+                (Get-ItlMcpFileState $file)|Should -BeExactly $before[$file].state
+                (Get-Item -LiteralPath $file).LastWriteTimeUtc.Ticks|Should -Be $before[$file].ticks
+            }
+        }
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext -Decision registry}
+        (ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)).Contains('defer')|Should -BeFalse
+        (Read-ItlProductProjectRecord applied).catalogRevision|Should -Be ('b'*40)
+        (Read-ItlClientMcpEntries codex)[$codeKey].url|Should -Be 'https://changed.invalid/mcp'
+    }
     It 'distinguishes arrays from scalar policy values in native proof' {
         (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@('one')}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args='one'}} @('entry'))
         (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@()}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=$null}} @('entry'))
