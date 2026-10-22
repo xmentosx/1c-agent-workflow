@@ -96,8 +96,9 @@ Describe 'Catalog runtime context is pinned by the existing registry operation' 
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'),[ref]$tokens,[ref]$errors)
         $actions=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'Action'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value})
         $brokers=@(($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath -eq 'InternalOnDemandOperation'}).Attributes|Where-Object {$_.TypeName.Name -eq 'ValidateSet'}|ForEach-Object {$_.PositionalArguments.Value}|Where-Object {$_})
-        # The ninth ValidateSet value is the empty "not a broker" option.
-        $actions.Count|Should -Be 96;$brokers.Count|Should -Be 8
+        # The empty "not a broker" value is excluded from this operation set.
+        $actions.Count|Should -Be 96;$brokers.Count|Should -Be 9
+        $brokers|Should -Contain 'repair-connections'
         foreach($action in $actions){
             $actual=Get-ItlProductProjectStartupDisposition $action
             $actual|Should -BeIn @('diagnostic','bootstrap','inherited-runtime','project-operation')

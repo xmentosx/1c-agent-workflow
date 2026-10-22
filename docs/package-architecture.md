@@ -296,6 +296,27 @@ runtime owners; no host-repair authority or persistent availability coordinator 
 added. See `.agents/skills/1c-workflow/references/mcp.md` for the on-demand recovery
 contract and client reload limitations.
 
+Architecture checkpoint approved on 2026-10-22: development recovery may close
+unneeded workflow-owned MCP processes automatically, across versions and chat
+lifetimes. The facade remains the owner of retained signed execution cleanup.
+A per-facade mailbox asks that owner to stop; it contains no admission secrets
+or independent state machine. Same-resource guard waiting can invoke the
+existing private broker to retire an obsolete exact-project connection that
+predates mailbox support. That adapter verifies the configured caller, helper,
+executable, creation identity, supervisor and full resource set, performs exact
+native cleanup before guard release, and retains unknown prior outcomes as
+diagnostic evidence. Active preparation, current facade processes, other
+projects/contours/resources and unproven process identities remain untouched.
+Waiting and cleanup inherit the original call deadline; each peer cleanup has
+a one-minute ceiling. No new global coordinator, client-wide restart, elevation,
+platform requirement or always-on client rule is added. Normal calls incur no
+peer lookup unless resource admission actually waits. The cross-process canary
+requires a new chat's original read to finish after retained owner cleanup for
+both backend families, without replaying an applied mutation. A rollback removes
+the recovery adapter and mailbox and retains the existing same-connection
+recovery path; descriptors/receipts never replace OS guard authority. Unknown
+outcomes require agent-owned readback/reconciliation, not a blanket approval.
+
 Architecture checkpoint: the user authorized this continuation design and its
 simplification on 2026-09-26. The existing update/refresh owner retains all
 lifecycle, Git, database and rollback authority. One worktree-local patch receipt

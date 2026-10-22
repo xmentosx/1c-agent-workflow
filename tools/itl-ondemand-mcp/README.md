@@ -48,6 +48,30 @@ operation is replayed. An unknown modifying outcome remains unknown even when
 the connection is recovered; inspect its effect before deciding to issue it again.
 The gateway remains two tools; its call description adds only the recovery route.
 
+Connection cleanup can cross chat lifetimes without restarting the Desktop app.
+Each facade exposes a project-local, generation/creation-identity-bound mailbox
+under its family's `connections/` directory. A same-resource waiter asks the old
+runtime to finish retained cleanup using its original signed execution; a busy
+runtime is left alone. Requests and responses are prefixed so neither current
+nor older runtime-registration scanners interpret them as backend instances.
+The mailbox holds no database keys and is not admission authority. Its failure
+warns and leaves same-connection recovery available.
+The mailbox polls its own request directory five times per second while the
+facade lives; it starts no native process and adds no client schema/context.
+
+The private `repair-connections` broker operation is an admission-recovery
+adapter for obsolete facades lacking a live mailbox. It checks the configured
+caller, exact project/helper/family, versioned executable, opened process
+creation identity, guard supervisor and complete resource set. It waits for
+private preparation children, stops only proven exact-base workflow backends
+while the old supervisor remains alive, then closes the obsolete facade and
+supervisor through the shared process-cleanup helper. No guards or leases are
+manually deleted; normal OS admission continues. Diagnostic receipts preserve
+an interrupted call's unknown outcome and never replay it. The agent resolves
+that outcome through observable effects and resumes; it asks the user only for
+a remaining concrete consequential choice. This adapter has no hard-coded
+version and never starts another App Server, global manager or elevated process.
+
 Primary errors retain their dispatch outcome. When upstream succeeds but cleanup
 fails, the response remains an error and includes the successful content and
 structured upstream result. Existing evidence records retain the execution ID

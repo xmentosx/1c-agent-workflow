@@ -1456,7 +1456,8 @@ function Write-ItlClientMcpEndpointSet {
     if ($PlanOnly) { return @($plans.path | Select-Object -Unique) }
     if ($null -ne $OnPrepared) {
         $projections=@($plans | ForEach-Object {[pscustomobject]@{client=$_.arguments.Client;owner=$_.arguments.Owner;path=$_.path;entries=$_.afterEntries}})
-        & $OnPrepared ([pscustomobject]@{requests=$Requests;fileStates=$fileStates;ownerState=$ownerState;ownerPath=$ownerPath;projections=$projections}) | Out-Null
+        $ownedKeys = @($finalSetClaims | ForEach-Object { [pscustomobject]@{ownerKey=$_.ownerKey;name=$_.name} })
+        & $OnPrepared ([pscustomobject]@{requests=$Requests;fileStates=$fileStates;ownerState=$ownerState;ownerPath=$ownerPath;projections=$projections;ownedKeys=$ownedKeys}) | Out-Null
     }
     $executionPlans = [Collections.Generic.List[object]]::new()
     foreach ($plan in $plans) { $executionPlans.Add($plan) }

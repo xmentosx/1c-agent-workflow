@@ -1,4 +1,24 @@
 ﻿Describe "1C workflow MCP config checks" {
+    It 'validates planned additional MCP keys while rejecting arbitrary extras and missing ready endpoints' {
+        $root = Join-Path $TestDrive 'MCP integrity'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-AgentTargets { @('kilocode') }
+            function Get-AiRules1cMcpExpectedClientKeys { @('ready') }
+            function Get-ItlClientMcpEndpointKeys { @('ready','planned-mask') }
+            function Get-ItlManagedMcpOwnerKeys { @('ready','planned-mask') }
+            { Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames @('ready') } | Should -Throw '*unexpectedManaged*planned-mask*'
+            { Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames @('ready') -PlannedOwnedKeys @{kilocode=@('ready','planned-mask')} } | Should -Not -Throw
+            function Get-ItlManagedMcpOwnerKeys { @('ready','planned-mask','unexpected') }
+            { Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames @('ready') -PlannedOwnedKeys @{kilocode=@('ready','planned-mask')} } | Should -Throw '*unexpectedManaged*unexpected*'
+            function Get-ItlClientMcpEndpointKeys { @('planned-mask') }
+            function Get-ItlManagedMcpOwnerKeys { @('planned-mask') }
+            { Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames @('ready') -PlannedOwnedKeys @{kilocode=@('planned-mask')} } | Should -Throw '*missingClient*ready*missingManaged*ready*'
+        }
+    }
+
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -2177,7 +2197,21 @@ managedBy = "external-mcp"
             @($kilo.instructions) | Should -Be @("USER-RULES.md", "docs/custom.md")
             $kilo.permission.bash | Should -Be "ask"
             $managed = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".agent-1c\mcp\client-managed.json") | ConvertFrom-Json
-            @($managed.owners.'kilocode/vibecoding1c').Count | Should -Be 9
+            # Kilo duplicate suppression also owns disabled OpenCode aliases.
+            # Preserve all nine required endpoints and validate each extra mask;
+            # a total-count assertion incorrectly rejects that valid final set.
+            $readyNames = @('1C-docs-mcp','1c-templates-mcp','1c-syntax-checker-mcp','1c-code-check-mcp','1c-ssl-mcp','BookStack-product-docs-mcp','itl-mantis-ticket-mcp','1c-code-metadata-mcp','1c-graph-metadata-mcp')
+            $ownedNames = @($managed.owners.'kilocode/vibecoding1c')
+            foreach ($name in $readyNames) { $ownedNames | Should -Contain $name }
+            @($ownedNames | Where-Object { $_ -in $readyNames }).Count | Should -Be 9
+            $maskSources = @{}
+            foreach ($name in $readyNames) { if ($name -match '^(?i)1c') { $maskSources['onec'+$name.Substring(2)]=$name } }
+            foreach ($name in @($ownedNames | Where-Object { $_ -notin $readyNames })) {
+                $maskSources.ContainsKey($name) | Should -BeTrue -Because 'only a planned disabled alias may supplement a required endpoint'
+                $kilo.mcp.$name.enabled | Should -BeFalse
+                $kilo.mcp.$name.managedBy | Should -Be 'vibecoding1c-mcp'
+                $kilo.mcp.$name.url | Should -Be $kilo.mcp.($maskSources[$name]).url
+            }
             @($managed.owners.'kilocode/ondemand-facade' | Sort-Object) | Should -Be @("ROCTUP MCP", "Vanessa UI MCP")
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

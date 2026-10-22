@@ -10,6 +10,8 @@ import (
 
 const ownerRecoveryTool = "itl_recover_connection"
 
+const connectionRecoveryContinuation = "Recover the connection, inspect the operation's observable result, then continue: reuse a completed result; retry when not applied or safe to repeat. Ask the user only for a remaining concrete consequential choice that cannot be resolved from evidence. Unknown outcome alone is not an approval barrier."
+
 func ownerRecoveryDefinition() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        ownerRecoveryTool,

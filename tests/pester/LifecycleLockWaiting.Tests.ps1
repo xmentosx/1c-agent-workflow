@@ -57,12 +57,12 @@ finally { Exit-Agent1cLifecycleOperation }
             $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $root, '-RequestedAction', $RequestedAction)
             try {
                 $waiter = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $first = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $first = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
                 $first.resource | Should -Be $Resource
                 $first.owner | Should -Match "activeAction='fixture-owner'"
                 [IO.File]::ReadAllText($ownerPath) | Should -BeExactly $originalOwner
                 $second = Wait-Fixture {
-                    $candidate = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                    $candidate = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
                     if ($candidate.elapsedSeconds -gt $first.elapsedSeconds) { $candidate } else { $null }
                 }
                 $second.elapsedSeconds | Should -BeGreaterThan $first.elapsedSeconds
@@ -135,7 +135,7 @@ finally { Exit-Agent1cLifecycleOperation }
             $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $secondBranch, '-RequestedAction', 'refresh-dev-branch')
             try {
                 $file = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $secondBranch '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $wait = Read-Agent1cLifecycleOperationRecord $file.FullName
+                $wait = Read-Agent1cLifecycleOperationRecord -Path $file.FullName -ExistingPublication
                 $wait.worktreePath | Should -Be $main
                 $wait.owner | Should -Match "activeAction='refresh-dev-branch'"
                 (Test-Agent1cLifecycleLockHeld $secondBranch) | Should -BeFalse
@@ -175,7 +175,7 @@ exit $LASTEXITCODE
             $job = Start-Worker $wrapper @('-Root', $root, '-Runner', $runner)
             try {
                 $waiter = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
-                $wait = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $wait = Read-Agent1cLifecycleOperationRecord -Path $waiter.FullName -ExistingPublication
                 [IO.File]::WriteAllText($wait.cancelPath, '')
                 $result = Receive-Worker $job
                 $result.exitCode | Should -Be 2 -Because $result.combinedText

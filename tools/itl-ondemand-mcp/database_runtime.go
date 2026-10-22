@@ -146,9 +146,21 @@ func (r *runtime) beginDatabaseExecutionWithLocalGate(ctx context.Context, meta 
 	if parent != nil {
 		request.InheritedContext, request.InheritedContextKey = parent.Encoded, parent.Key
 	}
+	var lastPeerRecovery time.Time
 	owner, err := acquireExecutionGuard(ctx, plan.Python, planner.ExecutionRuntimeRoot(), request, func(event executionGuardEvent) {
 		r.logger.Info("waiting for database execution", "status", event.Status,
 			"resources", event.Resources, "waitSeconds", event.WaitSeconds)
+		// The supervisor announces waiting=0 before even trying free OS
+		// handles. Only actual contention may invoke connection recovery.
+		if parent == nil && event.WaitSeconds >= 0.05 && time.Since(lastPeerRecovery) >= 5*time.Second {
+			lastPeerRecovery = time.Now()
+			_ = r.recoverPeerConnections(ctx, event.Resources)
+			if repairer, ok := r.broker.(obsoleteConnectionRepairBroker); ok {
+				if err := repairer.RepairObsoleteConnections(ctx, plan, event.Resources); err != nil {
+					r.logger.Warn("obsolete connection cleanup", "error", err)
+				}
+			}
+		}
 	})
 	if err != nil {
 		unlock()
@@ -266,6 +278,11 @@ func (r *runtime) restoreDatabaseRuntimeMode(context.Context) error   { return n
 // Called under the per-runtime gate and r.mu. Guard release belongs to the
 // outer call, never to backend idle cleanup.
 func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
+	// Retire the old HTTP session before native cleanup can release/reuse its
+	// port. A failed stop still retains the backend and its original guard.
+	if r.sessionTransport != nil {
+		r.sessionTransport.retired.Store(true)
+	}
 	if r.backend != nil || r.cleanupUnconfirmed {
 		if err := r.broker.Stop(ctx); err != nil {
 			r.cleanupUnconfirmed = true
