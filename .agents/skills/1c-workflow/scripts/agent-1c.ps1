@@ -12,8 +12,9 @@ param(
     [ValidateRange(1,50)][int]$CatalogLimit=10,
     [ValidateSet('', 'keep-local', 'registry', 'defer')]
     [string]$CatalogDecision = '',
-    [ValidateSet("", "status", "restore", "reconcile")]
+    [ValidateSet("", "status", "restore", "reconcile", "legacy-status", "legacy-copy")]
     [string]$WorkflowUpdateRecovery = "",
+    [string]$WorkflowUpdateLegacySourceRoot = "",
     [string]$WorkflowUpdateSnapshotId = "",
     [string]$WorkflowUpdateReconciliationFile = "",
     [string]$OpenSpecChangeId = "",
@@ -280,6 +281,11 @@ function Get-Agent1cReexecArguments {
     $arguments = [System.Collections.Generic.List[string]]::new()
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value (Resolve-Agent1cFullPath -Path $ProjectRoot)
+    if ($WorkflowUpdateRecovery -eq 'legacy-copy') {
+        # Keep source recovery's startup disposition in the fresh post-copy
+        # process; its receipt, rather than the review input, owns continuation.
+        Add-Agent1cReexecArgument -Arguments $arguments -Name 'WorkflowUpdateRecovery' -Value $WorkflowUpdateRecovery
+    }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecChangeId" -Value $OpenSpecChangeId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "OpenSpecArchiveSkipSpecs" -Value $OpenSpecArchiveSkipSpecs
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value (Resolve-Agent1cFullPath -Path $ConfigPath)

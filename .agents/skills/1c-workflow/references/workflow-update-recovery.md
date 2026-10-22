@@ -7,6 +7,37 @@ receipt, reset the project, run an old installer over new client membership, or
 delete the only before snapshot. No infobase load or test run is part of these
 file/settings recovery operations.
 
+## Legacy copy without receipt or backup
+
+An old updater can copy a transactional package, remove its temporary backup,
+then fail before the new post-copy owner because no transaction was created.
+Do not commit that incomplete package or loop through its dirty installed updater.
+Use a clean fixed source checkout and preserve the separate exact copied payload:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "<fixed-source>\scripts\update-installed-workflow.ps1" -ProjectRoot "<project>" -SourceRoot "<fixed-source>" -Recovery legacy-status -LegacySourceRoot "<copied-payload-source>"
+```
+
+The owner verifies pre-transaction HEAD, unstaged index, exact raw package bytes,
+lock-only workflow fields and unknown untracked ownership. Review its ignored
+`reportPath` and every path. Write a decision JSON containing that `reportPath`,
+the returned `reportSha256` and `"decision":"adopt-observed-legacy-copy"`; then use
+the same fixed-source launcher with `-Recovery legacy-copy -ReconciliationFile
+<decision.json>`. Late HEAD/index/source/file edits require a fresh review.
+
+Recovery captures a new snapshot of the **observed raw copy and current settings**;
+historical pre-copy/ignored bytes and historical untracked absence are unknown.
+It records that limited provenance, preserves the observed index and retirement
+archive, and enters the existing post-copy/allowlisted commit transaction without
+recopying payload bytes. A failure retains that transaction for the same explicit
+source-side recovery command. Repeating a completed decision creates no
+new commit. Recovery updates **master only**; development worktrees, infobases
+and publication remain outside its scope. Inspect them separately before any
+later normal update. A restore of this capsule returns observed recovery-start
+bytes in an inverse commit; it cannot recreate the lost pre-incident Git state
+or untrack files accepted by the reviewed package commit. Reload client context
+after the owner reports completion.
+
 ## Completed update
 
 `-Recovery status` lists retained completed snapshot ids and any pending root
