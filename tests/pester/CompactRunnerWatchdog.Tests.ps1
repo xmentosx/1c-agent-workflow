@@ -276,14 +276,22 @@ exit 0
             $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
             $watch.Stop()
             $result.exitCode | Should -Not -Be 0
-            $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
             $summary = ($result.stdout -join "`n") | ConvertFrom-Json
             $summary.stage | Should -Be 'runner.operation-timeout'
-            ($result.stderr -join "`n") | Should -Match 'ITL timeout extension: source=phase-budget:designer-wait\|running\|;'
+            # Process startup and tree cleanup are outside the reserved phase deadline.
+            # Observe that deadline itself, keeping the original repeated-budget fixture.
+            $extensions = [regex]::Matches(($result.stderr -join "`n"), '(?m)^ITL timeout extension: source=phase-budget:designer-wait\|running\|; deadlineUtc=(?<deadline>[^;]+);')
+            $extensions.Count | Should -Be 1 -Because ("the same phase must reserve its deadline once; outer invocation took {0:N3}s" -f $watch.Elapsed.TotalSeconds)
+            $terminal = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminal.operationTimeoutSource | Should -BeExactly 'phase-budget:designer-wait|running|'
+            $terminal.operationDeadlineUtc | Should -BeExactly $extensions[0].Groups['deadline'].Value
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+        # The stopped watch retains the original end-to-end bound after cleanup.
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
+        ($result.stderr -join "`n") | Should -Match 'ITL timeout extension: source=phase-budget:designer-wait\|running\|;'
     }
 
     It 'does not add a delayed status read to the published phase budget' {

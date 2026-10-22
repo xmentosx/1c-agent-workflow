@@ -205,5 +205,79 @@
     "requestedCommit": "fc1df658864cffc751d2a2afe58bee135f0add62",
     "repairCommit": "descendant, preserves requested commit identity",
     "registrationReceipt": "source-delivery ledger after owner repair; native/owner proof alone is not registered or publication"
+  },
+  "conflictReconciliation": {
+    "observedUtc": "2026-10-22T13:40:36.422818+00:00",
+    "sourceParent": "d99bc8512fde88362b192c5fbc4a76b53439ad80",
+    "requestedCommitPreserved": "fc1df658864cffc751d2a2afe58bee135f0add62",
+    "foreignCommit": "54adfc1c28fad47c45a7ea0287e468fd7641409a",
+    "cause": "Both branches changed the repeated-budget assertion block: published tests assert one phase reservation and terminal receipt identity; this task keeps overall <7 seconds and adds the delayed-read regression.",
+    "resolution": "Retain the entire foreign deadline/receipt assertion block. Keep the original stopped-watch <7-second assertion and positive phase-extension assertion after finally so three-way composition preserves both contracts. Delayed-read case, fixture, workload, preconditions and production runtime are unchanged.",
+    "preservation": {
+      "foreignAssertionBlockExact": true,
+      "allTestDeclarationsRetained": true,
+      "unchangedTestDeclarations": 17,
+      "originalHelperWorkloadExact": true,
+      "delayedReadCaseExact": true,
+      "originalThresholdLessThanSeconds": 7,
+      "runtimeUnchangedFromParent": true
+    },
+    "focused": {
+      "result": "Passed",
+      "passed": 2,
+      "failed": 0,
+      "tests": [
+        {
+          "name": "does not slide the action deadline when a phase repeats its remaining budget",
+          "result": "Passed",
+          "durationSeconds": 5.2839981
+        },
+        {
+          "name": "does not add a delayed status read to the published phase budget",
+          "result": "Passed",
+          "durationSeconds": 5.131526
+        }
+      ]
+    },
+    "costAndReuse": {
+      "selectedFile": "CompactRunnerWatchdog.Tests.ps1",
+      "focusedCases": 2,
+      "newCasesAdded": 0,
+      "selectionOrDependenciesChanged": false,
+      "reuse": "Changed test input requires fresh watchdog proof; unchanged files remain under existing runtime/input digest rules.",
+      "delta": "Additional regex and status receipt assertions in existing test; no new child processes or fixtures; focused durations remain below unchanged7-second bound. Prior23-test owner run remains historical evidence for its exact inputs."
+    },
+    "rawRefs": [
+      {
+        "path": "build/test-results/g3/watchdog-repair-20261022/conflict-reconciled-summary.json",
+        "sha256": "7ee88f9949956d2879e6e7d0ee69a721b7a2551b4f0eec01eac5a53a0acca1fd",
+        "bytes": 607
+      },
+      {
+        "path": "build/test-results/g3/watchdog-repair-20261022/conflict-reconciled.xml",
+        "sha256": "7653b780406f39354b402fada9b09cd7d0ddc882803ff2e886a0c875014657d9",
+        "bytes": 1944
+      },
+      {
+        "path": "build/test-results/g3/watchdog-repair-20261022/conflict-final-summary.json",
+        "sha256": "487d818ffbd3cb84fc3e8e2acdcdd90dd51790f52dc06ffb28d852550ca7fee9",
+        "bytes": 597
+      },
+      {
+        "path": "build/test-results/g3/watchdog-repair-20261022/conflict-final.xml",
+        "sha256": "c3dcf7a213c520638a53e492a7df6db61131488d393255eea915c49ad72e60f1",
+        "bytes": 1944
+      }
+    ],
+    "registration": "The existing RegisterChange/Status common-Git ledger is authoritative after this source commit; focused tests alone are not registration.",
+    "compositionPreview": {
+      "status": "clean",
+      "candidate": "1675840c84e2791f90be09bab20e2f0a30ae51cd",
+      "testBlob": "6f0f25e5af3ff2b751f6952a7d9556dde8294653",
+      "mergedTestEqualsSource": true,
+      "bothLessThan7AssertionsRetained": true,
+      "foreignDeadlineReceiptBlockExact": true,
+      "previewOnlyNoQueueMutation": true
+    }
   }
 }
