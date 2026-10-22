@@ -112,10 +112,23 @@ below. For an exposed Vanessa or ROCTUP facade with a connection/cleanup failure
 call `call_tool(name="itl_recover_connection", arguments={})` without asking for
 a manual reset. Its existing owner confirms cleanup, including its retained
 guard, and verifies a usable connection within at most one minute. Before a new
-normal call the facade also reconciles its pending cleanup automatically.
-Recovery never replays a previous operation: resume a safe read after success;
-inspect the effects of an unknown modifying call before deciding to issue it
-again. Preserve a failed recovery's concrete owner/identity/port error and evidence;
+normal call the facade also reconciles its pending cleanup automatically. A new
+chat waiting for the same resources requests cleanup from the original facade
+through its project-local connection mailbox; the original signed owner performs
+the stop. Active calls are allowed to finish. An obsolete facade without this
+control is retired by the helper only after exact project/helper, executable,
+process creation, supervisor and complete resource-set identity checks, with
+owned native cleanup before guard release. This is version-independent and
+needs neither a full Codex restart nor manual PID termination. When the client's
+old tools cannot expose this route, start one new chat on the updated config.
+
+Recovery preserves the preceding operation's outcome. After success, the agent
+checks its observable effects: reuse a completed result, retry an action proven
+not applied, or repeat a safe/idempotent action. The transport does not blindly
+duplicate a potentially applied modification. An unknown outcome alone is not
+a user-approval barrier: perform available status/readback/recovery steps and
+continue independent work; ask only for a concrete unresolved consequential
+choice. Preserve a failed recovery's concrete owner/identity/port error and evidence;
 do not loop unchanged attempts. Reconcile wrong/missing client entries with
 `sync-client-mcp -Client` and the owning client's supported reconnect. Keep project/worktree/infobase scope,
 guards and owned-process cleanup. A workflow defect follows

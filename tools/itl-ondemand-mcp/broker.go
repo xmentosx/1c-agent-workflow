@@ -78,7 +78,7 @@ func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 	result := []string{}
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
+		if !strings.EqualFold(key, "ITL_ONDEMAND_CONNECTION_REPAIR") && !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
 			!strings.EqualFold(key, "ITL_EXECUTION_CONTEXT_KEY") {
 			result = append(result, value)
 		}
@@ -97,6 +97,13 @@ func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 	} else if raw != "" {
 		result = append(result, "ITL_EXECUTION_INVOCATION="+raw)
 	}
+	if value, ok := ctx.Value(connectionRepairKey{}).(*connectionRepairRequest); ok {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, "ITL_ONDEMAND_CONNECTION_REPAIR="+string(raw))
+	}
 	return result, nil
 }
 
@@ -106,6 +113,29 @@ type backendBroker interface {
 	Recover(context.Context, *backendInfo, string) (*backendInfo, error)
 	MarkRunning(context.Context, *backendInfo) (*backendInfo, error)
 	Stop(context.Context) error
+}
+
+type obsoleteConnectionRepairBroker interface {
+	RepairObsoleteConnections(context.Context, *facadeExecutionPlan, []string) error
+}
+
+type connectionRepairKey struct{}
+type connectionRepairRequest struct {
+	Plan             *facadeExecutionPlan `json:"plan"`
+	Resources        []string             `json:"resources"`
+	CallerPID        int                  `json:"callerPid"`
+	CallerExecutable string               `json:"callerExecutable"`
+	HelperPath       string               `json:"helperPath"`
+}
+
+func (b *powershellBroker) RepairObsoleteConnections(ctx context.Context, plan *facadeExecutionPlan, resources []string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, connectionRepairKey{}, &connectionRepairRequest{plan, resources, os.Getpid(), executable, b.HelperPath})
+	_, err = b.invoke(ctx, "repair-connections", nil)
+	return err
 }
 
 type powershellBroker struct {

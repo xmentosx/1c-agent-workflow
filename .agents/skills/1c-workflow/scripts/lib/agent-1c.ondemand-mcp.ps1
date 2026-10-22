@@ -1862,7 +1862,7 @@ function Start-ItlOnDemandBackendInstanceCore {
 
 function Invoke-ItlOnDemandBackendBroker {
     param(
-        [ValidateSet("execution-plan", "ensure", "ensure-test-client", "mark-running", "recover", "complete-test-client-close", "stop", "stop-all")][string]$Operation,
+        [ValidateSet("execution-plan", "repair-connections", "ensure", "ensure-test-client", "mark-running", "recover", "complete-test-client-close", "stop", "stop-all")][string]$Operation,
         [ValidateSet("roctup", "vanessa-ui")][string]$Family,
         [string]$InstanceId,
         [string]$CatalogSha256,
@@ -1871,6 +1871,14 @@ function Invoke-ItlOnDemandBackendBroker {
         [int]$ExpectedPort,
         [string]$AuxiliaryContour = ""
     )
+    if ($Operation -eq 'repair-connections') {
+        # Admission repair cannot inherit or expand another execution. The exact
+        # still-held old owner fences its native cleanup; no new 1C work starts.
+        if ($env:ITL_EXECUTION_INVOCATION -or $env:ITL_EXECUTION_CONTEXT -or $env:ITL_EXECUTION_CONTEXT_KEY) { throw 'ITL_ONDEMAND_CONNECTION_REPAIR_NESTED' }
+        $result = Repair-ItlOnDemandObsoleteConnections -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour
+        Write-Output ('ITL_ONDEMAND_RESULT=' + ($result | ConvertTo-Json -Compress -Depth 20))
+        return
+    }
     $invocation = Read-ItlOnDemandExecutionInvocation -Family $Family -AuxiliaryContour $AuxiliaryContour -Operation $Operation
     if ([string](Get-StateValue $invocation 'kind' '') -eq 'owned-idle-stop') {
         if ($InstanceId -cne [string]$invocation.instanceId -or $CatalogSha256 -cne [string]$invocation.catalogSha256) { throw 'ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID' }
@@ -1977,6 +1985,117 @@ function Invoke-ItlOnDemandBackendBroker {
     }
     $json = $result | ConvertTo-Json -Compress -Depth 20
     Write-Output "ITL_ONDEMAND_RESULT=$json"
+}
+
+function Test-ItlOnDemandFacadeArgument {
+    param([string]$CommandLine, [string]$Name, [string]$Value)
+    # Match a complete native argument, including the shared Windows quoting
+    # contract. A similarly named worktree is never sufficient ownership.
+    $quoted = ConvertTo-NativeCommandLineArgument -Argument $Value
+    $forms = @([regex]::Escape($quoted))
+    if ($Value -notmatch '[\s"]') { $forms += [regex]::Escape('"' + $Value + '"') }
+    return [regex]::IsMatch($CommandLine, ('(?i)(?:^|\s)' + [regex]::Escape($Name) + '\s+(?:' + ($forms -join '|') + ')(?=\s|$)'))
+}
+
+function Get-ItlOnDemandConnectionRepairCandidate {
+    param([object]$Record, [object]$Request, [string]$Family, [string]$CurrentExecutable)
+    if ([string]$Record.operation -cne "ondemand-$Family-call" -or [string]$Record.state -cne 'running' -or
+        [string]$Record.executionId -notmatch '^[a-f0-9]{32}$') { Write-Verbose 'Connection repair: record is not a running family call'; return $null }
+    $wanted = @($Request.resources | Sort-Object -Unique)
+    $held = @($Record.resources | Sort-Object -Unique)
+    if ($wanted.Count -eq 0 -or $held.Count -ne $wanted.Count -or @(Compare-Object $held $wanted).Count -gt 0) { Write-Verbose 'Connection repair: different resource set'; return $null }
+    $supervisor = Get-Process -Id ([int]$Record.pid) -ErrorAction SilentlyContinue
+    if ($null -eq $supervisor) { Write-Verbose 'Connection repair: supervisor exited'; return $null }
+    $null = $supervisor.Handle
+    if ('windows-filetime:' + $supervisor.StartTime.ToFileTimeUtc() -cne [string]$Record.processStartTime) { Write-Verbose 'Connection repair: supervisor creation identity changed'; return $null }
+    $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($supervisor.Id)" -ErrorAction Stop
+    if ([string]$native.CommandLine -notmatch '(?:^|\s)-m\s+itl_remote\.execution_guard_host(?:\s|$)') { Write-Verbose 'Connection repair: not an execution supervisor'; return $null }
+    $facade = Get-Process -Id ([int]$native.ParentProcessId) -ErrorAction SilentlyContinue
+    if ($null -eq $facade -or $facade.Id -eq [int]$Request.callerPid) { Write-Verbose 'Connection repair: caller or exited parent'; return $null }
+    $null = $facade.Handle
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($facade.Id)" -ErrorAction Stop
+    $path = [IO.Path]::GetFullPath([string]$owner.ExecutablePath)
+    $installRoot = [IO.Path]::GetFullPath((Get-ItlOnDemandMcpInstallRoot)).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $path.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($path) -ine 'itl-ondemand-mcp-windows-amd64.exe' -or
+        [string]::Equals($path, $CurrentExecutable, [StringComparison]::OrdinalIgnoreCase)) { Write-Verbose 'Connection repair: executable is current or not a managed facade'; return $null }
+    # CIM creation dates have microsecond precision; the opened Windows handle
+    # has the exact FILETIME. A live pinned parent must predate its exact child.
+    # If that parent PID was reused, its new creation is later than the child;
+    # if either opened process exited, it cannot authorize cleanup.
+    if ($facade.HasExited -or $supervisor.HasExited -or $facade.StartTime.ToFileTimeUtc() -gt $supervisor.StartTime.ToFileTimeUtc()) { Write-Verbose 'Connection repair: opened parent/child identity changed'; return $null }
+    foreach ($argument in @(@('--project-root',[string]$script:ProjectRoot), @('--family',$Family), @('--helper',[string]$Request.helperPath))) {
+        if (-not (Test-ItlOnDemandFacadeArgument -CommandLine ([string]$owner.CommandLine) -Name $argument[0] -Value $argument[1])) { Write-Verbose "Connection repair: different $($argument[0])"; return $null }
+    }
+    # A live private broker still owns preparation/native work. Normal calls
+    # finish first. Modern facades use their mailbox and never enter this path.
+    $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($facade.Id)" -ErrorAction Stop)
+    $systemConsole = Join-Path ([Environment]::SystemDirectory) 'conhost.exe'
+    $otherChildren = @($children | Where-Object {
+        [int]$_.ProcessId -ne $supervisor.Id -and
+        -not [string]::Equals([string](Get-StateValue $_ 'ExecutablePath' ''), $systemConsole, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($otherChildren.Count -gt 0) { Write-Verbose 'Connection repair: private preparation is active'; return $null }
+    $connections = Join-Path (Join-Path (Get-ItlOnDemandRuntimeRoot) $Family) 'connections'
+    if (Test-Path -LiteralPath $connections) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $connections -Filter owner.json -Recurse -File)) {
+            try { $control = Read-Utf8Text $file.FullName | ConvertFrom-Json } catch { continue }
+            if ([int](Get-StateValue $control 'schemaVersion' 0) -eq 1 -and
+                [int](Get-ConfigValueFromObject $control 'process.pid' 0) -eq $facade.Id -and
+                [string](Get-ConfigValueFromObject $control 'process.started' '') -ceq $facade.StartTime.ToFileTimeUtc().ToString('x16') -and
+                [string](Get-ConfigValueFromObject $control 'process.executable' '') -ieq $path -and
+                [string](Get-StateValue $control 'projectRoot' '') -ieq [string]$script:ProjectRoot -and
+                [string](Get-StateValue $control 'family' '') -ceq $Family) { return $null }
+        }
+    }
+    return [pscustomobject]@{ facade=$facade; supervisor=$supervisor; executionId=[string]$Record.executionId; resources=$held }
+}
+
+function Repair-ItlOnDemandObsoleteConnections {
+    param([string]$Family, [string]$InstanceId, [string]$AuxiliaryContour = '')
+    $request = $env:ITL_ONDEMAND_CONNECTION_REPAIR | ConvertFrom-Json
+    $plan = Get-ItlOnDemandExecutionPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour
+    $configured = Get-ItlOnDemandMcpExecutablePath
+    if ([string]$request.plan.projectRoot -ine [string]$script:ProjectRoot -or
+        [string]$request.plan.guardRoot -ine [string]$plan.guardRoot -or
+        [string]$request.plan.instanceId -cne $InstanceId -or [string]$request.plan.family -cne $Family -or
+        [string]$request.callerExecutable -ine $configured) { throw 'ITL_ONDEMAND_CONNECTION_REPAIR_IDENTITY_CHANGED' }
+    $caller = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop
+    if ([int]$caller.ParentProcessId -ne [int]$request.callerPid) { throw 'ITL_ONDEMAND_CONNECTION_REPAIR_CALLER_CHANGED' }
+    $callerFacade = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$request.callerPid)" -ErrorAction Stop
+    if ([string]$callerFacade.ExecutablePath -ine $configured) { throw 'ITL_ONDEMAND_CONNECTION_REPAIR_CALLER_CHANGED' }
+    $retired = @()
+    $records = Join-Path ([string]$plan.guardRoot) 'executions'
+    if (Test-Path -LiteralPath $records) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $records -Filter '*.json' -File)) {
+            try { $record = Read-Utf8Text $file.FullName | ConvertFrom-Json } catch { continue }
+            try { $candidate = Get-ItlOnDemandConnectionRepairCandidate -Record $record -Request $request -Family $Family -CurrentExecutable $configured }
+            catch { Write-Verbose "Connection owner was not proven: $($_.Exception.Message)"; continue }
+            if ($null -eq $candidate) { continue }
+            # Retire only proven workflow native runtimes while the exact old
+            # supervisor still holds its full guard. The parent is stopped last.
+            foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object { [string]$_.family -ceq $Family })) {
+                $bases = @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family $Family -FallbackTarget $plan.targetBase)
+                $outside = @($bases | Where-Object {
+                    $base = $_
+                    @($plan.bases | Where-Object { $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch $_.path $base.path) }).Count -eq 0
+                })
+                if ($outside.Count -gt 0 -or [string]$runtime.instanceId -ceq $InstanceId) { continue }
+                if ($candidate.supervisor.HasExited -or $candidate.facade.HasExited) { throw 'ITL_ONDEMAND_CONNECTION_REPAIR_OWNER_EXITED: retry admission; no stale owner proof was used.' }
+                Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ([string]$runtime.instanceId) -ExpectedRuntimeState $runtime -StrictOwnership | Out-Null
+            }
+            $stopped = Stop-NativeProcessForSafety -Process $candidate.facade -UseOpenedProcess
+            if (-not $stopped.confirmed) { throw "ITL_ONDEMAND_CONNECTION_REPAIR_STOP_FAILED: $($stopped.error)" }
+            $stopped = Stop-NativeProcessForSafety -Process $candidate.supervisor -UseOpenedProcess
+            if (-not $stopped.confirmed) { throw "ITL_ONDEMAND_CONNECTION_REPAIR_STOP_FAILED: $($stopped.error)" }
+            $retired += $candidate.executionId
+            $receipt = [pscustomobject]@{ schemaVersion=1; executionId=$candidate.executionId; facadePid=$candidate.facade.Id; supervisorPid=$candidate.supervisor.Id; reason='obsolete-workflow-connection'; callOutcome='unknown'; automaticRetryPerformed=$false; cleanupConfirmed=$true; completedAt=[DateTime]::UtcNow.ToString('o') }
+            $receiptPath = Join-Path (Join-Path (Get-ItlOnDemandRuntimeRoot) $Family) "connection-recovery/recovery-$($candidate.executionId).json"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $receiptPath) | Out-Null
+            Write-Utf8Text -Path $receiptPath -Value ($receipt | ConvertTo-Json -Depth 10)
+        }
+    }
+    return [pscustomobject]@{ status='connections-repaired'; family=$Family; instanceId=$InstanceId; retiredExecutions=$retired; previousCallReplayed=$false }
 }
 
 function Get-ItlOnDemandRuntimeInstances {

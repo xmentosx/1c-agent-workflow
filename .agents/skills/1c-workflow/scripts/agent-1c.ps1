@@ -145,7 +145,7 @@ param(
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
     [switch]$OperationContinuation,
-    [ValidateSet("", "execution-plan", "ensure", "ensure-test-client", "mark-running", "recover", "complete-test-client-close", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
+    [ValidateSet("", "execution-plan", "repair-connections", "ensure", "ensure-test-client", "mark-running", "recover", "complete-test-client-close", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
     [string]$InternalOnDemandCatalogSha256 = "",

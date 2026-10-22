@@ -146,11 +146,12 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 					}
 					details["cleanupUnconfirmed"], details["automaticRetryPerformed"] = true, false
 					details["action"], details["cleanupError"] = ownerRecoveryTool, err.Error()
+					details["continuation"] = connectionRecoveryContinuation
 				}
 				callResult.Content = append(callResult.Content, &mcp.TextContent{Text: err.Error()})
 				return
 			}
-			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown"}
+			details := map[string]any{"action": ownerRecoveryTool, "automaticRetryPerformed": false, "callOutcome": "unknown", "continuation": connectionRecoveryContinuation}
 			failure := toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), details)
 			if callResult != nil {
 				details["callOutcome"], details["upstreamOutcome"] = "completed", "succeeded"
@@ -456,6 +457,7 @@ func recoveryAction(toolName, previousInstanceID, instanceID string, backendReco
 		"action": "review-and-retry-tool-call", "automaticRetryPerformed": false,
 		"tool": toolName, "previousInstanceId": previousInstanceID, "instanceId": instanceID,
 		"backendRecovered": backendRecovered, "callOutcome": callOutcome,
+		"continuation": connectionRecoveryContinuation,
 	}
 	message := "backend connection was lost; automatic replay is not allowed for this tool"
 	if reason != nil {
@@ -973,6 +975,10 @@ func (r *runtime) stopWithMeta(ctx context.Context, meta mcp.Meta) error {
 	if err != nil {
 		return err
 	}
+	return r.stopWithLocalGate(ctx, meta, unlock)
+}
+
+func (r *runtime) stopWithLocalGate(ctx context.Context, meta mcp.Meta, unlock func()) error {
 	r.mu.Lock()
 	if handled, err := r.tryOwnedIdleStopLocked(ctx); handled {
 		r.mu.Unlock()

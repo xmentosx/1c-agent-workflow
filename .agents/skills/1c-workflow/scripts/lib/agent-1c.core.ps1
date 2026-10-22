@@ -687,6 +687,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
     $facadeExecutionActions = @(
         "start-vanessa-profile",
         "internal-ondemand-execution-plan",
+        "internal-ondemand-repair-connections",
         "internal-ondemand-ensure",
         "internal-ondemand-ensure-test-client",
         "internal-ondemand-mark-running",

@@ -4056,7 +4056,7 @@ function Write-Vibecoding1cMcpKiloConfig {
 }
 
 function Write-Vibecoding1cMcpClientConfig {
-    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces, [switch]$PreserveUserChanges,[object]$EndpointSet=$null,[switch]$ReturnRequests,[switch]$UsePinnedCatalog)
+    param([string]$Client = "", [string[]]$Clients = @(), [string[]]$ReplaceAiRulesServerIds = @(), [string[]]$AdditionalInputPaths = @(), [switch]$PlanOnly, [switch]$IncludeClientSurfaces, [switch]$PreserveUserChanges,[object]$EndpointSet=$null,[switch]$ReturnRequests,[switch]$UsePinnedCatalog,[scriptblock]$OnPrepared=$null)
 
     if (-not $PlanOnly -and -not $ReturnRequests) { Write-Section "Write vibecoding1c MCP client config" }
 
@@ -4105,7 +4105,7 @@ function Write-Vibecoding1cMcpClientConfig {
     }
     if ($requests.Count -eq 0) { return }
     if($ReturnRequests){return @($requests)}
-    $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly -PreserveUserChanges:$PreserveUserChanges)
+    $paths = @(Write-ItlClientMcpEndpointSet -Requests $requests -AdditionalInputPaths $AdditionalInputPaths -PlanOnly:$PlanOnly -PreserveUserChanges:$PreserveUserChanges -OnPrepared $OnPrepared)
     if (-not $PlanOnly) {
         Ensure-GitIgnore
         Write-Host "Project MCP configs for $($selectedClients -join ', '): $($paths -join ', ')"

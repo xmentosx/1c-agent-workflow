@@ -5759,10 +5759,15 @@ function Get-AiRules1cMcpExpectedClientKeys {
 }
 
 function Assert-AiRules1cMcpReconcileIntegrity {
-    param([string[]]$ExpectedClientNames)
+    param([string[]]$ExpectedClientNames, [hashtable]$PlannedOwnedKeys = @{})
 
     foreach ($client in @(Get-AgentTargets)) {
     $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $ExpectedClientNames -Client $client)
+    # Required ready endpoints remain mandatory. Additional owned keys come
+    # only from the authoritative writer's preflight, never from actual state.
+    if ($PlannedOwnedKeys.ContainsKey($client)) {
+        $expectedKeys = @(@($expectedKeys) + @($PlannedOwnedKeys[$client]) | Select-Object -Unique)
+    }
     $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
     $managedKeys = @(Get-ItlManagedMcpOwnerKeys -Client $client -Owner "vibecoding1c")
     $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
@@ -5925,7 +5930,17 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
         $clients = @(Get-AgentTargets)
         # This reconcile replaces ai_rules/vibecoding defaults only. Explicit
         # sync-client-mcp/package setup owns changes to facade/UI families.
-        Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths)
+        $plannedOwnedKeys = @{}
+        $captureClaims = {
+            param($prepared)
+            foreach ($claim in @($prepared.ownedKeys)) {
+                if ([string]$claim.ownerKey -cmatch '^([^/]+)/vibecoding1c$') {
+                    $clientKey = $Matches[1]
+                    $plannedOwnedKeys[$clientKey] = @(@($plannedOwnedKeys[$clientKey]) + @([string]$claim.name) | Where-Object { $_ } | Select-Object -Unique)
+                }
+            }
+        }.GetNewClosure()
+        Write-Vibecoding1cMcpClientConfig -Clients $clients -ReplaceAiRulesServerIds $replacementServerIds -AdditionalInputPaths (Get-AiRules1cMcpReconcileSnapshotPaths) -OnPrepared $captureClaims
         $protection = Get-Variable -Name ItlMcpPreserveUserChanges -Scope Script -ErrorAction SilentlyContinue
         $removed = @()
         $pruned = @()
@@ -5933,7 +5948,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
             $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
         }
-        Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames
+        Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames -PlannedOwnedKeys $plannedOwnedKeys
         Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
         return [pscustomobject]@{
             reconciled = $true

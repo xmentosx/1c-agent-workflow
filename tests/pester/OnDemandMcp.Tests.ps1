@@ -3,6 +3,186 @@
     if (-not $env:ITL_PYTHON_EXECUTABLE) { $env:ITL_PYTHON_EXECUTABLE = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
 }
 AfterAll { $env:ITL_PYTHON_EXECUTABLE = $script:AdmissionFixturePythonOverride }
+Describe 'MCP connection continuation after workflow updates' -Tag 'ConnectionContinuation' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $script:connectionRoot = Join-Path $TestDrive 'Проект с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $connectionRoot '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $connectionRoot '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        . $context.HelperPath -ProjectRoot $connectionRoot -Action help *> $null
+        $script:connectionInstanceReader = (Get-Command Get-ItlOnDemandRuntimeInstances).ScriptBlock
+    }
+    BeforeEach {
+        $script:ProjectRoot = $connectionRoot
+        $script:repairCalls = [Collections.Generic.List[string]]::new()
+        $script:repairInstall = Join-Path $connectionRoot 'Установки MCP'
+        $script:currentFacade = Join-Path $repairInstall 'new/itl-ondemand-mcp-windows-amd64.exe'
+        $script:oldFacade = Join-Path $repairInstall 'previous/itl-ondemand-mcp-windows-amd64.exe'
+        $script:guardRoot = Join-Path $connectionRoot 'guards'
+        $script:heldResources = @('base-aaa','base-bbb')
+        $script:repairSupervisor = [pscustomobject]@{ Id=410; Handle=1; StartTime=[datetime]::Now.AddMinutes(-2); HasExited=$false }
+        $script:repairFacade = [pscustomobject]@{ Id=400; Handle=1; StartTime=[datetime]::Now.AddMinutes(-3); HasExited=$false }
+        $script:repairHelper = Join-Path $connectionRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        $script:repairCommand = Join-NativeCommandLineArguments @($oldFacade,'serve','--project-root',$connectionRoot,'--family','roctup','--helper',$repairHelper)
+        $script:repairChildren = @([pscustomobject]@{ProcessId=410})
+        $script:repairRecord = [pscustomobject]@{ executionId=('a'*32); pid=410; operation='ondemand-roctup-call'; state='running'; resources=$heldResources; processStartTime=('windows-filetime:'+$repairSupervisor.StartTime.ToFileTimeUtc()) }
+        $script:repairPlan = [pscustomobject]@{ projectRoot=$connectionRoot; family='roctup'; instanceId=('b'*32); guardRoot=$guardRoot; targetBase=[pscustomobject]@{kind='file';path=(Join-Path $connectionRoot 'База данных')}; bases=@([pscustomobject]@{kind='file';path=(Join-Path $connectionRoot 'База данных')}) }
+        $script:repairRequest = [pscustomobject]@{ plan=$repairPlan; resources=$heldResources; callerPid=900; callerExecutable=$currentFacade; helperPath=$repairHelper }
+        $env:ITL_ONDEMAND_CONNECTION_REPAIR = $repairRequest | ConvertTo-Json -Depth 10 -Compress
+        New-Item -ItemType Directory -Force -Path (Join-Path $guardRoot 'executions') | Out-Null
+        Write-Utf8Text (Join-Path $guardRoot ('executions/'+('a'*32)+'.json')) ($repairRecord | ConvertTo-Json -Depth 8)
+        Mock Get-ItlOnDemandMcpInstallRoot { $script:repairInstall }
+        Mock Get-ItlOnDemandMcpExecutablePath { $script:currentFacade }
+        Mock Get-ItlOnDemandExecutionPlan { $script:repairPlan }
+        Mock Get-Process { if ($Id -eq 410) { $script:repairSupervisor } elseif ($Id -eq 400) { $script:repairFacade } }
+        Mock Get-CimInstance {
+            if ($Filter -eq "ProcessId=$PID") { return [pscustomobject]@{ParentProcessId=900} }
+            if ($Filter -eq 'ProcessId=410') { return [pscustomobject]@{ParentProcessId=400;CommandLine='python.exe -m itl_remote.execution_guard_host'} }
+            if ($Filter -eq 'ProcessId=400') { return [pscustomobject]@{ExecutablePath=$script:oldFacade;CommandLine=$script:repairCommand;CreationDate=$script:repairFacade.StartTime} }
+            if ($Filter -eq 'ProcessId=900') { return [pscustomobject]@{ExecutablePath=$script:currentFacade} }
+            if ($Filter -eq 'ParentProcessId=400') { return $script:repairChildren }
+        }
+        Mock Get-ItlOnDemandRuntimeInstances { [pscustomobject]@{instanceId=('c'*32);family='roctup'} }
+        Mock Get-ItlOnDemandRuntimeDatabaseConnections { $script:repairPlan.bases }
+        Mock Stop-ItlOnDemandBackendInstance { $script:repairSupervisor.HasExited | Should -BeFalse; $script:repairCalls.Add('native') }
+        Mock Stop-NativeProcessForSafety { $script:repairCalls.Add($(if($Process.Id -eq 400){'facade'}else{'supervisor'})); $Process.HasExited=$true; [pscustomobject]@{confirmed=$true;error=''} }
+    }
+    AfterAll { $env:ITL_ONDEMAND_CONNECTION_REPAIR = $null }
+
+    It 'cleans an obsolete exact-project owner and its native runtime before releasing its guard' {
+        $result = Repair-ItlOnDemandObsoleteConnections -Family roctup -InstanceId ('b'*32)
+        $result.retiredExecutions | Should -Be @('a'*32)
+        @($repairCalls) | Should -Be @('native','facade','supervisor')
+        $receipt = Read-Utf8Text (Join-Path $connectionRoot ('.agent-1c/mcp/ondemand/roctup/connection-recovery/recovery-'+('a'*32)+'.json')) | ConvertFrom-Json
+        $receipt.cleanupConfirmed | Should -BeTrue
+        $receipt.callOutcome | Should -Be 'unknown'
+        $receipt.automaticRetryPerformed | Should -BeFalse
+    }
+
+    It 'matches the full native Cyrillic path and rejects a similarly named worktree' {
+        Test-ItlOnDemandFacadeArgument $repairCommand '--project-root' $connectionRoot | Should -BeTrue
+        Test-ItlOnDemandFacadeArgument $repairCommand '--project-root' ($connectionRoot+'-other') | Should -BeFalse
+        $script:repairCommand = Join-NativeCommandLineArguments @($oldFacade,'serve','--project-root',($connectionRoot+'-other'),'--family','roctup','--helper',$repairHelper)
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+    }
+
+    It 'preserves active preparation, a reused PID, another resource set and the selected facade' {
+        $script:repairChildren += [pscustomobject]@{ProcessId=411}
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+        $script:repairChildren = @([pscustomobject]@{ProcessId=410})
+        $saved = $repairRecord.processStartTime; $repairRecord.processStartTime='windows-filetime:1'
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+        $repairRecord.processStartTime=$saved; $repairRecord.resources=@('base-foreign')
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+        $repairRecord.resources=$heldResources
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $oldFacade | Should -BeNullOrEmpty
+        $repairFacade.StartTime=$repairSupervisor.StartTime.AddSeconds(1)
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+        Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+    }
+
+    It 'does not interpret a descriptor for a reused PID as a live modern owner' {
+        # Descriptor contents alone are not process identity. The helper must
+        # still compare the descriptor start and executable before preferring it.
+        $path = Join-Path $connectionRoot '.agent-1c/mcp/ondemand/roctup/connections/stale/owner.json'
+        Write-Utf8Text $path '{"process":{"pid":400,"started":"wrong","executable":"foreign"}}'
+        $candidate = Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade
+        $candidate | Should -Not -BeNullOrEmpty
+    }
+
+    It 'does not mistake the proven Windows console host for active workflow preparation' {
+        $script:repairChildren += [pscustomobject]@{ProcessId=412;ExecutablePath=(Join-Path ([Environment]::SystemDirectory) 'conhost.exe')}
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -Not -BeNullOrEmpty
+        $script:repairChildren += [pscustomobject]@{ProcessId=413;ExecutablePath=(Join-Path $connectionRoot 'conhost.exe')}
+        Get-ItlOnDemandConnectionRepairCandidate $repairRecord $repairRequest roctup $currentFacade | Should -BeNullOrEmpty
+    }
+
+    It 'keeps mailbox requests, responses and recovery receipts outside backend inventory' {
+        $runtimeRoot = Join-Path $connectionRoot '.agent-1c/mcp/ondemand/roctup'
+        Write-Utf8Text (Join-Path $runtimeRoot (('d'*32)+'.json')) '{"family":"roctup","instanceId":"native"}'
+        foreach ($name in @('connections/requests/request-','connections/responses/response-','connection-recovery/recovery-')) {
+            Write-Utf8Text (Join-Path $runtimeRoot ($name+('e'*32)+'.json')) '{"diagnostic":true}'
+        }
+        $items = @(& $script:connectionInstanceReader)
+        $items.Count | Should -Be 1
+        $items[0].instanceId | Should -Be 'native'
+    }
+}
+
+Describe 'Retired MCP connection native process canary' -Tag 'ConnectionContinuation' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $script:canaryRepo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+        $script:canaryInstall = Join-Path $TestDrive 'Установки с пробелом'
+        $script:canaryExecutable = Join-Path $canaryInstall 'previous/itl-ondemand-mcp-windows-amd64.exe'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $canaryExecutable) | Out-Null
+        & go -C (Join-Path $canaryRepo 'tools/itl-ondemand-mcp') test -c -o $canaryExecutable
+        if ($LASTEXITCODE -ne 0) { throw 'Connection process canary build failed' }
+    }
+
+    It 'retires an obsolete <Family> facade and admits the original resource set without restarting its host' -ForEach @(@{Family='roctup'},@{Family='vanessa-ui'}) {
+        $root = Join-Path $TestDrive ('Рабочий проект '+$Family)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        . $context.HelperPath -ProjectRoot $root -Action help *> $null
+        $helper = Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = $canaryExecutable
+        $start.Arguments = Join-NativeCommandLineArguments @('-test.run=^TestConnectionControlChild$','-test.timeout=45s','serve','--project-root',$root,'--family',$Family,'--helper',$helper)
+        $start.WorkingDirectory = Join-Path $canaryRepo 'tools/itl-ondemand-mcp'
+        $start.UseShellExecute=$false; $start.CreateNoWindow=$true
+        $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
+        $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false); $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+        $start.EnvironmentVariables['ITL_CONNECTION_CONTROL_CHILD']=$root
+        $start.EnvironmentVariables['ITL_CONNECTION_CONTROL_FAMILY']=$Family
+        $start.EnvironmentVariables['ITL_CONNECTION_CONTROL_LEGACY']='1'
+        $childTemp = Join-Path $root 'Временные файлы'
+        New-Item -ItemType Directory -Force -Path $childTemp | Out-Null
+        $start.EnvironmentVariables['TEMP']=$childTemp; $start.EnvironmentVariables['TMP']=$childTemp
+        $child = [Diagnostics.Process]::new(); $child.StartInfo=$start
+        $savedRepair=$env:ITL_ONDEMAND_CONNECTION_REPAIR
+        try {
+            $child.Start() | Should -BeTrue
+            $stdout=$child.StandardOutput.ReadToEndAsync(); $stderr=$child.StandardError.ReadToEndAsync()
+            $until=[DateTime]::UtcNow.AddSeconds(20)
+            while (-not (Test-Path -LiteralPath (Join-Path $root 'ready.json'))) {
+                if ($child.HasExited -or [DateTime]::UtcNow -gt $until) { throw "Old process did not retain its guard: $($stdout.GetAwaiter().GetResult()) $($stderr.GetAwaiter().GetResult())" }
+                Start-Sleep -Milliseconds 30
+            }
+            $script:canaryPlan = Read-Utf8Text (Join-Path $root 'ready.json') | ConvertFrom-Json
+            $records = @(Get-ChildItem -LiteralPath (Join-Path $canaryPlan.guardRoot 'executions') -Filter '*.json' -File)
+            $record = Read-Utf8Text $records[0].FullName | ConvertFrom-Json
+            $parentId = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+            $script:canaryCurrent = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$parentId").ExecutablePath
+            $env:ITL_ONDEMAND_CONNECTION_REPAIR = [pscustomobject]@{plan=$canaryPlan;resources=$record.resources;callerPid=$parentId;callerExecutable=$canaryCurrent;helperPath=$helper} | ConvertTo-Json -Compress -Depth 15
+            Mock Get-ItlOnDemandMcpInstallRoot { $script:canaryInstall }
+            Mock Get-ItlOnDemandMcpExecutablePath { $script:canaryCurrent }
+            Mock Get-ItlOnDemandExecutionPlan { $script:canaryPlan }
+            # The real child owns an in-process HTTP test backend, not a 1C
+            # native process. Native registered cleanup has separate owner tests.
+            Mock Get-ItlOnDemandRuntimeInstances { @() }
+            $result = Repair-ItlOnDemandObsoleteConnections -Family $Family -InstanceId $canaryPlan.instanceId
+            @($result.retiredExecutions).Count | Should -Be 1
+            $child.WaitForExit(3000) | Should -BeTrue
+            [IO.File]::ReadAllLines((Join-Path $root 'mutation')).Count | Should -Be 1
+            . (Join-Path $canaryRepo '.agents/skills/itl-remote-runner/scripts/ExecutionGuard.ps1')
+            $admission = Start-ItlExecutionGuardHost -Python $canaryPlan.python -Request @{
+                schemaVersion=1; root=$canaryPlan.guardRoot; bases=@($canaryPlan.bases)
+                operation='connection-recovery-canary';executionId=[guid]::NewGuid().ToString('N');timeout=3
+            }
+            try { @($admission.proof.resources).Count | Should -Be @($record.resources).Count }
+            finally { Complete-ItlExecutionGuardHost -Owner $admission -Result succeeded | Out-Null }
+        } finally {
+            $env:ITL_ONDEMAND_CONNECTION_REPAIR=$savedRepair
+            if (-not $child.HasExited) { $cleanup=Stop-NativeProcessForSafety -Process $child -UseOpenedProcess; $cleanup.confirmed | Should -BeTrue }
+            $child.Dispose()
+        }
+    }
+}
+
 Describe 'ITL performance TestClient owner bridge' {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
@@ -120,12 +300,12 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.24"
+        $manifest.facadeVersion | Should -Be "0.4.25"
         $manifest.minimumFacadeVersion | Should -Be "0.4.17"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
         $databaseRuntimeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\database_runtime.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.24"'
+        $mainSource | Should -Match 'const version = "0\.4\.25"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -153,10 +333,10 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.24"
-        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.24"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.24/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "b1cf660cff30234d4ab4f27ebb77fc05620c848b00a8edd6ec2da89402affd8a"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.25"
+        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.25"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.25/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "f532ff8bfca922ec01bad3ad9953fa2be1ba74618c352790f3f57a67efb6d4be"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -377,13 +557,13 @@ Describe "ITL on-demand MCP facade" {
             }
             $mismatch | Should -Match "DEPENDENCY_SELECTION_REQUIRED"
 
-            $lock.dependencies.itlOndemandMcp.version = "0.4.24"
+            $lock.dependencies.itlOndemandMcp.version = "0.4.25"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
             $resolved = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.24\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.25\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -416,7 +596,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.24"
+                $version = "0.4.25"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $cacheBytes = [byte[]](1, 2, 3, 4)
                 $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($cacheBytes)))).Replace('-', '').ToLowerInvariant()
@@ -437,7 +617,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.24\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.25\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -469,13 +649,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.24"
+                        version = "0.4.25"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.24\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.25\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -511,7 +691,7 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.24"
+                        version = "0.4.25"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $sourceSha256
