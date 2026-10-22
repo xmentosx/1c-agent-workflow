@@ -1,5 +1,7 @@
 # Tasks
 
+Актуальный registry dependency subset на runtime176bd2fa — [PM5 corrupt-cache/invalid-applied qualification](../add-product-project-registry/evidence/g3-pm5-cache-record-qualification-2026-10-22.md), 8 native controls passed. Это уточняет registry AC-16/17/26, не закрывает full G3/AC-39, consumer4.2/AC-43/G5/44 и не добавляет memory hook/cache/recovery. Остаток — в одном registry report; G4/Gate 6/рабочая миграция/публикация не начинались.
+
 Действующая [registry/source модель 2026-10-21](../add-product-project-registry/design.md#различия-проекта-и-подключённого-mcp-источника) заменяет прежний exact-index criterion. Code/Graph patches, source stamp и доступ к исходникам Graph не являются prerequisites памяти/G3. Исторические результаты ниже сохранены в своих границах; G4/AC-43/G5/44 не приняты и сейчас не реализуются.
 
 Текущая dependency qualification — [одна registry-матрица G3/AC-39](../add-product-project-registry/evidence/g3-final-qualification-2026-10-20.md). [Client/installed subset](../add-product-project-registry/evidence/g3-clients-installed-2026-10-21.md) добавил native Kilo connection/reconnect и legacy installed PM5 recovery; [registry CLI repair/repeat](../add-product-project-registry/evidence/g3-context-cli-output-2026-10-21.md) закрыл G3-CONTEXT-CLI-OUTPUT. Kilo aliases/API и другие client/platform/installed gaps открыты. Это не memory consumer acceptance; AC-43/G5/44 открыты, G1/Q1–Q7/D9/G2 прежние. Нет разрешения G4, рабочей миграции, публикации или второго updater/журнала.
