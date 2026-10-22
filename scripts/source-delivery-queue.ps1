@@ -276,8 +276,12 @@ function Register-SourceChange {
             $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
             if (-not $worktree) { $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "register" }
             else { [void](Invoke-WorktreeGit -Root $worktree.path -Arguments @("reset", "--hard", $startPoint)) }
-            Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $snapshot.entries -PublishedDevelop $snapshot.remoteBefore
+            # Admit the already validated source head first: it may contain an
+            # explicit merge resolution between its queued head and develop.
+            # Otherwise the old accepted candidate can conflict with develop
+            # before the resolving source lineage is ever considered.
             Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries @([pscustomobject]@{ id=$id; head=$head })
+            Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $snapshot.entries -PublishedDevelop $snapshot.remoteBefore
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $queueBase = if ($oldBase) { $oldBase } else { $base }
