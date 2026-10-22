@@ -22,6 +22,7 @@ param(
     [string]$DevBranchName,
     [switch]$DisableProjectTestsSafeMode,
     [switch]$CleanupDryRun,
+    [switch]$CleanupDiagnosticsOnly,
     [switch]$ConfirmBranchDeletion,
     [string]$PeerDevBranchName,
     [string]$BranchSyncRequestPath,
@@ -591,7 +592,16 @@ try {
             if ($Mode -eq 'dependencies') { Show-WorkflowDependencySelection | ConvertTo-Json -Depth 100 }
             else { Show-WorkflowStatus; Show-ItlArtifactFootprint }
         }
-        "clean-artifacts" { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun | Out-Null }
+        "clean-artifacts" {
+            if ($CleanupDiagnosticsOnly) {
+                $policy = Get-ItlArtifactRetentionPolicy
+                if ($policy.enabled) {
+                    $cleanup = Invoke-ItlDiagnosticArtifactCleanup -ProjectRoot $script:ProjectRoot -MinimumAgeDays $policy.diagnosticDays -ProtectedPaths (Get-ItlArtifactProtectedPaths) -DryRun:$CleanupDryRun
+                    Write-Host "ITL disposable diagnostics: candidates=$($cleanup.entries.Count), removedBytes=$($cleanup.removedBytes), retainedErrors=$($cleanup.failed.Count), dryRun=$([bool]$CleanupDryRun)."
+                    foreach ($issue in $cleanup.failed) { Write-Warning "ITL diagnostic retained: $($issue.path): $($issue.error)" }
+                }
+            } else { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun | Out-Null }
+        }
         "delete-dev-branch" { Remove-ItlDevBranch -Name $DevBranchName -Confirmed:$ConfirmBranchDeletion }
         "configure-auxiliary-contour" { Configure-AuxiliaryContour }
         "status-auxiliary-contours" { Show-AuxiliaryContoursStatus }

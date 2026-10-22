@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'agent-1c.diagnostic-retention.ps1')
+
 function Get-ItlArtifactRetentionPolicy {
     $enabledText = ([string](Get-EnvValue -Name 'ITL_ARTIFACT_CLEANUP_ENABLED' -Default 'true')).Trim().ToLowerInvariant()
     if ($enabledText -notin @('true', 'false')) { throw "ITL_ARTIFACT_CLEANUP_ENABLED must be true or false: '$enabledText'." }
@@ -6,6 +8,7 @@ function Get-ItlArtifactRetentionPolicy {
         ITL_RECOVERY_ARCHIVE_KEEP_COUNT = 2
         ITL_RUN_ARTIFACT_KEEP_COUNT = 3
         ITL_RUNTIME_ARTIFACT_RETENTION_DAYS = 7
+        ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS = 7
     }
     $values = @{}
     foreach ($name in $defaults.Keys) {
@@ -22,6 +25,7 @@ function Get-ItlArtifactRetentionPolicy {
         archiveKeepCount = $values.ITL_RECOVERY_ARCHIVE_KEEP_COUNT
         runKeepCount = $values.ITL_RUN_ARTIFACT_KEEP_COUNT
         runtimeDays = $values.ITL_RUNTIME_ARTIFACT_RETENTION_DAYS
+        diagnosticDays = $values.ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS
     }
 }
 
@@ -335,6 +339,7 @@ function Get-ItlArtifactCleanupPlan {
             $entries += [pscustomobject]@{ category = $item.category; group = $item.group; path = $item.path; root = $item.root; companion = $item.companion; expectedSha256 = $item.expectedSha256; modifiedAt = $item.modifiedAt; sizeBytes = (Get-ItlArtifactCandidateSize -Path $item.path); delete = $delete; reason = $(if ($protectedPath) { 'referenced' } elseif ($index -lt $keep) { 'newest' } elseif (-not $expired -and $item.category -in @('itl-run', 'vanessa', 'yaxunit')) { 'within-age' } else { 'expired' }) }
         }
     }
+    $entries += @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $ProjectRoot -MinimumAgeDays $policy.diagnosticDays -ProtectedPaths $protected)
     return [pscustomobject]@{ policy = $policy; entries = @($entries) }
 }
 
@@ -361,6 +366,12 @@ function Invoke-ItlArtifactCleanup {
     foreach ($entry in @($plan.entries | Where-Object delete)) {
         if ($DryRun) { continue }
         try {
+            if ($entry.category -eq 'diagnostic') {
+                Remove-ItlDiagnosticArtifact -Entry $entry
+                $removed += $entry.sizeBytes
+                [void]$removedPaths.Add([string]$entry.path)
+                continue
+            }
             if (-not (Test-ItlArtifactPathWithoutReparse -Root $entry.root -Path $entry.path -Recursive)) { throw 'path contains a reparse point or is outside the managed root' }
             if ($entry.companion -and -not (Test-ItlArtifactPathWithoutReparse -Root $entry.root -Path $entry.companion)) { throw 'manifest path is unsafe' }
             if ($entry.expectedSha256 -and (Get-FileHash -LiteralPath $entry.path -Algorithm SHA256).Hash -ine $entry.expectedSha256) { throw 'artifact hash differs from its manifest' }

@@ -150,6 +150,20 @@ path as the deciding evidence. Approval covers that stated boundary. A newly
 affected owner, resource class, administrative prerequisite, or installed
 migration is a scope change; implementation details inside the boundary are not.
 
+The user approved producer-marked diagnostic retention on 2026-10-22. The
+existing artifact-retention owner consumes immutable completion receipts for
+individual native temporary files and derived XML/ETLX, preserving original
+ETL, raw responses, handoffs, databases and unfinished work. No new job state
+machine, background service, elevation or lifecycle barrier is introduced.
+Routine planning reads bounded metadata; full hashes run only at enrollment
+and actual removal. A scheduled caller reuses the same owner and env policy.
+Windows 10/11 and Server 2019+ retain non-admin operation. Canary evidence is
+the Unicode-path original/derivative cleanup, busy-file continuation, changed
+byte/manifest rejection and existing clean-artifacts integration. Rollback stops
+new enrollment/invocations; retained originals regenerate derived artifacts.
+Unknown legacy investigations remain untouched. See
+[diagnostic retention](../.agents/skills/1c-workflow/references/artifact-retention.md).
+
 The existing database-access coordinator is the authoritative owner for exact
 infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote
 operations. Calling it with an already supported access mode, resource set, and

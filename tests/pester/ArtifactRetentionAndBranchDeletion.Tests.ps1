@@ -93,7 +93,7 @@ Describe 'ITL artifact retention' {
         }
         $script:retentionCandidates = $candidates
         $script:referencedResult = $candidates[0].path
-        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7 } }
+        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7; diagnosticDays = 7 } }
         Mock Get-ItlArtifactProtectedPaths { return @($script:referencedResult) }
         Mock Get-ItlResultArtifactCandidates { return $script:retentionCandidates }
         Mock Get-ItlRunArtifactCandidates { return @() }
@@ -178,7 +178,7 @@ Describe 'ITL artifact retention' {
             $runs += New-ItlArtifactRetentionCandidate -Category 'itl-run' -Root $root -Path $path -Group 'itl-run' -ModifiedAt $now.AddDays(-$daysAgo[$index])
         }
         $script:runCandidates = $runs
-        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7 } }
+        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7; diagnosticDays = 7 } }
         Mock Get-ItlArtifactProtectedPaths { return @() }
         Mock Get-ItlResultArtifactCandidates { return @() }
         Mock Get-ItlRunArtifactCandidates { return $script:runCandidates }
