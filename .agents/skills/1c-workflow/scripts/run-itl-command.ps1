@@ -997,7 +997,10 @@ try {
             $phaseRemainingSeconds = [Math]::Max($publishedTimeoutRemainingSeconds, $publishedStallRemainingSeconds)
             $phaseBudgetKey = "$currentStage|$publishedLiveness|$([string](Get-ObjectValue -Object $currentStatus -Name 'probePhase' -Default ''))"
             if ($currentStage -and $phaseRemainingSeconds -gt 0 -and $reservedPhaseBudgets.Add($phaseBudgetKey)) {
-                $phaseDeadlineUtc = [DateTime]::UtcNow.AddSeconds($phaseRemainingSeconds)
+                # Remaining time belongs to the published snapshot. A delayed
+                # reader must not grant the phase that elapsed time a second time.
+                $phaseRemainingAtReadSeconds = $phaseRemainingSeconds - [double]$freshness.ageSeconds
+                $phaseDeadlineUtc = [DateTime]::UtcNow.AddSeconds($phaseRemainingAtReadSeconds)
                 if ($phaseDeadlineUtc -gt $operationDeadlineUtc) {
                     $operationDeadlineUtc = if ($phaseDeadlineUtc -lt $maximumDeadlineUtc) { $phaseDeadlineUtc } else { $maximumDeadlineUtc }
                     $operationDeadlineSource = "phase-budget:$phaseBudgetKey"

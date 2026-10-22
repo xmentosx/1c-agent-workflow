@@ -122,7 +122,7 @@ AC-44 использует то же будущее registry release population.
 ## Native desktop dependency qualification, 2026-10-21
 
 - [x] Согласовать existing AC-15/20/25/35/43 с [одним registry desktop report](../add-product-project-registry/evidence/g3-desktop-native-2026-10-21.md): Kilo visible frontend/Code/Graph read subset, Cursor worker-only behind login, OpenCode selected-context failure; semantic generation-null error и реальные native token counters сохранены.
-- [ ] Существующая AC-43/G5 dependency остаётся открытой: G3-CURSOR-NATIVE-AGENT-AUTH, остальные installed/platform/CUSTOM/cost controls, future memory consumer/native canary. OpenCode selected-context и provider-403 закрыты в bounded native scope [единым registry follow-up](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md) на отдельной 1.19.3/original PROF root; полные registry G3/AC-39/release population AC-36–38/AC-44 не закрыты.
+- [ ] Существующая AC-43/G5 dependency остаётся открытой: остальные installed/platform/CUSTOM/cost controls, future memory consumer/native canary. OpenCode selected-context и provider-403 закрыты в bounded native scope [единым registry follow-up](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md) на отдельной 1.19.3/original PROF root; полные registry G3/AC-39/release population AC-36–38/AC-44 не закрыты.
 
 Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, credential storage или acceptance ledger нет. Native active_generation=null не возвращает backend patch в обязательный план. Шесть областей/home/grants/ai_rules_1c/G1/Q1–Q7/D9/G2 прежние; Gate 6, рабочая миграция и публикация не затронуты.
 
@@ -136,9 +136,11 @@ Consumer 4.2/G4 не начат; нового memory desktop probe, mapper, cred
 - [x] Согласовать existing AC-15/20/25/35/43 с [registry-only evidence](../add-product-project-registry/evidence/g3-opencode-provider-repair-2026-10-21.md): 1.18.11 version local/403 сохранён, vendor 1.19.3 и actual stats/list_graph_projects/reload passed. 19 fresh paths unchanged (16 existing/3 absent; 12 client formats/11 physical files), семь owned processes закрыты; input/cache costs не названы memory delta.
 - [ ] Full registry G3/AC-39/installed/model/platform/CUSTOM/cost и memory 4.2/AC-43/G5/44 остаются открытыми. Квалификационный vendor release не становится memory provider/новым startup gate. Gate 6/G4/рабочая миграция/публикация не начинались.
 
-## Cursor auth dependency follow-up
+## Cursor auth qualification follow-up
 
-- [x] Согласовать existing AC-15/20/25/35/43 с [одним registry report](../add-product-project-registry/evidence/g3-cursor-auth-qualification-2026-10-21.md): same installed client/profile/PROF root, visible signed-out UI, worker Code/Graph connection/tools28/54; fresh19 unchanged, окно оставлено для пользовательского входа. Это зависимость квалификации, не memory implementation или auth-state owner.
-- [ ] G3-CURSOR-NATIVE-AGENT-AUTH: обычный sign-in, visible native Agent tools/actual stats/list_graph_projects payloads/reload и cleanup по registry plan. До этого full registry AC-39 и memory4.2/AC-43/G5/44 не закрываются; account credentials/private switches не добавляются в business registry или memory.
+- [x] Согласовать existing AC-15/20/25/35/43 с [одним registry report/JSON 22.10](../add-product-project-registry/evidence/g3-cursor-native-reads-2026-10-22.md): пользователь разрешил другой signed-in профиль/installed3.26.16 на original PROF root. Actual два tools args {}/completed scoped payloads, native reload/account/toolset/result preservation и cleanup passed; fresh19 unchanged. Failed private3.25.9 сохранён, account/private-state owner не добавлен.
+- [x] G3-CURSOR-NATIVE-AGENT-AUTH закрыт в этой native области; normal source switches восстановлены, global auto-run/common MCP не менялись, credentials/private APIs не использовались. Account credentials/private switches не добавляются в business registry или memory. Это dependency evidence для памяти, не выполнение consumer4.2/AC-43/G5/44.
 
-Gate 6/G4/рабочая миграция/публикация не затронуты. Six scopes/home/grants/ai_rules_1c и mandatory release population AC-36–38 прежние.
+Canary1 user turn/2 tools/UI12 s, tokens/provider/title traffic/billing/paired delta не измерены; budgets прежние. Full registry G3/AC-39 и остальные installed/CUSTOM/platform/cost, mandatory release population AC-36–38 и memory4.2/G4/AC-43/G5/44 открыты. Gate 6/рабочая миграция/публикация не выполнялись; six scopes/home/grants/ai_rules_1c прежние.
+
+- [x] Согласовать dependency с [registry-owned watchdog repair](../add-product-project-registry/evidence/g3-watchdog-registration-repair-2026-10-22.md): existing runner phase deadline учитывает возраст публикации, исходный `<7 s`/workload сохранены; owner tests не заменяют source-delivery регистрацию. Memory не получает новый timeout owner/probe/schema; G4/4.2/AC-43/G5/44 и full G3/release population остаются открытыми.
