@@ -8,10 +8,19 @@ function Assert-DeliveryManualCleanupLease {
     }
 
     $persisted = Read-DeliveryOperation
+    $ownerStartMatches = $false
+    if ($persisted) {
+        try {
+            # JSON readers may materialize the same round-trip timestamp as a
+            # DateTime. Compare its exact instant, not culture-dependent text.
+            $ownerStartMatches = (ConvertTo-DeliveryUtcDateTime -Value $persisted.ownerProcessStartedAt).Ticks -eq
+                (ConvertTo-DeliveryUtcDateTime -Value $active.ownerProcessStartedAt).Ticks
+        } catch { $ownerStartMatches = $false }
+    }
     if (-not $persisted -or [int]$persisted.schemaVersion -ne 1 -or
         -not [string]$persisted.id -or [string]$persisted.id -cne [string]$active.id -or
         [string]$persisted.action -cne 'Cleanup' -or [int]$persisted.ownerPid -ne $PID -or
-        [string]$persisted.ownerProcessStartedAt -cne [string]$active.ownerProcessStartedAt -or
+        -not $ownerStartMatches -or
         -not (Test-DeliveryProcessIdentity -ProcessId ([int]$persisted.ownerPid) -StartedAt $persisted.ownerProcessStartedAt)) {
         throw 'The manual Cleanup delivery-operation lease is missing, changed, or owned by another process.'
     }

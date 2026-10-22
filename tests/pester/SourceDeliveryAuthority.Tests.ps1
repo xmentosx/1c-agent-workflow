@@ -62,14 +62,14 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         $status.cleanupPolicy.releaseMaster | Should -Be 'master'
         @($status.cleanupPolicy.promoteRelease) | Should -Be @('develop', 'master')
     }
-It "runs the published develop supervisor for registration, Plan and PublishDevelop, and master for release" {
+It "runs published develop for registration, Plan, publication and default Cleanup, and master only when selected" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
             $supervisorDirectory = Join-Path $fixture.root 'scripts'; New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
             $developSupervisor = @'
 [CmdletBinding()]
-param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]$SupervisorChannel,[switch]$BootstrapSupervisor)
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]$SupervisorChannel,[string]$CleanupChannel,[switch]$BootstrapSupervisor)
 [pscustomobject]@{ status='develop-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; channel=$SupervisorChannel; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
 '@
             [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $developSupervisor, [Text.UTF8Encoding]::new($false))
@@ -85,13 +85,16 @@ param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]
             & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
             & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
 
-            foreach ($action in @('RegisterChange','Plan','PublishDevelop')) {
+            foreach ($action in @('RegisterChange','Plan','PublishDevelop','Cleanup')) {
                 $payload = (Invoke-DeliveryTestPowerShell -Arguments @('-Action',$action,'-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
                 $payload.status | Should -Be 'develop-supervisor'
                 $payload.supervisorCommit | Should -Be $developCommit
                 $payload.channel | Should -Be 'develop'
                 $payload.bootstrap | Should -BeFalse
             }
+            $explicitCleanup = (Invoke-DeliveryTestPowerShell -Arguments @('-Action','Cleanup','-CleanupChannel','Develop','-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
+            $explicitCleanup.supervisorCommit | Should -Be $developCommit
+            $explicitCleanup.channel | Should -Be 'develop'
             foreach ($action in @('PromoteRelease','ReleaseMaster')) {
                 $payload = (Invoke-DeliveryTestPowerShell -Arguments @('-Action',$action,'-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
                 $payload.status | Should -Be 'master-supervisor'

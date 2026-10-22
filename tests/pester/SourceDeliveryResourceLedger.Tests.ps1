@@ -513,7 +513,9 @@ public static class $typeName
         }
     }
 
-    It 'bounds reader drain when an exited git root leaves a pipe-holding descendant' -Skip:($env:OS -ne 'Windows_NT') {
+    It 'bounds reader drain when a git root exits after <RootLifetimeMilliseconds>ms and leaves a pipe-holding descendant' -ForEach @(
+        @{ RootLifetimeMilliseconds=1500 }, @{ RootLifetimeMilliseconds=0 }
+    ) -Skip:($env:OS -ne 'Windows_NT') {
         $fixture = $null
         $childPid = 0
         $priorPath = $env:PATH
@@ -542,7 +544,7 @@ public static class $typeName
         childInfo.CreateNoWindow = true;
         Process child = Process.Start(childInfo);
         File.WriteAllText(Environment.GetEnvironmentVariable("ITL_DISPOSITION_PIPE_CHILD_PID_PATH"), child.Id.ToString(), new UTF8Encoding(false));
-        Thread.Sleep(1500);
+        Thread.Sleep($RootLifetimeMilliseconds);
         return 0;
     }
 }

@@ -129,6 +129,44 @@ Describe 'Source delivery ref-only cleanup' {
         } finally { Remove-RefCleanupFixture -Fixture $fixture }
     }
 
+    It 'accepts the exact live owner timestamp after JSON materialization as <Representation>' -ForEach @(
+        @{ Representation='DateTime' }, @{ Representation='DateTimeOffset' }, @{ Representation='offset string' }
+    ) {
+        $fixture = $null
+        try {
+            $fixture = New-RefCleanupFixture
+            [void](Enter-DeliveryOperation -Action Cleanup)
+            $script:TimestampLease = Read-DeliveryOperation
+            $instant = ConvertTo-DeliveryUtcDateTime -Value $script:ActiveOperation.ownerProcessStartedAt
+            $script:TimestampLease.ownerProcessStartedAt = switch ($Representation) {
+                'DateTime' { $instant }
+                'DateTimeOffset' { [DateTimeOffset]::new($instant) }
+                'offset string' { ([DateTimeOffset]::new($instant)).ToOffset([TimeSpan]::FromHours(3)).ToString('o') }
+            }
+            Mock Read-DeliveryOperation { $script:TimestampLease }
+            (Assert-DeliveryManualCleanupLease).id | Should -Be $script:ActiveOperation.id
+        } finally { Remove-RefCleanupFixture -Fixture $fixture }
+    }
+
+    It 'rejects a changed or invalid persisted owner timestamp without changing queue refs' -ForEach @(
+        @{ InvalidTimestamp='one tick' }, @{ InvalidTimestamp='invalid' }
+    ) {
+        $fixture = $null
+        try {
+            $fixture = New-RefCleanupFixture
+            Add-RefCleanupCandidates -Fixture $fixture -Queue
+            [void](Enter-DeliveryOperation -Action Cleanup)
+            $persisted = Read-DeliveryOperation
+            $persisted.ownerProcessStartedAt = if ($InvalidTimestamp -eq 'one tick') {
+                (ConvertTo-DeliveryUtcDateTime -Value $script:ActiveOperation.ownerProcessStartedAt).AddTicks(1).ToString('o')
+            } else { 'invalid timestamp' }
+            Write-DeliveryOperation -Operation $persisted
+            { Invoke-DeliveryRefDispositionCleanup } | Should -Throw '*missing, changed, or owned by another process*'
+            (& git -C $fixture.root rev-parse 'refs/itl/develop-queue/fixture/base').Trim() | Should -Be $fixture.base
+            (& git -C $fixture.root rev-parse 'refs/itl/develop-queue/fixture/head').Trim() | Should -Be $fixture.head
+        } finally { Remove-RefCleanupFixture -Fixture $fixture }
+    }
+
     It 'rejects an in-memory operation that no longer matches the persisted Cleanup lease' {
         $fixture = $null
         try {
