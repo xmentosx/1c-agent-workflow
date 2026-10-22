@@ -761,6 +761,83 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         }
     }
 
+    It "selects the workflow update ref without changing installed provenance: <Name>" -TestCases @(
+        @{ Name = 'legacy without lock'; Lock = $null; Override = ''; Expected = 'master' },
+        @{ Name = 'legacy without dependencies'; Lock = '{}'; Override = ''; Expected = 'master' },
+        @{ Name = 'legacy without workflow entry'; Lock = '{"dependencies":{}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'legacy without ref'; Lock = '{"dependencies":{"workflowPackage":{"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'empty saved ref'; Lock = '{"dependencies":{"workflowPackage":{"ref":""}}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'null saved ref'; Lock = '{"dependencies":{"workflowPackage":{"ref":null}}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'blank saved ref'; Lock = '{"dependencies":{"workflowPackage":{"ref":"  "}}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'saved develop'; Lock = '{"dependencies":{"workflowPackage":{"ref":"develop"}}}'; Override = ''; Expected = 'develop' },
+        @{ Name = 'saved master'; Lock = '{"dependencies":{"workflowPackage":{"ref":"master"}}}'; Override = ''; Expected = 'master' },
+        @{ Name = 'saved tag'; Lock = '{"dependencies":{"workflowPackage":{"ref":"workflow-v1"}}}'; Override = ''; Expected = 'workflow-v1' },
+        @{ Name = 'saved detached ref'; Lock = '{"dependencies":{"workflowPackage":{"ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}'; Override = ''; Expected = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+        @{ Name = 'explicit override'; Lock = '{"dependencies":{"workflowPackage":{"ref":"develop"}}}'; Override = 'master'; Expected = 'master' },
+        @{ Name = 'explicit legacy override'; Lock = $null; Override = 'develop'; Expected = 'develop' },
+        @{ Name = 'blank override'; Lock = '{"dependencies":{"workflowPackage":{"ref":"develop"}}}'; Override = '  '; Expected = 'develop' }
+    ) {
+        param($Name, $Lock, $Override, $Expected)
+        $tempRoot = Join-Path $TestDrive ('проект workflow ref ' + [guid]::NewGuid().ToString('N'))
+        $lockPath = Join-Path $tempRoot '.agent-1c/dependency-lock.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+        if ($null -ne $Lock) { Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value $Lock }
+        $before = if ($null -ne $Lock) { Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 }
+        $previousRef = $env:ITL_WORKFLOW_REF
+        $previousPrefixedRef = $env:AGENT_1C_ITL_WORKFLOW_REF
+        try {
+            $env:ITL_WORKFLOW_REF = $Override
+            $env:AGENT_1C_ITL_WORKFLOW_REF = ''
+            $selected = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-WorkflowPackageRef
+            }
+            $selected | Should -Be $Expected
+            if ($null -eq $Lock) {
+                Test-Path -LiteralPath $lockPath | Should -BeFalse
+            } else {
+                (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+            }
+        } finally {
+            $env:ITL_WORKFLOW_REF = $previousRef
+            $env:AGENT_1C_ITL_WORKFLOW_REF = $previousPrefixedRef
+        }
+    }
+
+    It "retains the bootstrap develop ref for a later workflow source resolution" {
+        $tempRoot = Join-Path $TestDrive 'проект bootstrap develop'
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help `
+                -BootstrapWorkflowRepo 'https://github.com/xmentosx/1c-agent-workflow.git' `
+                -BootstrapWorkflowRef 'develop' `
+                -BootstrapWorkflowCommit ('a' * 40) `
+                -BootstrapWorkflowSource 'path' *> $null
+            Apply-BootstrapWorkflowPackageProvenance | Out-Null
+        }
+        $lockPath = Join-Path $tempRoot '.agent-1c/dependency-lock.json'
+        $before = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+        $previous = @{}
+        foreach ($name in @('ITL_WORKFLOW_REF', 'AGENT_1C_ITL_WORKFLOW_REF', 'ITL_WORKFLOW_SOURCE_PATH', 'ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE')) {
+            $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $env:ITL_WORKFLOW_REF = ''
+            $env:AGENT_1C_ITL_WORKFLOW_REF = ''
+            $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
+            $env:ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE = 'false'
+            $source = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Resolve-WorkflowPackageSource
+            }
+            $source.ref | Should -Be 'develop'
+            $source.source | Should -Be 'path'
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+        } finally {
+            foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
+        }
+    }
+
     It "does not invent or overwrite bootstrap provenance when no bootstrap arguments are supplied" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-provenance-none-" + [guid]::NewGuid().ToString("N"))
         $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"

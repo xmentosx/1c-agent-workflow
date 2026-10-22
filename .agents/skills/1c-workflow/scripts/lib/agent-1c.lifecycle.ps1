@@ -6017,6 +6017,9 @@ function Get-WorkflowPackageRef {
     }
     $ref = [string](Get-EnvValue -Name "ITL_WORKFLOW_REF" -Default "")
     if ([string]::IsNullOrWhiteSpace($ref)) {
+        $ref = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'ref' -Default '')
+    }
+    if ([string]::IsNullOrWhiteSpace($ref)) {
         return (Get-WorkflowPackageDefaultRef)
     }
     return $ref

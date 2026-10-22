@@ -512,12 +512,27 @@ function Get-RunnerLivenessSnapshot {
 }
 
 function Stop-RunnerOwnedProcessTree {
-    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [IntPtr]$JobHandle = [IntPtr]::Zero
+    )
 
     $errors = [System.Collections.Generic.List[string]]::new()
     try { $Process.Refresh() } catch {}
     if ($Process.HasExited) {
         return [pscustomobject]@{ confirmed = $true; error = "" }
+    }
+    if ($JobHandle -ne [IntPtr]::Zero) {
+        try {
+            # The existing job owns the complete tree from process creation.
+            # Stop that exact tree without starting a second process-tree walker.
+            [ItlCompactHelperProcessJob]::Terminate($JobHandle)
+            $Process.WaitForExit(10000) | Out-Null
+            $Process.Refresh()
+            if ($Process.HasExited) { return [pscustomobject]@{ confirmed = $true; error = "" } }
+        } catch {
+            $errors.Add($_.Exception.Message) | Out-Null
+        }
     }
     try {
         & taskkill.exe /PID ([string]$Process.Id) /T /F *> $null
@@ -690,6 +705,9 @@ public static class ItlCompactHelperProcessJob
     private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(IntPtr job, UInt32 exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool InitializeProcThreadAttributeList(IntPtr attributeList, Int32 attributeCount, UInt32 flags, ref IntPtr size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -772,6 +790,12 @@ public static class ItlCompactHelperProcessJob
             if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
             if (job != IntPtr.Zero) CloseHandle(job);
         }
+    }
+
+    public static void Terminate(IntPtr job)
+    {
+        if (!TerminateJobObject(job, 1))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "TerminateJobObject for compact helper failed.");
     }
 
     public static void Close(IntPtr job)
@@ -888,9 +912,14 @@ if ($windowed) {
 `$OutputEncoding = `$utf8
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Threading; using System.Runtime.InteropServices; public static class ItlHelperConsole { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); } public static class ItlRunnerParentWatch { public static void Start(int runnerPid, int helperPid) { Thread watcher = new Thread(() => { try { using (Process runner = Process.GetProcessById(runnerPid)) { runner.WaitForExit(); } } catch { } try { ProcessStartInfo psi = new ProcessStartInfo("taskkill.exe", "/PID " + helperPid + " /T /F"); psi.UseShellExecute = false; psi.CreateNoWindow = true; using (Process killer = Process.Start(psi)) { if (killer != null) killer.WaitForExit(10000); } } catch { try { Process.GetCurrentProcess().Kill(); } catch { } } }); watcher.IsBackground = true; watcher.Start(); } }'
-[ItlHelperConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
-[ItlRunnerParentWatch]::Start($PID, `$PID)
+# Bind the one console API directly; compiling another C# assembly delays the
+# helper's first status. The parent's kill-on-close job already owns its lifetime.
+`$consoleAssembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('ItlHelperConsole'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+`$consoleType = `$consoleAssembly.DefineDynamicModule('Console').DefineType('ItlHelperConsole', [Reflection.TypeAttributes]'Public, Abstract, Sealed')
+`$consoleMethod = `$consoleType.DefinePInvokeMethod('SetConsoleCtrlHandler', 'kernel32.dll', [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [bool], [Type[]]@([IntPtr], [bool]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Auto)
+`$consoleMethod.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
+`$consoleApi = `$consoleType.CreateType()
+`$consoleApi::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
 `$helperExitCode = 1
 `$global:LASTEXITCODE = `$null
 try {
@@ -968,7 +997,7 @@ try {
                 }
                 if ([DateTime]::UtcNow -ge $terminalExitDeadlineUtc) {
                     $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) wrote terminal status but did not exit within the bounded grace period."
-                    $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                    $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
                     if (-not $termination.confirmed) { throw "$runnerFailureMessage Owned process tree termination was not confirmed: $($termination.error)" }
                     break
                 }
@@ -1029,7 +1058,7 @@ try {
                 $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
                 $updatedAt = [string]$freshness.updatedAt
                 $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) exceeded the ${effectiveOperationTimeoutSeconds}s operation limit after ${elapsed}s at stage '$currentStage' (liveness='$publishedLiveness'; updatedAt='$updatedAt'). The runner stopped only its helper process tree."
-                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
                 if (-not $termination.confirmed) {
                     throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
                 }
@@ -1054,7 +1083,7 @@ try {
                 $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
                 $updatedAt = [string]$freshness.updatedAt
                 $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
-                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess -JobHandle $helperJobHandle
                 if (-not $termination.confirmed) {
                     throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
                 }

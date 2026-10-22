@@ -122,6 +122,55 @@ while ($true) { Start-Sleep -Seconds 1 }
         }
     }
 
+    It 'stops the exact helper job on deadline without an external tree walker' {
+        $tempRoot = Join-Path $TestDrive 'deadline job путь'
+        $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+        $runnerPath = Join-Path $scriptRoot 'run-itl-command.ps1'
+        $neighbor = $null
+        $previousTimeout = $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS
+        try {
+            Copy-RunnerFixture -Destination $runnerPath
+            # The admitted job already owns all descendants. Normal cancellation
+            # must not depend on taskkill process startup or tree enumeration.
+            $walkerTrap = @'
+function taskkill.exe {
+    [IO.File]::WriteAllText((Join-Path (Get-Location).Path 'external-walker.txt'), 'called')
+    throw 'The native job must stop its own tree.'
+}
+'@
+            $text = [IO.File]::ReadAllText($runnerPath).Replace('function Stop-RunnerOwnedProcessTree {', ($walkerTrap + "`nfunction Stop-RunnerOwnedProcessTree {"))
+            [IO.File]::WriteAllText($runnerPath, $text, [Text.UTF8Encoding]::new($true))
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$child = Start-Process -FilePath 'powershell' -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -WindowStyle Hidden -PassThru
+$tree = @{helperPid=$PID;childPid=$child.Id}
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'tree.json'), ($tree | ConvertTo-Json))
+$now = (Get-Date).ToString('o')
+$status = @{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now;updatedAt=$now;stage='owned-child';liveness='running';timeoutRemainingSeconds=0;stallTimeoutRemainingSeconds=0}
+[IO.File]::WriteAllText($RunStatusPath, ($status | ConvertTo-Json))
+while ($true) { Start-Sleep -Seconds 1 }
+'@
+            $neighbor = Start-Process -FilePath 'powershell' -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -WindowStyle Hidden -PassThru
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = '5'
+            Push-Location $tempRoot
+            try { $result = Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('--','-Action','check-dev-branch') }
+            finally { Pop-Location }
+            $result.exitCode | Should -Not -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be 'runner.operation-timeout'
+            $tree = Get-Content -LiteralPath (Join-Path $tempRoot 'tree.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($ownedPid in @($tree.helperPid, $tree.childPid)) {
+                Get-Process -Id $ownedPid -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            }
+            $neighbor.Refresh()
+            $neighbor.HasExited | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $tempRoot 'external-walker.txt') | Should -BeFalse
+        } finally {
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = $previousTimeout
+            if ($null -ne $neighbor -and -not $neighbor.HasExited) { $neighbor.Kill(); $neighbor.WaitForExit() }
+        }
+    }
+
     It "survives a real Win32 Ctrl+C in the supported entrypoint helper console" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-real-ctrlc-" + [guid]::NewGuid().ToString("N"))
         $runnerProcess = $null
