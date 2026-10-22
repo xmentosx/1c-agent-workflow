@@ -156,7 +156,8 @@ individual native temporary files and derived XML/ETLX, preserving original
 ETL, raw responses, handoffs, databases and unfinished work. No new job state
 machine, background service, elevation or lifecycle barrier is introduced.
 Routine planning reads bounded metadata; full hashes run only at enrollment
-and actual removal. A scheduled caller reuses the same owner and env policy.
+and actual removal. Terminal measurement process cleanup invokes that same owner
+and env policy; no running Codex or separate chat automation is required.
 Windows 10/11 and Server 2019+ retain non-admin operation. Canary evidence is
 the Unicode-path original/derivative cleanup, busy-file continuation, changed
 byte/manifest rejection and existing clean-artifacts integration. Rollback stops

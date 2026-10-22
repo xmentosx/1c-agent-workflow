@@ -1,13 +1,31 @@
 # Disposable diagnostic artifacts
 
 The existing `clean-artifacts` owner also consumes immutable producer receipts
-under `.agent-1c/diagnostic-artifacts/<32-hex-id>.json`. Its automatic invocation
-after successful ITL actions needs no additional confirmation. The retention age
+under `.agent-1c/diagnostic-artifacts/<32-hex-id>.json`. It runs automatically
+after successful ITL actions and terminal measurement process cleanup, without
+Codex, chat automation or an additional confirmation. The retention age
 is `ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS` (default 7, minimum 1); the existing
 `ITL_ARTIFACT_CLEANUP_ENABLED=false` disables automatic cleanup.
 
-After a diagnostic reaches a terminal outcome and its owned processes have
-finished cleanup, its producer calls `Register-ItlDiagnosticArtifacts` from the
+The local and remote measurement engine creates a unique
+`build/diagnostic-runtime/<id>/native-temp` in an installed Windows project and
+passes it as TEMP/TMP to its owned command trees. After all process cleanup
+succeeds, it writes an exact completion receipt and invokes the installed helper
+with `-Action clean-artifacts -CleanupDiagnosticsOnly -DiagnosticCompletionPath
+<project-relative receipt>`. The helper enrolls only the named native temporary
+files, then applies the existing env age and protected-path policy. Unknown files
+in that directory remain. An interrupted run or failed process cleanup never
+enrolls its files. Retention failures go to `artifact-retention.json` as warnings
+and leave the measurement result unchanged. Portable workers without an installed
+project package retain their files. An older installed helper must be updated
+before it can accept the new completion argument.
+
+Other diagnostic producers use that same completion call with `producer`, `kind`,
+`disposablePaths`, `retainedPaths`, terminal `status` and `cleanupConfirmed` in
+their immutable receipt. A receipt is at most 1 MiB and names at most 4096 files,
+registered in batches of 256. Alternatively, after a diagnostic reaches a
+terminal outcome and its owned processes have finished cleanup, its producer
+calls `Register-ItlDiagnosticArtifacts` from the
 artifact-retention library. Supply the exact project root, producer name,
 project-relative terminal receipt, kind, disposable file list and retained
 originals. The terminal receipt must report `status` as `completed`, `succeeded`,
@@ -41,18 +59,20 @@ stopped, guard bypassed or proof rewritten. Already removed entries are no-ops.
 
 `Invoke-ItlDiagnosticArtifactCleanup -ProjectRoot <root> -DryRun` provides a
 diagnostic-only preview for an existing trusted package caller. Its default age
-is seven days; a scheduled caller must pass the age from the existing policy
-and honor its enabled flag. `-MinimumAgeDays 0` is reserved for an explicitly
-authorized reviewed immediate cleanup. A recurring caller must not use it.
-The caller can supply `-ProtectedPaths` from `Get-ItlArtifactProtectedPaths`.
-Use the same functions for scheduling; do not create a second deletion policy.
+is seven days; automatic callers pass the age from the existing policy and honor
+its enabled flag. `-MinimumAgeDays 0` is reserved for an explicitly authorized
+reviewed immediate cleanup. The caller supplies `-ProtectedPaths` from
+`Get-ItlArtifactProtectedPaths`; do not create a second deletion policy.
 
-Scheduled project callers can use the existing helper command
+Project callers can use the existing helper command
 `agent-1c.ps1 -Action clean-artifacts -CleanupDiagnosticsOnly -ProjectRoot <root>`.
 It honors the enabled flag and diagnostic age, uses the existing lifecycle lock
 and protected evidence paths, and does not sweep CF, run or recovery archives.
 Add `-CleanupDryRun` for a preview. Keep routine output bounded to counts/bytes;
 retained-file warnings explain why the original task's files were left intact.
+Fresh files survive enrollment and become eligible at a later diagnostic
+completion or ordinary automatic ITL cleanup. There is no idle-time timer or
+resident service; an inactive project does not generate new diagnostic files.
 
 Legacy investigations need a separate read-only task/evidence review before
 the producer can enroll individual regenerable files. Unknown completion,

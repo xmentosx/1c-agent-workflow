@@ -61,6 +61,21 @@ function Register-ItlDiagnosticArtifacts {
     return $path
 }
 
+function Complete-ItlDiagnosticArtifacts {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string]$CompletionPath)
+    $path = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $CompletionPath
+    if ((Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'Diagnostic completion receipt exceeds 1 MiB.' }
+    $receipt = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    if ($receipt.cleanupConfirmed -ne $true -or $receipt.status -notin @('completed', 'succeeded', 'passed', 'failed', 'cancelled')) { throw 'Terminal owned-process cleanup must finish before retention.' }
+    $files = @($receipt.disposablePaths)
+    if ($files.Count -gt 4096) { throw 'Diagnostic completion exceeds 4096 individual files.' }
+    for ($offset = 0; $offset -lt $files.Count; $offset += 256) {
+        $batch = @($files[$offset..([Math]::Min($offset + 255, $files.Count - 1))])
+        Register-ItlDiagnosticArtifacts -ProjectRoot $ProjectRoot -Producer $receipt.producer -TerminalReceipt $CompletionPath -Kind $receipt.kind -DisposablePath $batch -RetainedPath @($receipt.retainedPaths)
+    }
+}
+
 function Get-ItlDiagnosticArtifactPlan {
     param([string]$ProjectRoot, [ValidateRange(0, 3650)][int]$MinimumAgeDays = 7, [object]$ProtectedPaths = @())
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
