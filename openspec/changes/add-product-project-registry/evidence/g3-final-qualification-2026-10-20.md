@@ -87,3 +87,8 @@ AC-25 получил native canary usage: 2 user turns/4 provider requests, inpu
 ## Актуальный installed PM5, 2026-10-22
 
 [Текущий native subset](g3-pm5-current-package-2026-10-22.md) заменяет ограничение «только installed b4338057» для перечисленных first-update/later/association/restore/partial/private-create journeys на d109a95d. Остальные строки матрицы не закрыты: нового init/new branch/full refresh/downgrade, full multi-client/platform/remote/isolated Startup acceptance нет. 20+20 whole-CLI observations и baseline receipt mtime failure разделены; источники workload и Gate 6 не менялись. Оба changes используют этот же результат, G4/G5/рабочая миграция/публикация и release population остаются открыты.
+
+
+## Current installed PM5: multi-client/conflict/offline, 2026-10-22
+
+[Follow-up report/JSON](g3-pm5-multiclient-offline-2026-10-22.md), runtime d109a95d: native Kilo+Cursor path выявил **G3-CATALOG-OWNED-MCP-REENABLE**, а original defer→ordinary writer — **G3-DEFER-MCP-WRITER-PREFERENCE-LOSS**. AC-15/20/24/25/39 остаются открытыми в этой области; настоящая two-client partial/foreign-write/pinned recovery приёмка blocked до устранения re-enable. Unattended no-answer/keep-local/registry no-op и offline applied/no-cache safety прошли только bounded subsets. Whole CLI, metadata fallback и Git child lifetime разделены; strict latency/cleanup/full cost не приняты. DB/capsule/старые roots/Gate 6 evidence сохранены. Full G3, mandatory release population и memory4.2/AC-43/G5/44 открыты; runtime repair/Gate 6/G4/рабочая миграция/публикация не выполнялись.
