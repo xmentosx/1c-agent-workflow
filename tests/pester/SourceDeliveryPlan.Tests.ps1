@@ -1,7 +1,17 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1') }
 
 Describe 'Delivery v3 immutable selective plan' {
-    It 'finds binding in the real <Layout> cache layout without provisioning and rejects changed bytes' -TestCases @(@{Layout='canonical'},@{Layout='shared-sha'}) {
+    It 'batch-matches the same ordered Unicode inventory with the original wildcard semantics' {
+        $paths=@('scripts/a.ps1','SCRIPTS/b.PS1','tests/путь с пробелом/a.Tests.ps1','src/a[1].bsl','src/a1.bsl','other/file')
+        foreach($patterns in @(@('scripts/*'),@('tests/*/*.Tests.ps1','scripts/?.ps1'),@('src/a[1].bsl'),@('src/a`[1`].bsl'),@('missing/*'),@('*','scripts/*'))) {
+            $expected=@(foreach($path in $paths) {
+                foreach($pattern in $patterns) {if(Test-QualityPathPattern -Path $path -Pattern $pattern) {$path;break}}
+            })
+            @(Select-QualityPaths -Paths $paths -Pattern $patterns) -join "`n" | Should -BeExactly ($expected -join "`n")
+        }
+    }
+
+    It 'finds binding in the real <Layout> cache layout without provisioning and rejects changed bytes' -TestCases @(@{Layout='canonical'},@{Layout='shared-sha'},@{Layout='installed-sha'}) {
         param($Layout)
         $repo=New-PlanRepository
         $cache=Join-Path $TestDrive 'cache with spaces'
@@ -12,6 +22,10 @@ Describe 'Delivery v3 immutable selective plan' {
         }
         $previous=@{}
         try {
+            foreach($key in @('ITL_ARTIFACT_CACHE_ROOT','ITL_ONDEMAND_MCP_INSTALL_ROOT')) {
+                $previous[$key]=[Environment]::GetEnvironmentVariable($key,'Process')
+                [Environment]::SetEnvironmentVariable($key,(Join-Path $cache $key),'Process')
+            }
             foreach($name in $files.Keys) {
                 $previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
                 [Environment]::SetEnvironmentVariable($name,$null,'Process')
@@ -21,8 +35,8 @@ Describe 'Delivery v3 immutable selective plan' {
                 $sha[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             $deps=@{vanessaAutomation=@{sha256=$sha.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE;compatibilityVersion='1';downstreamRevision='r1';assetName='archive.zip'};
-                vanessaMcp=@{clientMcp=@{sha256=$sha.VANESSA_MCP_CLIENT_CFE_PATH;assetName='client.cfe'}};
-                itlOndemandMcp=@{sha256=$sha.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;assetName='mcp.exe'}}
+                vanessaMcp=@{clientMcp=@{sha256=$sha.VANESSA_MCP_CLIENT_CFE_PATH;version='1';assetName='client.cfe'}};
+                itlOndemandMcp=@{sha256=$sha.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;version='1';assetName='mcp.exe'}}
             New-Item -ItemType Directory -Force -Path (Join-Path $repo.root 'templates') | Out-Null
             [IO.File]::WriteAllText((Join-Path $repo.root 'templates/dependency-lock.json'),(@{dependencies=$deps}|ConvertTo-Json -Depth 6))
             if($Layout -eq 'shared-sha') {
@@ -32,11 +46,30 @@ Describe 'Delivery v3 immutable selective plan' {
                 # An invalid legacy alias must not conceal the SHA-keyed file.
                 [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $shared) 'archive.zip'),'wrong alias')
             }
+            if($Layout -eq 'installed-sha') {
+                foreach($key in @('VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                    $destination=if($key -eq 'VANESSA_MCP_CLIENT_CFE_PATH') {
+                        Join-Path $env:ITL_ARTIFACT_CACHE_ROOT ('vanessa-mcp-clientMcp/1/'+$sha[$key]+'/client.cfe')
+                    } else {Join-Path $env:ITL_ONDEMAND_MCP_INSTALL_ROOT ('1/'+$sha[$key]+'/mcp.exe')}
+                    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+                    Move-Item -LiteralPath (Join-Path $cache $files[$key]) -Destination $destination
+                }
+            }
             $binding=Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)
             $binding | Should -Not -BeNullOrEmpty
             (Get-SourceE2EArtifactBindingHashes -RepositoryRoot $repo.root -Binding $binding).Count | Should -Be 3
             $same=Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)
             $same.paths.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE | Should -BeExactly $binding.paths.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
+            if($Layout -eq 'installed-sha') {
+                foreach($key in @('VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                    $exact=$binding.paths.$key; $bytes=[IO.File]::ReadAllBytes($exact)
+                    [IO.File]::WriteAllText($exact,'corrupt cached artifact')
+                    $missing=''
+                    Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache) -MissingInput ([ref]$missing) | Should -BeNullOrEmpty
+                    $missing | Should -BeExactly $key
+                    [IO.File]::WriteAllBytes($exact,$bytes)
+                }
+            }
             if($Layout -eq 'shared-sha') {
                 $bytes=[IO.File]::ReadAllBytes($shared)
                 [IO.File]::WriteAllText($shared,'changed immutable bytes')

@@ -42,13 +42,10 @@ function Get-DevelopE2EInputIdentity {
         # the Core supervisor and its Windows PowerShell checker child.
         [string[]]$paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('ls-files','-z','--'))
         [Array]::Sort($paths, [StringComparer]::Ordinal)
-        $inputs = @(foreach ($path in $paths) {
+        $inputs = @(foreach ($path in @(Select-QualityPaths -Paths $paths -Pattern $patterns)) {
             # Isolated Pester execution belongs to the separate static proof.
             # Journey fixtures/features and all production inputs remain bound.
             if ($path -like 'tests/pester/*.Tests.ps1') { continue }
-            $matched = $false
-            foreach ($pattern in $patterns) { if (Test-QualityPathPattern -Path $path -Pattern ([string]$pattern)) { $matched = $true; break } }
-            if (-not $matched) { continue }
             $physical = Join-Path $RepositoryRoot $path.Replace('/','\')
             if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { throw 'DEVELOP_INPUT_MISSING' }
             [ordered]@{ path=$path; sha256=Get-DevelopE2EInputFileSha256 -Path $physical -RelativePath $path }

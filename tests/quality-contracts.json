@@ -27,6 +27,7 @@
       "scripts/source-delivery.ps1",
       "scripts/source-delivery-supervisor.ps1",
       "scripts/source-delivery-plan.ps1",
+      "scripts/source-e2e-artifact-discovery.ps1",
       "scripts/source-delivery-resources.ps1",
       "scripts/release-artifact-paths.ps1",
       "scripts/source-delivery-ref-cleanup.ps1",
@@ -588,6 +589,15 @@
       , "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1"]
     },
     {
+      "id": "source-delivery-artifact-discovery",
+      "owner": "read-only discovery of exact locked source E2E artifacts",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceDeliveryPlan.Tests.ps1",
+      "paths": ["scripts/source-e2e-artifact-discovery.ps1"],
+      "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-plan-checker",
       "owner": "checker and qualification collaborators consumed by delivery plan acceptance",
       "gate": "targeted",
@@ -631,7 +641,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1",
       "paths": ["scripts/source-delivery-integrity.ps1", "tests/pester/SourceDeliveryIntegrity.TestSupport.ps1"],
-      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "tests/pester/SourceDeliveryIntegrity.TestSupport.ps1"],
+      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "tests/pester/SourceDeliveryIntegrity.TestSupport.ps1", "scripts/source-e2e-artifact-discovery.ps1"],
       "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1"]
     },
     {
@@ -734,7 +744,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1",
       "paths": ["tests/pester/SourceDeliveryEvidence.TestSupport.ps1"],
-      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", "scripts/source-e2e-artifact-discovery.ps1"],
       "tests": ["tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1"]
     },
     {
@@ -744,7 +754,7 @@
       "budgetSeconds": 600,
       "primaryTest": "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1",
       "paths": ["tests/pester/SourceDeliveryHistorical.TestSupport.ps1", "tests/fixtures/source-delivery-history/*"],
-      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "reuseInputPaths": ["tests/pester/SourceDelivery.TestSupport.ps1", "tests/pester/SourceDeliveryFrozen.TestSupport.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/client-mcp-build.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/stand-env-identity.ps1", "scripts/invoke-pester-runtime.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", "scripts/source-e2e-artifact-discovery.ps1"],
       "tests": ["tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1"]
     },
     {
