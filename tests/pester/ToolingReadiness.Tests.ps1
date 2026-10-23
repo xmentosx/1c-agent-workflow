@@ -841,6 +841,10 @@ Describe "Named scenario repair round" {
         Mock Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind='scenario-loop'; sessionId='scenario-session' } }
         Mock Test-ItlDiagnosticVerificationScope { $true }
         Mock Get-ItlVerificationExecutionDecision { [pscustomobject]@{ run=$true } }
+        # Classification is delegated in this repair-phase sequencing fixture;
+        # the preflight owner tests exercise its rejection and continuation.
+        Mock Repair-OneCSourceLineEndings {}
+        Mock Assert-VerificationClassificationReady {}
         Mock Use-ItlVerificationRepairAttempt {}
         Mock Ensure-DevBranchEventLogBaseline { $state }
         Mock Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }

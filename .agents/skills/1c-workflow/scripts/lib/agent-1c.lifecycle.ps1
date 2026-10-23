@@ -20265,6 +20265,16 @@ function Invoke-DevBranchCheck {
     $platformPreparation = $null
     try {
     try {
+    if (-not $script:ActiveAuxiliaryVanessaContext) {
+        $classificationYaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $trigger -ExplicitComponents $explicit
+        $classificationVanessa = Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit
+        if ($classificationYaxunit.run -or $classificationVanessa.run) {
+            # Assess the same prepared source bytes that the load will consume.
+            # Keep the cycle's assessment: preparation may still change inputs.
+            Repair-OneCSourceLineEndings | Out-Null
+            Assert-VerificationClassificationReady -Reason 'check-dev-branch before infobase load' -RequireVanessa:$classificationVanessa.run -RequireYAxUnit:$classificationYaxunit.run | Out-Null
+        }
+    }
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
