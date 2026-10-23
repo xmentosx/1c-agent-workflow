@@ -1,0 +1,1488 @@
+{
+  "date": "2026-10-23",
+  "status": "passed-faulted-partial-cancel-recovery-subset-full-G3-open",
+  "identity": {
+    "normalCatalog": {
+      "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+      "matchesPriorQualifiedRevision": true,
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\origin.git"
+    },
+    "bothInstalledRuntimeEqual": true,
+    "rootIdentityUnchanged": true,
+    "roots": {
+      "value": [
+        {
+          "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+          "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619",
+          "bindingPresent": true,
+          "head": "5713df721980130a4dc26bcb978fa53f3dd5d58f"
+        },
+        {
+          "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+          "workflow": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+          "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+          "untracked": [],
+          "dirty": [],
+          "lockSha": "469ab61ebe6c3517ef53a6a78a85bc2753d566e61fd5deb7ce741518f8dc4012",
+          "bindingPresent": false,
+          "head": "9f633264b46277e3d28bc7ae06816a32f9b90424"
+        }
+      ],
+      "Count": 2
+    },
+    "implementationCommit": "909d1e229351d0b0cdca2db6c3fa81ff92b31503",
+    "runtimeSha": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4",
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+    "sourceHead": "e87afb76cca75e77f95ab8e01335ccb452316be8",
+    "timingWorkersGone": true,
+    "observedUtc": "2026-10-23T06:54:03.7607887Z",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "matchesPriorQualifiedSha": true,
+      "bytes": 3295928320
+    }
+  },
+  "nativeResult": {
+    "syntheticUrl": "http://127.0.0.1:9/g3-partial-cancel-native",
+    "manualMarkerRestores": 0,
+    "passed": true,
+    "cancelWhileWriterRunningProved": false,
+    "actualPublicPartialCancel": true,
+    "firstRevision": "427700d5ab32f47091ed51251a4306ec61268ef0",
+    "secondOperation": "21517d745bd145468593a2df1a731840",
+    "firstOperation": "a8642fce5abb4abf9f231712cb00a8c8",
+    "secondRevision": "f3371dbdff0fb4ab49f81683cd0b945901623bd1",
+    "laterTip": "41872fe8585048853edca9e0f21040aa027b74b4",
+    "finalRevision": "0d493bf0bb8817b7079f94632d36e2155218a19e",
+    "baselineUrl": "http://dev-ermakov.itland.local:22101/mcp/",
+    "runtimeEdits": 0
+  },
+  "nativeSteps": [
+    {
+      "name": "baseline-after-timing-attempts",
+      "exitCode": 0,
+      "durationMs": 5738,
+      "stdoutBytes": 557,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancel-resume-partial-apply",
+      "exitCode": 1,
+      "durationMs": 8069,
+      "stdoutBytes": 433,
+      "stderrBytes": 328
+    },
+    {
+      "name": "native-cancel-resume-main-blocked",
+      "exitCode": 1,
+      "durationMs": 2596,
+      "stdoutBytes": 0,
+      "stderrBytes": 297
+    },
+    {
+      "name": "native-cancel-resume-status",
+      "exitCode": 0,
+      "durationMs": 2739,
+      "stdoutBytes": 415,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancel-resume-cancel",
+      "exitCode": 0,
+      "durationMs": 2311,
+      "stdoutBytes": 369,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancelled-pinned-resume",
+      "exitCode": 0,
+      "durationMs": 3705,
+      "stdoutBytes": 324,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-resumed-owned-restore",
+      "exitCode": 0,
+      "durationMs": 3501,
+      "stdoutBytes": 318,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-original-after-resume-restore",
+      "exitCode": 0,
+      "durationMs": 8305,
+      "stdoutBytes": 1630,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-between-cases-sync",
+      "exitCode": 0,
+      "durationMs": 5349,
+      "stdoutBytes": 557,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancel-restore-partial-apply",
+      "exitCode": 1,
+      "durationMs": 7906,
+      "stdoutBytes": 433,
+      "stderrBytes": 328
+    },
+    {
+      "name": "native-cancel-restore-main-blocked",
+      "exitCode": 1,
+      "durationMs": 2412,
+      "stdoutBytes": 0,
+      "stderrBytes": 297
+    },
+    {
+      "name": "native-cancel-restore-status",
+      "exitCode": 0,
+      "durationMs": 2502,
+      "stdoutBytes": 415,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancel-restore-cancel",
+      "exitCode": 0,
+      "durationMs": 2338,
+      "stdoutBytes": 369,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-cancelled-direct-restore",
+      "exitCode": 0,
+      "durationMs": 3707,
+      "stdoutBytes": 318,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-original-after-direct-restore",
+      "exitCode": 0,
+      "durationMs": 8304,
+      "stdoutBytes": 1630,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-final-original-settings-sync",
+      "exitCode": 0,
+      "durationMs": 5501,
+      "stdoutBytes": 557,
+      "stderrBytes": 0
+    },
+    {
+      "name": "native-final-original-command",
+      "exitCode": 0,
+      "durationMs": 6349,
+      "stdoutBytes": 1562,
+      "stderrBytes": 0
+    }
+  ],
+  "cancelResume": {
+    "faultClient": "cursor",
+    "cancelRequest": {
+      "operationId": "a8642fce5abb4abf9f231712cb00a8c8",
+      "schemaVersion": 1,
+      "projectRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project"
+    },
+    "cancelChangedOnlyRequest": true,
+    "passed": true,
+    "operationId": "a8642fce5abb4abf9f231712cb00a8c8",
+    "receiptClients": [
+      "kilocode"
+    ],
+    "markerStayedPrior": true,
+    "revision": "427700d5ab32f47091ed51251a4306ec61268ef0",
+    "cancelOfRunningWriterProved": false,
+    "firstClientPhysicallyChanged": true,
+    "writerAlreadyStoppedOnIOFault": true
+  },
+  "cancelDirectRestore": {
+    "faultClient": "cursor",
+    "cancelRequest": {
+      "operationId": "21517d745bd145468593a2df1a731840",
+      "schemaVersion": 1,
+      "projectRoot": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project"
+    },
+    "cancelChangedOnlyRequest": true,
+    "passed": true,
+    "operationId": "21517d745bd145468593a2df1a731840",
+    "receiptClients": [
+      "kilocode"
+    ],
+    "markerStayedPrior": true,
+    "revision": "f3371dbdff0fb4ab49f81683cd0b945901623bd1",
+    "cancelOfRunningWriterProved": false,
+    "firstClientPhysicallyChanged": true,
+    "writerAlreadyStoppedOnIOFault": true
+  },
+  "originalAfterResumeRestore": {
+    "kilocodeGraph": "http://127.0.0.1:9/g3-partial-cancel-native",
+    "operation": "completed",
+    "cursorGraph": "http://127.0.0.1:9/g3-partial-cancel-native",
+    "catalogRevision": "41872fe8585048853edca9e0f21040aa027b74b4"
+  },
+  "originalAfterDirectRestore": {
+    "kilocodeGraph": "http://127.0.0.1:9/g3-partial-cancel-native",
+    "operation": "completed",
+    "cursorGraph": "http://127.0.0.1:9/g3-partial-cancel-native",
+    "catalogRevision": "f3371dbdff0fb4ab49f81683cd0b945901623bd1"
+  },
+  "restoreSemantics": "Owned before state restored; no persistent defer/override; normal startup reapplies unchanged desired catalog. Both original commands tested before fixture cleanup on the same origin/home.",
+  "timingAttempts": {
+    "acceptedAsCancellationProof": false,
+    "oldDiagnosticRetained": "debug-attempt1.json",
+    "secondCaptureFailure": "Missing Get-StateValue dependency in qualification worker; no drained native logs",
+    "originalZeroWritesDiagnosticIncorrect": true,
+    "operationBeforeSecondTimingAttempt": "4e922c07ef1e40e09cc715eec402ff0e",
+    "exactReasonUnresolved": true,
+    "initialOperation": "dc919c895fcb4fb4b9d738ff31665050",
+    "statusBeforeSecondTimingAttempt": "completed",
+    "firstTimingAttemptActuallyApplied": true,
+    "allTimingWorkersGone": true,
+    "lineBreakpointDidNotPause": true,
+    "nativeContinuation": "Private catalog returned to baseline through the normal public sync; separate real A-write/B-fault cases followed."
+  },
+  "clientBytes": {
+    "passed": true,
+    "historicalStrictByteAssertion": "Historical byte-order observation retained in the prior report; this run measures semantic, foreign-byte and full-file equality independently.",
+    "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+    "clients": [
+      {
+        "path": ".kilo/kilo.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": false,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 4,
+        "otherEntryCount": 4,
+        "maskedSha256": "bf761569ee7fac5203fc1315a37c53675476b06f74d5c0be55d5601d6bbeee5a"
+      },
+      {
+        "path": ".cursor/mcp.json",
+        "semanticEqual": true,
+        "entireFileByteEqual": false,
+        "allBytesOutsideOwnedValuesEqual": true,
+        "ownedValueCount": 2,
+        "otherEntryCount": 5,
+        "maskedSha256": "e5e32f5bdb24706771b178d46172d600bf8b516fdd8cb8fff2d89354e05087b1"
+      }
+    ]
+  },
+  "preservation": {
+    "protectedFiles": 21,
+    "protectedOldRoots": 4,
+    "currentStrictBeforeAfter": "passed",
+    "gate6Artifacts": 7,
+    "capsuleArtifactsVerified": 11,
+    "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+    "previousRawFilesVerified": 127,
+    "originalRawSeedMissing": false,
+    "historicalPriorRootMovementFailure": "Retained in previous report; current before uses the already updated seed, not a rewritten historical baseline."
+  },
+  "cost": {
+    "runtimeChanged": false,
+    "alwaysOnAddedBytes": 0,
+    "clientLlmTurns": 0,
+    "directCodeGraphTools": 0,
+    "cogneeCalls": 0,
+    "acceptedPublicCalls": 17,
+    "acceptedCallsTotalMs": 81332,
+    "benchmark": "Individual CLI samples only; no paired startup/context/token/billing proof; failed timing-harness overhead excluded from accepted call timings."
+  },
+  "remaining": [
+    {
+      "id": "active-writer-cancellation-proof",
+      "kind": "evidence-gap-not-confirmed-runtime-defect",
+      "required": "Public cancel after actual A receipt while writer still running; prove request observed, no B/marker write, pinned recovery and original command on unchanged preconditions."
+    },
+    "full registry tasks 4.2/5.2/5.6 and AC-16/24/26/39",
+    "other installed/client/PM4/Windows 10/Server/terminal/race/paired-cost criteria",
+    "release population AC-36-38",
+    "memory consumer4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "runtime or tests changes",
+    "package update",
+    "Gate6",
+    "G4/Cognee/OpenViking development",
+    "working-project migration",
+    "server/client upgrades",
+    "workflow/shared-catalog publication",
+    "new barriers/locks/state owners/recovery cache",
+    "manual applied/operation restore",
+    "raw PID termination"
+  ],
+  "validation": {
+    "openSpecCli": "1.13.1",
+    "registryStrict": "passed",
+    "memoryStrict": "passed",
+    "pesterOwnerTests": "not rerun for documentation-only qualification",
+    "sourceRegistration": "separate source-delivery ledger owns Targeted; not G3 acceptance"
+  },
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "207dd2b6b2f8b7f15309df0eec0cc13b292cd4cfdadb83e6280eff3021081849"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "aee7e93ce30a14f4b1d37601c07f120ffb79b4874a8c6eec2e18e2309fa61c60"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-before-files.json",
+      "bytes": 1913,
+      "sha256": "dfd2108bafba5926db127098014e5e9e99744afc08035df87335e7200f9d448e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active-cancel-resume-release",
+      "bytes": 36,
+      "sha256": "4875521fbb17813774a307a59871651bd544bae7f8229d05f50eed0cb8b11611"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "bc53deab21d43e2bc2de71b719ae001156886bb3b3b04227e4a9ea6f413a9a68"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43723,
+      "sha256": "f52eaaf255d4bf5bfc72b4a84b9d9ae2b132fc06378c4cf773ec8c58eaf27e8b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 136423,
+      "sha256": "2f13505bec1b01a42fbe3dcb0f874d01eabd3008c7b153ec3e18bfc14a7ac8bd"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "9c980cd83db31e36b099ce38cb8c78831726b3fa66db1717527707298b2cb5ad"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.cursor_mcp.json",
+      "bytes": 5835,
+      "sha256": "2596d2a6a9485c12e9fbe1bf3fe6a93dd5bead803aa0296752785d2c33a9a7c7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before\\.kilo_kilo.json",
+      "bytes": 7252,
+      "sha256": "529501ec03aabd41944c565e58be0f229cadc974f5091e6dfc5fc3f9545d2660"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-before-files.json",
+      "bytes": 1913,
+      "sha256": "ba6d52a690fd2a217ca94ea4968e2ef0985918c0dcdb2162acfc18b613cb7ce3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-capture-failure.json",
+      "bytes": 428,
+      "sha256": "4e0a1823261275c7160566c8ae6ca61be281d93163751fc52682f7a8b67533d7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-release",
+      "bytes": 36,
+      "sha256": "4875521fbb17813774a307a59871651bd544bae7f8229d05f50eed0cb8b11611"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\active2-cancel-resume-trace.log",
+      "bytes": 36,
+      "sha256": "7872334ab5c8d0c8c788235ba14b71ba05ec6a414cb86cb6dfcd6e36e8cd99e5"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\audit.ps1",
+      "bytes": 4511,
+      "sha256": "8006768950c84a7fff7809a091fa149404cfc6fc5932c51b86fb91f2e5192e30"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\baseline-after-timing-attempts-result.json",
+      "bytes": 503,
+      "sha256": "167c1213828713c727358fafc76796ea11a95691eedbfec2d2753beb90674678"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\baseline-after-timing-attempts.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\baseline-after-timing-attempts.stdout.log",
+      "bytes": 557,
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "207dd2b6b2f8b7f15309df0eec0cc13b292cd4cfdadb83e6280eff3021081849"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "aee7e93ce30a14f4b1d37601c07f120ffb79b4874a8c6eec2e18e2309fa61c60"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-before-files.json",
+      "bytes": 1913,
+      "sha256": "dfd2108bafba5926db127098014e5e9e99744afc08035df87335e7200f9d448e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\cancel-resume-release",
+      "bytes": 36,
+      "sha256": "4875521fbb17813774a307a59871651bd544bae7f8229d05f50eed0cb8b11611"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "ff033fd4faa1ef2700a6a843de667f34c759ac25e8efd8c6477fd6ab56115143"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\client-byte-analysis.json",
+      "bytes": 926,
+      "sha256": "5e736c240a5b6b63fdac0c633e24bc3ecd92aeda610afe203930a3a214e82a1c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\collect-evidence.py",
+      "bytes": 4640,
+      "sha256": "e47cbce006b23bdd2d1ed600d298d1e9dd199f2b8090ff5620672cc3a24245ba"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\common.ps1",
+      "bytes": 1840,
+      "sha256": "f9cf168cb30f9a33afab536e7a650ef3ab9e3f768d33e3e91d190c9a712701f1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\debug-attempt1.json",
+      "bytes": 251,
+      "sha256": "3ea371045e8f594c3dc260026b4ccdc6693e4c7263cc345f544f27a4616c87ac"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\driver-functions.ps1",
+      "bytes": 2658,
+      "sha256": "892052a28cf0a20f9ada401788207a0b299e519486d30658fb88e948d21b6514"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\identity-final.json",
+      "bytes": 3676,
+      "sha256": "05db905c64879408dffb1859f2af67c5803c17aa2e676b2df116a31b61525454"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\initial-harness-failure.json",
+      "bytes": 153,
+      "sha256": "79d8d049a22a722dd1f9c221009f46a5b3d071c4be320fe3dd55dc3f626180c7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\memory-validation.log",
+      "bytes": 44,
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-between-cases-sync-result.json",
+      "bytes": 498,
+      "sha256": "a05366ae49cc799e1e97089332fd1342f4be88e5b6d1acbc5664ab059131d0a1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-between-cases-sync.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-between-cases-sync.stdout.log",
+      "bytes": 557,
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43752,
+      "sha256": "f811704b5a2a0936f88aaa33693d20c7771b538541fe2ff46dc9f2ff3e60ed61"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 136897,
+      "sha256": "2f336beb804cfdb7babd231bfb25066c1abd05a3f04847ef7d0dc41b88e5ce57"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "7b27f6632c9be3f6d4a92317ec84d966ca2f8aa18694c9289133bc250cbb3c5a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-before-files.json",
+      "bytes": 1913,
+      "sha256": "755de73590cd916df63b855f04f1dcafe01721dd542b71f422dff7f973d5fba7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancel-result.json",
+      "bytes": 425,
+      "sha256": "5615ebcaa00670071e04ed993f024f3a67056a06924a489c85edbd4e3266dc2d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancel.stdout.log",
+      "bytes": 369,
+      "sha256": "cab9ce996a01de5f84c6602aad1c4752d2dc413a3a089b31355c0f88d71e16b9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "b404ca7538ac9103323a871cef8aa67a8082acea0b0f062c525979ad2885bfed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43752,
+      "sha256": "f811704b5a2a0936f88aaa33693d20c7771b538541fe2ff46dc9f2ff3e60ed61"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_mcp_product-context-cancel.json",
+      "bytes": 215,
+      "sha256": "28a0cc170085eaf4675cb7729250c3d26dc863915ba7cd16c7a311f01122051d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 159157,
+      "sha256": "6bc226cf4bde8470208b66a6c74891a20e5ae930585d1c3c068b54d8c3e75b3d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "7b27f6632c9be3f6d4a92317ec84d966ca2f8aa18694c9289133bc250cbb3c5a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled\\.kilo_kilo.json",
+      "bytes": 7258,
+      "sha256": "351b7a1f0b430061a9a240e2caaf553cc06033fd870f4d8581329c2ffa508729"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-cancelled-files.json",
+      "bytes": 1988,
+      "sha256": "cf05223ccfc9cae8c26685aad48b354a92a2358e198df5e30e45ba7fbd1f7a20"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-main-blocked-result.json",
+      "bytes": 418,
+      "sha256": "410ab64e6777d48a22febca1d6265a367617424be33b8e2a2f5c3eb51555604c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-main-blocked.stderr.log",
+      "bytes": 297,
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-main-blocked.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "b404ca7538ac9103323a871cef8aa67a8082acea0b0f062c525979ad2885bfed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43752,
+      "sha256": "f811704b5a2a0936f88aaa33693d20c7771b538541fe2ff46dc9f2ff3e60ed61"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 159157,
+      "sha256": "6bc226cf4bde8470208b66a6c74891a20e5ae930585d1c3c068b54d8c3e75b3d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "7b27f6632c9be3f6d4a92317ec84d966ca2f8aa18694c9289133bc250cbb3c5a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial\\.kilo_kilo.json",
+      "bytes": 7258,
+      "sha256": "351b7a1f0b430061a9a240e2caaf553cc06033fd870f4d8581329c2ffa508729"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial-apply-result.json",
+      "bytes": 510,
+      "sha256": "0e9cfd601010526cc3ceee33db7b901c127a57edea5cfd32ebc426f92a8de2b8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial-apply.stderr.log",
+      "bytes": 328,
+      "sha256": "678b88de46aac5270c4e8b834ed6ddf692fa7fdb51d6fb552a8b6e2babdb79a9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial-apply.stdout.log",
+      "bytes": 433,
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-partial-files.json",
+      "bytes": 1913,
+      "sha256": "55b1623cd5aea446c8fd243f715681a85be88f4ec2fc99a90b36ae43a792cf89"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-result.json",
+      "bytes": 799,
+      "sha256": "54b2a0fe6cdebfb25c910026ff66d7debb078c17352996f9df8bc36df994989b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-status-result.json",
+      "bytes": 425,
+      "sha256": "07a90d76f06dd944f63f1e775c5fa238dff0fb77be22c54a8d1de969c703c4c9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-status.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-restore-status.stdout.log",
+      "bytes": 415,
+      "sha256": "7904d37bfefcfeaa191eec550d92389e0aa472654e458d1c47a531b6165ceceb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43733,
+      "sha256": "5a330745c2d00c868a29066e982f86bf6a6f71eb89f0dabd3ac8cb41a77644d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 136819,
+      "sha256": "12f8da4bc8a1cd79abce03b1cf8882657f198494174fd326691ca6e21ce1dac7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a866fc5e36eddf9587bfe994c77d94e2174b6a299775f68fdcb89f181010f993"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-before-files.json",
+      "bytes": 1913,
+      "sha256": "7656936d43b3c215f78ac668000615c67b77e2435fdcada4a77a656fce37fc8d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancel-result.json",
+      "bytes": 424,
+      "sha256": "bfebd3a3d80b0c14ed5fb2015f74537a845084de8e13d343d7360b6ee708c9db"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancel.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancel.stdout.log",
+      "bytes": 369,
+      "sha256": "9b07237f25ce23a20bebdc8069a14932a079db68a48b8813bdf67783b2acdb9c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "b404ca7538ac9103323a871cef8aa67a8082acea0b0f062c525979ad2885bfed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43733,
+      "sha256": "5a330745c2d00c868a29066e982f86bf6a6f71eb89f0dabd3ac8cb41a77644d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_mcp_product-context-cancel.json",
+      "bytes": 215,
+      "sha256": "d568bcdb6cebbe54c5d1a13cbb441745174e24a0e10c4870dc8a8bc4cef8c1f2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 159119,
+      "sha256": "ccbd861c54569ac292eee8f2ea0c2437f0dcc3b7b4e1d8a1d368c84d6c8389ee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a866fc5e36eddf9587bfe994c77d94e2174b6a299775f68fdcb89f181010f993"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled\\.kilo_kilo.json",
+      "bytes": 7258,
+      "sha256": "351b7a1f0b430061a9a240e2caaf553cc06033fd870f4d8581329c2ffa508729"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-cancelled-files.json",
+      "bytes": 1988,
+      "sha256": "2a0b1d0f83a4e31f25e831c409779fc83216644e7da45162d5def3e980b8b83e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-main-blocked-result.json",
+      "bytes": 417,
+      "sha256": "7985092d5805c72fb72f187955017e038cca4ba90b6d68bd7d890a0d26d18bfc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-main-blocked.stderr.log",
+      "bytes": 297,
+      "sha256": "bfe420260fdc942537cbf594350462e402cc248c9f37a5cc8a5eeeb7515c6cb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-main-blocked.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "b404ca7538ac9103323a871cef8aa67a8082acea0b0f062c525979ad2885bfed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43733,
+      "sha256": "5a330745c2d00c868a29066e982f86bf6a6f71eb89f0dabd3ac8cb41a77644d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 159119,
+      "sha256": "ccbd861c54569ac292eee8f2ea0c2437f0dcc3b7b4e1d8a1d368c84d6c8389ee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a866fc5e36eddf9587bfe994c77d94e2174b6a299775f68fdcb89f181010f993"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial\\.kilo_kilo.json",
+      "bytes": 7258,
+      "sha256": "351b7a1f0b430061a9a240e2caaf553cc06033fd870f4d8581329c2ffa508729"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial-apply-result.json",
+      "bytes": 509,
+      "sha256": "29c5ce509a16c196f071b8fff5a2ad28702f448f9d3146e834eeee021097830b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial-apply.stderr.log",
+      "bytes": 328,
+      "sha256": "678b88de46aac5270c4e8b834ed6ddf692fa7fdb51d6fb552a8b6e2babdb79a9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial-apply.stdout.log",
+      "bytes": 433,
+      "sha256": "9013ec3d429a3e75567be2c8090201188fea07dd60082ae4ee22b4322f20ce70"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-partial-files.json",
+      "bytes": 1913,
+      "sha256": "ea35469e7513d97683ceac175578510deaeaaa9402205734ef3a5a5b433f655d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-result.json",
+      "bytes": 799,
+      "sha256": "29311d06b4173e170e7379de9cb525121282a0a13a47f7b102794a1ba8e6db79"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-status-result.json",
+      "bytes": 424,
+      "sha256": "e6728cf22777615b2fc06e287eb09fe027f17287ea4f4205a1460c40da314e67"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-status.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancel-resume-status.stdout.log",
+      "bytes": 415,
+      "sha256": "99916e14f56482b2174a0f2703a6f979e3919e3610fd0fe7881cc6688c0c83b9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-direct-restore-result.json",
+      "bytes": 429,
+      "sha256": "66f69d02cc7e3c2801f7644b8e522b4312357794e76f43a664f2466fe699ab56"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-direct-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-direct-restore.stdout.log",
+      "bytes": 318,
+      "sha256": "40b2ae6e711b34efc564fd5553d31757a7fda96a8b2937599908f2a73a6ac859"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-pinned-resume-result.json",
+      "bytes": 427,
+      "sha256": "7371a898e18048fae658f002b84a44e94754bb78d3ca95b18f17fb7c3e1247de"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-pinned-resume.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-cancelled-pinned-resume.stdout.log",
+      "bytes": 324,
+      "sha256": "e9530f40b9fcf5471ef0eabc07201281da930c14a3f1532c1824c85bb27c06f4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43733,
+      "sha256": "5a330745c2d00c868a29066e982f86bf6a6f71eb89f0dabd3ac8cb41a77644d4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 136819,
+      "sha256": "12f8da4bc8a1cd79abce03b1cf8882657f198494174fd326691ca6e21ce1dac7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a866fc5e36eddf9587bfe994c77d94e2174b6a299775f68fdcb89f181010f993"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-clean-baseline-files.json",
+      "bytes": 1913,
+      "sha256": "7656936d43b3c215f78ac668000615c67b77e2435fdcada4a77a656fce37fc8d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-debug-attempt1.ps1",
+      "bytes": 11100,
+      "sha256": "22edba7c2b5663f6aeae01b8a2b382ca5f913805202599bda1bab487ec7ac0e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43752,
+      "sha256": "4a81b43e281415b74f21cdbf6164fabf7554c12ff97eb8bcb20126bdae7c7a3c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137707,
+      "sha256": "459467092f142dfea26c8ac53b3884c20b7161612d9877baa735d20c7f4699c0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "7b27f6632c9be3f6d4a92317ec84d966ca2f8aa18694c9289133bc250cbb3c5a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-direct-restored-files.json",
+      "bytes": 1913,
+      "sha256": "e3904432f25e04b425052663dddd8074e5a9af158273b56979fe31cb99cc2ff4"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43731,
+      "sha256": "8b08f0de3f428aed1390ec91a6d538ffc5a223f0fbfc3cc160e4e31cbd1d8a4b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 144641,
+      "sha256": "8d93cb841d208567935146ff0f283d5d55971ebfa544d20af4cf4d00046822fb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "ccf1b42e394c856e865c01c2e558a1fd115246122853735837438d8416e47dc0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "ee15ff7f64805aa86d5e2ed1cce4966c2c886d7618e34ca113ab6f48e0c2eee9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "e68823ac70674665748c142b197e4cc5175f449b0a5a2d99c3961af1a6955c94"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-files.json",
+      "bytes": 1913,
+      "sha256": "9217c46c770a510250efb202ccbb373614760de057d0bfc9b08f25756d23f162"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-command-result.json",
+      "bytes": 414,
+      "sha256": "c7986d1c75fe22b98158e963d599c69dae4c53efa3eec1a0a79289dea5ad861a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-command.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-command.stdout.log",
+      "bytes": 1562,
+      "sha256": "ef8a3daa8a0b9004bae742ef9561f2c1f607f2e4237fff6b46503a580e05ffe8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-settings-sync-result.json",
+      "bytes": 508,
+      "sha256": "e70c3edae0f6100681779d49037eba65454942f279587ca97f8e74cb034f92c2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-settings-sync.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-final-original-settings-sync.stdout.log",
+      "bytes": 557,
+      "sha256": "2495a8c7cd7c8052f304476f23d864e8a96d8e8e11beb5b132aa4e58517e3832"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-initial-harness.ps1",
+      "bytes": 10769,
+      "sha256": "21d290cc1595a96853b81459c32d4afc59292487c441e34c53649eefe7ceedd6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-direct-restore-result.json",
+      "bytes": 421,
+      "sha256": "4d60518a523407077be8172823c800a50262535c57a2f1879bb5cabee86ba9df"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-direct-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-direct-restore.stdout.log",
+      "bytes": 1630,
+      "sha256": "b5eea88b2c6fd003bb578777ae45eb79744fa1194eea256a24787d3a4933eba0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-resume-restore-result.json",
+      "bytes": 421,
+      "sha256": "8c596fca5c4fb941f08d21a808d3de4865a9138018af21bda4b11cd8fcd276ee"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-resume-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-original-after-resume-restore.stdout.log",
+      "bytes": 1630,
+      "sha256": "b5eea88b2c6fd003bb578777ae45eb79744fa1194eea256a24787d3a4933eba0"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-partial-result.json",
+      "bytes": 12534,
+      "sha256": "ba3533d8254248473407e6092594ae2c9844e743a4c408150107fd7e6bebaf10"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-partial-steps.json",
+      "bytes": 8577,
+      "sha256": "2392859440e0bbd658a85587b1aed4362d6c9bf7514c504f96bd33afded95a27"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-partial.ps1",
+      "bytes": 8669,
+      "sha256": "10d063426a1512ab0dabb2b70fe8be122b8078f6a11ec559e5c4b609a7187136"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-post-direct-restore-original.json",
+      "bytes": 242,
+      "sha256": "6eda24d9d1719d2dfc96549ecba5367ddfd7c1d50df0df9a421fab5f54fa5055"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-post-resume-restore-original.json",
+      "bytes": 242,
+      "sha256": "36e2fc7c73afc8578d0dcb21489e1def8147506d72f456f176ad5d53b0107c78"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43733,
+      "sha256": "45285fcf5e9784a39745a9d2c56774606c2545aa9cffaa83cbb232b5b1958e8c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138910,
+      "sha256": "9de83391f0ff4158c2d6e86fd9981d1531ec953bdbfa46831326ffb89987fb44"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a866fc5e36eddf9587bfe994c77d94e2174b6a299775f68fdcb89f181010f993"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resume-restored-files.json",
+      "bytes": 1913,
+      "sha256": "cb6958191e8e0ad427b63bca26e7cca4f3b62cf793d69d65d6cd45c02309abb7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "30695502e1fb43064770e01ae799c45ad3971a936dd5bb1c7066c145f7ea3c6c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43738,
+      "sha256": "374799fee1cd9cd477dc1967705ae1403027a961d03a4b6f95fb86399b62328f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 137676,
+      "sha256": "6235688c70a9a71df7c53013d618759620c7bbff4d24e491e3aceaa393a666be"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "a5e783a79702c07f57065c8c17154c85fc7e97d0350b539bc8253a1e85d8b5f8"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.cursor_mcp.json",
+      "bytes": 5838,
+      "sha256": "2abbebab3eb259b51c9ca9bc892a44d9aa1920491abc885fa8ed581fba77697a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed\\.kilo_kilo.json",
+      "bytes": 7258,
+      "sha256": "351b7a1f0b430061a9a240e2caaf553cc06033fd870f4d8581329c2ffa508729"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed-files.json",
+      "bytes": 1913,
+      "sha256": "76077403cf8781e1d540931176a1e44e64538d2df103ba8600d54f17d9a61fd3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed-owned-restore-result.json",
+      "bytes": 426,
+      "sha256": "710061da29b046ceee0add864350163538d1459031829c3430364f0afae6c71e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed-owned-restore.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-resumed-owned-restore.stdout.log",
+      "bytes": 318,
+      "sha256": "d435133494f631a965611dba2ce92298c1d6068713c44ef2fa4e7f965956201d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-roots-after.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-roots-before.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native-steps.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\native.ps1",
+      "bytes": 11678,
+      "sha256": "c0ca7367c99183143668734b1b8d2bb245b9166a4173fc5bc82e0e5f025d8d62"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\paused-apply-attempt1.ps1",
+      "bytes": 1981,
+      "sha256": "da2db649082d1efa03382c914377c07a19875de8044ac0aaea0b28518cca80e1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\paused-apply.ps1",
+      "bytes": 2286,
+      "sha256": "0d4377bc1d3fa00793ad057768327a0366ddd87de3a200359582d98ed3991d2e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\pm5-copy-receipt.json",
+      "bytes": 2145,
+      "sha256": "2eb19aef95b08122d53fb2f1579cdd6f0553db410fd86a4000245e0899c4c69e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\preserve.ps1",
+      "bytes": 3489,
+      "sha256": "05e32d00fca53c7886dfd9e7a5d4b467f135528e52cc2dc0d82550c842344789"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "585bf7a15e77c77245fff21eedd5982f80e838d36ff91d47f50d51fe721164d6"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "0543f2a5d6bf8ba69e1f82bf10115bcb823d50733ffff8811dc697252472a1e3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\previous-evidence-preservation.json",
+      "bytes": 50571,
+      "sha256": "66423df385fc5cf62e5be9645bebe197d82a8e582cfe302a9c1112404f77fd4b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_dependency-lock.json",
+      "bytes": 16521,
+      "sha256": "28d3878449d77ed1082e6ccb5e8bc71966459d471d51df290b7acc4c6b326619"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_mcp_client-managed.json",
+      "bytes": 3887,
+      "sha256": "3c41892a4961da577e6e60c19d104de70e02196920f8f909dbd73e27369f9a82"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_mcp_product-context-applied.json",
+      "bytes": 43331,
+      "sha256": "207dd2b6b2f8b7f15309df0eec0cc13b292cd4cfdadb83e6280eff3021081849"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_mcp_product-context-operation.json",
+      "bytes": 138544,
+      "sha256": "aee7e93ce30a14f4b1d37601c07f120ffb79b4874a8c6eec2e18e2309fa61c60"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_mcp_vibecoding1c-selection.json",
+      "bytes": 1755,
+      "sha256": "4581126358ccc7c1898ef7f2d97b889a03c392dd9f0f152ee7edd4f6fd314c22"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.agent-1c_project.json",
+      "bytes": 3141,
+      "sha256": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.cursor_mcp.json",
+      "bytes": 5837,
+      "sha256": "265a6e35905fb5c4e141c2951bc976837c2fb306b8a8fa53c8a6fc32c23f3bab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before\\.kilo_kilo.json",
+      "bytes": 7256,
+      "sha256": "004df54cd6d7f91d6d13f7cfeb5f5a96d9f55543ef139b74a25d2b8fdbb66f19"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\recovery-before-files.json",
+      "bytes": 1913,
+      "sha256": "dfd2108bafba5926db127098014e5e9e99744afc08035df87335e7200f9d448e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\registry-validation.log",
+      "bytes": 48,
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\roots-before.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\source-status.ps1",
+      "bytes": 865,
+      "sha256": "b21913232d88612e18a73c3b50421a6fcdc5cd46502e74b84a66dd1f8760f594"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\support.ps1",
+      "bytes": 1258,
+      "sha256": "7bd0cfdfe74599e812b3c63ab47ee33bbc10faad7957b233a16eda9a9d2683e7"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\timing-attempt-audit.json",
+      "bytes": 774,
+      "sha256": "00cd45709bf33f02f73bb0113da4556a17f9cad6af9cc066a1157d1606c5b64b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\update-docs.py",
+      "bytes": 9261,
+      "sha256": "7d9fb90065753d7b23497b648dcfb4eba0f98b71871927cfb6432d250051080b"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\verify-capsule.ps1",
+      "bytes": 769,
+      "sha256": "37d43a6f360f279d4aa5996323027704a65890068fc87b05efde489b4925d70a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\partial-cancel-20261023\\verify-client-bytes.py",
+      "bytes": 2660,
+      "sha256": "f1e81de507d2a4c4979b9d03eb82c38986ac5a756207314454540c3fb1e73807"
+    }
+  ]
+}
