@@ -277,11 +277,12 @@ function Get-DevelopScenarioReusePlan {
 }
 
 function Test-DevelopScenarioEvidence {
-    param([object]$Report,[int]$Depth=0)
+    param([object]$Report,[int]$Depth=0,[string[]]$RequiredScenario=@())
     if($Depth -gt 32) {return $false}
     $records=@($Report.result.scenarioEvidence)
     if((@($records.id | Sort-Object) -join ',') -cne (@($Report.coverage | Sort-Object) -join ',')) {return $false}
-    foreach($record in $records) {
+    if(@($RequiredScenario | Where-Object {$_ -notin @($Report.coverage)}).Count) {return $false}
+    foreach($record in @($records | Where-Object {-not $RequiredScenario.Count -or $_.id -in $RequiredScenario})) {
         if($record.execution -eq 'executed') {
             if(-not (Test-Path -LiteralPath $record.path -PathType Leaf) -or
                 (Get-FileHash -LiteralPath $record.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $record.sha256) {return $false}
@@ -310,7 +311,7 @@ function Test-DevelopScenarioEvidence {
             $prior=Get-Content -LiteralPath $record.path -Raw -Encoding UTF8 | ConvertFrom-Json
             if($prior.status -cne 'passed' -or $prior.journey -cne $Report.journey) {return $false}
             if([int]$prior.schemaVersion -ne 1 -and $record.id -notin @($prior.coverage)) {return $false}
-            if([int]$prior.schemaVersion -in @(2,3) -and -not (Test-DevelopScenarioEvidence $prior ($Depth+1))) {return $false}
+            if([int]$prior.schemaVersion -in @(2,3) -and -not (Test-DevelopScenarioEvidence $prior ($Depth+1) @($record.id))) {return $false}
         } else {return $false}
     }
     return $true
@@ -320,6 +321,8 @@ function Invoke-DevelopScenarioJourney {
     param([string]$Journey,[object]$Plan,[switch]$DeferForStatic,[switch]$ReuseOnly)
     # A composite may consume ancestor proof only after current complete static.
     if($DeferForStatic) {return $null}
+    $script:developAncestorRoutes.Remove($Journey)
+    if(Get-Variable -Name developScenarioExecution -Scope Script -ErrorAction SilentlyContinue) {$script:developScenarioExecution.Remove($Journey)}
     $currentHead=(Invoke-RepositoryGit -RepositoryRoot $repoRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
     if(-not $script:developCurrentStaticProof -or -not (Test-WorkflowCurrentStaticProof -Proof $script:developCurrentStaticProof -Commit $currentHead -Tree $tree)) {
         throw 'DEVELOP_SCENARIO_STATIC_REQUIRED: repeat the same qualification through its complete current-candidate static stage before consuming scenario proof.'
@@ -376,17 +379,34 @@ function Invoke-DevelopScenarioJourneyCore {
         } elseif($record.execution -ne 'reuse') {
             $evidence+=,[pscustomobject]@{id=$record.id;execution='executed';path=$rawPath;sha256=(Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash.ToLowerInvariant()}
         } else {
-            $manifest=Join-Path (Split-Path $record.proof.reportPath -Parent) 'manifest.json'
+            $reportSource=$record.proof.reportPath
+            $reportSourceHash=$record.proof.sha256
+            $manifest=Join-Path (Split-Path $reportSource -Parent) 'manifest.json'
+            $prior=$record.proof.report
+            # Point at the original scenario evidence, not an ever-growing
+            # chain of complete compositions. Reauthenticate direct input
+            # equivalence before removing any intermediate certificate.
+            for($depth=0;$depth -lt 32 -and [int]$prior.schemaVersion -in @(2,3);$depth++) {
+                $link=@($prior.result.scenarioEvidence | Where-Object id -eq $record.id)
+                if($link.Count -ne 1 -or $link[0].execution -ne 'reused') {break}
+                $link=$link[0]
+                if((Get-FileHash -LiteralPath $link.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $link.sha256 -or
+                    (Get-FileHash -LiteralPath $link.manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $link.manifestSha256) {throw 'DEVELOP_SCENARIO_REFERENCE_SHA_MISMATCH'}
+                $leaf=Get-Content -LiteralPath $link.path -Raw -Encoding UTF8 | ConvertFrom-Json
+                $leafManifest=Get-Content -LiteralPath $link.manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if(-not (Test-DevelopScenarioEquivalentInput $repoRoot $leafManifest.inputIdentity $journeyInput $leaf.repository.commit @($record.id) $qualityCatalog)) {break}
+                $reportSource=$link.path;$reportSourceHash=$link.sha256;$manifest=$link.manifestPath;$prior=$leaf
+            }
             $manifestHash=(Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
-            $pairHash=Get-DevelopE2ECanonicalJsonSha256 ([ordered]@{report=$record.proof.sha256;manifest=$manifestHash})
+            $pairHash=Get-DevelopE2ECanonicalJsonSha256 ([ordered]@{report=$reportSourceHash;manifest=$manifestHash})
             $reference=Join-Path (Get-RepositoryCommonGitDirectory $repoRoot) ('itl/develop-e2e-qualifications/.references/'+$pairHash)
             [void][IO.Directory]::CreateDirectory($reference)
             $reportCopy=Join-Path $reference 'route-report.json';$manifestCopy=Join-Path $reference 'manifest.json'
-            foreach($pair in @(@($record.proof.reportPath,$reportCopy,$record.proof.sha256),@($manifest,$manifestCopy,$manifestHash))) {
+            foreach($pair in @(@($reportSource,$reportCopy,$reportSourceHash),@($manifest,$manifestCopy,$manifestHash))) {
                 if(-not (Test-Path -LiteralPath $pair[1] -PathType Leaf)) {Copy-Item -LiteralPath $pair[0] -Destination $pair[1]}
                 if((Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pair[2]) {throw 'DEVELOP_SCENARIO_REFERENCE_SHA_MISMATCH'}
             }
-            $evidence+=,[pscustomobject]@{id=$record.id;execution='reused';path=$reportCopy;sha256=$record.proof.sha256;
+            $evidence+=,[pscustomobject]@{id=$record.id;execution='reused';path=$reportCopy;sha256=$reportSourceHash;
                 manifestPath=$manifestCopy;manifestSha256=$manifestHash}
         }
     }

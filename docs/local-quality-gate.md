@@ -181,7 +181,10 @@ that execution with SHA-checked, applicable prior scenario evidence, after the
 current candidate's complete static proof. The cache remains under the existing
 `itl/develop-e2e-qualifications` owner. Native evidence and composed certificates
 are immutable; warm reuse preserves the existing certificate and cannot refer
-to itself. Scenario policy, source inputs, stand/positive-stand facts, effective
+to itself. Repeated compositions reference the original scenario certificate
+after rechecking direct input equivalence; they do not grow a chain of complete
+reports. A full certificate still validates every required scenario. Scenario
+policy, source inputs, stand/positive-stand facts, effective
 client selection, runtime, fork and all three physical artifact hashes bind reuse.
 The stateless client writer uses upgrade update and fresh install/branch as
 native representatives alongside the current static preservation/PlanOnly/atomic
