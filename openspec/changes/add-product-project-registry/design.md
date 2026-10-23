@@ -502,3 +502,7 @@ Account/profile/Agent switches принадлежат клиенту. Registry/m
 ### Completed resume сверяет текущую applied-квитанцию
 
 Completed plan не заменяет фактический applied marker. [Owner repair и original PM5 proof](evidence/g3-completed-resume-repair-2026-10-23.md) используют прежний record reader и сопоставляют operation ID/catalogRevision/contextHash перед возвратом configured. Completed compatibility restore сверяется со своим original baseline, включая законное отсутствие marker. Invalid/missing/mismatched результат даёт read-only refusal с public pinned restore continuation; оно доведено до original command. Это локальный recovery owner, не новый updater/state/lock/source stamp, не startup probe и не изменение Code/Graph/ai_rules_1c. Partial/restored/cancelled пути прежние; full G3/AC-39 и ограничения общей квалификации открыты.
+
+### Qualification boundary: partial cancel/recovery, 2026-10-23
+
+[PM5 native subset](evidence/g3-pm5-partial-cancel-2026-10-23.md) подтверждает cancel-only request на faulted partial, pinned resume и direct owned restore существующего writer; новых coordinator/locks/state/runtime checks нет. Active-writer cooperative cancel ещё не доказан, failed timing harness не принят. Restore возвращает owned before-состояние, не задаёт defer/override: следующий normal startup использует актуальный desired catalog; этот original путь повторён до fixture cleanup. Full G3/AC-39 открыт; памяти отдельный recovery/cache/probe не добавляется.
