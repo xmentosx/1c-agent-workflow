@@ -118,6 +118,59 @@
         (Read-ItlClientMcpEntries claude-code).code.headers.token | Should -Be harmless-fixture
         (Get-ItlManagedMcpOwnerKeys -Client claude-code -Owner vibecoding1c) | Should -Not -Contain code
     }
+    It 'preserves exact surrounding JSON bytes and planned output through <Client>' -Tag G3ForeignBytes -ForEach @(@{Client='cursor'},@{Client='kilocode'},@{Client='zcode'}) {
+        $old=@(@{client=$Client;owner='vibecoding1c';endpoints=@(@{name='owned';url='https://old.invalid'})})
+        Write-ItlClientMcpEndpointSet $old *> $null
+        $adapter=Get-ItlClientAdapter $Client;$path=Join-Path $root $adapter.mcpPath
+        $open=(@($adapter.mcpContainer.Split('.')|ForEach-Object {'"'+$_+'": {'}) -join '')
+        $close='}'*$adapter.mcpContainer.Split('.').Count
+        $prefix=[string][char]0xfeff+"{`r`n"+' "otherRoot": {"escaped":"\u0410","number":1.00},'+"`n"+$open+"`r`n"+' "z-foreign": { "args": ["Путь с пробелом"], "url":"https://user/a,}" },'+"`n"+' "owned": '
+        $suffix=","+"`r`n"+' "a-external": {"z":true, "a":false}'+"`n"+$close+","+"`r`n"+' "permission": {"*":"ask"}'+"`r`n}`r`n"
+        $entry=(Read-ItlClientMcpEntries $Client).owned|ConvertTo-Json -Depth 20 -Compress
+        $utf8=[Text.UTF8Encoding]::new($false,$true)
+        [IO.File]::WriteAllBytes($path,$utf8.GetBytes($prefix+$entry+$suffix))
+        $before=Get-ItlMcpFileState $path;$ticks=[IO.File]::GetLastWriteTimeUtc($path).Ticks
+        $new=@{Client=$Client;Owner='vibecoding1c';Endpoints=@(@{name='owned';url='https://new.invalid'})}
+        $plan=Write-ItlClientMcpEndpoints @new -PlanOnly
+        (Get-ItlMcpFileState $path)|Should -BeExactly $before
+        [IO.File]::GetLastWriteTimeUtc($path).Ticks|Should -Be $ticks
+        $receipt=Write-ItlClientMcpEndpoints @new -ReturnReceipt
+        $actual=$utf8.GetString([IO.File]::ReadAllBytes($path))
+        $actual.StartsWith($prefix,[StringComparison]::Ordinal)|Should -BeTrue
+        $actual.EndsWith($suffix,[StringComparison]::Ordinal)|Should -BeTrue
+        (Read-ItlClientMcpEntries $Client).owned.url|Should -BeExactly 'https://new.invalid'
+        (Get-ItlMcpFileState $path)|Should -BeExactly $plan.afterFiles[$path]
+        $receipt.fileState|Should -BeExactly $plan.afterFiles[$path]
+        $before=Get-ItlMcpFileState $path;$ticks=[IO.File]::GetLastWriteTimeUtc($path).Ticks
+        Write-ItlClientMcpEndpoints @new *> $null
+        (Get-ItlMcpFileState $path)|Should -BeExactly $before
+        [IO.File]::GetLastWriteTimeUtc($path).Ticks|Should -Be $ticks
+    }
+    It 'keeps an external append in place after partial <Recovery>' -Tag G3ForeignBytes -ForEach @(@{Recovery='resume'},@{Recovery='restore'}) {
+        $old=@(foreach($client in @('kilocode','cursor')){@{client=$client;owner='vibecoding1c';endpoints=@(@{name='1c-graph-metadata-mcp';url='https://old.invalid'})}})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $path=Join-Path $root '.kilo/kilo.json';$utf8=[Text.UTF8Encoding]::new($false,$true)
+        $text=$utf8.GetString([IO.File]::ReadAllBytes($path));$doc=Read-ItlJsoncDocument $text;$node=@($doc.Root.Members|Where-Object Name -CEQ 'mcp')[0].Value
+        $anchor='"z-user": { "path":"C:\\Путь с пробелом", "z":1.00 }'
+        [IO.File]::WriteAllBytes($path,$utf8.GetBytes($text.Insert($node.End-1,','+$anchor)))
+        $next=$context.Clone();$next.catalogRevision='b'*40
+        $desired=@(foreach($client in @('kilocode','cursor')){@{client=$client;owner='vibecoding1c';endpoints=@(@{name='1c-graph-metadata-mcp';url='https://new.invalid'})}})
+        Mock Write-ItlClientMcpEndpoints {if($Client -eq 'cursor' -and -not $PlanOnly){throw 'controlled fault before B write'};& $LowLevelWriter @PesterBoundParameters}
+        {Invoke-ItlProductProjectClientApply $next $desired}|Should -Throw '*controlled fault before B*'
+        $op=Read-ItlProductProjectRecord operation;$op.activeWrite.client|Should -Be cursor
+        $text=$utf8.GetString([IO.File]::ReadAllBytes($path));$doc=Read-ItlJsoncDocument $text;$node=@($doc.Root.Members|Where-Object Name -CEQ 'mcp')[0].Value
+        $foreign='"g3-race-foreign-'+$Recovery+'": { "url":"https://external.invalid", "enabled":false }'
+        [IO.File]::WriteAllBytes($path,$utf8.GetBytes($text.Insert($node.End-1,','+$foreign)))
+        Mock Write-ItlClientMcpEndpoints {& $LowLevelWriter @PesterBoundParameters}
+        $result=Invoke-ItlProductProjectClientApply -Mode $Recovery
+        $result.status|Should -Be $(if($Recovery -eq 'resume'){'configured'}else{'restored'})
+        $after=$utf8.GetString([IO.File]::ReadAllBytes($path))
+        $after.Contains($foreign)|Should -BeTrue
+        $after.IndexOf('"z-user"')|Should -BeLessThan $after.IndexOf('"g3-race-foreign-')
+        (Read-ItlProductProjectRecord operation).operationId|Should -BeExactly $op.operationId
+        (Read-ItlProductProjectRecord operation).context.catalogRevision|Should -BeExactly ('b'*40)
+        (Read-ItlClientMcpEntries kilocode).'1c-graph-metadata-mcp'.url|Should -BeExactly $(if($Recovery -eq 'resume'){'https://new.invalid'}else{'https://old.invalid'})
+    }
     It 'retains exact policy fields on a retired key restored after removal' {
         $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='retired';url='https://old.invalid'})})
         Write-ItlClientMcpEndpointSet $old *> $null

@@ -80,17 +80,38 @@
                 function Get-ItlActiveClient { return "kilocode" }
                 $alpha = [pscustomobject]@{ name = "alpha"; transport = "stdio"; command = "tool.exe"; args = @("alpha"); toolTimeoutSeconds = 120 }
                 $zulu = [pscustomobject]@{ name = "zulu"; transport = "stdio"; command = "tool.exe"; args = @("zulu"); toolTimeoutSeconds = 120 }
+                $path = Join-Path $tempRoot ".kilo\kilo.json"
+                $utf8 = [Text.UTF8Encoding]::new($false, $true)
+                $beforeText = $utf8.GetString([IO.File]::ReadAllBytes($path))
                 Write-ItlClientMcpEndpoints -Endpoints @($zulu, $alpha) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
                 $first = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
+                $firstText = $utf8.GetString([IO.File]::ReadAllBytes($path))
+                $firstTicks = (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks
                 Write-ItlClientMcpEndpoints -Endpoints @($alpha, $zulu) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
                 [pscustomobject]@{
                     first = $first
                     second = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
                     config = Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                    beforeText = $beforeText
+                    firstText = $firstText
+                    secondText = $utf8.GetString([IO.File]::ReadAllBytes($path))
+                    firstTicks = $firstTicks
+                    secondTicks = (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks
                 }
             }
 
-            $hashes.second | Should -Be $hashes.first; @($hashes.config.mcp.PSObject.Properties.Name) | Should -Be @("alpha", "custom", "zulu")
+            # Deterministic owned additions do not authorize moving or
+            # normalizing the existing foreign object and root permissions.
+            $hashes.second | Should -Be $hashes.first
+            $hashes.secondTicks | Should -Be $hashes.firstTicks
+            @($hashes.config.mcp.PSObject.Properties.Name | Sort-Object) | Should -Be @("alpha", "custom", "zulu")
+            @($hashes.config.mcp.PSObject.Properties.Name | Where-Object { $_ -ne 'custom' }) | Should -Be @("alpha", "zulu")
+            $suffixStart = $hashes.beforeText.IndexOf('},"permission"')
+            $suffixStart | Should -BeGreaterThan 0
+            foreach ($text in @($hashes.firstText, $hashes.secondText)) {
+                $text.StartsWith($hashes.beforeText.Substring(0, $suffixStart), [StringComparison]::Ordinal) | Should -BeTrue
+                $text.EndsWith($hashes.beforeText.Substring($suffixStart), [StringComparison]::Ordinal) | Should -BeTrue
+            }
             $hashes.config.mcp.custom.url | Should -Be "http://custom"; $hashes.config.permission.bash | Should -Be "ask"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

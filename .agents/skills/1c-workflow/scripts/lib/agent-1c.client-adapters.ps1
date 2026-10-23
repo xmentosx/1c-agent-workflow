@@ -1206,8 +1206,14 @@ function Write-ItlClientMcpEndpoints {
     }
 
     $config = [ordered]@{}
+    $existingJsonText = $null
     if (Test-Path -LiteralPath $path -PathType Leaf) {
-        try { $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) } catch { throw "Client MCP config is not valid JSON: $path. $($_.Exception.Message)" }
+        try {
+            # Keep a BOM as a text character, as in the OpenCode adapter, so
+            # the shared atomic UTF-8 writer can round-trip the original bytes.
+            $existingJsonText = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($path))
+            $config = ConvertTo-Vibecoding1cMcpHashtable -Object ($existingJsonText.TrimStart([char]0xfeff) | ConvertFrom-Json)
+        } catch { throw "Client MCP config is not valid JSON: $path. $($_.Exception.Message)" }
     }
     $containerName = [string]$adapter.mcpContainer
     $container = Get-ItlClientMcpContainer -Config $config -Path $containerName
@@ -1308,6 +1314,31 @@ function Write-ItlClientMcpEndpoints {
         $orderedContainer[$key] = $container[$key]
     }
     Set-ItlClientMcpContainer -Config $config -Path $containerName -Container $orderedContainer
+    $afterSemanticSignature = Get-ItlMcpOwnedSemanticSignature -Container $orderedContainer -Names $semanticNames
+    if ($null -eq $existingJsonText -or [string]::IsNullOrWhiteSpace($existingJsonText.TrimStart([char]0xfeff))) {
+        # A new/empty document has no foreign object spans to preserve.
+        $content = ($config | ConvertTo-Json -Depth 20) + [Environment]::NewLine
+        if ($existingJsonText -and $existingJsonText[0] -eq [char]0xfeff) { $content = [string][char]0xfeff + $content }
+    } else {
+        $content = $existingJsonText
+        # A no-op neither compiles the optional editor nor normalizes any text.
+        # For changes, use its existing span operations only on authorized keys;
+        # sorting a semantic projection must never reorder a physical user file.
+        if ($beforeSemanticSignature -cne $afterSemanticSignature) {
+            $containerPath = @($containerName.Split('.'))
+            foreach ($name in @($beforeContainer.Keys)) {
+                if ($name -in $semanticNames -and -not $orderedContainer.Contains($name)) {
+                    $content = Remove-ItlJsoncObjectProperty -Text $content -PropertyPath ($containerPath + @([string]$name))
+                }
+            }
+            foreach ($name in @($orderedContainer.Keys)) {
+                if ($name -in $semanticNames) {
+                    $content = Set-ItlJsoncObjectProperty -Text $content -PropertyPath ($containerPath + @([string]$name)) -Value $orderedContainer[$name]
+                }
+            }
+        }
+    }
+    $expectedFileState = Get-ItlMcpTextState -Text $content
     if ($PlanOnly) {
         $claims = [ordered]@{}
         foreach ($name in @($written + $PreserveOwnedKeys | Select-Object -Unique)) {
@@ -1317,12 +1348,9 @@ function Write-ItlClientMcpEndpoints {
         $plannedOwners=ConvertTo-Vibecoding1cMcpHashtable $plannedState['owners']
         $plannedOwners[$stateKey]=@(@($written)+@($PreserveOwnedKeys)|Select-Object -Unique)
         $plannedState['owners']=$plannedOwners
-        return [pscustomobject]@{ path=$path; ownerKey=$stateKey; entries=$claims; afterEntries=$orderedContainer; afterFiles=@{$path=(Get-ItlMcpTextState -Text (($config|ConvertTo-Json -Depth 20)+[Environment]::NewLine))}; afterOwnership=$plannedState; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
+        return [pscustomobject]@{ path=$path; ownerKey=$stateKey; entries=$claims; afterEntries=$orderedContainer; afterFiles=@{$path=$expectedFileState}; afterOwnership=$plannedState; beforeFileState=$beforeFileState; beforeOwnerState=$beforeOwnerState }
     }
-    $content = ($config | ConvertTo-Json -Depth 20) + [Environment]::NewLine
-    $expectedFileState = if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Read-Utf8Text -Path $path) -ceq $content) { $beforeFileState } else { Get-ItlMcpTextState -Text $content }
-    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
-    $afterSemanticSignature = Get-ItlMcpOwnedSemanticSignature -Container $orderedContainer -Names $semanticNames
+    if ($null -eq $existingJsonText -or $content -cne $existingJsonText) { Write-Utf8TextAtomic -Path $path -Value $content }
     if ($beforeSemanticSignature -cne $afterSemanticSignature) {
         Register-ItlClientMcpSemanticChange -Client $Client -Owner $Owner -Path $path
     }
