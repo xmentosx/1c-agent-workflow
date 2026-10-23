@@ -62,7 +62,7 @@ Describe "Develop E2E journey qualification router" {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
         function New-AncestorJourneyFixture {
-            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair)
+            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair,[switch]$IncludeUpdateScope)
             $root = Join-Path $TestDrive ('ancestor ' + (Get-NonAsciiFixtureSegment) + ' ' + [guid]::NewGuid().ToString('N'))
             [void](New-RouterFixture -Root $root)
             $catalog = Get-QualityContractCatalog -RepositoryRoot $root
@@ -72,6 +72,12 @@ Describe "Develop E2E journey qualification router" {
             Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
             $runtime = Join-Path $root ('.agents/skills/1c-workflow/scripts/runtime ' + (Get-NonAsciiFixtureSegment) + '.ps1')
             [IO.File]::WriteAllText($runtime, "'original runtime'`r`n", [Text.UTF8Encoding]::new($true))
+            if($IncludeUpdateScope) {
+                $catalog.contracts[0].paths += '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+                Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+                New-Item -ItemType Directory -Force -Path (Join-Path $root '.agents/skills/1c-workflow/scripts/lib') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'), "function Update-WorkflowPackage { 'old update' }`nfunction Initialize-Project { 'shared' }`n",[Text.UTF8Encoding]::new($true))
+            }
             if ($IncludeManifestRepair) {
                 New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
                 [IO.File]::WriteAllText((Join-Path $root 'scripts/source-e2e-manifest-repair.ps1'), "'original semantic repair'`r`n", [Text.UTF8Encoding]::new($true))
@@ -119,6 +125,91 @@ Describe "Develop E2E journey qualification router" {
             Write-Utf8Json -Path $path -Value $q
             return Save-DevelopE2ECurrentStaticProof -QualificationPath $path -Commit $commit -Tree $tree
         }
+    }
+
+    It 'routes update-only changes to upgrade and reuses the original fresh proof without rewriting it' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $physical=Join-Path $f.root $path
+        $text=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($physical))
+        [IO.File]::WriteAllBytes($physical,[Text.Encoding]::UTF8.GetBytes($text.Replace('old update','fixed update')))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'update-only repair'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $plan=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.commit -Catalog $f.catalog
+        @($plan.journeys) | Should -Be @('upgrade')
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+        $proof.report.repository.commit | Should -BeExactly $f.commit
+        $failedInputs=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $failedPath=Join-Path $f.root '.git/itl/runs/new-develop-failure.json'
+        Write-Utf8Json -Path $failedPath -Value @{schemaVersion=3;mode='Develop';status='failed';commit=(& git -C $f.root rev-parse HEAD).Trim();tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');stages=@(@{name='develop-e2e-fresh';status='failed'});journeyInputIdentities=@{fresh=$failedInputs}}
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        Remove-Item -LiteralPath $failedPath
+        # The exact same file also owns shared initialization: retain fresh.
+        [IO.File]::WriteAllBytes($physical,[Text.Encoding]::UTF8.GetBytes($text.Replace("'shared'","'changed shared'")))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'shared initialization change'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        @( (Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.commit -Catalog $f.catalog).journeys) | Should -Be @('upgrade','fresh')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'keeps fresh selected for missing baseline, unknown functions, parse errors and changed shared entrypoint code' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $f.root -Path $path | Should -BeFalse
+        {Get-DevelopFreshSourceProjection $path "function Update-WorkflowPackage { 'update' }; function Initialize-Project { Update-WorkflowPackage }"} | Should -Throw '*SHARED_CALLER*'
+        foreach($text in @("function Update-WorkflowPackage { 'fixed' }; function Unknown-Shared { 'new' }",'function Broken {')) {
+            [IO.File]::WriteAllText((Join-Path $f.root $path),$text,[Text.UTF8Encoding]::new($true))
+            Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $f.root -Path $path -BaseRef $f.commit | Should -BeFalse
+        }
+        $entry='.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        $before="param([string]`$Action,[string]`$WorkflowUpdateRecovery)`nfunction Get-Agent1cReexecArguments { 'shared' }"
+        $after="param([string]`$Action,[ValidateSet('','legacy-copy')][string]`$WorkflowUpdateRecovery,[string]`$WorkflowUpdateLegacySourceRoot)`nfunction Get-Agent1cReexecArguments { if (`$WorkflowUpdateRecovery -eq 'legacy-copy') { 'recovery' }`n 'shared' }"
+        (Get-DevelopFreshSourceProjection $entry $after) | Should -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
+        (Get-DevelopFreshSourceProjection $entry ($after.Replace("'shared'","'changed'"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
+        (Get-DevelopFreshSourceProjection $entry ($after.Replace("'recovery' }","'recovery' } else { 'shared path' }"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
+        {Get-DevelopFreshSourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[string]$WorkflowUpdateLegacySourceRoot=(Invoke-Unknown)'))} | Should -Throw '*SHARED_DEFAULT*'
+        {Get-DevelopFreshSourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[Parameter(Mandatory)][string]$WorkflowUpdateLegacySourceRoot'))} | Should -Throw '*SHARED_ATTRIBUTE*'
+        (Get-DevelopFreshSourceProjection $entry ($before.Replace("'shared'","return`n'shared'"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry ($before.Replace("'shared'","return 'shared'")))
+    }
+
+    It 'retains old E2E across a deadline-only change but rejects environment, workload and proof changes' {
+        $f=New-AncestorJourneyFixture
+        $f.catalog.developJourneys.routes.fresh | Add-Member -NotePropertyName hardSeconds -NotePropertyValue 3600
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'deadline only'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $f.external.environment='different'
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+        $f.external.environment='e'*64
+        [IO.File]::AppendAllText((Join-Path $f.cache 'route-report.json'),'tampered')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
+    }
+
+    It 'authenticates the original positive-stand fingerprint when reusing update-only changes' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateScope
+        $old=$f.inputs|ConvertTo-Json -Depth 24|ConvertFrom-Json
+        $positiveExternal=@{complete=$true;environment='positive stand'}
+        $oldPositive=[ordered]@{schemaVersion=2;journey='fresh';contract=$old.inventory.contract;inputs=$old.inventory.inputs;external=$positiveExternal}
+        $old.inventory.external|Add-Member -NotePropertyName positiveStandInputIdentity -NotePropertyValue (Get-DevelopE2ECanonicalJsonSha256 $oldPositive)
+        $old.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $old.inventory
+        $path=Join-Path $f.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $text=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+        [IO.File]::WriteAllBytes($path,[Text.Encoding]::UTF8.GetBytes($text.Replace('old update','new update')))
+        $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ExternalBinding $f.external
+        $newPositive=[ordered]@{schemaVersion=2;journey='fresh';contract=$current.inventory.contract;inputs=$current.inventory.inputs;external=$positiveExternal}
+        $positive=[pscustomobject]@{inventory=$newPositive;fingerprint=Get-DevelopE2ECanonicalJsonSha256 $newPositive}
+        $current | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positive
+        $current.inventory.external['positiveStandInputIdentity']=$positive.fingerprint
+        $current.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $current.inventory
+        Test-DevelopE2EEquivalentInput -RepositoryRoot $f.root -Recorded $old -Current $current -QualifiedCommit $f.commit | Should -BeTrue
+        $positiveExternal.environment='changed positive environment'
+        $positive.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $newPositive
+        $current.inventory.external.positiveStandInputIdentity=$positive.fingerprint
+        $current.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $current.inventory
+        Test-DevelopE2EEquivalentInput -RepositoryRoot $f.root -Recorded $old -Current $current -QualifiedCommit $f.commit | Should -BeFalse
     }
 
     It 'reuses workflow PowerShell source across LF and CRLF without normalizing BOM, content or 1C transport' {

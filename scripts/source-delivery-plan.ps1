@@ -276,6 +276,49 @@ function Get-DeliveryPlanEnvironmentIdentity {
     }
 }
 
+function Get-DeliveryStaticObservedSeconds {
+    param([object]$Run)
+    $intervals=@($Run.stages | Where-Object {$_.name -notlike 'develop-e2e-*' -and $_.durationMs -gt 0})
+    if(-not $intervals.Count -or @($intervals | Where-Object {-not $_.PSObject.Properties['startedAt'] -or -not $_.PSObject.Properties['finishedAt']}).Count) { return $null }
+    $end=$null; $seconds=0.0
+    foreach($interval in @($intervals | Sort-Object {[datetimeoffset]$_.startedAt})) {
+        $start=[datetimeoffset]$interval.startedAt; $finish=[datetimeoffset]$interval.finishedAt
+        if($finish -lt $start) { return $null }
+        if($null -eq $end -or $start -gt $end) { $seconds+=($finish-$start).TotalSeconds }
+        elseif($finish -gt $end) { $seconds+=($finish-$end).TotalSeconds }
+        if($null -eq $end -or $finish -gt $end) { $end=$finish }
+    }
+    return $seconds
+}
+
+function Get-DeliveryPlanTimeEstimate {
+    param([object]$Plan,[AllowEmptyCollection()][object[]]$Runs=@())
+    $details=@(foreach($stage in $Plan.stages) {
+        $samples=@()
+        if($stage.execution -eq 'reuse') { $seconds=0; $basis='reuse-after-current-static' }
+        else {
+            $name=([string]$stage.id).Replace('develop.','develop-e2e-')
+            $samples=@($Runs | Where-Object {$_.mode -ceq $stage.mode -and $_.status -ceq 'passed'} |
+                ForEach-Object {
+                    if($stage.id -eq 'develop.static') { Get-DeliveryStaticObservedSeconds -Run $_ }
+                    else {@($_.stages | Where-Object {$_.name -ceq $name -and $_.status -ceq 'passed' -and $_.durationMs -gt 0} | ForEach-Object {[double]$_.durationMs/1000})}
+                } | Where-Object {$null -ne $_ -and $_ -gt 0} | Select-Object -First 5 | Sort-Object)
+            $seconds=$null; $basis='unknown'
+            if($samples.Count) {
+                $middle=[int][math]::Floor($samples.Count/2)
+                $seconds=[int][math]::Ceiling($(if($samples.Count%2){$samples[$middle]}else{($samples[$middle-1]+$samples[$middle])/2}))
+                $basis='historical-stage-median-advisory'
+            }
+        }
+        [pscustomobject]@{id=$stage.id;estimatedSeconds=$seconds;sampleCount=$samples.Count;basis=$basis;hardLimitSeconds=$stage.budgetSeconds}
+    })
+    $unknown=@($details | Where-Object {$null -eq $_.estimatedSeconds})
+    $known=[int](($details | Measure-Object estimatedSeconds -Sum).Sum)
+    return [pscustomobject]@{kind='advisory-stage-estimate';estimatedSeconds=$(if($unknown.Count){$null}else{$known});
+        knownStageSeconds=$known;unknownStages=@($unknown | ForEach-Object {$_.id});hardLimitSeconds=$Plan.executedBudgetSeconds;stages=$details;
+        note='Hard limits are stop deadlines, not expected duration. Historical samples do not predict cache misses or a changed workload.'}
+}
+
 function New-DeliveryQualityPlanForCandidate {
     param(
         [Parameter(Mandatory = $true)][string]$CandidateRoot,
@@ -284,7 +327,8 @@ function New-DeliveryQualityPlanForCandidate {
         [Parameter(Mandatory = $true)][string]$CandidateTree,
         [switch]$RequireRelease,
         [string[]]$ReleaseCapability = @(),
-        [switch]$AllowCustomGateFixture
+        [switch]$AllowCustomGateFixture,
+        [object]$ArtifactBinding = $null
     )
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $paths = @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @("diff", "--name-only", "--diff-filter=ACDMRT", "-z", "$BaseCommit...$CandidateCommit", "--"))
@@ -331,7 +375,7 @@ function New-DeliveryQualityPlanForCandidate {
         $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
         return $plan
     }
-    $journeyPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $CandidateRoot -ChangedPath $paths -Catalog $catalog
+    $journeyPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $CandidateRoot -BaseRef $BaseCommit -ChangedPath $paths -Catalog $catalog
     if (@($journeyPlan.unknownPaths).Count -gt 0) { throw "QUALITY_OWNER_MISSING: $(@($journeyPlan.unknownPaths) -join ', ')" }
     $stages = [Collections.Generic.List[object]]::new()
     $developEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
@@ -343,16 +387,20 @@ function New-DeliveryQualityPlanForCandidate {
     $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests)) -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree })
     $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint -EvidenceRoot $evidenceRoot
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
-    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
+    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"reuse"}else{"complete static inventory with per-file proof reuse"}) }) | Out-Null
+    if(@($journeyPlan.journeys).Count -and $null -eq $ArtifactBinding) {
+        $ArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $CandidateRoot -SearchRoot @($script:Root)
+    }
+    if($ArtifactBinding) { [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $ArtifactBinding) }
     foreach ($journey in @($journeyPlan.journeys)) {
         $stageId = "develop.$journey"
         $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
         $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
         $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
-        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' })
+        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' }) -ArtifactBinding $ArtifactBinding
         if ($inputs) {
             $fingerprint = [string]$inputs.fingerprint
-            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs
+            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic
             $reusable = $null -ne $ancestor
         } else {
             $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
@@ -361,7 +409,7 @@ function New-DeliveryQualityPlanForCandidate {
             $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint -EvidenceRoot $evidenceRoot
             $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
         }
-        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified ancestor with complete matching journey inputs"}elseif($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
+        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified applicable ancestor inputs; current static proof required"}elseif($reusable){"matching exact-tree stage evidence"}elseif(-not $inputs){"complete binding unavailable; no matching exact-tree proof"}else{"no eligible ancestor for current workload/environment and proof requirements"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
     $releaseEnclosingOverhead = $null
@@ -401,6 +449,11 @@ function New-DeliveryQualityPlanForCandidate {
         $plan | Add-Member -NotePropertyName releaseEnclosingOverheadSeconds -NotePropertyValue $releaseEnclosingOverhead
         $plan.executedBudgetSeconds += $releaseEnclosingOverhead
     }
+    $timingRuns=@()
+    if(Get-Command Get-DeliveryRunHistory -ErrorAction SilentlyContinue) {
+        $timingRuns=@((Get-DeliveryRunHistory -Limit 32 -IncludeDetails).lastRuns)
+    }
+    $plan | Add-Member -NotePropertyName timeEstimate -NotePropertyValue (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $timingRuns)
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
     return $plan
 }
@@ -446,7 +499,7 @@ function Assert-DeliveryQualityPlanMayRun {
         throw "DELIVERY_RESUME_PLAN_MISMATCH: requested '$ResumePlan', current '$([string]$Plan.planId)'; $detail. Original immutable plan and proof were preserved. $continuation"
     }
     if ([int]$Plan.executedBudgetSeconds -gt 3600 -and $ApproveLongPlan -ne [string]$Plan.planId) {
-        throw "LONG_PLAN_APPROVAL_REQUIRED: plan '$([string]$Plan.planId)' requires $([int]$Plan.executedBudgetSeconds)s; pass -ApproveLongPlan '$([string]$Plan.planId)'."
+        throw "LONG_PLAN_APPROVAL_REQUIRED: plan '$([string]$Plan.planId)' has a hard-limit budget of $([int]$Plan.executedBudgetSeconds)s, not an expected duration (see timeEstimate); pass -ApproveLongPlan '$([string]$Plan.planId)'."
     }
 }
 

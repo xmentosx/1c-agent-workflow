@@ -67,6 +67,81 @@
 }
 
 Describe 'Delivery v3 immutable selective plan' {
+    It 'finds binding in known local caches without provisioning and rejects a corrupt explicit override' {
+        $repo=New-PlanRepository
+        $cache=Join-Path $TestDrive 'cache with spaces'
+        $sha=@{}; $files=@{
+            ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE='build/third-party/vanessa-automation/1-r1/archive.zip'
+            VANESSA_MCP_CLIENT_CFE_PATH='build/third-party/client-mcp/client.cfe'
+            ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='tools/itl-ondemand-mcp/build/mcp.exe'
+        }
+        $previous=@{}
+        try {
+            foreach($name in $files.Keys) {
+                $previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+                [Environment]::SetEnvironmentVariable($name,$null,'Process')
+                $path=Join-Path $cache $files[$name]
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path,$name,[Text.UTF8Encoding]::new($false))
+                $sha[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $deps=@{vanessaAutomation=@{sha256=$sha.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE;compatibilityVersion='1';downstreamRevision='r1';assetName='archive.zip'};
+                vanessaMcp=@{clientMcp=@{sha256=$sha.VANESSA_MCP_CLIENT_CFE_PATH;assetName='client.cfe'}};
+                itlOndemandMcp=@{sha256=$sha.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;assetName='mcp.exe'}}
+            New-Item -ItemType Directory -Force -Path (Join-Path $repo.root 'templates') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $repo.root 'templates/dependency-lock.json'),(@{dependencies=$deps}|ConvertTo-Json -Depth 6))
+            $binding=Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)
+            $binding | Should -Not -BeNullOrEmpty
+            (Get-SourceE2EArtifactBindingHashes -RepositoryRoot $repo.root -Binding $binding).Count | Should -Be 3
+            $bad=Join-Path $TestDrive 'corrupt.cfe'; [IO.File]::WriteAllText($bad,'corrupt')
+            [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH',$bad,'Process')
+            {Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)} | Should -Throw '*SOURCE_E2E_ARTIFACT_HASH_MISMATCH*'
+        } finally {
+            foreach($name in $previous.Keys) {[Environment]::SetEnvironmentVariable($name,$previous[$name],'Process')}
+        }
+    }
+
+    It 'passes the read-only SHA-validated artifact binding to planner identity and requires current static before reuse' {
+        $repo=New-PlanRepository; $script:Root=$repo.root; $catalog=New-PlanCatalog
+        $script:GateScript=Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog {$catalog}; Mock Test-QualityContractCatalog {$true}
+        Mock Resolve-QualityContractsForPaths {[pscustomobject]@{contracts=@($catalog.contracts[0]);tests=@();unknownPaths=@()}}
+        Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@('fresh');unknownPaths=@()}}
+        $artifact=[pscustomobject]@{schemaVersion=1;kind='itl-source-e2e-artifact-binding';paths=@{}}
+        Mock Find-SourceE2EArtifactBinding {$artifact}
+        Mock Get-SourceE2EArtifactBindingHashes {@{locked='verified'}}
+        Mock Get-DevelopE2EInputIdentity {[pscustomobject]@{fingerprint=('a'*64);inventory=@{external=@{standStateSha256=('c'*64)}}}}
+        Mock Get-DevelopE2EAncestorQualification {[pscustomobject]@{continuation=@{proofKind='pending-current-static'}}}
+        $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        @($plan.stages.execution) | Should -Be @('execute','reuse')
+        Should -Invoke Get-DevelopE2EInputIdentity -Times 1 -Exactly -ParameterFilter {$ArtifactBinding -eq $artifact}
+        Should -Invoke Get-DevelopE2EAncestorQualification -Times 1 -Exactly -ParameterFilter {$AllowPendingStatic}
+        Should -Invoke Get-SourceE2EArtifactBindingHashes -Times 1 -Exactly
+    }
+
+    It 'reports observed time separately from deadlines and never charges reused journeys their timeout' {
+        $plan=[pscustomobject]@{executedBudgetSeconds=13200;stages=@(
+            @{id='develop.static';mode='Develop';execution='execute';budgetSeconds=4200},
+            @{id='develop.upgrade';mode='Develop';execution='execute';budgetSeconds=5400},
+            @{id='develop.fresh';mode='Develop';execution='reuse';budgetSeconds=3600})}
+        $run=[pscustomobject]@{mode='Develop';status='passed';stages=@(
+            [pscustomobject]@{name='pester';status='passed';durationMs=600000;startedAt='2026-10-23T00:00:00Z';finishedAt='2026-10-23T00:10:00Z'},
+            [pscustomobject]@{name='ai-rules-compatibility';status='passed';durationMs=480000;startedAt='2026-10-23T00:00:00Z';finishedAt='2026-10-23T00:08:00Z'},
+            [pscustomobject]@{name='develop-e2e-upgrade';status='passed';durationMs=1200000;startedAt='2026-10-23T00:10:00Z';finishedAt='2026-10-23T00:30:00Z'})}
+        $estimate=Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run)
+        $estimate.estimatedSeconds | Should -Be 1800
+        $estimate.hardLimitSeconds | Should -Be 13200
+        $estimate.stages[2].estimatedSeconds | Should -Be 0
+        $estimate.stages[1].sampleCount | Should -Be 1
+        $unknown=Get-DeliveryPlanTimeEstimate -Plan $plan
+        $unknown.estimatedSeconds | Should -BeNullOrEmpty
+        @($unknown.unknownStages) | Should -Be @('develop.static','develop.upgrade')
+        # Timing observations are advisory; changing them cannot alter plan identity.
+        $repo=New-PlanRepository; $script:Root=$repo.root
+        $plan | Add-Member -NotePropertyName timeEstimate -NotePropertyValue $estimate
+        $estimate.note | Should -Match 'not expected duration'
+    }
+
     It 'keeps a completed 32-second plan usable and stops only beyond the 120-second planning limit' {
         Mock Write-Warning {}
         { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 32000 } | Should -Not -Throw
