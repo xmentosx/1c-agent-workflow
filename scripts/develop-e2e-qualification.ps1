@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
+. (Join-Path $PSScriptRoot 'develop-journey-inputs.ps1')
 
 function Get-DevelopE2EInputFileSha256 {
     param([string]$Path, [string]$RelativePath)
@@ -51,6 +52,7 @@ function Get-DevelopE2EInputIdentity {
             if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { throw 'DEVELOP_INPUT_MISSING' }
             [ordered]@{ path=$path; sha256=Get-DevelopE2EInputFileSha256 -Path $physical -RelativePath $path }
         })
+        $positiveIdentity = $null
         if ($null -eq $ExternalBinding) {
             if (-not $ProjectRoot -or -not $AiRulesSource) { return $null }
             $stand = Get-DevelopE2EStandStateSha256 -ProjectRoot $ProjectRoot
@@ -123,7 +125,9 @@ function Get-DevelopE2EInputIdentity {
         # Version the normalization contract; legacy raw-byte identities require
         # one fresh qualification rather than an unauthenticated cache rewrite.
         $body = [ordered]@{ schemaVersion=2; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
-        return [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+        $result = [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+        if ($positiveIdentity) { $result | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positiveIdentity }
+        return $result
     } catch {
         Write-Verbose "Develop E2E input identity unavailable: $($_.Exception.GetType().Name); $($_.FullyQualifiedErrorId)"
         return $null
@@ -150,7 +154,8 @@ function Test-DevelopE2ENewerJourneyFailure {
             if (-not $property -or -not $property.Value) { return $true }
             $failedInput = $property.Value
             if ((Get-DevelopE2ECanonicalJsonSha256 -Value $failedInput.inventory) -cne [string]$failedInput.fingerprint) { return $true }
-            if ([string]$failedInput.fingerprint -ceq [string]$InputIdentity.fingerprint) { return $true }
+            if ([string]$failedInput.fingerprint -ceq [string]$InputIdentity.fingerprint -or
+                (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $failedInput -Current $InputIdentity -QualifiedCommit ([string]$run.commit))) { return $true }
         } catch { return $true }
     }
     return $false
@@ -213,11 +218,12 @@ function Get-DevelopE2EAncestorQualification {
         try {
             $manifest = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$manifest.schemaVersion -ne 2 -or [string]$manifest.kind -ne 'itl-develop-e2e-qualification-cache' -or [string]$manifest.identity.journey -ne $Journey -or
-                [string]$manifest.inputIdentity.fingerprint -cne [string]$InputIdentity.fingerprint -or
-                (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$InputIdentity.fingerprint) { continue }
+                (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$manifest.inputIdentity.fingerprint) { continue }
             $reportPath = Join-Path $file.DirectoryName 'route-report.json'
             if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) { continue }
             $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$manifest.inputIdentity.fingerprint -cne [string]$InputIdentity.fingerprint -and
+                -not (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit ([string]$report.repository.commit))) { continue }
             $qualifiedTree = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse',"$([string]$report.repository.commit)^{tree}")).stdout.Trim()
             if ($qualifiedTree -cne [string]$report.repository.tree -or $qualifiedTree -cne [string]$manifest.identity.tree) { continue }
             # The complete owner fingerprint above binds current source and
@@ -298,7 +304,12 @@ function Resolve-DevelopE2EJourneyPlan {
     } else {
         foreach ($name in @($Catalog.developJourneys.names)) {
             $routeContracts = @($Catalog.developJourneys.routes.$name.contracts | ForEach-Object { [string]$_ })
-            if (@($contractIds | Where-Object { $_ -in $routeContracts }).Count -gt 0) { $journeys.Add([string]$name) | Out-Null }
+            $routeIds=$contractIds
+            if ($name -eq 'fresh') {
+                $freshPaths=@($paths | Where-Object { -not (Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $root -Path $_ -BaseRef $BaseRef) })
+                $routeIds=if($freshPaths.Count){@((Resolve-QualityContractsForPaths -Catalog $Catalog -Paths $freshPaths).contracts | ForEach-Object {[string]$_.id})}else{@()}
+            }
+            if (@($routeIds | Where-Object { $_ -in $routeContracts }).Count -gt 0) { $journeys.Add([string]$name) | Out-Null }
         }
         $reason = if ($journeys.Count -gt 0) { "quality-contract-route" } else { "no-develop-journey-route" }
     }
