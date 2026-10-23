@@ -34,6 +34,11 @@ function Get-DevelopInputDifferenceNames {
 # Never turn a node exclusion into an exemption for a shared runtime file.
 function Get-DevelopJourneyExcludedScope {
     param([string]$Path,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    if($Path -ceq 'scripts/stand-env-identity.ps1') {
+        # Discovery reads source artifacts for planning; it does not implement
+        # either native journey. The rest of the shared stand contract binds.
+        return @{functions=@('Find-SourceE2EArtifactBinding')}
+    }
     if ($Journey -eq 'upgrade') {
         if ($Path -ceq 'scripts/invoke-develop-e2e.ps1') {
             return @{ functions=@('Set-FreshConfigurationComment','Get-BranchWorktree');
@@ -116,13 +121,15 @@ function Get-DevelopJourneySourceProjection {
     $tokens=$null; $errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseInput($Text,[ref]$tokens,[ref]$errors)
     if (@($errors).Count) { throw 'DEVELOP_SOURCE_PROJECTION_PARSE_ERROR' }
-    $updateFunctions=if($Journey -eq 'upgrade'){@($scope.functions)}else{(Get-DevelopJourneyExcludedScope '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').functions}
+    $updateFunctions=@()
+    if($Journey -eq 'fresh') {$updateFunctions+=@((Get-DevelopJourneyExcludedScope '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').functions)}
+    if($scope.ContainsKey('functions')) {$updateFunctions+=@($scope.functions)}
     foreach($command in @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst]},$true))) {
         if($command.GetCommandName() -notin $updateFunctions) { continue }
         $parent=$command.Parent
         while($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $parent=$parent.Parent }
         if($parent -and $scope.ContainsKey('functions') -and $parent.Name -in $scope.functions) { continue }
-        if ($Journey -eq 'upgrade') {
+        if ($Journey -eq 'upgrade' -and $scope.ContainsKey('conditions')) {
             $parent=$command.Parent; $inFresh=$false
             while($parent) {
                 if($parent -is [Management.Automation.Language.IfStatementAst] -and $parent.Clauses.Count -eq 1 -and -not $parent.ElseClause -and

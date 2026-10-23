@@ -380,6 +380,12 @@ Planner получает тот же SHA-проверяемый artifact binding
 выполняется только в явных overrides и известных локальных cache paths; Plan
 не скачивает артефакты и не собирает EXE. При недоступном binding reuse остаётся
 неподтверждённым до обычного readiness, который готовит и проверяет артефакты.
+Общий Vanessa cache использует имя `<sha256>-<assetName>`; поиск проверяет его
+по полному SHA, сохраняя совместимость с прежним непредфиксным именем. Ошибка
+override не заменяется другим файлом. При неполном binding диагностика называет
+именно отсутствующий artifact, а не первый неустановленный process override.
+Изменение только `Find-SourceE2EArtifactBinding` не выбирает native journey;
+остальной stand contract и появление общего caller сохраняют строгий отбор.
 Каждый выбранный native stage содержит advisory `reuseDiagnostics`: причина
 отклонения старого proof, его commit и изменившиеся source paths/external keys.
 Значения окружения не выводятся; список ограничен восемью receipts и двенадцатью
@@ -394,6 +400,12 @@ shard. Её зависимости от actual lifecycle/journey sources не с
 остальных тестов `SourceDeliveryPlan.Tests.ps1`; это проверяется реальным
 расчётом shard digest в регрессии каталога. Общие fixtures принадлежат одному
 `SourceDeliveryPlan.TestSupport.ps1`, без нового runner или gate.
+На 2026-10-23 native scheduler выполнил десять incremental/default-boundary
+сценариев за 94,59 с против 62,83 с прежних семи: добавлены discovery-only,
+shared-stand и реальный legacy-Plan → candidate-calculator процесс. Ordering
+weight — 100 с, deadline не расширен. Остальные 32 planner-теста заняли 48,18 с.
+Эти измерения относятся к изолированным fixtures, без запуска 1С или публикации;
+операционное улучшение отдельно проверяется обычным и warm/retry `Plan`.
 
 `timeEstimate` отдельно показывает advisory median последних пяти успешных
 наблюдений этапа, число samples и неизвестные этапы. Для static используется
@@ -422,6 +434,18 @@ runtime его выбирает; старый неизменный proof пер�
 и `PublishDevelop`; candidate-копия не подставляется. Исключение — явно заданный
 подменный `-GateScript` для изолированного процессного fixture. Одноразовый
 bootstrap-режим остаётся и для master-канала до появления supervisor.
+
+Отбор, fingerprints и advisory ETA рассчитываются функциями закреплённого
+кандидата в дочерней области видимости. Supervisor проверяет чистоту и точные
+commit/tree/base/channel, результат identity и SHA calculator до сохранения;
+calculator commit/SHA входят в plan identity. `Plan`, Develop и master delivery
+используют один этот вызов. Запись, approval, очередь, checkpoint и push остаются
+у опубликованного владельца; старые планы без calculator сохраняют свой decoder.
+Если опубликованный supervisor ещё не умеет делегировать расчёт, shim возвращает
+его сохранённый plan без изменения bytes и дополнительный `candidatePreview`
+с актуальным расчётом. Preview не сохраняется как resumable plan и имеет
+`resumable=false`: он не подменяет legacy planId и не разрешает публикацию.
+После публикации поддержки обычный Plan сразу использует candidate calculator.
 
 `Status` не является исполняющим supervisor: read-only вызов использует файл из
 текущего checkout без создания worktree. Поэтому диагностика выводит две разные

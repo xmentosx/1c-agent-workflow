@@ -725,7 +725,7 @@ function Publish-AccumulatedDevelop {
         }
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $customGate = [bool]$script:DeliveryCustomGateBoundary
-        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
+        $deliveryPlan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
         if (-not $frozenPlan -or $frozenPlan.PSObject.Properties['queue']) { Set-DeliveryPlanQueue -Plan $deliveryPlan -Entries $entries }
         $invalidEvidence = @(if ($Action -eq 'PublishDevelop') { Get-DeliveryPlanInvalidEvidence -Plan $deliveryPlan })
         if ($replacementOriginal -and $invalidEvidence.Count -eq 0) {
@@ -1115,7 +1115,7 @@ function Release-DevelopToMaster {
         $candidateBeforeGate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $customGate = [bool]$script:DeliveryCustomGateBoundary
-        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteMaster -CandidateCommit $candidateBeforeGate -CandidateTree $candidateTree -RequireRelease -AllowCustomGateFixture:$customGate
+        $deliveryPlan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteMaster -CandidateCommit $candidateBeforeGate -CandidateTree $candidateTree -RequireRelease -AllowCustomGateFixture:$customGate
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
         $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidateBeforeGate }) -State "active"
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan

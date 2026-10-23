@@ -45,6 +45,9 @@ function Get-DeliveryPlanIdentity {
     if ($Plan.PSObject.Properties['queue']) {
         $identity['queue'] = @($Plan.queue | ForEach-Object { [ordered]@{ id=[string]$_.id; base=[string]$_.base; head=[string]$_.head } })
     }
+    if ($Plan.PSObject.Properties['calculator']) {
+        $identity['calculator'] = $Plan.calculator
+    }
     if ($Plan.PSObject.Properties['replacesPlanId']) { $identity['replacesPlanId'] = [string]$Plan.replacesPlanId }
     if ($Plan.PSObject.Properties['replanQueueScope']) { $identity['replanQueueScope'] = [string]$Plan.replanQueueScope }
     return $identity
@@ -388,8 +391,9 @@ function New-DeliveryQualityPlanForCandidate {
     $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint -EvidenceRoot $evidenceRoot
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
     $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"reuse"}else{"complete static inventory with per-file proof reuse"}) }) | Out-Null
+    $missingArtifact=''
     if(@($journeyPlan.journeys).Count -and $null -eq $ArtifactBinding) {
-        $ArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $CandidateRoot -SearchRoot @($script:Root)
+        $ArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $CandidateRoot -SearchRoot @($script:Root) -MissingInput ([ref]$missingArtifact)
     }
     if($ArtifactBinding) { [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $ArtifactBinding) }
     foreach ($journey in @($journeyPlan.journeys)) {
@@ -398,7 +402,12 @@ function New-DeliveryQualityPlanForCandidate {
         $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
         $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
         $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
-        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' }) -ArtifactBinding $ArtifactBinding -Diagnostics $reuseDiagnostics
+        $inputs=if($missingArtifact) {
+            Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'ARTIFACT_BINDING_MISSING' -Inputs @($missingArtifact)
+            $null
+        } else {
+            Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' }) -ArtifactBinding $ArtifactBinding -Diagnostics $reuseDiagnostics
+        }
         if ($inputs) {
             $fingerprint = [string]$inputs.fingerprint
             $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic -Diagnostics $reuseDiagnostics
@@ -534,6 +543,84 @@ function Resolve-DeliveryPlanAiRulesSource {
     return Resolve-DeliveryAiRulesSource -Lock $aiRulesLock
 }
 
+function Invoke-DeliveryCandidatePlanCalculation {
+    param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,
+        [switch]$RequireRelease,[string[]]$ReleaseCapability=@(),[switch]$AllowCustomGateFixture)
+    $arguments=@{CandidateRoot=$CandidateRoot;BaseCommit=$BaseCommit;CandidateCommit=$CandidateCommit;CandidateTree=$CandidateTree;
+        RequireRelease=$RequireRelease;ReleaseCapability=$ReleaseCapability;AllowCustomGateFixture=$AllowCustomGateFixture}
+    $calculator=Join-Path $CandidateRoot 'scripts/source-delivery-plan.ps1'
+    if($AllowCustomGateFixture -or -not (Test-Path -LiteralPath $calculator -PathType Leaf)) {
+        return New-DeliveryQualityPlanForCandidate @arguments
+    }
+    $head=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $tree=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
+    if($head -cne $CandidateCommit -or $tree -cne $CandidateTree -or
+        @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','-z')).Count) {
+        throw 'DELIVERY_PLAN_CANDIDATE_CHANGED: reconstruct the exact clean candidate before planning; queue and proof were preserved.'
+    }
+    $sha=Get-DeliveryFileSha256 $calculator
+    # Only calculation is delegated. Child-scope definitions cannot replace the
+    # published owner's queue, persistence, approval or execution functions.
+    $plan=& {
+        param($root,$options)
+        foreach($module in @('quality-contracts.ps1','develop-e2e-qualification.ps1','source-delivery-plan.ps1')) {
+            . (Join-Path $root ('scripts/'+$module))
+        }
+        New-DeliveryQualityPlanForCandidate @options
+    } $CandidateRoot $arguments
+    $valid=$false
+    try {
+        $valid=$plan.kind -ceq 'itl-delivery-plan' -and [int]$plan.schemaVersion -eq 1 -and
+            $plan.candidate.commit -ceq $CandidateCommit -and $plan.candidate.tree -ceq $CandidateTree -and
+            $plan.candidate.baseCommit -ceq $BaseCommit -and $plan.supervisor.commit -ceq $script:DeliverySupervisorCommit -and
+            $plan.supervisor.channel -ceq (Get-DeliverySupervisorChannel) -and
+            [bool]$plan.supervisor.bootstrap -eq [bool]$script:DeliverySupervisorBootstrap -and
+            $plan.planId -ceq (Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanIdentity $plan))
+        if($valid -and $plan.status -eq 'ready') {
+            $expected=@(if($RequireRelease -or $ReleaseCapability.Count) {
+                Resolve-DeliveryRequiredReleaseCapabilities -Catalog (Get-DeliveryReleaseStageCatalog $CandidateRoot) -RequireRelease:$RequireRelease -ReleaseCapability $ReleaseCapability
+            })
+            $valid=(@($plan.releaseCapabilities) -join ',') -ceq ($expected -join ',') -and
+                [bool]$plan.requireRelease -eq ($expected.Count -gt 0) -and
+                (@($plan.stages | Where-Object mode -eq 'Release' | ForEach-Object id) -join ',') -ceq (@($expected|ForEach-Object{'release.'+$_}) -join ',')
+        }
+    } catch { $valid=$false }
+    if(-not $valid) {
+        throw 'DELIVERY_PLAN_CALCULATOR_INVALID: candidate calculation does not match the pinned identity; queue and proof were preserved.'
+    }
+    $after=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    if($after -cne $CandidateCommit -or (Get-DeliveryFileSha256 $calculator) -cne $sha -or
+        @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','-z')).Count) {
+        throw 'DELIVERY_PLAN_CANDIDATE_CHANGED: calculation changed its pinned inputs; reconstruct the candidate and repeat planning.'
+    }
+    $plan | Add-Member -NotePropertyName calculator -NotePropertyValue ([ordered]@{protocolVersion=1;commit=$CandidateCommit;sha256=$sha})
+    $plan.planId=Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanIdentity $plan)
+    return $plan
+}
+
+function Add-DeliveryCandidatePlanPreview {
+    param([object]$Plan,[string]$ShimPlanModule)
+    if($Plan.PSObject.Properties['calculator']) { return $Plan }
+    $worktree=$null
+    try {
+        $worktree=New-DeliveryWorktree -StartPoint $Plan.candidate.commit -Purpose 'plan-preview'
+        . $ShimPlanModule
+        [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
+        $preview=Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $Plan.candidate.baseCommit `
+            -CandidateCommit $Plan.candidate.commit -CandidateTree $Plan.candidate.tree -ReleaseCapability @($Plan.releaseCapabilities)
+        Set-DeliveryPlanQueue -Plan $preview -Entries $Plan.queue
+        # The legacy immutable plan belongs to its published owner. A preview is
+        # returned only, never saved as resumable evidence or used to execute.
+        $preview | Add-Member -NotePropertyName resumable -NotePropertyValue $false
+        $Plan | Add-Member -NotePropertyName candidatePreview -NotePropertyValue $preview
+        $Plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published calculator predates candidate delegation; candidatePreview is advisory and cannot be resumed'
+        return $Plan
+    } finally {
+        if($worktree) { Remove-DeliveryWorktree $worktree }
+        if(Test-Path -LiteralPath 'Function:\Remove-DeliveryPreparedAiRulesWorktree') { Remove-DeliveryPreparedAiRulesWorktree }
+    }
+}
+
 function New-AccumulatedDeliveryPlan {
     param([switch]$RequireRelease)
     Assert-CleanDeliveryWorktree
@@ -551,7 +638,7 @@ function New-AccumulatedDeliveryPlan {
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
-        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities)
+        $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries
         $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         return $plan

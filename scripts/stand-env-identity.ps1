@@ -14,7 +14,7 @@ function Get-DevelopPositiveStandRoot {
 }
 
 function Find-SourceE2EArtifactBinding {
-    param([string]$RepositoryRoot,[string[]]$SearchRoot=@())
+    param([string]$RepositoryRoot,[string[]]$SearchRoot=@(),[ref]$MissingInput)
     $lockPath=Join-Path $RepositoryRoot 'templates/dependency-lock.json'
     if(-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return $null }
     $deps=(Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
@@ -29,7 +29,13 @@ function Find-SourceE2EArtifactBinding {
     foreach($name in $specs.Keys) {
         $spec=$specs[$name]; $explicit=[Environment]::GetEnvironmentVariable($name,'Process')
         $candidates=if($explicit){@($explicit)}else{@($roots | ForEach-Object {Join-Path $_ $spec.relative})}
-        if(-not $explicit -and $spec.ContainsKey('shared')) { $candidates+=Join-Path $common $spec.shared }
+        if(-not $explicit -and $spec.ContainsKey('shared')) {
+            # The immutable download owner keys shared files by SHA and name.
+            $sharedDirectory=Split-Path -Parent (Join-Path $common $spec.shared)
+            $candidates+=Join-Path $sharedDirectory (([string]$spec.sha).ToLowerInvariant()+'-'+[IO.Path]::GetFileName($spec.shared))
+            # Retain exact-hash compatibility with older unprefixed caches.
+            $candidates+=Join-Path $common $spec.shared
+        }
         foreach($path in $candidates) {
             if(-not (Test-Path -LiteralPath $path -PathType Leaf)) {
                 if($explicit){throw "SOURCE_E2E_ARTIFACT_MISSING: '$name'"}; continue
@@ -39,7 +45,10 @@ function Find-SourceE2EArtifactBinding {
             }
             $paths[$name]=[IO.Path]::GetFullPath($path); break
         }
-        if(-not $paths.Contains($name)) { return $null }
+        if(-not $paths.Contains($name)) {
+            if($MissingInput) {$MissingInput.Value=[string]$name}
+            return $null
+        }
     }
     $binding=[pscustomobject]@{schemaVersion=1;kind='itl-source-e2e-artifact-binding';paths=[pscustomobject]$paths}
     [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $RepositoryRoot -Binding $binding)
