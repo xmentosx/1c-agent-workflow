@@ -25,7 +25,8 @@ function Get-DevelopE2EInputIdentity {
         [Parameter(Mandatory = $true)][ValidateSet('upgrade','fresh')][string]$Journey,
         [object]$Catalog = $null,
         [string]$ProjectRoot = '', [string]$AiRulesSource = '', [string]$AgentTarget = '',
-        [object]$ExternalBinding = $null, [object]$ArtifactBinding = $null
+        [object]$ExternalBinding = $null, [object]$ArtifactBinding = $null,
+        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null
     )
     try {
         if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot }
@@ -54,12 +55,17 @@ function Get-DevelopE2EInputIdentity {
         })
         $positiveIdentity = $null
         if ($null -eq $ExternalBinding) {
-            if (-not $ProjectRoot -or -not $AiRulesSource) { return $null }
+            if (-not $ProjectRoot -or -not $AiRulesSource) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'BINDING_LOCATION_MISSING' -Inputs @('ProjectRoot','AiRulesSource' | Where-Object {-not (Get-Variable $_ -ValueOnly)})
+                return $null
+            }
             $stand = Get-DevelopE2EStandStateSha256 -ProjectRoot $ProjectRoot
             $files = [ordered]@{}
             foreach ($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
                 $physical = Join-Path $ProjectRoot $relative.Replace('/','\')
-                if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
+                if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @($relative); return $null
+                }
                 $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } elseif ($relative -eq '.agent-1c/release-e2e.json') {
                     $configInput = Get-Content -LiteralPath $physical -Raw -Encoding UTF8 | ConvertFrom-Json
                     # Capture independently validates every admission before the
@@ -87,19 +93,29 @@ function Get-DevelopE2EInputIdentity {
             } else {
                 foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
                     $physical = [Environment]::GetEnvironmentVariable($name,'Process')
-                    if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) { return $null }
+                    if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) {
+                        Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_BINDING_MISSING' -Inputs @($name); return $null
+                    }
                     $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
                 }
             }
             $runtime = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { return $null }
+            if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('WindowsPowerShell'); return $null
+            }
             $platformLine = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*PLATFORM_PATH\s*=' }) | Select-Object -Last 1
-            if (-not $platformLine) { return $null }
+            if (-not $platformLine) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @('PLATFORM_PATH'); return $null
+            }
             $platform = ($platformLine.Substring($platformLine.IndexOf('=') + 1)).Trim().Trim('"',"'")
             if (Test-Path -LiteralPath $platform -PathType Container) { $platform = Join-Path $platform '1cv8.exe' }
-            if (-not (Test-Path -LiteralPath $platform -PathType Leaf)) { return $null }
+            if (-not (Test-Path -LiteralPath $platform -PathType Leaf)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('PLATFORM_PATH'); return $null
+            }
             $go = Get-Command go.exe -ErrorAction SilentlyContinue
-            if (-not $go -or -not (Test-Path -LiteralPath $go.Source -PathType Leaf)) { return $null }
+            if (-not $go -or -not (Test-Path -LiteralPath $go.Source -PathType Leaf)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('go.exe'); return $null
+            }
             $ExternalBinding = [ordered]@{
                 complete=$true; standStateSha256=$stand; root=[IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
                 files=$files; uiPolicySha256=Get-DevelopE2ECanonicalJsonSha256 -Value $ui
@@ -116,7 +132,7 @@ function Get-DevelopE2EInputIdentity {
             $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
             if ($positiveRoot) {
                 $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey $Journey -Catalog $Catalog `
-                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding
+                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding -Diagnostics $Diagnostics
                 if ($null -eq $positiveIdentity) { return $null }
                 $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
             }
@@ -130,6 +146,7 @@ function Get-DevelopE2EInputIdentity {
         return $result
     } catch {
         Write-Verbose "Develop E2E input identity unavailable: $($_.Exception.GetType().Name); $($_.FullyQualifiedErrorId)"
+        Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'INPUT_IDENTITY_UNAVAILABLE' -Inputs @($_.Exception.GetType().Name)
         return $null
     }
 }
@@ -205,7 +222,8 @@ function Get-DevelopE2EOwnerInputContinuation {
 
 function Get-DevelopE2EAncestorQualification {
     param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity,
-        [object]$StaticProof = $null, [switch]$AllowPendingStatic)
+        [object]$StaticProof = $null, [switch]$AllowPendingStatic,
+        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null)
     if ($null -eq $InputIdentity -or [string]$InputIdentity.fingerprint -cnotmatch '^[a-f0-9]{64}$' -or
         (Get-DevelopE2ECanonicalJsonSha256 -Value $InputIdentity.inventory) -cne [string]$InputIdentity.fingerprint -or
         -not $InputIdentity.inventory.external.complete -or [string]$InputIdentity.inventory.journey -cne $Journey) { return $null }
@@ -213,32 +231,56 @@ function Get-DevelopE2EAncestorQualification {
     $current = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
     $common = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
     $root = Join-Path $common 'itl/develop-e2e-qualifications'
-    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $null }
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+        Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NO_PRIOR_JOURNEY_PROOF'
+        return $null
+    }
+    $seenJourney=$false
     foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter manifest.json | Sort-Object LastWriteTimeUtc -Descending)) {
+        $qualifiedCommit=''
         try {
             $manifest = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ([int]$manifest.schemaVersion -ne 2 -or [string]$manifest.kind -ne 'itl-develop-e2e-qualification-cache' -or [string]$manifest.identity.journey -ne $Journey -or
-                (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$manifest.inputIdentity.fingerprint) { continue }
+            if ([string]$manifest.identity.journey -ne $Journey) { continue }
+            $seenJourney=$true
+            if ([int]$manifest.schemaVersion -ne 2 -or [string]$manifest.kind -ne 'itl-develop-e2e-qualification-cache' -or
+                (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$manifest.inputIdentity.fingerprint) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'MANIFEST_INVALID'; continue
+            }
             $reportPath = Join-Path $file.DirectoryName 'route-report.json'
-            if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) { continue }
+            if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'REPORT_SHA_MISMATCH'; continue
+            }
             $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $qualifiedCommit=[string]$report.repository.commit
             if ([string]$manifest.inputIdentity.fingerprint -cne [string]$InputIdentity.fingerprint -and
-                -not (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit ([string]$report.repository.commit))) { continue }
+                -not (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit $qualifiedCommit)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'INPUTS_NOT_EQUIVALENT' -Commit $qualifiedCommit -Inputs @(Get-DevelopInputDifferenceNames -Recorded $manifest.inputIdentity -Current $InputIdentity)
+                continue
+            }
             $qualifiedTree = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse',"$([string]$report.repository.commit)^{tree}")).stdout.Trim()
-            if ($qualifiedTree -cne [string]$report.repository.tree -or $qualifiedTree -cne [string]$manifest.identity.tree) { continue }
+            if ($qualifiedTree -cne [string]$report.repository.tree -or $qualifiedTree -cne [string]$manifest.identity.tree) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'PROOF_TREE_MISMATCH' -Commit $qualifiedCommit; continue
+            }
             # The complete owner fingerprint above binds current source and
             # environment. Keep the historical envelope identity: its raw stand
             # configuration also included admission receipts, which may advance.
-            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 ([string]$report.identitySha256) -StandStateSha256 $StandStateSha256)) { continue }
+            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 ([string]$report.identitySha256) -StandStateSha256 $StandStateSha256)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ROUTE_OR_STAND_INVALID' -Commit $qualifiedCommit; continue
+            }
             $continuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
             if (-not $continuation -and [int]$InputIdentity.inventory.contract.schemaVersion -eq 2) {
                 $continuation = Get-DevelopE2EOwnerInputContinuation -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree -StaticProof $StaticProof -AllowPendingStatic:$AllowPendingStatic
             }
-            if (-not $continuation) { continue }
-            if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) { continue }
+            if (-not $continuation) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'LINEAGE_OR_CURRENT_STATIC_UNPROVEN' -Commit $qualifiedCommit; continue
+            }
+            if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NEWER_APPLICABLE_FAILURE' -Commit $qualifiedCommit; continue
+            }
             return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity }
-        } catch { continue }
+        } catch { Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'PROOF_UNREADABLE_OR_INVALID' -Commit $qualifiedCommit; continue }
     }
+    if(-not $seenJourney) { Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NO_PRIOR_JOURNEY_PROOF' }
     return $null
 }
 
@@ -296,22 +338,20 @@ function Resolve-DevelopE2EJourneyPlan {
 
     if ($unknownPaths.Count -gt 0) {
         throw "QUALITY_OWNER_MISSING: $($unknownPaths -join ', ')"
-    } elseif ($matchedFullPaths.Count -gt 0) {
-        foreach ($name in @($Catalog.developJourneys.names)) { $journeys.Add([string]$name) | Out-Null }
-        $reason = "develop-orchestration-full-path"
-    } elseif ($contractIds.Count -eq 0 -and @($paths | Where-Object { $_ -like "tests/pester/*.Tests.ps1" }).Count -eq $paths.Count) {
+    } elseif (@($paths | Where-Object { $_ -like "tests/pester/*.Tests.ps1" }).Count -eq $paths.Count) {
         $reason = "direct-tests-only"
     } else {
         foreach ($name in @($Catalog.developJourneys.names)) {
             $routeContracts = @($Catalog.developJourneys.routes.$name.contracts | ForEach-Object { [string]$_ })
-            $routeIds=$contractIds
-            if ($name -eq 'fresh') {
-                $freshPaths=@($paths | Where-Object { -not (Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $root -Path $_ -BaseRef $BaseRef) })
-                $routeIds=if($freshPaths.Count){@((Resolve-QualityContractsForPaths -Catalog $Catalog -Paths $freshPaths).contracts | ForEach-Object {[string]$_.id})}else{@()}
-            }
-            if (@($routeIds | Where-Object { $_ -in $routeContracts }).Count -gt 0) { $journeys.Add([string]$name) | Out-Null }
+            # Pester contracts still select static tests; their files are never
+            # executed by the native journey. Mixed diffs keep runtime routing.
+            $routePaths=@($paths | Where-Object { $_ -notlike 'tests/pester/*.Tests.ps1' -and
+                -not (Test-DevelopJourneyUnaffectedPath -RepositoryRoot $root -Path $_ -BaseRef $BaseRef -Journey $name) })
+            $routeIds=if($routePaths.Count){@((Resolve-QualityContractsForPaths -Catalog $Catalog -Paths $routePaths).contracts | ForEach-Object {[string]$_.id})}else{@()}
+            if (@($routePaths | Where-Object {$_ -in $fullPathSet}).Count -gt 0 -or
+                @($routeIds | Where-Object { $_ -in $routeContracts }).Count -gt 0) { $journeys.Add([string]$name) | Out-Null }
         }
-        $reason = if ($journeys.Count -gt 0) { "quality-contract-route" } else { "no-develop-journey-route" }
+        $reason = if ($matchedFullPaths.Count) { 'develop-orchestration-full-path' } elseif ($journeys.Count -gt 0) { "quality-contract-route" } else { "no-develop-journey-route" }
     }
 
     return [pscustomobject][ordered]@{

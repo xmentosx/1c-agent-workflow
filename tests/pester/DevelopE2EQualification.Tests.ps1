@@ -110,9 +110,9 @@ Describe "Develop E2E journey qualification router" {
             return $tree
         }
         function Find-AncestorFixtureProof {
-            param([object]$Fixture,[string]$Tree,[object]$StaticProof=$null)
+            param([object]$Fixture,[string]$Tree,[object]$StaticProof=$null,[Collections.Generic.List[object]]$Diagnostics=$null)
             $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $Fixture.root -Journey fresh -Catalog $Fixture.catalog -ExternalBinding $Fixture.external
-            Get-DevelopE2EAncestorQualification -RepositoryRoot $Fixture.root -Tree $Tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs -StaticProof $StaticProof
+            Get-DevelopE2EAncestorQualification -RepositoryRoot $Fixture.root -Tree $Tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -InputIdentity $inputs -StaticProof $StaticProof -Diagnostics $Diagnostics
         }
         function New-CurrentStaticFixtureProof {
             param([object]$Fixture)
@@ -165,21 +165,87 @@ Describe "Develop E2E journey qualification router" {
     It 'keeps fresh selected for missing baseline, unknown functions, parse errors and changed shared entrypoint code' {
         $f=New-AncestorJourneyFixture -IncludeUpdateScope
         $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
-        Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $f.root -Path $path | Should -BeFalse
-        {Get-DevelopFreshSourceProjection $path "function Update-WorkflowPackage { 'update' }; function Initialize-Project { Update-WorkflowPackage }"} | Should -Throw '*SHARED_CALLER*'
+        Test-DevelopJourneyUnaffectedPath -RepositoryRoot $f.root -Path $path | Should -BeFalse
+        {Get-DevelopJourneySourceProjection $path "function Update-WorkflowPackage { 'update' }; function Initialize-Project { Update-WorkflowPackage }"} | Should -Throw '*SHARED_CALLER*'
         foreach($text in @("function Update-WorkflowPackage { 'fixed' }; function Unknown-Shared { 'new' }",'function Broken {')) {
             [IO.File]::WriteAllText((Join-Path $f.root $path),$text,[Text.UTF8Encoding]::new($true))
-            Test-DevelopFreshUpdateOnlyPath -RepositoryRoot $f.root -Path $path -BaseRef $f.commit | Should -BeFalse
+            Test-DevelopJourneyUnaffectedPath -RepositoryRoot $f.root -Path $path -BaseRef $f.commit | Should -BeFalse
         }
         $entry='.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         $before="param([string]`$Action,[string]`$WorkflowUpdateRecovery)`nfunction Get-Agent1cReexecArguments { 'shared' }"
         $after="param([string]`$Action,[ValidateSet('','legacy-copy')][string]`$WorkflowUpdateRecovery,[string]`$WorkflowUpdateLegacySourceRoot)`nfunction Get-Agent1cReexecArguments { if (`$WorkflowUpdateRecovery -eq 'legacy-copy') { 'recovery' }`n 'shared' }"
-        (Get-DevelopFreshSourceProjection $entry $after) | Should -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
-        (Get-DevelopFreshSourceProjection $entry ($after.Replace("'shared'","'changed'"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
-        (Get-DevelopFreshSourceProjection $entry ($after.Replace("'recovery' }","'recovery' } else { 'shared path' }"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry $before)
-        {Get-DevelopFreshSourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[string]$WorkflowUpdateLegacySourceRoot=(Invoke-Unknown)'))} | Should -Throw '*SHARED_DEFAULT*'
-        {Get-DevelopFreshSourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[Parameter(Mandatory)][string]$WorkflowUpdateLegacySourceRoot'))} | Should -Throw '*SHARED_ATTRIBUTE*'
-        (Get-DevelopFreshSourceProjection $entry ($before.Replace("'shared'","return`n'shared'"))) | Should -Not -BeExactly (Get-DevelopFreshSourceProjection $entry ($before.Replace("'shared'","return 'shared'")))
+        (Get-DevelopJourneySourceProjection $entry $after) | Should -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        (Get-DevelopJourneySourceProjection $entry ($after.Replace("'shared'","'changed'"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        (Get-DevelopJourneySourceProjection $entry ($after.Replace("'recovery' }","'recovery' } else { 'shared path' }"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry $before)
+        {Get-DevelopJourneySourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[string]$WorkflowUpdateLegacySourceRoot=(Invoke-Unknown)'))} | Should -Throw '*SHARED_DEFAULT*'
+        {Get-DevelopJourneySourceProjection $entry ($after.Replace('[string]$WorkflowUpdateLegacySourceRoot','[Parameter(Mandatory)][string]$WorkflowUpdateLegacySourceRoot'))} | Should -Throw '*SHARED_ATTRIBUTE*'
+        (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return`n'shared'"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return 'shared'")))
+    }
+
+    It 'projects multiple disjoint function spans in numeric reverse order on Windows PowerShell' {
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $names=(Get-DevelopJourneyExcludedScope $path).functions
+        $before=(@($names | ForEach-Object { "function $_ { 'update before' }`n'shared $_'" }) -join "`n")
+        $after=$before.Replace('update before','update after with a different length')
+        $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before
+        (Get-DevelopJourneySourceProjection -Path $path -Text $after) | Should -BeExactly $baseline
+        (Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace('shared ','changed shared '))) | Should -Not -BeExactly $baseline
+    }
+
+    It 'keeps upgrade dependencies for shared callers, unknown functions, malformed and else paths' {
+        $path='scripts/invoke-develop-e2e.ps1'
+        $before='function Get-BranchWorktree { param($Root) "old" }; if ($requestedJourneys -contains "fresh") { Get-BranchWorktree -Root "fresh" }; "shared"'
+        $before+="`n`$message=@'`nmultiline literal`nsecond line`n'@`n"
+        $after=$before.Replace('"old"','"new"')
+        $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before -Journey upgrade
+        (Get-DevelopJourneySourceProjection -Path $path -Text $after -Journey upgrade) | Should -BeExactly $baseline
+        (Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace("`n","`r`n")) -Journey upgrade) | Should -BeExactly $baseline
+        foreach($text in @($after.Replace('"shared"','"changed shared"'),($after+'; function Unknown { "new runtime" }'))) {
+            (Get-DevelopJourneySourceProjection -Path $path -Text $text -Journey upgrade) | Should -Not -BeExactly $baseline
+        }
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after.Replace('}; "shared"','} else { "changed" }; "shared"')) -Journey upgrade} | Should -Throw '*SHARED_CALLER*'
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after+'; Get-BranchWorktree -Root "upgrade"') -Journey upgrade} | Should -Throw '*SHARED_CALLER*'
+        {Get-DevelopJourneySourceProjection -Path $path -Text ($after+'; function Broken {') -Journey upgrade} | Should -Throw '*PARSE_ERROR*'
+        Test-DevelopJourneyUnaffectedPath -RepositoryRoot $RepoRoot -Path $path -Journey upgrade | Should -BeFalse
+    }
+
+    It 'keeps update-only selection in a long Unicode checkout when reading a historical Git object' {
+        $prefix='history '+(Get-NonAsciiFixtureSegment)+' '
+        $segment=$prefix+('x'*[math]::Max(1,160-$TestDrive.Length-1-$prefix.Length))
+        $root=Join-Path $TestDrive $segment
+        [void](New-RouterFixture $root)
+        $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $physical=Join-Path $root $path
+        [void][IO.Directory]::CreateDirectory((Split-Path $physical))
+        $before="function Update-WorkflowPackage { 'before' }; function Initialize-Project { 'shared' }`n"
+        [IO.File]::WriteAllText($physical,$before,[Text.UTF8Encoding]::new($true))
+        $catalog=Get-QualityContractCatalog $root
+        $catalog.contracts[0].paths += $path
+        Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+        & git -C $root add --all; & git -C $root commit --quiet -m 'long path baseline'
+        $base=(& git -C $root rev-parse HEAD).Trim()
+        ($root.Length+1+$base.Length+1+$path.Length) | Should -BeGreaterThan 260
+        (Get-DevelopHistoricalSourceText -RepositoryRoot $root -Commit $base -Path $path) | Should -BeExactly (([string][char]0xFEFF)+$before)
+        [IO.File]::WriteAllText($physical,$before.Replace("'before'","'after'"),[Text.UTF8Encoding]::new($true))
+        & git -C $root add --all; & git -C $root commit --quiet -m 'update-only long path'
+        @((Resolve-DevelopE2EJourneyPlan -RepositoryRoot $root -BaseRef $base).journeys) | Should -Be @('upgrade')
+    }
+
+    It 'retains native receipts when only isolated test paths are added to their owner and explains rejected proof' {
+        $f=New-AncestorJourneyFixture
+        $f.catalog.contracts[0].paths += 'tests/pester/Fixture.Tests.ps1'
+        Write-Utf8Json -Path (Join-Path $f.root 'tests/quality-contracts.json') -Value $f.catalog
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static owner path only'
+        $tree=Publish-AncestorFixtureTargeted $f
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -Not -BeNullOrEmpty
+        $diagnostics=[Collections.Generic.List[object]]::new()
+        [IO.File]::AppendAllText((Join-Path $f.cache 'route-report.json'),'tampered')
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree -Diagnostics $diagnostics | Should -BeNullOrEmpty
+        @($diagnostics.code) | Should -Contain 'REPORT_SHA_MISMATCH'
+        for($i=0;$i -lt 20;$i++) {Add-DevelopReuseDiagnostic -Diagnostics $diagnostics -Code 'INPUTS_NOT_EQUIVALENT' -Inputs @(1..20|ForEach-Object{"source:path$_"})}
+        $diagnostics.Count | Should -Be 8
+        $diagnostics[1].inputs.Count | Should -Be 12
+        $diagnostics[1].omittedInputCount | Should -Be 8
     }
 
     It 'retains old E2E across a deadline-only change but rejects environment, workload and proof changes' {
