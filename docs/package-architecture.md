@@ -39,6 +39,15 @@ Explicit PublishDevelop Replan archives the original checkpoint and rejected
 proof through this same owner; unchanged inputs cannot reset its circuit breaker.
 This adds no state owner, lock family or master-channel authority.
 
+Delivery calculation is a stateless candidate contract, distinct from publication
+authority. The existing supervisor calls the exact clean candidate's calculator
+in a child scope, validates its envelope and input identity, and binds calculator
+commit/SHA before saving. Its queue, locks, proof validation, approval, recovery
+and push remain with the published owner. A newer shim talking to a legacy owner
+may return an advisory candidate preview alongside the unchanged saved plan;
+that preview is never persisted as resumable authority. This adds no coordinator,
+installed migration, runtime owner or permission to execute a delivery stage.
+
 The user approved bounded frozen-scope recovery on 2026-10-16. Explicit
 `PublishDevelop -Replan <originalPlanId> -ReplanQueueScope Frozen` transfers the
 original checkpoint to a compatible published develop supervisor only after

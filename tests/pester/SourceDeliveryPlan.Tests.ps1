@@ -1,7 +1,8 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1') }
 
 Describe 'Delivery v3 immutable selective plan' {
-    It 'finds binding in known local caches without provisioning and rejects a corrupt explicit override' {
+    It 'finds binding in the real <Layout> cache layout without provisioning and rejects changed bytes' -TestCases @(@{Layout='canonical'},@{Layout='shared-sha'}) {
+        param($Layout)
         $repo=New-PlanRepository
         $cache=Join-Path $TestDrive 'cache with spaces'
         $sha=@{}; $files=@{
@@ -24,9 +25,26 @@ Describe 'Delivery v3 immutable selective plan' {
                 itlOndemandMcp=@{sha256=$sha.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE;assetName='mcp.exe'}}
             New-Item -ItemType Directory -Force -Path (Join-Path $repo.root 'templates') | Out-Null
             [IO.File]::WriteAllText((Join-Path $repo.root 'templates/dependency-lock.json'),(@{dependencies=$deps}|ConvertTo-Json -Depth 6))
+            if($Layout -eq 'shared-sha') {
+                $shared=Join-Path $repo.root ('.git/itl/dependencies/vanessa-automation/1-r1/'+$sha.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE+'-archive.zip')
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $shared) | Out-Null
+                Move-Item -LiteralPath (Join-Path $cache $files.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE) -Destination $shared
+                # An invalid legacy alias must not conceal the SHA-keyed file.
+                [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $shared) 'archive.zip'),'wrong alias')
+            }
             $binding=Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)
             $binding | Should -Not -BeNullOrEmpty
             (Get-SourceE2EArtifactBindingHashes -RepositoryRoot $repo.root -Binding $binding).Count | Should -Be 3
+            $same=Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)
+            $same.paths.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE | Should -BeExactly $binding.paths.ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
+            if($Layout -eq 'shared-sha') {
+                $bytes=[IO.File]::ReadAllBytes($shared)
+                [IO.File]::WriteAllText($shared,'changed immutable bytes')
+                $missing=''
+                Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache) -MissingInput ([ref]$missing) | Should -BeNullOrEmpty
+                $missing | Should -BeExactly 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE'
+                [IO.File]::WriteAllBytes($shared,$bytes)
+            }
             $bad=Join-Path $TestDrive 'corrupt.cfe'; [IO.File]::WriteAllText($bad,'corrupt')
             [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH',$bad,'Process')
             {Find-SourceE2EArtifactBinding -RepositoryRoot $repo.root -SearchRoot @($cache)} | Should -Throw '*SOURCE_E2E_ARTIFACT_HASH_MISMATCH*'
@@ -597,8 +615,8 @@ Describe 'Delivery v3 immutable selective plan' {
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
         $publishText = [regex]::Match($candidateSource, '(?ms)^function Publish-AccumulatedDevelop \{.*?^\}').Value
         $resolverText | Should -Match 'Resolve-DeliveryAiRulesSource -Lock \$aiRulesLock'
-        $accumulatedText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
-        $publishText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
+        $accumulatedText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*Invoke-DeliveryCandidatePlanCalculation'
+        $publishText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*Invoke-DeliveryCandidatePlanCalculation'
 
         & {
             Invoke-Expression $resolverText
@@ -626,7 +644,7 @@ Describe 'Delivery v3 immutable selective plan' {
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
         & {
             Invoke-Expression $accumulatedText
-            $script:Remote = 'origin'; $script:preflightCalled = $false; $script:resolverCalled = $false
+            $script:Remote = 'origin'; $script:preflightCalled = $false; $script:resolverCalled = $false; $script:DeliveryCustomGateBoundary=$false
             function Assert-CleanDeliveryWorktree {}
             function Invoke-DeliveryGit { param([string[]]$Arguments); return [pscustomobject]@{ exitCode=0; stdout='' } }
             function Get-GitValue { return ('b' * 40) }
@@ -642,8 +660,8 @@ Describe 'Delivery v3 immutable selective plan' {
             function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@() } }
             function Assert-ComponentPublicationFinalizerPreflight { $script:preflightCalled = $true }
             function Resolve-DeliveryPlanAiRulesSource { $script:resolverCalled = $true; return 'C:\exact-rules' }
-            function New-DeliveryQualityPlanForCandidate {
-                param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease,[string[]]$ReleaseCapability)
+            function Invoke-DeliveryCandidatePlanCalculation {
+                param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease,[string[]]$ReleaseCapability,[switch]$AllowCustomGateFixture)
                 return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability) }
             }
             function Save-DeliveryQualityPlan { return 'C:\plan.json' }

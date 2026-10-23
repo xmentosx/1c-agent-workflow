@@ -182,6 +182,17 @@ Describe "Develop E2E journey qualification router" {
         (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return`n'shared'"))) | Should -Not -BeExactly (Get-DevelopJourneySourceProjection $entry ($before.Replace("'shared'","return 'shared'")))
     }
 
+    It 'isolates artifact discovery from both journeys but retains shared stand behavior and callers' {
+        $path='scripts/stand-env-identity.ps1'
+        $before="function Find-SourceE2EArtifactBinding { 'old lookup' }`nfunction Get-DevelopPositiveStandRoot { 'shared stand' }"
+        foreach($journey in @('upgrade','fresh')) {
+            $baseline=Get-DevelopJourneySourceProjection -Path $path -Text $before -Journey $journey
+            (Get-DevelopJourneySourceProjection -Path $path -Text ($before.Replace('old lookup','new lookup')) -Journey $journey) | Should -BeExactly $baseline
+            (Get-DevelopJourneySourceProjection -Path $path -Text ($before.Replace('shared stand','changed stand')) -Journey $journey) | Should -Not -BeExactly $baseline
+            {Get-DevelopJourneySourceProjection -Path $path -Text ($before+"`nFind-SourceE2EArtifactBinding") -Journey $journey} | Should -Throw '*SHARED_CALLER*'
+        }
+    }
+
     It 'projects multiple disjoint function spans in numeric reverse order on Windows PowerShell' {
         $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
         $names=(Get-DevelopJourneyExcludedScope $path).functions

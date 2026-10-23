@@ -76,8 +76,9 @@ function New-IncrementalPlanFixture {
     $catalog.contracts[0] | Add-Member primaryTest 'tests/pester/Runtime.Tests.ps1'
     $catalog.contracts[0] | Add-Member budgetSeconds 30
     $catalog.contracts[0].paths += @('tests/pester/Runtime.Tests.ps1','scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1','templates/dependency-lock.json','tests/quality-contracts.json')
-    $catalog.developJourneys.fullPaths=@('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1')
-    foreach($relative in @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
+    $catalog.contracts[0].paths += 'scripts/stand-env-identity.ps1'
+    $catalog.developJourneys.fullPaths=@('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1')
+    foreach($relative in @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
         $path=Join-Path $root $relative
         [void][IO.Directory]::CreateDirectory((Split-Path $path))
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
@@ -89,7 +90,8 @@ function New-IncrementalPlanFixture {
     $binding=[pscustomobject]@{schemaVersion=1;kind='itl-source-e2e-artifact-binding';paths=[pscustomobject]@{
         ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=$artifact;VANESSA_MCP_CLIENT_CFE_PATH=$artifact;ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=$artifact}}
     [void][IO.Directory]::CreateDirectory((Join-Path $root 'templates'))
-    $lock=@{dependencies=@{vanessaAutomation=@{sha256=$sha};vanessaMcp=@{clientMcp=@{sha256=$sha}};itlOndemandMcp=@{sha256=$sha}}}
+    $lock=@{dependencies=@{vanessaAutomation=@{sha256=$sha;compatibilityVersion='1';downstreamRevision='r1';assetName='archive.zip'};
+        vanessaMcp=@{clientMcp=@{sha256=$sha;assetName='client.cfe'}};itlOndemandMcp=@{sha256=$sha;assetName='mcp.exe'}}}
     [IO.File]::WriteAllText((Join-Path $root 'templates/dependency-lock.json'),($lock|ConvertTo-Json -Depth 6))
     # Keep rules and stand outside the candidate: advancing source commits
     # must not silently advance a controlled-fork/environment identity.

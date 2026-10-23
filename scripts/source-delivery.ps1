@@ -323,7 +323,26 @@ try {
     if ($supervisorAst.ParamBlock -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "SupervisorChannel" }).Count -gt 0) {
         $arguments["SupervisorChannel"] = $selectedChannel
     }
-    & $supervisorPath @arguments
+    if($Action -eq 'Plan' -and -not $customGateFixture) {
+        $wire=& $supervisorPath @arguments
+        $plan=($wire -join [Environment]::NewLine) | ConvertFrom-Json
+        if(-not $plan.PSObject.Properties['calculator'] -and $plan.status -eq 'ready') {
+            $shimPlanModule=Join-Path $PSScriptRoot 'source-delivery-plan.ps1'
+            # Read-only migration view: keep the legacy owner's saved plan and
+            # expose the candidate calculation without granting it execution.
+            $readerArguments=@{Action='Status'}
+            foreach($name in @('RepositoryRoot','Remote','SupervisorCommit','SupervisorChannel','BootstrapSupervisor','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot')) {
+                if($arguments.ContainsKey($name)) {$readerArguments[$name]=$arguments[$name]}
+            }
+            $plan=& {
+                param($owner,$readerOptions,$module,$value)
+                . $owner @readerOptions > $null
+                . $module
+                Add-DeliveryCandidatePlanPreview -Plan $value -ShimPlanModule $module
+            } $supervisorPath $readerArguments $shimPlanModule $plan
+        }
+        $plan | ConvertTo-Json -Depth 24
+    } else { & $supervisorPath @arguments }
 } finally {
     if ($supervisorRoot -and (Test-Path -LiteralPath $supervisorRoot -PathType Container)) {
         & git -C $candidateRoot worktree remove --force -- $supervisorRoot 2>$null

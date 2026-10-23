@@ -323,9 +323,9 @@ Describe 'Source quality catalog contracts' {
         [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 183
         [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 145
         [double]$trackedTimings.files.'SourceQualityCatalog.Tests.ps1' | Should -Be 153
-        # 2026-10-23 native PS5: seven incremental cases completed in 49.50s.
-        # Add five seconds and round up for ordering, without changing deadlines.
-        [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 55
+        # 2026-10-23 native scheduler: ten incremental/native-boundary cases
+        # completed in 94.59s. Reserve five seconds; do not change deadlines.
+        [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 100
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
         # Individual case sums plus 5 seconds per file for setup, rounded up.
