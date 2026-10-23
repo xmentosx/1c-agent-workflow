@@ -630,7 +630,7 @@ function Test-DevelopE2ERouteReport {
                 ([int]$report.schemaVersion -eq 2 -and (@($report.coverage | Sort-Object) -join ',') -cne (@($report.plan.scenarioContracts.$Journey.scenarios.id | Sort-Object) -join ',')) -or
                 @($report.coverage | Where-Object {$_ -notin @($report.plan.scenarioContracts.$Journey.scenarios.id)}).Count -or
                 (@($report.coverage | Sort-Object) -join ',') -cne (@($report.result.coverage | Sort-Object) -join ',')) {return $false}
-            if(-not $report.result.PSObject.Properties['scenarioEvidence'] -or -not (Test-DevelopScenarioEvidence $report)) {return $false}
+            if(-not $report.result.PSObject.Properties['scenarioEvidence'] -or -not (Test-DevelopScenarioEvidence $report -RequiredScenario $RequiredScenario)) {return $false}
         } elseif($report.result.PSObject.Properties['coverage']) {
             return $false
         }

@@ -373,10 +373,28 @@ $value=@{schemaVersion=3;kind='itl-develop-e2e';status='passed';candidate=@{tree
     $again=Ensure-DevelopE2ERoute -Journey fresh -Plan $routePlan
     (Get-FileHash $again).Hash | Should -BeExactly $sha
     Should -Invoke Invoke-PowerShellChild -Times 1 -Exactly
+    $script:developScenarioExecution.ContainsKey('fresh') | Should -BeFalse
     Test-DevelopE2ERouteReport -Path $again -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
+    $firstTree=$tree;$firstPath=Join-Path $f.root '.git/first-composition.json';Copy-Item $path $firstPath
+    $firstNative=@($report.result.scenarioEvidence|Where-Object execution -eq 'executed')[0].path
+    $originalVerification=@($report.result.scenarioEvidence|Where-Object id -eq 'verification')[0].path
+    $runtime=Join-Path $f.root 'runtime.ps1'
+    [IO.File]::WriteAllText($runtime,[IO.File]::ReadAllText($runtime).Replace("function Change-Mcp {'v2'}","function Change-Mcp {'v3'}"))
+    & git -C $f.root add -- runtime.ps1;& git -C $f.root commit --quiet -m 'next producer change'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $script:developCurrentStaticProof=Save-IncrementalStaticProof $f
+    $next=Ensure-DevelopE2ERoute -Journey fresh -Plan (Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.base)
+    $report=Get-Content $next -Raw -Encoding UTF8|ConvertFrom-Json
+    @($report.result.scenarioEvidence|Where-Object id -eq 'verification')[0].path | Should -BeExactly $originalVerification
+    Should -Invoke Invoke-PowerShellChild -Times 2 -Exactly
+    # The next complete certificate has no dependency on the previous changed
+    # producer's execution. Its unchanged scenarios point directly at the leaf.
+    [IO.File]::AppendAllText($firstNative,'corruption')
+    Test-DevelopE2ERouteReport -Path $firstPath -Tree $firstTree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeFalse
+    Test-DevelopE2ERouteReport -Path $next -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
     $native=@($report.result.scenarioEvidence|Where-Object execution -eq 'executed')[0].path
     [IO.File]::AppendAllText($native,'corruption')
-    Test-DevelopE2ERouteReport -Path $again -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeFalse
+    Test-DevelopE2ERouteReport -Path $next -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeFalse
 }
 
 It 'canonicalizes the actual sole client without hiding ambiguity, another client or unknown identity fields' {
