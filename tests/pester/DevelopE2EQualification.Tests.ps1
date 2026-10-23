@@ -62,7 +62,7 @@ Describe "Develop E2E journey qualification router" {
     BeforeAll {
         . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
         function New-AncestorJourneyFixture {
-            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair,[switch]$IncludeUpdateScope)
+            param([switch]$IncludePesterOwnerInputs,[switch]$IncludeManifestRepair,[switch]$IncludeUpdateScope,[switch]$IncludeUpdateDocument)
             $root = Join-Path $TestDrive ('ancestor ' + (Get-NonAsciiFixtureSegment) + ' ' + [guid]::NewGuid().ToString('N'))
             [void](New-RouterFixture -Root $root)
             $catalog = Get-QualityContractCatalog -RepositoryRoot $root
@@ -77,6 +77,14 @@ Describe "Develop E2E journey qualification router" {
                 Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
                 New-Item -ItemType Directory -Force -Path (Join-Path $root '.agents/skills/1c-workflow/scripts/lib') | Out-Null
                 [IO.File]::WriteAllText((Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'), "function Update-WorkflowPackage { 'old update' }`nfunction Initialize-Project { 'shared' }`n",[Text.UTF8Encoding]::new($true))
+            }
+            if($IncludeUpdateDocument) {
+                $doc='.agents/skills/1c-workflow/references/workflow-update-recovery.md'
+                $catalog.contracts[0].paths += $doc
+                Write-Utf8Json -Path (Join-Path $root 'tests/quality-contracts.json') -Value $catalog
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $doc)) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root '.gitattributes'),($doc+" text eol=crlf`n"),[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $root $doc),"# Recovery`r`nOriginal instructions`r`n",[Text.UTF8Encoding]::new($true))
             }
             if ($IncludeManifestRepair) {
                 New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
@@ -231,6 +239,22 @@ Describe "Develop E2E journey qualification router" {
         $before = Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml'
         [IO.File]::WriteAllText($transport, "<Configuration />`n", [Text.UTF8Encoding]::new($false))
         Get-DevelopE2EInputFileSha256 -Path $transport -RelativePath 'src/cf/Configuration.xml' | Should -Not -BeExactly $before
+    }
+
+    It 'authenticates a historical CRLF recovery document against its Git LF blob without relaxing runtime hashes' {
+        $f=New-AncestorJourneyFixture -IncludeUpdateDocument
+        $doc='.agents/skills/1c-workflow/references/workflow-update-recovery.md'
+        $historical=Get-DevelopHistoricalSourceText -RepositoryRoot $f.root -Commit $f.commit -Path $doc
+        $historical.Contains("`r`n") | Should -BeFalse
+        [IO.File]::WriteAllText((Join-Path $f.root $doc),"# Recovery`r`nCorrected instructions`r`n",[Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'recovery documentation only'
+        $tree=Publish-AncestorFixtureTargeted -Fixture $f
+        $proof=Find-AncestorFixtureProof -Fixture $f -Tree $tree
+        $proof | Should -Not -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proof.reportPath).Hash | Should -BeExactly $f.reportSha
+        # Changing an unrelated runtime input still forbids old native proof.
+        [IO.File]::AppendAllText($f.runtime,"`n'changed runtime'")
+        Find-AncestorFixtureProof -Fixture $f -Tree $tree | Should -BeNullOrEmpty
     }
 
     It 'defers the original fail-fast route until current static proof and then reuses the unchanged native journey' {
