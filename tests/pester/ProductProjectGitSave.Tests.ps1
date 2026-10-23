@@ -2,7 +2,7 @@
     BeforeAll {
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
-        foreach($leaf in @('core','vanessa','vibecoding1c-mcp','product-catalog','product-project')) {
+        foreach($leaf in @('runtime-values','core','vanessa','vibecoding1c-mcp','product-catalog','product-project')) {
             . (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")
         }
         function Resolve-Agent1cFullPath { param($Path) [IO.Path]::GetFullPath($Path) }
@@ -33,6 +33,73 @@
         $NativeCatalogGit=${function:Invoke-ItlCatalogGit}
     }
 
+    It 'closes the stalled Git HTTP child connection inside the original metadata deadline' -Tag G3GitTreeDeadline {
+        $f=New-SaveFixture (Join-Path $TestDrive 'Stalled transport')
+        $serverRoot=Join-Path $TestDrive 'Owned HTTP server'
+        [void][IO.Directory]::CreateDirectory($serverRoot)
+        $serverScript=Join-Path $serverRoot 'server.ps1'
+        $serverBody=@'
+param([string]$Root)
+$ErrorActionPreference='Stop'
+$utf8=[Text.UTF8Encoding]::new($false)
+$listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+$client=$null
+try {
+ $listener.Start()
+ [IO.File]::WriteAllText((Join-Path $Root 'port'),[string]$listener.LocalEndpoint.Port,$utf8)
+ $until=[DateTime]::UtcNow.AddSeconds(45)
+ while(-not $listener.Pending()){
+  if((Test-Path -LiteralPath (Join-Path $Root 'stop')) -or [DateTime]::UtcNow -ge $until){return}
+  Start-Sleep -Milliseconds 25
+ }
+ $client=$listener.AcceptTcpClient()
+ [IO.File]::WriteAllText((Join-Path $Root 'accepted'),[DateTime]::UtcNow.ToString('o'),$utf8)
+ $buffer=New-Object byte[] 4096
+ while([DateTime]::UtcNow -lt $until -and -not (Test-Path -LiteralPath (Join-Path $Root 'stop'))){
+  try {
+   if($client.Client.Poll(100000,[Net.Sockets.SelectMode]::SelectRead) -and $client.Client.Receive($buffer) -eq 0){
+    [IO.File]::WriteAllText((Join-Path $Root 'peer-closed'),[DateTime]::UtcNow.ToString('o'),$utf8)
+    break
+   }
+  }catch [Net.Sockets.SocketException]{
+   if($_.Exception.SocketErrorCode -notin @([Net.Sockets.SocketError]::ConnectionReset,[Net.Sockets.SocketError]::ConnectionAborted)){throw}
+   [IO.File]::WriteAllText((Join-Path $Root 'peer-closed'),[DateTime]::UtcNow.ToString('o'),$utf8)
+   break
+  }
+ }
+}finally{if($client){$client.Dispose()};$listener.Stop()}
+'@
+        [IO.File]::WriteAllText($serverScript,$serverBody,[Text.UTF8Encoding]::new($true))
+        $line=Join-NativeCommandLineArguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$serverScript,'-Root',$serverRoot)
+        $server=Start-Process -FilePath powershell.exe -ArgumentList $line -WindowStyle Hidden -PassThru
+        try {
+            $ready=[DateTime]::UtcNow.AddSeconds(10)
+            while(-not (Test-Path -LiteralPath (Join-Path $serverRoot 'port'))){
+                if($server.HasExited -or [DateTime]::UtcNow -ge $ready){throw 'Owned stalled Git listener did not start'}
+                Start-Sleep -Milliseconds 25
+            }
+            $port=[IO.File]::ReadAllText((Join-Path $serverRoot 'port'))
+            $start=[DateTime]::UtcNow;$deadline=$start.AddSeconds(10)
+            $capturedFailure=$null
+            try {$null=Invoke-ItlCatalogGit $f.source @('ls-remote',('http://127.0.0.1:'+$port+'/registry.git')) $deadline}
+            catch {$capturedFailure=$_}
+            finally {$returnedUtc=[DateTime]::UtcNow}
+            $capturedFailure|Should -Not -BeNullOrEmpty
+            $capturedFailure.Exception.Message|Should -BeLike '*NATIVE_PROCESS_TIMEOUT*'
+            $elapsed=($returnedUtc-$start).TotalSeconds
+            Test-Path -LiteralPath (Join-Path $serverRoot 'accepted')|Should -BeTrue
+            $observed=[DateTime]::UtcNow.AddSeconds(2)
+            while(-not (Test-Path -LiteralPath (Join-Path $serverRoot 'peer-closed')) -and [DateTime]::UtcNow -lt $observed){Start-Sleep -Milliseconds 25}
+            Test-Path -LiteralPath (Join-Path $serverRoot 'peer-closed')|Should -BeTrue
+            $closed=[DateTime]::Parse([IO.File]::ReadAllText((Join-Path $serverRoot 'peer-closed')))
+            $closed.ToUniversalTime()|Should -BeLessThan $deadline
+            $elapsed|Should -BeLessThan 10
+        } finally {
+            [IO.File]::WriteAllText((Join-Path $serverRoot 'stop'),'stop',[Text.UTF8Encoding]::new($false))
+            if(-not $server.WaitForExit(5000)){throw 'Owned stalled Git listener did not stop cooperatively'}
+            $server.Dispose()
+        }
+    }
     It 'saves and confirms a Unicode project without changing the reader checkout or other files' {
         $f=New-SaveFixture (Join-Path $TestDrive 'Unicode путь')
         $before=Get-FileHash (Join-Path $f.source 'catalog/catalog.json')

@@ -455,6 +455,52 @@
         (Read-ItlProductProjectSetting selection).defer.settingsIntentHash|Should -Be $preview.settingsIntentHash
         $decision.deferred|Should -BeTrue
     }
+    It 'recovers a zero-client-write defer through <Recovery> while preserving <Damage>' -Tag G3DeferRestore -ForEach @(
+        @{Recovery='restore';Damage='none'},
+        @{Recovery='resume';Damage='none'},
+        @{Recovery='restore';Damage='selection'},
+        @{Recovery='restore';Damage='owned-client-entry'}
+    ) {
+        $old=@(@{client='claude-code';owner='vibecoding1c';endpoints=@(@{name='code';url='https://old.invalid'},@{name='stable';url='https://stable.invalid'})})
+        $null=Invoke-ItlProductProjectClientApply $context $old
+        $prior=Get-ItlCatalogHash (Read-ItlProductProjectRecord applied)
+        $path=Join-Path $root '.mcp.json'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('old.invalid','manual.invalid'))
+        Mock Get-Vibecoding1cMcpClientConfigEndpointSet {return @{allEndpoints=@(@{id='fixture-code';name='code';url='https://new.invalid'},@{id='fixture-stable';name='stable';url='https://stable.invalid'})}}
+        $changed=ConvertTo-ItlCatalogCanonicalValue $context;$changed.catalogRevision=('b'*40);$changed.settingsHash='settings-b'
+        $preview=New-ItlProductProjectPreview $changed @('claude-code')
+        $decision=Resolve-ItlProductProjectPreviewDecision $preview defer
+        @($decision.requests).Count|Should -Be 0
+        $null=Invoke-ItlProductProjectClientApply $decision.context $decision.requests -ProofRequests $decision.proofRequests -SavePrivateSelection -PrivateSelection $decision.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
+        $operation=Read-ItlProductProjectRecord operation
+        $operation.status|Should -Be completed
+        $operation.prepared|Should -BeFalse
+        if($Recovery -eq 'resume'){
+            # Legacy receipts can retain the failed first restore transition.
+            $operation.status='partial';$operation.direction='restore'
+            Write-ItlProductProjectRecord operation $operation
+        }
+        if($Damage -eq 'selection'){
+            $selection=ConvertTo-ItlCatalogCanonicalValue (Read-ItlProductProjectSetting selection)
+            $changedSelection=ConvertTo-ItlCatalogCanonicalValue $selection
+            $changedSelection['conditionValues']=@{userFlag=$true}
+            Set-ItlProductProjectSetting selection $changedSelection $selection
+        }elseif($Damage -eq 'owned-client-entry'){
+            Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('stable.invalid','external.invalid'))
+        }
+        $clientBefore=Get-ItlMcpFileState $path
+        $selectionBefore=Get-ItlMcpFileState (Get-Vibecoding1cMcpSelectionPath)
+        if($Damage -ne 'none'){
+            $errorCode=if($Damage -eq 'selection'){'*CATALOG_SETTING_CONFLICT*'}else{'*CATALOG_CLIENT_CONFLICT*'}
+            {Invoke-ItlProductProjectRecovery $Recovery}|Should -Throw $errorCode
+            (Get-ItlMcpFileState (Get-Vibecoding1cMcpSelectionPath))|Should -BeExactly $selectionBefore
+        }else{
+            (Invoke-ItlProductProjectRecovery $Recovery).status|Should -Be restored
+            (Get-ItlCatalogHash (Read-ItlProductProjectRecord applied))|Should -BeExactly $prior
+            (Read-ItlProductProjectSetting selection)|Should -BeNullOrEmpty
+        }
+        (Get-ItlMcpFileState $path)|Should -BeExactly $clientBefore
+    }
     It 'preserves defer through the ordinary MCP writer on the pinned applied context until an explicit registry decision' -Tag 'G3PinnedDefer' {
         $snapshot=New-StartupCatalogFixture
         $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}

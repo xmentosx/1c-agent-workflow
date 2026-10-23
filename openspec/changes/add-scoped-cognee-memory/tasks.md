@@ -1,5 +1,7 @@
 # Tasks
 
+[Итоговый прогон G3](../add-product-project-registry/evidence/g3-completion-2026-10-23.md): доступный current PM5 subset завершён; **полная G3/AC-39 BLOCKED** по G3-B1–B5. Два owner-local repairs прошли 132+12 source tests и installed repeat `dfae2ff3`; 90 config calls + update. Настоящие conflict answers/Ctrl+C, pending stable ID, damaged-applied owned recovery и transport 7,933/7,836 с подтверждены. Warm full median/p95 1,006314/1,353585 с: median goal остаётся недостигнутым, без округления/повтора ради pass. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
 [Квалификация cache/schema/applied на текущем PM5](../add-product-project-registry/evidence/g3-pm5-cache-integrity-2026-10-23.md): пакет `fac4bc51` установлен штатным update за 376,761 с. **Подтверждены 8 групп сценариев, 11 CLI-вызовов в итоговом наборе.** Проверены сохранение validated applied при offline/неподдерживаемой схеме, безопасный отказ без привязки, отказ для неизвестного проекта и повреждённого applied, доступность status и продолжение после удаления внесённого тестом повреждения. SHA и mtime защищённых путей, база, бизнес-исходники и прежние доказательства сохранены. Полная G3/AC-39, остальные платформы/клиенты/сценарии, стоимость и наполнение реестра остаются открытыми. Gate 6, G4, рабочая миграция и публикация не выполнялись.
 
 [PM5 update copy-status repair](../add-product-project-registry/evidence/g3-pm5-update-copy-status-repair-2026-10-23.md): **G3-PM5-UPDATE-COPY-STATUS-STALE закрыт в исходном PM5 subset**. Existing snapshot/receipt owner использует прежний PID-owned heartbeat; watchdog120 s и assertions неизменны. Source compact перенос449705 ms и original installed update443186 ms завершились без retry/recovery, оба roots clean, snapshots680/359. 84/0/0 complete owner tests; Kilo+Cursor/DB/старые доказательства сохранены. Full G3/AC-39, остальные journeys/cost/population и memory dependencies открыты; Gate6/G4/рабочая миграция/публикация не выполнялись.
@@ -194,3 +196,10 @@ Canary1 user turn/2 tools/UI12 s, tokens/provider/title traffic/billing/paired d
 
 
 - [x] AC-17/21/24/26 **bounded current PM5 cache/local-record subset**: [native report](../add-product-project-registry/evidence/g3-pm5-cache-integrity-2026-10-23.md), corrupt HEAD и schema3 bound fallback/unbound safe refusal, exact unknown-ID preview refusal, invalid-applied ordinary admission/status, healthy continuation и idle cancel. Исправлены только ошибочные диагностические ожидания harness; raw failures сохранены. Это не actual interactive cancel, owned recovery этого damaged record или full G3/AC-39.
+
+## Итоговая квалификация G3, 2026-10-23
+
+- [x] Source repair обнаруженных в оставшихся сценариях defer/restore и Git child cleanup: [единый отчёт](../add-product-project-registry/evidence/g3-completion-2026-10-23.md), 132/132 apply/context/setup и 12/12 Git-save. Negative guards сохранены; старые failures не удалены.
+- [ ] Принять полный G3/AC-39 по итоговой матрице с отдельными installed/platform/client границами; source green и регистрация не заменяют непроверенные клетки.
+
+- [x] Завершить доступный installed PM5 batch по итоговой матрице: оба обнаруженных runtime defects исправлены/повторены; true console, stable pending ID, native damaged-marker recovery, 20 warm pairs и preservation audit зафиксированы. **Это не полный G3 pass**: G3-B1–B5 остаются незакрытыми.

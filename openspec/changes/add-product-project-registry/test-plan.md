@@ -1,5 +1,7 @@
 # План приёмки
 
+[Итоговый прогон G3](evidence/g3-completion-2026-10-23.md): доступный current PM5 subset завершён; **полная G3/AC-39 BLOCKED** по G3-B1–B5. Два owner-local repairs прошли 132+12 source tests и installed repeat `dfae2ff3`; 90 config calls + update. Настоящие conflict answers/Ctrl+C, pending stable ID, damaged-applied owned recovery и transport 7,933/7,836 с подтверждены. Warm full median/p95 1,006314/1,353585 с: median goal остаётся недостигнутым, без округления/повтора ради pass. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
 Текущий итог G3.7 — [единая матрица AC и блокеров, 2026-10-20](evidence/g3-final-qualification-2026-10-20.md). Full G3/AC-39 не принят; нижеследующие исходные результаты сохранены с их собственной датой/source/scope. Новая матрица не переименовывает failed cold/harness observations в общий pass.
 
 ## Статус и правила доказательства
@@ -711,3 +713,13 @@ Focused file times: rollback316.576 s и watchdog155.011 s против existing
 Проверены точный пакет и roots до/после, исход основной фазы installed CLI, отсутствие угаданных ID, сохранность applied SHA/context при offline/schema fault, типизированный отказ для неизвестного ID и неверного hash, доступность status и SHA/actual mtime для 18 состояний путей (по 9 на root, включая отсутствие файла). Две ветки предупреждений и публичная/внутренняя ошибки unknown ID различены по коду владельца. Первые ошибки ожиданий harness сохранены. BOM и агрегация отчёта исправлены только в harness; пути, топология, данные и runtime thresholds не подменялись. Всего сохранены 13 CLI-наблюдений, включая 2 ранних; единый непрерывный проход всего harness не заявляется.
 
 CLI занимал 1,188–4,101 с на локальных fixtures: это не проверка stalled fetch deadline/cleanup, paired Startup или полной стоимости функции. Сверены 12 864 прежних snapshot files, 2 349 raw artifacts, 21 защищённый файл, 4 старых roots, 11 capsule hashes и 7 Gate 6 artifacts. Штатное recovery именно этого повреждённого applied не проверено. Полные AC-39, release population 5.7/AC-36–38 и memory consumer 4.2/AC-43/G5/44 не приняты. Этот source change документационный; фактические выбор, исполнение, reuse и стоимость Targeted определяет RegisterChange. Дополнительный always-on context/schema: 0 байт; новые provider/LLM/memory calls: 0.
+
+## Завершающая квалификация G3, 2026-10-23
+
+[Единый отчёт и матрица](evidence/g3-completion-2026-10-23.md). Source: defer/restore red 2/4 и green 132/132 в трёх полных owner suites; Git cleanup проверяет реальный зависший HTTP, закрытие дочернего соединения и исходный deadline, затем весь Git-save owner 12/12. Сохранены ранний harness bootstrap failure, failed reserve=2 и прежние native 21–22,5 с transport tail; assertions/deadline не ослаблены. Замер времени вызова отделён от Pester assertion overhead, время закрытия сокета проверяется независимо.
+
+Native acceptance исправлений, полный остаток AC и сохранность зафиксированы в итоговом installed отчёте; исходная source-assisted recovery остаётся отдельным этапом, затем прежняя цепочка повторена installed. Test-actor reset после штатного restore — отдельная уборка fixtures, не доказательство recovery. Полная G3/AC-39 пока не принята; Gate 6, G4, рабочая миграция и публикация не выполняются.
+
+[Итоговый прогон G3](evidence/g3-completion-2026-10-23.md): доступный current PM5 subset завершён; **полная G3/AC-39 BLOCKED** по G3-B1–B5. Два owner-local repairs прошли 132+12 source tests и installed repeat `dfae2ff3`; 90 config calls + update. Настоящие conflict answers/Ctrl+C, pending stable ID, damaged-applied owned recovery и transport 7,933/7,836 с подтверждены. Warm full median/p95 1,006314/1,353585 с: median goal остаётся недостигнутым, без округления/повтора ради pass. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
+Полная матрица AC-01–39 и конкретные blockers — в едином отчёте. Старые остатки по точному indexed revision/server patch, live Mantis create и выпускному наполнению не становятся дополнительными G3 prerequisites. Проверенные server/native срезы сохраняют свои версии; непроверенные platform/frontend/whole lifecycle не отмечаются выполненными.
