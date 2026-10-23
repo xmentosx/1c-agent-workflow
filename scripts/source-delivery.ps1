@@ -323,24 +323,34 @@ try {
     if ($supervisorAst.ParamBlock -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "SupervisorChannel" }).Count -gt 0) {
         $arguments["SupervisorChannel"] = $selectedChannel
     }
-    if($Action -eq 'Plan' -and -not $customGateFixture) {
-        $wire=& $supervisorPath @arguments
-        $plan=($wire -join [Environment]::NewLine) | ConvertFrom-Json
-        if(-not $plan.PSObject.Properties['calculator'] -and $plan.status -eq 'ready') {
-            $shimPlanModule=Join-Path $PSScriptRoot 'source-delivery-plan.ps1'
-            # Read-only migration view: keep the legacy owner's saved plan and
-            # expose the candidate calculation without granting it execution.
-            $readerArguments=@{Action='Status'}
-            foreach($name in @('RepositoryRoot','Remote','SupervisorCommit','SupervisorChannel','BootstrapSupervisor','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot')) {
-                if($arguments.ContainsKey($name)) {$readerArguments[$name]=$arguments[$name]}
-            }
-            $plan=& {
-                param($owner,$readerOptions,$module,$value)
-                . $owner @readerOptions > $null
-                . $module
-                Add-DeliveryCandidatePlanPreview -Plan $value -ShimPlanModule $module
-            } $supervisorPath $readerArguments $shimPlanModule $plan
+    $ownerPlanModule=Join-Path (Split-Path -Parent $supervisorPath) 'source-delivery-plan.ps1'
+    $legacyCalculator=$false
+    if($Action -eq 'Plan' -and -not $customGateFixture -and (Test-Path -LiteralPath $ownerPlanModule)) {
+        $ownerPlanSource=[IO.File]::ReadAllText($ownerPlanModule)
+        # Opaque/historical supervisors keep their own Plan protocol. Only the
+        # standard module promises the readers used by the advisory bridge.
+        $legacyCalculator=$ownerPlanSource -match '(?m)^function New-AccumulatedDeliveryPlan \{' -and
+            $ownerPlanSource.Contains('Get-SourceRegistrationSnapshot') -and
+            $ownerPlanSource.Contains('Get-SourceRegistrationStartPoint') -and
+            $ownerPlanSource -notmatch '(?m)^function Invoke-DeliveryCandidatePlanCalculation \{'
+    }
+    # Non-Plan options still reach the owner's normal validation. The read-only
+    # bridge accepts only the standard planning interface, including RequireRelease.
+    $planOptions=@('Action','RepositoryRoot','Remote','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot','RequireRelease')
+    if(@($PSBoundParameters.Keys | Where-Object {$_ -notin $planOptions}).Count) {$legacyCalculator=$false}
+    if($legacyCalculator) {
+        $readerArguments=@{Action='Status'}
+        foreach($name in @('RepositoryRoot','Remote','SupervisorCommit','SupervisorChannel','BootstrapSupervisor','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot')) {
+            if($arguments.ContainsKey($name)) {$readerArguments[$name]=$arguments[$name]}
         }
+        $plan=& {
+            param($owner,$readerOptions,$module,$release)
+            # Load the pinned owner's readers once. Queue reconstruction and
+            # preflight remain its functions; the preview cannot persist a plan.
+            . $owner @readerOptions > $null
+            . $module
+            New-AccumulatedDeliveryPlan -RequireRelease:$release -PreviewOnly
+        } $supervisorPath $readerArguments (Join-Path $PSScriptRoot 'source-delivery-plan.ps1') ([bool]$RequireRelease)
         $plan | ConvertTo-Json -Depth 24
     } else { & $supervisorPath @arguments }
 } finally {

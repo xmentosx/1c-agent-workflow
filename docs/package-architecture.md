@@ -44,8 +44,10 @@ authority. The existing supervisor calls the exact clean candidate's calculator
 in a child scope, validates its envelope and input identity, and binds calculator
 commit/SHA before saving. Its queue, locks, proof validation, approval, recovery
 and push remain with the published owner. A newer shim talking to a legacy owner
-may return an advisory candidate preview alongside the unchanged saved plan;
-that preview is never persisted as resumable authority. This adds no coordinator,
+returns one advisory candidate calculation through the owner's read-only readers
+and queue/preflight functions; existing saved plans remain unchanged. The preview
+is never persisted as resumable authority and the legacy calculator does not run.
+This adds no coordinator,
 installed migration, runtime owner or permission to execute a delivery stage.
 
 The user approved bounded frozen-scope recovery on 2026-10-16. Explicit

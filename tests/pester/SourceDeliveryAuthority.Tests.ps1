@@ -62,7 +62,8 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         $status.cleanupPolicy.releaseMaster | Should -Be 'master'
         @($status.cleanupPolicy.promoteRelease) | Should -Be @('develop', 'master')
     }
-It "runs published develop for registration, Plan, publication and default Cleanup, and master only when selected" {
+It "runs published develop for registration, Plan, publication and default Cleanup, and master only when selected (<Layout>)" -TestCases @(@{Layout='opaque'},@{Layout='older-plan-module'}) {
+        param($Layout)
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
@@ -73,7 +74,12 @@ param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]
 [pscustomobject]@{ status='develop-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; channel=$SupervisorChannel; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
 '@
             [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $developSupervisor, [Text.UTF8Encoding]::new($false))
-            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: published develop supervisor'
+            if($Layout -eq 'older-plan-module') {
+                # A historical module without the accepted-candidate readers
+                # does not promise the current read-only preview protocol.
+                [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-plan.ps1'), 'function New-AccumulatedDeliveryPlan { throw "old controller owns this protocol" }',[Text.UTF8Encoding]::new($false))
+            }
+            & git -C $fixture.root add scripts; & git -C $fixture.root commit --quiet -m 'test: published develop supervisor'
             $developCommit = (& git -C $fixture.root rev-parse HEAD).Trim(); & git -C $fixture.root push --quiet origin HEAD:develop
             & git -C $fixture.root switch --quiet -c master $fixture.base
             New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null

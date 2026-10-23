@@ -384,8 +384,14 @@ Planner получает тот же SHA-проверяемый artifact binding
 по полному SHA, сохраняя совместимость с прежним непредфиксным именем. Ошибка
 override не заменяется другим файлом. При неполном binding диагностика называет
 именно отсутствующий artifact, а не первый неустановленный process override.
-Изменение только `Find-SourceE2EArtifactBinding` не выбирает native journey;
-остальной stand contract и появление общего caller сохраняют строгий отбор.
+Поиск CFE использует штатный `ITL/artifacts/vanessa-mcp-clientMcp/<version>/<sha>/<assetName>`,
+а EXE — `ITL/MCP/ondemand/<version>/<sha>/<assetName>`, включая настроенные
+корни владельцев cache. Каждый файл сверяется с SHA lock, override не допускает
+fallback. Поиск вынесен в `source-e2e-artifact-discovery.ps1`: его изменение
+выбирает только planner/incremental regressions, без SourceQualificationFixture
+и Release orchestration. Исторические receipts со старой функцией в stand-модуле
+сохраняют прежнюю строгую AST-проекцию; остальной stand contract и появление
+общего caller по-прежнему выбирают native journey.
 Каждый выбранный native stage содержит advisory `reuseDiagnostics`: причина
 отклонения старого proof, его commit и изменившиеся source paths/external keys.
 Значения окружения не выводятся; список ограничен восемью receipts и двенадцатью
@@ -404,6 +410,16 @@ shard. Её зависимости от actual lifecycle/journey sources не с
 сценариев за 94,59 с против 62,83 с прежних семи: добавлены discovery-only,
 shared-stand и реальный legacy-Plan → candidate-calculator процесс. Ordering
 weight — 100 с, deadline не расширен. Остальные 32 planner-теста заняли 48,18 с.
+Разбор retained Targeted `955db4d114fb4513b2cfd5efb49db1cc` (29:45, 43 executed,
+0 reused) показал поздние тяжёлые группы: SourceQualificationFixture — 341 с
+при default ordering weight 1 с, Replan — 338 с при weight 57 с,
+DevelopE2EQualification — 284 с при weight 33 с, RefCleanup — 304 с при 200 с.
+Ordering weights исправлены по этим наблюдениям: тяжёлые независимые файлы
+заполняют первые parallel slots, serial admission и hard deadlines сохранены.
+Перенос discovery один раз затрагивает прежний stand owner; следующие изменения
+его отдельного файла выбирают ровно два связанных shard, что закреплено регрессией.
+После пакетного wildcard matching 34 planner-сценария заняли 28,50 с,
+11 incremental-сценариев — 48,36 с (native default-path/shim fixtures).
 Эти измерения относятся к изолированным fixtures, без запуска 1С или публикации;
 операционное улучшение отдельно проверяется обычным и warm/retry `Plan`.
 
@@ -441,11 +457,20 @@ commit/tree/base/channel, результат identity и SHA calculator до с�
 calculator commit/SHA входят в plan identity. `Plan`, Develop и master delivery
 используют один этот вызов. Запись, approval, очередь, checkpoint и push остаются
 у опубликованного владельца; старые планы без calculator сохраняют свой decoder.
-Если опубликованный supervisor ещё не умеет делегировать расчёт, shim возвращает
-его сохранённый plan без изменения bytes и дополнительный `candidatePreview`
-с актуальным расчётом. Preview не сохраняется как resumable plan и имеет
-`resumable=false`: он не подменяет legacy planId и не разрешает публикацию.
+Если опубликованный supervisor ещё не умеет делегировать расчёт, стандартный
+`Plan` один раз загружает его read-only readers и реконструирует кандидат через
+его же queue/preflight functions, затем один раз вызывает candidate calculator.
+Возвращаемый preview имеет `resumable=false` и не сохраняется. Существующие
+immutable legacy plans/proof не меняются и старый calculator не запускается.
+Мост применяется только к стандартному модулю с accepted-candidate readers;
+непрозрачные и более старые supervisor выполняют свой исходный `Plan`.
+Публикация продолжает использовать опубликованного владельца и его протокол;
+preview не даёт права использовать новый decoder для старого checkpoint.
 После публикации поддержки обычный Plan сразу использует candidate calculator.
+Wildcard inventory сопоставляется пакетно с однажды созданными PowerShell
+WildcardPattern; grammar, case rules, порядок, unknown-owner и все хэши сохранены.
+Это сокращает повторные вызовы script-функций на каждый file × pattern, а не
+уменьшает инвентарь или пределы проверок.
 
 `Status` не является исполняющим supervisor: read-only вызов использует файл из
 текущего checkout без создания worktree. Поэтому диагностика выводит две разные

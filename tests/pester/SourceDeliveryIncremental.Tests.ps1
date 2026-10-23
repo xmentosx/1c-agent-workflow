@@ -82,14 +82,25 @@ It 'keeps the actual catalog native-free for isolated Pester changes including m
         }
     }
 
+It 'selects only planner regressions for discovery changes without native fixture or publication suites' {
+    $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+    $path='scripts/source-e2e-artifact-discovery.ps1'
+    $selection=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)
+    @($selection.unknownPaths) | Should -BeNullOrEmpty
+    @($selection.tests) | Should -Be @('tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryPlan.Tests.ps1')
+    $route=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path) -Catalog $catalog
+    @($route.journeys) | Should -BeNullOrEmpty
+    @($route.unknownPaths) | Should -BeNullOrEmpty
+}
+
 It 'uses the pinned candidate calculator through the native legacy Plan shim without changing authority or saved proof' {
         $f=New-IncrementalPlanFixture; $script:Root=$f.root
-        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','git-path-list.ps1')
+        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
         foreach($name in $modules) {Copy-Item -LiteralPath (Join-Path $RepoRoot ('scripts/'+$name)) -Destination (Join-Path $f.root ('scripts/'+$name)) -Force}
         $f.catalog.contracts[0].paths+=@($modules|ForEach-Object{'scripts/'+$_})
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))
         $names=@('New-DeliveryWorktree','Remove-DeliveryWorktree','Get-DeliveryTextSha256','Get-DeliveryFileIdentity','Get-DeliveryFileSha256',
-            'Invoke-DeliveryGit','Get-GitValue','Get-DeliveryCommonGitDirectory')
+            'Invoke-DeliveryGit','Invoke-WorktreeGit','Get-GitValue','Get-DeliveryCommonGitDirectory')
         $definitions=@(foreach($file in @('source-delivery-supervisor.ps1','source-delivery-candidate.ps1')) {
             $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('scripts/'+$file)),[ref]$t,[ref]$e)
             $ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $names},$true)|ForEach-Object{$_.Extent.Text}
@@ -98,6 +109,21 @@ It 'uses the pinned candidate calculator through the native legacy Plan shim wit
 param($Action,$RepositoryRoot,$SupervisorCommit,$SupervisorChannel,[switch]$BootstrapSupervisor,$AiRulesSource='',$E2EProjectRoot='',$Remote='origin')
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
 $script:Root=$RepositoryRoot;$script:Remote=$Remote;$script:DeliverySupervisorCommit=$SupervisorCommit;$script:DeliverySupervisorChannel=$SupervisorChannel;$script:DeliverySupervisorBootstrap=[bool]$BootstrapSupervisor;$script:DeliveryCustomGateBoundary=$false
+function Assert-CleanDeliveryWorktree {
+    if(@(Get-RepositoryGitPathList -RepositoryRoot $script:Root -Arguments @('status','--porcelain=v1','-z')).Count) {throw 'dirty fixture'}
+}
+
+function Get-SourceRegistrationSnapshot {
+    [pscustomobject]@{entries=@([pscustomobject]@{id='test';base=(Get-GitValue -Arguments @('rev-parse','origin/develop'));head=(Get-GitValue -Arguments @('rev-parse','HEAD'))})}
+}
+function Get-SourceRegistrationStartPoint {param($Snapshot); $Snapshot.entries[0].head}
+function Add-QueuedRangesToCandidate {param($CandidateRoot,$Entries,$PublishedDevelop)}
+function Get-OwnedComponentPublicationPlan {param($CandidateRoot,$CandidateCommit); [pscustomobject]@{requiredReleaseCapabilities=@()}}
+function Assert-ComponentPublicationFinalizerPreflight {
+    param($CandidateRoot,$CandidateCommit,$Plan)
+    [IO.File]::AppendAllText((Join-Path $script:Root '.git/preflight.log'),"preflight`n")
+}
+function Remove-DeliveryPreparedAiRulesWorktree {}
 '@
         $legacy+="`n"+$definitions+@'
 
@@ -115,6 +141,8 @@ if($Action -eq 'Plan') {
 }
 '@
         [IO.File]::WriteAllText((Join-Path $f.root 'scripts/source-delivery-supervisor.ps1'),$legacy,[Text.UTF8Encoding]::new($true))
+        $publishedCalculator=Join-Path $f.root 'scripts/source-delivery-plan.ps1'
+        [IO.File]::WriteAllText($publishedCalculator,([IO.File]::ReadAllText($publishedCalculator).Replace('function Invoke-DeliveryCandidatePlanCalculation {','function Legacy-CandidateCalculationPlaceholder {')),[Text.UTF8Encoding]::new($true))
         $f.catalog.contracts[0].paths+='scripts/source-delivery-supervisor.ps1'
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'legacy published owner'
@@ -125,20 +153,30 @@ if($Action -eq 'Plan') {
         [IO.File]::WriteAllText($calculator,$text,[Text.UTF8Encoding]::new($true))
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'new candidate policy'
         $head=(& git -C $f.root rev-parse HEAD).Trim()
+        # A frozen legacy plan already exists. A read-only preview must not
+        # recalculate it, overwrite its bytes, or save a resumable replacement.
+        $savedRoot=Join-Path $f.root '.git/itl/plans/v1'
+        [void][IO.Directory]::CreateDirectory($savedRoot)
+        $savedPath=Join-Path $savedRoot (('c'*64)+'.json')
+        [IO.File]::WriteAllText($savedPath,'{"legacy":"immutable proof"}')
+        $savedSha=(Get-FileHash -LiteralPath $savedPath).Hash
+        # A local bare remote keeps the production fetch in the preview path.
+        $bare=Join-Path $f.root '.git/remote.git'; & git init --bare --quiet $bare
+        & git -C $f.root remote add origin $bare
+        & git -C $f.root push --quiet origin "${published}:refs/heads/develop"
         $worker=Join-Path $f.root '.git/inspect.ps1';$output=Join-Path $f.root '.git/plan.json'
         $scriptText="& '"+(Join-Path $RepoRoot 'scripts/source-delivery.ps1').Replace("'","''")+"' -Action Plan -RepositoryRoot '"+$f.root.Replace("'","''")+"' | Set-Content -LiteralPath '"+$output.Replace("'","''")+"' -Encoding UTF8"
         [IO.File]::WriteAllText($worker,$scriptText,[Text.UTF8Encoding]::new($true))
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $worker
         $LASTEXITCODE | Should -Be 0
         $plan=Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json
-        $plan.planId | Should -BeExactly ('c'*64)
-        $plan.candidatePreview.resumable | Should -BeFalse
-        $plan.candidatePreview.calculator.commit | Should -BeExactly $head
-        $plan.candidatePreview.stages[0].reason | Should -BeExactly 'candidate policy selected'
-        $saved=Get-Content (Join-Path $f.root ('.git/itl/plans/v1/'+$plan.planId+'.json')) -Raw|ConvertFrom-Json
-        (Get-FileHash -LiteralPath (Join-Path $f.root ('.git/itl/plans/v1/'+$plan.planId+'.json'))).Hash | Should -BeExactly ([IO.File]::ReadAllText((Join-Path $f.root '.git/itl/plans/v1/legacy.sha256')))
-        $saved.PSObject.Properties.Name | Should -Not -Contain 'candidatePreview'
-        Test-Path (Join-Path $f.root ('.git/itl/plans/v1/'+$plan.candidatePreview.planId+'.json')) | Should -BeFalse
+        $plan.resumable | Should -BeFalse
+        $plan.calculator.commit | Should -BeExactly $head
+        $plan.stages[0].reason | Should -BeExactly 'candidate policy selected'
+        (Get-FileHash -LiteralPath $savedPath).Hash | Should -BeExactly $savedSha
+        Test-Path (Join-Path $savedRoot 'legacy.sha256') | Should -BeFalse -Because 'the old Plan must never run'
+        @(Get-Content -LiteralPath (Join-Path $f.root '.git/preflight.log')).Count | Should -Be 1
+        Test-Path (Join-Path $savedRoot ($plan.planId+'.json')) | Should -BeFalse
         (& git -C $f.root rev-parse origin/develop).Trim() | Should -BeExactly $published
         (& git -C $f.root rev-parse HEAD).Trim() | Should -BeExactly $head
         @(Get-RepositoryGitPathList -RepositoryRoot $f.root -Arguments @('status','--porcelain=v1','-z')).Count | Should -Be 0
@@ -173,6 +211,14 @@ It 'reuses an unchanged upgrade through real planner and checker only after curr
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
         Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
         Save-IncrementalJourneyProofs $f
+        # Exercise automatic discovery at the real default artifact paths,
+        # rather than handing the planner an already-complete binding.
+        [IO.File]::AppendAllText((Join-Path $f.root '.git/info/exclude'),"`n/build/`n/tools/itl-ondemand-mcp/build/`n")
+        foreach($relative in @('build/third-party/vanessa-automation/1-r1/archive.zip','build/third-party/client-mcp/client.cfe','tools/itl-ondemand-mcp/build/mcp.exe')) {
+            $cachePath=Join-Path $f.root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $cachePath))
+            Copy-Item -LiteralPath $f.artifact -Destination $cachePath
+        }
         $runner=Join-Path $f.root 'scripts/invoke-develop-e2e.ps1'
         $text=[IO.File]::ReadAllText($runner).Replace('Fresh journey branch worktree was not registered:','Fresh branch fixture was not registered:')
         [IO.File]::WriteAllText($runner,$text,[Text.UTF8Encoding]::new($true))
@@ -185,15 +231,16 @@ It 'reuses an unchanged upgrade through real planner and checker only after curr
         # An accumulated range may select both routes even when an intermediate
         # candidate already proved upgrade. Discovery must reuse that proof.
         $base=(& git -C $f.root rev-parse "$($f.base)~1").Trim()
-        $args=@{CandidateRoot=$f.root;BaseCommit=$base;CandidateCommit=$commit;CandidateTree=$tree;ArtifactBinding=$f.binding}
+        $args=@{CandidateRoot=$f.root;BaseCommit=$base;CandidateCommit=$commit;CandidateTree=$tree}
         $plan=New-DeliveryQualityPlanForCandidate @args
         @($plan.stages.id) | Should -Be @('develop.static','develop.upgrade','develop.fresh')
-        @($plan.stages.execution) | Should -Be @('execute','reuse','execute')
+        @($plan.stages.execution) | Should -Be @('execute','reuse','execute') -Because (@($plan.stages | Where-Object id -ne 'develop.static' | ForEach-Object reuseDiagnostics) | ConvertTo-Json -Depth 8 -Compress)
         $original=Join-Path $f.root '.git/upgrade.json'; $sha=(Get-FileHash $original).Hash
         $repoRoot=$f.root; $qualityCatalog=$f.catalog
         $script:developQualificationRoot=Join-Path $f.root '.git/current';[void][IO.Directory]::CreateDirectory($script:developQualificationRoot)
         $script:releaseContext=[pscustomobject]@{};$script:aiRulesRelease=[pscustomobject]@{}
-        $script:developRulesSource=$f.rules;$script:sourceE2EArtifactBinding=$f.binding;$script:stages=@()
+        $script:developRulesSource=$f.rules;$script:sourceE2EArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $f.root;$script:stages=@()
+        $script:sourceE2EArtifactBinding.paths.VANESSA_MCP_CLIENT_CFE_PATH | Should -BeExactly (Join-Path $f.root 'build/third-party/client-mcp/client.cfe')
         Mock Get-DevelopE2EIdentitySha256 {'a'*64}
         Mock Add-ReusedStage {}
         Mock Invoke-PowerShellChild {throw 'UNEXPECTED_NATIVE_JOURNEY'}

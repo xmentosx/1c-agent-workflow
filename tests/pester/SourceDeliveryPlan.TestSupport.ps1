@@ -20,6 +20,7 @@ function Get-DeliveryCommonGitDirectory {
     (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
 }
 . (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1')
+. (Join-Path $RepoRoot 'scripts/source-e2e-artifact-discovery.ps1')
 $checkerTokens = $null; $checkerErrors = $null
 $checkerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts\check.ps1'), [ref]$checkerTokens, [ref]$checkerErrors)
 if (@($checkerErrors).Count -gt 0) { throw 'The candidate checker did not parse.' }
@@ -77,12 +78,16 @@ function New-IncrementalPlanFixture {
     $catalog.contracts[0] | Add-Member budgetSeconds 30
     $catalog.contracts[0].paths += @('tests/pester/Runtime.Tests.ps1','scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1','templates/dependency-lock.json','tests/quality-contracts.json')
     $catalog.contracts[0].paths += 'scripts/stand-env-identity.ps1'
+    # Retain the original historical reproducer from before discovery moved out.
+    # Ancestor receipts must still authenticate and project that exact old path.
     $catalog.developJourneys.fullPaths=@('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1')
     foreach($relative in @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
         $path=Join-Path $root $relative
         [void][IO.Directory]::CreateDirectory((Split-Path $path))
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
     }
+    $legacyStand=Join-Path $root 'scripts/stand-env-identity.ps1'
+    [IO.File]::AppendAllText($legacyStand,"`n"+[IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/source-e2e-artifact-discovery.ps1')),[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 16),[Text.UTF8Encoding]::new($false))
     $artifact=Join-Path $root '.git/artifact.bin'
     [IO.File]::WriteAllBytes($artifact,[byte[]](0,1,2,3))
@@ -91,7 +96,7 @@ function New-IncrementalPlanFixture {
         ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=$artifact;VANESSA_MCP_CLIENT_CFE_PATH=$artifact;ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=$artifact}}
     [void][IO.Directory]::CreateDirectory((Join-Path $root 'templates'))
     $lock=@{dependencies=@{vanessaAutomation=@{sha256=$sha;compatibilityVersion='1';downstreamRevision='r1';assetName='archive.zip'};
-        vanessaMcp=@{clientMcp=@{sha256=$sha;assetName='client.cfe'}};itlOndemandMcp=@{sha256=$sha;assetName='mcp.exe'}}}
+        vanessaMcp=@{clientMcp=@{sha256=$sha;version='1';assetName='client.cfe'}};itlOndemandMcp=@{sha256=$sha;version='1';assetName='mcp.exe'}}}
     [IO.File]::WriteAllText((Join-Path $root 'templates/dependency-lock.json'),($lock|ConvertTo-Json -Depth 6))
     # Keep rules and stand outside the candidate: advancing source commits
     # must not silently advance a controlled-fork/environment identity.

@@ -577,6 +577,21 @@ function Test-QualityPathPattern {
     return $normalizedPath -like $normalizedPattern
 }
 
+function Select-QualityPaths {
+    param([AllowEmptyCollection()][string[]]$Paths,[AllowEmptyCollection()][string[]]$Pattern)
+    # Compile once per inventory, preserving PowerShell's wildcard/case rules.
+    # Calling a script function for every file x pattern dominated warm Plan.
+    $matchers=@(foreach($item in $Pattern) {
+        [Management.Automation.WildcardPattern]::new($item.Replace('\','/'),[Management.Automation.WildcardOptions]::IgnoreCase)
+    })
+    foreach($raw in $Paths) {
+        $path=$raw.Replace('\','/')
+        foreach($matcher in $matchers) {
+            if($matcher.IsMatch($path)) {$path; break}
+        }
+    }
+}
+
 function Resolve-QualityContractsForPaths {
     param(
         [Parameter(Mandatory = $true)][object]$Catalog,
@@ -598,9 +613,10 @@ function Resolve-QualityContractsForPaths {
             }
             continue
         }
-        $matches = @($Catalog.contracts | Where-Object {
-            $contract = $_
-            @($contract.paths | Where-Object { Test-QualityPathPattern -Path $path -Pattern ([string]$_) }).Count -gt 0
+        $matches = @(foreach($contract in $Catalog.contracts) {
+            foreach($pattern in $contract.paths) {
+                if($path -like ([string]$pattern).Replace('\','/')) {$contract; break}
+            }
         })
         if ($matches.Count -eq 0) {
             $unknown.Add($path) | Out-Null

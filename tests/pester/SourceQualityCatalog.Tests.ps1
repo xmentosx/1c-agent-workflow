@@ -211,6 +211,7 @@ Describe 'Source quality catalog contracts' {
             "scripts/source-delivery.ps1",
             "scripts/source-delivery-supervisor.ps1",
             "scripts/source-delivery-plan.ps1",
+            "scripts/source-e2e-artifact-discovery.ps1",
             "scripts/source-delivery-resources.ps1",
             "scripts/release-artifact-paths.ps1",
             "scripts/source-delivery-ref-cleanup.ps1",
@@ -307,7 +308,7 @@ Describe 'Source quality catalog contracts' {
         }
         $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $updatedOrderingWeights = [ordered]@{
-            "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
+            "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=285
             "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=48
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
             "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=91
@@ -326,6 +327,10 @@ Describe 'Source quality catalog contracts' {
         # 2026-10-23 native scheduler: ten incremental/native-boundary cases
         # completed in 94.59s. Reserve five seconds; do not change deadlines.
         [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 100
+        # Retained 955db4d1 worker results: 341s fixture and 338s replan.
+        # Keep these costly files out of the default one-second tail.
+        [double]$trackedTimings.files.'SourceQualificationFixture.Tests.ps1' | Should -Be 342
+        [double]$trackedTimings.files.'SourceDeliveryReplan.Tests.ps1' | Should -Be 339
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
         # Individual case sums plus 5 seconds per file for setup, rounded up.
@@ -340,7 +345,7 @@ Describe 'Source quality catalog contracts' {
         [double]$trackedTimings.files."ReleaseOrchestration.Tests.ps1" | Should -Be 285
         [double]$trackedTimings.files."DevelopManifestContinuation.Tests.ps1" | Should -Be 328
         [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
-        [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 200
+        [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 305
         $estimate = {
             param([double[]]$ParallelSeconds, [double[]]$SerialSeconds, [int]$WorkerCount, [double]$OverheadSeconds)
             $lanes = New-Object double[] $WorkerCount

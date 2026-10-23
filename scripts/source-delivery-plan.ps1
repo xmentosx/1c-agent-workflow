@@ -176,13 +176,7 @@ function Get-DeliveryMatchedFiles {
         $script:DeliveryTrackedPathCache[$root] = @(Get-RepositoryGitPathList -RepositoryRoot $root -Arguments @("ls-files", "-z", "--"))
     }
     $trackedPaths = @($script:DeliveryTrackedPathCache[$root])
-    $files = foreach ($relativePath in $trackedPaths) {
-        $relative = ([string]$relativePath).Replace('\', '/')
-        $matched = $false
-        foreach ($item in $Pattern) {
-            if (Test-QualityPathPattern -Path $relative -Pattern ([string]$item)) { $matched = $true; break }
-        }
-        if (-not $matched) { continue }
+    $files = foreach ($relative in @(Select-QualityPaths -Paths $trackedPaths -Pattern $Pattern)) {
         $fullPath = Join-Path $root $relative.Replace('/', '\')
         if (Test-Path -LiteralPath $fullPath -PathType Leaf) { Get-Item -LiteralPath $fullPath }
     }
@@ -563,7 +557,7 @@ function Invoke-DeliveryCandidatePlanCalculation {
     # published owner's queue, persistence, approval or execution functions.
     $plan=& {
         param($root,$options)
-        foreach($module in @('quality-contracts.ps1','develop-e2e-qualification.ps1','source-delivery-plan.ps1')) {
+        foreach($module in @('quality-contracts.ps1','develop-e2e-qualification.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1')) {
             . (Join-Path $root ('scripts/'+$module))
         }
         New-DeliveryQualityPlanForCandidate @options
@@ -598,31 +592,8 @@ function Invoke-DeliveryCandidatePlanCalculation {
     return $plan
 }
 
-function Add-DeliveryCandidatePlanPreview {
-    param([object]$Plan,[string]$ShimPlanModule)
-    if($Plan.PSObject.Properties['calculator']) { return $Plan }
-    $worktree=$null
-    try {
-        $worktree=New-DeliveryWorktree -StartPoint $Plan.candidate.commit -Purpose 'plan-preview'
-        . $ShimPlanModule
-        [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
-        $preview=Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $Plan.candidate.baseCommit `
-            -CandidateCommit $Plan.candidate.commit -CandidateTree $Plan.candidate.tree -ReleaseCapability @($Plan.releaseCapabilities)
-        Set-DeliveryPlanQueue -Plan $preview -Entries $Plan.queue
-        # The legacy immutable plan belongs to its published owner. A preview is
-        # returned only, never saved as resumable evidence or used to execute.
-        $preview | Add-Member -NotePropertyName resumable -NotePropertyValue $false
-        $Plan | Add-Member -NotePropertyName candidatePreview -NotePropertyValue $preview
-        $Plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published calculator predates candidate delegation; candidatePreview is advisory and cannot be resumed'
-        return $Plan
-    } finally {
-        if($worktree) { Remove-DeliveryWorktree $worktree }
-        if(Test-Path -LiteralPath 'Function:\Remove-DeliveryPreparedAiRulesWorktree') { Remove-DeliveryPreparedAiRulesWorktree }
-    }
-}
-
 function New-AccumulatedDeliveryPlan {
-    param([switch]$RequireRelease)
+    param([switch]$RequireRelease,[switch]$PreviewOnly)
     Assert-CleanDeliveryWorktree
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
@@ -640,9 +611,17 @@ function New-AccumulatedDeliveryPlan {
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries
-        $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
+        if($PreviewOnly) {
+            $plan | Add-Member -NotePropertyName resumable -NotePropertyValue $false
+            $plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published calculator predates candidate delegation; advisory preview only, publication requires a supported replan under the published owner'
+        } else {
+            $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
+        }
         return $plan
-    } finally { if ($worktree) { Remove-DeliveryWorktree -Worktree $worktree } }
+    } finally {
+        if ($worktree) { Remove-DeliveryWorktree -Worktree $worktree }
+        if($PreviewOnly) {Remove-DeliveryPreparedAiRulesWorktree}
+    }
 }
 
 function Invoke-DeliveryDiagnosticFull {
