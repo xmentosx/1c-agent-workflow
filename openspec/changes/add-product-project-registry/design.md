@@ -511,6 +511,10 @@ Completed plan не заменяет фактический applied marker. [Own
 
 [Следующий native-helper proof](evidence/g3-pm5-active-cancel-2026-10-23.md) закрывает прежний active-writer evidence gap на том же PM5 Kilo+Cursor root: cancel-only request при живом writer → настоящий cooperative stop до B/marker → pinned resume/owned restore и original commands. Timing-only command breakpoint и один qualification fixture lease не меняют runtime/lifecycle authority; новых barriers/state/locks/coordinators нет. Прежние failed harness сохранены; full G3/AC-39 и race/terminal/прочие journeys остаются открытыми. Restore по-прежнему не задаёт persisted defer; memory не добавляет свой recovery/cache/probe.
 
-### Qualification update: два сеанса и полная граница Startup, 2026-10-23
+### Qualification update: два сеанса и полная граница Startup, 2026-10-23 (исторический срез)
 
 [Current PM5 batch](evidence/g3-pm5-concurrency-startup-2026-10-23.md) подтверждает existing lifecycle serialization и nonblocking read-only status для двух same-user native helpers; каждый main использует свой pinned context. Новых runtime owners/locks/recovery/probes нет. Полное measured окно включает lazy import и pre-main work; 2.045/2.570 s превышают цель1/2, **G3-PM5-STARTUP-WINDOW-COST открыт**. Initialize-only/preloaded timings не заменяют полный scope, calibration не является feature baseline; требований/барьеров не меняли. Full G3/AC-39 и memory dependency прежние.
+
+### Qualification update: lazy import и observer calibration, 2026-10-23
+
+[Единый owner result](evidence/g3-startup-window-repair-2026-10-23.md). Existing lazy importer проверяет видимые функции через Function provider, сохраняя UI separation/idempotence; PATH/module discovery удалён у прежнего owner. Finding закрыт в проверенном current PM5 subset; full window 0.932/1.238 s. Instrumentation остаётся qualification-only, presumed overhead не вычитается; новых always-on/state/locks/barriers нет. Registry feature baseline/full G3/AC-39 и memory consumer4.2/G4/AC-43/G5/44 открыты. Память не добавляет отдельный updater/cache/probe или второй cost ledger.

@@ -36,15 +36,17 @@
 }
 
 function Import-ItlProductProject {
-    if (-not (Get-Command Resolve-ItlProductContext -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1') }
-    if (-not (Get-Command Save-ItlCatalogRecord -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project.ps1') }
-    if (-not (Get-Command Invoke-ItlProductProjectClientApply -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-runtime.ps1') }
-    if (-not (Get-Command Read-ItlProductProjectSnapshot -CommandType Function -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-context.ps1') }
+    # These are owned dot-sourced functions. Missing Get-Command lookups search
+    # PATH/modules; the function provider checks only the visible session scope.
+    if (-not (Test-Path -LiteralPath 'Function:\Resolve-ItlProductContext')) { . (Join-Path $PSScriptRoot 'agent-1c.product-catalog.ps1') }
+    if (-not (Test-Path -LiteralPath 'Function:\Save-ItlCatalogRecord')) { . (Join-Path $PSScriptRoot 'agent-1c.product-project.ps1') }
+    if (-not (Test-Path -LiteralPath 'Function:\Invoke-ItlProductProjectClientApply')) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-runtime.ps1') }
+    if (-not (Test-Path -LiteralPath 'Function:\Read-ItlProductProjectSnapshot')) { . (Join-Path $PSScriptRoot 'agent-1c.product-project-context.ps1') }
 }
 
 function Import-ItlProductProjectSetup {
     . Import-ItlProductProject
-    if(-not (Get-Command Invoke-ItlProductProjectCommand -ErrorAction SilentlyContinue)){. (Join-Path $PSScriptRoot 'agent-1c.product-project-ui.ps1')}
+    if(-not (Test-Path -LiteralPath 'Function:\Invoke-ItlProductProjectCommand')){. (Join-Path $PSScriptRoot 'agent-1c.product-project-ui.ps1')}
 }
 
 function Read-Vibecoding1cProductContext {
