@@ -331,6 +331,10 @@ Fresh19 unchanged, 30 owned processes штатно закрыты. Canary1 user 
 
 [Registry-owned repair/proof](../add-product-project-registry/evidence/g3-completed-resume-repair-2026-10-23.md) подтверждает actual marker перед success completed resume и предоставляет tested existing restore continuation при invalid/missing/mismatch. Memory consumer не принимает completed plan как отдельный источник контекста и не создаёт свой repair/cache/probe. Canonical registry context/шесть областей/home/ai_rules_1c прежние; full registry G3/AC-39, consumer4.2/G4/AC-43/G5/44 и выпускное наполнение открыты. Scope не включает Gate6, рабочую миграцию или публикацию.
 
-### Registry recovery dependency: partial cancel, 2026-10-23
+### Registry recovery dependency: partial cancel, 2026-10-23 (исторический subset)
 
 [Один registry qualification report](../add-product-project-registry/evidence/g3-pm5-partial-cancel-2026-10-23.md) подтверждает cancel на faulted partial и original resume/restore continuation, сохраняя единственного context/apply owner. Отмена ещё работающего writer остаётся evidence gap; full registry G3/AC-39 и consumer4.2/G4/AC-43/G5/44 открыты. Restore не задаёт persisted defer, следующий startup может применить актуальный каталог. Memory не дублирует recovery/кеш/проверки; шесть областей/home/grants/ai_rules_1c прежние.
+
+### Registry recovery update: active-writer cancellation, 2026-10-23
+
+[Единый registry qualification report](../add-product-project-registry/evidence/g3-pm5-active-cancel-2026-10-23.md) закрывает прежний named active-writer gap в PM5 native-helper subset с original resume/restore continuation. Context/apply/recovery остаются у existing registry/client owner; timing instrumentation не поставляется в runtime. Full registry G3/AC-39 и consumer4.2/G4/AC-43/G5/44 открыты. Memory не вводит собственный cache/recovery/probe; шесть областей/home/grants/ai_rules_1c и optional OpenViking прежние.
