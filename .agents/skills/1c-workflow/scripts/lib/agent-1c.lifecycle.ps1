@@ -6705,89 +6705,94 @@ function New-WorkflowUpdateRollbackSnapshot {
         [string]$SnapshotParent = ([System.IO.Path]::GetTempPath())
     )
 
-    foreach ($relativePath in $RelativePaths) {
-        Assert-WorkflowManagedTargetPath -Path (Join-Path $script:ProjectRoot $relativePath)
-        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relativePath
-    }
-    $tempRoot = Get-FullPathNormalized $SnapshotParent
-    New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-    $snapshotRoot = Join-Path $tempRoot ("itl-workflow-update-rollback-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
-    $preparationPath = Join-Path $snapshotRoot 'preparation.json'
-    $records = @()
-    $parentStates = @{}
-    $index = 0
-
-    try {
-        # Until the prepared transaction receipt is armed, this function only
-        # reads project paths. A crash while copying backups can therefore be
-        # recovered by discarding this private snapshot on the next update.
-        Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
-            schemaVersion = 1
-            operation = 'update-workflow'
-            projectRoot = [string]$script:ProjectRoot
-            snapshotRoot = [string]$snapshotRoot
-            phase = 'capturing'
-        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+    # Capture and receipt fingerprints can outlive the status watchdog. Keep
+    # the existing PID-owned heartbeat while every snapshot/SHA guard runs.
+    return Invoke-WithRunStatusHeartbeat {
         foreach ($relativePath in $RelativePaths) {
-            $targetPath = Join-Path $script:ProjectRoot $relativePath
-            Assert-WorkflowManagedTargetPath -Path $targetPath
+            Assert-WorkflowManagedTargetPath -Path (Join-Path $script:ProjectRoot $relativePath)
             Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relativePath
-
-            $parent = Split-Path -Parent $targetPath
-            while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
-                $parentFull = Get-FullPathNormalized $parent
-                if (-not $parentStates.ContainsKey($parentFull)) {
-                    $parentStates[$parentFull] = Test-Path -LiteralPath $parentFull -PathType Container -ErrorAction SilentlyContinue
-                }
-                $parent = Split-Path -Parent $parentFull
-            }
-
-            $existed = Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue
-            $backupPath = ""
-            $wasDirectory = $false
-            if ($existed) {
-                $wasDirectory = Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction SilentlyContinue
-                $backupPath = Join-Path $snapshotRoot ("item-{0}" -f $index)
-                if ($wasDirectory) {
-                    Copy-Item -LiteralPath $targetPath -Destination $backupPath -Recurse -Force
-                } else {
-                    Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
-                }
-            }
-            $records += [pscustomobject]@{
-                relativePath = $relativePath
-                targetPath = $targetPath
-                existed = [bool]$existed
-                wasDirectory = [bool]$wasDirectory
-                backupPath = $backupPath
-            }
-            $index++
         }
-        Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
-            schemaVersion = 1
-            operation = 'update-workflow'
-            projectRoot = [string]$script:ProjectRoot
-            snapshotRoot = [string]$snapshotRoot
-            phase = 'captured'
-        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
-    } catch {
-        $snapshotError = $_.Exception.Message
+        $tempRoot = Get-FullPathNormalized $SnapshotParent
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        $snapshotRoot = Join-Path $tempRoot ("itl-workflow-update-rollback-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
+        $preparationPath = Join-Path $snapshotRoot 'preparation.json'
+        $records = @()
+        $parentStates = @{}
+        $index = 0
+
         try {
-            Remove-WorkflowUpdateRollbackSnapshot -Snapshot ([pscustomobject]@{ root = $snapshotRoot; tempRoot = $tempRoot })
+            # Until the prepared transaction receipt is armed, this function only
+            # reads project paths. A crash while copying backups can therefore be
+            # recovered by discarding this private snapshot on the next update.
+            Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$snapshotRoot
+                phase = 'capturing'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+            foreach ($relativePath in $RelativePaths) {
+                $targetPath = Join-Path $script:ProjectRoot $relativePath
+                Assert-WorkflowManagedTargetPath -Path $targetPath
+                Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relativePath
+
+                $parent = Split-Path -Parent $targetPath
+                while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+                    $parentFull = Get-FullPathNormalized $parent
+                    if (-not $parentStates.ContainsKey($parentFull)) {
+                        $parentStates[$parentFull] = Test-Path -LiteralPath $parentFull -PathType Container -ErrorAction SilentlyContinue
+                    }
+                    $parent = Split-Path -Parent $parentFull
+                }
+
+                $existed = Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue
+                $backupPath = ""
+                $wasDirectory = $false
+                if ($existed) {
+                    $wasDirectory = Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction SilentlyContinue
+                    $backupPath = Join-Path $snapshotRoot ("item-{0}" -f $index)
+                    if ($wasDirectory) {
+                        Copy-Item -LiteralPath $targetPath -Destination $backupPath -Recurse -Force
+                    } else {
+                        Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
+                    }
+                }
+                $records += [pscustomobject]@{
+                    relativePath = $relativePath
+                    targetPath = $targetPath
+                    existed = [bool]$existed
+                    wasDirectory = [bool]$wasDirectory
+                    backupPath = $backupPath
+                }
+                $index++
+            }
+            Write-Utf8TextAtomic -Path $preparationPath -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$snapshotRoot
+                phase = 'captured'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
         } catch {
-            throw "WORKFLOW_UPDATE_SNAPSHOT_PREPARE_FAILED: $snapshotError Snapshot cleanup also failed at '$snapshotRoot': $($_.Exception.Message)"
+            $snapshotError = $_.Exception.Message
+            try {
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot ([pscustomobject]@{ root = $snapshotRoot; tempRoot = $tempRoot })
+            } catch {
+                throw "WORKFLOW_UPDATE_SNAPSHOT_PREPARE_FAILED: $snapshotError Snapshot cleanup also failed at '$snapshotRoot': $($_.Exception.Message)"
+            }
+            throw
         }
-        throw
+
+        return [pscustomobject]@{
+            root = $snapshotRoot
+            tempRoot = $tempRoot
+            targetRoot = $script:ProjectRoot
+            records = @($records)
+            parentStates = $parentStates
+        }
     }
 
-    return [pscustomobject]@{
-        root = $snapshotRoot
-        tempRoot = $tempRoot
-        targetRoot = $script:ProjectRoot
-        records = @($records)
-        parentStates = $parentStates
-    }
 }
 
 function Restore-WorkflowUpdateRollbackSnapshot {
@@ -7698,111 +7703,116 @@ function Save-WorkflowUpdateSnapshotReceipt {
         [hashtable]$Details = @{}
     )
 
-    if ($Phase -eq 'prepared' -and $Details.ContainsKey('dependencyPlan')) {
-        $expectedLockExists = Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockExists' $null
-        $actualLockExists = Test-Path -LiteralPath (Get-DependencyLockPath) -PathType Leaf
-        if ($null -ne $expectedLockExists -and [bool]$expectedLockExists -ne [bool]$actualLockExists) {
-            throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock appeared or disappeared after planning. Preserve it and repeat update-workflow.'
-        }
-        $expectedLockHash = [string](Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockSha256' '')
-        if ($expectedLockHash -and (Get-FileHash -LiteralPath (Get-DependencyLockPath) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedLockHash) {
-            throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock changed after planning. Preserve it and repeat update-workflow.'
-        }
-    }
-    $pathState = Get-WorkflowUpdateSnapshotPathState -Snapshot $Snapshot
-    $receiptPath = Join-Path $Snapshot.root 'transaction.json'
-    $prior = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop } else { $null }
-    if ($null -ne $prior -and ([string]$prior.operation -cne 'update-workflow' -or
-        [string]$prior.projectRoot -cne [string]$Snapshot.targetRoot -or [string]$prior.snapshotRoot -cne [string]$Snapshot.root)) {
-        throw "WORKFLOW_UPDATE_RECEIPT_INVALID: refusing to replace another transaction at '$receiptPath'."
-    }
-    $recoveredDetails = @{}
-    if ($null -ne $prior -and [string]$prior.phase -ceq 'master-committed') {
-        $missing = @(@('preCommitHead','aiRulesPathsBefore','clientSurfacePathsBefore','plannedChangePaths') | Where-Object {
-            $null -eq $prior.PSObject.Properties[$_]
-        })
-        if ($missing.Count -gt 0 -and $missing.Count -ne 4) {
-            throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: only a fully lost detail set can be reconstructed; preserve the partially missing receipt for exact reconciliation.'
-        }
-        if ($missing.Count -eq 4) {
-            if ([string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorRoot' -Default '') -eq '' -or
-                [string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorCommit' -Default '') -notmatch '^[a-f0-9]{40}$') {
-                throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: missing details have no recorded executor-rebinding provenance; preserve the receipt for exact reconciliation.'
+    # Capture and receipt fingerprints can outlive the status watchdog. Keep
+    # the existing PID-owned heartbeat while every snapshot/SHA guard runs.
+    return Invoke-WithRunStatusHeartbeat {
+        if ($Phase -eq 'prepared' -and $Details.ContainsKey('dependencyPlan')) {
+            $expectedLockExists = Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockExists' $null
+            $actualLockExists = Test-Path -LiteralPath (Get-DependencyLockPath) -PathType Leaf
+            if ($null -ne $expectedLockExists -and [bool]$expectedLockExists -ne [bool]$actualLockExists) {
+                throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock appeared or disappeared after planning. Preserve it and repeat update-workflow.'
             }
-            if ([string]$Source.root -cne [string]$prior.sourceRoot -or [string]$Source.commit -cne [string]$prior.sourceCommit) {
-                throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained-detail recovery cannot substitute another package source.'
-            }
-            $recoveredDetails = Get-WorkflowUpdateRetainedMasterCommitDetails -Pending ([pscustomobject]@{snapshot=$Snapshot;receipt=$prior;receiptPath=$receiptPath})
-        }
-    }
-    $beforeState = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['beforePathState']) {
-        ConvertTo-Agent1cHashtable -Object $prior.beforePathState
-    } else { Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Snapshot }
-    $hasGit = Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git')
-    $preUpdateHead = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['preUpdateHead']) { [string]$prior.preUpdateHead } elseif ($hasGit) { Get-CurrentCommit } else { '' }
-    $branchRef = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['branchRef']) { [string]$prior.branchRef } elseif ($hasGit) { (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() } else { '' }
-    if ($Phase -in @('branch-commit-ready', 'master-commit-ready')) {
-        Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $Snapshot -BeforeCommit $preUpdateHead -CapturedPathState $pathState
-    }
-    if ($Phase -eq 'prepared') {
-        foreach ($relative in @($beforeState.Keys)) {
-            if ([string]$pathState[$relative] -cne [string]$beforeState[$relative]) {
-                throw "WORKFLOW_UPDATE_PREPARE_DRIFT: '$relative' changed between the before snapshot and receipt. Preserve the project file and retry after resolving its owner."
+            $expectedLockHash = [string](Get-ConfigValueFromObject $Details.dependencyPlan 'inputLockSha256' '')
+            if ($expectedLockHash -and (Get-FileHash -LiteralPath (Get-DependencyLockPath) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedLockHash) {
+                throw 'DEPENDENCY_PREFLIGHT_DRIFT: the dependency lock changed after planning. Preserve it and repeat update-workflow.'
             }
         }
-        $pathState = $beforeState
-        # Mark the private snapshot armed before the transaction can be
-        # created. An armed snapshot without its receipt is ambiguous: the
-        # receipt may have been removed after project copying began.
-        Write-Utf8TextAtomic -Path (Join-Path $Snapshot.root 'preparation.json') -Value (([ordered]@{
+        $pathState = Get-WorkflowUpdateSnapshotPathState -Snapshot $Snapshot
+        $receiptPath = Join-Path $Snapshot.root 'transaction.json'
+        $prior = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Read-Utf8Text -Path $receiptPath | ConvertFrom-Json -ErrorAction Stop } else { $null }
+        if ($null -ne $prior -and ([string]$prior.operation -cne 'update-workflow' -or
+            [string]$prior.projectRoot -cne [string]$Snapshot.targetRoot -or [string]$prior.snapshotRoot -cne [string]$Snapshot.root)) {
+            throw "WORKFLOW_UPDATE_RECEIPT_INVALID: refusing to replace another transaction at '$receiptPath'."
+        }
+        $recoveredDetails = @{}
+        if ($null -ne $prior -and [string]$prior.phase -ceq 'master-committed') {
+            $missing = @(@('preCommitHead','aiRulesPathsBefore','clientSurfacePathsBefore','plannedChangePaths') | Where-Object {
+                $null -eq $prior.PSObject.Properties[$_]
+            })
+            if ($missing.Count -gt 0 -and $missing.Count -ne 4) {
+                throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: only a fully lost detail set can be reconstructed; preserve the partially missing receipt for exact reconciliation.'
+            }
+            if ($missing.Count -eq 4) {
+                if ([string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorRoot' -Default '') -eq '' -or
+                    [string](Get-ConfigValueFromObject -Object $prior -Path 'recoveryExecutorCommit' -Default '') -notmatch '^[a-f0-9]{40}$') {
+                    throw 'WORKFLOW_UPDATE_MASTER_COMMIT_RECEIPT_INVALID: missing details have no recorded executor-rebinding provenance; preserve the receipt for exact reconciliation.'
+                }
+                if ([string]$Source.root -cne [string]$prior.sourceRoot -or [string]$Source.commit -cne [string]$prior.sourceCommit) {
+                    throw 'WORKFLOW_UPDATE_SOURCE_CHANGED: retained-detail recovery cannot substitute another package source.'
+                }
+                $recoveredDetails = Get-WorkflowUpdateRetainedMasterCommitDetails -Pending ([pscustomobject]@{snapshot=$Snapshot;receipt=$prior;receiptPath=$receiptPath})
+            }
+        }
+        $beforeState = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['beforePathState']) {
+            ConvertTo-Agent1cHashtable -Object $prior.beforePathState
+        } else { Get-WorkflowUpdateSnapshotBeforeState -Snapshot $Snapshot }
+        $hasGit = Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git')
+        $preUpdateHead = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['preUpdateHead']) { [string]$prior.preUpdateHead } elseif ($hasGit) { Get-CurrentCommit } else { '' }
+        $branchRef = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['branchRef']) { [string]$prior.branchRef } elseif ($hasGit) { (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() } else { '' }
+        if ($Phase -in @('branch-commit-ready', 'master-commit-ready')) {
+            Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $Snapshot -BeforeCommit $preUpdateHead -CapturedPathState $pathState
+        }
+        if ($Phase -eq 'prepared') {
+            foreach ($relative in @($beforeState.Keys)) {
+                if ([string]$pathState[$relative] -cne [string]$beforeState[$relative]) {
+                    throw "WORKFLOW_UPDATE_PREPARE_DRIFT: '$relative' changed between the before snapshot and receipt. Preserve the project file and retry after resolving its owner."
+                }
+            }
+            $pathState = $beforeState
+            # Mark the private snapshot armed before the transaction can be
+            # created. An armed snapshot without its receipt is ambiguous: the
+            # receipt may have been removed after project copying began.
+            Write-Utf8TextAtomic -Path (Join-Path $Snapshot.root 'preparation.json') -Value (([ordered]@{
+                schemaVersion = 1
+                operation = 'update-workflow'
+                projectRoot = [string]$script:ProjectRoot
+                snapshotRoot = [string]$Snapshot.root
+                phase = 'armed'
+            } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        }
+        $receipt = [ordered]@{
             schemaVersion = 1
             operation = 'update-workflow'
-            projectRoot = [string]$script:ProjectRoot
+            phase = $Phase
+            projectRoot = [string]$Snapshot.targetRoot
             snapshotRoot = [string]$Snapshot.root
-            phase = 'armed'
-        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
-    }
-    $receipt = [ordered]@{
-        schemaVersion = 1
-        operation = 'update-workflow'
-        phase = $Phase
-        projectRoot = [string]$Snapshot.targetRoot
-        snapshotRoot = [string]$Snapshot.root
-        sourceRoot = [string]$Source.root
-        sourceCommit = [string]$Source.commit
-        sourceRepo = [string](Get-ConfigValueFromObject -Object $Source -Path 'repo' -Default (Get-StateValue -State $prior -Name 'sourceRepo' -Default ''))
-        sourceRef = [string](Get-ConfigValueFromObject -Object $Source -Path 'ref' -Default (Get-StateValue -State $prior -Name 'sourceRef' -Default ''))
-        sourceKind = [string](Get-ConfigValueFromObject -Object $Source -Path 'source' -Default (Get-StateValue -State $prior -Name 'sourceKind' -Default ''))
-        records = @($Snapshot.records | ForEach-Object {
-            [ordered]@{
-                relativePath = [string]$_.relativePath
-                existed = [bool]$_.existed
-                wasDirectory = [bool]$_.wasDirectory
-                backupName = $(if ($_.backupPath) { Split-Path -Leaf ([string]$_.backupPath) } else { '' })
+            sourceRoot = [string]$Source.root
+            sourceCommit = [string]$Source.commit
+            sourceRepo = [string](Get-ConfigValueFromObject -Object $Source -Path 'repo' -Default (Get-StateValue -State $prior -Name 'sourceRepo' -Default ''))
+            sourceRef = [string](Get-ConfigValueFromObject -Object $Source -Path 'ref' -Default (Get-StateValue -State $prior -Name 'sourceRef' -Default ''))
+            sourceKind = [string](Get-ConfigValueFromObject -Object $Source -Path 'source' -Default (Get-StateValue -State $prior -Name 'sourceKind' -Default ''))
+            records = @($Snapshot.records | ForEach-Object {
+                [ordered]@{
+                    relativePath = [string]$_.relativePath
+                    existed = [bool]$_.existed
+                    wasDirectory = [bool]$_.wasDirectory
+                    backupName = $(if ($_.backupPath) { Split-Path -Leaf ([string]$_.backupPath) } else { '' })
+                }
+            })
+            parentStates = $Snapshot.parentStates
+            beforePathState = $beforeState
+            pathState = $pathState
+            preUpdateHead = $preUpdateHead
+            branchRef = $branchRef
+            completedHead = $(if ($Phase -eq 'post-copy-complete' -and $hasGit) { Get-CurrentCommit } else { '' })
+            updatedAt = (Get-Date).ToString('o')
+        }
+        $reserved = @($receipt.Keys)
+        if ($null -ne $prior) {
+            foreach ($property in @($prior.PSObject.Properties)) {
+                if ($reserved -notcontains [string]$property.Name) { $receipt[[string]$property.Name] = $property.Value }
             }
-        })
-        parentStates = $Snapshot.parentStates
-        beforePathState = $beforeState
-        pathState = $pathState
-        preUpdateHead = $preUpdateHead
-        branchRef = $branchRef
-        completedHead = $(if ($Phase -eq 'post-copy-complete' -and $hasGit) { Get-CurrentCommit } else { '' })
-        updatedAt = (Get-Date).ToString('o')
-    }
-    $reserved = @($receipt.Keys)
-    if ($null -ne $prior) {
-        foreach ($property in @($prior.PSObject.Properties)) {
-            if ($reserved -notcontains [string]$property.Name) { $receipt[[string]$property.Name] = $property.Value }
         }
-    }
-    foreach ($name in @($recoveredDetails.Keys)) { $receipt[[string]$name] = $recoveredDetails[$name] }
-    foreach ($name in @($Details.Keys)) {
-        if ($reserved -contains [string]$name) {
-            throw "WORKFLOW_UPDATE_RECEIPT_DETAIL_CONFLICT: '$name' is a reserved receipt field."
+        foreach ($name in @($recoveredDetails.Keys)) { $receipt[[string]$name] = $recoveredDetails[$name] }
+        foreach ($name in @($Details.Keys)) {
+            if ($reserved -contains [string]$name) {
+                throw "WORKFLOW_UPDATE_RECEIPT_DETAIL_CONFLICT: '$name' is a reserved receipt field."
+            }
+            $receipt[[string]$name] = $Details[$name]
         }
-        $receipt[[string]$name] = $Details[$name]
+        Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
     }
-    Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+
 }
 
 function Get-WorkflowUpdatePendingSnapshot {
