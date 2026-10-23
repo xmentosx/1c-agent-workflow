@@ -394,15 +394,17 @@ function New-DeliveryQualityPlanForCandidate {
     if($ArtifactBinding) { [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $ArtifactBinding) }
     foreach ($journey in @($journeyPlan.journeys)) {
         $stageId = "develop.$journey"
+        $reuseDiagnostics=[Collections.Generic.List[object]]::new()
         $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
         $rulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
         $agentVariable = Get-Variable -Name AgentTarget -Scope Script -ErrorAction SilentlyContinue
-        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' }) -ArtifactBinding $ArtifactBinding
+        $inputs = Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $journey -Catalog $catalog -ProjectRoot $(if ($standVariable) { [string]$standVariable.Value } else { '' }) -AiRulesSource $(if ($rulesVariable) { [string]$rulesVariable.Value } else { '' }) -AgentTarget $(if ($agentVariable) { [string]$agentVariable.Value } else { '' }) -ArtifactBinding $ArtifactBinding -Diagnostics $reuseDiagnostics
         if ($inputs) {
             $fingerprint = [string]$inputs.fingerprint
-            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic
+            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic -Diagnostics $reuseDiagnostics
             $reusable = $null -ne $ancestor
         } else {
+            Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'COMPLETE_BINDING_UNAVAILABLE'
             $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
             $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })
             $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
@@ -410,6 +412,7 @@ function New-DeliveryQualityPlanForCandidate {
             $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
         }
         $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified applicable ancestor inputs; current static proof required"}elseif($reusable){"matching exact-tree stage evidence"}elseif(-not $inputs){"complete binding unavailable; no matching exact-tree proof"}else{"no eligible ancestor for current workload/environment and proof requirements"}) }) | Out-Null
+        $stages[$stages.Count-1] | Add-Member -NotePropertyName reuseDiagnostics -NotePropertyValue @($reuseDiagnostics.ToArray())
     }
     $orderedReleaseCapabilities = @()
     $releaseEnclosingOverhead = $null

@@ -1,12 +1,48 @@
 Set-StrictMode -Version Latest
 
+function Add-DevelopReuseDiagnostic {
+    param([AllowNull()][Collections.Generic.List[object]]$Diagnostics,[string]$Code,[string]$Commit='',
+        [string[]]$Inputs=@())
+    if($null -eq $Diagnostics -or $Diagnostics.Count -ge 8) { return }
+    $names=@($Inputs | Sort-Object -Unique)
+    $Diagnostics.Add([pscustomobject]@{code=$Code; qualifiedCommit=$Commit;
+        inputs=@($names | Select-Object -First 12); omittedInputCount=[math]::Max(0,$names.Count-12)})
+}
+
+# Explanations are advisory only: the acceptance owner still validates every
+# hash, lineage, static proof and newer failure. Never emit environment values.
+function Get-DevelopInputDifferenceNames {
+    param([object]$Recorded,[object]$Current)
+    $old=@{}; $new=@{}
+    foreach($entry in @($Recorded.inventory.inputs)) {$old[[string]$entry.path]=[string]$entry.sha256}
+    foreach($entry in @($Current.inventory.inputs)) {$new[[string]$entry.path]=[string]$entry.sha256}
+    foreach($path in @(@($old.Keys)+@($new.Keys) | Sort-Object -Unique)) {
+        if($old[$path] -cne $new[$path]) { 'source:'+ $path }
+    }
+    $before=$Recorded.inventory.external | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+    $after=$Current.inventory.external | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+    foreach($name in @(@($before.PSObject.Properties.Name)+@($after.PSObject.Properties.Name) | Sort-Object -Unique)) {
+        $a=$before.PSObject.Properties[$name]; $b=$after.PSObject.Properties[$name]
+        if(-not $a -or -not $b -or (Get-DevelopE2ECanonicalJsonSha256 $a.Value) -cne (Get-DevelopE2ECanonicalJsonSha256 $b.Value)) { 'external:'+ $name }
+    }
+    if((Get-DevelopE2ECanonicalJsonSha256 $Recorded.inventory.contract) -cne (Get-DevelopE2ECanonicalJsonSha256 $Current.inventory.contract)) {'contract'}
+}
+
 # One source projection is shared by journey selection and ancestor reuse.
-# These nodes are unreachable from fresh's init/status/new/check/export/refresh
-# actions. Everything else, including unknown functions and top-level code,
-# remains an input. Do not turn this into a lifecycle-file exclusion.
-function Get-DevelopFreshUpdateScope {
-    param([string]$Path)
+# Exclude only nodes outside the requested journey's execution path. Everything
+# else, including unknown functions and top-level code, remains an input.
+# Never turn a node exclusion into an exemption for a shared runtime file.
+function Get-DevelopJourneyExcludedScope {
+    param([string]$Path,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    if ($Journey -eq 'upgrade') {
+        if ($Path -ceq 'scripts/invoke-develop-e2e.ps1') {
+            return @{ functions=@('Set-FreshConfigurationComment','Get-BranchWorktree');
+                conditions=@('$requestedJourneys -contains "fresh"') }
+        }
+        return $null
+    }
     switch -Exact ($Path.Replace('\','/')) {
+        'scripts/develop-configuration-rejection.ps1' { return @{ whole=$true } }
         'scripts/update-installed-workflow.ps1' { return @{ whole=$true } }
         '.agents/skills/1c-workflow/references/workflow-update-recovery.md' { return @{ whole=$true } }
         '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' {
@@ -55,7 +91,9 @@ function ConvertTo-DevelopSourceTokens {
 function Get-DevelopHistoricalSourceText {
     param([string]$RepositoryRoot,[string]$Commit,[string]$Path)
     $spec="${Commit}:$Path"
-    $text=(Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('show',$spec)).stdout
+    # Explicitly end revisions: without -- Git also probes commit:path as a
+    # filesystem path, which can exceed MAX_PATH in nested registration fixtures.
+    $text=(Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('show',$spec,'--')).stdout
     # The shared Git UTF-8 StreamReader consumes a BOM. Recover it from the
     # authoritative blob byte count before comparing original source hashes.
     $size=[long](Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('cat-file','-s',$spec)).stdout.Trim()
@@ -65,22 +103,34 @@ function Get-DevelopHistoricalSourceText {
     return $text
 }
 
-function Get-DevelopFreshSourceProjection {
-    param([string]$Path,[AllowEmptyString()][string]$Text)
-    $scope=Get-DevelopFreshUpdateScope -Path $Path
+function Get-DevelopJourneySourceProjection {
+    param([string]$Path,[AllowEmptyString()][string]$Text,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if (-not $scope) { return $null }
-    if ($scope.ContainsKey('whole')) { return 'update-only-path' }
+    if ($scope.ContainsKey('whole')) { return 'outside-requested-journey' }
+    # Match the existing PowerShell transport hash contract, including CRLF
+    # inside multiline token text. Keep BOM and every other source character.
+    $Text=$Text.Replace("`r`n","`n")
     $hasBom=$Text.StartsWith([string][char]0xFEFF,[StringComparison]::Ordinal)
     if($hasBom) { $Text=$Text.Substring(1) }
     $tokens=$null; $errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseInput($Text,[ref]$tokens,[ref]$errors)
     if (@($errors).Count) { throw 'DEVELOP_SOURCE_PROJECTION_PARSE_ERROR' }
-    $updateFunctions=(Get-DevelopFreshUpdateScope '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').functions
+    $updateFunctions=if($Journey -eq 'upgrade'){@($scope.functions)}else{(Get-DevelopJourneyExcludedScope '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').functions}
     foreach($command in @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst]},$true))) {
         if($command.GetCommandName() -notin $updateFunctions) { continue }
         $parent=$command.Parent
         while($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $parent=$parent.Parent }
         if($parent -and $scope.ContainsKey('functions') -and $parent.Name -in $scope.functions) { continue }
+        if ($Journey -eq 'upgrade') {
+            $parent=$command.Parent; $inFresh=$false
+            while($parent) {
+                if($parent -is [Management.Automation.Language.IfStatementAst] -and $parent.Clauses.Count -eq 1 -and -not $parent.ElseClause -and
+                    (ConvertTo-DevelopSourceTokens $parent.Clauses[0].Item1.Extent.Text) -ceq (ConvertTo-DevelopSourceTokens $scope.conditions[0])) { $inFresh=$true; break }
+                $parent=$parent.Parent
+            }
+            if($inFresh) { continue }
+        }
         $inUpdateDispatch=$false
         if($Path -ceq '.agents/skills/1c-workflow/scripts/agent-1c.ps1') {
             foreach($dispatch in @($ast.FindAll({param($n) $n -is [Management.Automation.Language.SwitchStatementAst] -and $n.Condition.Extent.Text -ceq '$Action'},$true))) {
@@ -128,7 +178,9 @@ function Get-DevelopFreshSourceProjection {
     }
     $builder=[Text.StringBuilder]::new($Text)
     $last=$Text.Length
-    foreach($span in @($spans | Sort-Object start -Descending)) {
+    # Windows PowerShell 5.1 does not reliably resolve a named sort property
+    # on Hashtable items; compare numeric offsets explicitly.
+    foreach($span in @($spans | Sort-Object { [int]$_.start } -Descending)) {
         if($span.end -gt $last) { throw 'DEVELOP_SOURCE_PROJECTION_OVERLAP' }
         [void]$builder.Remove($span.start,$span.end-$span.start)
         [void]$builder.Insert($span.start,$span.text)
@@ -137,18 +189,21 @@ function Get-DevelopFreshSourceProjection {
     return ([string]$hasBom)+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
 }
 
-function Test-DevelopFreshUpdateOnlyPath {
-    param([string]$RepositoryRoot,[string]$Path,[string]$BaseRef)
-    $scope=Get-DevelopFreshUpdateScope -Path $Path
+function Test-DevelopJourneyUnaffectedPath {
+    param([string]$RepositoryRoot,[string]$Path,[string]$BaseRef,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if(-not $scope) { return $false }
     if($scope.ContainsKey('whole')) { return $true }
     if(-not $BaseRef) { return $false }
     try {
         $before=Get-DevelopHistoricalSourceText -RepositoryRoot $RepositoryRoot -Commit $BaseRef -Path $Path
         $after=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $Path)))
-        return (Get-DevelopFreshSourceProjection -Path $Path -Text $before) -ceq
-            (Get-DevelopFreshSourceProjection -Path $Path -Text $after)
-    } catch { return $false }
+        return (Get-DevelopJourneySourceProjection -Path $Path -Text $before -Journey $Journey) -ceq
+            (Get-DevelopJourneySourceProjection -Path $Path -Text $after -Journey $Journey)
+    } catch {
+        Write-Verbose "DEVELOP_JOURNEY_SOURCE_UNAVAILABLE ($Journey, $Path): $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Test-DevelopE2EEquivalentInput {
@@ -163,6 +218,11 @@ function Test-DevelopE2EEquivalentInput {
             $value=$input.inventory.contract | ConvertTo-Json -Depth 24 | ConvertFrom-Json
             # A deadline is still pinned by the immutable plan, not by workload.
             $value.PSObject.Properties.Remove('hardSeconds')
+            # Adding an isolated static regression to an owner's path catalog
+            # cannot change the native journey workload. Other paths/fields bind.
+            foreach($owner in @($value.contracts)) {
+                $owner.paths=@($owner.paths | Where-Object {$_ -notlike 'tests/pester/*.Tests.ps1'})
+            }
             Get-DevelopE2ECanonicalJsonSha256 $value
         })
         if($contracts[0] -cne $contracts[1]) { return $false }
@@ -188,9 +248,8 @@ function Test-DevelopE2EEquivalentInput {
         foreach($entry in @($Current.inventory.inputs)) { if($new.ContainsKey($entry.path)){return $false}; $new[$entry.path]=$entry.sha256 }
         if((@($old.Keys | Sort-Object) -join "`n") -cne (@($new.Keys | Sort-Object) -join "`n")) { return $false }
         $changed=@($old.Keys | Where-Object {$old[$_] -cne $new[$_]})
-        if($changed.Count -and $Current.inventory.journey -cne 'fresh') { return $false }
         # Reject unrelated runtime drift before expensive historical AST reads.
-        foreach($path in $changed) { if(-not (Get-DevelopFreshUpdateScope $path)) { return $false } }
+        foreach($path in $changed) { if(-not (Get-DevelopJourneyExcludedScope -Path $path -Journey $Current.inventory.journey)) { return $false } }
         foreach($path in $changed) {
             $before=Get-DevelopHistoricalSourceText -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit -Path $path
             $afterPath=Join-Path $RepositoryRoot $path
@@ -212,7 +271,7 @@ function Test-DevelopE2EEquivalentInput {
                 try { $beforeHash=([BitConverter]::ToString($sha.ComputeHash($checkoutBytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
             }
             if($beforeHash -cne $old[$path] -or (Get-DevelopE2EInputFileSha256 -Path $afterPath -RelativePath $path) -cne $new[$path]) { return $false }
-            if((Get-DevelopFreshSourceProjection -Path $path -Text $before) -cne (Get-DevelopFreshSourceProjection -Path $path -Text $after)) { return $false }
+            if((Get-DevelopJourneySourceProjection -Path $path -Text $before -Journey $Current.inventory.journey) -cne (Get-DevelopJourneySourceProjection -Path $path -Text $after -Journey $Current.inventory.journey)) { return $false }
         }
         return $true
     } catch { return $false }

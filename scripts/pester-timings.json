@@ -55,6 +55,7 @@
     "ReleaseReadiness.Tests.ps1": 105.0,
     "SourceDeliveryComponentPublication.Tests.ps1": 201.0,
     "SourceDeliveryPlan.Tests.ps1": 91.0,
+    "SourceDeliveryIncremental.Tests.ps1": 55.0,
     "SourceDeliveryProcessLifetime.Tests.ps1": 7.0,
     "SourceDeliveryResourceLedger.Tests.ps1": 192.0,
     "SourceDeliveryRunIndex.Tests.ps1": 45.0,

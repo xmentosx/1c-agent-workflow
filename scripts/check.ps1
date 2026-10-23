@@ -225,8 +225,10 @@ function Ensure-DevelopE2ERoute {
         return $routePath
     }
 
-    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
-    $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity -StaticProof $script:developCurrentStaticProof -AllowPendingStatic:$DeferForStatic
+    $reuseDiagnostics=[Collections.Generic.List[object]]::new()
+    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -Diagnostics $reuseDiagnostics
+    if(-not $inputIdentity) { Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'COMPLETE_BINDING_UNAVAILABLE' }
+    $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity -StaticProof $script:developCurrentStaticProof -AllowPendingStatic:$DeferForStatic -Diagnostics $reuseDiagnostics
     if ($ancestor -and [string]$ancestor.continuation.proofKind -eq 'pending-current-static') {
         Write-Host "Develop E2E ${Journey}: matching SHA-verified journey inputs; waiting for the current candidate's complete static proof."
         return $null
@@ -241,6 +243,12 @@ function Ensure-DevelopE2ERoute {
         return $routePath
     }
 
+    if($reuseDiagnostics.Count) {
+        $Reason += '; reuse rejected: ' + (@($reuseDiagnostics | ForEach-Object {
+            $_.code + $(if($_.inputs.Count){' ['+($_.inputs -join ', ')+']'})
+        }) -join '; ')
+        Write-Host "Develop E2E ${Journey}: $Reason"
+    }
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
         $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding

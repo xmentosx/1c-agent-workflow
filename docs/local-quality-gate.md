@@ -352,19 +352,49 @@ reuse: изменения только явно перечисленных updat
 маршрут. Update/recovery по-прежнему выбирает `upgrade`; специальные recovery
 сценарии проверяются своими регрессиями, а не подменяются обычным happy path.
 
+Изолированные `tests/pester/*.Tests.ps1` выбирают свои static-проверки, включая
+тесты, явно перечисленные в runtime-контрактах. Они не выбирают live E2E;
+в смешанном diff маршрутизация сохраняется для изменённого runtime. Добавление
+такого test path в существующий контракт не инвалидирует native receipt.
+В `invoke-develop-e2e.ps1` изменения только `Get-BranchWorktree`,
+`Set-FreshConfigurationComment` и закрытого блока `fresh` не выбирают `upgrade`.
+Общие вызовы этих функций, неизвестный код, else/elseif и ошибки разбора
+сохраняют консервативный маршрут. `develop-configuration-rejection.ps1`
+относится только к `upgrade`; негативный и позитивный стенды внутри этого
+journey остаются обязательными и проверяют разные условия.
+
 Исходные E2E receipts не переписываются при уточнении отбора. Старый schema-2
 proof допускает continuation только после проверки его исходного SHA, Git blob
 bytes, неизменной применимой части исходников, полного окружения и артефактов,
 source lineage и текущего Targeted/static proof. Identity положительного стенда
 также проверяется; более поздний применимый сбой запрещает старый успех.
 Изменение одного hard timeout меняет immutable plan, но не workload acceptance.
+AST-проекция применяет тот же LF/CRLF-контракт PowerShell, что и input hash,
+включая многострочные токены. BOM, значимые разделители команд, native artifacts
+и 1С transport не нормализуются этим уточнением.
+Исторический `commit:path` читается с явным завершением revision-аргументов
+Git (`--`): проверка одноимённого filesystem path в глубоком checkout не должна
+превращать unchanged input в ложный cache miss.
 
 Planner получает тот же SHA-проверяемый artifact binding, что checker. Его поиск
 выполняется только в явных overrides и известных локальных cache paths; Plan
 не скачивает артефакты и не собирает EXE. При недоступном binding reuse остаётся
 неподтверждённым до обычного readiness, который готовит и проверяет артефакты.
+Каждый выбранный native stage содержит advisory `reuseDiagnostics`: причина
+отклонения старого proof, его commit и изменившиеся source paths/external keys.
+Значения окружения не выводятся; список ограничен восемью receipts и двенадцатью
+именами на receipt с явным числом опущенных имён. Checker записывает эти причины
+в reason этапа перед дорогим запуском. Отсутствие binding, повреждение SHA,
+изменение входов, неподтверждённая lineage/static и более поздний применимый сбой
+различаются. Диагностика не участвует в immutable plan identity и не разрешает reuse.
 
 `executedBudgetSeconds` — сумма предельных таймаутов, а не прогноз.
+Сквозная матрица `SourceDeliveryIncremental.Tests.ps1` имеет отдельный Pester
+shard. Её зависимости от actual lifecycle/journey sources не сбрасывают proof
+остальных тестов `SourceDeliveryPlan.Tests.ps1`; это проверяется реальным
+расчётом shard digest в регрессии каталога. Общие fixtures принадлежат одному
+`SourceDeliveryPlan.TestSupport.ps1`, без нового runner или gate.
+
 `timeEstimate` отдельно показывает advisory median последних пяти успешных
 наблюдений этапа, число samples и неизвестные этапы. Для static используется
 объединение временных интервалов его проверок: параллельные Pester/compatibility

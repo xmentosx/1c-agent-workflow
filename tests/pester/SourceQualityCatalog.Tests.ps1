@@ -280,7 +280,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1",
-            "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
@@ -323,6 +323,9 @@ Describe 'Source quality catalog contracts' {
         [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 183
         [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 145
         [double]$trackedTimings.files.'SourceQualityCatalog.Tests.ps1' | Should -Be 153
+        # 2026-10-23 native PS5: seven incremental cases completed in 49.50s.
+        # Add five seconds and round up for ordering, without changing deadlines.
+        [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 55
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
         # Individual case sums plus 5 seconds per file for setup, rounded up.
@@ -364,7 +367,7 @@ Describe 'Source quality catalog contracts' {
         # Keep the historical measured comparison intact. Current selection
         # additionally owns aggregate-input and candidate-registration regressions.
         $currentParallel = @($observedSeconds.GetEnumerator() | Where-Object Key -notin @('ReleaseGate.Tests.ps1','SourceDeliveryQueue.Tests.ps1','SourceDeliveryPlan.Tests.ps1') | ForEach-Object { [double]$_.Value })
-        $currentParallel += @('SourceDeliveryQueue.Tests.ps1','SourceDeliveryAuthority.Tests.ps1','SourceDeliveryOperationRecovery.Tests.ps1','SourceDeliveryPlan.Tests.ps1','FullInputProof.Tests.ps1','SourceDeliveryCandidateRegistration.Tests.ps1','SourceDeliveryFrozenPublication.Tests.ps1','SourceDeliveryFrozenPlan.Tests.ps1','SourceDeliveryLegacyPlan.Tests.ps1','SourceDeliveryPublicationCleanup.Tests.ps1','SourceDeliveryCandidateIntegrity.Tests.ps1','SourceDeliveryFinalizerIntegrity.Tests.ps1','SourceDeliveryControllerRollback.Tests.ps1','SourceDeliveryEvidenceRepair.Tests.ps1','SourceDeliveryHistoricalTransition.Tests.ps1','SourceDeliveryReleaseEvidenceRepair.Tests.ps1','SourceDeliveryRemoteMovement.Tests.ps1','SourceDeliveryReplan.Tests.ps1','RepositoryGitTransport.Tests.ps1') | ForEach-Object { [double]$trackedTimings.files.$_ }
+        $currentParallel += @('SourceDeliveryQueue.Tests.ps1','SourceDeliveryAuthority.Tests.ps1','SourceDeliveryOperationRecovery.Tests.ps1','SourceDeliveryPlan.Tests.ps1','SourceDeliveryIncremental.Tests.ps1','FullInputProof.Tests.ps1','SourceDeliveryCandidateRegistration.Tests.ps1','SourceDeliveryFrozenPublication.Tests.ps1','SourceDeliveryFrozenPlan.Tests.ps1','SourceDeliveryLegacyPlan.Tests.ps1','SourceDeliveryPublicationCleanup.Tests.ps1','SourceDeliveryCandidateIntegrity.Tests.ps1','SourceDeliveryFinalizerIntegrity.Tests.ps1','SourceDeliveryControllerRollback.Tests.ps1','SourceDeliveryEvidenceRepair.Tests.ps1','SourceDeliveryHistoricalTransition.Tests.ps1','SourceDeliveryReleaseEvidenceRepair.Tests.ps1','SourceDeliveryRemoteMovement.Tests.ps1','SourceDeliveryReplan.Tests.ps1','RepositoryGitTransport.Tests.ps1') | ForEach-Object { [double]$trackedTimings.files.$_ }
         $currentFour = & $estimate $currentParallel $serial 4 ($overhead + [double]$trackedTimings.files.'SourceDeliveryAdmission.Tests.ps1')
         ([double]$catalog.budgets.targetedHardSeconds - $currentFour) | Should -BeGreaterThan 200
     }
@@ -901,9 +904,9 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $consumers=@('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
                 'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
                 'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryIncremental')
             $catalogIndependent=@('DevelopStaticQualificationCache','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryIncremental')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
@@ -971,6 +974,12 @@ Describe 'Catalog selection and qualified consumer inputs' {
                 $plannerDigest=$plannerChanged
             }
             @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('scripts/check.ps1') | Select-Object -ExpandProperty tests) | Should -Contain 'tests/pester/SourceDeliveryPlan.Tests.ps1'
+            $incrementalPath=Join-Path $RepositoryRoot 'tests/pester/SourceDeliveryIncremental.Tests.ps1'
+            $incrementalDigest=Get-ShardInputDigest -Paths @($incrementalPath)
+            $plannerDigest=Get-ShardInputDigest -Paths @($plannerPath)
+            [IO.File]::AppendAllText((Join-Path $RepositoryRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'),"`n# changed actual journey source",[Text.UTF8Encoding]::new($false))
+            Get-ShardInputDigest -Paths @($incrementalPath) | Should -Not -Be $incrementalDigest -Because 'the incremental suite consumes the actual lifecycle source'
+            Get-ShardInputDigest -Paths @($plannerPath) | Should -BeExactly $plannerDigest -Because 'the remaining planner suite does not consume lifecycle source'
             [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'scripts/test-release-readiness.ps1'),"`n# changed readiness owner",[Text.UTF8Encoding]::new($false))
             Get-ShardInputDigest -Paths @($readinessPath) | Should -Not -Be $readinessDigest
             $developPath=Join-Path $RepositoryRoot 'tests/pester/DevelopE2EQualification.Tests.ps1'
