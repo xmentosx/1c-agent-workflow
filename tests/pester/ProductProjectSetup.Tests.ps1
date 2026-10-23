@@ -495,3 +495,27 @@
         Should -Invoke New-ItlProductProjectPreview -Times 1 -Exactly
     }
 }
+
+Describe 'Catalog lazy import uses only visible functions' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1')
+    }
+    It 'loads missing catalog functions without command or module discovery and keeps them on repeated import' -Tag G3CatalogImport {
+        $names=@('Resolve-ItlProductContext','Save-ItlCatalogRecord','Invoke-ItlProductProjectClientApply','Read-ItlProductProjectSnapshot','Invoke-ItlProductProjectCommand')
+        foreach($name in $names){Remove-Item -LiteralPath ('Function:\'+$name) -ErrorAction SilentlyContinue}
+        # A missing function queried through Get-Command scans PATH and modules.
+        # This assertion tests the lookup contract, not a machine-specific time.
+        Mock Get-Command {throw 'Unexpected command discovery in catalog lazy import'}
+        . Import-ItlProductProject
+        foreach($name in $names[0..3]){Test-Path -LiteralPath ('Function:\'+$name)|Should -BeTrue}
+        Test-Path -LiteralPath 'Function:\Invoke-ItlProductProjectCommand'|Should -BeFalse
+        . Import-ItlProductProjectSetup
+        Test-Path -LiteralPath 'Function:\Invoke-ItlProductProjectCommand'|Should -BeTrue
+        $before=@{};foreach($name in $names){$before[$name]=(Get-Item -LiteralPath ('Function:\'+$name)).ScriptBlock}
+        . Import-ItlProductProjectSetup
+        foreach($name in $names){[object]::ReferenceEquals($before[$name],(Get-Item -LiteralPath ('Function:\'+$name)).ScriptBlock)|Should -BeTrue}
+        Should -Invoke Get-Command -Times 0 -Exactly
+    }
+}

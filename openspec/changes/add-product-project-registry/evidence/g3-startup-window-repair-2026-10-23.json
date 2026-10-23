@@ -1,0 +1,848 @@
+{
+  "date": "2026-10-23",
+  "finding": {
+    "id": "G3-PM5-STARTUP-WINDOW-COST",
+    "status": "closed-in-current-PM5-subset",
+    "acceptance": {
+      "medianTargetMs": 1000,
+      "p95TargetMs": 2000,
+      "fullWindowMet": true,
+      "runtimeBarrier": false,
+      "subtractedInstrumentationMs": 0
+    }
+  },
+  "sourceBase": "6346ba79c3fa5296ae24eb5aebe7d3ef34b23e85",
+  "implementation": {
+    "runtimeSha": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+    "runtimePath": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+    "sourceRoot": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow",
+    "commit": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+    "beforeRuntimeSha": "66841d17ffbb70c5fddbc905522d2970bbb1f6801e9c61259242dd1ff3fa29b3"
+  },
+  "identity": {
+    "normalCatalog": {
+      "cache": "C:\\itlj\\g3-pm5-current-20261022\\mcp-home\\registry",
+      "priorFixtureHead": "587ec7cf3fb0061b63d8fcbdc96f8d33c067358f",
+      "originHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "unchanged": true,
+      "priorFixtureOrigin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\active-cancel-20261023\\origin.git",
+      "cacheHead": "c29e72af12049b8227ac836e26f283220c2ab5b3",
+      "origin": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\owned-mcp-defer-repair-20261022\\origin.git"
+    },
+    "bothInstalledRuntimeEqual": true,
+    "rootIdentityUnchanged": true,
+    "loaderSha": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+    "roots": [
+      {
+        "descriptorSha": "76fc38ecbef46af1bb32ab34714b4c73ea941f2809b7099763f8b71401d7332e",
+        "workflow": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "749ac670ab2d7b282b0512b6c005d79b512d79ff31c5f16dd31e17bb64d18958",
+        "bindingPresent": true,
+        "head": "baea203b8ed0294170f3cde76895ed1f6c808bc6"
+      },
+      {
+        "descriptorSha": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "workflow": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "untracked": [],
+        "dirty": [],
+        "lockSha": "8894b542bfc78a9f147a9c4b610a74baf99778e1f4362d473c7a048a66b03068",
+        "bindingPresent": false,
+        "head": "d0053b937db9852a95717262759dfeed2738e31b"
+      }
+    ],
+    "implementationCommit": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+    "runtimeSha": "c204c13a55f2bd504c6ae3c2e70087e46305179fab1c6f015bf3b84daea93da4",
+    "publicProcessesGone": true,
+    "sourceHead": "44ce6ebad18b635c582ca26e96d6e9d4ce96c081",
+    "observedUtc": "2026-10-23T11:31:24.1596893Z",
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "matchesPriorQualifiedSha": true,
+      "bytes": 3295928320
+    }
+  },
+  "installedUpdate": {
+    "exitCode": 0,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\candidate-update-logs\\update-workflow-2e91447da8a04bf9a2463f0498e5e5d1.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\candidate-update-logs\\update-workflow-2e91447da8a04bf9a2463f0498e5e5d1.stderr.log",
+    "durationMs": 385171
+  },
+  "host": {
+    "powershell": "5.1.26100.9711",
+    "elevated": false,
+    "source": "read-only native host probe after timing series",
+    "os": "10.0.26300.0",
+    "cpuIsolation": "shared host; no exclusive CPU reservation"
+  },
+  "cause": {
+    "owner": "Import-ItlProductProject / Import-ItlProductProjectSetup",
+    "confirmed": "Missing Get-Command Function lookups perform PATH/module discovery before owned dot-sourcing; native CommandDiscovery trace plus three fresh-process samples in each of six modes.",
+    "fix": "Function provider presence lookup, keeping lazy load, visible scope, UI separation and idempotence. No cache or runtime observer added.",
+    "calibration": [
+      {
+        "guard": "original",
+        "observer": "none",
+        "total": {
+          "n": 3,
+          "medianMs": 893.6938,
+          "p95Ms": 972.4597,
+          "minMs": 885.3767,
+          "maxMs": 972.4597
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 854.1377000000001,
+          "p95Ms": 892.3304,
+          "minMs": 808.4688,
+          "maxMs": 892.3304
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 72.3973,
+          "p95Ms": 75.2219,
+          "minMs": 35.1711,
+          "maxMs": 75.2219
+        }
+      },
+      {
+        "guard": "original",
+        "observer": "boundary",
+        "total": {
+          "n": 3,
+          "medianMs": 887.706,
+          "p95Ms": 904.2325000000001,
+          "minMs": 865.4042000000001,
+          "maxMs": 904.2325000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 846.8416000000001,
+          "p95Ms": 863.1323000000001,
+          "minMs": 824.9328,
+          "maxMs": 863.1323000000001
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 36.059000000000005,
+          "p95Ms": 36.234700000000004,
+          "minMs": 36.0471,
+          "maxMs": 36.234700000000004
+        }
+      },
+      {
+        "guard": "original",
+        "observer": "full",
+        "total": {
+          "n": 3,
+          "medianMs": 892.767,
+          "p95Ms": 946.8267000000001,
+          "minMs": 866.3643000000001,
+          "maxMs": 946.8267000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 842.4478,
+          "p95Ms": 897.2065,
+          "minMs": 824.2624000000001,
+          "maxMs": 897.2065
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 44.9176,
+          "p95Ms": 45.1755,
+          "minMs": 37.6039,
+          "maxMs": 45.1755
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "none",
+        "total": {
+          "n": 3,
+          "medianMs": 75.4332,
+          "p95Ms": 77.21770000000001,
+          "minMs": 71.491,
+          "maxMs": 77.21770000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.0382000000000002,
+          "p95Ms": 3.55,
+          "minMs": 3.0111000000000003,
+          "maxMs": 3.55
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 67.8421,
+          "p95Ms": 69.0142,
+          "minMs": 63.93840000000001,
+          "maxMs": 69.0142
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "boundary",
+        "total": {
+          "n": 3,
+          "medianMs": 71.4514,
+          "p95Ms": 75.8125,
+          "minMs": 70.4491,
+          "maxMs": 75.8125
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.1805,
+          "p95Ms": 3.2608,
+          "minMs": 3.1444,
+          "maxMs": 3.2608
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 63.875,
+          "p95Ms": 67.90390000000001,
+          "minMs": 62.9444,
+          "maxMs": 67.90390000000001
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "full",
+        "total": {
+          "n": 3,
+          "medianMs": 81.29560000000001,
+          "p95Ms": 89.31830000000001,
+          "minMs": 78.2382,
+          "maxMs": 89.31830000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.1556,
+          "p95Ms": 3.6486,
+          "minMs": 3.1536,
+          "maxMs": 3.6486
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 73.5597,
+          "p95Ms": 80.49390000000001,
+          "minMs": 70.507,
+          "maxMs": 80.49390000000001
+        }
+      }
+    ],
+    "calibrationLimit": "module-only phase diagnostic; registered breakpoints have no matching callback hits here; not public Startup acceptance"
+  },
+  "startup": {
+    "passed": true,
+    "calibration": [
+      {
+        "guard": "original",
+        "observer": "none",
+        "total": {
+          "n": 3,
+          "medianMs": 893.6938,
+          "p95Ms": 972.4597,
+          "minMs": 885.3767,
+          "maxMs": 972.4597
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 854.1377000000001,
+          "p95Ms": 892.3304,
+          "minMs": 808.4688,
+          "maxMs": 892.3304
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 72.3973,
+          "p95Ms": 75.2219,
+          "minMs": 35.1711,
+          "maxMs": 75.2219
+        }
+      },
+      {
+        "guard": "original",
+        "observer": "boundary",
+        "total": {
+          "n": 3,
+          "medianMs": 887.706,
+          "p95Ms": 904.2325000000001,
+          "minMs": 865.4042000000001,
+          "maxMs": 904.2325000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 846.8416000000001,
+          "p95Ms": 863.1323000000001,
+          "minMs": 824.9328,
+          "maxMs": 863.1323000000001
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 36.059000000000005,
+          "p95Ms": 36.234700000000004,
+          "minMs": 36.0471,
+          "maxMs": 36.234700000000004
+        }
+      },
+      {
+        "guard": "original",
+        "observer": "full",
+        "total": {
+          "n": 3,
+          "medianMs": 892.767,
+          "p95Ms": 946.8267000000001,
+          "minMs": 866.3643000000001,
+          "maxMs": 946.8267000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 842.4478,
+          "p95Ms": 897.2065,
+          "minMs": 824.2624000000001,
+          "maxMs": 897.2065
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 44.9176,
+          "p95Ms": 45.1755,
+          "minMs": 37.6039,
+          "maxMs": 45.1755
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "none",
+        "total": {
+          "n": 3,
+          "medianMs": 75.4332,
+          "p95Ms": 77.21770000000001,
+          "minMs": 71.491,
+          "maxMs": 77.21770000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.0382000000000002,
+          "p95Ms": 3.55,
+          "minMs": 3.0111000000000003,
+          "maxMs": 3.55
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 67.8421,
+          "p95Ms": 69.0142,
+          "minMs": 63.93840000000001,
+          "maxMs": 69.0142
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "boundary",
+        "total": {
+          "n": 3,
+          "medianMs": 71.4514,
+          "p95Ms": 75.8125,
+          "minMs": 70.4491,
+          "maxMs": 75.8125
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.1805,
+          "p95Ms": 3.2608,
+          "minMs": 3.1444,
+          "maxMs": 3.2608
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 63.875,
+          "p95Ms": 67.90390000000001,
+          "minMs": 62.9444,
+          "maxMs": 67.90390000000001
+        }
+      },
+      {
+        "guard": "provider",
+        "observer": "full",
+        "total": {
+          "n": 3,
+          "medianMs": 81.29560000000001,
+          "p95Ms": 89.31830000000001,
+          "minMs": 78.2382,
+          "maxMs": 89.31830000000001
+        },
+        "guards": {
+          "n": 3,
+          "medianMs": 3.1556,
+          "p95Ms": 3.6486,
+          "minMs": 3.1536,
+          "maxMs": 3.6486
+        },
+        "loads": {
+          "n": 3,
+          "medianMs": 73.5597,
+          "p95Ms": 80.49390000000001,
+          "minMs": 70.507,
+          "maxMs": 80.49390000000001
+        }
+      }
+    ],
+    "warm": {
+      "full": {
+        "wholeCli": {
+          "n": 20,
+          "medianMs": 4764.5,
+          "p95Ms": 5583,
+          "minMs": 4472,
+          "maxMs": 5881
+        },
+        "window": {
+          "n": 20,
+          "medianMs": 932.0738,
+          "p95Ms": 1238.2177000000001,
+          "minMs": 827.1728,
+          "maxMs": 1341.5088
+        },
+        "initialize": {
+          "n": 20,
+          "medianMs": 895.55105,
+          "p95Ms": 1200.4504,
+          "minMs": 787.4256,
+          "maxMs": 1296.3166
+        },
+        "preInitialize": {
+          "n": 20,
+          "medianMs": 37.694700000000125,
+          "p95Ms": 45.19219999999996,
+          "minMs": 33.91899999999998,
+          "maxMs": 49.04970000000003
+        },
+        "cpuPowerShell": {
+          "n": 20,
+          "medianMs": 726.5625,
+          "p95Ms": 906.25,
+          "minMs": 640.625,
+          "maxMs": 984.375
+        },
+        "peakPowerShellBytes": 303415296
+      },
+      "boundary": {
+        "wholeCli": {
+          "n": 20,
+          "medianMs": 4750.0,
+          "p95Ms": 5679,
+          "minMs": 4250,
+          "maxMs": 6040
+        },
+        "window": {
+          "n": 20,
+          "medianMs": 997.5939000000001,
+          "p95Ms": 1309.5132,
+          "minMs": 743.3385000000001,
+          "maxMs": 1322.068
+        },
+        "initialize": {
+          "n": 20,
+          "medianMs": 959.6905,
+          "p95Ms": 1269.2869,
+          "minMs": 702.1260000000001,
+          "maxMs": 1279.2723
+        },
+        "preInitialize": {
+          "n": 20,
+          "medianMs": 40.542700000000025,
+          "p95Ms": 48.17529999999999,
+          "minMs": 34.06920000000002,
+          "maxMs": 48.36659999999995
+        },
+        "cpuPowerShell": {
+          "n": 20,
+          "medianMs": 710.9375,
+          "p95Ms": 890.625,
+          "minMs": 625,
+          "maxMs": 906.25
+        },
+        "peakPowerShellBytes": 303300608
+      },
+      "off": {
+        "wholeCli": {
+          "n": 20,
+          "medianMs": 4691.5,
+          "p95Ms": 5171,
+          "minMs": 4324,
+          "maxMs": 5228
+        }
+      }
+    },
+    "protectedNoOpChecks": 60,
+    "fullMinusBoundaryWindow": {
+      "n": 20,
+      "medianMs": -10.400700000000029,
+      "p95Ms": 312.03880000000004,
+      "minMs": -472.29100000000005,
+      "maxMs": 374.25440000000003
+    },
+    "wholeCliFullMinusOff": {
+      "n": 20,
+      "medianMs": 155.0,
+      "p95Ms": 1231,
+      "minMs": -492,
+      "maxMs": 1259
+    },
+    "wholeCliBoundaryMinusOff": {
+      "n": 20,
+      "medianMs": 53.0,
+      "p95Ms": 835,
+      "minMs": -642,
+      "maxMs": 1566
+    },
+    "engineeringGoal": {
+      "medianTargetMs": 1000,
+      "p95TargetMs": 2000,
+      "fullWindowMet": true,
+      "runtimeBarrier": false,
+      "subtractedInstrumentationMs": 0
+    },
+    "previousSameStand": {
+      "window": {
+        "n": 20,
+        "medianMs": 2044.6278000000002,
+        "p95Ms": 2570.0083,
+        "minMs": 1656.5289,
+        "maxMs": 3408.5171
+      },
+      "preInitialize": {
+        "n": 20,
+        "medianMs": 1033.82505,
+        "p95Ms": 1423.609,
+        "minMs": 938.5489000000002,
+        "maxMs": 1505.8915
+      },
+      "wholeCliOff": {
+        "n": 20,
+        "medianMs": 5596.0,
+        "p95Ms": 6961,
+        "minMs": 4819,
+        "maxMs": 7607
+      },
+      "comparison": "historical same-day same-root package observation, not alternating source-version A/B or legacy feature baseline"
+    },
+    "scenarios": [
+      {
+        "durationMs": 6782,
+        "stderrBytes": 0,
+        "stdoutBytes": 1562,
+        "profile": "on",
+        "observer": "full",
+        "name": "startup-publisher-only",
+        "exitCode": 0,
+        "git": {
+          "fetch": 1,
+          "merge": 1,
+          "rev-parse": 1
+        },
+        "client": "kilocode",
+        "changedClientFiles": 0,
+        "startupWindowMs": 4467.394200000001,
+        "mainRevision": "72fedf0f91c169682904c14fb5ce1ae411aa4270",
+        "startupPowerShellHttpCalls": 0,
+        "offlineWarningObserved": false
+      },
+      {
+        "durationMs": 9217,
+        "stderrBytes": 0,
+        "stdoutBytes": 1630,
+        "profile": "on",
+        "observer": "full",
+        "name": "startup-changed",
+        "exitCode": 0,
+        "git": {
+          "fetch": 1,
+          "merge": 1,
+          "rev-parse": 1
+        },
+        "client": "kilocode",
+        "changedClientFiles": 2,
+        "startupWindowMs": 6512.9529,
+        "mainRevision": "180dba8db04e5b336903453b921f5b99559e52dc",
+        "startupPowerShellHttpCalls": 0,
+        "offlineWarningObserved": false
+      },
+      {
+        "durationMs": 7009,
+        "stderrBytes": 0,
+        "stdoutBytes": 1189,
+        "profile": "on",
+        "observer": "full",
+        "name": "startup-offline",
+        "exitCode": 0,
+        "git": {
+          "fetch": 1,
+          "rev-parse": 1
+        },
+        "client": "kilocode",
+        "changedClientFiles": 0,
+        "startupWindowMs": 3479.4406000000004,
+        "mainRevision": "180dba8db04e5b336903453b921f5b99559e52dc",
+        "startupPowerShellHttpCalls": 0,
+        "offlineWarningObserved": true
+      }
+    ],
+    "context": {
+      "stdoutUtf8Bytes": 2157,
+      "bytesDiv4TokenProxy": 540,
+      "actualTokens": "unknown",
+      "billing": "unknown"
+    },
+    "measurementLimits": [
+      "shared Windows host; no exclusive CPU",
+      "boundary observer still uses three command breakpoints, not zero-overhead timing",
+      "module-only calibration is not public Startup acceptance",
+      "paired observer deltas include host/process noise; no inferred debugger overhead subtracted",
+      "Git counts cover the existing owner only; no exhaustive native network or child CPU/RAM trace",
+      "no legacy/no-registry incremental feature baseline"
+    ]
+  },
+  "publicCalls": 66,
+  "measurement": {
+    "original": "20 alternating full-profiler/on versus off pairs; same root, command, two clients and complete Startup boundary, plus original publisher-only/change/offline",
+    "additional": "20 interleaved boundary-only observer calls (three breakpoints), not a replacement for full-profiler acceptance",
+    "window": "first Import-ItlProductProject entry through Sync-ItlClientMcpConfig entry; lazy import, disposition, initialize and pre-main config read included",
+    "seriesRuns": 1,
+    "quantiles": "median and nearest-rank p95",
+    "subtractedInstrumentationMs": 0,
+    "featureCounterfactual": "legacy/no-registry not measured",
+    "warmNoOpChecks": 60,
+    "alwaysOnAddedBytes": 0,
+    "clientLlmTurns": 0,
+    "directClientMcpTools": 0,
+    "cogneeCalls": 0,
+    "databaseLaunches": 0
+  },
+  "tests": {
+    "red": "1 expected failure on old import",
+    "green": "1 passed on fix",
+    "unfilteredOwners": "123 passed, 0 failed/skipped",
+    "sourceRegistration": "separate source-delivery ledger owns Targeted and queue outcome; not full G3 acceptance"
+  },
+  "preservation": {
+    "protectedFiles": 21,
+    "oldRoots": 4,
+    "gate6Artifacts": 7,
+    "capsuleArtifacts": 11,
+    "previousUniqueRawFiles": 1151,
+    "strictBeforeAfter": "passed",
+    "currentDbUnchanged": true,
+    "clientBytes": {
+      "passed": true,
+      "historicalStrictByteAssertion": "Historical byte-order observation retained in the prior report; this run measures semantic, foreign-byte and full-file equality independently.",
+      "contract": "AC-16 owned sections restored; foreign bytes preserved.",
+      "clients": [
+        {
+          "path": ".kilo/kilo.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": true,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 4,
+          "otherEntryCount": 4,
+          "maskedSha256": "bf761569ee7fac5203fc1315a37c53675476b06f74d5c0be55d5601d6bbeee5a"
+        },
+        {
+          "path": ".cursor/mcp.json",
+          "semanticEqual": true,
+          "entireFileByteEqual": true,
+          "allBytesOutsideOwnedValuesEqual": true,
+          "ownedValueCount": 2,
+          "otherEntryCount": 5,
+          "maskedSha256": "e5e32f5bdb24706771b178d46172d600bf8b516fdd8cb8fff2d89354e05087b1"
+        }
+      ]
+    },
+    "originalRawSeedMissing": false,
+    "historicalFailures": "old seed movement and all earlier failed harness/qualification evidence retained"
+  },
+  "remaining": [
+    "full G3/AC-39 and external-edit race/terminal/other installed-client-platform-PM4 criteria",
+    "whole feature incremental baseline and actual model tokens/billing",
+    "release population AC-36-38",
+    "memory consumer4.2/G4/AC-43/G5/44"
+  ],
+  "notPerformed": [
+    "Gate6",
+    "G4/Cognee/OpenViking development",
+    "working-project migration",
+    "workflow/shared-registry publication",
+    "Code/Graph/server/client upgrades",
+    "new always-on diagnostics, state/locks/coordinator or runtime barrier",
+    "relaxed assertions or 1s/2s goals"
+  ],
+  "validation": {
+    "openSpecCli": "1.13.1",
+    "registryStrict": "passed",
+    "memoryStrict": "passed"
+  },
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\raw-manifest.json",
+    "bytes": 124127,
+    "sha256": "7c604d694000cd711dd1dd0587f964102ed293c8bc20484cc93ca4610ec19ec7"
+  },
+  "rawManifestFileCount": 401,
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\candidate-input.json",
+      "bytes": 445,
+      "sha256": "3d0a5c428035ea9c27a5a12811a49417d6c8c605d273943cfd0c8d4911e927ab"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\candidate-native-update.json",
+      "bytes": 540,
+      "sha256": "850eda4bbc7d106c296728bb011af231726e7dfc0e5003b41412a1994634836d"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\roots-before-candidate.json",
+      "bytes": 1297,
+      "sha256": "7e05a78c4fc8a507bbd07e6cd787f4a8bc8a80e79a9031a970608d735664403c"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\after-update-roots.json",
+      "bytes": 1297,
+      "sha256": "1ca61ac4d74dbc65a9e2feeb9d67518f3efa038a369c116d9fa03238fdd14f6a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\roots-before.json",
+      "bytes": 1297,
+      "sha256": "1ca61ac4d74dbc65a9e2feeb9d67518f3efa038a369c116d9fa03238fdd14f6a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\roots-after.json",
+      "bytes": 1297,
+      "sha256": "1ca61ac4d74dbc65a9e2feeb9d67518f3efa038a369c116d9fa03238fdd14f6a"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\identity-final.json",
+      "bytes": 3935,
+      "sha256": "d7c60ae6b440c92def3886dd5a6a28b03e61a47b94c9279e1cd4ffec55e7c1ea"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\guard-discovery-diagnostic.log",
+      "bytes": 8819,
+      "sha256": "2ac872affe5dbf002e2ab48e003af92af18109cb815c7e01894ffb57a18b263f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\calibration-series.json",
+      "bytes": 24844,
+      "sha256": "bd72b5d077b5690d58c857cb86309674bf326bee2f48ea8f26c33d2ba1f08ff2"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\analysis.json",
+      "bytes": 9145,
+      "sha256": "85c0bedc0c50b7eb9bf7cce950a54fe8e22531958ab6b782fbceb2a07fc42c59"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\warm-samples.json",
+      "bytes": 27013,
+      "sha256": "de0764e91598f5460e90a06b39a464b072e0db72ae300a9ba887b1f59fe18250"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\batch-steps.json",
+      "bytes": 29413,
+      "sha256": "c2b719a37a7ccc06a09a7607cc61a7e504b8ecd0b148be7254364975a38d38eb"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\batch-result.json",
+      "bytes": 488,
+      "sha256": "1e29293edacb55718faffdda220ad1e7fbb36967045a356cefa14ae67ebe03bc"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\preserved-before.json",
+      "bytes": 9482,
+      "sha256": "a91cc3dcbb1b1949cfef02d8c99cf23047c6f22a616ece108faa3844620cf507"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\preserved-after.json",
+      "bytes": 9482,
+      "sha256": "1a98eef7be48320a4c52b5d272a5e8168dd7d3b8213574ba2666b2fc865e5f4f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\previous-evidence-preservation.json",
+      "bytes": 455830,
+      "sha256": "85f29bcc034a5d538d08be416adfd3c0cc9dd25d99867a338834972ac8fbadad"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\capsule-final-validation.json",
+      "bytes": 3486,
+      "sha256": "0c6fdb954cf222d01503396c33267ee4034742cf670e13e393be876f4e11fb48"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\client-byte-analysis.json",
+      "bytes": 924,
+      "sha256": "13f0d796f57f38603a70e95bd994b2e2d91387896d1cb4a032d440525ce4ecb1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\red.json",
+      "bytes": 254,
+      "sha256": "b0d776f60b62a65ddd9bbbc37204cd1cd35a9799928139e87a4401a1594116ed"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\green.json",
+      "bytes": 256,
+      "sha256": "7810ebb4e24ec2b5c302488c78bf99ffee33eb06622a99f30f9d958ee875c007"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\owned.json",
+      "bytes": 390,
+      "sha256": "2e8fe3dc8c5fb7ec5c1d65d073ad6076a7212b92782e859b0dd2e1cf906da76e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\public-profile.ps1",
+      "bytes": 6232,
+      "sha256": "958cf32fc29015fc406441815151ce5570ca0de861988c3f2b935a0bce53f0b1"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\batch.ps1",
+      "bytes": 7977,
+      "sha256": "8d79ef1fca00fb4022b1b19193eca42bed29573ade83fa297e617828e76e9ce9"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\calibrate-import.ps1",
+      "bytes": 2304,
+      "sha256": "df69ac3ffd75f0c0cd300608c67083ced296bcc23d326db8c35f0674911b303f"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\calibrate-series.ps1",
+      "bytes": 865,
+      "sha256": "3cd8eaf8c3895010a32b7611d6f281fe029e03418df96f43eac32a9adcf9c6f3"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\analyse.py",
+      "bytes": 4721,
+      "sha256": "8dae3caeca3045fc74ac0c113ee31701f2dda29c639e65816e29511749b08315"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\collect-repair.py",
+      "bytes": 6346,
+      "sha256": "641f3e44423d3b1d7fb15960827951383e47dab61dc90bc9efd228975b8fc77e"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\registry-validation.log",
+      "bytes": 48,
+      "sha256": "55c0a9360e6774d5f191edc2a2f835964bc440456bca0dd3359480a590bc1515"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\memory-validation.log",
+      "bytes": 44,
+      "sha256": "ac0368ff6c9e7efaac0feca8670d0e264cf03114681e7abeaac7cc326b7c8891"
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\startup-window-repair-20261023\\raw-manifest.json",
+      "bytes": 124127,
+      "sha256": "7c604d694000cd711dd1dd0587f964102ed293c8bc20484cc93ca4610ec19ec7"
+    }
+  ]
+}
