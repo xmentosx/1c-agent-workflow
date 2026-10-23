@@ -1,5 +1,7 @@
 # Tasks
 
+[Нативные клиенты на текущем PM5, 2026-10-24](evidence/g3-pm5-native-clients-2026-10-24.md): Kilo 7.8.15 / VS Code 1.142.0 и Cursor 3.27.12 выполнили по четыре реальных чтения Code/Graph до и после Reload Window. OpenCode 1.19.3 сохранил PM5-контекст и подключения после renderer reload, но квота модели заблокировала вызовы инструментов: **G3-OPENCODE-PROVIDER-QUOTA** открыт. Смена версии первого Cursor и автоматические записи клиентов учтены отдельно; окончательная сохранность 46 путей, базы и истории подтверждена. Полная registry G3/AC-39 остаётся непринятой. Gate 6, G4, рабочая миграция и публикация не выполнялись.
+
 [Стоимость G3 и baseline, 2026-10-24](evidence/g3-cost-baseline-2026-10-24.md): сопоставимый current-package legacy unbound baseline подготовлен; 20 AB/BA блоков, 100 retained samples + 4 warmups. Полный Startup median/p95 **0.995591 / 1.168819 с**, цель 1/2 с выполнена; paired whole CLI без профилировщика **0.548018 / 1.428991 с**. Запас median всего 4.408850 мс, устойчивый SLA <1 с не доказан. Прежнее превышение6.314 мс не округлено в pass, подробные phase probes отделены от benchmark. G3-B5 закрыт для сопоставимого warm no-op PM5 subset; полная G3/AC-39 остаётся BLOCKED по остальным клеткам. Ниже сохранены исторические результаты; новую стоимость определяет этот отчёт. Gate6/G4/рабочая миграция/публикация не выполнялись.
 
 [Итоговый прогон G3](evidence/g3-completion-2026-10-23.md): доступный current PM5 subset завершён; **полная G3/AC-39 BLOCKED** по G3-B1–B5. Два owner-local repairs прошли 132+12 source tests и installed repeat `dfae2ff3`; 90 config calls + update. Настоящие conflict answers/Ctrl+C, pending stable ID, damaged-applied owned recovery и transport 7,933/7,836 с подтверждены. Warm full median/p95 1,006314/1,353585 с: median goal остаётся недостигнутым, без округления/повтора ради pass. Gate 6, G4, рабочая миграция и публикация не выполнялись.
@@ -251,3 +253,10 @@ Full 3.4/5.4–5.6/AC-39, остальные clients/CUSTOM/installed/platform, 
 - [ ] Принять полный G3/AC-39 по итоговой матрице с отдельными installed/platform/client границами; source green и регистрация не заменяют непроверенные клетки.
 
 - [x] Завершить доступный installed PM5 batch по итоговой матрице: оба обнаруженных runtime defects исправлены/повторены; true console, stable pending ID, native damaged-marker recovery, 20 warm pairs и preservation audit зафиксированы. **Это не полный G3 pass**: G3-B1–B5 остаются незакрытыми.
+
+
+## Квалификация нативных клиентов PM5, 2026-10-24
+
+- [x] Зафиксировать exact current PM5 root/package и нативные Kilo/Cursor Code/Graph чтения до/после полного IDE reload: [единый report](evidence/g3-pm5-native-clients-2026-10-24.md); source readiness/подключение MCP отдельно от agent calls, peer settings и исходные failures сохранены. Это registry proof, не memory implementation.
+- [ ] Закрыть G3-OPENCODE-PROVIDER-QUOTA: доступный уже настроенный authorized provider, по два новых actual tool calls до/после native renderer reload на том же current PM5 root. Connected/GET200 и прежние PROF proof не заменяют этот критерий.
+- [ ] Full G3/AC-39 и оставшиеся platform/client/lifecycle клетки по итоговой матрице; population перед первым выпуском и G4/G5 сохраняют отдельные gates/разрешения.
