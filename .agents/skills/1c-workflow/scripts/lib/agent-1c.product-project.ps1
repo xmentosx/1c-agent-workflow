@@ -8,7 +8,16 @@ function Invoke-ItlCatalogGit {
     try {
         [Environment]::SetEnvironmentVariable('GIT_TERMINAL_PROMPT', '0', 'Process')
         [Environment]::SetEnvironmentVariable('GCM_INTERACTIVE', 'Never', 'Process')
-        $result = Invoke-ItlNativeProcessCapture -FilePath 'git.exe' -Arguments (@('-c','core.quotepath=false','--no-pager','-C',([IO.Path]::GetFullPath($Root))) + $Arguments) -WorkingDirectory $Root -DeadlineUtc $DeadlineUtc -OnWait { }
+        # The native Git HTTP/SSH children own the same transport. Reserve
+        # cleanup inside the caller's absolute budget instead of stopping only
+        # their parent and leaving its output pipes/network active afterwards.
+        $transportDeadline=$DeadlineUtc.AddSeconds(-3)
+        if([DateTime]::UtcNow -ge $transportDeadline){throw 'CATALOG_GIT_DEADLINE: no transport cleanup budget remains; repeat the same catalog operation; prepared data is preserved.'}
+        $result = Invoke-ItlNativeProcessCapture -FilePath 'git.exe' -Arguments (@('-c','core.quotepath=false','--no-pager','-C',([IO.Path]::GetFullPath($Root))) + $Arguments) -WorkingDirectory $Root -DeadlineUtc $transportDeadline -OnWait { } -OnTimeout {
+            param($process)
+            . (Join-Path $PSScriptRoot 'agent-1c.ui-tools.ps1')
+            Stop-ItlUiToolProcessTree -Process $process
+        }
     } finally {
         [Environment]::SetEnvironmentVariable('GIT_TERMINAL_PROMPT', $previousPrompt, 'Process')
         [Environment]::SetEnvironmentVariable('GCM_INTERACTIVE', $previousGcm, 'Process')

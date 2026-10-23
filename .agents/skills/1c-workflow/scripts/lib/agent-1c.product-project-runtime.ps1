@@ -180,7 +180,11 @@ function Invoke-ItlProductProjectClientApply {
             return [pscustomobject]@{status=$(if($compatible){'compatible-restored'}else{'configured'});operationId=$operation.operationId;catalogRevision=$operation.context.catalogRevision}
         }
         if($operation.status -in @('cancelled','restored')){return [pscustomobject]@{status=$operation.status;operationId=$operation.operationId}}
-        if(-not $operation.prepared){$ExpectedInputStates=Get-ItlCatalogField $operation 'previewInputStates';$ExpectedOwnerState=[string](Get-ItlCatalogField $operation 'previewOwnerState' '')}
+        # Forward resume retains the admitted preview. Restore has its own
+        # receipt/settings checks below and a fresh writer preflight. A defer
+        # can complete without a client set being prepared while its selection
+        # write has already made the original forward preview obsolete.
+        if(-not $operation.prepared -and $Mode -eq 'resume' -and $operation.direction -ne 'restore'){$ExpectedInputStates=Get-ItlCatalogField $operation 'previewInputStates';$ExpectedOwnerState=[string](Get-ItlCatalogField $operation 'previewOwnerState' '')}
         foreach($settingPlan in @(Get-ItlProductProjectSettingPlans $operation)){
             $current=Read-ItlProductProjectSetting $settingPlan.kind
             if((Get-ItlCatalogHash $current) -cne (Get-ItlCatalogHash $settingPlan.expected)){
