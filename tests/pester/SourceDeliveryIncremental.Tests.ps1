@@ -95,7 +95,7 @@ It 'selects only planner regressions for discovery changes without native fixtur
 
 It 'uses the pinned candidate calculator through the native legacy Plan shim without changing authority or saved proof' {
         $f=New-IncrementalPlanFixture; $script:Root=$f.root
-        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
+        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
         foreach($name in $modules) {Copy-Item -LiteralPath (Join-Path $RepoRoot ('scripts/'+$name)) -Destination (Join-Path $f.root ('scripts/'+$name)) -Force}
         $f.catalog.contracts[0].paths+=@($modules|ForEach-Object{'scripts/'+$_})
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))
@@ -268,4 +268,236 @@ It 'reuses an unchanged upgrade through real planner and checker only after curr
         @($missingUpgrade.reuseDiagnostics.code) | Should -Contain 'BINDING_LOCATION_MISSING'
         @($missingUpgrade.reuseDiagnostics.inputs) | Should -Contain 'AiRulesSource'
     }
+
+
+BeforeAll {
+    function New-ScenarioPlanFixture {
+        $f=New-IncrementalPlanFixture
+        $actual=Get-QualityContractCatalog $RepoRoot
+        $f.catalog.developJourneys | Add-Member -NotePropertyName scenarios -NotePropertyValue $actual.developJourneys.scenarios
+        $rules=@([pscustomobject]@{path='runtime.ps1';functions=[pscustomobject]@{
+            'Change-Update'=@('upgrade.update');'Change-Export'=@('fresh.stale-export');'Change-Mcp'=@('upgrade.update','fresh.install')}})
+        $f.catalog.developJourneys | Add-Member -NotePropertyName scenarioInputs -NotePropertyValue $rules
+        [IO.File]::WriteAllText((Join-Path $f.root 'runtime.ps1'),"function Change-Update {'v1'}`nfunction Change-Export {'v1'}`nfunction Change-Mcp {'v1'}`n")
+        [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}')
+        [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'scenario baseline'
+        $f.base=(& git -C $f.root rev-parse HEAD).Trim()
+        $script:Root=$f.root;$script:GateScript=Join-Path $f.root 'scripts/check.ps1'
+        $script:E2EProjectRoot=$f.stand;$script:AiRulesSource=$f.rules;$script:AgentTarget='kilocode'
+        foreach($relative in @('build/third-party/vanessa-automation/1-r1/archive.zip','build/third-party/client-mcp/client.cfe','tools/itl-ondemand-mcp/build/mcp.exe')) {
+            $cache=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $cache));Copy-Item -LiteralPath $f.artifact -Destination $cache
+        }
+        [IO.File]::AppendAllText((Join-Path $f.root '.git/info/exclude'),"`n/build/`n/tools/itl-ondemand-mcp/build/`n")
+        Save-IncrementalJourneyProofs $f
+        return $f
+    }
+    function Set-ScenarioFixtureChange {
+        param($Fixture,$Function)
+        $path=Join-Path $Fixture.root 'runtime.ps1'
+        $text=[IO.File]::ReadAllText($path).Replace("function $Function {'v1'}","function $Function {'v2'}")
+        [IO.File]::WriteAllText($path,$text)
+        & git -C $Fixture.root add -- runtime.ps1; & git -C $Fixture.root commit --quiet -m $Function
+    }
+}
+
+It 'selects changed behavior, preserves prerequisite closure and reuses independent scenario proof (<Function>)' -ForEach @(
+    @{Function='Change-Update';Journey='upgrade';Execute=@('update')},
+    @{Function='Change-Export';Journey='fresh';Execute=@('install','branch','verification','stale-export')},
+    @{Function='Change-Mcp';Journey='fresh';Execute=@('install')}
+) {
+    param($Function,$Journey,$Execute)
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    # Save real complete identities after substituting only the native Go host.
+    Save-IncrementalJourneyProofs $f
+    Set-ScenarioFixtureChange $f $Function
+    $head=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $head -CandidateTree $tree
+    $stage=@($plan.stages|Where-Object id -eq "develop.$Journey")[0]
+    @($stage.scenarios | Where-Object execution -ne 'reuse' | ForEach-Object id) | Should -Be $Execute
+    @($stage.scenarios | Where-Object execution -eq 'reuse').Count | Should -BeGreaterThan 0
+    foreach($record in @($stage.scenarios | Where-Object execution -eq 'reuse')) {$record.evidenceCommit|Should -BeExactly $f.base}
+    $estimate=Get-DeliveryPlanTimeEstimate $plan @()
+    @($estimate.stages|Where-Object id -eq "develop.$Journey")[0].basis | Should -Be 'scenario-workload-not-yet-measured'
+    if($Function -eq 'Change-Mcp') {
+        @($plan.stages.id) | Should -Be @('develop.static','develop.upgrade','develop.fresh')
+        @($stage.scenarios|Where-Object {$_.id -in @('stale-export','close','refresh') -and $_.execution -ne 'reuse'}).Count | Should -Be 0
+    }
+}
+
+It 'routes scenarios through the real checker and a native child, then reuses the composed proof without launching again' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    Save-IncrementalJourneyProofs $f
+    Set-ScenarioFixtureChange $f 'Change-Mcp'
+    $repoRoot=$f.root;$qualityCatalog=$f.catalog;$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $outputRoot=Join-Path $f.root '.git/output';[void][IO.Directory]::CreateDirectory($outputRoot)
+    $FreshProjectsRoot='C:\itlj'
+    $script:releaseContext=$null;$script:aiRulesRelease=$null
+    $script:developQualificationRoot=Join-Path $f.root '.git/current';[void][IO.Directory]::CreateDirectory($script:developQualificationRoot)
+    $script:developCurrentStaticProof=Save-IncrementalStaticProof $f
+    $script:developRulesSource=$f.rules;$script:developJourneyInputs=@{};$script:developAncestorRoutes=@{}
+    $script:sourceE2EArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $f.root
+    $script:sourceE2EArtifactBindingPath=Join-Path $f.root '.git/binding.json'
+    [IO.File]::WriteAllText($script:sourceE2EArtifactBindingPath,($script:sourceE2EArtifactBinding|ConvertTo-Json -Depth 8))
+    $script:developScript=Join-Path $f.root '.git/native-scenario-child.ps1'
+    $child=@'
+param($CandidateRoot,$ProjectRoot,$AiRulesSource,$OutputPath,$Journey,$Scenario,$FreshProjectsRoot,$AgentTarget,$ArtifactBindingPath)
+$ErrorActionPreference='Stop'
+$binding=Get-Content -LiteralPath $ArtifactBindingPath -Raw -Encoding UTF8|ConvertFrom-Json
+foreach($entry in $binding.paths.PSObject.Properties){if(-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)){throw 'binding lost'}}
+$tree=(& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
+$value=@{schemaVersion=3;kind='itl-develop-e2e';status='passed';candidate=@{tree=$tree};requestedJourneys=@($Journey);journeys=@(@{name=$Journey;status='passed';coverage=@($Scenario.Split(','))})}
+[IO.File]::WriteAllText($OutputPath,($value|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+[IO.File]::AppendAllText((Join-Path $CandidateRoot '.git/native-launches.log'),"$Journey=$Scenario;binding=$(@($binding.paths.PSObject.Properties).Count)`n")
+'@
+    [IO.File]::WriteAllText($script:developScript,$child,[Text.UTF8Encoding]::new($false))
+    Mock Get-DevelopE2EIdentitySha256 {'a'*64}
+    Mock Invoke-PowerShellChild {
+        & (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -NoLogo -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments
+        if($LASTEXITCODE -ne 0){throw 'native scenario child failed'}
+    }
+    $routePlan=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.base
+    Ensure-DevelopE2ERoute -Journey fresh -Plan $routePlan -DeferForStatic | Should -BeNullOrEmpty
+    Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
+    $path=Ensure-DevelopE2ERoute -Journey fresh -Plan $routePlan
+    $report=Get-Content $path -Raw -Encoding UTF8|ConvertFrom-Json
+    $report.schemaVersion | Should -Be 2
+    @($report.result.scenarioEvidence | Where-Object execution -eq 'executed' | ForEach-Object id) | Should -Be @('install')
+    @($report.result.scenarioEvidence | Where-Object execution -eq 'reused').Count | Should -Be 5
+    (Get-Content (Join-Path $f.root '.git/native-launches.log') -Raw).Trim() | Should -BeExactly 'fresh=install;binding=3'
+    $sha=(Get-FileHash $path).Hash
+    $again=Ensure-DevelopE2ERoute -Journey fresh -Plan $routePlan
+    (Get-FileHash $again).Hash | Should -BeExactly $sha
+    Should -Invoke Invoke-PowerShellChild -Times 1 -Exactly
+    Test-DevelopE2ERouteReport -Path $again -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
+    $native=@($report.result.scenarioEvidence|Where-Object execution -eq 'executed')[0].path
+    [IO.File]::AppendAllText($native,'corruption')
+    Test-DevelopE2ERouteReport -Path $again -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeFalse
+}
+
+It 'canonicalizes the actual sole client without hiding ambiguity, another client or unknown identity fields' {
+    $root=Join-Path $TestDrive 'Клиент с пробелом';[void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+    $path=Join-Path $root '.agent-1c/project.json'
+    [IO.File]::WriteAllText($path,'{"aiRules":{"tools":["kilocode"]}}')
+    (Get-SourceE2EClientIdentity -ProjectRoot $root) | Should -BeExactly (Get-SourceE2EClientIdentity -ProjectRoot $root -AgentTarget kilocode)
+    (Get-SourceE2EClientIdentity -ProjectRoot $root -AgentTarget codex) | Should -Not -BeExactly (Get-SourceE2EClientIdentity -ProjectRoot $root)
+    [IO.File]::WriteAllText($path,'{"aiRules":{"tools":["kilocode","codex"]}}')
+    {Resolve-SourceE2EAgentTarget -ProjectRoot $root} | Should -Throw '*AGENT_TARGET_REQUIRED*'
+    $ambiguous=Get-SourceE2EClientIdentity -ProjectRoot $root
+    {ConvertTo-DevelopEffectiveClientIdentity $ambiguous} | Should -Throw '*AGENT_TARGET_REQUIRED*'
+    $unknown=$ambiguous|ConvertFrom-Json;$unknown|Add-Member -NotePropertyName future -NotePropertyValue 'unowned'
+    {ConvertTo-DevelopEffectiveClientIdentity ($unknown|ConvertTo-Json -Depth 8 -Compress)} | Should -Throw '*IDENTITY_UNKNOWN*'
+}
+
+It 'retains verification, rollback, artifact and unknown-input rejection in scenario reuse' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $old=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    foreach($key in @('platformSha256','rulesCommit','uiPolicySha256','artifacts','freshProjectsRoot','futureInput')) {
+        $changed=$old|ConvertTo-Json -Depth 24|ConvertFrom-Json
+        $changed.inventory.external|Add-Member -NotePropertyName $key -NotePropertyValue 'different' -Force
+        $changed.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $changed.inventory
+        Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('install') $f.catalog | Should -BeFalse
+    }
+    $source=Join-Path $f.root 'runtime.ps1';[IO.File]::AppendAllText($source,"`nWrite-Output 'unknown shared side effect'`n")
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('install') $f.catalog | Should -BeFalse
+    $catalog=Get-QualityContractCatalog $RepoRoot
+    @((Get-DevelopScenarioCatalog $catalog fresh|Where-Object id -eq 'stale-export').dependsOn)|Should -Be @('verification')
+    @((Get-DevelopScenarioCatalog $catalog fresh|Where-Object id -eq 'close').dependsOn)|Should -Be @('verification')
+    @($catalog.developJourneys.scenarios.upgrade.id)|Should -Contain 'configuration-rejection'
+    $legacyPlan=[pscustomobject]@{kind='itl-develop-e2e-journey-plan';journeys=@('fresh')}
+    {New-DevelopE2ERouteReport -RepositoryRoot $f.root -Plan $legacyPlan -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) -JourneyResult ([pscustomobject]@{name='fresh';status='passed';coverage=@('install')})} | Should -Throw '*SCENARIO_COVERAGE_REQUIRED*'
+    $failureRoot=Join-Path $f.root '.git/itl/runs';[void][IO.Directory]::CreateDirectory($failureRoot)
+    $report=Get-Content (Join-Path $f.root '.git/fresh.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $run=@{schemaVersion=3;mode='Develop';status='failed';commit=$f.base;tree=$tree;finishedAt=[datetime]::UtcNow.AddSeconds(1).ToString('o');
+        stages=@(@{name='develop-e2e-fresh';status='failed'});journeyInputIdentities=@{fresh=$old};journeyScenarioExecution=@{fresh=@('install')}}
+    $failurePath=Join-Path $failureRoot 'fixture-develop-failed.json'
+    [IO.File]::WriteAllText($failurePath,($run|ConvertTo-Json -Depth 24))
+    Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $f.root -Report $report -CurrentCommit $f.base -CurrentTree $tree -InputIdentity $old -RequiredScenario verification | Should -BeFalse
+    Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $f.root -Report $report -CurrentCommit $f.base -CurrentTree $tree -InputIdentity $old -RequiredScenario install | Should -BeTrue
+    $run.journeyScenarioExecution.fresh=@('unknown-owner')
+    [IO.File]::WriteAllText($failurePath,($run|ConvertTo-Json -Depth 24))
+    Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $f.root -Report $report -CurrentCommit $f.base -CurrentTree $tree -InputIdentity $old -RequiredScenario verification | Should -BeTrue
+}
+
+It 'uses the actual MCP writer ownership without selecting stale export or configuration rejection' {
+    $f=New-IncrementalPlanFixture
+    $catalog=Get-QualityContractCatalog $RepoRoot
+    $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1'
+    $path=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $path))
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
+    $f.catalog.contracts[0].paths+=@($relative)
+    $f.catalog.developJourneys|Add-Member -NotePropertyName scenarios -NotePropertyValue $catalog.developJourneys.scenarios
+    $f.catalog.developJourneys|Add-Member -NotePropertyName scenarioInputs -NotePropertyValue @($catalog.developJourneys.scenarioInputs|Where-Object path -eq $relative)
+    & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'real writer baseline'
+    $base=(& git -C $f.root rev-parse HEAD).Trim()
+    $bytes=[IO.File]::ReadAllBytes($path);$hasBom=$bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191
+    $text=[IO.File]::ReadAllText($path);$tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
+    $function=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-ItlClientMcpEndpoints'},$true)
+    $text=$text.Insert($function.Body.EndBlock.Statements[0].Extent.StartOffset,"Write-Verbose 'writer regression'`n")
+    [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($hasBom))
+    $upgrade=Resolve-DevelopScenarioSelection $f.root $base @($relative) $f.catalog upgrade
+    $fresh=Resolve-DevelopScenarioSelection $f.root $base @($relative) $f.catalog fresh
+    @($upgrade.selected) | Should -Be @('update')
+    @($fresh.selected) | Should -Be @('install','branch')
+    $actual=Resolve-DevelopE2EJourneyPlanCore -RepositoryRoot $f.root -BaseRef $base -ChangedPath @($relative) -Catalog $catalog
+    @($actual.journeys) | Should -Be @('upgrade','fresh')
+    @($upgrade.selected) | Should -Not -Contain 'configuration-rejection'
+    @($fresh.selected) | Should -Not -Contain 'stale-export'
+    $original=Get-DevelopHistoricalSourceText $f.root $base $relative
+    # A product-enabled or unknown stand cannot use the representative shortcut.
+    Get-DevelopScenarioSourceProjection $relative $original fresh @('refresh') $catalog | Should -BeNullOrEmpty
+    $before=Get-DevelopScenarioSourceProjection $relative $original fresh @('refresh') $catalog -NoProductContext $true
+    $after=Get-DevelopScenarioSourceProjection $relative $text fresh @('refresh') $catalog -NoProductContext $true
+    $before | Should -BeExactly $after
+    # A new ambient dependency invalidates the stateless representative contract.
+    [IO.File]::WriteAllText($path,$text.Insert($function.Body.EndBlock.Statements[0].Extent.StartOffset,"Write-Verbose `$Action`n"),[Text.UTF8Encoding]::new($hasBom))
+    $unknown=Resolve-DevelopScenarioSelection $f.root $base @($relative) $f.catalog fresh
+    @($unknown.selected) | Should -Be @($catalog.developJourneys.scenarios.fresh.id)
+}
+
+It 'checkpoints a native subset without granting full qualification and composes it only after complete static (<NativeJourney>)' -TestCases @(@{NativeJourney='fresh'},@{NativeJourney='all'}) {
+    param($NativeJourney)
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    Save-IncrementalJourneyProofs $f
+    Set-ScenarioFixtureChange $f 'Change-Mcp'
+    $repoRoot=$f.root;$qualityCatalog=$f.catalog;$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $binding=Find-SourceE2EArtifactBinding -RepositoryRoot $f.root
+    $inputs=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $binding
+    $rawPath=Join-Path $f.root '.git/subset.json'
+    $raw=@{schemaVersion=3;kind='itl-develop-e2e';status='passed';candidate=@{tree=$tree};requestedJourneys=@('fresh');journeys=@(@{name='fresh';status='passed';coverage=@('install')})}
+    if($NativeJourney -eq 'all') {$raw.requestedJourneys=@('upgrade','fresh');$raw.journeys+=@(@{name='upgrade';status='passed';coverage=@('update')})}
+    [IO.File]::WriteAllText($rawPath,($raw|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    $cache=Save-DevelopScenarioExecution -RepositoryRoot $f.root -RawPath $rawPath -Journey fresh -Before $inputs -After $inputs -Catalog $f.catalog
+    $cache | Should -Not -BeNullOrEmpty
+    $partial=Join-Path $cache 'route-report.json'
+    Test-DevelopE2ERouteReport -Path $partial -Tree $tree -Journey fresh -IdentitySha256 $inputs.fingerprint -StandStateSha256 ('c'*64) | Should -BeFalse
+    Test-DevelopE2ERouteReport -Path $partial -Tree $tree -Journey fresh -IdentitySha256 $inputs.fingerprint -StandStateSha256 ('c'*64) -RequiredScenario install | Should -BeTrue
+    Test-DevelopE2ERouteReport -Path $partial -Tree $tree -Journey fresh -IdentitySha256 $inputs.fingerprint -StandStateSha256 ('c'*64) -RequiredScenario verification | Should -BeFalse
+    $script:developQualificationRoot=Join-Path $f.root '.git/current';[void][IO.Directory]::CreateDirectory($script:developQualificationRoot)
+    $outputRoot=Join-Path $f.root '.git/output';[void][IO.Directory]::CreateDirectory($outputRoot)
+    $FreshProjectsRoot='C:\itlj';$script:developRulesSource=$f.rules;$script:sourceE2EArtifactBinding=$binding
+    $script:developJourneyInputs=@{};$script:developAncestorRoutes=@{};$script:developCurrentStaticProof=$null
+    $script:releaseContext=$null;$script:aiRulesRelease=$null
+    $plan=Resolve-DevelopE2EJourneyPlan -RepositoryRoot $f.root -BaseRef $f.base
+    Mock Get-DevelopE2EIdentitySha256 {'a'*64}
+    Mock Invoke-PowerShellChild {throw 'UNEXPECTED_NATIVE_JOURNEY'}
+    {Ensure-DevelopE2ERoute -Journey fresh -Plan $plan} | Should -Throw '*SCENARIO_STATIC_REQUIRED*'
+    $script:developCurrentStaticProof=Save-IncrementalStaticProof $f
+    $full=Ensure-DevelopE2ERoute -Journey fresh -Plan $plan
+    (Get-Content $full -Raw -Encoding UTF8|ConvertFrom-Json).schemaVersion | Should -Be 2
+    Test-DevelopE2ERouteReport -Path $full -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
+    Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
+}
+
 }

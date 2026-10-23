@@ -351,7 +351,7 @@ Describe "Release gate scripts" {
         }
     }
 
-    It "routes Develop E2E upgrade and fresh journeys independently and reports schema 2 state" {
+    It "routes Develop E2E journeys independently and reports schema 3 with explicit executed coverage" {
         $path = Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1"
         $tokens = $null
         $errors = $null
@@ -434,7 +434,10 @@ Describe "Release gate scripts" {
         $text | Should -Match 'if \(\$requestedJourneys -contains "fresh"\)'
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "upgrade"\).*?Invoke-InstalledAction -Name "upgrade-update-workflow".*?\$journeys\.upgrade\.status = "passed"'
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?Invoke-DevelopProcess -Name "fresh-bootstrap-init-project".*?\$journeys\.fresh\.status = "passed"'
-        $text | Should -Match 'schemaVersion = 2'
+        $text | Should -Match 'schemaVersion = 3'
+        $text | Should -Match 'coverage = @\(\$scenarioSelection\[\$requestedJourney\]\)'
+        $text | Should -Match 'Assert-DevelopScenarioCompletion -Catalog \$scenarioCatalog -Journey upgrade'
+        $text | Should -Match 'Assert-DevelopScenarioCompletion -Catalog \$scenarioCatalog -Journey fresh'
         foreach ($field in @("requestedJourneys", "journeys", "activeJourney", "steps", "operationTimings", "error")) {
             $text | Should -Match ([regex]::Escape($field + " ="))
         }
@@ -470,7 +473,7 @@ Describe "Release gate scripts" {
         $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -ChangedPath @\(\$continuation\.paths\)'
     }
 
-    It "records backward-compatible structured timings for fresh journey operations" {
+    It "retains structured pass and failure timings for fresh operations in the scoped report" {
         $path = Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1"
         $tokens = $null
         $errors = $null
@@ -499,7 +502,7 @@ Describe "Release gate scripts" {
         $timings[1].error | Should -Be "timed failure"
 
         $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
-        $text | Should -Match 'schemaVersion = 2'
+        $text | Should -Match 'schemaVersion = 3'
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?\$freshTimings = \$journeys\.fresh\.operationTimings.*?Invoke-DevelopTimedOperation -Timings \$freshTimings -Name "provision-project".*?Invoke-DevelopTimedOperation -Timings \$freshTimings -Name "close-and-cleanup"'
     }
 

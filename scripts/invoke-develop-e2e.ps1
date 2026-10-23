@@ -7,7 +7,8 @@ param(
     [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
     [ValidateSet("upgrade", "fresh", "all")][string]$Journey = "all",
-    [string]$ArtifactBindingPath = ''
+    [string]$ArtifactBindingPath = '',
+    [string]$Scenario = ''
 )
 
 Set-StrictMode -Version Latest
@@ -15,6 +16,9 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
+. (Join-Path $PSScriptRoot 'quality-contracts.ps1')
+. (Join-Path $PSScriptRoot 'develop-e2e-scenarios.ps1')
+. (Join-Path $PSScriptRoot 'develop-e2e-qualification.ps1')
 . (Join-Path $PSScriptRoot 'source-e2e-manifest-repair.ps1')
 . (Join-Path $PSScriptRoot "develop-configuration-rejection.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
@@ -41,9 +45,24 @@ $steps = New-Object System.Collections.Generic.List[object]
 $failure = $null
 $activeJourney = ""
 $requestedJourneys = if ($Journey -eq "all") { @("upgrade", "fresh") } else { @($Journey) }
+$scenarioCatalog=Get-QualityContractCatalog -RepositoryRoot $CandidateRoot
+$scenarioSelection=@{}
+if($Scenario -and $Journey -eq 'all') {throw 'DEVELOP_SCENARIO_REQUIRES_ONE_JOURNEY'}
+foreach($name in $requestedJourneys) {
+    $ids=if($Scenario){@($Scenario.Split(',') | Where-Object {$_})}else{@(Get-DevelopScenarioCatalog $scenarioCatalog $name | ForEach-Object {$_.id})}
+    $scenarioSelection[$name]=@(Expand-DevelopScenarioSelection $scenarioCatalog $name $ids)
+}
+if($requestedJourneys -contains 'upgrade') {
+    $descriptor=Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if(-not $descriptor.PSObject.Properties['developConfigurationRejection']) {
+        if($Scenario -and 'configuration-rejection' -in $scenarioSelection['upgrade']) {throw 'DEVELOP_SCENARIO_NOT_APPLICABLE: configuration rejection requires its configured dedicated negative stand.'}
+        $scenarioSelection['upgrade']=@($scenarioSelection['upgrade'] | Where-Object {$_ -ne 'configuration-rejection'})
+    }
+}
 $journeys = [ordered]@{}
 foreach ($requestedJourney in $requestedJourneys) {
     $journeys[$requestedJourney] = [ordered]@{
+        coverage = @($scenarioSelection[$requestedJourney])
         name = $requestedJourney
         status = "pending"
         startedAt = ""
@@ -76,6 +95,11 @@ if ([string]$onDemandSourceBuild.sha256 -cne ([string]$onDemandLock.sha256).ToLo
     throw "DEVELOP_E2E_ONDEMAND_SOURCE_BUILD_MISMATCH: expected='$(([string]$onDemandLock.sha256).ToLowerInvariant())' actual='$([string]$onDemandSourceBuild.sha256)'."
 }
 $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$onDemandSourceBuild.path
+$nativeInputProjectRoot=$ProjectRoot
+$nativeInputBefore=@{}
+foreach($name in $requestedJourneys) {
+    $nativeInputBefore[$name]=Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $name -Catalog $scenarioCatalog -ProjectRoot $nativeInputProjectRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $artifactBinding -FreshProjectsRoot $FreshProjectsRoot
+}
 . (Join-Path $PSScriptRoot "develop-e2e-cleanup.ps1")
 
 function ConvertTo-DevelopProcessArgument {
@@ -444,6 +468,11 @@ $standBranchCleanAtStart = $false
 $standBranchHeadAtStart = ""
 $trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
 $seedProjectRoot = $ProjectRoot
+if($requestedJourneys -contains 'upgrade' -and 'configuration-rejection' -notin $scenarioSelection['upgrade']) {
+    $seedConfig=Get-Content -LiteralPath (Join-Path $seedProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $positiveSeed=Get-DevelopPositiveStandRoot -ProjectRoot $seedProjectRoot -Config $seedConfig
+    if($positiveSeed) {$seedProjectRoot=$positiveSeed;$ProjectRoot=$positiveSeed}
+}
 $qualificationFixture = $null
 $fixturePath = Join-Path $outputRoot 'qualification-fixture.json'
 $fixtureDisposal = $null
@@ -510,11 +539,14 @@ try {
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
         if ($positiveStandRoot) {
+            if('configuration-rejection' -in $scenarioSelection['upgrade']) {
             $journeys.upgrade.configurationRejection = Invoke-DevelopConfigurationRejectionScenario `
                 -Expected $expectedConfigurationRejection -Root $standBranchRoot -BranchName $developBranchName
+            }
+            if('verification-export' -in $scenarioSelection['upgrade']) {
             $positiveOutput = Join-Path $outputRoot 'upgrade-positive/develop-e2e-summary.json'
             $positiveArguments = @('-CandidateRoot',$CandidateRoot,'-ProjectRoot',$positiveStandRoot,'-AiRulesSource',$AiRulesSource,
-                '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade')
+                '-OutputPath',$positiveOutput,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-Journey','upgrade','-Scenario','update,verification-export')
             if ($ArtifactBindingPath) { $positiveArguments += @('-ArtifactBindingPath', $ArtifactBindingPath) }
             [void](Invoke-DevelopProcess -Name 'upgrade-positive' -WorkingRoot $positiveStandRoot -ScriptPath $PSCommandPath `
                 -Arguments $positiveArguments -TimeoutSeconds 3600)
@@ -525,7 +557,8 @@ try {
                 throw 'DEVELOP_POSITIVE_JOURNEY_UNPROVEN'
             }
             $journeys.upgrade.positiveJourney = [ordered]@{path=$positiveOutput;sha256=(Get-FileHash -LiteralPath $positiveOutput -Algorithm SHA256).Hash.ToLowerInvariant();summary=$positive}
-        } else {
+            }
+        } elseif('verification-export' -in $scenarioSelection['upgrade']) {
             [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch" -Root $standBranchRoot -BranchName $developBranchName)
             if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
                 [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
@@ -537,6 +570,7 @@ try {
             Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
             $journeys.upgrade.artifactCleanup = Remove-DevelopE2EExportArtifacts -Root $standBranchRoot -Summary $exportSummary
         }
+        Assert-DevelopScenarioCompletion -Catalog $scenarioCatalog -Journey upgrade -Result $journeys.upgrade -Steps $steps.ToArray()
         $journeys.upgrade.status = "passed"
         $journeys.upgrade.finishedAt = [DateTime]::UtcNow.ToString("o")
         $activeJourney = ""
@@ -581,6 +615,7 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "status" -Operation {
             Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status", "-AgentTarget", "kilocode") -TimeoutSeconds 120)
         })
+        if(@($scenarioSelection['fresh'] | Where-Object {$_ -ne 'install'}).Count) {
         $branchName = "develop-golden"
         $freshBranchRoot = Invoke-DevelopTimedOperation -Timings $freshTimings -Name "create-dev-branch" -Operation {
             Assert-SourceE2ESpace -Operation 'new-dev-branch and Enterprise normalization' -Allocations @(
@@ -590,6 +625,7 @@ try {
             Get-BranchWorktree -Root $freshRoot -Name $branchName
         }
         $freshWorktreeLease = Lock-DevelopE2EFreshWorktree -ProjectRoot $freshRoot -BranchPath $freshBranchRoot
+        if('verification' -in $scenarioSelection['fresh']) {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "missing-suite-recovery" -Operation {
             [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
         })
@@ -604,6 +640,8 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-golden-change" -Operation {
             [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
         })
+        }
+        if('stale-export' -in $scenarioSelection['fresh']) {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "commit-stale-boundary" -Operation {
             [IO.File]::AppendAllText((Join-Path $freshBranchRoot "tests\features\ITLDevelopJourney.feature"), "`n# stale verification boundary`n", [Text.UTF8Encoding]::new($false))
             & git -C $freshBranchRoot add -- tests/features/ITLDevelopJourney.feature
@@ -619,6 +657,8 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "export-result" -Operation {
             [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "fresh-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
         })
+        }
+        if('refresh' -in $scenarioSelection['fresh']) {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "advance-master" -Operation {
             [IO.File]::WriteAllText((Join-Path $freshRoot "develop-journey.txt"), "refresh boundary" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
             & git -C $freshRoot add develop-journey.txt
@@ -631,6 +671,8 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-after-refresh" -Operation {
             [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
         })
+        }
+        if('close' -in $scenarioSelection['fresh']) {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "close-and-cleanup" -Operation {
             [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
             Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease
@@ -640,8 +682,23 @@ try {
                 '-OutputPath',(Join-Path $outputRoot 'fresh-source-seed-confirmation.json')) -TimeoutSeconds 180)
             Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
         })
+        } else {
+            # Dispose this task's unmerged disposable branch through its
+            # existing lifecycle owner; do not fake a close/export result.
+            Unlock-DevelopE2EFreshWorktree -Lease $freshWorktreeLease
+            $freshWorktreeLease=$null
+            [void](Invoke-InstalledAction -Name 'fresh-dispose-branch' -Root $freshRoot -Action 'delete-dev-branch' -AdditionalArguments @('-DevBranchName',$branchName,'-ConfirmBranchDeletion') -TimeoutSeconds 900)
+            [void](Invoke-DevelopProcess -Name 'fresh-source-seed-unchanged' -WorkingRoot $CandidateRoot -ScriptPath (Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1') -Arguments @(
+                '-Action','Capture','-Phase','Develop','-ProjectRoot',$freshSeedProjectRoot,'-AgentTarget',$AgentTarget,
+                '-OutputPath',(Join-Path $outputRoot 'fresh-source-seed-confirmation.json')) -TimeoutSeconds 180)
+            Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
+        }
+        } else {
+            Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot
+        }
         $freshBranchRoot = ""
         $freshRoot = ""
+        Assert-DevelopScenarioCompletion -Catalog $scenarioCatalog -Journey fresh -Result $journeys.fresh -Steps $steps.ToArray()
         $journeys.fresh.status = "passed"
         $journeys.fresh.finishedAt = [DateTime]::UtcNow.ToString("o")
         $activeJourney = ""
@@ -695,7 +752,7 @@ try {
         if($entry.journey -eq 'upgrade'){$fixtureDisposal=$disposal}else{$freshSourceFixtureDisposal=$disposal}
     }
     $payload = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         kind = "itl-develop-e2e"
         status = $(if ($failure) { "failed" } else { "passed" })
         requestedJourneys = @($requestedJourneys)
@@ -751,4 +808,8 @@ try {
 }
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }
+foreach($name in $requestedJourneys) {
+    $nativeInputAfter=Get-DevelopE2EInputIdentity -RepositoryRoot $CandidateRoot -Journey $name -Catalog $scenarioCatalog -ProjectRoot $nativeInputProjectRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $artifactBinding -FreshProjectsRoot $FreshProjectsRoot
+    [void](Save-DevelopScenarioExecution -RepositoryRoot $CandidateRoot -RawPath $OutputPath -Journey $name -Before $nativeInputBefore[$name] -After $nativeInputAfter -Catalog $scenarioCatalog)
+}
 Write-Host "Develop E2E passed: $OutputPath"

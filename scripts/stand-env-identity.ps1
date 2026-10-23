@@ -156,8 +156,16 @@ function Get-SourceE2EClientIdentity {
     $targets = @(foreach ($name in $roots.Keys) {
         [ordered]@{ role=$name; root=$roots[$name].ToLowerInvariant(); configuredClients=@(Get-SourceE2EConfiguredClients -ProjectRoot $roots[$name]) }
     })
-    # ConvertTo-Json decorates strings in Windows PowerShell 5.1; the cache owner needs a scalar, not its Length property.
-    return [string]([ordered]@{ requestedAgentTarget=$AgentTarget; freshAgentTarget='kilocode'; targets=$targets } | ConvertTo-Json -Depth 6 -Compress)
+    # Canonicalize only when every real target resolves to the same sole
+    # configured client. Mixed/ambiguous targets keep the request explicit;
+    # runtime membership and attachment validation remain the installed owner.
+    $effective=$AgentTarget
+    if([string]::IsNullOrWhiteSpace($effective) -and $targets.Count -gt 0 -and @($targets | Where-Object {@($_.configuredClients).Count -ne 1}).Count -eq 0) {
+        $choices=@($targets | ForEach-Object {$_.configuredClients[0]} | Sort-Object -Unique)
+        if($choices.Count -eq 1) {$effective=[string]$choices[0]}
+    }
+    # Cast away Windows PowerShell 5.1 ConvertTo-Json string decorations.
+    return [string]([ordered]@{ requestedAgentTarget=$effective; freshAgentTarget='kilocode'; targets=$targets } | ConvertTo-Json -Depth 6 -Compress)
 }
 
 function Get-DeliveryPlanSemanticDotEnvNames {

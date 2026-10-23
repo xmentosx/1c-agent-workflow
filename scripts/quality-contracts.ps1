@@ -1,5 +1,22 @@
 Set-StrictMode -Version Latest
 
+function Get-DevelopScenarioCatalog {
+    param([object]$Catalog,[string]$Journey)
+    if(-not $Catalog.developJourneys.PSObject.Properties['scenarios']) {return @()}
+    $items=@($Catalog.developJourneys.scenarios.$Journey)
+    $expected=if($Journey -eq 'upgrade') {@('update','configuration-rejection','verification-export')} else {@('install','branch','verification','stale-export','refresh','close')}
+    if((@($items.id) -join ',') -cne ($expected -join ',')) {throw 'DEVELOP_SCENARIO_IMPLEMENTATION_MISSING'}
+    $seen=@()
+    foreach($item in $items) {
+        if(@($item.PSObject.Properties.Name | Where-Object {$_ -notin @('id','dependsOn','operations')}).Count) {throw 'DEVELOP_SCENARIO_FIELD_UNKNOWN'}
+        if($item.id -notmatch '^[a-z][a-z0-9-]+$' -or $item.id -in $seen -or
+            @($item.dependsOn | Where-Object {$_ -notin $seen}).Count -or
+            @($item.dependsOn | Sort-Object -Unique).Count -ne @($item.dependsOn).Count) {throw 'DEVELOP_SCENARIO_CATALOG_INVALID'}
+        $seen+=([string]$item.id)
+    }
+    return $items
+}
+
 function Get-QualityContractReuseInputPaths {
     param([Parameter(Mandatory = $true)][object]$Contract)
     $property = $Contract.PSObject.Properties['reuseInputPaths']
@@ -31,13 +48,18 @@ function Get-DevelopE2EJourneyContractProjection {
         if ($reuseInputs.Count -gt 0) { $projected['reuseInputPaths'] = $reuseInputs }
         [pscustomobject]$projected
     })
-    return [ordered]@{
+    $projection=[ordered]@{
         schemaVersion = 2; journey = $Journey
         hardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $Catalog -Journey $Journey
         names = @($Catalog.developJourneys.names)
         fullPaths = @($Catalog.developJourneys.fullPaths)
         contracts = $runtimeOwners
     }
+    if($Catalog.developJourneys.PSObject.Properties['scenarios']) {
+        $projection['scenarios']=@($Catalog.developJourneys.scenarios.$Journey)
+        $projection['scenarioInputs']=@($Catalog.developJourneys.scenarioInputs)
+    }
+    return $projection
 }
 
 function Get-QualityContractCatalog {
@@ -414,6 +436,23 @@ function Test-QualityContractCatalog {
     $actualDevelopJourneys = @($Catalog.developJourneys.names | ForEach-Object { [string]$_ })
     if (@($actualDevelopJourneys | Sort-Object -Unique).Count -ne $expectedDevelopJourneys.Count -or ($actualDevelopJourneys -join "`n") -ne ($expectedDevelopJourneys -join "`n")) {
         throw "Quality contract developJourneys.names must define exactly: $($expectedDevelopJourneys -join ', ')."
+    }
+    if($Catalog.developJourneys.PSObject.Properties['scenarios']) {
+        foreach($name in $expectedDevelopJourneys) {[void](Get-DevelopScenarioCatalog $Catalog $name)}
+        $known=@(foreach($name in $expectedDevelopJourneys) {Get-DevelopScenarioCatalog $Catalog $name | ForEach-Object {"$name.$($_.id)"}})
+        $rulePaths=@()
+        foreach($rule in @($Catalog.developJourneys.scenarioInputs)) {
+            if($rule.path -in $rulePaths -or [IO.Path]::IsPathRooted($rule.path) -or $rule.path -match '(^|/)\.\.(/|$)' -or
+                -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $rule.path) -PathType Leaf) -or
+                @($rule.PSObject.Properties.Name | Where-Object {$_ -notin @('path','functions','requiresNoProductContext')}).Count) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
+            if($rule.PSObject.Properties['requiresNoProductContext'] -and $rule.requiresNoProductContext -isnot [bool]) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
+            $rulePaths+=([string]$rule.path)
+            foreach($function in $rule.functions.PSObject.Properties) {
+                if(-not $function.Name -or @($function.Value).Count -eq 0 -or
+                    @($function.Value | Where-Object {$_ -notin $known}).Count -or
+                    @($function.Value | Sort-Object -Unique).Count -ne @($function.Value).Count) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
+            }
+        }
     }
     $fullPaths = @($Catalog.developJourneys.fullPaths | ForEach-Object { ([string]$_).Replace('\', '/') })
     if ($fullPaths.Count -eq 0 -or @($fullPaths | Sort-Object -Unique).Count -ne $fullPaths.Count -or

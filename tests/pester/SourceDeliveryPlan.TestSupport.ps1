@@ -3,6 +3,7 @@ $context = Initialize-WorkflowPesterContext
 $RepoRoot = $context.RepoRoot
 . (Join-Path $RepoRoot 'scripts\git-path-list.ps1')
 . (Join-Path $RepoRoot 'scripts\quality-contracts.ps1')
+. (Join-Path $RepoRoot 'scripts\release-qualification.ps1')
 . (Join-Path $RepoRoot 'scripts\develop-e2e-qualification.ps1')
 
 function Get-DeliveryTextSha256 {

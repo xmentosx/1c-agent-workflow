@@ -47,6 +47,12 @@ function Get-DevelopJourneyExcludedScope {
         return $null
     }
     switch -Exact ($Path.Replace('\','/')) {
+        # Source rules packaging/qualification is not executed by fresh install;
+        # fresh consumes the independently pinned controlled-fork identity.
+        'scripts/build-ai-rules-release.ps1' { return @{ whole=$true } }
+        'scripts/test-ai-rules-compatibility.ps1' { return @{ whole=$true } }
+        'scripts/test-ai-rules-overlay-lock.ps1' { return @{ whole=$true } }
+        'scripts/promote-ai-rules-compatibility.ps1' { return @{ whole=$true } }
         'scripts/develop-configuration-rejection.ps1' { return @{ whole=$true } }
         'scripts/update-installed-workflow.ps1' { return @{ whole=$true } }
         '.agents/skills/1c-workflow/references/workflow-update-recovery.md' { return @{ whole=$true } }

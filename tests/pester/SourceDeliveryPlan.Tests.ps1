@@ -128,6 +128,22 @@ Describe 'Delivery v3 immutable selective plan' {
         $estimate.note | Should -Match 'not expected duration'
     }
 
+    It 'estimates only the matching scenario workload and excludes composition-only and legacy full timings' {
+        $plan=[pscustomobject]@{executedBudgetSeconds=3600;stages=@([pscustomobject]@{
+            id='develop.fresh';mode='Develop';execution='execute';budgetSeconds=3600;scenarios=@(
+                @{id='install';execution='setup'},@{id='branch';execution='execute'},@{id='verification';execution='reuse'})})}
+        $legacy=[pscustomobject]@{mode='Develop';status='passed';stages=@(@{name='develop-e2e-fresh';status='passed';durationMs=2400000})}
+        $composition=[pscustomobject]@{mode='Develop';status='passed';journeyScenarioExecution=@{};stages=$legacy.stages}
+        $different=[pscustomobject]@{mode='Develop';status='passed';journeyScenarioExecution=@{fresh=@('install')};stages=$legacy.stages}
+        $matching=[pscustomobject]@{mode='Develop';status='passed';journeyScenarioExecution=@{fresh=@('install','branch')};stages=@(@{name='develop-e2e-fresh';status='passed';durationMs=300000})}
+        $unknown=Get-DeliveryPlanTimeEstimate $plan @($legacy,$composition,$different)
+        $unknown.estimatedSeconds | Should -BeNullOrEmpty
+        $unknown.stages[0].sampleCount | Should -Be 0
+        $known=Get-DeliveryPlanTimeEstimate $plan @($legacy,$composition,$different,$matching)
+        $known.estimatedSeconds | Should -Be 300
+        $known.stages[0].sampleCount | Should -Be 1
+    }
+
     It 'keeps a completed 32-second plan usable and stops only beyond the 120-second planning limit' {
         Mock Write-Warning {}
         { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 32000 } | Should -Not -Throw

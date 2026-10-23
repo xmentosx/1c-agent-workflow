@@ -295,12 +295,26 @@ function Get-DeliveryPlanTimeEstimate {
         if($stage.execution -eq 'reuse') { $seconds=0; $basis='reuse-after-current-static' }
         else {
             $name=([string]$stage.id).Replace('develop.','develop-e2e-')
+            $scenarioRecords=@()
+            if(($stage -is [Collections.IDictionary] -and $stage.Contains('scenarios')) -or $stage.PSObject.Properties['scenarios']) {$scenarioRecords=@($stage.scenarios)}
+            $workload=@($scenarioRecords | Where-Object {$_.execution -in @('execute','setup')} | ForEach-Object id | Sort-Object)
             $samples=@($Runs | Where-Object {$_.mode -ceq $stage.mode -and $_.status -ceq 'passed'} |
                 ForEach-Object {
                     if($stage.id -eq 'develop.static') { Get-DeliveryStaticObservedSeconds -Run $_ }
-                    else {@($_.stages | Where-Object {$_.name -ceq $name -and $_.status -ceq 'passed' -and $_.durationMs -gt 0} | ForEach-Object {[double]$_.durationMs/1000})}
+                    else {
+                        $run=$_;$journey=([string]$stage.id).Replace('develop.','')
+                        $hasScope=($run -is [Collections.IDictionary] -and $run.Contains('journeyScenarioExecution')) -or $run.PSObject.Properties['journeyScenarioExecution']
+                        if($hasScope) {
+                            $scopes=$run.journeyScenarioExecution
+                            $hasJourney=($scopes -is [Collections.IDictionary] -and $scopes.Contains($journey)) -or $scopes.PSObject.Properties[$journey]
+                            # Composition alone is not a native timing sample.
+                            if(-not $hasJourney -or -not @($scopes.$journey).Count) {return}
+                            if($scenarioRecords.Count -and (@($scopes.$journey | Sort-Object) -join ',') -cne ($workload -join ',')) {return}
+                        } elseif($scenarioRecords.Count -and @($scenarioRecords | Where-Object {$_.execution -notin @('execute','setup')}).Count) {return}
+                        @($run.stages | Where-Object {$_.name -ceq $name -and $_.status -ceq 'passed' -and $_.durationMs -gt 0} | ForEach-Object {[double]$_.durationMs/1000})
+                    }
                 } | Where-Object {$null -ne $_ -and $_ -gt 0} | Select-Object -First 5 | Sort-Object)
-            $seconds=$null; $basis='unknown'
+            $seconds=$null; $basis=$(if($scenarioRecords.Count){'scenario-workload-not-yet-measured'}else{'unknown'})
             if($samples.Count) {
                 $middle=[int][math]::Floor($samples.Count/2)
                 $seconds=[int][math]::Ceiling($(if($samples.Count%2){$samples[$middle]}else{($samples[$middle-1]+$samples[$middle])/2}))
@@ -391,6 +405,7 @@ function New-DeliveryQualityPlanForCandidate {
     }
     if($ArtifactBinding) { [void](Get-SourceE2EArtifactBindingHashes -RepositoryRoot $CandidateRoot -Binding $ArtifactBinding) }
     foreach ($journey in @($journeyPlan.journeys)) {
+        $scenarioRecords=@()
         $stageId = "develop.$journey"
         $reuseDiagnostics=[Collections.Generic.List[object]]::new()
         $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
@@ -404,8 +419,14 @@ function New-DeliveryQualityPlanForCandidate {
         }
         if ($inputs) {
             $fingerprint = [string]$inputs.fingerprint
-            $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic -Diagnostics $reuseDiagnostics
-            $reusable = $null -ne $ancestor
+            if($catalog.developJourneys.PSObject.Properties['scenarios']) {
+                $scenarioRecords=@(Get-DevelopScenarioReusePlan $CandidateRoot $CandidateTree $journey $inputs $catalog -AllowPendingStatic -ProjectRoot $(if($standVariable){[string]$standVariable.Value}else{''}))
+                $reusable=@($scenarioRecords | Where-Object {$_.execution -in @('execute','setup')}).Count -eq 0
+                $fingerprint=Get-DeliveryCanonicalJsonSha256 ([ordered]@{inputs=$inputs.fingerprint;scenarios=$catalog.developJourneys.scenarios.$journey;scope=$catalog.developJourneys.scenarioInputs})
+            } else {
+                $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $CandidateRoot -Tree $CandidateTree -Journey $journey -StandStateSha256 ([string]$inputs.inventory.external.standStateSha256) -InputIdentity $inputs -AllowPendingStatic -Diagnostics $reuseDiagnostics
+                $reusable = $null -ne $ancestor
+            }
         } else {
             Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'COMPLETE_BINDING_UNAVAILABLE'
             $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
@@ -416,6 +437,15 @@ function New-DeliveryQualityPlanForCandidate {
         }
         $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=(Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $journey); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable -and $inputs){"verified applicable ancestor inputs; current static proof required"}elseif($reusable){"matching exact-tree stage evidence"}elseif(-not $inputs){"complete binding unavailable; no matching exact-tree proof"}else{"no eligible ancestor for current workload/environment and proof requirements"}) }) | Out-Null
         $stages[$stages.Count-1] | Add-Member -NotePropertyName reuseDiagnostics -NotePropertyValue @($reuseDiagnostics.ToArray())
+        if($scenarioRecords.Count) {
+            $view=@(foreach($record in $scenarioRecords) {
+                [pscustomobject]@{id=$record.id;execution=$record.execution;dependsOn=$record.dependsOn;applicable=$record.applicable;
+                    evidenceCommit=$(if($record.proof){$record.proof.report.repository.commit}else{''});
+                    evidenceSha256=$(if($record.proof){$record.proof.sha256}else{''});reuseDiagnostics=@($record.reuseDiagnostics | Select-Object -First 1);
+                    omittedDiagnosticCount=[math]::Max(0,@($record.reuseDiagnostics).Count-1)}
+            })
+            $stages[$stages.Count-1] | Add-Member -NotePropertyName scenarios -NotePropertyValue $view
+        }
     }
     $orderedReleaseCapabilities = @()
     $releaseEnclosingOverhead = $null
