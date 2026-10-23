@@ -749,6 +749,16 @@ Describe "Branch-first verification suite selection" {
         $cycle | Should -Match 'classification-required'
     }
 
+    It "checks classification before releasing runtime or loading the infobase" {
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1') -Raw -Encoding UTF8
+        $check = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)(?=\nfunction Check-DevBranch)').Groups['body'].Value
+        $check.IndexOf('Assert-VerificationClassificationReady') | Should -BeGreaterThan -1
+        foreach ($next in @('Invoke-DevBranchVanessaRuntimeRelease', 'Use-ItlVerificationRepairAttempt', 'Update-DevBranchBase')) {
+            $check.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $check.IndexOf($next)
+        }
+        $check.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $check.IndexOf('Assert-VerificationClassificationReady')
+    }
+
     It "exposes a static classification validator that never starts 1C" {
         $helper = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
         $selection = Get-Content -LiteralPath $ModulePath -Raw -Encoding UTF8
@@ -781,5 +791,126 @@ Describe "Branch-first verification suite selection" {
         $advanced | Should -Match 'Do not merely rename the original file'
         $selectionReference | Should -Match '(?s)at most eight flat\s+scenarios'
         $selectionReference | Should -Match 'post-merge scenario baseline'
+    }
+}
+
+Describe 'Classification before infobase preparation' {
+    BeforeAll {
+        $preflightRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $preflightLib = Join-Path $preflightRoot '.agents\skills\1c-workflow\scripts\lib'
+    }
+
+    BeforeEach {
+        . (Join-Path $preflightLib 'agent-1c.verification-selection.ps1')
+        . (Join-Path $preflightLib 'agent-1c.verification-modes.ps1')
+        . (Join-Path $preflightLib 'agent-1c.lifecycle.ps1')
+        $script:PreflightCycle = ${function:Invoke-ItlVerificationCycle}
+        $script:PreflightEvents = [Collections.Generic.List[string]]::new()
+        $script:PreflightModes = @{ ITL_YAXUNIT_TESTING = 'auto'; ITL_VANESSA_TESTING = 'off'; ITL_CHECK_EVENT_LOG = 'off' }
+        $script:PreflightState = [pscustomobject]@{ lastVerificationEvidenceKind = 'complete/current-obligations' }
+        $script:PreflightSourceOid = 'current'
+        $script:PreflightDecisionOid = 'stale'
+        $script:PreflightVanessaReady = $true
+        $script:PreflightLateEdit = $false
+        $script:ActiveAuxiliaryVanessaContext = $null
+        $VerificationTrigger = 'command'
+        $ExplicitVerificationComponent = @()
+        $DevBranchName = 'branch1'
+        $RepairSessionId = ''
+        function Get-EnvValue { param($Name, $Default) if ($script:PreflightModes.ContainsKey($Name)) { $script:PreflightModes[$Name] } else { $Default } }
+        function Get-StateValue { param($State, $Name, $Default) if ($State.PSObject.Properties[$Name]) { $State.$Name } else { $Default } }
+        function Read-DevBranchState { $script:PreflightState }
+        function Get-DevBranchKind { 'configuration' }
+        function Get-ExportPath { 'src/cf' }
+        function Assert-ExportPathInsideProject { 'unused' }
+        function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+        function Restore-ConfigDumpInfoLoadSnapshot { $script:PreflightEvents.Add('restore') }
+        function Remove-ConfigDumpInfoLoadSnapshot {}
+        function Assert-ItlVerificationRepairScope {}
+        function Repair-OneCSourceLineEndings { $script:PreflightEvents.Add('normalize') }
+        function Update-VerificationSuiteInventory {
+            $script:PreflightEvents.Add('classify')
+            [pscustomobject]@{
+                vanessaClassificationComplete = $script:PreflightVanessaReady
+                yaxunit = @{ classificationComplete = $script:PreflightDecisionOid -eq $script:PreflightSourceOid }
+                classificationIssues = @('YAxUnit applicability is stale. Current sourceOid=current. Reclassify the exact sourceOid.')
+            }
+        }
+        function Update-DevBranchState {}
+        function Get-VerificationClassificationInventoryPath { 'inventory.json' }
+        function Set-RunFailureContext { param($Category, $RequiredAction) $script:PreflightEvents.Add($RequiredAction) }
+        function Invoke-DevBranchVanessaRuntimeRelease { $script:PreflightEvents.Add('release') }
+        function Assert-VanessaVerificationPreflight {}
+        function Test-ItlFullVerificationProofEligible { $true }
+        function Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind = 'canonical-repair' } }
+        function Use-ItlVerificationRepairAttempt { $script:PreflightEvents.Add('attempt') }
+        function Ensure-DevBranchEventLogBaseline { $script:PreflightEvents.Add('baseline'); $script:PreflightState }
+        function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'cursor'; capturedAt = [datetime]'2026-10-24' } }
+        function Update-DevBranchBase { $script:PreflightEvents.Add('load'); if ($script:PreflightLateEdit) { $script:PreflightSourceOid = 'changed-during-load' } }
+        function Invoke-ItlVerificationCycle {
+            if ($script:PreflightLateEdit) { & $script:PreflightCycle -Trigger command }
+            $script:PreflightEvents.Add('verified')
+        }
+        function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+        function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
+        function Complete-ItlVerificationRepairSession { $script:PreflightEvents.Add('repair-complete') }
+        function Complete-ItlVerificationRepairFailure { $script:PreflightEvents.Add('repair-failed') }
+        function Write-DevBranchVerificationRunUserReport { $script:PreflightEvents.Add('report') }
+    }
+
+    It 'rejects stale source classification without load, runtime release, baseline or repair-attempt consumption' {
+        $VerificationTrigger = 'repair'
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*sourceOid=current*'
+        @($script:PreflightEvents) | Should -Be @('normalize', 'classify', 'classify-tests-and-repeat-original-itl-command', 'restore')
+    }
+
+    It 'continues the original repair after classification is corrected' {
+        $VerificationTrigger = 'repair'
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*'
+        $script:PreflightDecisionOid = 'current'
+        Invoke-DevBranchCheck
+        @($script:PreflightEvents | Where-Object { $_ -eq 'attempt' }).Count | Should -Be 1
+        @($script:PreflightEvents | Where-Object { $_ -eq 'load' }).Count | Should -Be 1
+        $script:PreflightEvents | Should -Contain 'verified'
+        $script:PreflightEvents | Should -Contain 'repair-complete'
+        $script:PreflightEvents[-1] | Should -Be 'report'
+    }
+
+    It 'preserves component selection for <caseName>' -TestCases @(
+        @{ caseName = 'YAxUnit only'; yaxunit = 'auto'; vanessa = 'off'; sourceReady = $true; vanessaReady = $false; trigger = 'command'; named = @(); assessments = 1 },
+        @{ caseName = 'Vanessa only'; yaxunit = 'off'; vanessa = 'auto'; sourceReady = $false; vanessaReady = $true; trigger = 'command'; named = @(); assessments = 1 },
+        @{ caseName = 'both disabled'; yaxunit = 'off'; vanessa = 'off'; sourceReady = $false; vanessaReady = $false; trigger = 'command'; named = @(); assessments = 0 },
+        @{ caseName = 'named YAxUnit overrides off'; yaxunit = 'off'; vanessa = 'auto'; sourceReady = $true; vanessaReady = $false; trigger = 'explicit'; named = @('yaxunit'); assessments = 1 }
+    ) {
+        param($caseName, $yaxunit, $vanessa, $sourceReady, $vanessaReady, $trigger, $named, $assessments)
+        $script:PreflightModes.ITL_YAXUNIT_TESTING = $yaxunit
+        $script:PreflightModes.ITL_VANESSA_TESTING = $vanessa
+        if ($sourceReady) { $script:PreflightDecisionOid = 'current' }
+        $script:PreflightVanessaReady = $vanessaReady
+        $VerificationTrigger = $trigger
+        $ExplicitVerificationComponent = $named
+        Invoke-DevBranchCheck
+        @($script:PreflightEvents | Where-Object { $_ -eq 'classify' }).Count | Should -Be $assessments
+        $script:PreflightEvents | Should -Contain 'load'
+        $script:PreflightEvents | Should -Contain 'verified'
+    }
+
+    It 'keeps the auxiliary contour outside branch classification' {
+        $script:ActiveAuxiliaryVanessaContext = [pscustomobject]@{ name = 'auxiliary' }
+        Invoke-DevBranchCheck
+        $script:PreflightEvents | Should -Not -Contain 'classify'
+        $script:PreflightEvents | Should -Contain 'verified'
+    }
+
+    It 'rechecks changed inputs in the existing cycle after loading' {
+        $VerificationTrigger = 'repair'
+        $script:PreflightDecisionOid = 'current'
+        $script:PreflightLateEdit = $true
+        { Invoke-DevBranchCheck } | Should -Throw '*ITL_TEST_CLASSIFICATION_REQUIRED*'
+        @($script:PreflightEvents | Where-Object { $_ -eq 'classify' }).Count | Should -Be 2
+        $script:PreflightEvents | Should -Contain 'load'
+        $script:PreflightEvents | Should -Contain 'repair-failed'
+        $script:PreflightEvents | Should -Not -Contain 'verified'
+        $script:PreflightEvents | Should -Not -Contain 'report'
     }
 }

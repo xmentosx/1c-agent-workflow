@@ -1,11 +1,13 @@
 # Controlled ai_rules_1c upgrades
 
-## Current intake: upstream 2f640143, local r46
+## Current candidate: planning sufficiency, local r47
 
-The current intake rebuilds directly from upstream `2f640143756ecd01fed42100e412632aa9082385`
-and preserves the prepared r45/r44 behavior. The source lock remains `pending`;
+The r47 candidate continues the exact r46 intake of upstream
+`2f640143756ecd01fed42100e412632aa9082385` and changes only the common grilling
+and SDD planning instructions. The source lock remains `pending`;
 registration does not publish the fork or update installed projects. Decisions,
 exact checks and remaining native acceptance are recorded in
+[the planning candidate](workflow-acceleration-candidate.md) and
 [the r46 intake](ai-rules-r46-intake.md). Earlier qualification sections below
 retain their historical scope and do not qualify the new candidate.
 

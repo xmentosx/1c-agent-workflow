@@ -1028,12 +1028,12 @@
     },
     {
       "path": "content/rules/sdd-integrations.md",
-      "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "requirementId": "ITL-PLANNING-SUFFICIENCY-001",
+      "disposition": "resolved",
+      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage.",
       "upstreamSha256": "0c4dda48f15addc69b08c27060b0109292f47263f012a9a16519ceb9fb93439e",
       "baselineSha256": "f18f30484abccbdda49e24a28a82f2df55a146baf2964a6430d87a91bb647528",
-      "resultSha256": "f18f30484abccbdda49e24a28a82f2df55a146baf2964a6430d87a91bb647528"
+      "resultSha256": "048cf041c6c23eec227b44c0249f2447f8d82990f663a9670a02949e9de4872b"
     },
     {
       "path": "content/rules/subagent-core.md",
@@ -1766,12 +1766,12 @@
     },
     {
       "path": "content/skills/grilling/SKILL.md",
-      "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "requirementId": "ITL-PLANNING-SUFFICIENCY-001",
+      "disposition": "resolved",
+      "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "1e0c9ff2ac2a49ccab5cb76c044eb7e2792337da59f52d303715ffc375970ce2",
-      "resultSha256": "1e0c9ff2ac2a49ccab5cb76c044eb7e2792337da59f52d303715ffc375970ce2"
+      "resultSha256": "57e361a0aef1801245d3b2979815b1071cf954fb04bbf30973a2a31d7d148aa9"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-code-check-mcp.md",

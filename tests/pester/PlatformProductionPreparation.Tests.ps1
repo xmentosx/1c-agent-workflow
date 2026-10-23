@@ -117,6 +117,10 @@
                     }
                     function Invoke-DevBranchVanessaRuntimeRelease {}
                     function Assert-VanessaVerificationPreflight {}
+                    # This report fixture supplies completed platform preparation
+                    # and a delegated verification cycle, not a Git test catalog.
+                    function Repair-OneCSourceLineEndings {}
+                    function Assert-VerificationClassificationReady {}
                     function Test-ItlFullVerificationProofEligible { $true }
                     function Ensure-DevBranchEventLogBaseline { $script:reportState }
                     function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }

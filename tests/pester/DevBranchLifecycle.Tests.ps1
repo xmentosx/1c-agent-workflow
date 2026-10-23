@@ -2829,6 +2829,9 @@ try {
             }
             function Confirm-UnverifiedProceed { $false }
             function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }; function Restore-ConfigDumpInfoLoadSnapshot { $script:DumpInfoDirty = $false; $script:DumpInfoRestored = $true }; function Remove-ConfigDumpInfoLoadSnapshot {}
+            # This cursor/export fixture delegates verification; classification
+            # and its rejected/continued load path have their own owner tests.
+            function Assert-VerificationClassificationReady {}
             function Invoke-DevBranchVanessaRuntimeRelease {}; function Assert-VanessaVerificationPreflight {}; function Use-ItlVerificationRepairAttempt {}; function Ensure-DevBranchEventLogBaseline { param([object]$State) $State }; function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = "cursor.json"; capturedAt = [datetime]"2026-07-28T00:00:00Z" } }; function Update-DevBranchBase { $script:DumpInfoDirty = $true }; function Invoke-ItlVerificationCycle { param([string]$Trigger, [string[]]$ExplicitComponents, [string]$EventLogCursorPath, [Nullable[datetime]]$EventLogBoundaryAt, [string]$EventLogCursorScope) $script:VerificationSawDirtyDumpInfo = $script:DumpInfoDirty }; function Complete-ItlVerificationRepairSession {}
             function Load-ConfigFromFiles {
                 [pscustomobject]@{
@@ -2939,6 +2942,8 @@ try {
             function Invoke-DevBranchVanessaRuntimeRelease {}
             function Assert-VanessaVerificationPreflight {}
             function Test-ItlFullVerificationProofEligible { $true }
+            # Keep this fixture focused on the real ProjectRoot dump cursor.
+            function Assert-VerificationClassificationReady {}
             function Ensure-DevBranchEventLogBaseline { param($State) $State }
             function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'cursor.json'; capturedAt = [datetime]'2026-07-28T00:00:00Z' } }
             function Write-NativeLoadCursor {
