@@ -202,6 +202,15 @@ function Test-DevelopE2EEquivalentInput {
             } else { [Text.Encoding]::UTF8.GetBytes($before) }
             $sha=[Security.Cryptography.SHA256]::Create()
             try { $beforeHash=([BitConverter]::ToString($sha.ComputeHash($beforeBytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+            if($beforeHash -cne $old[$path] -and $path -ceq '.agents/skills/1c-workflow/references/workflow-update-recovery.md') {
+                # Git stores text as LF while the historical Windows checkout
+                # may have been CRLF. Authenticate that exact alternative only
+                # for this non-executable, update-only document. Never normalize
+                # native artifacts, 1C transport or arbitrary runtime inputs.
+                $checkoutBytes=[Text.Encoding]::UTF8.GetBytes($before.Replace("`r`n","`n").Replace("`n","`r`n"))
+                $sha=[Security.Cryptography.SHA256]::Create()
+                try { $beforeHash=([BitConverter]::ToString($sha.ComputeHash($checkoutBytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+            }
             if($beforeHash -cne $old[$path] -or (Get-DevelopE2EInputFileSha256 -Path $afterPath -RelativePath $path) -cne $new[$path]) { return $false }
             if((Get-DevelopFreshSourceProjection -Path $path -Text $before) -cne (Get-DevelopFreshSourceProjection -Path $path -Text $after)) { return $false }
         }
