@@ -372,7 +372,7 @@ function New-DeliveryQualityPlanForCandidate {
         $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
         return $plan
     }
-    $journeyPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $CandidateRoot -BaseRef $BaseCommit -ChangedPath $paths -Catalog $catalog
+    $journeyPlan = Resolve-DevelopE2EJourneyPlanCore -RepositoryRoot $CandidateRoot -BaseRef $BaseCommit -ChangedPath $paths -Catalog $catalog
     if (@($journeyPlan.unknownPaths).Count -gt 0) { throw "QUALITY_OWNER_MISSING: $(@($journeyPlan.unknownPaths) -join ', ')" }
     $stages = [Collections.Generic.List[object]]::new()
     $developEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Develop

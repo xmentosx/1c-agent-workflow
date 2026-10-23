@@ -193,6 +193,37 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
+    It 'keeps accelerated token normalization identical to its original fallback on large Unicode source' {
+        $chunk=@'
+function Read-Example {
+    $path = 'C:\путь с пробелом'
+    $value = @"
+первая строка
+вторая строка
+"@
+    # Ignore this comment, retaining actual statement separators.
+    if ($true) {
+        Write-Output `
+            $value
+    }
+    return
+    'separate statement'
+}
+'@
+        $text=([string][char]0xFEFF)+(@(1..180|ForEach-Object {$chunk}) -join "`n")
+        $tokens=$null;$errors=$null
+        [void][Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xFEFF),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $tokens.Count | Should -BeGreaterThan 4096
+        $normalizer=Get-DevelopSourceTokenNormalizer
+        ($normalizer -is [type]) | Should -BeTrue
+        $fast=$normalizer::Normalize($tokens)
+        ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
+        Mock Get-DevelopSourceTokenNormalizer {$null}
+        ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
+        {ConvertTo-DevelopSourceTokens ($text+"`nfunction broken {")} | Should -Throw '*PARSE_ERROR*'
+    }
+
     It 'projects multiple disjoint function spans in numeric reverse order on Windows PowerShell' {
         $path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
         $names=(Get-DevelopJourneyExcludedScope $path).functions
@@ -652,6 +683,20 @@ Describe "Develop E2E journey qualification router" {
             $fresh=Get-DevelopE2EInputIdentity @normal -Journey fresh
             $upgrade=Get-DevelopE2EInputIdentity @normal -Journey upgrade
             $fresh | Should -Not -BeNullOrEmpty; $upgrade | Should -Not -BeNullOrEmpty
+            $hasher=(Get-Command Get-DevelopE2EInputFileSha256).ScriptBlock
+            $reads=[Collections.Generic.List[string]]::new()
+            Mock Get-DevelopE2EInputFileSha256 {
+                param($Path,$RelativePath)
+                $reads.Add($RelativePath)
+                & $hasher -Path $Path -RelativePath $RelativePath
+            }
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            $reads.Count | Should -Be @($fresh.inventory.inputs).Count
+            $positiveEnv=Join-Path $positive '.dev.env';$positiveBytes=[IO.File]::ReadAllBytes($positiveEnv)
+            [IO.File]::AppendAllText($positiveEnv,"UI_TESTING=changed`n")
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
+            [IO.File]::WriteAllBytes($positiveEnv,$positiveBytes)
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
             [IO.File]::AppendAllText($rejection, '# receipt fix')
             (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
             (Get-DevelopE2EInputIdentity @normal -Journey upgrade).fingerprint | Should -Not -BeExactly $upgrade.fingerprint

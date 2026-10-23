@@ -91,7 +91,7 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:GateScript=Join-Path $repo.root 'check.ps1'
         Mock Get-QualityContractCatalog {$catalog}; Mock Test-QualityContractCatalog {$true}
         Mock Resolve-QualityContractsForPaths {[pscustomobject]@{contracts=@($catalog.contracts[0]);tests=@();unknownPaths=@()}}
-        Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@('fresh');unknownPaths=@()}}
+        Mock Resolve-DevelopE2EJourneyPlanCore {[pscustomobject]@{journeys=@('fresh');unknownPaths=@()}}
         $artifact=[pscustomobject]@{schemaVersion=1;kind='itl-source-e2e-artifact-binding';paths=@{}}
         Mock Find-SourceE2EArtifactBinding {$artifact}
         Mock Get-SourceE2EArtifactBindingHashes {@{locked='verified'}}
@@ -102,6 +102,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Should -Invoke Get-DevelopE2EInputIdentity -Times 1 -Exactly -ParameterFilter {$ArtifactBinding -eq $artifact}
         Should -Invoke Get-DevelopE2EAncestorQualification -Times 1 -Exactly -ParameterFilter {$AllowPendingStatic}
         Should -Invoke Get-SourceE2EArtifactBindingHashes -Times 1 -Exactly
+        Should -Invoke Test-QualityContractCatalog -Times 1 -Exactly
     }
 
     It 'reports observed time separately from deadlines and never charges reused journeys their timeout' {
@@ -157,7 +158,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@('upgrade'); unknownPaths=@() } }
 
         $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $first.schemaVersion | Should -Be 1
@@ -175,7 +176,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
         $script:evidenceOwnershipCalls = 0
         Mock Get-DeliveryCommonGitDirectory {
             $script:evidenceOwnershipCalls++
@@ -217,7 +218,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
 
         $oldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $proof = Join-Path $TestDrive 'older-tree-proof.json'
@@ -250,7 +251,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{contracts=@($catalog.contracts[0]);tests=@('tests/pester/Runtime.Tests.ps1');unknownPaths=@()} }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{journeys=@('upgrade','fresh');unknownPaths=@()} }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{journeys=@('upgrade','fresh');unknownPaths=@()} }
         $binding=[pscustomobject]@{fingerprint=('d'*64);inventory=[pscustomobject]@{external=[pscustomobject]@{standStateSha256=('c'*64)}}}
         Mock Get-DevelopE2EInputIdentity { $binding }
         Mock Get-DevelopE2EAncestorQualification { [pscustomobject]@{reportPath='verified original';inputIdentity=$binding} }
@@ -315,7 +316,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
         $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $plan.executedBudgetSeconds | Should -Be 7500
         (Get-DeliveryPlanGateBudgetSeconds -Plan $plan -Mode Develop) | Should -Be 7500
@@ -356,7 +357,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
         $oldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $oldCommit -CandidateTree $oldTree
         $oldPlan.executedBudgetSeconds | Should -Be 6000
         $proof = Join-Path $TestDrive 'prior-budget-proof.json'
@@ -393,7 +394,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
 
         $masterPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $script:DeliverySupervisorChannel = 'develop'
@@ -409,7 +410,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
         Mock Get-DeliveryPlanEnvironmentIdentity { param([string]$Mode) [ordered]@{ mode=$Mode } }
         Mock Get-DeliveryReleaseStageCatalog {
             [pscustomobject]@{ stages=@(
@@ -445,7 +446,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
-        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlanCore { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
         Mock Get-DeliveryPlanEnvironmentIdentity { param([string]$Mode) [ordered]@{ mode=$Mode } }
         Mock Get-DeliveryReleaseStageCatalog { $releaseCatalog }
         Mock Test-DeliveryStageEvidence { $null }

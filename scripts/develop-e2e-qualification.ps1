@@ -50,97 +50,103 @@ function Get-DevelopE2EInputIdentity {
             if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) { throw 'DEVELOP_INPUT_MISSING' }
             [ordered]@{ path=$path; sha256=Get-DevelopE2EInputFileSha256 -Path $physical -RelativePath $path }
         })
-        $positiveIdentity = $null
-        if ($null -eq $ExternalBinding) {
-            if (-not $ProjectRoot -or -not $AiRulesSource) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'BINDING_LOCATION_MISSING' -Inputs @('ProjectRoot','AiRulesSource' | Where-Object {-not (Get-Variable $_ -ValueOnly)})
-                return $null
-            }
-            $stand = Get-DevelopE2EStandStateSha256 -ProjectRoot $ProjectRoot
-            $files = [ordered]@{}
-            foreach ($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
-                $physical = Join-Path $ProjectRoot $relative.Replace('/','\')
-                if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) {
-                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @($relative); return $null
+        # The positive stand uses this same source snapshot. Capture source
+        # inputs once per invocation; every stand/environment is still read
+        # independently, and a later checker invocation takes a new snapshot.
+        function Get-DevelopStandInputIdentity {
+            param([string]$ProjectRoot,[object]$ExternalBinding)
+            $positiveIdentity = $null
+            if ($null -eq $ExternalBinding) {
+                if (-not $ProjectRoot -or -not $AiRulesSource) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'BINDING_LOCATION_MISSING' -Inputs @('ProjectRoot','AiRulesSource' | Where-Object {-not (Get-Variable $_ -ValueOnly)})
+                    return $null
                 }
-                $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } elseif ($relative -eq '.agent-1c/release-e2e.json') {
-                    $configInput = Get-Content -LiteralPath $physical -Raw -Encoding UTF8 | ConvertFrom-Json
-                    # Capture independently validates every admission before the
-                    # gate. Its receipt chain changes with installed workflow
-                    # commits, but does not change the immutable capsule input.
-                    if ($configInput.PSObject.Properties['qualificationFixtures']) {
-                        foreach ($descriptor in $configInput.qualificationFixtures.PSObject.Properties) {
-                            $descriptor.Value.PSObject.Properties.Remove('workflowUpdateAdmission')
+                $stand = Get-DevelopE2EStandStateSha256 -ProjectRoot $ProjectRoot
+                $files = [ordered]@{}
+                foreach ($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
+                    $physical = Join-Path $ProjectRoot $relative.Replace('/','\')
+                    if (-not (Test-Path -LiteralPath $physical -PathType Leaf)) {
+                        Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @($relative); return $null
+                    }
+                    $files[$relative] = if ($relative -eq '.dev.env') { Get-DeliveryStableDotEnvSha256 -Path $physical } elseif ($relative -eq '.agent-1c/release-e2e.json') {
+                        $configInput = Get-Content -LiteralPath $physical -Raw -Encoding UTF8 | ConvertFrom-Json
+                        # Capture independently validates every admission before the
+                        # gate. Its receipt chain changes with installed workflow
+                        # commits, but does not change the immutable capsule input.
+                        if ($configInput.PSObject.Properties['qualificationFixtures']) {
+                            foreach ($descriptor in $configInput.qualificationFixtures.PSObject.Properties) {
+                                $descriptor.Value.PSObject.Properties.Remove('workflowUpdateAdmission')
+                            }
                         }
+                        Get-DevelopE2ECanonicalJsonSha256 -Value $configInput
+                    } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+                }
+                # UI policy affects installed behavior but is not in the older semantic dotenv projection.
+                $ui = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*(?:AGENT_1C_)?UI_TESTING\s*=' })
+                $processValues = [ordered]@{}
+                foreach ($name in @((Get-DeliveryPlanSemanticDotEnvNames) + @('UI_TESTING','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE') | Sort-Object -Unique)) {
+                    foreach ($key in @($name, "AGENT_1C_$name")) {
+                        $processValues[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
                     }
-                    Get-DevelopE2ECanonicalJsonSha256 -Value $configInput
-                } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
-            }
-            # UI policy affects installed behavior but is not in the older semantic dotenv projection.
-            $ui = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*(?:AGENT_1C_)?UI_TESTING\s*=' })
-            $processValues = [ordered]@{}
-            foreach ($name in @((Get-DeliveryPlanSemanticDotEnvNames) + @('UI_TESTING','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE') | Sort-Object -Unique)) {
-                foreach ($key in @($name, "AGENT_1C_$name")) {
-                    $processValues[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+                }
+                $artifacts = [ordered]@{}
+                if ($null -ne $ArtifactBinding) {
+                    $artifacts = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $RepositoryRoot -Binding $ArtifactBinding
+                } else {
+                    foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+                        $physical = [Environment]::GetEnvironmentVariable($name,'Process')
+                        if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) {
+                            Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_BINDING_MISSING' -Inputs @($name); return $null
+                        }
+                        $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
+                    }
+                }
+                $runtime = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('WindowsPowerShell'); return $null
+                }
+                $platformLine = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*PLATFORM_PATH\s*=' }) | Select-Object -Last 1
+                if (-not $platformLine) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @('PLATFORM_PATH'); return $null
+                }
+                $platform = ($platformLine.Substring($platformLine.IndexOf('=') + 1)).Trim().Trim('"',"'")
+                if (Test-Path -LiteralPath $platform -PathType Container) { $platform = Join-Path $platform '1cv8.exe' }
+                if (-not (Test-Path -LiteralPath $platform -PathType Leaf)) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('PLATFORM_PATH'); return $null
+                }
+                $go = Get-Command go.exe -ErrorAction SilentlyContinue
+                if (-not $go -or -not (Test-Path -LiteralPath $go.Source -PathType Leaf)) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('go.exe'); return $null
+                }
+                $ExternalBinding = [ordered]@{
+                    complete=$true; standStateSha256=$stand; root=[IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
+                    files=$files; uiPolicySha256=Get-DevelopE2ECanonicalJsonSha256 -Value $ui
+                    processEnvironmentSha256=Get-DevelopE2ECanonicalJsonSha256 -Value $processValues
+                    osKernelSha256=(Get-FileHash -LiteralPath (Join-Path $env:SystemRoot 'System32\kernel32.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); freshProjectsRoot='C:\itlj'
+                    client=Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
+                    rulesCommit=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD')).stdout.Trim()
+                    rulesTree=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
+                    artifacts=$artifacts; nativeRuntimeSha256=(Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
+                    platformSha256=(Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
+                    goSha256=(Get-FileHash -LiteralPath $go.Source -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+                $config = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
+                if ($positiveRoot) {
+                    $positiveIdentity = Get-DevelopStandInputIdentity -ProjectRoot $positiveRoot -ExternalBinding $null
+                    if ($null -eq $positiveIdentity) { return $null }
+                    $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
                 }
             }
-            $artifacts = [ordered]@{}
-            if ($null -ne $ArtifactBinding) {
-                $artifacts = Get-SourceE2EArtifactBindingHashes -RepositoryRoot $RepositoryRoot -Binding $ArtifactBinding
-            } else {
-                foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
-                    $physical = [Environment]::GetEnvironmentVariable($name,'Process')
-                    if (-not $physical -or -not (Test-Path -LiteralPath $physical -PathType Leaf)) {
-                        Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_BINDING_MISSING' -Inputs @($name); return $null
-                    }
-                    $artifacts[$name] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
-                }
-            }
-            $runtime = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('WindowsPowerShell'); return $null
-            }
-            $platformLine = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot '.dev.env'), [Text.Encoding]::UTF8) | Where-Object { $_ -match '^\s*PLATFORM_PATH\s*=' }) | Select-Object -Last 1
-            if (-not $platformLine) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'STAND_INPUT_MISSING' -Inputs @('PLATFORM_PATH'); return $null
-            }
-            $platform = ($platformLine.Substring($platformLine.IndexOf('=') + 1)).Trim().Trim('"',"'")
-            if (Test-Path -LiteralPath $platform -PathType Container) { $platform = Join-Path $platform '1cv8.exe' }
-            if (-not (Test-Path -LiteralPath $platform -PathType Leaf)) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('PLATFORM_PATH'); return $null
-            }
-            $go = Get-Command go.exe -ErrorAction SilentlyContinue
-            if (-not $go -or -not (Test-Path -LiteralPath $go.Source -PathType Leaf)) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'HOST_RUNTIME_MISSING' -Inputs @('go.exe'); return $null
-            }
-            $ExternalBinding = [ordered]@{
-                complete=$true; standStateSha256=$stand; root=[IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
-                files=$files; uiPolicySha256=Get-DevelopE2ECanonicalJsonSha256 -Value $ui
-                processEnvironmentSha256=Get-DevelopE2ECanonicalJsonSha256 -Value $processValues
-                osKernelSha256=(Get-FileHash -LiteralPath (Join-Path $env:SystemRoot 'System32\kernel32.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); freshProjectsRoot='C:\itlj'
-                client=Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
-                rulesCommit=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD')).stdout.Trim()
-                rulesTree=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
-                artifacts=$artifacts; nativeRuntimeSha256=(Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
-                platformSha256=(Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
-                goSha256=(Get-FileHash -LiteralPath $go.Source -Algorithm SHA256).Hash.ToLowerInvariant()
-            }
-            $config = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
-            if ($positiveRoot) {
-                $positiveIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $RepositoryRoot -Journey $Journey -Catalog $Catalog `
-                    -ProjectRoot $positiveRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding -Diagnostics $Diagnostics
-                if ($null -eq $positiveIdentity) { return $null }
-                $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
-            }
+            if (-not $ExternalBinding.complete) { return $null }
+            # Version the normalization contract; legacy raw-byte identities require
+            # one fresh qualification rather than an unauthenticated cache rewrite.
+            $body = [ordered]@{ schemaVersion=2; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
+            $result = [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+            if ($positiveIdentity) { $result | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positiveIdentity }
+            return $result
         }
-        if (-not $ExternalBinding.complete) { return $null }
-        # Version the normalization contract; legacy raw-byte identities require
-        # one fresh qualification rather than an unauthenticated cache rewrite.
-        $body = [ordered]@{ schemaVersion=2; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
-        $result = [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
-        if ($positiveIdentity) { $result | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positiveIdentity }
-        return $result
+        return Get-DevelopStandInputIdentity -ProjectRoot $ProjectRoot -ExternalBinding $ExternalBinding
     } catch {
         Write-Verbose "Develop E2E input identity unavailable: $($_.Exception.GetType().Name); $($_.FullyQualifiedErrorId)"
         Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'INPUT_IDENTITY_UNAVAILABLE' -Inputs @($_.Exception.GetType().Name)
@@ -311,6 +317,13 @@ function Resolve-DevelopE2EJourneyPlan {
     $root = [IO.Path]::GetFullPath($RepositoryRoot)
     if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $root }
     [void](Test-QualityContractCatalog -RepositoryRoot $root -Catalog $Catalog)
+    return Resolve-DevelopE2EJourneyPlanCore -RepositoryRoot $root -BaseRef $BaseRef -ChangedPath $ChangedPath -Catalog $Catalog
+}
+
+function Resolve-DevelopE2EJourneyPlanCore {
+    # Internal selection over the catalog already validated by its calling owner.
+    param([string]$RepositoryRoot,[string]$BaseRef='', [string[]]$ChangedPath=@(),[object]$Catalog)
+    $root=[IO.Path]::GetFullPath($RepositoryRoot)
     $paths = @(Get-DevelopE2EChangedPaths -RepositoryRoot $root -BaseRef $BaseRef -ChangedPath $ChangedPath)
     if ($paths.Count -eq 0) {
         return [pscustomobject][ordered]@{
