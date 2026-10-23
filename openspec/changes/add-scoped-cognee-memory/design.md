@@ -338,3 +338,7 @@ Fresh19 unchanged, 30 owned processes штатно закрыты. Canary1 user 
 ### Registry recovery update: active-writer cancellation, 2026-10-23
 
 [Единый registry qualification report](../add-product-project-registry/evidence/g3-pm5-active-cancel-2026-10-23.md) закрывает прежний named active-writer gap в PM5 native-helper subset с original resume/restore continuation. Context/apply/recovery остаются у existing registry/client owner; timing instrumentation не поставляется в runtime. Full registry G3/AC-39 и consumer4.2/G4/AC-43/G5/44 открыты. Memory не вводит собственный cache/recovery/probe; шесть областей/home/grants/ai_rules_1c и optional OpenViking прежние.
+
+### Registry cost/concurrency dependency update, 2026-10-23
+
+[Один registry batch](../add-product-project-registry/evidence/g3-pm5-concurrency-startup-2026-10-23.md) подтверждает same-user serialization/read-only status, сохраняя единственный selected-context owner. Full Startup window2.045/2.570 s сохраняет открытый **G3-PM5-STARTUP-WINDOW-COST**, который memory consumer не обходит отдельным updater/cache/probe. Это не memory implementation/token benchmark и не основание закрыть G4/AC-43/G5/44; full registry G3/AC-39 и прочие prerequisites остаются открытыми.

@@ -449,3 +449,9 @@ Full registry G3/AC-39/remaining installed/client/platform/cost, AC-36–38 popu
 [Один registry report/JSON](../add-product-project-registry/evidence/g3-pm5-active-cancel-2026-10-23.md) закрывает прежний named PM5 active-writer cancellation gap: public cancel после настоящей A receipt при живом writer, apply exit1 до B/marker; pinned resume при новом tip и отдельный direct owned restore → original commands passed. 15 native calls и timing-only command breakpoint без runtime patch/mock подтверждают existing registry/client owner; memory не создаёт свой resolver/cache/recovery/probe. Failed harness и прежние исторические границы сохранены.
 
 Это AC-16/26 dependency subset, не full registry G3/AC-39 или consumer4.2/G4/AC-43/G5/44 acceptance. Полные race/terminal/installed/client/platform/cost/population критерии открыты; шесть областей/home/grants/Q1–Q7/D9/G2/optional OpenViking/ai_rules_1c прежние. Gate6/G4/рабочая миграция/публикация не выполнялись.
+
+## Dependency: current PM5 concurrency/Startup cost, 2026-10-23
+
+[Единый registry report/JSON](../add-product-project-registry/evidence/g3-pm5-concurrency-startup-2026-10-23.md) подтверждает same-user A/B serialization и read-only status при active writer, pinned main обоих original commands, 40 native no-op checks и publisher-only/change/offline. Приёмка времени остаётся открытой: **G3-PM5-STARTUP-WINDOW-COST**, full window2.045/2.570 s при цели1/2; внутренний hook и calibration не подменяют полный scope.
+
+Memory не вводит свой cache/probe/updater и не закрывает cost gap за registry owner. No-op output/context bytes не являются model token/billing proof; эта серия не G5 memory comparison. Consumer4.2/G4/AC-43/G5/44, full registry G3/AC-39 и прочие journeys/population открыты. Шесть областей/home/grants/Q1–Q7/D9/G2/optional OpenViking/ai_rules_1c прежние; Gate6/G4/рабочая миграция/публикация не выполнялись.
