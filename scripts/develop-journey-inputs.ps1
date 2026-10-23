@@ -67,12 +67,75 @@ function Get-DevelopJourneyExcludedScope {
     return $null
 }
 
+function Get-DevelopSourceTokenNormalizer {
+    # A stateless accelerator, keyed by its implementation so a candidate cannot
+    # inherit another supervisor's loaded type. The original PS path remains
+    # available on hosts where runtime compilation is unavailable.
+    $definition=@'
+using System;
+using System.Collections.Generic;
+using System.Text;
+public static class __TYPE__ {
+    struct Part { public string Kind; public string Text;
+        public Part(string kind, string text) { Kind=kind; Text=text; } }
+    public static string Normalize(object[] tokens) {
+        if (tokens.Length==0) return "";
+        var kindProperty=tokens[0].GetType().GetProperty("Kind");
+        var textProperty=tokens[0].GetType().GetProperty("Text");
+        var parts=new List<Part>();
+        foreach (var token in tokens) {
+            var kind=Convert.ToString(kindProperty.GetValue(token,null));
+            if (kind=="Comment" || kind=="EndOfInput" || kind=="LineContinuation") continue;
+            parts.Add(new Part(kind,Convert.ToString(textProperty.GetValue(token,null))));
+        }
+        var output=new StringBuilder(); var last=""; bool first=true;
+        for (int i=0;i<parts.Count;i++) {
+            var part=parts[i];
+            if (part.Kind=="NewLine") {
+                int next=i+1;
+                while (next<parts.Count && parts[next].Kind=="NewLine") next++;
+                if (last=="" || last=="NewLine" || last=="LCurly" || next==parts.Count || parts[next].Kind=="RCurly") continue;
+                if (!first) output.Append('\n'); first=false;
+                output.Append("NewLine:"); last="NewLine";
+            } else {
+                if (!first) output.Append('\n'); first=false;
+                output.Append(part.Kind).Append(':').Append(part.Text); last=part.Kind;
+            }
+        }
+        return output.ToString();
+    }
+}
+'@
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($definition)))).Replace('-','')}
+    finally {$sha.Dispose()}
+    $name='ItlDevelopTokens_'+$hash
+    $cache=Get-Variable -Name developTokenNormalizers -Scope Script -ErrorAction SilentlyContinue
+    if(-not $cache) {$script:developTokenNormalizers=@{}}
+    if(-not $script:developTokenNormalizers.ContainsKey($name)) {
+        $type=$name -as [type]
+        if(-not $type) {
+            try {$type=Add-Type -TypeDefinition ($definition.Replace('__TYPE__',$name)) -PassThru -ErrorAction Stop | Where-Object FullName -CEQ $name}
+            catch {Write-Verbose 'Token accelerator unavailable; retaining the original PowerShell normalization.'; $type=$null}
+        }
+        $script:developTokenNormalizers[$name]=$type
+    }
+    return $script:developTokenNormalizers[$name]
+}
+
 function ConvertTo-DevelopSourceTokens {
     param([AllowEmptyString()][string]$Text)
     $Text=$Text.TrimStart([char]0xFEFF)
     $tokens=$null; $errors=$null
     [void][Management.Automation.Language.Parser]::ParseInput($Text,[ref]$tokens,[ref]$errors)
     if (@($errors).Count) { throw 'DEVELOP_SOURCE_PROJECTION_PARSE_ERROR' }
+    if($tokens.Count -ge 4096) {
+        $normalizer=Get-DevelopSourceTokenNormalizer
+        if($normalizer) {
+            try {return $normalizer::Normalize($tokens)}
+            catch {Write-Verbose 'Token accelerator rejected this host input; retaining the original PowerShell normalization.'}
+        }
+    }
     $meaningful=@($tokens | Where-Object { $_.Kind -notin @('Comment','EndOfInput','LineContinuation') })
     $parts=[Collections.Generic.List[string]]::new(); $lastKind=''
     for($i=0;$i -lt $meaningful.Count;$i++) {

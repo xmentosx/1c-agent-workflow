@@ -290,7 +290,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -500,11 +500,14 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 83
-        @($currentSelection.tests).Count | Should -Be (83 + $registryConsumers.Count + 3)
+        # One additional real catalog consumer; historical observed timings above
+        # remain unchanged, and the exact added selection is checked below.
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 3)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/SourceDeliveryIncremental.Tests.ps1",
             "tests/pester/SourceQualityCatalog.Tests.ps1")
         # Historical catalog-wide scheduler weights/four lanes, retained for comparison:
         # parallel 936.459, old complete ReleaseGate 198.938. No cache reuse is assumed.
@@ -879,7 +882,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')
         @($selected.unknownPaths) | Should -BeNullOrEmpty
-        @($selected.tests) | Should -Be @('tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
+        @($selected.tests) | Should -Be @('tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
     }
 
     It 'invalidates every existing qualification consumer when the catalog bytes change' {
@@ -909,9 +912,9 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $consumers=@('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',
                 'ReleaseOrchestration','DevelopManifestContinuation','E2EClientSelection','ReleaseSnapshotContinuation','ReleaseAdmission',
                 'PesterShardIdentity','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryIncremental')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryIncremental','SourceDeliveryFrozenPlan','SourceDeliveryHistoricalTransition')
             $catalogIndependent=@('DevelopStaticQualificationCache','PesterCacheCompatibility','ReleaseProgressObservation','E2EArtifactCleanup','ForkQualificationInventory',
-                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryIncremental')
+                'CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog','SourceDeliveryPlan','SourceDeliveryFrozenPlan','SourceDeliveryHistoricalTransition')
             $trackedPaths=@('tests/quality-contracts.json')+@($consumers | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
             . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
             $actualPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepoRoot -Arguments @('ls-files','-z','--cached'))
@@ -942,6 +945,21 @@ Describe 'Catalog selection and qualified consumer inputs' {
                     $changed | Should -BeExactly $before[$name] -Because "$name does not read the real catalog as fixture input"
                 } else {
                     $changed | Should -Not -Be $before[$name] -Because "$name still consumes the catalog during full qualification"
+                }
+            }
+            # Discovery is loaded by the real planner, not by the custom-gate
+            # frozen/historical process fixtures. Exercise actual per-file keys.
+            $beforeDiscovery=@{}
+            foreach($name in $consumers) {
+                $beforeDiscovery[$name]=Get-ShardInputDigest -Paths @((Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')))
+            }
+            [IO.File]::AppendAllText((Join-Path $RepositoryRoot 'scripts/source-e2e-artifact-discovery.ps1'),"`n# changed artifact lookup",[Text.UTF8Encoding]::new($false))
+            foreach($name in $consumers) {
+                $after=Get-ShardInputDigest -Paths @((Join-Path $RepositoryRoot ('tests/pester/'+$name+'.Tests.ps1')))
+                if($name -in @('SourceDeliveryPlan','SourceDeliveryIncremental')) {
+                    $after | Should -Not -Be $beforeDiscovery[$name]
+                } else {
+                    $after | Should -BeExactly $beforeDiscovery[$name] -Because "$name does not execute artifact discovery"
                 }
             }
             # Definitions loaded by the workflow-transition module remain Full

@@ -378,7 +378,10 @@ Git (`--`): проверка одноимённого filesystem path в глу�
 
 Planner получает тот же SHA-проверяемый artifact binding, что checker. Его поиск
 выполняется только в явных overrides и известных локальных cache paths; Plan
-не скачивает артефакты и не собирает EXE. При недоступном binding reuse остаётся
+не провиженит этот source cache и не собирает EXE. Отдельный component preflight
+опубликованного владельца по-прежнему скачивает remote assets для проверки SHA;
+это время входит в полный CLI, но не в `planningDurationMs` расчёта DAG.
+При недоступном binding reuse остаётся
 неподтверждённым до обычного readiness, который готовит и проверяет артефакты.
 Общий Vanessa cache использует имя `<sha256>-<assetName>`; поиск проверяет его
 по полному SHA, сохраняя совместимость с прежним непредфиксным именем. Ошибка
@@ -471,6 +474,19 @@ Wildcard inventory сопоставляется пакетно с однажды
 WildcardPattern; grammar, case rules, порядок, unknown-owner и все хэши сохранены.
 Это сокращает повторные вызовы script-функций на каждый file × pattern, а не
 уменьшает инвентарь или пределы проверок.
+Planner валидирует каталог один раз до внутреннего отбора; самостоятельный
+router сохраняет свою обязательную валидацию. Source inventory снимается один
+раз для journey и его positive stand, а mutable stand/environment читаются
+независимо при каждом вызове. Большие token streams имеют stateless-ускоритель,
+тип которого закреплён SHA реализации; при недоступном компиляторе остаётся
+исходный PowerShell путь. Регрессия сравнивает оба результата, включая Unicode,
+here-strings, comments и statement separators. Профиль того же кандидата:
+31,785 → 28,116 с; шесть source projections — 7,634 → 2,881 с.
+
+Incremental-регрессия читает настоящий каталог: изменение его bytes выбирает её
+и сбрасывает её proof. Custom-gate frozen/historical fixtures не копируют и не
+исполняют discovery-модуль. Реальный расчёт per-file digest подтверждает, что
+изменение поиска сбрасывает planner/incremental, сохраняя эти process proofs.
 
 `Status` не является исполняющим supervisor: read-only вызов использует файл из
 текущего checkout без создания worktree. Поэтому диагностика выводит две разные
