@@ -3,6 +3,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot 'develop-journey-inputs.ps1')
+. (Join-Path $PSScriptRoot 'develop-e2e-scenarios.ps1')
 
 function Get-DevelopE2EInputFileSha256 {
     param([string]$Path, [string]$RelativePath)
@@ -26,8 +27,10 @@ function Get-DevelopE2EInputIdentity {
         [object]$Catalog = $null,
         [string]$ProjectRoot = '', [string]$AiRulesSource = '', [string]$AgentTarget = '',
         [object]$ExternalBinding = $null, [object]$ArtifactBinding = $null,
-        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null
+        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null,
+        [string]$FreshProjectsRoot='C:\itlj'
     )
+    if([string]::IsNullOrWhiteSpace($FreshProjectsRoot)) {$FreshProjectsRoot='C:\itlj'}
     try {
         if ($null -eq $Catalog) { $Catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot }
         $projection = Get-DevelopE2EJourneyContractProjection -Catalog $Catalog -Journey $Journey
@@ -37,6 +40,7 @@ function Get-DevelopE2EInputIdentity {
         $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
         $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/source-e2e-manifest-repair.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
             'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1')
+        if($Catalog.developJourneys.PSObject.Properties['scenarios']) {$patterns+=@('scripts/develop-e2e-scenarios.ps1','scripts/quality-contracts.ps1')}
         if ($Journey -eq 'upgrade') { $patterns += 'scripts/develop-configuration-rejection.ps1' }
         # Git inventory is unique. Ordinal ordering also stays identical between
         # the Core supervisor and its Windows PowerShell checker child.
@@ -122,7 +126,7 @@ function Get-DevelopE2EInputIdentity {
                     complete=$true; standStateSha256=$stand; root=[IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
                     files=$files; uiPolicySha256=Get-DevelopE2ECanonicalJsonSha256 -Value $ui
                     processEnvironmentSha256=Get-DevelopE2ECanonicalJsonSha256 -Value $processValues
-                    osKernelSha256=(Get-FileHash -LiteralPath (Join-Path $env:SystemRoot 'System32\kernel32.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); freshProjectsRoot='C:\itlj'
+                    osKernelSha256=(Get-FileHash -LiteralPath (Join-Path $env:SystemRoot 'System32\kernel32.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); freshProjectsRoot=[IO.Path]::GetFullPath($FreshProjectsRoot).ToLowerInvariant()
                     client=Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget $AgentTarget
                     rulesCommit=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD')).stdout.Trim()
                     rulesTree=(Invoke-RepositoryGit -RepositoryRoot $AiRulesSource -Arguments @('rev-parse','HEAD^{tree}')).stdout.Trim()
@@ -131,11 +135,32 @@ function Get-DevelopE2EInputIdentity {
                     goSha256=(Get-FileHash -LiteralPath $go.Source -Algorithm SHA256).Hash.ToLowerInvariant()
                 }
                 $config = Get-Content -LiteralPath (Join-Path $ProjectRoot '.agent-1c/release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $ExternalBinding['configurationRejectionApplicable']=[bool]$config.PSObject.Properties['developConfigurationRejection']
+                # Product startup is cross-cutting when enabled. Prove its
+                # absence on actual Develop targets before narrowing MCP scope.
+                $contextRoots=[ordered]@{project=$ProjectRoot}
+                if($config.PSObject.Properties['developWorktreePath'] -and $config.developWorktreePath) {$contextRoots['develop']=[string]$config.developWorktreePath}
+                $contextKnown=$true;$contextDisabled=$true
+                $contextInputs=@(foreach($role in $contextRoots.Keys) {
+                    $root=[IO.Path]::GetFullPath($contextRoots[$role]);$path=Join-Path $root '.agent-1c/project.json'
+                    $pending=Test-Path -LiteralPath (Join-Path $root '.agent-1c/mcp/product-context-operation.json') -PathType Leaf
+                    $hash='missing'
+                    if(Test-Path -LiteralPath $path -PathType Leaf) {
+                        $project=Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+                        $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                        if($project.PSObject.Properties['productProject'] -and $project.productProject) {$contextDisabled=$false}
+                    } else {$contextKnown=$false;$contextDisabled=$false}
+                    if($pending) {$contextDisabled=$false}
+                    [ordered]@{role=$role;root=$root.ToLowerInvariant();projectSha256=$hash;pendingProductContext=[bool]$pending}
+                })
+                $ExternalBinding['productContext']=[ordered]@{known=$contextKnown;disabled=$contextDisabled;inputs=$contextInputs}
                 $positiveRoot = Get-DevelopPositiveStandRoot -ProjectRoot $ProjectRoot -Config $config
                 if ($positiveRoot) {
                     $positiveIdentity = Get-DevelopStandInputIdentity -ProjectRoot $positiveRoot -ExternalBinding $null
                     if ($null -eq $positiveIdentity) { return $null }
                     $ExternalBinding['positiveStandInputIdentity'] = [string]$positiveIdentity.fingerprint
+                    $ExternalBinding.productContext.disabled=[bool]($ExternalBinding.productContext.disabled -and $positiveIdentity.inventory.external.productContext.disabled)
+                    $ExternalBinding.productContext.known=[bool]($ExternalBinding.productContext.known -and $positiveIdentity.inventory.external.productContext.known)
                 }
             }
             if (-not $ExternalBinding.complete) { return $null }
@@ -155,7 +180,7 @@ function Get-DevelopE2EInputIdentity {
 }
 
 function Test-DevelopE2ENewerJourneyFailure {
-    param([string]$RepositoryRoot, [object]$Report, [string]$CurrentCommit, [string]$CurrentTree, [object]$InputIdentity = $null)
+    param([string]$RepositoryRoot, [object]$Report, [string]$CurrentCommit, [string]$CurrentTree, [object]$InputIdentity = $null,[string[]]$RequiredScenario=@())
     $common = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
     $runRoot = Join-Path $common 'itl/runs'
     if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $false }
@@ -165,6 +190,14 @@ function Test-DevelopE2ENewerJourneyFailure {
             $journey = [string]$Report.journey
             if ([string]$run.status -ne 'failed' -or [datetime]$run.finishedAt -le [datetime]$Report.finishedAt -or
                 @($run.stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.status -eq 'failed' }).Count -eq 0) { continue }
+            if($RequiredScenario.Count -and $run.PSObject.Properties['journeyScenarioExecution']) {
+                $property=$run.journeyScenarioExecution.PSObject.Properties[$journey]
+                $scenarioContract=$InputIdentity -and (($InputIdentity.inventory.contract -is [Collections.IDictionary] -and $InputIdentity.inventory.contract.Contains('scenarios')) -or $InputIdentity.inventory.contract.PSObject.Properties['scenarios'])
+                $known=if($scenarioContract) {@($InputIdentity.inventory.contract.scenarios.id)}else{@()}
+                if($property -and @($property.Value).Count -and $known.Count -and
+                    @($property.Value | Where-Object {$_ -notin $known}).Count -eq 0 -and
+                    @($property.Value | Where-Object {$_ -in $RequiredScenario}).Count -eq 0) {continue}
+            }
             if (-not (Get-Command Get-WorkflowContinuationEndpoint -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'release-qualification.ps1') }
             if (-not (Get-WorkflowContinuationEndpoint -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$run.commit) -CurrentCommit $CurrentCommit -CurrentTree $CurrentTree)) { continue }
             # Older failed journeys lack external facts. They cannot authorize a
@@ -174,8 +207,13 @@ function Test-DevelopE2ENewerJourneyFailure {
             if (-not $property -or -not $property.Value) { return $true }
             $failedInput = $property.Value
             if ((Get-DevelopE2ECanonicalJsonSha256 -Value $failedInput.inventory) -cne [string]$failedInput.fingerprint) { return $true }
-            if ([string]$failedInput.fingerprint -ceq [string]$InputIdentity.fingerprint -or
-                (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $failedInput -Current $InputIdentity -QualifiedCommit ([string]$run.commit))) { return $true }
+            $equivalent=[string]$failedInput.fingerprint -ceq [string]$InputIdentity.fingerprint
+            if(-not $equivalent) {
+                $equivalent=if($RequiredScenario.Count -and (($InputIdentity.inventory.contract -is [Collections.IDictionary] -and $InputIdentity.inventory.contract.Contains('scenarios')) -or $InputIdentity.inventory.contract.PSObject.Properties['scenarios'])) {
+                    Test-DevelopScenarioEquivalentInput $RepositoryRoot $failedInput $InputIdentity ([string]$run.commit) $RequiredScenario (Get-QualityContractCatalog $RepositoryRoot)
+                } else {Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $failedInput -Current $InputIdentity -QualifiedCommit ([string]$run.commit)}
+            }
+            if($equivalent) {return $true}
         } catch { return $true }
     }
     return $false
@@ -190,7 +228,7 @@ function Get-DevelopE2EOwnerInputContinuation {
     if (-not $endpoint) { return $null }
     $paths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @('diff','--name-only','-z',$QualifiedCommit,$CurrentCommit,'--'))
     $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
-    $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $paths
+    $selection = if($paths.Count) {Resolve-QualityContractsForPaths -Catalog $catalog -Paths $paths} else {[pscustomobject]@{unknownPaths=@()}}
     foreach ($path in @($selection.unknownPaths)) {
         $approvedScope = $false
         foreach ($scope in $catalog.continuationScopes.PSObject.Properties) {
@@ -226,7 +264,9 @@ function Get-DevelopE2EOwnerInputContinuation {
 function Get-DevelopE2EAncestorQualification {
     param([string]$RepositoryRoot, [string]$Tree, [string]$Journey, [string]$IdentitySha256, [string]$StandStateSha256, [object]$InputIdentity,
         [object]$StaticProof = $null, [switch]$AllowPendingStatic,
-        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null)
+        [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null,
+        [string[]]$RequiredScenario=@(),[object]$Catalog=$null,
+        [AllowNull()][object[]]$QualificationInventory=$null)
     if ($null -eq $InputIdentity -or [string]$InputIdentity.fingerprint -cnotmatch '^[a-f0-9]{64}$' -or
         (Get-DevelopE2ECanonicalJsonSha256 -Value $InputIdentity.inventory) -cne [string]$InputIdentity.fingerprint -or
         -not $InputIdentity.inventory.external.complete -or [string]$InputIdentity.inventory.journey -cne $Journey) { return $null }
@@ -239,7 +279,9 @@ function Get-DevelopE2EAncestorQualification {
         return $null
     }
     $seenJourney=$false
-    foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter manifest.json | Sort-Object LastWriteTimeUtc -Descending)) {
+    $files=if($null -ne $QualificationInventory) {$QualificationInventory} else {Get-ChildItem -LiteralPath $root -Recurse -File -Filter manifest.json | Sort-Object LastWriteTimeUtc -Descending}
+    foreach ($file in @($files)) {
+        if($file.FullName.StartsWith((Join-Path $root '.references')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {continue}
         $qualifiedCommit=''
         try {
             $manifest = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -255,8 +297,26 @@ function Get-DevelopE2EAncestorQualification {
             }
             $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $qualifiedCommit=[string]$report.repository.commit
-            if ([string]$manifest.inputIdentity.fingerprint -cne [string]$InputIdentity.fingerprint -and
-                -not (Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit $qualifiedCommit)) {
+            if($RequiredScenario.Count) {
+                $coverage=@(Get-DevelopScenarioCoverage $report $Catalog $Journey)
+                if(@($RequiredScenario | Where-Object {$_ -notin $coverage}).Count) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'SCENARIO_COVERAGE_MISSING' -Commit $qualifiedCommit -Inputs $RequiredScenario
+                    continue
+                }
+                if([int]$report.schemaVersion -in @(2,3) -and
+                    (Get-DevelopE2ECanonicalJsonSha256 $report.plan.scenarioContracts.$Journey) -cne
+                    (Get-DevelopE2ECanonicalJsonSha256 ([ordered]@{scenarios=$Catalog.developJourneys.scenarios.$Journey;inputs=$Catalog.developJourneys.scenarioInputs}))) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'SCENARIO_CONTRACT_CHANGED' -Commit $qualifiedCommit -Inputs $RequiredScenario
+                    continue
+                }
+            }
+            $equivalent=[string]$manifest.inputIdentity.fingerprint -ceq [string]$InputIdentity.fingerprint
+            if(-not $equivalent) {
+                $equivalent=if($RequiredScenario.Count) {
+                    Test-DevelopScenarioEquivalentInput $RepositoryRoot $manifest.inputIdentity $InputIdentity $qualifiedCommit $RequiredScenario $Catalog
+                } else {Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit $qualifiedCommit}
+            }
+            if (-not $equivalent) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'INPUTS_NOT_EQUIVALENT' -Commit $qualifiedCommit -Inputs @(Get-DevelopInputDifferenceNames -Recorded $manifest.inputIdentity -Current $InputIdentity)
                 continue
             }
@@ -267,7 +327,7 @@ function Get-DevelopE2EAncestorQualification {
             # The complete owner fingerprint above binds current source and
             # environment. Keep the historical envelope identity: its raw stand
             # configuration also included admission receipts, which may advance.
-            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 ([string]$report.identitySha256) -StandStateSha256 $StandStateSha256)) {
+            if (-not (Test-DevelopE2ERouteReport -Path $reportPath -Tree ([string]$report.repository.tree) -Journey $Journey -IdentitySha256 ([string]$report.identitySha256) -StandStateSha256 $StandStateSha256 -RequiredScenario $RequiredScenario)) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ROUTE_OR_STAND_INVALID' -Commit $qualifiedCommit; continue
             }
             $continuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit ([string]$report.repository.commit) -CurrentCommit $current -CurrentTree $Tree
@@ -277,7 +337,7 @@ function Get-DevelopE2EAncestorQualification {
             if (-not $continuation) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'LINEAGE_OR_CURRENT_STATIC_UNPROVEN' -Commit $qualifiedCommit; continue
             }
-            if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity) {
+            if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity -RequiredScenario $RequiredScenario) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NEWER_APPLICABLE_FAILURE' -Commit $qualifiedCommit; continue
             }
             return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity }
@@ -364,10 +424,20 @@ function Resolve-DevelopE2EJourneyPlanCore {
         $reason = if ($matchedFullPaths.Count) { 'develop-orchestration-full-path' } elseif ($journeys.Count -gt 0) { "quality-contract-route" } else { "no-develop-journey-route" }
     }
 
+    $scenarioPlan=[ordered]@{};$scenarioReasons=[ordered]@{}
+    if($Catalog.developJourneys.PSObject.Properties['scenarios']) {
+        foreach($name in @($journeys)) {
+            $scoped=Resolve-DevelopScenarioSelection $root $BaseRef $paths $Catalog $name
+            $scenarioPlan[$name]=@($scoped.selected);$scenarioReasons[$name]=@($scoped.reasons)
+            if(-not @($scoped.selected).Count) {[void]$journeys.Remove($name)}
+        }
+    }
     return [pscustomobject][ordered]@{
         schemaVersion = 1
         kind = "itl-develop-e2e-journey-plan"
         reason = $reason
+        scenarios = $scenarioPlan
+        scenarioReasons = $scenarioReasons
         paths = $paths
         contracts = $contractIds
         journeys = @($journeys)
@@ -505,8 +575,13 @@ function New-DevelopE2ERouteReport {
     if ($Journey -notin @($Plan.journeys | ForEach-Object { [string]$_ }) -or [string]$JourneyResult.name -ne $Journey -or [string]$JourneyResult.status -ne "passed") {
         throw "Develop E2E route report requires one passed result for requested journey '$Journey'."
     }
-    return [pscustomobject][ordered]@{
-        schemaVersion = 1
+    $scoped=$Plan.PSObject.Properties['scenarioCoverage'] -and $Plan.scenarioCoverage.PSObject.Properties[$Journey]
+    if(-not $scoped -and $JourneyResult.PSObject.Properties['coverage']) {throw 'DEVELOP_SCENARIO_COVERAGE_REQUIRED: partial execution cannot become a legacy full journey.'}
+    if($scoped -and (-not $JourneyResult.PSObject.Properties['coverage'] -or
+        -not $JourneyResult.PSObject.Properties['scenarioEvidence'] -or
+        (@($JourneyResult.coverage | Sort-Object) -join ',') -cne (@($Plan.scenarioCoverage.$Journey | Sort-Object) -join ','))) {throw 'DEVELOP_SCENARIO_COVERAGE_UNPROVEN'}
+    $record=[ordered]@{
+        schemaVersion = $(if($scoped){2}else{1})
         kind = "itl-develop-e2e-route-report"
         status = "passed"
         repository = [ordered]@{ commit = $commit; tree = $tree }
@@ -518,6 +593,8 @@ function New-DevelopE2ERouteReport {
         result = $JourneyResult
         finishedAt = [DateTime]::UtcNow.ToString("o")
     }
+    if($scoped) {$record['coverage']=@($JourneyResult.coverage)}
+    return [pscustomobject]$record
 }
 
 function Test-DevelopE2ERouteReport {
@@ -527,7 +604,7 @@ function Test-DevelopE2ERouteReport {
         [Parameter(Mandatory = $true)][ValidateSet("upgrade", "fresh")][string]$Journey,
         [Parameter(Mandatory = $true)][string]$IdentitySha256,
         [Parameter(Mandatory = $true)][string]$StandStateSha256,
-        [string]$ProjectRoot = ""
+        [string]$ProjectRoot = "",[string[]]$RequiredScenario=@()
     )
 
     if ($Tree -notmatch '^[a-f0-9]{40}$' -or $IdentitySha256 -notmatch '^[a-f0-9]{64}$' -or $StandStateSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
@@ -539,11 +616,24 @@ function Test-DevelopE2ERouteReport {
         $report = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
         $standMatches = [string]$report.standStateSha256 -eq $StandStateSha256 -or
             ($ProjectRoot -and (Test-DevelopE2ELegacyStandContinuation -ProjectRoot $ProjectRoot -RecordedSha256 ([string]$report.standStateSha256)))
-        if ([int]$report.schemaVersion -ne 1 -or [string]$report.kind -ne "itl-develop-e2e-route-report" -or
+        if ([int]$report.schemaVersion -notin @(1,2,3) -or [string]$report.kind -ne "itl-develop-e2e-route-report" -or
             [string]$report.status -ne "passed" -or [string]$report.repository.tree -ne $Tree -or
             [string]$report.identitySha256 -ne $IdentitySha256 -or -not $standMatches -or [string]$report.journey -ne $Journey -or
             [string]$report.plan.kind -ne "itl-develop-e2e-journey-plan" -or
             [string]$report.planSha256 -ne (Get-DevelopE2ECanonicalJsonSha256 -Value $report.plan)) { return $false }
+        if([int]$report.schemaVersion -in @(2,3)) {
+            if([int]$report.schemaVersion -eq 3 -and (-not $RequiredScenario.Count -or @($RequiredScenario | Where-Object {$_ -notin @($report.coverage)}).Count)) {return $false}
+            if(-not $report.PSObject.Properties['coverage'] -or -not @($report.coverage).Count -or
+                -not $report.plan.PSObject.Properties['scenarioContracts'] -or
+                @($report.coverage | Sort-Object -Unique).Count -ne @($report.coverage).Count -or
+                (@($report.coverage | Sort-Object) -join ',') -cne (@($report.plan.scenarioCoverage.$Journey | Sort-Object) -join ',') -or
+                ([int]$report.schemaVersion -eq 2 -and (@($report.coverage | Sort-Object) -join ',') -cne (@($report.plan.scenarioContracts.$Journey.scenarios.id | Sort-Object) -join ',')) -or
+                @($report.coverage | Where-Object {$_ -notin @($report.plan.scenarioContracts.$Journey.scenarios.id)}).Count -or
+                (@($report.coverage | Sort-Object) -join ',') -cne (@($report.result.coverage | Sort-Object) -join ',')) {return $false}
+            if(-not $report.result.PSObject.Properties['scenarioEvidence'] -or -not (Test-DevelopScenarioEvidence $report)) {return $false}
+        } elseif($report.result.PSObject.Properties['coverage']) {
+            return $false
+        }
         return $Journey -in @($report.plan.journeys | ForEach-Object { [string]$_ }) -and
             [string]$report.result.name -eq $Journey -and [string]$report.result.status -eq "passed"
     } catch { return $false }
@@ -571,14 +661,19 @@ function Save-DevelopE2EQualification {
         [Parameter(Mandatory = $true)][ValidateSet("upgrade", "fresh")][string]$Journey,
         [Parameter(Mandatory = $true)][string]$IdentitySha256,
         [Parameter(Mandatory = $true)][string]$StandStateSha256,
-        [object]$InputIdentity = $null
+        [object]$InputIdentity = $null,[string[]]$RequiredScenario=@()
     )
 
-    if (-not (Test-DevelopE2ERouteReport -Path $ReportPath -Tree $Tree -Journey $Journey -IdentitySha256 $IdentitySha256 -StandStateSha256 $StandStateSha256)) {
+    if (-not (Test-DevelopE2ERouteReport -Path $ReportPath -Tree $Tree -Journey $Journey -IdentitySha256 $IdentitySha256 -StandStateSha256 $StandStateSha256 -RequiredScenario $RequiredScenario)) {
         throw "Develop E2E route report is incomplete, corrupt, or does not match tree/identity/journey."
     }
     $report = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $target = Get-DevelopE2EQualificationCachePath -RepositoryRoot $RepositoryRoot -Tree $Tree -Journey $Journey -IdentitySha256 $IdentitySha256
+    if([int]$report.schemaVersion -in @(2,3)) {
+        # Compositions refer to immutable older receipts. Never replace a
+        # referenced certificate or turn warm reuse into a self-reference.
+        $target=Join-Path (Get-RepositoryCommonGitDirectory $RepositoryRoot) ('itl/develop-e2e-qualifications/scenarios/'+(Get-FileHash -LiteralPath $ReportPath -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     $token = [guid]::NewGuid().ToString("N")
     $temporaryReport = Join-Path $target ("route-report.json.$token.tmp")

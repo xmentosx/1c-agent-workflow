@@ -119,6 +119,7 @@ $e2eReportPath = ""
 $developE2EReportPath = ""
 $developPlan = $null
 $script:developAncestorRoutes = @{}
+$script:developScenarioExecution = @{}
 $script:developCurrentStaticProof = $null
 $script:developJourneyInputs = @{}
 $developScript = ""
@@ -215,6 +216,9 @@ function Ensure-DevelopE2ERoute {
         [string]$Reason = "owner-selected public journey",
         [switch]$DeferForStatic
     )
+    if($qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+        return Invoke-DevelopScenarioJourney -Journey $Journey -Plan $Plan -DeferForStatic:$DeferForStatic
+    }
     $routePath = Join-Path $script:developQualificationRoot ("develop-e2e-$Journey.json")
     $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
     $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
@@ -226,7 +230,7 @@ function Ensure-DevelopE2ERoute {
     }
 
     $reuseDiagnostics=[Collections.Generic.List[object]]::new()
-    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -Diagnostics $reuseDiagnostics
+    $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -Diagnostics $reuseDiagnostics -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
     if(-not $inputIdentity) { Add-DevelopReuseDiagnostic -Diagnostics $reuseDiagnostics -Code 'COMPLETE_BINDING_UNAVAILABLE' }
     $ancestor = Get-DevelopE2EAncestorQualification -RepositoryRoot $repoRoot -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity -StaticProof $script:developCurrentStaticProof -AllowPendingStatic:$DeferForStatic -Diagnostics $reuseDiagnostics
     if ($ancestor -and [string]$ancestor.continuation.proofKind -eq 'pending-current-static') {
@@ -251,7 +255,7 @@ function Ensure-DevelopE2ERoute {
     }
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
-        $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
+        $beforeInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
         $script:developJourneyInputs[$Journey] = $beforeInputs
         $journeyHardSeconds = Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $Journey
         $developArguments = @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey, "-FreshProjectsRoot", $FreshProjectsRoot)
@@ -269,7 +273,7 @@ function Ensure-DevelopE2ERoute {
         $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $Plan -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -JourneyResult $result
         [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-        $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
+        $inputIdentity = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $Journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
         # Binding is cache eligibility, not a barrier to the actual passed run.
         if (-not $beforeInputs -or -not $inputIdentity -or [string]$beforeInputs.fingerprint -cne [string]$inputIdentity.fingerprint) { $inputIdentity = $null }
         [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -InputIdentity $inputIdentity)
@@ -511,6 +515,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\source-delivery-cleanup.ps1"),
         (Join-Path $repoRoot "scripts\develop-static-qualification.ps1"),
         (Join-Path $repoRoot "scripts\develop-e2e-qualification.ps1"),
+        (Join-Path $repoRoot "scripts\develop-e2e-scenarios.ps1"),
         (Join-Path $repoRoot "scripts\develop-journey-inputs.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
         (Join-Path $repoRoot "scripts\source-e2e-manifest-repair.ps1"),
@@ -655,12 +660,12 @@ function Test-DevelopQualification {
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
                 $journeyPath = if ([IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } else { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') }
                 $continued = [string]$record.execution -eq "continued"
-                if ($continued -and $record.PSObject.Properties['inputIdentity']) {
+                if ($record.PSObject.Properties['inputIdentity'] -and $record.inputIdentity) {
                     $rulesRoot = if ($aiRulesRelease -and $aiRulesRelease.PSObject.Properties['sourceRoot']) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
-                    $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $rulesRoot -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding
+                    $currentInputs = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $rulesRoot -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot ([string](Get-Variable -Name FreshProjectsRoot -ValueOnly -ErrorAction SilentlyContinue))
                     if (-not $currentInputs -or [string]$currentInputs.fingerprint -cne [string]$record.inputIdentity.fingerprint -or
                         (Get-DevelopE2ECanonicalJsonSha256 -Value $record.inputIdentity.inventory) -cne [string]$record.inputIdentity.fingerprint -or
-                        -not (Test-RecordedWorkflowContinuation -Record $record.continuation -Commit $Commit -Tree $Tree)) { return $null }
+                        ($continued -and -not (Test-RecordedWorkflowContinuation -Record $record.continuation -Commit $Commit -Tree $Tree))) { return $null }
                 }
                 # The writer carries valid baseline routes even when this change requires no new journeys.
                 if ([int]$qualification.schemaVersion -eq 4 -and $journey -notin $plannedJourneys -and -not $continued) { return $null }
@@ -870,6 +875,7 @@ try {
         New-Item -ItemType Directory -Force -Path $developQualificationRoot | Out-Null
         $earlyPlan = [pscustomobject][ordered]@{
             schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
+            scenarios = $(if($developPlan.PSObject.Properties['scenarios']){$developPlan.scenarios}else{[pscustomobject]@{}})
             paths = @($developPlan.paths); contracts = @($developPlan.contracts); journeys = @($developPlan.journeys)
             unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
         }
@@ -1131,10 +1137,27 @@ try {
             }
         }
         if (-not $baselineValid -and $plannedJourneys.Count -gt 0 -and $plannedJourneys.Count -lt $allJourneys.Count) {
-            throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
+            if((Get-Variable -Name qualityCatalog -ErrorAction SilentlyContinue) -and $qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+                foreach($unselected in @($allJourneys | Where-Object {$_ -notin $plannedJourneys})) {
+                    $continuationPlan=$developPlan | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+                    $continuationPlan.journeys=@($allJourneys)
+                    $continuedPath=Invoke-DevelopScenarioJourney -Journey $unselected -Plan $continuationPlan -ReuseOnly
+                    $prior=$script:developAncestorRoutes[$unselected]
+                    $routeRecords[$unselected]=[ordered]@{path=Get-RelativeRepositoryPath -Path $continuedPath -Root $repoRoot;
+                        sha256=(Get-FileHash -LiteralPath $continuedPath -Algorithm SHA256).Hash.ToLowerInvariant();
+                        evidenceCommit=$prior.report.repository.commit;evidenceTree=$prior.report.repository.tree;
+                        identitySha256=$prior.report.identitySha256;standStateSha256=$developStandStateSha256;
+                        execution='continued';inputIdentity=$prior.inputIdentity;continuation=$prior.continuation}
+                }
+                $baselineValid=$true
+            }
+            if(-not $baselineValid) {
+                throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
+            }
         }
         $effectivePlan = [pscustomobject][ordered]@{
             schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
+            scenarios = $(if($developPlan.PSObject.Properties['scenarios']){$developPlan.scenarios}else{[pscustomobject]@{}})
             paths = @($developPlan.paths); contracts = @($developPlan.contracts); journeys = @($plannedJourneys)
             unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
         }
@@ -1148,6 +1171,7 @@ try {
             if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $evidenceTree -Journey $journey -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
             $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $(if ($ancestor) { [string]$ancestor.report.repository.commit } else { $commit }); evidenceTree = $evidenceTree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if ($ancestor) { 'continued' } elseif (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
             if ($ancestor) { $routeRecords[$journey]['identitySha256'] = $routeIdentitySha256; $routeRecords[$journey]['inputIdentity'] = $ancestor.inputIdentity; $routeRecords[$journey]['continuation'] = $ancestor.continuation }
+            elseif($qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {$routeRecords[$journey]['inputIdentity']=$script:developJourneyInputs[$journey]}
         }
         if ($plannedJourneys.Count -gt 0) {
             foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
@@ -1293,6 +1317,7 @@ try {
         developQualificationPath = $developQualificationFullPath
         developE2eReportPath = $developE2EReportPath
         journeyInputIdentities = $script:developJourneyInputs
+        journeyScenarioExecution = $script:developScenarioExecution
         e2eReportPath = $e2eReportPath
         releaseContextPath = $releaseContextPath
         qualificationReuseKind = $qualificationReuseKind

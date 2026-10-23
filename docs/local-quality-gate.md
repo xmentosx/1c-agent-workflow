@@ -154,6 +154,59 @@ for reuse. Unit/fixture proof is not live qualification. A change to this delive
 mechanism requires its applicable real warm/retry acceptance before claiming the
 improvement is operational; ordinary features do not acquire an extra live gate.
 Do not add duplicate tests or one test per helper just to satisfy this policy.
+
+### Develop scenario coverage
+
+`developJourneys.scenarios` in the existing quality catalog defines independent
+coverage and ordered setup dependencies within `upgrade` and `fresh`.
+`scenarioInputs` classifies changes to known runtime functions; top-level edits,
+new/unknown functions, parse failures and unclassified inputs retain the complete
+owned route. Selection and cache eligibility remain different decisions: absent
+or invalid prior coverage requires an explicit first qualification, not a
+synthetic pass or an exemption for the whole changed file.
+
+The runner accepts `-Scenario` only with one journey and expands its required
+setup. Omitting it runs the original complete lifecycle. Fresh verification,
+stale export/recovery, refresh and close keep their original assertions and
+workload. Verified export and close retain their fresh-check prerequisites.
+A partial fresh run disposes its disposable branch through `delete-dev-branch`;
+it does not claim a successful close or export. Unknown scenario identifiers,
+missing required operations, branch-disposal failure and input drift never grant
+proof. Fixture cleanup retains its existing owner and recovery policy.
+
+Native summary schema 3 records executed coverage. An immutable execution-only
+route schema 3 checkpoints its subset, including a separately run canary; it
+cannot qualify a complete journey. Route report schema 2 composes
+that execution with SHA-checked, applicable prior scenario evidence, after the
+current candidate's complete static proof. The cache remains under the existing
+`itl/develop-e2e-qualifications` owner. Native evidence and composed certificates
+are immutable; warm reuse preserves the existing certificate and cannot refer
+to itself. Scenario policy, source inputs, stand/positive-stand facts, effective
+client selection, runtime, fork and all three physical artifact hashes bind reuse.
+The stateless client writer uses upgrade update and fresh install/branch as
+native representatives alongside the current static preservation/PlanOnly/atomic
+write tests. Other unchanged consumers may retain proof after those producers
+pass, only with known disabled product context across all target roots and no
+pending product operation. Unknown context, new ambient dependencies or unmapped
+code retains conservative coverage.
+An empty request and an explicit sole configured client have the same identity;
+ambiguous selection and unknown identity fields disable this equivalence.
+
+Legacy schema 1 means the original full journey, never a new partial execution.
+Legacy proof is accepted only for its known coverage and authenticated equivalent
+source/environment. A changed runner envelope or newly bound native input may
+require one new baseline. Old receipts are not rewritten. An unselected journey
+can only continue valid prior coverage; missing proof does not widen the route.
+Newer applicable failures continue to reject reuse; scoped failures bind their
+executed scenarios, while legacy failures retain conservative journey scope.
+
+Plan lists each scenario as execution, setup or reuse with its evidence/rejection
+reason. Whole-journey timing samples are not estimates for a partial workload:
+without an applicable measurement its duration is unknown. Keep hard deadlines
+separate and use retained canary/warm evidence before claiming an operational
+speedup. The regression matrix must exercise real candidate planning, checker
+handoff, default binding and native-child launch counts, plus dependency and
+tamper rejection. Never restore speed by dropping a negative assertion.
 Budget and blocking authority remain those of the existing gate and architecture
 policy; this section adds no runtime barrier or automatic performance threshold.
 
@@ -843,8 +896,10 @@ live-отчётов. Каталог владельцев сопоставляе�
 неизвестный путь блокируется до назначения owner. Изменения, не входящие
 в установленный lifecycle (например standalone MCP host), могут продолжить
 незатронутые доказательства базового `develop` только при совпадении полного
-input identity. Отсутствующая или несовместимая baseline qualification также
-закрыто переключает выполнение на обе journey.
+input identity. Отсутствующая или несовместимая baseline qualification требует
+доказательства недостающих сценариев выбранного маршрута. Невыбранная journey
+без пригодного доказательства требует явной квалификации baseline; маршрут
+самостоятельно не расширяется.
 
 Маршруты различают наблюдаемое поведение: update/controlled-rules владельцы идут
 в `upgrade`, init/dependency/lifecycle/MCP владельцы — в `fresh`, а общие
