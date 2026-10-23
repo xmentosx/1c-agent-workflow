@@ -459,3 +459,7 @@ Memory не вводит свой cache/probe/updater и не закрывает
 ## Startup cost repair/repeat, 2026-10-23
 
 [Canonical report/JSON](../add-product-project-registry/evidence/g3-startup-window-repair-2026-10-23.md). Finding закрыт в проверенном current PM5 subset; original window median/p95 0.932/1.238 s. 123 owner tests, 60 protected no-op SHA+mtime guards и publisher-only/change/offline → original command passed. Для повторной cost-приёмки сохранять полное окно Import → main, original 20 full-profiler/on-off pairs, отдельный observer control и неизменные цели; module-only/preloaded/inner numbers не заменяют этот scope. Это measured subset, не полный G3/G4 acceptance.
+
+## External edit race после CLI decision, 2026-10-23
+
+[Canonical report/JSON](../add-product-project-registry/evidence/g3-pm5-external-edit-race-2026-10-23.md): три исходных race calls, 20 public calls/7 independent editors, no main после refusal, fresh keep-local и pinned resume/restore functional paths passed. Strict foreign/final byte assertions **failed без изменения ожиданий**; **G3-MCP-FOREIGN-BYTE-PRESERVATION** остаётся блокером AC-16/24/26/39. Диагностика ownership/raw value spans отделена от общей byte приёмки. Повтор после owner repair обязан сохранить реальную внешнюю append-правку и оба recovery пути. Ввод Read-Host/GUI/terminal не подменяется explicit CLI proof; full G3/G4 и population открыты.

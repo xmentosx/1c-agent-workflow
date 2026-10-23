@@ -346,3 +346,7 @@ Fresh19 unchanged, 30 owned processes штатно закрыты. Canary1 user 
 ### Qualification update: lazy import и observer calibration, 2026-10-23
 
 [Единый owner result](../add-product-project-registry/evidence/g3-startup-window-repair-2026-10-23.md). Existing lazy importer проверяет видимые функции через Function provider, сохраняя UI separation/idempotence; PATH/module discovery удалён у прежнего owner. Finding закрыт в проверенном current PM5 subset; full window 0.932/1.238 s. Instrumentation остаётся qualification-only, presumed overhead не вычитается; новых always-on/state/locks/barriers нет. Registry feature baseline/full G3/AC-39 и memory consumer4.2/G4/AC-43/G5/44 открыты. Память не добавляет отдельный updater/cache/probe или второй cost ledger.
+
+### Qualification update: external edit после согласия, 2026-10-23
+
+[Единый registry owner result](../add-product-project-registry/evidence/g3-pm5-external-edit-race-2026-10-23.md) подтверждает повторную проверку snapshot после explicit CLI decision и перед B write, pinned recovery и main-phase suppression. Новых state/locks/updater/probes нет. Generic JSON writer сортирует весь container; **G3-MCP-FOREIGN-BYTE-PRESERVATION открыт**, значения чужих подключений сохранены, точные bytes/order — нет. Semantic-only результат не снимает этот критерий. Memory не добавляет свой writer/cache/recovery; full registry G3/AC-39 и memory consumer4.2/G4/AC-43/G5/44 открыты.
