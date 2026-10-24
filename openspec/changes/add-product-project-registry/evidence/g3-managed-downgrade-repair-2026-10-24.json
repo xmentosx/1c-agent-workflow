@@ -1,0 +1,619 @@
+{
+  "observedUtc": "2026-10-24T19:54:44.720222+00:00",
+  "status": "MAIN_HANDOFF_PASSED_ORIGINAL_DOWNGRADE_BLOCKED_LEGACY_ROLLOUT",
+  "originalScenarioAccepted": false,
+  "fullG3Accepted": false,
+  "nextBlocker": "G3-MANAGED-DOWNGRADE-LEGACY-ROLLOUT-PINS",
+  "tests": {
+    "stage": "owners-v4",
+    "durationMs": 246728,
+    "files": [
+      "tests/pester/DependencyLocks.Tests.ps1",
+      "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+    ],
+    "allOwners": true,
+    "skipped": 0,
+    "passed": 99,
+    "notRun": 0,
+    "failed": 0
+  },
+  "rulesPolicy": {
+    "stage": "rules-policy-v3",
+    "durationMs": 3939,
+    "files": [
+      "tests/pester/AiRulesMigration.Tests.ps1"
+    ],
+    "allOwners": false,
+    "skipped": 0,
+    "passed": 2,
+    "notRun": 29,
+    "failed": 0
+  },
+  "modernPrecondition": [
+    {
+      "workflow": "15b7bcd476c518afb94a6ded648a2a1c633395d6",
+      "lockMode": "workflow",
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+      "projectMode": "workflow",
+      "schemaVersion": 2,
+      "envMode": "DEPENDENCY_MODE=workflow"
+    },
+    {
+      "workflow": "15b7bcd476c518afb94a6ded648a2a1c633395d6",
+      "lockMode": "workflow",
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "projectMode": "workflow",
+      "schemaVersion": 2,
+      "envMode": "DEPENDENCY_MODE=workflow"
+    }
+  ],
+  "downgrade": {
+    "process": {
+      "exitCode": 1,
+      "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v5-downgrade-native\\update-workflow-ff303b35c05b46eb9e67a1b138bcc2b3.stdout.log",
+      "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v5-downgrade-native\\update-workflow-ff303b35c05b46eb9e67a1b138bcc2b3.stderr.log",
+      "durationMs": 258955
+    },
+    "error": "WORKFLOW_UPDATE_BRANCHES_INCOMPLETE: master is updated; repeat update-workflow when the named branches are available or repaired. itldev/workflow-release-e2e-preflight=blocked: WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE: ITL_ONDEMAND_FACADE_LOCK_MISMATCH: compatibility='0.4.15' dependencyLock='0.4.24'. Snapshot: C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-399283752e274338b8bf90768e596e20 Report: C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\snapshots\\workflow-update-rollout.json"
+  },
+  "proof": {
+    "mainAccepted": true,
+    "roots": [
+      {
+        "configurationTree": "53a9c5c3256d9ee6851ca367a5457dd5b5660a73",
+        "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r42",
+          "commit": "827e5ccaa7e319dc5871555f7e997093478359c4",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 42,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-10T11:08:40Z"
+        },
+        "head": "f4ca984554c83ccfcebf216278a9dc2359a27a10",
+        "lockMode": "locked",
+        "envMode": [
+          "DEPENDENCY_MODE=locked"
+        ],
+        "schema": 1,
+        "ondemand": "0.4.15",
+        "dirty": [],
+        "projectMode": "locked",
+        "businessDirty": [],
+        "compatibility": {
+          "schemaVersion": 1,
+          "facadeVersion": "0.4.15",
+          "minimumFacadeVersion": "0.4.15",
+          "families": {
+            "roctup": {
+              "serverName": "itl-roctup-data",
+              "backendVersions": {
+                "roctup": "v1.7.1"
+              },
+              "lockKeys": [
+                "roctupMcpToolkit"
+              ],
+              "qualification": "live-tools-list",
+              "catalog": "catalogs/roctup-v1.7.1.json",
+              "catalogSha256": "c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011"
+            },
+            "vanessa-ui": {
+              "serverName": "itl-vanessa-ui",
+              "backendVersions": {
+                "clientMcp": "v0.6.5",
+                "vaExtension": "1.2.043.42",
+                "vanessaAutomation": "1.2.043.42",
+                "vanessaExt": "1.3.9.139"
+              },
+              "backendRevisions": {
+                "vanessaAutomation": "itl-r4"
+              },
+              "vanessaAutomationArtifact": {
+                "archiveSha256": "84aabfbf77511abd432c235625afb543aa3c182654e08a24bda3c4312c7d5f4c",
+                "epfSha256": "b1e5d7111115b6cea4fdf64774f31de2f485579f024e6af81c2b361ecabd4e1b",
+                "manifestSha256": "83c607e966714bb9bfb77837238adfdf4284f039b0ab38713bb7c437b269efbe",
+                "patchSha256": "8238207473428a147f69f5bc4693f2b11d2d59569344be255f375db7aa3fdc38",
+                "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
+              },
+              "pairedExtensionArtifact": {
+                "assetName": "VAExtension.1.32-itl-r4.cfe",
+                "sha256": "24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c",
+                "protocol": "itl-file-code-v1"
+              },
+              "lockKeys": [
+                "vanessaAutomation",
+                "vanessaMcp.clientMcp",
+                "vanessaMcp.vaExtension"
+              ],
+              "embeddedDependencies": {
+                "vanessaExt": {
+                  "version": "1.3.9.139",
+                  "assetName": "AddIn.zip",
+                  "sha256": "4d7b8c1a9054d8d902ddc07720613c48a0c481c87edff4391589e4cd4ea15514"
+                }
+              },
+              "qualification": "live-tools-list",
+              "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.42.json",
+              "catalogSha256": "742f4d5a6d473f345f5adb86dbc42ea68a7c04a5c053ab68339ef8c15d6db6fe"
+            }
+          }
+        },
+        "untracked": [],
+        "pending": [],
+        "runtime": [
+          {
+            "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+            "sha256": "3f760f936e9ed66a9c5ca9cd7710e5307b1171bdd76cd3277eb1337bec58c6c2",
+            "equalsOriginalOldSource": true
+          },
+          {
+            "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+            "sha256": "069c16172c84c0d1b599bc0e80645f46fb2756b788ac6e1745051a6a6863d4ba",
+            "equalsOriginalOldSource": true
+          },
+          {
+            "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            "sha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+            "equalsOriginalOldSource": true
+          }
+        ],
+        "configurationUnchanged": true,
+        "workflow": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+        "gate6Artifacts": 0
+      },
+      {
+        "configurationTree": "79d912aee1e711c0bcefd4660131902c1b731e3e",
+        "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+        "aiRules": {
+          "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+          "ref": "itl-main-5700f54-r43",
+          "commit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+          "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
+          "upstreamRef": "refs/heads/main",
+          "upstreamCommit": "5700f54a899abb1e8b6483badd6986e5a0e6c1af",
+          "downstreamRevision": 43,
+          "compatibilityStatus": "passed",
+          "compatibilityCheckedAt": "2026-10-16T08:24:32Z"
+        },
+        "head": "dc3a04926bfb2272620c24429d5efc34bd5d8932",
+        "lockMode": "workflow",
+        "envMode": [
+          "DEPENDENCY_MODE=workflow"
+        ],
+        "schema": 2,
+        "ondemand": "0.4.24",
+        "dirty": [
+          ".agent-1c/dependency-lock.json",
+          ".agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json",
+          ".agents/skills/1c-workflow/assets/product-project-compatibility.json",
+          ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md.template",
+          ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template",
+          ".agents/skills/1c-workflow/references/advanced-actions.md",
+          ".agents/skills/1c-workflow/references/init-setup.md",
+          ".agents/skills/1c-workflow/references/mcp.md",
+          ".agents/skills/1c-workflow/references/platform-validation-evidence.md",
+          ".agents/skills/1c-workflow/references/tooling-recovery.md",
+          ".agents/skills/1c-workflow/references/verification-result.md",
+          ".agents/skills/1c-workflow/references/workflow-incidents.md",
+          ".agents/skills/1c-workflow/references/yaxunit-tests.md",
+          ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.auxiliary.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.openspec-cli.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-diagnostics.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-console.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/itl-powershell-environment.ps1",
+          ".agents/skills/1c-workflow/scripts/run-itl-command.ps1",
+          ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py",
+          ".agents/skills/itl-roctup-1c-data/SKILL.md",
+          ".agents/skills/itl-vanessa-ui-mcp/SKILL.md",
+          ".agents/skills/product-docs/SKILL.md",
+          "AGENT-INSTALL.md",
+          "USER-RULES.md",
+          "docs/itl-workflow/dependency-versions.md",
+          "templates/USER-RULES.append.md",
+          "templates/ai-rules-overlay/sections.json",
+          "templates/dependency-lock.json",
+          "templates/dev.env.example",
+          "templates/product-project-registry/README.md",
+          "templates/product-project-registry/pilot/catalog.json",
+          "templates/product-project-registry/pilot/product-relations.json",
+          "templates/product-project-registry/schemas/catalog.schema.json",
+          "templates/product-project-registry/schemas/product-relations.schema.json",
+          "templates/project.json"
+        ],
+        "projectMode": "workflow",
+        "businessDirty": [],
+        "compatibility": {
+          "schemaVersion": 1,
+          "facadeVersion": "0.4.15",
+          "minimumFacadeVersion": "0.4.15",
+          "families": {
+            "roctup": {
+              "serverName": "itl-roctup-data",
+              "backendVersions": {
+                "roctup": "v1.7.1"
+              },
+              "lockKeys": [
+                "roctupMcpToolkit"
+              ],
+              "qualification": "live-tools-list",
+              "catalog": "catalogs/roctup-v1.7.1.json",
+              "catalogSha256": "c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011"
+            },
+            "vanessa-ui": {
+              "serverName": "itl-vanessa-ui",
+              "backendVersions": {
+                "clientMcp": "v0.6.5",
+                "vaExtension": "1.2.043.42",
+                "vanessaAutomation": "1.2.043.42",
+                "vanessaExt": "1.3.9.139"
+              },
+              "backendRevisions": {
+                "vanessaAutomation": "itl-r4"
+              },
+              "vanessaAutomationArtifact": {
+                "archiveSha256": "84aabfbf77511abd432c235625afb543aa3c182654e08a24bda3c4312c7d5f4c",
+                "epfSha256": "b1e5d7111115b6cea4fdf64774f31de2f485579f024e6af81c2b361ecabd4e1b",
+                "manifestSha256": "83c607e966714bb9bfb77837238adfdf4284f039b0ab38713bb7c437b269efbe",
+                "patchSha256": "8238207473428a147f69f5bc4693f2b11d2d59569344be255f375db7aa3fdc38",
+                "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
+              },
+              "pairedExtensionArtifact": {
+                "assetName": "VAExtension.1.32-itl-r4.cfe",
+                "sha256": "24190cb07ad82ac49aacdd86c1fb6412cd2f6713758cde123b1bb4103b7b4c0c",
+                "protocol": "itl-file-code-v1"
+              },
+              "lockKeys": [
+                "vanessaAutomation",
+                "vanessaMcp.clientMcp",
+                "vanessaMcp.vaExtension"
+              ],
+              "embeddedDependencies": {
+                "vanessaExt": {
+                  "version": "1.3.9.139",
+                  "assetName": "AddIn.zip",
+                  "sha256": "4d7b8c1a9054d8d902ddc07720613c48a0c481c87edff4391589e4cd4ea15514"
+                }
+              },
+              "qualification": "live-tools-list",
+              "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.42.json",
+              "catalogSha256": "742f4d5a6d473f345f5adb86dbc42ea68a7c04a5c053ab68339ef8c15d6db6fe"
+            }
+          }
+        },
+        "untracked": [],
+        "pending": [
+          "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-399283752e274338b8bf90768e596e20"
+        ],
+        "runtime": [
+          {
+            "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+            "sha256": "3f760f936e9ed66a9c5ca9cd7710e5307b1171bdd76cd3277eb1337bec58c6c2",
+            "equalsOriginalOldSource": true
+          },
+          {
+            "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+            "sha256": "069c16172c84c0d1b599bc0e80645f46fb2756b788ac6e1745051a6a6863d4ba",
+            "equalsOriginalOldSource": true
+          },
+          {
+            "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            "sha256": "1117f6140e7bf760297d2f25619accaa4b5557f84b1db94fc312af714d098fa1",
+            "equalsOriginalOldSource": true
+          }
+        ],
+        "configurationUnchanged": true,
+        "workflow": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+        "gate6Artifacts": 0
+      }
+    ],
+    "openCodeSkipped": true,
+    "sourceCommit": "15b7bcd476c518afb94a6ded648a2a1c633395d6",
+    "workingMigration": false,
+    "preservationPassed": true,
+    "gate6Started": false,
+    "originalScenarioAccepted": false,
+    "branchAccepted": false,
+    "publication": false,
+    "database": {
+      "path": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "unchanged": true,
+      "bytes": 3295928320
+    }
+  },
+  "preservation": {
+    "capsuleObjects": 11,
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    },
+    "historicalFiles": [
+      {
+        "sha256": "bf5cef7d0cbf2aaf364e920af4d4c31d6680893ccb187e3b364081f4a5981c92",
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json"
+      },
+      {
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+        "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json"
+      },
+      {
+        "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json"
+      },
+      {
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json"
+      },
+      {
+        "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff"
+      },
+      {
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD"
+      },
+      {
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl"
+      },
+      {
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml"
+      },
+      {
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml"
+      },
+      {
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json"
+      },
+      {
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result"
+      },
+      {
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log"
+      },
+      {
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log"
+      },
+      {
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json"
+      },
+      {
+        "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json"
+      },
+      {
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json"
+      },
+      {
+        "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json"
+      },
+      {
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json"
+      },
+      {
+        "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json"
+      },
+      {
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json"
+      },
+      {
+        "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json"
+      }
+    ],
+    "allPreserved": true,
+    "runtime": [
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        "installedSha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "installedSha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+        "installedSha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1",
+        "installedSha256": null
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "installedSha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+        "installedSha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        "installedSha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "installedSha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "installedSha256": "d101f84193286312fcb0576b21d9e037abf8f822b76d0affe5883d9ad1170d3d"
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+        "installedSha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818"
+      }
+    ],
+    "roots": [
+      {
+        "dirty": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5",
+        "head": "6de621e48689c9cce297d0fc3419449fa1d7c31d",
+        "untracked": []
+      },
+      {
+        "dirty": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "head": "9269a4fb1cd8f267eccea4a0ca8884b394f0346b",
+        "untracked": []
+      },
+      {
+        "dirty": [
+          ".agent-1c/project.json"
+        ],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "untracked": []
+      },
+      {
+        "dirty": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "untracked": []
+      },
+      {
+        "dirty": [],
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "head": "160616d6a310b8401f23da0cc44361943970f7fd",
+        "untracked": []
+      },
+      {
+        "dirty": [],
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "head": "48062b1e0672515586ba829000ca2c3b5116c8cd",
+        "untracked": []
+      }
+    ]
+  },
+  "priorEvidencePreserved": {
+    "passed": true,
+    "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\lifecycle-pm5-20261024\\raw-evidence-manifest.json",
+    "sha256": "5693e939a725381145a99d701467f72ccf18c61ba3038b42e0f5e68c6b84a20e",
+    "files": 957,
+    "failedSnapshotArchivePreserved": true
+  },
+  "failedBranchArchive": {
+    "path": "build\\test-results\\g3\\downgrade-mode-repair-20261024\\failed-legacy-branch-snapshot.zip",
+    "files": 578,
+    "bytes": 3386656,
+    "sha256": "a003e5c8c5a3c6343596a77ea528c08cb9acdb6478976f3da40e22402efba983"
+  },
+  "pendingSnapshot": {
+    "id": "399283752e274338b8bf90768e596e20",
+    "phase": "post-copy-failed",
+    "sourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+    "hasDependencyPlan": false
+  },
+  "raw": {
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024",
+    "files": 468,
+    "manifestSha256": "db4aa3578c39d463d6038f4ae76be45e47a84d0f20d7f47fe4d8e16be9bd7015"
+  },
+  "checkpoint": {
+    "id": "G3-LD1",
+    "status": "PROPOSED_NOT_APPROVED",
+    "implementationStarted": false
+  },
+  "scope": {
+    "openCodeSkipped": true,
+    "gate6": false,
+    "g4": false,
+    "workingMigration": false,
+    "publication": false
+  },
+  "nativeImplementationCommit": "15b7bcd476c518afb94a6ded648a2a1c633395d6",
+  "postNativeSourceCorrection": {
+    "reason": "Keep post-copy literal visible to existing emitted LifecyclePhase completeness contract",
+    "changes": "Same initial post-copy argv with visible literal; committed checkpoints skip migration writers to preserve existing no-replay invariant",
+    "focusedPhaseContract": {
+      "stage": "phase-contract",
+      "durationMs": 6423,
+      "files": [
+        "tests/pester/DevBranchLifecycle.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 1,
+      "notRun": 194,
+      "failed": 0
+    },
+    "focusedHandoff": {
+      "stage": "handoff",
+      "durationMs": 26339,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 4,
+      "notRun": 58,
+      "failed": 0
+    },
+    "nativeProofIsPriorImplementation": true,
+    "exactFinalCandidateProof": "source-delivery Targeted ledger; no full G3 acceptance",
+    "commitResumeRed": {
+      "stage": "checkpoint-red",
+      "durationMs": 48848,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 4,
+      "notRun": 58,
+      "failed": 2
+    },
+    "commitResumeAndHandoffGreen": {
+      "stage": "checkpoint-green",
+      "durationMs": 42932,
+      "files": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 6,
+      "notRun": 58,
+      "failed": 0
+    }
+  }
+}

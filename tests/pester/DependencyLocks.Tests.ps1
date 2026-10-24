@@ -421,6 +421,55 @@
     }
 }
 
+Describe 'Legacy dependency wire format on managed downgrade' -Tag G3DowngradeDependencyMode {
+    BeforeAll {
+        $wireRepo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $wireHelper = Join-Path $wireRepo '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    }
+
+    It 'keeps all persisted modes readable by the <Kind> target without changing selected pins' -ForEach @(
+        @{Kind='legacy';Schema=1;TemplateMode='fresh';Expected='locked'},
+        @{Kind='legacy-pinned';Schema=1;TemplateMode='pinned';Expected='locked'},
+        @{Kind='current';Schema=2;TemplateMode='workflow';Expected='workflow'}
+    ) {
+        $root=Join-Path $TestDrive ('Режимы downgrade с пробелом '+$Kind)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'),(Join-Path $root 'templates')|Out-Null
+        $template=Get-Content (Join-Path $wireRepo 'templates/dependency-lock.json') -Raw -Encoding UTF8|ConvertFrom-Json
+        $template.schemaVersion=$Schema;$template.mode=$TemplateMode
+        $template|ConvertTo-Json -Depth 100|Set-Content (Join-Path $root 'templates/dependency-lock.json') -Encoding UTF8
+        $template.schemaVersion=2;$template.mode='workflow'
+        $template.dependencies.workflowPackage.commit=('a'*40)
+        $template.dependencies|Add-Member -NotePropertyName foreign -NotePropertyValue @{value='keep'}
+        $template|ConvertTo-Json -Depth 100|Set-Content (Join-Path $root '.agent-1c/dependency-lock.json') -Encoding UTF8
+        Set-Content (Join-Path $root '.agent-1c/project.json') '{"dependencyMode":"workflow","fixture":"keep"}' -Encoding UTF8
+        Set-Content (Join-Path $root '.dev.env') "DEPENDENCY_MODE=workflow`r`nPRIVATE_KEEP=Точное значение Ω`r`n" -Encoding UTF8
+        & {
+            . $wireHelper -ProjectRoot $root -Action help *> $null
+            $plan=Get-WorkflowDependencyPlan
+            $intent=$plan.manifest|ConvertTo-Json -Depth 100 -Compress
+            $sync=Sync-WorkflowManagedDependencyLockEntries
+            $sync.mode|Should -BeExactly $Expected
+            $lock=Read-DependencyLockManifest
+            $lock.mode|Should -BeExactly $Expected
+            $lock.schemaVersion|Should -Be $Schema
+            $lock.dependencies.workflowPackage.commit|Should -BeExactly ('a'*40)
+            $lock.dependencies.foreign.value|Should -BeExactly 'keep'
+            $lock.dependencies.yaxunit.sha256|Should -BeExactly $plan.manifest.dependencies.yaxunit.sha256
+            (Get-Content $script:ConfigPath -Raw -Encoding UTF8|ConvertFrom-Json).dependencyMode|Should -BeExactly $Expected
+            (Read-Utf8Text (Join-Path $root '.dev.env'))|Should -Match ('(?m)^DEPENDENCY_MODE='+$Expected+'\r?$')
+            (Read-Utf8Text (Join-Path $root '.dev.env'))|Should -Match 'PRIVATE_KEEP=Точное значение Ω'
+            ($plan.manifest|ConvertTo-Json -Depth 100 -Compress)|Should -BeExactly $intent
+            Get-DependencyMode|Should -BeExactly 'workflow'
+            Update-DependencyLockEntry -Name foreign -Values @{value='updated'}
+            (Read-DependencyLockManifest).mode|Should -BeExactly $Expected
+            $null=Sync-WorkflowManagedDependencyLockEntries
+            $before=Read-Utf8Text (Get-DependencyLockPath)
+            (Sync-WorkflowManagedDependencyLockEntries).changed|Should -BeFalse
+            (Read-Utf8Text (Get-DependencyLockPath))|Should -BeExactly $before
+        }
+    }
+}
+
 Describe 'Workflow dependency selection' -Tag WorkflowDependencySelection {
     BeforeAll {
         $selectionRepo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path

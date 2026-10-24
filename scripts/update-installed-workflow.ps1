@@ -26,7 +26,17 @@ if ([string]::Equals($source, $project, [StringComparison]::OrdinalIgnoreCase) -
 if (-not (Test-Path -LiteralPath $project -PathType Container)) {
     throw "Installed project root was not found: $project"
 }
-$helper = Join-Path $source '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
+$executor = $source
+$sourceTemplate = Join-Path $source 'templates/dependency-lock.json'
+if (Test-Path -LiteralPath $sourceTemplate -PathType Leaf) {
+    $template = Get-Content -LiteralPath $sourceTemplate -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([int]$template.schemaVersion -eq 1 -and [string]$template.mode -in @('fresh','latest','locked','pinned')) {
+        # SourceRoot still selects the exact payload. The current source-side
+        # launcher owns its transition, including old-package branch rollout.
+        $executor = Split-Path -Parent $PSScriptRoot
+    }
+}
+$helper = Join-Path $executor '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
 if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
     throw "Current ITL workflow helper was not found: $helper"
 }

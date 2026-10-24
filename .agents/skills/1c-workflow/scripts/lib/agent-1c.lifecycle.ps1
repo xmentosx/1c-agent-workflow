@@ -706,15 +706,17 @@ function Invoke-Agent1cFreshProcess {
     foreach ($argument in @($script:Agent1cReexecArguments)) {
         $reexecArguments.Add([string]$argument) | Out-Null
     }
-    if (@($AdditionalArguments) -contains "-LifecyclePhase") {
+    foreach ($overrideName in @('-LifecyclePhase', '-DependencyMode')) {
+      if (@($AdditionalArguments) -contains $overrideName) {
         for ($index = $reexecArguments.Count - 1; $index -ge 0; $index--) {
-            if ($reexecArguments[$index] -eq "-LifecyclePhase") {
+            if ($reexecArguments[$index] -ieq $overrideName) {
                 $reexecArguments.RemoveAt($index)
                 if ($index -lt $reexecArguments.Count) {
                     $reexecArguments.RemoveAt($index)
                 }
             }
         }
+      }
     }
 
     $continuesLifecycleOperation = $null -ne $script:LifecycleOperationRecord -and
@@ -8492,12 +8494,53 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
     }
     $masterOnly = [string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only'
     $repeatAction = if ($masterOnly) { 'Repeat the same source-side -Recovery legacy-copy command with its pinned decision file' } else { 'Repeat update-workflow' }
+    $childScript = $script:Agent1cScriptPath
+    $executorRoot = [string](Get-ConfigValueFromObject $pending.receipt 'recoveryExecutorRoot' '')
+    if ($executorRoot) {
+        $executorCommit = [string](Get-ConfigValueFromObject $pending.receipt 'recoveryExecutorCommit' '')
+        if ($executorCommit -notmatch '^[a-f0-9]{40}$') {
+            throw 'WORKFLOW_UPDATE_LEGACY_EXECUTOR_REQUIRED: restore the exact recorded current workflow checkout and repeat its source-side update; preserve the pending snapshot.'
+        }
+        Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{
+            sourceRoot=$executorRoot
+            sourceCommit=$executorCommit
+        })
+        $childScript = Join-Path $executorRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    }
     if ([string]$pending.receipt.phase -notin @('master-commit-ready', 'master-committed')) {
         Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $Snapshot -Pending $pending
+        # Complete the existing owner-controlled settings handoff before an old
+        # installed child reads env/project/lock. The pinned intent stays intact
+        # in the same snapshot; ordinary current-package updates keep their order.
+        if ((Get-WorkflowDependencyWireFormat).mode -eq 'locked') {
+            Sync-WorkflowManagedDependencyLockEntries | Out-Null
+        }
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-running
     }
+    $childArguments = @()
+    $previousDependencyMode = [Environment]::GetEnvironmentVariable('DEPENDENCY_MODE', 'Process')
+    $legacyDependencyWire = (Get-WorkflowDependencyWireFormat).mode -eq 'locked'
     try {
-        $child = Invoke-Agent1cFreshProcess -AdditionalArguments @('-LifecyclePhase', 'post-copy') -ReturnExitStatus
+        if ($legacyDependencyWire -and -not $SkipAiRules -and
+            [string]$pending.receipt.phase -notin @('master-commit-ready', 'master-committed')) {
+            # The old child cannot interpret the admitted bundle transition.
+            # Let the existing migration owner consume that exact intent here;
+            # its standalone monotonic and ownership checks remain authoritative.
+            $migration = Invoke-AiRulesBaselineMigration
+            Assert-AiRulesBaselineMigrationResult -Migration $migration
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-running
+        }
+        if ($legacyDependencyWire) {
+            # Dotenv import preserves inherited process values. Serialize this
+            # handoff in both channels, including an explicit caller argument.
+            [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'locked', 'Process')
+            $childArguments += @('-DependencyMode', 'locked')
+        }
+        try {
+            $child = Invoke-Agent1cFreshProcess -ScriptPath $childScript -AdditionalArguments (@('-LifecyclePhase', 'post-copy') + $childArguments) -ReturnExitStatus
+        } finally {
+            if ($legacyDependencyWire) { [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', $previousDependencyMode, 'Process') }
+        }
         if ([int]$child.exitCode -ne 0) { throw "Fresh workflow post-copy process failed with exit code $($child.exitCode); its original terminal operation evidence is retained." }
         if ($masterOnly) {
             $current = Get-WorkflowUpdatePendingSnapshot
@@ -9466,6 +9509,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         if ($conflicts.Count -gt 0) {
             throw "WORKFLOW_UPDATE_BRANCH_WRITE_SET_CONFLICT: '$script:ProjectRoot' has user changes in owned paths: $($conflicts -join ', '). Preserve them and repeat update-workflow after resolving the named paths."
         }
+        $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $Source
         $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$Source.root)
         Assert-WorkflowDependencyPlan -Plan $dependencyPlan
         $candidateRulesPaths = @()
@@ -9483,6 +9527,10 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
             $snapshotDetails = @{ dependencyPlan=$dependencyPlan }
             if ($null -ne $LocalPatchPlan) {
                 $snapshotDetails.localPatchRetirement = Invoke-WorkflowLocalPatchStep -Step Bind -Plan $LocalPatchPlan
+            }
+            if ($null -ne $legacyExecutor) {
+                $snapshotDetails.recoveryExecutorRoot = [string]$legacyExecutor.root
+                $snapshotDetails.recoveryExecutorCommit = [string]$legacyExecutor.commit
             }
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase prepared -Details $snapshotDetails
         }
@@ -9962,6 +10010,52 @@ function Get-WorkflowUpdateCandidateRulesPaths {
     return @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools @(Get-AgentTargets))
 }
 
+function Resolve-WorkflowUpdateLegacyExecutor {
+    param([Parameter(Mandatory = $true)][object]$Source)
+
+    $templatePath = Join-Path ([string]$Source.root) 'templates/dependency-lock.json'
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) { return $null }
+    $template = Read-Utf8Text -Path $templatePath | ConvertFrom-Json
+    if ((Get-WorkflowDependencyWireFormat -Template $template).mode -ne 'locked') { return $null }
+
+    # Keep code and payload separate only for the legacy transition. Reuse an
+    # exact source checkout already owned by update-workflow, never the copied
+    # old helper or an unversioned backup of the installed scripts.
+    $executingRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cCoreRoot '..\..\..\..\..'))
+    $candidates = @()
+    $reason = ''
+    if (-not [string]::Equals($executingRoot, [string]$script:ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $candidates += [pscustomobject]@{root=$executingRoot;commit=''}
+    } else {
+        $installedCommit = [string](Get-ConfigValueFromObject (Get-DependencyLockEntry -Name 'workflowPackage') 'commit' '')
+        $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+        if ($installedCommit -match '^[a-f0-9]{40}$' -and (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json -ErrorAction Stop
+            if ([int]$report.schemaVersion -eq 1 -and [string]$report.mainRoot -ceq [string]$script:ProjectRoot -and
+                [string]$report.sourceCommit -ceq $installedCommit) {
+                $candidates += [pscustomobject]@{root=[string]$report.sourceRoot;commit=$installedCommit}
+            }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if (-not $candidate.root -or [string]::Equals([string]$candidate.root, [string]$Source.root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        try {
+            $commit = [string]$candidate.commit
+            if (-not $commit) { $commit = (Get-GitOutputAt -Root $candidate.root -Arguments @('rev-parse','HEAD')).Trim() }
+            Assert-WorkflowUpdateRecordedSource -Receipt ([pscustomobject]@{sourceRoot=$candidate.root;sourceCommit=$commit})
+            foreach ($relative in @('agent-1c.ps1','lib/agent-1c.lifecycle.ps1','lib/agent-1c.dependencies.ps1')) {
+                $verified = Join-Path $candidate.root ('.agents/skills/1c-workflow/scripts/' + $relative)
+                $executing = Join-Path (Split-Path -Parent $script:Agent1cCoreRoot) $relative
+                if ((Get-FileHash -LiteralPath $verified).Hash -ine (Get-FileHash -LiteralPath $executing).Hash) {
+                    throw 'The exact source does not match the executing update owner.'
+                }
+            }
+            return [pscustomobject]@{root=[string]$candidate.root;commit=$commit}
+        } catch { $reason = $_.Exception.Message }
+    }
+    throw "WORKFLOW_UPDATE_LEGACY_EXECUTOR_REQUIRED: before copying an old package, run scripts/update-installed-workflow.ps1 from a clean exact current workflow checkout with -ProjectRoot '$script:ProjectRoot' -SourceRoot '$($Source.root)'. Keep that current checkout unchanged until master and branch rollout finish. No package files have been copied. $reason"
+}
+
 function Update-WorkflowPackage {
     Write-Section "Update ITL workflow package"
     if ($LifecyclePhase -ne 'post-copy' -and $WorkflowUpdateRecovery -eq 'legacy-status') {
@@ -10072,6 +10166,7 @@ function Update-WorkflowPackage {
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
         if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
+        $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $source
         $previousRolloutPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
         if (Test-Path -LiteralPath $previousRolloutPath -PathType Leaf) {
             try { $previousRollout = Read-Utf8Text -Path $previousRolloutPath | ConvertFrom-Json -ErrorAction Stop }
@@ -10115,7 +10210,12 @@ function Update-WorkflowPackage {
                 -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root -AiRulesPathsAfter $candidateRulesPaths) `
                 -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
             try {
-                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase prepared -Details @{ dependencyPlan=$dependencyPlan }
+                $details = @{dependencyPlan=$dependencyPlan}
+                if ($null -ne $legacyExecutor) {
+                    $details.recoveryExecutorRoot = [string]$legacyExecutor.root
+                    $details.recoveryExecutorCommit = [string]$legacyExecutor.commit
+                }
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $copySnapshot -Source $source -Phase prepared -Details $details
             } catch {
                 $prepareError = $_.Exception.Message
                 try { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot }

@@ -414,6 +414,18 @@ function Assert-WorkflowDependencyPlan {
     throw "DEPENDENCY_SELECTION_REQUIRED: review '$reportPath'; supply decisions or a complete compatible hotfix with -DependencySelectionFile <UTF-8 JSON> and repeat the original helper operation. Current dependencies have not been replaced."
 }
 
+function Get-WorkflowDependencyWireFormat {
+    param([AllowNull()][object]$Template = $null)
+    if ($null -eq $Template) { $Template = New-DefaultDependencyLockManifest }
+    # This is the target package's persisted protocol, not a second selection
+    # policy. Old helpers cannot decode workflow; locked consumes exact pins.
+    if ([int](Get-ConfigValueFromObject $Template 'schemaVersion' 0) -eq 1 -and
+        [string](Get-ConfigValueFromObject $Template 'mode' '') -in @('fresh','latest','locked','pinned')) {
+        return [pscustomobject]@{schemaVersion=1;mode='locked'}
+    }
+    return [pscustomobject]@{schemaVersion=2;mode='workflow'}
+}
+
 function Get-WorkflowDependencySyncManifest {
     param([object]$Plan, [object]$Before)
     $manifest = ConvertTo-Agent1cHashtable -Object $Plan.manifest
@@ -423,6 +435,9 @@ function Get-WorkflowDependencySyncManifest {
         $installed = Get-ConfigValueFromObject $Before "dependencies.$name" $null
         if ($null -ne $installed) { $manifest.dependencies[$name] = $installed }
     }
+    $wire = Get-WorkflowDependencyWireFormat
+    $manifest['schemaVersion'] = $wire.schemaVersion
+    $manifest['mode'] = $wire.mode
     return $manifest
 }
 
