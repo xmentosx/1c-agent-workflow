@@ -819,53 +819,7 @@ Describe "Exhausted repair session after tooling recovery" {
     }
 }
 
-Describe "Named scenario repair round" {
-    It "uses one owned load and attempt for diagnostic and unfiltered proof" {
-        $VerificationTrigger = 'repair'
-        $RepairSessionId = 'scenario-session'
-        $VanessaFeaturePath = 'tests/features/Named.feature'
-        $VanessaFilterTags = ''
-        $script:scenarioPhases = [Collections.Generic.List[bool]]::new()
-        $state = [pscustomobject]@{ lastVerificationEvidenceKind = 'full' }
-        Mock Assert-ItlVerificationRepairScope {}
-        Mock Read-DevBranchState { $state }
-        Mock Get-DevBranchKind { 'configuration' }
-        Mock Get-ExportPath { 'src/cf' }
-        Mock Resolve-Agent1cFullPath { param($Path) $Path }
-        Mock New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
-        Mock Restore-ConfigDumpInfoLoadSnapshot {}
-        Mock Remove-ConfigDumpInfoLoadSnapshot {}
-        Mock Invoke-DevBranchVanessaRuntimeRelease {}
-        Mock Assert-VanessaVerificationPreflight {}
-        Mock Test-ItlFullVerificationProofEligible { $script:scenarioPhases.Count -gt 0 }
-        Mock Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind='scenario-loop'; sessionId='scenario-session' } }
-        Mock Test-ItlDiagnosticVerificationScope { $true }
-        Mock Get-ItlVerificationExecutionDecision { [pscustomobject]@{ run=$true } }
-        # Classification is delegated in this repair-phase sequencing fixture;
-        # the preflight owner tests exercise its rejection and continuation.
-        Mock Repair-OneCSourceLineEndings {}
-        Mock Assert-VerificationClassificationReady {}
-        Mock Use-ItlVerificationRepairAttempt {}
-        Mock Ensure-DevBranchEventLogBaseline { $state }
-        Mock Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{path='cursor';capturedAt=[datetime]::UtcNow} }
-        Mock Update-DevBranchBase {}
-        Mock Invoke-ItlVerificationCycle {
-            param($Trigger, $ExplicitComponents, $ScenarioDiagnosticOnly, $EventLogCursorPath, $EventLogBoundaryAt, $EventLogCursorScope)
-            $script:scenarioPhases.Add([bool]$ScenarioDiagnosticOnly)
-        }
-        Mock Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
-        Mock Get-VerificationState { [pscustomobject]@{ status='passed'; isFreshPassed=$true } }
-        Mock Complete-ItlVerificationRepairSession {}
-        Mock Complete-ItlVerificationRepairFailure {}
 
-        Invoke-DevBranchCheck
-
-        @($script:scenarioPhases.ToArray()) | Should -Be @($true, $false)
-        Should -Invoke Use-ItlVerificationRepairAttempt -Times 1 -Exactly
-        Should -Invoke Update-DevBranchBase -Times 1 -Exactly
-        Should -Invoke Complete-ItlVerificationRepairSession -Times 1 -Exactly
-    }
-}
 
 Describe 'repair session explicit extension' {
     BeforeEach {

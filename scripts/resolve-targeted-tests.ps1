@@ -9,6 +9,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 $CoverageContract = @($CoverageContract | ForEach-Object { @(([string]$_) -split ',') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
@@ -23,6 +27,9 @@ $root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $catalog = Get-QualityContractCatalog -RepositoryRoot $root
 $semanticPath = ([string]$catalog.semanticTargeting.path).Replace('\', '/')
 $semanticRenamedPaths = @()
+$libraryProperty = $catalog.semanticTargeting.PSObject.Properties['libraries']
+$libraryPaths = @(if ($libraryProperty) { $libraryProperty.Value.PSObject.Properties | ForEach-Object { [string]$_.Name } })
+$libraryRenamedPaths = @{}
 $paths = New-Object System.Collections.Generic.List[string]
 foreach ($path in @($ChangedPath)) { if ($path) { $paths.Add(([string]$path).Replace('\', '/')) | Out-Null } }
 if ($BaseRef) {
@@ -37,6 +44,7 @@ if ($BaseRef) {
             $oldPath = ([string]$statusFields[$index++]).Replace('\', '/')
             $newPath = ([string]$statusFields[$index++]).Replace('\', '/')
             if ($status -like 'R*' -and $oldPath -eq $semanticPath) { $semanticRenamedPaths += $newPath }
+            if ($status -like 'R*' -and $oldPath -in $libraryPaths) { $libraryRenamedPaths[$oldPath] = $newPath }
         } elseif ($index -lt $statusFields.Count) {
             $index++
         }
@@ -58,8 +66,9 @@ if ($uniquePaths.Count -eq 0) { throw "Targeted mode found no changed paths. Pas
 $semanticPathChanged = $semanticPath -in $uniquePaths -or $semanticRenamedPaths.Count -gt 0
 $semanticCurrentPath = Join-Path $root $semanticPath.Replace('/', '\')
 $semanticCurrentExists = Test-Path -LiteralPath $semanticCurrentPath -PathType Leaf
-[void](Test-QualityContractCatalog -RepositoryRoot $root -Catalog $catalog -SkipSemanticEntrypointValidation:(-not $semanticCurrentExists -and $semanticPathChanged))
-$ordinaryPaths = @($uniquePaths | Where-Object { $_ -ne $semanticPath -and $_ -notin $semanticRenamedPaths })
+$changedLibraries = @($libraryPaths | Where-Object { $_ -in $uniquePaths -or $libraryRenamedPaths.ContainsKey($_) })
+[void](Test-QualityContractCatalog -RepositoryRoot $root -Catalog $catalog -SkipSemanticEntrypointValidation:(-not $semanticCurrentExists -and $semanticPathChanged) -SkipSemanticLibraryValidation $changedLibraries)
+$ordinaryPaths = @($uniquePaths | Where-Object { $_ -ne $semanticPath -and $_ -notin $semanticRenamedPaths -and $_ -notin $changedLibraries -and $_ -notin @($libraryRenamedPaths.Values) })
 $selection = if ($ordinaryPaths.Count -gt 0) {
     Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ordinaryPaths
 } else {
@@ -102,6 +111,32 @@ if ($semanticPathChanged) {
         if (@($selectedContracts | Where-Object { [string]$_.id -eq [string]$contract.id }).Count -eq 0) { $selectedContracts.Add($contract) | Out-Null }
     }
 }
+$additionalInputs = @($additionalInputs)
+foreach ($path in $changedLibraries) {
+    $currentPath = Join-Path $root $path
+    $currentText = if (Test-Path -LiteralPath $currentPath -PathType Leaf) {
+        ConvertTo-TargetedCanonicalPowerShellText -Text ([IO.File]::ReadAllText($currentPath, [Text.Encoding]::UTF8))
+    } else { $null }
+    $baselineText = $null
+    if ($BaseRef) {
+        $baselineResult = Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('show', "$BaseRef`:$path") -AllowFailure
+        if ($baselineResult.exitCode -eq 0) { $baselineText = ConvertTo-TargetedCanonicalPowerShellText -Text $baselineResult.stdout }
+    }
+    $impact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $currentText -BaselineText $baselineText -LibraryPath $path
+    foreach ($test in $impact.tests) { $selectedTests.Add([string]$test) | Out-Null }
+    $semanticImpacts += @($impact.impacts)
+    $pathOwners = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)
+    foreach ($owner in $pathOwners.contracts) {
+        if (@($selectedContracts | Where-Object id -eq $owner.id).Count -eq 0) { $selectedContracts.Add($owner) | Out-Null }
+    }
+    # Preserve the entrypoint binding required by schema v2, then bind the
+    # complete current module. Deleted inputs already invalidate path owners;
+    # an exact rename binds its replacement like the entrypoint fallback does.
+    if ($semanticCurrentExists) { $additionalInputs += $semanticPath }
+    if (Test-Path -LiteralPath $currentPath -PathType Leaf) { $additionalInputs += $path }
+    if ($libraryRenamedPaths.ContainsKey($path)) { $additionalInputs += [string]$libraryRenamedPaths[$path] }
+}
+$additionalInputs = @($additionalInputs | Sort-Object -Unique)
 $resolvedTests = @($selectedTests | Sort-Object -Unique)
 if ($resolvedTests.Count -eq 0) { throw "Targeted mode selected no tests." }
 

@@ -265,6 +265,34 @@ owner test. Информационной привязки action к owner для
 rename, parse error и отсутствующий baseline выбирают полный `lifecycle`
 contract. Full и Develop по-прежнему используют полный inventory.
 
+Для трёх явно объявленных функций проверки в `semanticTargeting.libraries`
+действует тот же AST-selector: `Invoke-DevBranchCheck`,
+`Assert-VanessaVerificationPreflight`, `Get-ItlVanessaVerificationSelectionPlan`.
+Каждая привязка перечисляет owner tests и literal public `check-dev-branch`
+probe. Новый/удалённый callee, динамический вызов, смена member target,
+необъявленная функция, общий код, inventory/порядок функций, rename, parse error
+или отсутствие baseline сохраняют **все** прежние path contracts модуля.
+`callsSha256` закрепляет проверенный набор вызовов: последующие правки после
+расширения зависимостей также остаются широкими до ревью ownership и обновления
+привязки, tests/probe и подписи в каталоге.
+Полные текущие module и entrypoint входят в `additionalInputs` каждого
+выбранного шарда. Неполный план отвергается; агент повторно создаёт его через
+`resolve-targeted-tests.ps1` и продолжает исходную проверку.
+`DevBranchCheck` содержит перенесённые без изменения случаев проверки cursor и
+repair sequencing; прежние широкие выборки сохраняют их. Пилот подготовки
+`WorkflowUpdateRollback` переиспользует только неизменяемый исторический текст и
+скомпилированные определения внутри worker. Репозитории, commits, mutable
+состояние и реальное воспроизведение missing receipt создаются для каждого случая.
+
+Замер пилота 2026-10-24 (Windows PowerShell 5.1, Pester 5.8.0, fresh worker,
+без reuse): WorkflowUpdateRollback — 84/84 до и после, 1013,199 → 1102,999 с;
+внутри него 18 legacy-случаев — 596,529 → 560,543 с. Параллельная нагрузка
+focused-проверок различалась, поэтому полное время не является чистым A/B.
+Повторная подготовка исторического кода, 18 обращений с первой инициализацией:
+22,457 → 1,055 с. AST-сравнение сохранило все исходные It/TestCases/assertions.
+Для локальных правок трёх объявленных функций выбор файлов: 61 → 5, 39 → 4,
+28 → 6, объединение 83 → 8. Холодный Targeted за пять минут этим не доказан.
+
 Каждый дочерний этап имеет hard timeout, no-progress timeout, heartbeat и запись
 длительности в `build/test-results/local/check-summary.json`. Там же сохраняются
 целевой/hard бюджет и пять самых медленных стадий. Выход за цель виден как
