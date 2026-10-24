@@ -107,6 +107,7 @@ function Read-ItlProductProjectSnapshot {
         try{$null=Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(10))}catch{$state.catalogRefreshError=$_.Exception}
     }
     $refreshError=Get-ItlCatalogField $state 'catalogRefreshError'
+    $inputsMatch=$false;$inputs=$null
     if(-not $refreshError -and $NoOpApplied -and $NoOpApplied.configurationState -eq 'configured' -and
         (Get-ItlCatalogField $NoOpApplied 'noOpInputs') -and (Get-ItlCatalogField $NoOpApplied.context 'registryMetadata') -and
         (-not $IncludeClientSurfaces -or (Get-ItlCatalogField $NoOpApplied.noOpInputs 'includeClientSurfaces' $false))){
@@ -136,6 +137,7 @@ function Read-ItlProductProjectSnapshot {
         $snapshot=Read-ItlProductCatalogSnapshot -RepositoryRoot (Get-ItlCatalogField $state 'catalogPinnedRoot' (Get-Vibecoding1cMcpRegistryRoot)) -Commit $commit
         $snapshot|Add-Member -NotePropertyName stale -NotePropertyValue ([bool]$refreshError) -Force
         $state.catalogSnapshot=$snapshot;$state.snapshot=$snapshot.registry
+        if($inputsMatch){$snapshot|Add-Member -NotePropertyName checkedNoOpInputs -NotePropertyValue $inputs -Force}
         if($refreshError){$state.error=$refreshError}
         return $snapshot
     }catch{
@@ -381,12 +383,42 @@ function Set-ItlProductProjectAppliedContext {
     if(-not $state.snapshot){throw 'CATALOG_BASELINE_MISSING: the saved context has no pinned endpoint metadata; repeat explicit setup with a validated catalog.'}
     # Retain one effective revision. An observed latest tip is not the deferred
     # context and must not leak through nested legacy endpoint consumers.
-    try{$state.catalogSnapshot=Read-ItlProductCatalogSnapshot (Get-Vibecoding1cMcpRegistryRoot) $Applied.catalogRevision;$state.catalogError=$null}
+    try{
+        if((Get-ItlCatalogField (Get-ItlCatalogField $state 'catalogSnapshot') 'catalogRevision') -cne $Applied.catalogRevision){$state.catalogSnapshot=Read-ItlProductCatalogSnapshot (Get-Vibecoding1cMcpRegistryRoot) $Applied.catalogRevision}
+        $state.catalogError=$null
+    }
     catch{$state.catalogSnapshot=$null;$state.catalogError=[InvalidOperationException]::new('CATALOG_PINNED_OBJECT_UNAVAILABLE: use the saved selected projection; full old catalog objects are unavailable.')}
     $state['catalogAttempted']=$true;$state.attempted=$true
     $state['warningShown']=$true
     Set-ItlProductProjectOperationContext $Applied.context
     if($Reason){Write-Warning $Reason}
+}
+
+function Get-ItlProductProjectPublisherContext {
+    param([object]$Snapshot,[object]$Applied)
+    # A validated new snapshot may change publication metadata without changing
+    # any effective setting. Reuse only the existing checked receipt and exact
+    # catalog/relation blobs; any input/registry business change uses full preview.
+    $inputs=Get-ItlCatalogField $Snapshot 'checkedNoOpInputs'
+    if(-not $inputs -or -not $Applied -or $Applied.configurationState -ne 'configured' -or
+        (Get-ItlCatalogHash $inputs) -cne (Get-ItlCatalogHash $Applied.noOpInputs)){return $null}
+    foreach($path in @('registry.json','catalog/catalog.json','catalog/product-relations.json')){
+        $old=Get-ItlCatalogField $Applied.context.inputGitObjectIds $path
+        $new=Get-ItlCatalogField $Snapshot.inputGitObjectIds $path
+        if($old -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$' -or $new -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'){return $null}
+        if($path -ne 'registry.json' -and $old -cne $new){return $null}
+    }
+    $before=ConvertTo-ItlCatalogCanonicalValue (Get-ItlCatalogField $Applied.context 'registryMetadata')
+    $after=ConvertTo-ItlCatalogCanonicalValue $Snapshot.registry
+    if(-not $before -or -not $after -or -not (Get-ItlCatalogField $Applied.context 'catalogPublication')){return $null}
+    $before.Remove('publishedAt');$after.Remove('publishedAt')
+    if((Get-ItlCatalogHash $before) -cne (Get-ItlCatalogHash $after)){return $null}
+    $context=ConvertTo-ItlCatalogCanonicalValue $Applied.context
+    $context.catalogRevision=$Snapshot.catalogRevision
+    $context.inputGitObjectIds=ConvertTo-ItlCatalogCanonicalValue $Snapshot.inputGitObjectIds
+    $context.registryMetadata=ConvertTo-ItlCatalogCanonicalValue $Snapshot.registry
+    $context.catalogPublication.baseRevision=$Snapshot.catalogRevision
+    return $context
 }
 
 function Initialize-ItlProductProjectContext {
@@ -397,6 +429,7 @@ function Initialize-ItlProductProjectContext {
     if(-not $binding){return}
     $applied=Read-ItlProductProjectRecord applied
     $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
+    $publisherContext=$null
     try{
         $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
         $appliedFamily=Get-ItlCatalogField (Get-ItlCatalogField $applied 'context') 'baseConfigurationVersion' ''
@@ -404,14 +437,26 @@ function Initialize-ItlProductProjectContext {
         $snapshot=Read-ItlProductProjectSnapshot -NoOpApplied $noOpApplied -IncludeClientSurfaces:$IncludeClientSurfaces
         $reused=Get-ItlCatalogField $snapshot 'reusedAppliedContext'
         if($reused){Set-ItlProductProjectOperationContext $reused;return}
-        $effective=Get-ItlProductProjectEffectiveSnapshot $snapshot $preferences
-        $context=Resolve-ItlProductProjectRuntimeContext -Snapshot $effective.snapshot -Binding $binding -Overrides (Get-ItlCatalogField $preferences 'overrides' @{}) -Conditions (ConvertTo-Agent1cHashtable (Get-ItlCatalogField $preferences 'conditionValues' @{})) -ProductVersion (Get-ItlCatalogField $preferences 'productVersion' '')
-        $context['catalogPublication']=$effective.publication
+        if((Get-ItlCatalogField $snapshot 'stale' $false) -and $applied){Set-ItlProductProjectAppliedContext $applied 'Catalog is offline; the validated applied revision is retained without client writes.';return}
+        $publisherContext=if(-not $Decision -and -not (Get-ItlCatalogField $preferences 'defer')){Get-ItlProductProjectPublisherContext $snapshot $noOpApplied}else{$null}
+        if(-not $publisherContext){
+            $effective=Get-ItlProductProjectEffectiveSnapshot $snapshot $preferences
+            $context=Resolve-ItlProductProjectRuntimeContext -Snapshot $effective.snapshot -Binding $binding -Overrides (Get-ItlCatalogField $preferences 'overrides' @{}) -Conditions (ConvertTo-Agent1cHashtable (Get-ItlCatalogField $preferences 'conditionValues' @{})) -ProductVersion (Get-ItlCatalogField $preferences 'productVersion' '')
+            $context['catalogPublication']=$effective.publication
+        }
     }catch{
         if($applied -and $applied.context.projectId -ceq $binding.projectId -and $applied.context.productId -ceq $binding.productId){Set-ItlProductProjectAppliedContext $applied ('Catalog refresh/validation failed; continuing with applied revision '+$applied.catalogRevision+'. Freshness and current native readiness are unverified.');return}
         throw
     }
-    if((Get-ItlCatalogField $snapshot 'stale' $false) -and $applied){Set-ItlProductProjectAppliedContext $applied 'Catalog is offline; the validated applied revision is retained without client writes.';return}
+    if($publisherContext){
+        $savePrivate=(Get-ItlCatalogField $preferences 'catalogRevision') -cne $publisherContext.catalogRevision
+        $preferences['catalogRevision']=$publisherContext.catalogRevision
+        $inputs=$snapshot.checkedNoOpInputs
+        $null=Invoke-ItlProductProjectClientApply -Context $publisherContext -Requests @() -SavePrivateSelection:$savePrivate -PrivateSelection $preferences -ExpectedInputStates $inputs.files -ExpectedOwnerState (Get-ItlCatalogField $inputs.files (Get-ItlManagedMcpStatePath))
+        Set-ItlProductProjectOperationContext $publisherContext
+        Write-Host 'Catalog context updated; client MCP settings unchanged.'
+        return
+    }
     if(Get-ItlCatalogField $snapshot 'stale' $false){Write-Warning 'Catalog is offline; this root is materialized from a validated cached Git snapshot. Freshness and native readiness are unverified.'}
     $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
     if($family -and $context.baseConfigurationVersion -and $family -cne $context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: automatic catalog update cannot change the local product family or infobase; review the project record before continuing.'}
