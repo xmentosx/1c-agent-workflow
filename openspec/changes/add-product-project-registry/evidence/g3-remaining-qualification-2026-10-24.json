@@ -1,0 +1,598 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-24",
+  "status": "current-PM5-available-subsets-passed-full-G3-not-accepted",
+  "sourceCommit": "24ff6160401f7057939d1965f672c1a543c10ea2",
+  "installedCommit": "dfae2ff3353cd0784867eb8eac5d115a2d3d741a",
+  "aiRulesCommit": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+  "database": {
+    "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+    "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+    "bytes": 3295928320
+  },
+  "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+  "native": {
+    "identity": {
+      "exe": "C:\\Users\\xment\\AppData\\Local\\OpenAI\\Codex\\bin\\6257d9e8f63c0f2b\\codex.exe",
+      "sha256": "00c0f1e4099246fddcd67ec620ca8ed50827c7d70e113b7224f7a2933cf2d67c",
+      "version": "codex-cli 0.163.0-alpha.11",
+      "retainedRpcHelper": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\source-client-qualification-20261020\\codex-native.py",
+      "retainedRpcHelperSha256": "f78764280e354ea4fe4b1f6499017890b9f4d135bde34f11fae9d60eb859ead4"
+    },
+    "metadataPhases": [
+      {
+        "label": "before-reload",
+        "threadId": "01a16cb8-52a4-7c81-ac6f-6f23f9a995ab",
+        "toolCalls": 2,
+        "elapsedSeconds": 2.802934799983632,
+        "evidence": "before-reload.json"
+      },
+      {
+        "label": "after-reload-same-thread",
+        "threadId": "01a16cb8-52a4-7c81-ac6f-6f23f9a995ab",
+        "toolCalls": 2,
+        "elapsedSeconds": 2.122670999960974,
+        "evidence": "after-reload-same-thread.json"
+      },
+      {
+        "label": "after-reload-new-thread",
+        "threadId": "01a16cb8-6638-71a3-942b-30c92124e75a",
+        "toolCalls": 2,
+        "elapsedSeconds": 3.245967600028962,
+        "evidence": "after-reload-new-thread.json"
+      }
+    ],
+    "functionalCalls": [
+      {
+        "requestId": 3,
+        "label": "before-reload",
+        "tool": "get_module_structure",
+        "arguments": {
+          "module_path": "CommonModules/ОбщегоНазначения/Ext/Module.bsl",
+          "max_chars": 2048,
+          "max_items": 1,
+          "detail_level": "outline"
+        }
+      },
+      {
+        "requestId": 4,
+        "label": "before-reload",
+        "tool": "search_code",
+        "arguments": {
+          "query": "Получить",
+          "project_id": "pm5corp",
+          "search_type": "fulltext",
+          "top_k": 1,
+          "max_items": 1
+        }
+      },
+      {
+        "requestId": 6,
+        "label": "after-reload",
+        "tool": "get_module_structure",
+        "arguments": {
+          "module_path": "CommonModules/ОбщегоНазначения/Ext/Module.bsl",
+          "max_chars": 2048,
+          "max_items": 1,
+          "detail_level": "outline"
+        }
+      },
+      {
+        "requestId": 7,
+        "label": "after-reload",
+        "tool": "search_code",
+        "arguments": {
+          "query": "Получить",
+          "project_id": "pm5corp",
+          "search_type": "fulltext",
+          "top_k": 1,
+          "max_items": 1
+        }
+      },
+      {
+        "requestId": 8,
+        "label": "foreign-project-negative",
+        "tool": "search_code",
+        "arguments": {
+          "query": "Получить",
+          "project_id": "pm4corp",
+          "search_type": "fulltext",
+          "top_k": 1,
+          "max_items": 1
+        }
+      }
+    ],
+    "totalToolCalls": 11,
+    "llmTurns": 0,
+    "scope": "native Codex app-server core/API tools and MCP reload on current installed PM5; not Desktop UI/model-agent acceptance",
+    "gracefulExitCodes": [
+      0,
+      0
+    ]
+  },
+  "startupModes": [
+    {
+      "mode": "publisher-only",
+      "passed": true,
+      "profile": "retained full diagnostic observer; single sample",
+      "startupMs": 5426.096100000001,
+      "wholeCliMs": 8120.2747,
+      "fetches": 1,
+      "powershellHttpProbes": 0,
+      "clientBytesAndMtimeUnchanged": true,
+      "freshnessWarning": false,
+      "stdoutBytes": 1562,
+      "stderrBytes": 0
+    },
+    {
+      "mode": "changed",
+      "passed": true,
+      "profile": "retained full diagnostic observer; single sample",
+      "startupMs": 6895.8150000000005,
+      "wholeCliMs": 9893.6496,
+      "fetches": 1,
+      "powershellHttpProbes": 0,
+      "clientBytesAndMtimeUnchanged": false,
+      "freshnessWarning": false,
+      "stdoutBytes": 1630,
+      "stderrBytes": 0
+    },
+    {
+      "mode": "offline",
+      "passed": true,
+      "profile": "retained full diagnostic observer; single sample",
+      "startupMs": 3531.8024,
+      "wholeCliMs": 7749.837100000001,
+      "fetches": 1,
+      "powershellHttpProbes": 0,
+      "clientBytesAndMtimeUnchanged": true,
+      "freshnessWarning": true,
+      "stdoutBytes": 1189,
+      "stderrBytes": 0
+    }
+  ],
+  "clients": [
+    {
+      "client": "codex",
+      "status": "passed-current-PM5-core-API-reload-and-tools",
+      "remaining": "Desktop/model-agent UI and full installed lifecycle not accepted by app-server proof"
+    },
+    {
+      "client": "kilocode",
+      "status": "retained-current-PM5-native-IDE-read-and-reload-pass",
+      "remaining": "Other platforms/families/full lifecycle not covered"
+    },
+    {
+      "client": "opencode",
+      "status": "skipped-user-decision",
+      "remaining": "0 agent tool calls in prior run; not PASS; support preserved"
+    },
+    {
+      "client": "cursor",
+      "status": "retained-current-PM5-native-IDE-read-and-reload-pass",
+      "remaining": "Other platforms/families/full lifecycle not covered"
+    },
+    {
+      "client": "cline",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "claude-code",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "kimi",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "qwen",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "command-code",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "zcode",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "mimocode",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    },
+    {
+      "client": "pi",
+      "status": "unverified-native-client-not-discovered-in-bounded-inventory",
+      "remaining": "Need installed authorized client/profile; PATH and two extension roots only, not exhaustive machine absence"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-02",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-03",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-04",
+      "status": "qualified-source-and-private-native",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-05",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-06",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-07",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-08",
+      "status": "partial-current-PM5-client-proof",
+      "evidenceOrigin": "current11 native Codex calls + retained Kilo/Cursor; OpenCode SKIPPED; 12-client inventory",
+      "remaining": "G3-B1/B3/B4; core/API is not Desktop model-agent activation; no new source revision prerequisites"
+    },
+    {
+      "id": "AC-09",
+      "status": "qualified-server-contract-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-10",
+      "status": "qualified-server-contract-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-11",
+      "status": "qualified-server-contract-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Прежний live proof сохраняет свои версии/область; полный selected-client journey относится к G3-B4/AC-21, реальные выпускные связи — AC-37."
+    },
+    {
+      "id": "AC-12",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Live Mantis create не требуется test-plan и не выполнялся; это не blocker маршрутизации."
+    },
+    {
+      "id": "AC-13",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3: полный bootstrap canary не заменён source fixtures или обычным update."
+    },
+    {
+      "id": "AC-14",
+      "status": "qualified-source-and-private-native",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-15",
+      "status": "qualified-PM5-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-16",
+      "status": "qualified-PM5-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-17",
+      "status": "qualified-PM5-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-18",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3: полная native branch/managed downgrade матрица не принята."
+    },
+    {
+      "id": "AC-19",
+      "status": "partial-platform",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B1/B2: Win10/Server/terminal multi-user/PM4 не проверены."
+    },
+    {
+      "id": "AC-20",
+      "status": "partial-current-PM5-client-proof",
+      "evidenceOrigin": "current11 native Codex calls + retained Kilo/Cursor; OpenCode SKIPPED; 12-client inventory",
+      "remaining": "G3-B1/B3/B4; core/API is not Desktop model-agent activation; no new source revision prerequisites"
+    },
+    {
+      "id": "AC-21",
+      "status": "not-accepted-full-journey",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Полная original journey зависит от G3-B1–B4; изолированные успехи не суммируются в full pass."
+    },
+    {
+      "id": "AC-22",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3: полный bootstrap canary не заменён source fixtures или обычным update."
+    },
+    {
+      "id": "AC-23",
+      "status": "qualified-PM5-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Другие обязательные platform/client/lifecycle клетки — G3-B1/B3/B4; прежние отдельные failures сохранены."
+    },
+    {
+      "id": "AC-24",
+      "status": "qualified-PM5-console-subset",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-25",
+      "status": "partial-cost-matrix",
+      "evidenceOrigin": "prior comparable warm no-op A/B pass; current3 functional diagnostic modes",
+      "remaining": "G3-B5; single profiled samples are not incremental legacy A/B or statistical SLA"
+    },
+    {
+      "id": "AC-26",
+      "status": "partial-current-PM5-client-proof",
+      "evidenceOrigin": "current11 native Codex calls + retained Kilo/Cursor; OpenCode SKIPPED; 12-client inventory",
+      "remaining": "G3-B1/B3/B4; core/API is not Desktop model-agent activation; no new source revision prerequisites"
+    },
+    {
+      "id": "AC-27",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-28",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-29",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-30",
+      "status": "qualified-G3-boundary-only",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G4/native memory/G5 не разрешены; этот статус не принимает memory consumer или Q currentness."
+    },
+    {
+      "id": "AC-31",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-32",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-33",
+      "status": "partial-installed",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G3-B2/B3/B4; отсутствие полного foreground first legacy matrix не скрыто новым successful modern update."
+    },
+    {
+      "id": "AC-34",
+      "status": "qualified-G3-boundary-only",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "G4/native memory/G5 не разрешены; этот статус не принимает memory consumer или Q currentness."
+    },
+    {
+      "id": "AC-35",
+      "status": "qualified-contract",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Нет нового остатка в указанном контракте; см. общие platform/client/installed границы."
+    },
+    {
+      "id": "AC-36",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-37",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-38",
+      "status": "release-pending-not-G3-prerequisite",
+      "evidenceOrigin": "historical g3-completion-2026-10-23, original scope retained; not rerun here",
+      "remaining": "Обязательны products/projects/settings/functionality map и подтверждённый опубликованный snapshot до первого выпуска; memory AC-44 потребляет тот же результат."
+    },
+    {
+      "id": "AC-39",
+      "status": "not-accepted-full-G3",
+      "evidenceOrigin": "current scope + historical proofs explicitly separated",
+      "remaining": "G3-B1–B5 applicable residuals below; OpenCode skip does not remove support or grant G4/Gate6/migration/publication"
+    }
+  ],
+  "blockers": [
+    {
+      "id": "G3-B1",
+      "status": "unverified-no-stand",
+      "remaining": "Windows10/Server2019+ local/terminal independent-user matrix; current stand Windows11 build26300 only"
+    },
+    {
+      "id": "G3-B2",
+      "status": "unverified-no-PM4-stand",
+      "remaining": "Real isolated PM4 installed bootstrap/update/association/restore; source fixtures are not installed proof"
+    },
+    {
+      "id": "G3-B3",
+      "status": "unverified-full-lifecycle-with-Gate6-excluded",
+      "remaining": "Full fresh init/new branch/refresh/managed downgrade and remaining first legacy choices; prior approved capsule replay retained, missing original live seed not replaced; do not run dependent Gate6"
+    },
+    {
+      "id": "G3-B4",
+      "status": "partial-client-matrix",
+      "remaining": "Current Codex core/API added to prior Kilo/Cursor IDE pass; Codex Desktop/model UI, remaining8 clients and full platform/lifecycle cells unverified; OpenCode SKIPPED, does not block this run"
+    },
+    {
+      "id": "G3-B5",
+      "status": "partial-cost-matrix",
+      "remaining": "Comparable current warm no-op A/B passed in prior20-block proof. Current publisher/change/offline diagnostic single samples complete functional/count/bytes subset, not paired legacy deltas or cross-platform/client/cold/remote SLA; do not apply warm no-op thresholds to unlike samples"
+    }
+  ],
+  "preservation": {
+    "paths": 46,
+    "shaAndMtimeRestored": true,
+    "controlledFixtureFilesRestored": 7,
+    "databaseUnchanged": true,
+    "historicalFiles": 21,
+    "historicalRoots": 4,
+    "capsuleArtifacts": 11,
+    "priorManifestsVerified": [
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\raw-evidence-manifest.json",
+        "sha256": "34af1dc8c747868742d6a330b3a7e57d770f08eaa86740e5171206d4b4e34df4",
+        "filesVerified": 702
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\raw-evidence-manifest.json",
+        "sha256": "2afb421ee52c3c8d0c2b31b4ddf0ff31218178b8f6d096e55dfa05b0b2b2b6e0",
+        "filesVerified": 659
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\raw-evidence-manifest.json",
+        "sha256": "b9901b815b7f16888bcd319089fde1ac8cc3f01e495711612e61491f2aaf1932",
+        "filesVerified": 486
+      }
+    ],
+    "productRestoreAcceptanceClaimed": false,
+    "leaseReleased": true
+  },
+  "forbiddenNotPerformed": [
+    "Gate6",
+    "G4",
+    "working-project migration",
+    "workflow/public registry publication",
+    "server patches/reindex",
+    "1C launch"
+  ],
+  "privateFixtureGit": "Only2 synthetic commits pushed to new ignored local bare fixture origin; original catalog/history preserved",
+  "rawManifest": {
+    "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\raw-evidence-manifest.json",
+    "sha256": "44d09f51696c0817e38ac2aaeee732ded2595d9e99dab1631117675135ca84f3",
+    "files": 793
+  },
+  "rawEvidence": [
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\audit.json",
+      "sha256": "06a62f8923e5d7e6ca3a8d0eb6b9e134b12fbf166b3149b0517cf30e16a0de94",
+      "bytes": 1109
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\matrix-audit.json",
+      "sha256": "f24674e2abfdc885540dd3cc0c811f2df23512deb11394bbb3cd4bb92882d77f",
+      "bytes": 17947
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\native-current.json",
+      "sha256": "e3444b2fa89afe9cf236444283cf49ef046e253a010d2172c02160da2e7b53f7",
+      "bytes": 1790
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\native-functional.json",
+      "sha256": "fed3dcd0b0ba5206212f679ea7f1defb3cddb255fa220e6b2fe3ff6e740e627b",
+      "bytes": 9817
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\client-inventory.json",
+      "sha256": "edb6ad2c6575e58af4ff7c1de646a189beca07ae334d97ebac75f07aa8abc44e",
+      "bytes": 1198
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\modes\\mode-results.json",
+      "sha256": "82565e36a2a87edc0074505d664c91df3d3b5d79d588330b8c5efe12cd9f06d8",
+      "bytes": 12561
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\modes\\mode-progress.json",
+      "sha256": "84f47b636ae26fb9cb120cd26c7a034797c7674902a70120be8409cf5d5c8194",
+      "bytes": 16592
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\metadata-native-guard.json",
+      "sha256": "6a692405535a5858df81c44ef3fd1e860e025a851347e1d6618d6186fc332e38",
+      "bytes": 12503
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\final-original-guard.json",
+      "sha256": "bcfcc5652f5fbb08d543f256d6c18ac4d55f784752f9b407431b30a7325c7b91",
+      "bytes": 12426
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\fixture-cleanup.json",
+      "sha256": "e9fd0b944301bb6617208fdee0b4827d39f2620d6c748d2b8dbf63dbf6644b2a",
+      "bytes": 1225
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\final-identity.json",
+      "sha256": "f2df8d5d0f450b04309f99833ddd0c4c2d1b82049b9c18cb3833436cfce0f290",
+      "bytes": 4842
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\historical-preservation-comparison.json",
+      "sha256": "bdeaf2c3f795f0db265956d4ec4202d0993efc812879528499b4320c062fba59",
+      "bytes": 9584
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\capsule-final-validation.json",
+      "sha256": "25dd882eaf5e9fb9494e310c0009de82cdedd697f0ff3e288772a0ecfd425e45",
+      "bytes": 3486
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\lease-released.json",
+      "sha256": "1f488a70179cc7b4c9183827535c868a0f5bffc54bc2f12a1d71051e749c44b2",
+      "bytes": 68
+    },
+    {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\host.json",
+      "sha256": "6f481c1259ddcd3416491e330a82035262c1697234665f7af387185b7e057483",
+      "bytes": 124
+    }
+  ]
+}
