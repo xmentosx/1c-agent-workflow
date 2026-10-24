@@ -266,7 +266,7 @@ function Get-DevelopE2EAncestorQualification {
         [object]$StaticProof = $null, [switch]$AllowPendingStatic,
         [AllowNull()][Collections.Generic.List[object]]$Diagnostics=$null,
         [string[]]$RequiredScenario=@(),[object]$Catalog=$null,
-        [AllowNull()][object[]]$QualificationInventory=$null)
+        [AllowNull()][object[]]$QualificationInventory=$null,[hashtable]$LookupContext=$null)
     if ($null -eq $InputIdentity -or [string]$InputIdentity.fingerprint -cnotmatch '^[a-f0-9]{64}$' -or
         (Get-DevelopE2ECanonicalJsonSha256 -Value $InputIdentity.inventory) -cne [string]$InputIdentity.fingerprint -or
         -not $InputIdentity.inventory.external.complete -or [string]$InputIdentity.inventory.journey -cne $Journey) { return $null }
@@ -313,7 +313,7 @@ function Get-DevelopE2EAncestorQualification {
             $equivalent=[string]$manifest.inputIdentity.fingerprint -ceq [string]$InputIdentity.fingerprint
             if(-not $equivalent) {
                 $equivalent=if($RequiredScenario.Count) {
-                    Test-DevelopScenarioEquivalentInput $RepositoryRoot $manifest.inputIdentity $InputIdentity $qualifiedCommit $RequiredScenario $Catalog
+                    Test-DevelopScenarioEquivalentInput $RepositoryRoot $manifest.inputIdentity $InputIdentity $qualifiedCommit $RequiredScenario $Catalog -LookupContext $LookupContext
                 } else {Test-DevelopE2EEquivalentInput -RepositoryRoot $RepositoryRoot -Recorded $manifest.inputIdentity -Current $InputIdentity -QualifiedCommit $qualifiedCommit}
             }
             if (-not $equivalent) {

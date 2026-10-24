@@ -3,7 +3,7 @@
 Architecture checkpoint approved by the user on 2026-10-24: replace whole-journey
 coverage with scenario coverage inside the existing source qualification owner,
 canonicalize actual client selection, retain strict checks, register the change
-and show Plan. Publication remains unauthorized.
+and show Plan. The user subsequently authorized publication to develop after Plan.
 
 The invariant is complete, applicable coverage for the integrated candidate:
 each required scenario has actual passed execution or authenticated equivalent
@@ -60,3 +60,20 @@ preserve existing-file collisions; process ownership and release checks are
 unchanged. The failed checkpoint and queue remain available for supported replan.
 The original transport regression failed before the repair; all 83 Designer
 completion tests passed afterward on Windows PowerShell 5.1 (zero skipped).
+
+The repaired installable candidate b543a0e2 completed actual Develop qualification:
+3721/0/0 static tests, 171 of 193 Pester shards reused, upgrade 51m19s,
+fresh 41m50s, total 1h48m43s. Its qualification is reusable and tracked state
+remained clean. Concurrent registrations then changed verification runtime
+inputs; this baseline cannot authorize those changed inputs automatically.
+Future long execution must follow activation of the publication checkpoint so
+later registrations remain in the next release.
+
+Warm Plan exposed a separate failure: 312s exceeded the unchanged 120s budget.
+Profiling attributed 90.4s of a 103.3s upgrade lookup to six repeated function
+comparisons. An invocation-local cache and ambient analysis of changed functions
+only reduced the same lookup to 23.5s (one comparison, 6.9s), with identical
+scenario decisions. Source SHA authentication still precedes every cache use;
+null refusals are cached, and the next lookup starts empty. Regressions retain
+tampered-input, ambient/top-level and ordinal BOM rejection. This measurement
+is a lookup improvement, not final publication timing acceptance.
