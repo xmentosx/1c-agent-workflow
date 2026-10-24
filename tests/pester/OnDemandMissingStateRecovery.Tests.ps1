@@ -3,6 +3,92 @@
     $context=Initialize-WorkflowPesterContext
     . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
     $actualOwnershipProof=(Get-Command Get-ItlOnDemandProcessOwnershipProof).ScriptBlock
+    $actualChildProof=(Get-Command Get-ItlOnDemandOwnedTestClientProcesses).ScriptBlock
+}
+
+Describe 'Cross-family retained cleanup on isolated native processes' {
+    BeforeEach {
+        $script:nativeSavedRoot=$script:ProjectRoot
+        $script:ProjectRoot=Join-Path $TestDrive ('Изолированный стенд '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
+        $script:nativeFixtures=[Collections.Generic.List[object]]::new()
+        $script:nativeLeases=@{}
+        $script:listenerScript=Join-Path $script:ProjectRoot 'Владелец listener.py'
+        Write-Utf8Text $listenerScript @'
+import json, socket, sys, time
+with socket.socket() as listener:
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    with open(sys.argv[1], 'w', encoding='utf-8') as result:
+        json.dump({'port': listener.getsockname()[1]}, result)
+    while True:
+        time.sleep(0.1)
+'@
+        function New-NativeCleanupFixture {
+            param([string]$Name)
+            $resultPath=Join-Path $script:ProjectRoot ($Name+'.json')
+            $process=Start-NativeProcessBackground -FilePath (Get-Command python -CommandType Application | Select-Object -First 1).Source -Arguments @('-u',$script:listenerScript,$resultPath)
+            $script:nativeFixtures.Add($process)
+            $deadline=[DateTime]::UtcNow.AddSeconds(15)
+            while(-not (Test-Path -LiteralPath $resultPath)) {
+                if($process.HasExited -or [DateTime]::UtcNow -gt $deadline){throw 'isolated listener did not start'}
+                Start-Sleep -Milliseconds 50
+            }
+            $port=[int](Read-Utf8Text $resultPath|ConvertFrom-Json).port
+            return [pscustomobject]@{process=$process;port=$port;started=$process.StartTime.ToUniversalTime().ToString('o');executable=$process.Path;markers=@($script:listenerScript,$resultPath)}
+        }
+        Mock Get-ItlOnDemandManagedPortLeaseMatches {
+            param($Family,$Key,$LeaseToken)
+            if($script:nativeLeases.ContainsKey($LeaseToken)){$script:nativeLeases[$LeaseToken]}
+        }
+        Mock Release-ItlOnDemandManagedPortLease {param($Family,$Key,$LeaseToken) $script:nativeLeases.Remove($LeaseToken)}
+        Mock Get-OneCExecutionGuardSettings { [pscustomobject]@{root=(Join-Path $script:ProjectRoot 'guards');python=(Get-Command python -CommandType Application|Select-Object -First 1).Source;waitTimeoutSeconds=15} }
+    }
+    AfterEach {
+        foreach($process in $script:nativeFixtures){
+            if(-not $process.HasExited){$null=$process.Handle;(Stop-NativeProcessForSafety -Process $process -UseOpenedProcess).confirmed | Should -BeTrue}
+        }
+        $script:ProjectRoot=$script:nativeSavedRoot
+    }
+    It 'releases only the retained <Family> runtime and keeps the other family usable' -ForEach @(@{Family='roctup'},@{Family='vanessa-ui'}) {
+        param($Family)
+        $own=New-NativeCleanupFixture own
+        $other=New-NativeCleanupFixture peer
+        $peerFamily=$(if($Family -eq 'roctup'){'vanessa-ui'}else{'roctup'})
+        $basePath=Join-Path $script:ProjectRoot 'Копия базы'
+        $record=[pscustomobject]@{schemaVersion=4;status='running';family=$Family;instanceId=('a'*32);pid=$own.process.Id;port=$own.port;processStartTime=$own.started;executablePath=$own.executable;ownershipMarkers=$own.markers;infoBaseKind='file';infoBasePath=$basePath;managerInfoBaseKind='file';managerInfoBasePath=$basePath;portFamily='isolated';portKey='own';portLeaseToken='own-token';testClientPid=0;testClientPort=0}
+        $peer=$record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $peer.family=$peerFamily;$peer.instanceId=('b'*32);$peer.pid=$other.process.Id;$peer.port=$other.port;$peer.processStartTime=$other.started;$peer.executablePath=$other.executable;$peer.ownershipMarkers=$other.markers;$peer.portKey='peer';$peer.portLeaseToken='peer-token'
+        $script:nativeLeases['peer-token']=[pscustomobject]@{port=$other.port;pid=$other.process.Id}
+        $script:nativeLeases['own-token']=[pscustomobject]@{port=$own.port;pid=$own.process.Id}
+        $script:nativeSessions=@([pscustomobject]@{pid=$own.process.Id},[pscustomobject]@{pid=$other.process.Id})
+        if($peerFamily -eq 'vanessa-ui'){
+            $client=New-NativeCleanupFixture client
+            foreach($entry in @{testClientPid=$client.process.Id;testClientPort=$client.port;testClientProcessStartTime=$client.started;testClientExecutablePath=$client.executable;testClientOwnershipMarkers=$client.markers;testClientPortFamily='isolated';testClientPortKey='peer-client';testClientPortLeaseToken='peer-client-token'}.GetEnumerator()){$peer|Add-Member -Force -NotePropertyName $entry.Key -NotePropertyValue $entry.Value}
+            $script:nativeLeases['peer-client-token']=[pscustomobject]@{port=$client.port;pid=$client.process.Id}
+            $script:nativeSessions+=[pscustomobject]@{pid=$client.process.Id}
+        }
+        Invoke-WithItlOnDemandRuntimeMutation -Family $peerFamily -InstanceIds @('b'*32) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$peer}|Out-Null
+        $peerPath=Get-ItlOnDemandRuntimePath -Family $peerFamily -InstanceId ('b'*32)
+        $peerHash=(Get-FileHash -LiteralPath $peerPath).Hash
+        Mock Get-OneCInfoBaseSessionProcesses { $script:nativeSessions }
+        $admissions=@([pscustomobject]@{infoBaseKind='file';infoBasePath=$basePath})
+        $stopped=Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$Family-call" -ScriptBlock {
+            Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ('a'*32) -RetainedRuntimeState $record
+        }
+        $stopped.status | Should -Be stopped
+        $own.process.WaitForExit(5000) | Should -BeTrue
+        Test-TcpPortOpen -Port $own.port | Should -BeFalse
+        $other.process.HasExited | Should -BeFalse
+        Test-TcpPortOpen -Port $other.port | Should -BeTrue
+        if($peerFamily -eq 'vanessa-ui'){$client.process.HasExited | Should -BeFalse;Test-TcpPortOpen -Port $client.port | Should -BeTrue;$script:nativeLeases.ContainsKey('peer-client-token') | Should -BeTrue}
+        (Get-FileHash -LiteralPath $peerPath).Hash | Should -Be $peerHash
+        $script:nativeLeases.ContainsKey('own-token') | Should -BeFalse
+        $script:nativeLeases.ContainsKey('peer-token') | Should -BeTrue
+        # The original task can acquire the same resource after owned cleanup,
+        # while the other family's warmed native runtime remains available.
+        (Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$peerFamily-call" -ScriptBlock { Test-TcpPortOpen -Port $other.port }) | Should -BeTrue
+    }
 }
 
 Describe 'Private TestClient close and runtime mutation owner' {
@@ -277,5 +363,97 @@ Describe 'Retained on-demand launch evidence recovery' {
         Should -Invoke Stop-Process -Times 0 -Exactly
         Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
         Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
+    }
+
+    It 'finishes retained <Family> cleanup beside a proven live peer, preserving it (<Defect>)' -ForEach @(
+        @{Family='vanessa-ui';Defect='none'},@{Family='roctup';Defect='none'},
+        @{Family='vanessa-ui';Defect='reused-pid'},@{Family='roctup';Defect='reused-pid'},
+        @{Family='vanessa-ui';Defect='replaced-lease'},@{Family='roctup';Defect='replaced-lease'},
+        @{Family='vanessa-ui';Defect='changed-registration'},@{Family='roctup';Defect='changed-registration'},
+        @{Family='vanessa-ui';Defect='foreign-executable'},@{Family='roctup';Defect='foreign-executable'},
+        @{Family='vanessa-ui';Defect='unregistered'},@{Family='roctup';Defect='unregistered'},
+        @{Family='vanessa-ui';Defect='ambiguous'},@{Family='roctup';Defect='ambiguous'},
+        @{Family='vanessa-ui';Defect='foreign-listener'},@{Family='roctup';Defect='foreign-listener'},
+        @{Family='vanessa-ui';Defect='wrong-base'},@{Family='roctup';Defect='wrong-base'}
+    ) {
+        param($Family,$Defect)
+        $script:launch.family=$Family
+        if($Family -eq 'roctup'){$script:launch.testClientPid=0;$script:launch.testClientPort=0}
+        $script:peerFamily=$(if($Family -eq 'roctup'){'vanessa-ui'}else{'roctup'})
+        $script:peer=$script:launch|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $script:peer.family=$peerFamily;$script:peer.instanceId=('d'*32)
+        $script:peer | Add-Member status running
+        $script:peer.pid=201;$script:peer.port=9876
+        $script:peer.managerInfoBasePath=$(if($peerFamily -eq 'roctup'){'C:\Целевая база'}else{'C:\Менеджер соседа'})
+        $script:peer.ownershipMarkers=@($peer.managerInfoBasePath,'port=9876')
+        $script:peer.portKey='peer-backend';$script:peer.portLeaseToken='peer-backend-token'
+        $script:peer.testClientPid=202;$script:peer.testClientPort=48152
+        $script:peer.testClientPortKey='peer-child';$script:peer.testClientPortLeaseToken='peer-child-token'
+        $script:peer.testClientOwnershipMarkers=@('C:\Целевая база','/TESTCLIENT','-TPort 48152')
+        $script:peerSession=$(if($peerFamily -eq 'roctup'){201}else{202})
+        $script:peerDefect=$Defect
+        if($Defect -eq 'wrong-base'){$script:peer.managerInfoBasePath='C:\Другая база';$script:peer.infoBasePath='C:\Другая база'}
+        Mock Get-ItlOnDemandRuntimeInstances {
+            if($script:peerDefect -eq 'unregistered'){return @()}
+            if($script:peerDefect -eq 'ambiguous'){return @($script:peer,$script:peer)}
+            $script:peer
+        }
+        Mock Read-ItlOnDemandRuntimeState {
+            param($Family,$InstanceId)
+            if($InstanceId -cne ('d'*32)){return $null}
+            $current=$script:peer|ConvertTo-Json -Depth 8|ConvertFrom-Json
+            if($script:peerDefect -eq 'changed-registration'){$current.processStartTime=$script:started.AddSeconds(1).ToString('o')}
+            $current
+        }
+        Mock Get-Process {
+            param($Id)
+            $start=$script:started
+            if($Id -eq $script:peerSession -and $script:peerDefect -eq 'reused-pid'){$start=$start.AddMilliseconds(1)}
+            [pscustomobject]@{Id=[int](@($Id)[0]);StartTime=$start;HasExited=$false}
+        }
+        Mock Get-CimInstance {
+            param($ClassName,$Filter)
+            $exe=$script:peer.executablePath
+            if($script:peerDefect -eq 'foreign-executable'){$exe='C:\Чужая платформа\1cv8.exe'}
+            [pscustomobject]@{ExecutablePath=$exe;CommandLine=($script:peer.ownershipMarkers -join ' ')+' '+($script:peer.testClientOwnershipMarkers -join ' ')}
+        }
+        Mock Get-ItlOnDemandProcessOwnershipProof {
+            param($RuntimeState,$ExactStart)
+            if($RuntimeState.pid -eq 201){return (& $actualOwnershipProof -RuntimeState $RuntimeState -ExactStart:$ExactStart)}
+            [pscustomobject]@{owned=$true}
+        }
+        Mock Get-ItlOnDemandOwnedTestClientProcesses {
+            param($RuntimeState,$ExactStart,$RegisteredOnly)
+            if($RuntimeState.pid -eq 201){return (& $actualChildProof -RuntimeState $RuntimeState -ExactStart:$ExactStart -RegisteredOnly:$RegisteredOnly)}
+            if($RuntimeState.family -eq 'vanessa-ui'){[pscustomobject]@{process=[pscustomobject]@{Id=102}}}
+        }
+        Mock Test-ItlOnDemandPortOwnedByProcess { param($Port,$ProcessId) if($script:peerDefect -eq 'foreign-listener'){return $false}; ($Port -eq 9876 -and $ProcessId -eq 201) -or ($Port -eq 48152 -and $ProcessId -eq 202) }
+        Mock Get-ItlOnDemandManagedPortLeaseMatches {
+            param($Family,$Key,$LeaseToken)
+            if($script:peerDefect -eq 'replaced-lease' -and $Key -like 'peer-*'){return @()}
+            if($Key -eq 'peer-backend' -and $LeaseToken -eq 'peer-backend-token'){return [pscustomobject]@{port=9876;pid=201}}
+            if($Key -eq 'peer-child' -and $LeaseToken -eq 'peer-child-token'){return [pscustomobject]@{port=48152;pid=202}}
+        }
+        Mock Get-OneCInfoBaseSessionProcesses {
+            param($InfoBaseKind,$InfoBasePath)
+            [pscustomobject]@{pid=101}
+            if($script:launch.family -eq 'vanessa-ui'){[pscustomobject]@{pid=102}}
+            if($InfoBasePath -eq 'C:\Целевая база'){[pscustomobject]@{pid=$script:peerSession}}
+        }
+        $operation={ Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId ('a'*32) -RetainedRuntimeState $script:launch }
+        if($Defect -eq 'none') {
+            (Get-ItlOnDemandProcessOwnershipProof -RuntimeState $script:peer -ExactStart).owned | Should -BeTrue
+            if($peerFamily -eq 'vanessa-ui'){@(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $script:peer -ExactStart -RegisteredOnly).Count | Should -Be 1}
+            Assert-ItlOnDemandCleanupIdentity -Actual (Read-ItlOnDemandRuntimeState -Family $peerFamily -InstanceId ('d'*32)) -Expected $script:peer
+            (& $operation).status | Should -Be stopped
+            $script:sequence.ToArray() | Should -Contain 'stop-101'
+            $script:sequence.ToArray() | Should -Contain 'release-original-backend-token'
+        } else {
+            $operation | Should -Throw '*ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT*'
+            Should -Invoke Stop-Process -Times 0 -Exactly
+            Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+        }
+        Should -Invoke Stop-Process -Times 0 -Exactly -ParameterFilter { $Id -in @(201,202) }
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly -ParameterFilter { $Key -like 'peer-*' }
     }
 }

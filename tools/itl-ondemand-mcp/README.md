@@ -36,13 +36,21 @@ debt from an idle stop is likewise reconciled before backend startup. An idle
 stop encountering a registration already removed by lifecycle continues through
 the existing guarded retained-launch cleanup, rather than treating removal as
 either a cleanup receipt or a permanent failure.
+Retained cleanup distinguishes unknown exact-base sessions from registered
+warm peers of either family. A peer is preserved only after exact process/start,
+executable/markers, database, listener, current registration and lease checks.
+Unknown, replaced or ambiguous ownership still retains the original guard.
 
 For both families the agent can call `call_tool` with
 `name="itl_recover_connection", arguments={}`. This facade-owned operation is
 discoverable through `resolve_tool` without starting 1C and is also exposed on
 the full surface. It uses the existing stop owner, including a retained execution,
 then initializes and verifies a usable backend under a fresh call guard. Its
-budget is at most one minute and never extends a shorter caller deadline. No
+cleanup, admission and cold readiness share the existing request-phase budget
+(ten minutes by default or the caller's remaining phase); it never restarts that
+budget or extends a shorter caller deadline. Startup phases report elapsed and
+remaining milliseconds; broker errors preserve cancellation and bounded redacted
+output even when the helper exits without a result marker. No
 PID, base, lease or foreign instance selector is accepted, and no previous tool
 operation is replayed. An unknown modifying outcome remains unknown even when
 the connection is recovered; inspect its effect before deciding to issue it again.

@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeBrokerFixture(t *testing.T, body string) string {
@@ -17,6 +19,30 @@ func writeBrokerFixture(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestPowerShellBrokerReportsDeadlineAndExitWithoutLeakingSecrets(t *testing.T) {
+	for _, mode := range []string{"deadline", "exit"} {
+		t.Run(mode, func(t *testing.T) {
+			body := "Start-Sleep -Seconds 20"
+			budget := 100 * time.Millisecond
+			if mode == "exit" {
+				body = "[Console]::Error.WriteLine('token=private-fixture-token'); exit 7"
+				budget = 15 * time.Second
+			}
+			broker := &powershellBroker{HelperPath: writeBrokerFixture(t, body), ProjectRoot: filepath.Join(t.TempDir(), "Проект с пробелом"), Family: "vanessa-ui", InstanceID: strings.Repeat("a", 32), Timeout: budget}
+			_, err := broker.invoke(context.Background(), "mark-running", nil)
+			if err == nil || !strings.Contains(err.Error(), "mark-running") || !strings.Contains(err.Error(), "elapsedMs=") || !strings.Contains(err.Error(), "remainingMs=") {
+				t.Fatalf("lost phase/operation diagnostics: %v", err)
+			}
+			if mode == "deadline" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("exit status hid the expired context: %v", err)
+			}
+			if mode == "exit" && (!strings.Contains(err.Error(), "exit status 7") || strings.Contains(err.Error(), "private-fixture-token")) {
+				t.Fatalf("exit reason lost or secret exposed: %v", err)
+			}
+		})
+	}
 }
 
 func TestPowerShellBrokerRecoveryPassesRetainedUnicodeLaunchProofInsideTheExistingInvocation(t *testing.T) {

@@ -312,13 +312,18 @@ func (b *powershellBroker) invoke(ctx context.Context, operation string, extra [
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
+	started, budget := time.Now(), remainingPhaseMilliseconds(callCtx)
 	err := cmd.Run()
 	info, parseErr := parseBrokerOutput(output.String())
 	if err != nil {
+		// CommandContext may terminate Windows PowerShell before it emits a
+		// result marker. Preserve cancellation independently of exit status.
+		reason := errors.Join(err, callCtx.Err())
+		diagnostic := resultEvidenceMessage(nil, fmt.Errorf("%s", strings.TrimSpace(output.String())))
 		if parseErr == nil && info != nil && info.Status == "failed" {
-			return nil, fmt.Errorf("backend broker failed; log=%s", info.LogPath)
+			diagnostic = "backend reported failure; log=" + info.LogPath
 		}
-		return nil, fmt.Errorf("backend broker %s failed: %w: %s", operation, err, strings.TrimSpace(output.String()))
+		return nil, fmt.Errorf("backend broker %s failed: elapsedMs=%d budgetMs=%d remainingMs=%d: %w: %s", operation, time.Since(started).Milliseconds(), budget, remainingPhaseMilliseconds(callCtx), reason, diagnostic)
 	}
 	if parseErr != nil {
 		return nil, parseErr

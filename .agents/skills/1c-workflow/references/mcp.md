@@ -111,7 +111,11 @@ catalog resolution alone does not start 1C. Use the family's existing recovery
 below. For an exposed Vanessa or ROCTUP facade with a connection/cleanup failure,
 call `call_tool(name="itl_recover_connection", arguments={})` without asking for
 a manual reset. Its existing owner confirms cleanup, including its retained
-guard, and verifies a usable connection within at most one minute. Before a new
+guard, and verifies a usable connection within the same bounded request phase
+as a normal cold call (ten minutes by default, respecting shorter caller limits).
+Failed startup reports its phase, elapsed/remaining budget and helper exit or
+cancellation reason. Proven registered peers of either family remain alive;
+unknown exact-base sessions still require their owner's continuation. Before a new
 normal call the facade also reconciles its pending cleanup automatically. A new
 chat waiting for the same resources requests cleanup from the original facade
 through its project-local connection mailbox; the original signed owner performs

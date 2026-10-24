@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -26,8 +25,9 @@ func (r *runtime) recoverConnection(ctx context.Context, meta mcp.Meta, argument
 	if !ok || len(input) != 0 {
 		return toolError("ITL_ONDEMAND_ARGUMENTS_INVALID", ownerRecoveryTool+" accepts only an empty object", nil)
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
+	// callNamed already owns the bounded request phase, including any shorter
+	// caller deadline. Cleanup/admission/cold readiness consume that one budget;
+	// recovery must neither truncate it to one minute nor restart it.
 	if err := r.stopWithMeta(ctx, meta); err != nil {
 		return recoveryAction(ownerRecoveryTool, r.instanceID, r.instanceID, false, "not-started", err)
 	}

@@ -347,6 +347,18 @@ the recovery adapter and mailbox and retains the existing same-connection
 recovery path; descriptors/receipts never replace OS guard authority. Unknown
 outcomes require agent-owned readback/reconciliation, not a blanket approval.
 
+Retained cleanup classifies registered warm peers without taking authority over
+them. The existing native ownership, listener and immutable lease checks prove
+each peer against a re-read project-local registration; unknown or ambiguous
+same-base sessions still retain the original execution. This is owner-local
+classification, with no peer stop, new coordinator, state migration or admission
+mode. Same-connection recovery consumes the original request-phase budget,
+including cold protocol readiness, rather than imposing a separate minute.
+Per-phase elapsed/remaining timing and broker cancellation diagnostics are
+bounded and contain no connection secrets. Source regression uses both families
+with real isolated processes/listeners and the existing OS execution guard;
+session discovery and port reservations are private fixtures, not live 1C proof.
+
 Architecture checkpoint: the user authorized this continuation design and its
 simplification on 2026-09-26. The existing update/refresh owner retains all
 lifecycle, Git, database and rollback authority. One worktree-local patch receipt
