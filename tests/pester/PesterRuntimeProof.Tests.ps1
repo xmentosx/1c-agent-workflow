@@ -188,3 +188,218 @@ Describe 'Actual Pester worker runtime qualification' {
     }
 
 }
+
+Describe 'External Pester runtime reuse through the original worker' {
+    BeforeEach {
+        $script:savedExternalRoot=$env:ITL_PESTER_RUNTIME_TEST_ROOT
+        $env:ITL_PESTER_RUNTIME_TEST_ROOT=Join-Path $TestDrive ('Runtime внешний '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($env:ITL_PESTER_RUNTIME_TEST_ROOT)
+        [IO.File]::WriteAllText((Join-Path $env:ITL_PESTER_RUNTIME_TEST_ROOT 'engine.dll'),'original engine bytes')
+    }
+    AfterEach {$env:ITL_PESTER_RUNTIME_TEST_ROOT=$script:savedExternalRoot}
+    It 'reuses exact external bytes, rejects replacement at the same path and keeps preview read-only' {
+        $root=New-RuntimeProofFixture 'External bytes'
+        $catalogPath=Join-Path $root 'tests/quality-contracts.json'
+        $c=Get-Content $catalogPath -Raw|ConvertFrom-Json
+        $c|Add-Member pesterExternalRuntimeProfiles ([pscustomobject]@{fixture=[pscustomobject]@{kind='directory';environmentVariable='ITL_PESTER_RUNTIME_TEST_ROOT'}})
+        $c|Add-Member pesterExternalRuntimeTests ([pscustomobject]@{'tests/pester/Runtime.Tests.ps1'=@('fixture')})
+        [IO.File]::WriteAllText($catalogPath,($c|ConvertTo-Json -Depth 8))
+        & git -C $root add --all; & git -C $root commit -qm 'external runtime contract'
+        $first=Invoke-RuntimeProofFixture $root out-first
+        $warm=Invoke-RuntimeProofFixture $root out-warm
+        $first.executedWorkerCount | Should -Be 1
+        $warm.reusedWorkerCount | Should -Be 1
+        [IO.File]::WriteAllText((Join-Path $env:ITL_PESTER_RUNTIME_TEST_ROOT 'engine.dll'),'replacement at the same version and path')
+        $changed=Invoke-RuntimeProofFixture $root out-changed
+        $changed.executedWorkerCount | Should -Be 1
+        $rewarm=Invoke-RuntimeProofFixture $root out-rewarm
+        $rewarm.reusedWorkerCount | Should -Be 1
+        @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 2
+        $previewRoot=Join-Path $root out-preview
+        $run=Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',$previewRoot,'-JunitPath',(Join-Path $previewRoot 'pester.xml'),'-PlanOnly')
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $preview=($run.stdout -join [Environment]::NewLine)|ConvertFrom-Json
+        $preview.reusedCount | Should -Be 1
+        @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 2
+        Test-Path (Join-Path $previewRoot 'pester.xml') | Should -BeFalse
+        $other=Join-Path $TestDrive 'Reuse другой worktree'
+        try {
+            & git -C $root worktree add --quiet --detach $other HEAD
+            $cross=Invoke-RuntimeProofFixture $other out-cross
+            $cross.reusedWorkerCount | Should -Be 1
+            Test-Path (Join-Path $other counter.txt) | Should -BeFalse
+        } finally {& git -C $root worktree remove --force $other}
+        $cache=Join-Path $root ('.git/itl/pester-shards/v1/'+$rewarm.workers[0].inputDigest)
+        $recordPath=Join-Path $cache 'result.json';$manifestPath=Join-Path $cache 'manifest.json'
+        $record=Get-Content $recordPath -Raw|ConvertFrom-Json
+        $record.PSObject.Properties.Remove('externalRuntimeIdentity')
+        [IO.File]::WriteAllText($recordPath,($record|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+        $manifest=Get-Content $manifestPath -Raw|ConvertFrom-Json
+        $manifest.resultSha256=(Get-FileHash $recordPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($manifestPath,($manifest|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        $withoutWitness=Invoke-RuntimeProofFixture $root out-without-witness
+        $withoutWitness.executedWorkerCount | Should -Be 1 -Because 'integrity-valid legacy proof without an external witness is insufficient'
+        [IO.Directory]::Delete($env:ITL_PESTER_RUNTIME_TEST_ROOT,$true)
+        foreach($name in @('out-unknown-a','out-unknown-b')){
+            $unknown=Invoke-RuntimeProofFixture $root $name
+            $unknown.executedWorkerCount | Should -Be 1
+            $unknown.workers[0].inputDigest | Should -BeNullOrEmpty
+            $unknown.workers[0].repeatReason | Should -Match 'fixture.*unavailable'
+        }
+        $c.PSObject.Properties.Remove('pesterExternalRuntimeProfiles')
+        [IO.File]::WriteAllText($catalogPath,($c|ConvertTo-Json -Depth 8))
+        $undefined=Invoke-RuntimeProofFixture $root out-undefined-profile
+        $undefined.executedWorkerCount | Should -Be 1
+        $undefined.workers[0].inputDigest | Should -BeNullOrEmpty
+        $undefined.workers[0].repeatReason | Should -Match 'identity unavailable'
+        @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 6
+    }
+    It 'does not qualify passed tests when the external input changes during execution' {
+        $root=New-RuntimeProofFixture 'External drift'
+        $catalogPath=Join-Path $root 'tests/quality-contracts.json'
+        $c=Get-Content $catalogPath -Raw|ConvertFrom-Json
+        $c|Add-Member pesterExternalRuntimeProfiles ([pscustomobject]@{fixture=[pscustomobject]@{kind='directory';environmentVariable='ITL_PESTER_RUNTIME_TEST_ROOT'}})
+        $c|Add-Member pesterExternalRuntimeTests ([pscustomobject]@{'tests/pester/Runtime.Tests.ps1'=@('fixture')})
+        [IO.File]::WriteAllText($catalogPath,($c|ConvertTo-Json -Depth 8))
+        $test=Join-Path $root 'tests/pester/Runtime.Tests.ps1'
+        [IO.File]::AppendAllText($test,"`nAfterAll { Add-Content -LiteralPath (Join-Path `$env:ITL_PESTER_RUNTIME_TEST_ROOT 'engine.dll') -Value 'changed during execution' }")
+        & git -C $root add --all; & git -C $root commit -qm 'runtime drift reproducer'
+        $a=Invoke-RuntimeProofFixture $root out-first
+        $b=Invoke-RuntimeProofFixture $root out-second
+        $a.executedWorkerCount | Should -Be 1
+        $b.executedWorkerCount | Should -Be 1
+        $a.workers[0].passed | Should -Be 1
+        $a.workers[0].inputDigest | Should -BeNullOrEmpty
+        @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 2
+    }
+}
+
+Describe 'External Pester runtime bounded observation' {
+    BeforeAll {. (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')}
+    It 'preserves completed profile reuse when another native observer exceeds its deadline' {
+        $saved=$env:ITL_PESTER_RUNTIME_TEST_ROOT
+        try {
+            $root=New-RuntimeProofFixture 'Bounded external probe'
+            $env:ITL_PESTER_RUNTIME_TEST_ROOT=Join-Path $root 'external runtime Внешний'
+            [void][IO.Directory]::CreateDirectory($env:ITL_PESTER_RUNTIME_TEST_ROOT)
+            [IO.File]::WriteAllText((Join-Path $env:ITL_PESTER_RUNTIME_TEST_ROOT 'engine.dll'),'engine bytes')
+            Copy-Item (Join-Path $root 'tests/pester/Runtime.Tests.ps1') (Join-Path $root 'tests/pester/Slow.Tests.ps1')
+            $catalogPath=Join-Path $root 'tests/quality-contracts.json'
+            $c=Get-Content $catalogPath -Raw|ConvertFrom-Json
+            $c.contracts[0].tests=@('tests/pester/Runtime.Tests.ps1','tests/pester/Slow.Tests.ps1')
+            $definition=[pscustomobject]@{kind='directory';environmentVariable='ITL_PESTER_RUNTIME_TEST_ROOT'}
+            $c|Add-Member pesterExternalRuntimeProfiles ([pscustomobject]@{'fixture-fast'=$definition;'fixture-slow'=$definition})
+            $c|Add-Member pesterExternalRuntimeTests ([pscustomobject]@{'tests/pester/Runtime.Tests.ps1'=@('fixture-fast');'tests/pester/Slow.Tests.ps1'=@('fixture-slow')})
+            [IO.File]::WriteAllText($catalogPath,($c|ConvertTo-Json -Depth 8))
+            & git -C $root add --all; & git -C $root commit -qm 'two independent external profiles'
+            $cold=Invoke-RuntimeProofFixture $root out-cold
+            $cold.executedWorkerCount | Should -Be 2
+            $scripts=(Join-Path $RepoRoot 'scripts').Replace("'","''")
+            $probe=Join-Path $TestDrive 'partial native observer Проект.ps1'
+            $body=@'
+param([string]$ProfilePath,[string]$ResultPath,[switch]$RuntimeIdentityOnly)
+. 'SCRIPTS/git-path-list.ps1'
+. 'SCRIPTS/invoke-pester-runtime.ps1'
+. 'SCRIPTS/pester-external-runtime.ps1'
+$spec=Get-Content $ProfilePath -Raw|ConvertFrom-Json
+$receipt=Get-PesterExternalRuntimeReceipt $spec.repositoryRoot ([pscustomobject]@{'fixture-fast'=$spec.profiles.'fixture-fast'})
+$receipt|Add-Member 'fixture-slow' ([pscustomobject]@{status='unknown';sha256='';reason='Observation did not complete within the bounded runtime probe.'})
+Write-PesterExternalRuntimeReceipt $ResultPath $receipt
+Start-Sleep -Seconds 20
+'@
+            [IO.File]::WriteAllText($probe,$body.Replace('SCRIPTS',$scripts),[Text.UTF8Encoding]::new($true))
+            $runner=[IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'))
+            $runner=$runner.Replace('(Join-Path $PSScriptRoot ''run-pester-external-shard.ps1'')',("'"+$probe.Replace("'","''")+"'"))
+            $runner=$runner.Replace('$PSScriptRoot',("'"+$scripts+"'"))
+            $runner=$runner.Replace('if(-not $process.WaitForExit(60000))','if(-not $process.WaitForExit(5000))')
+            $runnerPath=Join-Path $TestDrive partial-observer-runner.ps1
+            [IO.File]::WriteAllText($runnerPath,$runner,[Text.UTF8Encoding]::new($true))
+            $out=Join-Path $root out-preview
+            $run=Invoke-TestPowerShellFile -FilePath $runnerPath -Arguments @('-RepositoryRoot',$root,'-OutputRoot',$out,'-JunitPath',(Join-Path $out 'never.xml'),'-PlanOnly')
+            $run.exitCode | Should -Be 0 -Because $run.combinedText
+            $preview=($run.stdout -join [Environment]::NewLine)|ConvertFrom-Json
+            $preview.reusedCount | Should -Be 1
+            $preview.executedCount | Should -Be 1
+            ($preview.files|Where-Object path -Like '*Slow.Tests.ps1').reason | Should -Match 'bounded runtime probe'
+            @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 2
+            Test-Path (Join-Path $out never.xml) | Should -BeFalse
+        } finally {$env:ITL_PESTER_RUNTIME_TEST_ROOT=$saved}
+    }
+}
+
+Describe 'External Pester runtime component environment closure' {
+    BeforeAll {. (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')}
+    It 'rejects an absent venv and binds DLLs, configuration and site packages only for the selected component' {
+        $root=Join-Path $TestDrive 'Component runtime Проект'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root 'build/host-test-runtime'))
+        function Read-ComponentWitness {
+            $lines=[Collections.Generic.List[string]]::new()
+            Add-PesterExternalComponentEnvironment $root Native $lines
+            Get-PesterExternalSha $lines.ToArray()
+        }
+        {Read-ComponentWitness} | Should -Throw '*not prepared*'
+        $generation=Join-Path $root ('build/host-test-runtime/native-'+('a'*20))
+        [void][IO.Directory]::CreateDirectory((Join-Path $generation 'Lib/site-packages'))
+        [IO.File]::WriteAllText((Join-Path $generation 'python.dll'),'original DLL')
+        [IO.File]::WriteAllText((Join-Path $generation 'pyvenv.cfg'),"include-system-site-packages = false`nversion = original")
+        $initial=Read-ComponentWitness
+        (Read-ComponentWitness) | Should -Be $initial
+        $foreign=Join-Path $root ('build/host-test-runtime/mantis-'+('b'*20))
+        [void][IO.Directory]::CreateDirectory($foreign)
+        [IO.File]::WriteAllText((Join-Path $foreign 'python.dll'),'unrelated component')
+        (Read-ComponentWitness) | Should -Be $initial
+        [IO.File]::WriteAllText((Join-Path $generation 'python.dll'),'replacement at the same path and version')
+        $changed=Read-ComponentWitness
+        $changed | Should -Not -Be $initial
+        [IO.File]::WriteAllText((Join-Path $generation 'pyvenv.cfg'),"include-system-site-packages = false`nversion = changed")
+        $config=Read-ComponentWitness
+        $config | Should -Not -Be $changed
+        [IO.File]::WriteAllText((Join-Path $generation 'Lib/site-packages/injected.pth'),'external startup plugin')
+        {Read-ComponentWitness} | Should -Throw '*custom startup/search paths*'
+        [IO.File]::Delete((Join-Path $generation 'Lib/site-packages/injected.pth'))
+        [IO.File]::WriteAllText((Join-Path $generation 'pyvenv.cfg'),'include-system-site-packages = true')
+        {Read-ComponentWitness} | Should -Throw '*system-site isolation*'
+    }
+}
+
+Describe 'External Pester runtime custom configuration' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')
+    }
+    It 'does not qualify external hooks referenced by Git configuration' {
+        $root=New-RuntimeProofFixture 'External Git hooks'
+        & git -C $root config core.hooksPath (Join-Path $TestDrive 'external hooks Внешний')
+        $LASTEXITCODE | Should -Be 0
+        $receipt=Get-PesterExternalRuntimeReceipt $root ([pscustomobject]@{git=[pscustomobject]@{kind='git'}})
+        $receipt.git.status | Should -BeExactly unknown
+        $receipt.git.reason | Should -Match 'external hooks/attribute/template'
+    }
+    It 'does not qualify an unobserved Git process override' {
+        $saved=$env:GIT_TEMPLATE_DIR
+        try {
+            $env:GIT_TEMPLATE_DIR=Join-Path $TestDrive 'external template Внешний'
+            $receipt=Get-PesterExternalRuntimeReceipt $RepoRoot ([pscustomobject]@{git=[pscustomobject]@{kind='git'}})
+            $receipt.git.status | Should -BeExactly unknown
+            $receipt.git.reason | Should -Match 'process overrides'
+        } finally {$env:GIT_TEMPLATE_DIR=$saved}
+    }
+}
+
+Describe 'External Pester runtime command resolution' {
+    BeforeAll {. (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')}
+    It 'does not qualify a later exe when the original command selects an earlier <Extension> wrapper' -ForEach @(@{Extension='cmd'},@{Extension='ps1'}) {
+        $oldPath=$env:PATH
+        $root=Join-Path $TestDrive 'Command resolution Проект'
+        $first=Join-Path $root wrapper;$later=Join-Path $root executable
+        [void][IO.Directory]::CreateDirectory($first);[void][IO.Directory]::CreateDirectory($later)
+        [IO.File]::WriteAllText((Join-Path $first ('itl-runtime-proof.'+$Extension)),'exit 0')
+        [IO.File]::WriteAllText((Join-Path $later 'itl-runtime-proof.exe'),'later exe bytes')
+        try {
+            $env:PATH=$first+[IO.Path]::PathSeparator+$later
+            {Get-PesterExternalExecutable itl-runtime-proof} | Should -Throw '*external wrapper*'
+            $env:PATH=$later
+            (Get-PesterExternalExecutable itl-runtime-proof) | Should -BeExactly (Join-Path $later 'itl-runtime-proof.exe')
+        } finally {$env:PATH=$oldPath}
+    }
+}

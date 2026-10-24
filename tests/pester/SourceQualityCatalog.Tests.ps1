@@ -534,7 +534,8 @@ Describe 'Source quality catalog contracts' {
         $pathDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardRelativeTestPath' }, $true)
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardInputDigest' }, $true)
         $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        @($actualCatalog.pesterNonReusableTests) | Should -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
+        @($actualCatalog.pesterNonReusableTests) | Should -Not -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
+        @($actualCatalog.pesterExternalRuntimeTests.'tests/pester/VanessaNestedSelection.Tests.ps1') | Should -Contain 'onescript'
         $result = & {
             $RepositoryRoot = $RepoRoot
             # Contracts and hashing dependencies deliberately absent: the
@@ -896,7 +897,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
         @($errors) | Should -BeNullOrEmpty
         & {
-            foreach($name in @('Get-ShardRelativeTestPath','Get-ShardInputDigest','Get-TextSha256')) {
+            foreach($name in @('Get-ShardRelativeTestPath','Get-ShardExternalProfiles','Get-ShardInputDigest','Get-TextSha256')) {
                 $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true)
                 $definition | Should -Not -BeNullOrEmpty
                 . ([scriptblock]::Create($definition.Extent.Text))

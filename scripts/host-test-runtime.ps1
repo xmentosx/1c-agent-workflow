@@ -18,7 +18,7 @@
         . (Join-Path $root 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1') -Action status -ConfigPath $configPath *> $null
         $bootstrap=Resolve-PythonExecutable -Config $config
         $probeCode='import json,sys; print(json.dumps(dict(executable=sys.executable,version=list(sys.version_info[:3]),prefix=sys.prefix,base_prefix=sys.base_prefix)))'
-        $probe=Invoke-ProcessWithTimeout -FilePath $bootstrap -Arguments @('-I','-X','utf8','-c',$probeCode) -TimeoutSec 30
+        $probe=Invoke-ProcessWithTimeout -FilePath $bootstrap -Arguments @('-I','-S','-B','-X','utf8','-c',$probeCode) -TimeoutSec 30
         if($probe.exitCode -ne 0){throw "Source Python bootstrap probe failed: $($probe.lines -join '; '). Configure ITL_SOURCE_TEST_PYTHON with a working absolute interpreter and repeat the same component test."}
         $base=($probe.lines -join "`n") | ConvertFrom-Json
         if([int]$base.version[0] -ne 3){throw 'Source host tests require Python 3. Configure ITL_SOURCE_TEST_PYTHON and repeat the same component test.'}
@@ -35,7 +35,7 @@
         if($external){$python=[IO.Path]::GetFullPath($env:SPPR_TEST_PYTHON)}
         if(-not (Test-Path -LiteralPath $python -PathType Leaf)){
             if($external){throw "Configured SPPR_TEST_PYTHON '$python' is missing. Restore that isolated environment or remove the override and repeat the SPPR component test."}
-            $arguments=@('-I','-X','utf8','-m','venv')
+            $arguments=@('-I','-S','-B','-X','utf8','-m','venv')
             if(-not $requirements){$arguments+='--without-pip'}
             $arguments+=$generation
             $created=Invoke-ProcessWithTimeout -FilePath ([string]$base.executable) -Arguments $arguments -TimeoutSec 180
@@ -54,7 +54,7 @@
             $installed=Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-I','-X','utf8','-m','pip','install','--disable-pip-version-check','-r',$requirements) -TimeoutSec 600
             if($installed.exitCode -ne 0){throw "Source $Component dependencies could not be prepared: $($installed.lines -join '; '). Restore package connectivity and repeat the same component test; its incomplete venv is retained."}
         }
-        $verified=Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-I','-X','utf8','-c',$probeCode) -TimeoutSec 30
+        $verified=Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-I','-B','-X','utf8','-c',$probeCode) -TimeoutSec 30
         if($verified.exitCode -ne 0){throw "Source $Component isolated Python probe failed. Restore its venv and repeat the same component test."}
         $actual=($verified.lines -join "`n") | ConvertFrom-Json
         if([string]$actual.prefix -ceq [string]$actual.base_prefix){throw "Source $Component test runtime '$python' is not isolated. Use a venv; installed/global Python was not modified."}

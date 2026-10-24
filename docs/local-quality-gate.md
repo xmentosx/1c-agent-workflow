@@ -451,6 +451,34 @@ Git worktree lock и повторяет cleanup. Чужой lock не снима
 
 ### Инкрементальность и защита от замедления
 
+External-runtime Pester files use per-file runtime profiles rather than a
+blanket non-reuse list. The existing scheduler observes profiles in its selected
+Desktop child and verifies matching before/after witnesses from the actual
+worker. Missing identity, changed bytes at the same path, changed configuration,
+or an older receipt without the witness executes the original file without
+qualifying reuse. Native assertions and scenario selection are unchanged.
+The adapter applies only to mapped files: ordinary workers and their existing
+shared input keys stay unchanged. Plan uses the same read-only observation and
+cache admission; it never installs or repairs a runtime.
+
+Profiles cover Git binaries/configuration and the relevant published ancestor,
+Windows/CLR inputs, OneScript engine/libraries, Node executable/DLLs, isolated
+Python bootstrap and complete per-component venv/package bytes, and the local
+pinned Go compiler plus offline source closure from `go list`. Unknown Node/OneScript search paths, Go overlays/CGo or
+missing modules fail closed for reuse. Custom Python startup/search hooks and
+Git process overrides, conditional configuration or external hook/attribute paths
+also disable reuse; the original checks remain executable. Go observation disables
+downloads.
+Source stdlib-only venv creation uses `-I -S` so global Python site plugins are
+not unobserved inputs. BookStack/SPPR keep their original direct package tests:
+measured full environment observation costs more than executing those tests.
+HostSourceRuntime intentionally creates fresh environments from unpinned package
+constraints and also executes. Each exception reports its concrete reason.
+The bounded parent probe retains atomic completed rows if another profile times
+out; unfinished identity remains unknown and cannot admit reuse. A slow profile
+cannot discard already qualified inputs of unrelated files.
+
+
 Static ETA uses the current full Pester inventory's read-only cache lookup:
 the same owner digests, observed child runtime, legacy lookup, manifest/JUnit
 SHA and selected-test checks as execution. It reports execute/reuse counts,
@@ -473,12 +501,12 @@ Pester reuse keys describe the actual child PowerShell/Pester executable and
 module bytes, independently of the parent's shell version. Input ownership,
 wildcard matches are resolved once per invocation against its fixed inventory.
 Each digest still checks file existence and authenticates dirty/unindexed bytes;
-changing catalog/inventory/root resets the transient selection cache. Missing ownership/required inputs, unknown runtime, failed or
-altered proof still prevent reuse. The external-runtime non-reuse list remains
-mandatory: Windows process/CIM/window/file-lock probes, installed
-OneScript/Python/Go tools and transport/runtime fixtures lack a complete
-external identity. Removing their blanket non-reuse requires proving those
-inputs first; a small source diff alone cannot supply that proof.
+changing catalog/inventory/root resets the transient selection cache. Missing
+ownership/required inputs, unknown runtime, failed or altered proof still prevent
+reuse. External-runtime files additionally require
+qualified per-file profiles and matching witnesses from the original worker;
+unknown inputs execute without reusable proof. The package
+and fresh dependency workloads retain native execution for the reasons above.
 
 
 

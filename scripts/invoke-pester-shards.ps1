@@ -157,13 +157,64 @@ function Get-PesterWorkerRuntimeReceipt {
     }
 }
 
+function Get-ShardExternalProfiles {
+    param([string[]]$Paths)
+    $mapping=$catalog.PSObject.Properties['pesterExternalRuntimeTests']
+    if(-not $mapping){return @()}
+    return @($Paths|ForEach-Object {
+        $relative=Get-ShardRelativeTestPath $_
+        $property=$mapping.Value.PSObject.Properties[$relative]
+        if($property){@($property.Value)}
+    }|Sort-Object -Unique)
+}
+function Get-PesterExternalWorkerReceipt {
+    $mapping=$catalog.PSObject.Properties['pesterExternalRuntimeTests']
+    if(-not $mapping){return [pscustomobject]@{}}
+    $definitions=$catalog.PSObject.Properties['pesterExternalRuntimeProfiles']
+    if(-not $definitions){return [pscustomobject]@{}}
+    $profiles=[ordered]@{}
+    foreach($name in @(Get-ShardExternalProfiles @($items.path))){
+        $definition=$definitions.Value.PSObject.Properties[$name]
+        if($definition){$profiles[$name]=$definition.Value}
+    }
+    if(-not $profiles.Count){return [pscustomobject]@{}}
+    $script:pesterExternalSpecPath=Join-Path $workerRoot 'external-runtime.json'
+    $spec=[ordered]@{repositoryRoot=$RepositoryRoot;profiles=[pscustomobject]$profiles}
+    [IO.File]::WriteAllText($script:pesterExternalSpecPath,($spec|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    $output=Join-Path $workerRoot ('external-runtime.receipt-'+[guid]::NewGuid().ToString('N')+'.json')
+    $process=$null
+    try {
+        $args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(ConvertTo-NativeArgument (Join-Path $PSScriptRoot 'run-pester-external-shard.ps1')),
+            '-RuntimeIdentityOnly','-ProfilePath',(ConvertTo-NativeArgument $script:pesterExternalSpecPath),'-ResultPath',(ConvertTo-NativeArgument $output))
+        $stdin=Join-Path $workerRoot 'external-runtime.stdin'
+        [IO.File]::WriteAllText($stdin,'',[Text.UTF8Encoding]::new($false))
+        $process=Start-PesterWorkerProcess -Arguments $args -StdinPath $stdin -StdoutPath ($output+'.stdout') -StderrPath ($output+'.stderr')
+        $null=$process.Handle
+        if(-not $process.WaitForExit(60000)){$process.Kill();$process.WaitForExit()}
+        $process.WaitForExit()
+        # Completed rows remain qualified even if another profile timed out.
+        # The atomic receipt initializes unfinished rows as unknown.
+        if(-not [IO.File]::Exists($output)){return [pscustomobject]@{}}
+        return Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json
+    } catch {return [pscustomobject]@{}} finally {if($process){$process.Dispose()}}
+}
+
 function Test-PesterShardResultRuntime {
-    param([object]$Result)
+    param([object]$Result,[string]$TestPath='')
     $receiptVariable = Get-Variable -Name pesterRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue
     if (-not $receiptVariable -or -not $receiptVariable.Value -or $receiptVariable.Value.status -ne 'known') { return $false }
     $actual = $Result.PSObject.Properties['runtimeIdentity']
-    return $actual -and $actual.Value -and $actual.Value.PSObject.Properties['identitySha256'] -and
+    $baseMatches=$actual -and $actual.Value -and $actual.Value.PSObject.Properties['identitySha256'] -and
         [string]$actual.Value.identitySha256 -ceq [string]$receiptVariable.Value.identity.identitySha256
+    if(-not $baseMatches){return $false}
+    foreach($profile in @(Get-ShardExternalProfiles $(if($TestPath){@($TestPath)}else{@($Result.paths)}))){
+        $expected=$script:pesterExternalRuntimeReceipt.PSObject.Properties[$profile]
+        $witness=$Result.PSObject.Properties['externalRuntimeIdentity']
+        $observed=if($witness){$witness.Value.PSObject.Properties[$profile]}else{$null}
+        if(-not $expected -or $expected.Value.status -ne 'known' -or [string]$expected.Value.sha256 -cnotmatch '^[a-f0-9]{64}$' -or -not $observed -or
+            $observed.Value.status -ne 'known' -or $observed.Value.sha256 -cne $expected.Value.sha256){return $false}
+    }
+    return $true
 }
 
 function Initialize-VanessaSourceBuildArchiveForPester {
@@ -402,6 +453,19 @@ function Get-ShardInputDigest {
     # Unknown external runtime identity cannot qualify a reusable shard. For
     # example, the OneScript probe executes installed engine assemblies.
     if ($nonReusableProperty -and @($relativeTests | Where-Object { $_ -in @($nonReusableProperty.Value) }).Count -gt 0) { return '' }
+    $externalRuntimeLines=New-Object System.Collections.Generic.List[string]
+    if ($catalog.PSObject.Properties['pesterExternalRuntimeTests']) {
+        $externalReceipt=Get-Variable -Name pesterExternalRuntimeReceipt -Scope Script -ErrorAction SilentlyContinue
+        foreach($profile in @(Get-ShardExternalProfiles $Paths)) {
+            if(-not $externalReceipt -or -not $externalReceipt.Value){return ''}
+            $external=$externalReceipt.Value.PSObject.Properties[$profile]
+            if(-not $external -or $external.Value.status -ne 'known' -or [string]$external.Value.sha256 -cnotmatch '^[a-f0-9]{64}$'){return ''}
+            $externalRuntimeLines.Add('external-runtime='+$profile+'|'+$external.Value.sha256)
+            foreach($file in @('scripts/pester-external-runtime.ps1','scripts/run-pester-external-shard.ps1')) {
+                $externalRuntimeLines.Add($file+'='+(Get-PesterShardFileSha256 (Join-Path $PSScriptRoot (Split-Path $file -Leaf))))
+            }
+        }
+    }
     $snapshotVariable=Get-Variable -Name pesterOwnerInputSnapshot -Scope Script -ErrorAction SilentlyContinue
     if (-not $snapshotVariable -or -not $snapshotVariable.Value -or
         -not [object]::ReferenceEquals($snapshotVariable.Value.catalog,$catalog) -or
@@ -467,6 +531,7 @@ function Get-ShardInputDigest {
     # independently prove the current child identity before any reuse.
     if ($LegacyWorkerCount -gt 0) { $runtimeIdentity = "powershell=$($runtime.powerShellVersion)|pester=$($runtime.pesterVersion)|workers=$LegacyWorkerCount" }
     $lines.Add($runtimeIdentity)
+    foreach($externalLine in $externalRuntimeLines){$lines.Add($externalLine)}
     $externalInputNames = if ($IncludeLegacyGlobalExternalInputs) {
         @(Get-QualityPesterExternalInputNames)
     } else {
@@ -508,7 +573,7 @@ function Get-ShardCacheEntryRoot {
                     if (-not $producerRoot -or -not [string]$producerRoot.Value) { continue }
                     $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
                     if (-not (Test-ShardResultTestPath -Result $result -TestPath $TestPath -SourceRoot ([string]$producerRoot.Value))) { continue }
-                    if (-not (Test-PesterShardResultRuntime -Result $result)) { continue }
+                    if (-not (Test-PesterShardResultRuntime -Result $result -TestPath $TestPath)) { continue }
                 }
                 return $entryRoot
             }
@@ -645,6 +710,8 @@ $items = @($testFiles | ForEach-Object {
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
 $script:pesterRuntimeReceipt = Get-PesterWorkerRuntimeReceipt
+$script:pesterExternalSpecPath=''
+$script:pesterExternalRuntimeReceipt=Get-PesterExternalWorkerReceipt
 $entries = New-Object System.Collections.Generic.List[object]
 $pendingParallel = New-Object System.Collections.Generic.Queue[object]
 $pendingSerial = New-Object System.Collections.Generic.Queue[object]
@@ -756,14 +823,20 @@ foreach ($item in $items) {
     $relativeItemPath = Get-ShardRelativeTestPath -Path ([string]$item.path)
     $nonReusable = $catalog.PSObject.Properties['pesterNonReusableTests']
     $changedInputs=@($previewChangedPaths | Where-Object {$preparedInputs -and $preparedInputs.paths -contains $_})
+    $unknownExternal=@(foreach($profile in @(Get-ShardExternalProfiles @([string]$item.path))){
+        $witness=$script:pesterExternalRuntimeReceipt.PSObject.Properties[$profile]
+        if(-not $witness){$profile+': identity unavailable'}elseif($witness.Value.status -ne 'known'){$profile+': '+$witness.Value.reason}
+    })
     $repeatReason = if ($cached) { $reuseReason } elseif ($nonReusable -and $relativeItemPath -in @($nonReusable.Value)) {
         'unqualified external runtime; mandatory native boundary'
-    } elseif ($script:pesterRuntimeReceipt.status -ne 'known') { 'unknown child runtime identity' }
+    } elseif ($unknownExternal.Count) { 'unqualified external runtime: '+($unknownExternal -join '; ') }
+    elseif ($script:pesterRuntimeReceipt.status -ne 'known') { 'unknown child runtime identity' }
     elseif (-not $digest) { 'incomplete owner inputs' }
     elseif($changedInputs.Count) {'changed owner inputs; exact passed proof unavailable'} else { 'no valid passed proof for exact owner inputs and runtime' }
     $preview.Add([pscustomobject]@{path=$relativeItemPath;execution=$(if($cached){'reuse'}else{'execute'});reason=$repeatReason;
         inputDigest=$digest;changedInputs=$changedInputs;estimatedSeconds=$(if($cached){0.0}else{[double]$item.weight});serial=[bool]$item.serial;preflight=[bool]$item.preflight})
     if ($PlanOnly) { continue }
+    $externalProfiles=@(Get-ShardExternalProfiles @([string]$item.path))
     $payload = [ordered]@{
         schemaVersion = 1
         worker = $index
@@ -777,7 +850,19 @@ foreach ($item in $items) {
     }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue $reuseReason -Force }
+    $externalPath=''
+    if($externalProfiles.Count){
+        $externalPath=Join-Path $workerRoot ('worker-'+$index+'.external.json')
+        $profiles=[ordered]@{}
+        foreach($name in $externalProfiles){
+            $definitions=$catalog.PSObject.Properties['pesterExternalRuntimeProfiles']
+            $definition=if($definitions){$definitions.Value.PSObject.Properties[$name]}else{$null}
+            $profiles[$name]=if($definition){$definition.Value}else{[pscustomobject]@{kind='unknown'}}
+        }
+        [IO.File]::WriteAllText($externalPath,([ordered]@{repositoryRoot=$RepositoryRoot;profiles=[pscustomobject]$profiles}|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    }
     $entry = [pscustomobject]@{
+        externalPath=$externalPath
         worker = $index; serial = [bool]$item.serial; preflight = [bool]$item.preflight; process = $null; reused = [bool]$cached; digest = $digest
         testPath = [string]$item.path
         planPath = $planPath; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath; stdinPath = $stdinPath
@@ -801,7 +886,9 @@ if ($PlanOnly) {
 
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
-    $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
+    $selectedWorker=if($Entry.externalPath){Join-Path $PSScriptRoot 'run-pester-external-shard.ps1'}else{$workerScript}
+    $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $selectedWorker), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
+    if($Entry.externalPath){$args+=@('-ProfilePath',(ConvertTo-NativeArgument $Entry.externalPath))}
     $relativePath = Get-ShardRelativeTestPath -Path $Entry.testPath
     $externalInputs = @(if ($pesterExternalInputsByTest.ContainsKey($relativePath)) { $pesterExternalInputsByTest[$relativePath] })
     $Entry.process = Start-PesterWorkerProcess -Arguments $args -StdinPath $Entry.stdinPath -StdoutPath $Entry.stdoutPath -StderrPath $Entry.stderrPath -ExternalInputNames $externalInputs
@@ -822,7 +909,7 @@ function Complete-PesterFileEntry {
         $workerResult | Add-Member -NotePropertyName repeatReason -NotePropertyValue ([string]$plan.repeatReason) -Force
         if ($Entry.digest -and -not (Test-PesterShardResultRuntime -Result $workerResult)) {
             $Entry.digest = ''
-            $workerResult | Add-Member -NotePropertyName reuseReason -NotePropertyValue 'Actual worker runtime differs from qualified probe or changed during execution; result is not reusable.' -Force
+            $workerResult | Add-Member -NotePropertyName reuseReason -NotePropertyValue 'Actual worker runtime or external inputs differ from the qualified probe or changed during execution; result is not reusable.' -Force
         }
         $workerResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue ([string]$Entry.digest) -Force
         [IO.File]::WriteAllText($Entry.resultPath, (($workerResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))

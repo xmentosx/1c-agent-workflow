@@ -63,7 +63,7 @@ Describe 'Independent host component source verification' {
         $tokens=$null; $errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        foreach($name in @('Get-ShardRelativeTestPath','Get-ShardInputDigest')) {
+        foreach($name in @('Get-ShardRelativeTestPath','Get-ShardExternalProfiles','Get-ShardInputDigest')) {
             $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true)
             $definition | Should -Not -BeNullOrEmpty
             . ([scriptblock]::Create($definition.Extent.Text))

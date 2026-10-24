@@ -269,6 +269,14 @@ Text or marker assertions protect selected anchors but do not prove semantic
 equivalence; use a focused behavioral contract when the rule governs a
 verifiable safety or completion path. Do not add tests that only repeat prose.
 
+External Pester runtime witnesses are stateless inputs owned by the existing
+shard scheduler/worker contract (`pester-external-runtime.ps1`). A per-file adapter
+observes before/after bytes without changing the ordinary worker or installing
+runtimes. Failure to observe identity disables cache admission only; original
+execution, errors and assertions remain authoritative. No shared environment
+manager, persistent runtime registry, lifecycle lease or installed migration is
+introduced. Source host tests retain their checkout-local environment owner.
+
 ## Runtime check blocking policy
 
 The workflow exists to complete users' project tasks. Every new barrier ships
