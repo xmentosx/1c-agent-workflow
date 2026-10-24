@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Targeted", "Smoke", "Fast", "Full", "Develop", "Release")]
     [string]$Mode = "Smoke",
@@ -401,6 +401,18 @@ function Complete-ParallelGateStage {
     try {
         Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds
         Add-StageResult -Name $Name -Status "passed" -Execution "executed" -Reason $Reason -Detail $Detail -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
+        # Collection can occur long after this parallel child exits. Retain the
+        # enclosing interval and record actual execution separately for ETA.
+        try {
+            $exitAt=$Child.process.ExitTime.ToUniversalTime()
+            $startAt=$Child.process.StartTime.ToUniversalTime()
+            if($exitAt -ge $startAt) {
+                Set-StageMetrics -Name $Name -Metrics ([ordered]@{
+                    timingKind='process-exit';processDurationMs=[int64]($exitAt-$startAt).TotalMilliseconds;
+                    collectionDelayMs=[int64][math]::Max(0,([DateTime]::UtcNow-$exitAt).TotalMilliseconds)
+                })
+            }
+        } catch { } # Unavailable telemetry cannot reject a successful check.
     } catch {
         Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason $Reason -Detail $_.Exception.Message -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
         throw

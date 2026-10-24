@@ -5,6 +5,26 @@
 }
 
 Describe "Local quality gate contract" {
+
+    It 'measures a parallel child at process exit instead of charging delayed collection as execution' {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot scripts/check.ps1),[ref]$tokens,[ref]$errors)
+        @($errors)|Should -BeNullOrEmpty
+        $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Complete-ParallelGateStage'},$true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        function Wait-PowerShellChildProcess {}
+        function Add-StageResult {param($Name,$Status,$Execution,$Reason,$Detail,$StartedAt,$DurationMs) $script:observedStageStatus=$Status}
+        function Set-StageMetrics {param($Name,$Metrics) $script:observedProcessTiming=$Metrics}
+        $start=[DateTime]::UtcNow.AddMinutes(-10)
+        $child=[pscustomobject]@{startedAt=$start;process=[pscustomobject]@{StartTime=$start;ExitTime=$start.AddMinutes(1)}}
+        Complete-ParallelGateStage -Name compatibility -Reason fixture -Child $child -TimeoutSeconds 600
+        $script:observedStageStatus | Should -Be passed
+        $script:observedProcessTiming.timingKind | Should -BeExactly process-exit
+        $script:observedProcessTiming.processDurationMs | Should -Be 60000
+        $script:observedProcessTiming.collectionDelayMs | Should -BeGreaterThan 500000
+    }
+
+
         It "preserves exact Unicode stdout and stderr from a redirected Windows PowerShell Pester shard" {
         $fixtureRoot = Join-Path $TestDrive "Путь с пробелом"
         New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null

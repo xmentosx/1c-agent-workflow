@@ -168,6 +168,11 @@ Describe 'Delivery v3 immutable selective plan' {
         $estimate.estimatedSeconds | Should -Be 202
         $estimate.stages[0].workload.reusedFiles | Should -Be 190
         $estimate.stages[0].workload.fixtureInputsRequired | Should -BeFalse
+        $run.stages[2] = [pscustomobject]@{name='ai-rules-compatibility';durationMs=900000;
+            metrics=[pscustomobject]@{timingKind='process-exit';processDurationMs=180000}}
+        $measured=Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run) -StaticPreview $preview
+        $measured.estimatedSeconds | Should -Be 202
+        $measured.stages[0].workload.compatibilityTimingBasis | Should -BeExactly process-exit
         $preview.estimatedSeconds=500
         (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run) -StaticPreview $preview).estimatedSeconds | Should -Be 522
         $plan.requireRelease=$true

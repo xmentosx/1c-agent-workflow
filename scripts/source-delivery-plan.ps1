@@ -324,13 +324,22 @@ function Get-DeliveryStaticWorkloadPreview {
 function Get-DeliveryStaticReuseEstimate {
     param([object]$Preview,[object]$Plan,[object[]]$Runs)
     $observations=@($Runs | Where-Object {$_.mode -ceq 'Develop' -and $_.status -ceq 'passed'} | Select-Object -First 5)
+    $measured=@($observations | Where-Object {@($_.stages | Where-Object {
+        $_.name -eq 'ai-rules-compatibility' -and $_.PSObject.Properties['metrics'] -and $_.metrics -and
+        $_.metrics.PSObject.Properties['timingKind'] -and $_.metrics.PSObject.Properties['processDurationMs'] -and $_.metrics.timingKind -eq 'process-exit'
+    }).Count -gt 0})
+    if($measured.Count) {$observations=$measured}
     $needsFixture=@($Plan.stages | Where-Object {$_.id -like 'develop.*' -and $_.id -ne 'develop.static'}).Count -gt 0 -or [bool]$Plan.requireRelease
     $samples=@(foreach($run in $observations) {
         $stages=@($run.stages | Where-Object {$_.name -notlike 'develop-e2e-*' -and
             $_.name -ne 'pester' -and ($needsFixture -or $_.name -ne 'qualification-fixture-inputs')})
         $compat=0.0;$other=0.0
         foreach($stage in $stages) {
-            if($stage.name -eq 'ai-rules-compatibility') {$compat=[math]::Max($compat,[double]$stage.durationMs/1000)}
+            if($stage.name -eq 'ai-rules-compatibility') {
+                $duration=[double]$stage.durationMs
+                if($stage.PSObject.Properties['metrics'] -and $stage.metrics -and $stage.metrics.PSObject.Properties['timingKind'] -and $stage.metrics.PSObject.Properties['processDurationMs'] -and $stage.metrics.timingKind -eq 'process-exit') {$duration=[double]$stage.metrics.processDurationMs}
+                $compat=[math]::Max($compat,$duration/1000)
+            }
             else {$other += [double]$stage.durationMs/1000}
         }
         [math]::Max([double]$Preview.estimatedSeconds,$compat)+$other+[double]$Preview.durationMs/1000
@@ -342,6 +351,7 @@ function Get-DeliveryStaticReuseEstimate {
         $seconds=[int][math]::Ceiling($(if($samples.Count%2){$samples[$middle]}else{($samples[$middle-1]+$samples[$middle])/2}))
     }
     return [pscustomobject]@{estimatedSeconds=$seconds;sampleCount=$samples.Count;basis='current-shard-reuse-and-historical-overhead';
+        compatibilityTimingBasis=$(if($measured.Count){'process-exit'}else{'legacy-envelope-upper-bound'});
         pesterSeconds=$Preview.estimatedSeconds;executedFiles=$Preview.executedCount;reusedFiles=$Preview.reusedCount;
         fixtureInputsRequired=$needsFixture;planningOverheadSeconds=[int][math]::Ceiling($Preview.durationMs/1000);
         mandatoryRepeats=@($Preview.files | Where-Object {$_.execution -eq 'execute' -and $_.reason -like 'unqualified external*'} | Select-Object path,estimatedSeconds,reason);

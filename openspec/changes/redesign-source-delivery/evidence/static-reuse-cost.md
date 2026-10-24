@@ -47,3 +47,13 @@ The first registration rejected incomplete extracted-function setup; cache
 initialization is now owned by the digest function, and fixtures describe the
 actual required child version. No mutation assertion was removed. Registration
 owns the final Targeted run on the integrated queue candidate.
+
+A subsequent owner-local timing audit found that Complete-ParallelGateStage
+recorded the time of collection, not process exit. For parallel compatibility
+this can charge waiting for Pester as compatibility execution. The original
+enclosing interval remains intact; new process-exit and collection-delay metrics
+are advisory and cannot fail or bypass acceptance. ETA prefers measured process
+samples and labels legacy envelopes as upper bounds. A delayed-collection unit
+regression and ETA-consumer regression passed (2/2). The accepted queue head is
+retained in ancestry; this independently usable telemetry correction is registered
+through the same queue owner, with no publication.

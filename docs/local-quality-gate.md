@@ -442,6 +442,9 @@ combined with Pester through max for parallel compatibility, not a sum.
 Fixture capture is charged only when the plan selects E2E or Release.
 Unknown historical overhead remains unknown; the hard deadline is never an ETA.
 Weights are advisory observations, not a guarantee for a changed workload.
+Parallel stages record process exit duration separately from delayed collection.
+ETA prefers these native timings; old enclosing intervals are explicitly marked
+as legacy upper bounds until a measured sample exists.
 
 Pester reuse keys describe the actual child PowerShell/Pester executable and
 module bytes, independently of the parent's shell version. Input ownership,
