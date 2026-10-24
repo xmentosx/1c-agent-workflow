@@ -26,6 +26,9 @@ function Get-DesignerOwnedProcessInventory {
         & {
             . $HelperPath -ProjectRoot $root -Action help *> $null
             function Get-Agent1cTempRoot { return $temp }
+            # The private input has no reader until Start-Process. A failure in
+            # shared atomic publication must not prevent its native transport.
+            function Write-Utf8TextAtomic { throw [IO.IOException]::new('probe-input-atomic-rename-unavailable') }
             $script:Agent1cCoreRoot = $library
             $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
             $state.trackedProcessIds = @(900001..900512)
@@ -69,6 +72,43 @@ function Get-DesignerOwnedProcessInventory {
             { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw '*forced-probe-start-failure*'
             $state.processScanProcess | Should -BeNullOrEmpty
             @(Get-ChildItem -LiteralPath $root -File).Count | Should -Be 0
+        }
+    }
+
+    It 'does not launch a native probe after an incomplete private input write' {
+        $root = Join-Path $TestDrive 'Ошибка записи probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Get-Utf8Encoding { throw 'forced-probe-encoding-failure' }
+            $script:probeChildStarted = $false
+            function Start-Process { $script:probeChildStarted = $true; throw 'must-not-launch' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw '*forced-probe-encoding-failure*'
+            $script:probeChildStarted | Should -BeFalse
+            $state.processScanProcess | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $root -File).Count | Should -Be 0
+        }
+    }
+
+    It 'preserves an existing private input collision and does not launch its native child' {
+        $root = Join-Path $TestDrive 'Коллизия probe с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        $output = Join-Path $root 'existing.json'
+        $collisionInputPath = [IO.Path]::ChangeExtension($output, 'input.json')
+        [IO.File]::WriteAllText($collisionInputPath, 'Чужой неизменный файл', [Text.UTF8Encoding]::new($false))
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Agent1cTempRoot { return $root }
+            function Join-Path { param($Path, $ChildPath) return $output }
+            $script:probeChildStarted = $false
+            function Start-Process { $script:probeChildStarted = $true; throw 'must-not-launch' }
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds 30
+            { Start-DesignerProcessEnumeration -ProbeState $state } | Should -Throw
+            $script:probeChildStarted | Should -BeFalse
+            $state.processScanProcess | Should -BeNullOrEmpty
+            [IO.File]::ReadAllText($collisionInputPath, [Text.Encoding]::UTF8) | Should -Be 'Чужой неизменный файл'
         }
     }
 

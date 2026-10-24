@@ -6699,8 +6699,19 @@ if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+    $inputCreated = $false
     try {
-        Write-Utf8TextAtomic -Path $inputPath -Value $inputPayload
+        # This unique private file is consumed only after Start-Process. Close
+        # it before launch; an atomic rename adds a sharing failure boundary
+        # without protecting any concurrent reader. Never overwrite a collision.
+        $inputStream = [IO.File]::Open($inputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $inputCreated = $true
+        try {
+            $inputBytes = (Get-Utf8Encoding).GetBytes($inputPayload)
+            $inputStream.Write($inputBytes, 0, $inputBytes.Length)
+        } finally {
+            $inputStream.Dispose()
+        }
         $process = Start-Process `
             -FilePath "powershell" `
             -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
@@ -6711,7 +6722,7 @@ exit 0
             throw "Could not start the bounded Designer process enumeration."
         }
     } catch {
-        Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue
+        if ($inputCreated) { Remove-Item -LiteralPath $inputPath -Force -ErrorAction SilentlyContinue }
         throw
     }
     $ProbeState.processScanProcess = $process
