@@ -30,6 +30,7 @@ $semanticRenamedPaths = @()
 $libraryProperty = $catalog.semanticTargeting.PSObject.Properties['libraries']
 $libraryPaths = @(if ($libraryProperty) { $libraryProperty.Value.PSObject.Properties | ForEach-Object { [string]$_.Name } })
 $libraryRenamedPaths = @{}
+$libraryInheritedRenames = @()
 $paths = New-Object System.Collections.Generic.List[string]
 foreach ($path in @($ChangedPath)) { if ($path) { $paths.Add(([string]$path).Replace('\', '/')) | Out-Null } }
 if ($BaseRef) {
@@ -44,7 +45,16 @@ if ($BaseRef) {
             $oldPath = ([string]$statusFields[$index++]).Replace('\', '/')
             $newPath = ([string]$statusFields[$index++]).Replace('\', '/')
             if ($status -like 'R*' -and $oldPath -eq $semanticPath) { $semanticRenamedPaths += $newPath }
-            if ($status -like 'R*' -and $oldPath -in $libraryPaths) { $libraryRenamedPaths[$oldPath] = $newPath }
+            if ($status -like 'R*' -and $oldPath -in $libraryPaths) {
+                $libraryRenamedPaths[$oldPath] = $newPath
+                # An exact move inside the existing helper module namespace
+                # retains the original complete owner, including Unicode names.
+                $moduleDirectory = $oldPath.Substring(0, $oldPath.LastIndexOf('/') + 1)
+                if ($status -ceq 'R100' -and $newPath.StartsWith($moduleDirectory, [StringComparison]::Ordinal) -and
+                    $newPath.Substring($moduleDirectory.Length) -match '^agent-1c\.[^/]+\.ps1$') {
+                    $libraryInheritedRenames += $newPath
+                }
+            }
         } elseif ($index -lt $statusFields.Count) {
             $index++
         }
@@ -68,12 +78,15 @@ $semanticCurrentPath = Join-Path $root $semanticPath.Replace('/', '\')
 $semanticCurrentExists = Test-Path -LiteralPath $semanticCurrentPath -PathType Leaf
 $changedLibraries = @($libraryPaths | Where-Object { $_ -in $uniquePaths -or $libraryRenamedPaths.ContainsKey($_) })
 [void](Test-QualityContractCatalog -RepositoryRoot $root -Catalog $catalog -SkipSemanticEntrypointValidation:(-not $semanticCurrentExists -and $semanticPathChanged) -SkipSemanticLibraryValidation $changedLibraries)
-$ordinaryPaths = @($uniquePaths | Where-Object { $_ -ne $semanticPath -and $_ -notin $semanticRenamedPaths -and $_ -notin $changedLibraries -and $_ -notin @($libraryRenamedPaths.Values) })
+# A renamed library keeps its source fallback. Resolve any destination owner
+# too; only an exact move within the same module namespace can inherit it.
+$ordinaryPaths = @($uniquePaths | Where-Object { $_ -ne $semanticPath -and $_ -notin $semanticRenamedPaths -and $_ -notin $changedLibraries })
 $selection = if ($ordinaryPaths.Count -gt 0) {
     Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ordinaryPaths
 } else {
     [pscustomobject]@{ contracts = @(); tests = @(); unknownPaths = @() }
 }
+$selection.unknownPaths = @($selection.unknownPaths | Where-Object { $_ -notin $libraryInheritedRenames })
 if (@($selection.unknownPaths).Count -gt 0) {
     throw "Targeted mode found paths without a quality owner: $($selection.unknownPaths -join ', '). Update tests/quality-contracts.json."
 }

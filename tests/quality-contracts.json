@@ -631,7 +631,19 @@
         "scripts/test-release-readiness.ps1"
       ],
       "reuseInputPaths": [
-        "tests/quality-contracts.json"
+        "tests/quality-contracts.json",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+        "tests/pester/DevBranchLifecycleSupport.ps1",
+        "tests/pester/DevBranchCheck.Tests.ps1",
+        "tests/pester/VanessaAuthoring.Tests.ps1",
+        "tests/pester/VanessaAuthoringLint.Tests.ps1",
+        "tests/pester/VerificationSelection.Tests.ps1",
+        "tests/pester/VerificationProofReuse.Tests.ps1",
+        "tests/pester/VerificationAggregateAssessment.Tests.ps1",
+        "tests/pester/VanessaRunnerTopology.Tests.ps1",
+        "tests/pester/PlatformProductionPreparation.Tests.ps1"
       ],
       "tests": [
         "tests/pester/LocalQualityGate.Tests.ps1",
@@ -1056,6 +1068,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1", "AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "scripts/update-installed-workflow.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
+      "reuseInputPaths": ["scripts/git-path-list.ps1"],
       "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/CavemanPolicyTransition.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
     },
     {

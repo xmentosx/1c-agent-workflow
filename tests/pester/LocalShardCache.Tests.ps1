@@ -5,6 +5,103 @@
 }
 
 Describe "Local quality gate contract" {
+    It 'passes only declared external inputs to native children and restores them between launches' {
+        $root = Join-Path $TestDrive 'окружение worker с пробелом'
+        $testRoot = Join-Path $root 'tests/pester'
+        New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+        & git -C $root init --quiet
+        $previousRules = [Environment]::GetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH','Process')
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','Process')
+        try {
+            $archive = Join-Path $root 'архив с пробелом.zip'
+            [IO.File]::WriteAllBytes($archive,[byte[]](1,2,3))
+            $env:ITL_AI_RULES_SOURCE_PATH = $root
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archive
+            $tests = @()
+            $mappings = [ordered]@{}
+            foreach ($case in @(
+                @{name='A-None';rules=$false;archive=$false},
+                @{name='B-Rules';rules=$true;archive=$false},
+                @{name='C-Archive';rules=$false;archive=$true},
+                @{name='D-Both';rules=$true;archive=$true},
+                @{name='E-NoneAgain';rules=$false;archive=$false}
+            )) {
+                $path = 'tests/pester/'+$case.name+'.Tests.ps1'
+                $tests += $path
+                $names = @()
+                $rulesAssertion = 'Should -BeNullOrEmpty'
+                $archiveAssertion = 'Should -BeNullOrEmpty'
+                if ($case.rules) { $names += 'ITL_AI_RULES_SOURCE_PATH'; $rulesAssertion = "Should -BeExactly '"+$root.Replace("'","''")+"'" }
+                if ($case.archive) { $names += 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE'; $archiveAssertion = "Should -BeExactly '"+$archive.Replace("'","''")+"'" }
+                if ($names.Count) { $mappings[$path] = $names }
+                $body = "Describe '"+$case.name+"' { It 'observes only fingerprinted inputs' { [Environment]::GetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH','Process') | "+$rulesAssertion+"; [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','Process') | "+$archiveAssertion+" } }"
+                [IO.File]::WriteAllText((Join-Path $root $path),$body,[Text.UTF8Encoding]::new($true))
+            }
+            $catalog = [ordered]@{schemaVersion=1;pesterExternalInputs=$mappings;contracts=@([ordered]@{id='environment';owner='fixture';gate='targeted';budgetSeconds=30;primaryTest=$tests[0];paths=@('fixture/*');tests=$tests})}
+            [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+            $selectionPath = Join-Path $root 'selection.json'
+            [IO.File]::WriteAllText($selectionPath,(@{tests=$tests}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            & git -C $root add --all
+            & git -C $root -c user.name=Test -c user.email=test@example.invalid commit --quiet -m fixture
+            $output = Join-Path $root 'out'
+            $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),'-WorkerCount','1','-SelectionPath',$selectionPath)
+            $run.exitCode | Should -Be 0 -Because $run.combinedText
+            $summary = Get-Content -LiteralPath (Join-Path $output 'pester-shards/summary.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $summary.executedWorkerCount | Should -Be 5
+            $summary.reusedWorkerCount | Should -Be 0
+            $summary.passed | Should -Be 5
+            $env:ITL_AI_RULES_SOURCE_PATH | Should -BeExactly $root
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE | Should -BeExactly $archive
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH',$previousRules,'Process')
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE',$previousArchive,'Process')
+        }
+    }
+
+    It 'invalidates the ownership self-test for each loaded library and executed probe input' {
+        $root = Join-Path $TestDrive 'reuse зависимости с пробелом'
+        & git clone --quiet --shared --no-hardlinks -- $RepoRoot $root
+        $LASTEXITCODE | Should -Be 0
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        $selectionPath = Join-Path $root 'build/ownership-identity-selection.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectionPath) | Out-Null
+        Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value '{"tests":["tests/pester/LocalTargetedSelection.Tests.ps1"]}'
+        $invoke = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $output = Join-Path $root 'build/ownership-identity'
+        $arguments = @('-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),'-SelectionPath',$selectionPath,'-InputIdentityOnly')
+        $run = Invoke-TestPowerShellFile -FilePath $invoke -Arguments $arguments
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $original = ($run.stdout -join "`n") | ConvertFrom-Json
+        $original.reusable | Should -BeTrue
+        $digest = $original.files[0].digest
+        $digest | Should -Not -BeNullOrEmpty
+        foreach ($path in @(
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1',
+            'tests/pester/DevBranchLifecycleSupport.ps1',
+            'tests/pester/DevBranchCheck.Tests.ps1',
+            'tests/pester/VanessaAuthoring.Tests.ps1',
+            'tests/pester/VanessaAuthoringLint.Tests.ps1',
+            'tests/pester/VerificationSelection.Tests.ps1',
+            'tests/pester/VerificationProofReuse.Tests.ps1',
+            'tests/pester/VerificationAggregateAssessment.Tests.ps1',
+            'tests/pester/VanessaRunnerTopology.Tests.ps1',
+            'tests/pester/PlatformProductionPreparation.Tests.ps1'
+        )) {
+            $file = Join-Path $root $path
+            $bytes = [IO.File]::ReadAllBytes($file)
+            try {
+                [IO.File]::AppendAllText($file,"`n# changed ownership dependency`n",[Text.UTF8Encoding]::new($false))
+                $run = Invoke-TestPowerShellFile -FilePath $invoke -Arguments $arguments
+                $run.exitCode | Should -Be 0 -Because $run.combinedText
+                $identity = ($run.stdout -join "`n") | ConvertFrom-Json
+                $identity.reusable | Should -BeTrue
+                $identity.files[0].digest | Should -Not -Be $digest -Because $path
+            } finally { [IO.File]::WriteAllBytes($file,$bytes) }
+        }
+    }
+
         It "completes and reruns an explicitly non-reusable passed file through the real shard runner" {
         $root = Join-Path $TestDrive 'Некэшируемая проверка с пробелом'
         $testRoot = Join-Path $root 'tests/pester'
