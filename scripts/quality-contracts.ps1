@@ -219,6 +219,10 @@ function Get-PublicLifecycleActions {
     return @($validateSet.PositionalArguments | ForEach-Object { [string]$_.SafeGetValue() } | Sort-Object -Unique)
 }
 
+function Get-QualityPesterExternalInputNames {
+    @('ITL_AI_RULES_SOURCE_PATH', 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE')
+}
+
 function Get-Agent1cSemanticModel {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
@@ -245,7 +249,7 @@ function Get-Agent1cSemanticModel {
         $parameters[$name] = [string]$parameter.Extent.Text
         $spans.Add([pscustomobject]@{ start = [int]$parameter.Extent.StartOffset; length = [int]($parameter.Extent.EndOffset - $parameter.Extent.StartOffset); marker = "__ITL_PARAMETER_$name`__" }) | Out-Null
     }
-    foreach ($definition in @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })) {
+    foreach ($definition in @(if ($null -ne $ast.EndBlock) { $ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } })) {
         $name = [string]$definition.Name
         if (-not $name -or $functions.ContainsKey($name)) { return [pscustomobject]@{ valid = $false; reason = "dynamic-or-duplicate-function"; detail = $name } }
         $functions[$name] = [string]$definition.Extent.Text
@@ -543,7 +547,7 @@ function Test-QualityContractCatalog {
             if (-not (Test-Path -LiteralPath $testPath -PathType Leaf)) { throw "Quality contract '$($contract.id)' references missing test '$test'." }
         }
     }
-    $allowedPesterExternalInputs = @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
+    $allowedPesterExternalInputs = @(Get-QualityPesterExternalInputNames)
     $pesterExternalInputsProperty = $Catalog.PSObject.Properties["pesterExternalInputs"]
     $pesterExternalInputMappings = $(if ($pesterExternalInputsProperty) { @($pesterExternalInputsProperty.Value.PSObject.Properties) } else { @() })
     foreach ($property in $pesterExternalInputMappings) {

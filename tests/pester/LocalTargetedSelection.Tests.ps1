@@ -5,6 +5,65 @@
 }
 
 Describe "Local quality gate contract" {
+    It 'retains complete owner fallback when a reviewed baseline gains the stale-pin diagnostic' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        # Freeze only this regression's reviewed call set, so a future valid
+        # production pin update cannot turn the safe-fallback test into a barrier.
+        $text = "function Invoke-DevBranchCheck { Write-Output 'baseline' }"
+        $model = Get-Agent1cSemanticModel -Text $text -Library
+        $catalog.semanticTargeting.libraries.PSObject.Properties[$path].Value.functions.'Invoke-DevBranchCheck'.callsSha256 = Get-QualityFunctionInvocationInventory -Model $model -Name 'Invoke-DevBranchCheck'
+        $signature = 'function Invoke-DevBranchCheck {'
+        $baseline = $text.Replace($signature,$signature+"`n    Write-Verbose 'owner-local diagnostic'")
+        $baseline | Should -Not -Be $text
+        $current = $baseline.Replace($signature,$signature+"`n    # next local edit")
+        (Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog) | Should -BeTrue
+        $impact = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $baseline -CurrentText $current
+        $impact.fallback | Should -BeTrue
+        $impact.reason | Should -Be 'function-dependencies-changed-Invoke-DevBranchCheck'
+        @($impact.tests) | Should -Be @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)).tests)
+    }
+
+    It 'classifies both ends of a library rename into <destination>' -TestCases @(
+        @{ destination='scripts/release-e2e/перенесённый модуль.ps1'; known=$true; edit=$false },
+        @{ destination='unknown/перенесённый модуль.ps1'; known=$false; edit=$false },
+        @{ destination='.agents/skills/1c-workflow/scripts/lib/agent-1c.изменённый модуль.ps1'; known=$false; edit=$true }
+    ) {
+        param($destination,$known,$edit)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root = Join-Path $TestDrive ('rename владелец с пробелом '+[guid]::NewGuid().ToString('N'))
+        & git -c core.longpaths=true clone --quiet --shared --no-hardlinks -- $RepoRoot $root
+        $LASTEXITCODE | Should -Be 0
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        & git -C $root add -- tests/quality-contracts.json
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit --allow-empty -qm baseline
+        $base = (& git -C $root rev-parse HEAD).Trim()
+        $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $destination)) | Out-Null
+        & git -C $root mv -- $path $destination
+        if ($edit) { [IO.File]::AppendAllText((Join-Path $root $destination),"`nWrite-Verbose 'changed during rename'`n",[Text.UTF8Encoding]::new($false)) }
+        & git -C $root add -- $destination
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -qm rename
+        $LASTEXITCODE | Should -Be 0
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/resolve-targeted-tests.ps1') -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base)
+        if (-not $known) {
+            $run.exitCode | Should -Not -Be 0
+            $run.combinedText | Should -Match 'without a quality owner'
+            $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+            @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($destination)).unknownPaths) | Should -Be @($destination)
+            return
+        }
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $selection = ($run.stdout -join "`n") | ConvertFrom-Json
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $expected = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path,$destination)
+        @($selection.tests) | Should -Be @($expected.tests)
+        @($selection.tests) | Should -Contain 'tests/pester/DevelopConfigurationRejection.Tests.ps1'
+        @($selection.tests) | Should -Contain 'tests/pester/WorkflowUpdateRollback.Tests.ps1'
+        @($selection.additionalInputs) | Should -Contain $destination
+    }
+
     It 'narrows only declared check functions while retaining the complete fallback for <module>' -TestCases @(
         @{ module='lifecycle'; functionName='Invoke-DevBranchCheck' },
         @{ module='vanessa'; functionName='Assert-VanessaVerificationPreflight' },
@@ -18,6 +77,18 @@ Describe "Local quality gate contract" {
         $signature = 'function '+$functionName+' {'
         $changed = $text.Replace($signature, $signature+"`n    # local control-flow edit")
         $changed | Should -Not -Be $text
+        $model = Get-Agent1cSemanticModel -Text $text -Library
+        $calls = Get-QualityFunctionInvocationInventory -Model $model -Name $functionName
+        $live = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $changed
+        $pin = $catalog.semanticTargeting.libraries.PSObject.Properties[$path].Value.functions.PSObject.Properties[$functionName].Value.callsSha256
+        if ($calls -cne $pin) {
+            $live.fallback | Should -BeTrue
+            @($live.tests) | Should -Be @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)).tests)
+        } else { $live.fallback | Should -BeFalse }
+        # Positive narrowing uses an explicitly reviewed fixture pin. Drift in
+        # the live catalog must select the broad owner, not fail this self-test.
+        $catalog = $catalog | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $catalog.semanticTargeting.libraries.PSObject.Properties[$path].Value.functions.PSObject.Properties[$functionName].Value.callsSha256 = $calls
         $impact = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $changed
         $impact.fallback | Should -BeFalse
         @($impact.impacts.name) | Should -Be @($functionName)
@@ -36,6 +107,8 @@ Describe "Local quality gate contract" {
             $text.Replace($signature,'function Renamed-Owner {'),
             ($text+"`nfunction New-Owner {}"),
             ($text+"`n{"),
+            ("begin {`n"+$text+"`n}"),
+            ("process {`n"+$text+"`n}"),
             '',
             $null
         )) {
@@ -66,9 +139,18 @@ Describe "Local quality gate contract" {
         $root = Join-Path $TestDrive 'check owner путь с пробелом'
         & git clone --quiet --shared --no-hardlinks -- $RepoRoot $root
         $LASTEXITCODE | Should -Be 0
-        foreach ($path in @('scripts/quality-contracts.ps1','tests/quality-contracts.json','tests/pester/DevBranchCheck.Tests.ps1')) {
+        foreach ($path in @('scripts/quality-contracts.ps1','scripts/resolve-targeted-tests.ps1','tests/quality-contracts.json','tests/pester/DevBranchCheck.Tests.ps1')) {
             Copy-Item -LiteralPath (Join-Path $RepoRoot $path) -Destination (Join-Path $root $path) -Force
         }
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        # This fixture proves the skipped-preflight mutant at a known baseline;
+        # live pins are independently checked by the safe-fallback case above.
+        $fixtureCatalogPath = Join-Path $root 'tests/quality-contracts.json'
+        $fixtureCatalog = Get-QualityContractCatalog -RepositoryRoot $root
+        $fixturePath = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $fixtureModel = Get-Agent1cSemanticModel -Text ([IO.File]::ReadAllText((Join-Path $root $fixturePath))) -Library
+        $fixtureCatalog.semanticTargeting.libraries.PSObject.Properties[$fixturePath].Value.functions.'Invoke-DevBranchCheck'.callsSha256 = Get-QualityFunctionInvocationInventory -Model $fixtureModel -Name 'Invoke-DevBranchCheck'
+        [IO.File]::WriteAllText($fixtureCatalogPath,($fixtureCatalog | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
         & git -C $root -c user.name=Test -c user.email=test@example.invalid add --all
         # A committed candidate already contains these exact files. Keep one
         # baseline commit in both the dirty-source and committed-source fixture.

@@ -8,6 +8,7 @@ Describe 'Scheduler-independent Pester proof' {
     It 'reuses Targeted proof in Full with another worker limit, retaining input and SHA guards: <Producer>' -ForEach @(
         @{ Producer = 'current' }
         @{ Producer = 'legacy-workers-4' }
+        @{ Producer = 'pre-isolation' }
     ) {
         $root = Join-Path $TestDrive "Кэш с пробелом $Producer"
         $testRoot = Join-Path $root 'tests/pester'
@@ -28,14 +29,19 @@ Describe 'Scheduler-independent Pester proof' {
         & git -C $root commit -m fixture *> $null
         $runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
         $producerPath = $runner
-        if ($Producer -eq 'legacy-workers-4') {
+        if ($Producer -ne 'current') {
             # Produce the previous runtime key through the real runner. Keep all
             # owner inputs, child execution and cache manifest checks unchanged.
             $legacy = [IO.File]::ReadAllText($runner)
             $legacy = $legacy.Replace('$lines.Add($runtimeIdentity)', '$lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|workers=$WorkerCount")')
+            if ($Producer -eq 'pre-isolation') {
+                $withoutScope = $legacy.Replace("`$lines.Add('external-input-scope=declared-v1')", '')
+                $withoutScope | Should -Not -Be $legacy
+                $legacy = $withoutScope
+            }
             $legacy = $legacy.Replace('$PSScriptRoot', ("'" + (Split-Path -Parent $runner).Replace("'", "''") + "'"))
             $producerPath = Join-Path $TestDrive 'legacy-shard-runner.ps1'
-            [IO.File]::WriteAllText($producerPath, $legacy, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($producerPath, $legacy, [Text.UTF8Encoding]::new($true))
         }
         $summaries = @()
         foreach ($attempt in 1..4) {
@@ -61,11 +67,14 @@ Describe 'Scheduler-independent Pester proof' {
             $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
             $summaries += ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
         }
-        @($summaries | ForEach-Object { $_.executedWorkerCount }) | Should -Be @(2,0,1)
-        @($summaries | ForEach-Object { $_.reusedWorkerCount }) | Should -Be @(0,2,1)
+        $expectedExecuted = if ($Producer -eq 'pre-isolation') { @(2,2,1) } else { @(2,0,1) }
+        $expectedReused = if ($Producer -eq 'pre-isolation') { @(0,0,1) } else { @(0,2,1) }
+        @($summaries | ForEach-Object { $_.executedWorkerCount }) | Should -Be $expectedExecuted
+        @($summaries | ForEach-Object { $_.reusedWorkerCount }) | Should -Be $expectedReused
         @($summaries | ForEach-Object { $_.pesterWorkers.effective }) | Should -Be @(4,3,3)
         foreach ($name in @('A','B')) {
-            @(Get-Content -LiteralPath (Join-Path $root "counter$name.txt")).Count | Should -Be 2
+            $expectedCount = if ($Producer -eq 'pre-isolation') { 3 } else { 2 }
+            @(Get-Content -LiteralPath (Join-Path $root "counter$name.txt")).Count | Should -Be $expectedCount
         }
     }
 

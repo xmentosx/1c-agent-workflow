@@ -3,6 +3,10 @@
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
+        $QuoteBootstrapNativeArgument = & {
+            . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+            (Get-Command ConvertTo-GitProcessArgument -CommandType Function).ScriptBlock
+        }
         $HelperPath = $context.HelperPath
         $HelperModulePaths = $context.HelperModulePaths
         $LauncherPath = $context.LauncherPath
@@ -2611,12 +2615,12 @@ $status = [ordered]@{
 exit 2
 '@
 
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
                 "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
 
             $process.ExitCode | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c") -ErrorAction SilentlyContinue) | Should -Be $false
@@ -3032,7 +3036,7 @@ exit 2
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
                 "-File", $HelperPath,
@@ -3040,7 +3044,7 @@ exit 2
                 "-Action", "validate",
                 "-RunStatusPath", $statusPath,
                 "-RunLogPath", $logPath
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
             $process.ExitCode | Should -Be 1
 
             (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
@@ -3078,7 +3082,7 @@ Write-Host "fake helper exits without status"
 exit 7
 '@
 
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
                 "-File", $LauncherPath,
@@ -3090,7 +3094,7 @@ exit 7
                 "--",
                 "-Action", "init-project",
                 "-InitMode", "configured"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
 
             $process.ExitCode | Should -Be 7
             $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -3128,7 +3132,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot ".git\index.lock") -Encoding AS
 Start-Sleep -Seconds 20
 '@
 
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
                 "-File", $LauncherPath,
@@ -3139,7 +3143,7 @@ Start-Sleep -Seconds 20
                 "-MaxWaitSeconds", "5",
                 "--",
                 "-Action", "init-project"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
 
             $process.ExitCode | Should -Be 124
             $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -3198,12 +3202,12 @@ Start-Sleep -Seconds 20
             }
             [System.IO.File]::WriteAllText($oldStatusPath, (($oldStatus | ConvertTo-Json) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding $false))
 
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
                 "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
                 "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
 
             $process.ExitCode | Should -Be 0
             $oldFinal = Get-Content -Encoding UTF8 -Raw $oldStatusPath | ConvertFrom-Json
@@ -3315,11 +3319,11 @@ Start-Sleep -Seconds 20
             }
             Set-Content -LiteralPath $oldStatusPath -Encoding UTF8 -Value ($oldStatus | ConvertTo-Json)
 
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+            $process = Start-Process -FilePath "powershell" -ArgumentList (@(
                 "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
                 "-ProjectRoot", $tempRoot, "-MaxWaitSeconds", "10", "--",
                 "-Action", "init-project", "-InitMode", "wizard"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            ) | ForEach-Object { & $QuoteBootstrapNativeArgument -Value ([string]$_) }) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
             $process.ExitCode | Should -Not -Be 0
             (Get-Content -LiteralPath $stderrPath -Raw) | Should -Match "already running"
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory).Count | Should -Be 1

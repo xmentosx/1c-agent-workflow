@@ -71,10 +71,17 @@ $script:pesterPowerShellExecutable = $(if ($powerShellCommand) { [string]$powerS
 $script:pesterRuntimeReceipt = [pscustomobject]@{status='unknown';identity=$null;reason='Runtime has not been observed.';durationMs=0}
 
 function Start-PesterWorkerProcess {
-    param([string[]]$Arguments, [string]$StdinPath, [string]$StdoutPath, [string]$StderrPath)
+    param([string[]]$Arguments, [string]$StdinPath, [string]$StdoutPath, [string]$StderrPath, [string[]]$ExternalInputNames = @())
     $originalPowerShellModulePath = $env:PSModulePath
     $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    $externalValues = @{}
     try {
+        # Match the actual child environment to the per-file digest contract.
+        # Restore the scheduler before launching any other worker.
+        foreach ($name in @(Get-QualityPesterExternalInputNames)) {
+            $externalValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ($name -notin $ExternalInputNames) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
+        }
         if ($resetModulePathForWindowsPowerShell) {
             $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
             $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
@@ -86,6 +93,7 @@ function Start-PesterWorkerProcess {
         }
         return Start-Process -FilePath $script:pesterPowerShellExecutable -ArgumentList ($Arguments -join ' ') -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $StdinPath -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath -PassThru
     } finally {
+        foreach ($name in @($externalValues.Keys)) { [Environment]::SetEnvironmentVariable($name, $externalValues[$name], 'Process') }
         if ($resetModulePathForWindowsPowerShell) {
             if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
             else { $env:PSModulePath = $originalPowerShellModulePath }
@@ -388,6 +396,9 @@ function Get-ShardInputDigest {
         if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
     $lines = New-Object System.Collections.Generic.List[string]
+    # Old receipts were produced with undeclared inherited inputs. They cannot
+    # qualify the isolated child contract, including through legacy lookup keys.
+    $lines.Add('external-input-scope=declared-v1')
     # The selected tests are distinct from their shared owner input set.
     # Deduplicating that set must never make different test files one shard.
     foreach ($test in @($relativeTests | Sort-Object -Unique)) { $lines.Add("selected-test=$test") }
@@ -402,7 +413,7 @@ function Get-ShardInputDigest {
     if ($LegacyWorkerCount -gt 0) { $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|workers=$LegacyWorkerCount" }
     $lines.Add($runtimeIdentity)
     $externalInputNames = if ($IncludeLegacyGlobalExternalInputs) {
-        @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
+        @(Get-QualityPesterExternalInputNames)
     } else {
         @($relativeTests | ForEach-Object {
             if ($pesterExternalInputsByTest.ContainsKey([string]$_)) { @($pesterExternalInputsByTest[[string]$_]) }
@@ -693,6 +704,7 @@ foreach ($item in $items) {
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue $reuseReason -Force }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; preflight = [bool]$item.preflight; process = $null; reused = [bool]$cached; digest = $digest
+        testPath = [string]$item.path
         planPath = $planPath; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath; stdinPath = $stdinPath
     }
     $entries.Add($entry) | Out-Null
@@ -707,7 +719,9 @@ $fingerprintPlanStopwatch.Stop()
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
-    $Entry.process = Start-PesterWorkerProcess -Arguments $args -StdinPath $Entry.stdinPath -StdoutPath $Entry.stdoutPath -StderrPath $Entry.stderrPath
+    $relativePath = Get-ShardRelativeTestPath -Path $Entry.testPath
+    $externalInputs = @(if ($pesterExternalInputsByTest.ContainsKey($relativePath)) { $pesterExternalInputsByTest[$relativePath] })
+    $Entry.process = Start-PesterWorkerProcess -Arguments $args -StdinPath $Entry.stdinPath -StdoutPath $Entry.stdoutPath -StderrPath $Entry.stderrPath -ExternalInputNames $externalInputs
     $null = $Entry.process.Handle
 }
 
