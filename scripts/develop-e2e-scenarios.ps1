@@ -32,35 +32,43 @@ function Assert-DevelopScenarioCompletion {
 
 function Get-DevelopChangedFunctions {
     param([string]$Before,[string]$After)
-    if($Before.StartsWith([string][char]0xfeff) -ne $After.StartsWith([string][char]0xfeff)) {return $null}
-    $maps=@();$remainders=@();$contexts=@()
+    if($Before.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal) -ne $After.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal)) {return $null}
+    $maps=@();$remainders=@();$definitions=@()
     foreach($text in @($Before,$After)) {
         $text=$text.Replace("`r`n","`n")
         $tokens=$null;$errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xfeff),[ref]$tokens,[ref]$errors)
         if(@($errors).Count) {throw 'DEVELOP_SCENARIO_SOURCE_PARSE_ERROR'}
-        $map=@{};$context=@{};$builder=[Text.StringBuilder]::new($text.TrimStart([char]0xfeff))
+        $map=@{};$definition=@{};$builder=[Text.StringBuilder]::new($text.TrimStart([char]0xfeff))
         $nodes=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst]})
         foreach($node in $nodes) {
             $map[$node.Name]=ConvertTo-DevelopSourceTokens $node.Extent.Text
-            $locals=@('null','true','false','_','psitem','psboundparameters','psscriptroot','args','input','pscmdlet','pscommandpath')
-            if($node.Body.ParamBlock) {$locals+=@($node.Body.ParamBlock.Parameters | ForEach-Object {$_.Name.VariablePath.UserPath.ToLowerInvariant()})}
-            foreach($assignment in @($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst]},$true))) {
-                $locals+=@($assignment.Left.FindAll({param($n)$n -is [Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.IsUnqualified},$true) | ForEach-Object {$_.VariablePath.UserPath.ToLowerInvariant()})
-            }
-            $locals+=@($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.ForEachStatementAst]},$true) | ForEach-Object {$_.Variable.VariablePath.UserPath.ToLowerInvariant()})
-            $context[$node.Name]=@($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.VariableExpressionAst]},$true) | ForEach-Object {$_.VariablePath.UserPath.ToLowerInvariant()} | Where-Object {$_ -notin $locals} | Sort-Object -Unique)
+            $definition[$node.Name]=$node
         }
         foreach($node in @($nodes | Sort-Object {$_.Extent.StartOffset} -Descending)) {
             [void]$builder.Remove($node.Extent.StartOffset,$node.Extent.EndOffset-$node.Extent.StartOffset)
         }
-        $maps+=,$map;$contexts+=,$context;$remainders+=ConvertTo-DevelopSourceTokens $builder.ToString()
+        $maps+=,$map;$definitions+=,$definition;$remainders+=ConvertTo-DevelopSourceTokens $builder.ToString()
     }
     if($remainders[0] -cne $remainders[1]) {return $null}
-    foreach($name in @($maps[0].Keys | Where-Object {$maps[1].ContainsKey($_)})) {
-        if(@($contexts[1][$name] | Where-Object {$_ -notin @($contexts[0][$name])}).Count) {return $null}
+    $changed=@(@($maps[0].Keys)+@($maps[1].Keys) | Sort-Object -Unique | Where-Object {$maps[0][$_] -cne $maps[1][$_]})
+    # Identical executable tokens imply identical ambient references. Walking
+    # every unchanged function repeatedly dominated real warm planning.
+    $getContext={param($node)
+        $locals=@('null','true','false','_','psitem','psboundparameters','psscriptroot','args','input','pscmdlet','pscommandpath')
+        if($node.Body.ParamBlock) {$locals+=@($node.Body.ParamBlock.Parameters | ForEach-Object {$_.Name.VariablePath.UserPath.ToLowerInvariant()})}
+        foreach($assignment in @($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst]},$true))) {
+            $locals+=@($assignment.Left.FindAll({param($n)$n -is [Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.IsUnqualified},$true) | ForEach-Object {$_.VariablePath.UserPath.ToLowerInvariant()})
+        }
+        $locals+=@($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.ForEachStatementAst]},$true) | ForEach-Object {$_.Variable.VariablePath.UserPath.ToLowerInvariant()})
+        @($node.Body.FindAll({param($n)$n -is [Management.Automation.Language.VariableExpressionAst]},$true) | ForEach-Object {$_.VariablePath.UserPath.ToLowerInvariant()} | Where-Object {$_ -notin $locals} | Sort-Object -Unique)
     }
-    return ,@(@($maps[0].Keys)+@($maps[1].Keys) | Sort-Object -Unique | Where-Object {$maps[0][$_] -cne $maps[1][$_]})
+    foreach($name in @($changed | Where-Object {$maps[0].ContainsKey($_) -and $maps[1].ContainsKey($_)})) {
+        $beforeContext=@(& $getContext $definitions[0][$name])
+        $afterContext=@(& $getContext $definitions[1][$name])
+        if(@($afterContext | Where-Object {$_ -notin $beforeContext}).Count) {return $null}
+    }
+    return ,$changed
 }
 
 function Resolve-DevelopScenarioSelection {
@@ -107,7 +115,7 @@ function Get-DevelopScenarioCoverage {
 function Get-DevelopScenarioSourceProjection {
     param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false)
     $Text=$Text.Replace("`r`n","`n")
-    $bom=[string]$Text.StartsWith([string][char]0xfeff)
+    $bom=[string]$Text.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal)
     $controller=@()
     switch -Exact ($Path) {
         # Copy GC retains/reports resources; it cannot grant journey status.
@@ -170,7 +178,7 @@ function ConvertTo-DevelopEffectiveClientIdentity {
 }
 
 function Test-DevelopScenarioEquivalentInput {
-    param([string]$RepositoryRoot,[object]$Recorded,[object]$Current,[string]$QualifiedCommit,[string[]]$Scenario,[object]$Catalog)
+    param([string]$RepositoryRoot,[object]$Recorded,[object]$Current,[string]$QualifiedCommit,[string[]]$Scenario,[object]$Catalog,[hashtable]$LookupContext=$null)
     try {
         foreach($value in @($Recorded,$Current)) {
             if([int]$value.schemaVersion -ne 2 -or -not $value.inventory.external.complete -or
@@ -216,7 +224,6 @@ function Test-DevelopScenarioEquivalentInput {
             if($prior.sha256 -ceq $entry.sha256) {continue}
             $a=Get-DevelopHistoricalSourceText $RepositoryRoot $QualifiedCommit $entry.path
             $b=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $entry.path)))
-            if(@($Catalog.developJourneys.scenarioInputs | Where-Object path -eq $entry.path).Count -and $null -eq (Get-DevelopChangedFunctions $a $b)) {return $false}
             # Historical source is authenticated using the existing transport
             # hash before any scoped projection can authorize reuse.
             $bytes=if($entry.path -match '^(scripts/|\.agents/skills/|templates/).*\.ps1$') {
@@ -229,6 +236,17 @@ function Test-DevelopScenarioEquivalentInput {
                 try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($a.Replace("`r`n","`n").Replace("`n","`r`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
             }
             if($hash -cne $prior.sha256 -or (Get-DevelopE2EInputFileSha256 (Join-Path $RepositoryRoot $entry.path) $entry.path) -cne $entry.sha256) {return $false}
+            if(@($Catalog.developJourneys.scenarioInputs | Where-Object path -eq $entry.path).Count) {
+                # This invocation-only cache follows, never replaces, actual
+                # historical/current SHA authentication. Cache null refusals too.
+                $key=[string]$prior.sha256+':'+[string]$entry.sha256
+                if($null -ne $LookupContext -and $LookupContext.changedFunctions.ContainsKey($key)) {$changed=$LookupContext.changedFunctions[$key]}
+                else {
+                    $changed=Get-DevelopChangedFunctions $a $b
+                    if($null -ne $LookupContext) {$LookupContext.changedFunctions[$key]=$changed}
+                }
+                if($null -eq $changed) {return $false}
+            }
             $noProduct=$new.inventory.external.PSObject.Properties['productContext'] -and $new.inventory.external.productContext.known -and $new.inventory.external.productContext.disabled
             $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct)
             $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct)
@@ -246,6 +264,7 @@ function Get-DevelopScenarioReusePlan {
     if($InputIdentity) {$ProjectRoot=[string]$InputIdentity.inventory.external.root}
     $descriptorPath=if($ProjectRoot) {Join-Path $ProjectRoot '.agent-1c/release-e2e.json'}else{''}
     $rejectionApplicable=$true
+    $lookupContext=@{changedFunctions=@{}}
     $cacheRoot=Join-Path (Get-RepositoryCommonGitDirectory $RepositoryRoot) 'itl/develop-e2e-qualifications'
     # Enumerate once per invocation, without descending into immutable raw
     # evidence/references. Every consumer still rechecks manifest/report SHA.
@@ -263,7 +282,7 @@ function Get-DevelopScenarioReusePlan {
         if($InputIdentity) {
             $proof=Get-DevelopE2EAncestorQualification -RepositoryRoot $RepositoryRoot -Tree $Tree -Journey $Journey `
                 -StandStateSha256 $InputIdentity.inventory.external.standStateSha256 -InputIdentity $InputIdentity `
-                -StaticProof $StaticProof -AllowPendingStatic:$AllowPendingStatic -Diagnostics $diagnostics -RequiredScenario @($item.id) -Catalog $Catalog -QualificationInventory $inventory
+                -StaticProof $StaticProof -AllowPendingStatic:$AllowPendingStatic -Diagnostics $diagnostics -RequiredScenario @($item.id) -Catalog $Catalog -QualificationInventory $inventory -LookupContext $lookupContext
         }
         $applicable=$true
         if($Journey -eq 'upgrade' -and $item.id -eq 'configuration-rejection' -and -not $rejectionApplicable) {$applicable=$false}

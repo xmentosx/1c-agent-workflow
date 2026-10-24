@@ -301,6 +301,46 @@ BeforeAll {
     }
 }
 
+It 'authenticates source on every reuse while comparing each file pair once per lookup' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    Save-IncrementalJourneyProofs $f
+    $recorded=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Set-ScenarioFixtureChange $f 'Change-Update'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $script:changedFunctionImplementation=(Get-Item Function:Get-DevelopChangedFunctions).ScriptBlock
+    Mock Get-DevelopChangedFunctions { param($Before,$After) & $script:changedFunctionImplementation $Before $After }
+    $records=@(Get-DevelopScenarioReusePlan -RepositoryRoot $f.root -Tree $tree -Journey upgrade -InputIdentity $current -Catalog $f.catalog -AllowPendingStatic)
+    @($records|Where-Object execution -eq execute|ForEach-Object id) | Should -Be @('update')
+    @($records|Where-Object execution -eq reuse).Count | Should -Be 2
+    Should -Invoke Get-DevelopChangedFunctions -Times 1 -Exactly
+    # A new invocation must not inherit any prior source comparison result.
+    $null=Get-DevelopScenarioReusePlan -RepositoryRoot $f.root -Tree $tree -Journey upgrade -InputIdentity $current -Catalog $f.catalog -AllowPendingStatic
+    Should -Invoke Get-DevelopChangedFunctions -Times 2 -Exactly
+    $lookupContext=@{changedFunctions=@{}}
+    Test-DevelopScenarioEquivalentInput $f.root $recorded $current $f.base @('configuration-rejection') $f.catalog -LookupContext $lookupContext | Should -BeTrue
+    Should -Invoke Get-DevelopChangedFunctions -Times 3 -Exactly
+    $path=Join-Path $f.root 'runtime.ps1'
+    [IO.File]::AppendAllText($path,"`nWrite-Verbose 'late source drift'`n")
+    Test-DevelopScenarioEquivalentInput $f.root $recorded $current $f.base @('configuration-rejection') $f.catalog -LookupContext $lookupContext | Should -BeFalse
+    Should -Invoke Get-DevelopChangedFunctions -Times 3 -Exactly
+    $drift=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    1..2|ForEach-Object {Test-DevelopScenarioEquivalentInput $f.root $recorded $drift $f.base @('configuration-rejection') $f.catalog -LookupContext $lookupContext | Should -BeFalse}
+    Should -Invoke Get-DevelopChangedFunctions -Times 4 -Exactly
+}
+
+It 'retains ambient and top-level refusal while analyzing changed functions only' {
+    $before='function Untouched { $global:existing }; function Changed { param($value) $local=1; foreach($item in @(1)) { $local += $item }; return $value+$local+$script:shared }'
+    $after=$before.Replace('$local=1','$local=2')
+    @(Get-DevelopChangedFunctions $before $after) | Should -Be @('Changed')
+    Get-DevelopChangedFunctions $before ($after.Replace('$script:shared','$script:newDependency')) | Should -BeNullOrEmpty
+    Get-DevelopChangedFunctions $before ($after+"`nWrite-Verbose 'new top-level behavior'") | Should -BeNullOrEmpty
+    Get-DevelopChangedFunctions $before ([string][char]0xfeff+$after) | Should -BeNullOrEmpty
+    @(Get-DevelopChangedFunctions $before ($before+"`r`n")) | Should -BeNullOrEmpty
+}
+
 It 'selects changed behavior, preserves prerequisite closure and reuses independent scenario proof (<Function>)' -ForEach @(
     @{Function='Change-Update';Journey='upgrade';Execute=@('update')},
     @{Function='Change-Export';Journey='fresh';Execute=@('install','branch','verification','stale-export')},
@@ -408,13 +448,13 @@ It 'retains native proof across copy cleanup changes but rejects a changed space
     & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'storage native input baseline'
     $f.base=(& git -C $f.root rev-parse HEAD).Trim()
     Save-IncrementalJourneyProofs $f
-    $before=[IO.File]::ReadAllText($path)
-    [IO.File]::WriteAllText($path,$before.Replace('-OperationTimeoutSec 2','-OperationTimeoutSec 3'))
+    $before=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+    [IO.File]::WriteAllText($path,$before.Replace('-OperationTimeoutSec 2','-OperationTimeoutSec 3'),[Text.UTF8Encoding]::new($false))
     & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'cleanup reader change'
     $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
     $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $commit -CandidateTree $tree -ArtifactBinding $f.binding
     @($plan.stages|Where-Object id -ne 'develop.static'|ForEach-Object execution) | Should -Be @('reuse','reuse')
-    [IO.File]::WriteAllText($path,[IO.File]::ReadAllText($path).Replace('$full=[IO.Path]::GetFullPath($Path)',"Write-Verbose 'changed space admission';`$full=[IO.Path]::GetFullPath(`$Path)"))
+    [IO.File]::WriteAllText($path,[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path)).Replace('$full=[IO.Path]::GetFullPath($Path)',"Write-Verbose 'changed space admission';`$full=[IO.Path]::GetFullPath(`$Path)"),[Text.UTF8Encoding]::new($false))
     & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'space admission change'
     $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
     $changed=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $commit -CandidateTree $tree -ArtifactBinding $f.binding
@@ -498,7 +538,8 @@ It 'uses the actual MCP writer ownership without selecting stale export or confi
     # A product-enabled or unknown stand cannot use the representative shortcut.
     Get-DevelopScenarioSourceProjection $relative $original fresh @('refresh') $catalog | Should -BeNullOrEmpty
     $before=Get-DevelopScenarioSourceProjection $relative $original fresh @('refresh') $catalog -NoProductContext $true
-    $after=Get-DevelopScenarioSourceProjection $relative $text fresh @('refresh') $catalog -NoProductContext $true
+    $current=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+    $after=Get-DevelopScenarioSourceProjection $relative $current fresh @('refresh') $catalog -NoProductContext $true
     $before | Should -BeExactly $after
     # A new ambient dependency invalidates the stateless representative contract.
     [IO.File]::WriteAllText($path,$text.Insert($function.Body.EndBlock.Statements[0].Extent.StartOffset,"Write-Verbose `$Action`n"),[Text.UTF8Encoding]::new($hasBom))
