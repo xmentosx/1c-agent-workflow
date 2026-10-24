@@ -542,6 +542,77 @@
         (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@('one')}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args='one'}} @('entry'))
         (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=@()}} @('entry'))|Should -Not -Be (Get-ItlMcpOwnedSemanticSignature @{entry=@{args=$null}} @('entry'))
     }
+    It 'adopts publisher-only through the existing journal without preview and restores the exact prior context' -Tag G3PublisherOnlyCost {
+        $snapshot=New-StartupCatalogFixture
+        $snapshot.inputGitObjectIds=@{'registry.json'= ('3'*40);'catalog/catalog.json'= ('1'*40);'catalog/product-relations.json'= ('2'*40)}
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $before=Read-ItlProductProjectRecord applied
+        $protected=@(Get-ItlClientMcpConfigPaths codex)+@(Get-ItlClientMcpConfigPaths claude-code)
+        $states=@{};foreach($path in $protected){if(Test-Path -LiteralPath $path){$states[$path]=@{hash=Get-ItlMcpFileState $path;ticks=(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks}}}
+        $snapshot['checkedNoOpInputs']=Get-ItlProductProjectNoOpInputs $before.proof
+        $snapshot.catalogRevision=('b'*40);$snapshot.inputGitObjectIds['registry.json']=('4'*40);$snapshot.registry['publishedAt']='publisher-only'
+        Mock New-ItlProductProjectPreview {throw 'publisher-only must not rebuild the client preview'}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $after=Read-ItlProductProjectRecord applied
+        $after.catalogRevision|Should -Be ('b'*40)
+        $after.context.inputGitObjectIds['registry.json']|Should -Be ('4'*40)
+        $after.context.catalogPublication.baseRevision|Should -Be ('b'*40)
+        $after.context.registryMetadata.publishedAt|Should -Be publisher-only
+        $after.contextHash|Should -BeExactly (Get-ItlCatalogHash $after.context)
+        $after.operationId|Should -Not -Be $before.operationId
+        (Read-ItlProductProjectSetting selection).catalogRevision|Should -Be ('b'*40)
+        (Read-ItlProductProjectRecord operation).status|Should -Be completed
+        (Invoke-ItlProductProjectClientApply -Mode resume).status|Should -Be configured
+        (Invoke-ItlProductProjectClientApply -Mode restore).status|Should -Be restored
+        (Get-ItlCatalogHash (Read-ItlProductProjectRecord applied))|Should -BeExactly (Get-ItlCatalogHash $before)
+        foreach($path in $states.Keys){(Get-ItlMcpFileState $path)|Should -BeExactly $states[$path].hash;(Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks|Should -Be $states[$path].ticks}
+        Should -Invoke New-ItlProductProjectPreview -Times 0 -Exactly
+    }
+    It 'keeps publisher-only file races outside the freshness fallback' -Tag G3PublisherOnlyCost {
+        $snapshot=New-StartupCatalogFixture
+        $snapshot.inputGitObjectIds=@{'registry.json'= ('3'*40);'catalog/catalog.json'= ('1'*40);'catalog/product-relations.json'= ('2'*40)}
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $prior=Read-ItlProductProjectRecord applied
+        $snapshot['checkedNoOpInputs']=Get-ItlProductProjectNoOpInputs $prior.proof
+        $snapshot.catalogRevision=('b'*40);$snapshot.registry['publishedAt']='publisher-only'
+        $path=Join-Path $root '.codex/config.toml'
+        Write-Utf8TextAtomic $path ((Read-Utf8Text $path).Replace('source.invalid','external.invalid'))
+        $foreign=Get-ItlMcpFileState $path
+        Invoke-Vibecoding1cMcpRegistryOperation {{Initialize-ItlProductProjectContext}|Should -Throw '*CLIENT_MCP_PREVIEW_CHANGED*'}
+        (Get-ItlMcpFileState $path)|Should -BeExactly $foreign
+        (Get-ItlCatalogHash (Read-ItlProductProjectRecord applied))|Should -BeExactly (Get-ItlCatalogHash $prior)
+    }
+    It 'uses the already validated pinned snapshot offline without resolve or a second Git decode' -Tag G3PublisherOnlyCost {
+        $snapshot=New-StartupCatalogFixture
+        $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}
+        $null=Invoke-ItlProductProjectClientApply $context @() -BindProject -DesiredBinding $binding
+        Mock Read-ItlProductProjectSnapshot {return $snapshot}
+        Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
+        Mock Get-Vibecoding1cMcpCurrentEndpoints {return @()}
+        Mock Select-Vibecoding1cMcpManifestServers {return @()}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        $prior=Read-ItlProductProjectRecord applied
+        $snapshot['stale']=$true
+        Mock Read-ItlProductProjectSnapshot { $state=(Get-Variable ItlMcpRegistryOperation -Scope Script).Value;$state['catalogSnapshot']=$snapshot;return $snapshot }
+        Mock Resolve-ItlProductProjectRuntimeContext {throw 'offline must not resolve again'}
+        Mock Read-ItlProductCatalogSnapshot {throw 'offline must not decode the same snapshot again'}
+        Invoke-Vibecoding1cMcpRegistryOperation {Initialize-ItlProductProjectContext}
+        (Get-ItlCatalogHash (Read-ItlProductProjectRecord applied))|Should -BeExactly (Get-ItlCatalogHash $prior)
+        Should -Invoke Resolve-ItlProductProjectRuntimeContext -Times 0 -Exactly
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 0 -Exactly
+    }
     It 'runs one startup resolve/apply then performs no client writes on no-op and publisher-only changes' {
         $snapshot=New-StartupCatalogFixture
         $binding=@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='fixture';productId='corp'}

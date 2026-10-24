@@ -331,6 +331,27 @@
         Should -Invoke Read-ItlProductCatalogSnapshot -Times 2 -Exactly
         Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 2 -Exactly
     }
+    It 'requires full preview when publisher-only reuse would hide <Change>' -Tag G3PublisherOnlyCost -ForEach @(
+        @{Change='catalog'},@{Change='relations'},@{Change='endpoint'},@{Change='source-version'},@{Change='local-input'},@{Change='missing-proof'}
+    ) {
+        $snapshot.inputGitObjectIds=@{'registry.json'= ('3'*40);'catalog/catalog.json'= ('1'*40);'catalog/product-relations.json'= ('2'*40)}
+        $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
+        $context['registryMetadata']=ConvertTo-ItlCatalogCanonicalValue $snapshot.registry
+        $context['catalogPublication']=@{state='published';baseRevision=$snapshot.catalogRevision;localRecords=@()}
+        $hint=@{configurationState='configured';context=$context;noOpInputs=@{files=@{fixture='old'};includeClientSurfaces=$false}}
+        $next=ConvertTo-ItlCatalogCanonicalValue $snapshot
+        $next['checkedNoOpInputs']=ConvertTo-ItlCatalogCanonicalValue $hint.noOpInputs
+        $next.catalogRevision=('b'*40);$next.registry['publishedAt']='new'
+        switch($Change){
+            catalog {$next.inputGitObjectIds['catalog/catalog.json']=('4'*40)}
+            relations {$next.inputGitObjectIds['catalog/product-relations.json']=('4'*40)}
+            endpoint {$next.registry.hosts[0].servers[0].url='https://changed.invalid'}
+            source-version {$next.registry.hosts[0].configurations[0]['configurationVersion']='different'}
+            local-input {$next.checkedNoOpInputs.files.fixture='changed'}
+            missing-proof {$next.inputGitObjectIds.Remove('catalog/product-relations.json')}
+        }
+        Get-ItlProductProjectPublisherContext $next $hint|Should -BeNullOrEmpty
+    }
     It 'remembers failed refresh for the operation without nested retries or writable fallback' {
         [Environment]::SetEnvironmentVariable('VIBECODING1C_MCP_REGISTRY_PATH',(Join-Path $TestDrive 'No valid cache'),'Process')
         Mock Update-Vibecoding1cMcpRegistryCheckout {throw 'fixture unavailable'}

@@ -1,0 +1,1882 @@
+{
+  "schemaVersion": 1,
+  "scope": "Owner-local G3 publisher-only/offline repair and current PM5 paired dynamic cost; not full G3 acceptance",
+  "implementationCommit": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+  "installedRoots": [
+    {
+      "untracked": [],
+      "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+      "changed": [],
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+      "head": "160616d6a310b8401f23da0cc44361943970f7fd"
+    },
+    {
+      "untracked": [],
+      "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+      "changed": [],
+      "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+      "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+      "head": "48062b1e0672515586ba829000ca2c3b5116c8cd"
+    }
+  ],
+  "runtime": [
+    {
+      "beforeSha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+      "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+      "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+      "sha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": null,
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1",
+      "sha256": null,
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+      "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+      "sha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+      "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+      "sha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+      "sha256": "d101f84193286312fcb0576b21d9e037abf8f822b76d0affe5883d9ad1170d3d",
+      "sourceEqualsInstalled": true
+    },
+    {
+      "beforeSha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+      "sha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+      "sourceEqualsInstalled": true
+    }
+  ],
+  "tests": {
+    "red": {
+      "stage": "red",
+      "durationMs": 6216,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 0,
+      "notRun": 66,
+      "failed": 1
+    },
+    "firstGreen": {
+      "stage": "first-green",
+      "durationMs": 5398,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": false,
+      "skipped": 0,
+      "passed": 1,
+      "notRun": 66,
+      "failed": 0
+    },
+    "unfilteredOwners": {
+      "stage": "owners",
+      "durationMs": 139487,
+      "files": [
+        "tests/pester/ProductProjectApply.Tests.ps1",
+        "tests/pester/ProductProjectContext.Tests.ps1",
+        "tests/pester/ProductProjectApply.Tests.ps1"
+      ],
+      "allOwners": true,
+      "skipped": 0,
+      "passed": 101,
+      "notRun": 0,
+      "failed": 0
+    }
+  },
+  "measurements": {
+    "utc": "2026-10-24T11:12:58.998870+00:00",
+    "publicSyncCalls": 154,
+    "qualifiedSamples": 120,
+    "blocksPerMode": 20,
+    "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+    "fixedOriginInvocationHash": "a3f9b79ebe74a303e644988e288434e6def61c80912dd36619c55f11897abf27",
+    "cases": [
+      {
+        "scenario": "publisher-only",
+        "targetUrl": "",
+        "targetRevision": "df186e4d3dd1f875639093a708add94c14b2d3d8",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "endpoint",
+        "targetUrl": "http://127.0.0.1:9/g3-paired-endpoint",
+        "targetRevision": "fd20e608cb9057bc9fa33ce248e08ce3a7a46ec2",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "offline",
+        "targetUrl": "",
+        "targetRevision": null,
+        "home": "home-offline"
+      }
+    ],
+    "p95Method": "nearest rank ceil(.95*n), n=20; delta within each pair",
+    "cpuScope": "PowerShell process CPU during public command; excludes native Git/other child CPU, no profiler; not total process-tree CPU or wall time",
+    "modes": [
+      {
+        "mode": "publisher-only",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5236.2186,
+            "legacyMs": 4176.0455,
+            "deltaMs": 1060.1731,
+            "catalogCpuMs": 4453.125,
+            "legacyCpuMs": 3562.5,
+            "cpuDeltaMs": 890.625,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-01-catalog-result.json",
+            "legacyResult": "after-publisher-only-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5151.7964,
+            "legacyMs": 4247.9133,
+            "deltaMs": 903.8831,
+            "catalogCpuMs": 4671.875,
+            "legacyCpuMs": 3453.125,
+            "cpuDeltaMs": 1218.75,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-02-catalog-result.json",
+            "legacyResult": "after-publisher-only-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5302.9815,
+            "legacyMs": 4025.8838,
+            "deltaMs": 1277.0976999999998,
+            "catalogCpuMs": 4593.75,
+            "legacyCpuMs": 3578.125,
+            "cpuDeltaMs": 1015.625,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-03-catalog-result.json",
+            "legacyResult": "after-publisher-only-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5163.9461,
+            "legacyMs": 3807.9238,
+            "deltaMs": 1356.0223,
+            "catalogCpuMs": 4671.875,
+            "legacyCpuMs": 3343.75,
+            "cpuDeltaMs": 1328.125,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-04-catalog-result.json",
+            "legacyResult": "after-publisher-only-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5260.4971000000005,
+            "legacyMs": 3726.0058000000004,
+            "deltaMs": 1534.4913000000001,
+            "catalogCpuMs": 4906.25,
+            "legacyCpuMs": 3421.875,
+            "cpuDeltaMs": 1484.375,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-05-catalog-result.json",
+            "legacyResult": "after-publisher-only-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5163.0864,
+            "legacyMs": 3932.5433000000003,
+            "deltaMs": 1230.5430999999999,
+            "catalogCpuMs": 4671.875,
+            "legacyCpuMs": 3468.75,
+            "cpuDeltaMs": 1203.125,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-06-catalog-result.json",
+            "legacyResult": "after-publisher-only-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5222.5967,
+            "legacyMs": 3806.3949000000002,
+            "deltaMs": 1416.2017999999998,
+            "catalogCpuMs": 4734.375,
+            "legacyCpuMs": 3593.75,
+            "cpuDeltaMs": 1140.625,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-07-catalog-result.json",
+            "legacyResult": "after-publisher-only-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5217.9745,
+            "legacyMs": 4061.6353000000004,
+            "deltaMs": 1156.3392,
+            "catalogCpuMs": 4625,
+            "legacyCpuMs": 3515.625,
+            "cpuDeltaMs": 1109.375,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-08-catalog-result.json",
+            "legacyResult": "after-publisher-only-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 4980.875,
+            "legacyMs": 4058.8481,
+            "deltaMs": 922.0268999999998,
+            "catalogCpuMs": 4531.25,
+            "legacyCpuMs": 3828.125,
+            "cpuDeltaMs": 703.125,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-09-catalog-result.json",
+            "legacyResult": "after-publisher-only-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5028.2697,
+            "legacyMs": 4022.7778000000003,
+            "deltaMs": 1005.4918999999995,
+            "catalogCpuMs": 4609.375,
+            "legacyCpuMs": 3390.625,
+            "cpuDeltaMs": 1218.75,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-10-catalog-result.json",
+            "legacyResult": "after-publisher-only-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5008.0993,
+            "legacyMs": 4060.6355000000003,
+            "deltaMs": 947.4637999999995,
+            "catalogCpuMs": 4453.125,
+            "legacyCpuMs": 3437.5,
+            "cpuDeltaMs": 1015.625,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-11-catalog-result.json",
+            "legacyResult": "after-publisher-only-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5005.0566,
+            "legacyMs": 4106.6320000000005,
+            "deltaMs": 898.4245999999994,
+            "catalogCpuMs": 4734.375,
+            "legacyCpuMs": 3375,
+            "cpuDeltaMs": 1359.375,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-12-catalog-result.json",
+            "legacyResult": "after-publisher-only-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5254.1787,
+            "legacyMs": 4166.9071,
+            "deltaMs": 1087.2716,
+            "catalogCpuMs": 5015.625,
+            "legacyCpuMs": 3546.875,
+            "cpuDeltaMs": 1468.75,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-13-catalog-result.json",
+            "legacyResult": "after-publisher-only-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5316.894,
+            "legacyMs": 3886.7386,
+            "deltaMs": 1430.1554,
+            "catalogCpuMs": 4796.875,
+            "legacyCpuMs": 3640.625,
+            "cpuDeltaMs": 1156.25,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-14-catalog-result.json",
+            "legacyResult": "after-publisher-only-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5342.0795,
+            "legacyMs": 4157.6286,
+            "deltaMs": 1184.4508999999998,
+            "catalogCpuMs": 4531.25,
+            "legacyCpuMs": 3781.25,
+            "cpuDeltaMs": 750.0,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-15-catalog-result.json",
+            "legacyResult": "after-publisher-only-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5445.084,
+            "legacyMs": 3980.9736000000003,
+            "deltaMs": 1464.1103999999996,
+            "catalogCpuMs": 5328.125,
+            "legacyCpuMs": 3609.375,
+            "cpuDeltaMs": 1718.75,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-16-catalog-result.json",
+            "legacyResult": "after-publisher-only-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5312.0115000000005,
+            "legacyMs": 4035.8166,
+            "deltaMs": 1276.1949000000004,
+            "catalogCpuMs": 4843.75,
+            "legacyCpuMs": 3765.625,
+            "cpuDeltaMs": 1078.125,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-17-catalog-result.json",
+            "legacyResult": "after-publisher-only-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5206.5681,
+            "legacyMs": 4320.4058,
+            "deltaMs": 886.1623,
+            "catalogCpuMs": 4781.25,
+            "legacyCpuMs": 3500,
+            "cpuDeltaMs": 1281.25,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-18-catalog-result.json",
+            "legacyResult": "after-publisher-only-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 5141.6946,
+            "legacyMs": 4253.1881,
+            "deltaMs": 888.5064999999995,
+            "catalogCpuMs": 4906.25,
+            "legacyCpuMs": 3937.5,
+            "cpuDeltaMs": 968.75,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-19-catalog-result.json",
+            "legacyResult": "after-publisher-only-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 5406.7437,
+            "legacyMs": 3930.5326,
+            "deltaMs": 1476.2111,
+            "catalogCpuMs": 4875,
+            "legacyCpuMs": 3562.5,
+            "cpuDeltaMs": 1312.5,
+            "catalogStdoutBytes": 1129,
+            "legacyStdoutBytes": 2009,
+            "catalogResult": "after-publisher-only-20-catalog-result.json",
+            "legacyResult": "after-publisher-only-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 5220.2856,
+          "p95Ms": 5406.7437,
+          "minMs": 4980.875,
+          "maxMs": 5445.084
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 4047.33235,
+          "p95Ms": 4253.1881,
+          "minMs": 3726.0058000000004,
+          "maxMs": 4320.4058
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 1170.3950499999999,
+          "p95Ms": 1476.2111,
+          "minMs": 886.1623,
+          "maxMs": 1534.4913000000001
+        },
+        "catalogProcessCpu": {
+          "n": 20,
+          "medianMs": 4703.125,
+          "p95Ms": 5015.625,
+          "minMs": 4453.125,
+          "maxMs": 5328.125
+        },
+        "legacyProcessCpu": {
+          "n": 20,
+          "medianMs": 3554.6875,
+          "p95Ms": 3828.125,
+          "minMs": 3343.75,
+          "maxMs": 3937.5
+        },
+        "pairedProcessCpuDelta": {
+          "n": 20,
+          "medianMs": 1179.6875,
+          "p95Ms": 1484.375,
+          "minMs": 703.125,
+          "maxMs": 1718.75
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1129
+          ],
+          "legacy": [
+            2009
+          ]
+        }
+      },
+      {
+        "mode": "endpoint",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7874.9313,
+            "legacyMs": 4071.1164000000003,
+            "deltaMs": 3803.8149,
+            "catalogCpuMs": 7531.25,
+            "legacyCpuMs": 3515.625,
+            "cpuDeltaMs": 4015.625,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-01-catalog-result.json",
+            "legacyResult": "after-endpoint-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8367.1158,
+            "legacyMs": 4070.7797,
+            "deltaMs": 4296.3360999999995,
+            "catalogCpuMs": 7406.25,
+            "legacyCpuMs": 3421.875,
+            "cpuDeltaMs": 3984.375,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-02-catalog-result.json",
+            "legacyResult": "after-endpoint-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8047.2334,
+            "legacyMs": 4513.0487,
+            "deltaMs": 3534.1847,
+            "catalogCpuMs": 7578.125,
+            "legacyCpuMs": 3531.25,
+            "cpuDeltaMs": 4046.875,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-03-catalog-result.json",
+            "legacyResult": "after-endpoint-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8260.9908,
+            "legacyMs": 4223.443200000001,
+            "deltaMs": 4037.547599999999,
+            "catalogCpuMs": 7625,
+            "legacyCpuMs": 3843.75,
+            "cpuDeltaMs": 3781.25,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-04-catalog-result.json",
+            "legacyResult": "after-endpoint-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8519.2256,
+            "legacyMs": 3951.9981000000002,
+            "deltaMs": 4567.227499999999,
+            "catalogCpuMs": 7453.125,
+            "legacyCpuMs": 3421.875,
+            "cpuDeltaMs": 4031.25,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-05-catalog-result.json",
+            "legacyResult": "after-endpoint-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8173.6965,
+            "legacyMs": 4206.725100000001,
+            "deltaMs": 3966.9713999999994,
+            "catalogCpuMs": 7796.875,
+            "legacyCpuMs": 3859.375,
+            "cpuDeltaMs": 3937.5,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-06-catalog-result.json",
+            "legacyResult": "after-endpoint-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7928.2704,
+            "legacyMs": 4038.6463000000003,
+            "deltaMs": 3889.6241,
+            "catalogCpuMs": 7578.125,
+            "legacyCpuMs": 3500,
+            "cpuDeltaMs": 4078.125,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-07-catalog-result.json",
+            "legacyResult": "after-endpoint-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8048.1643,
+            "legacyMs": 4272.6389,
+            "deltaMs": 3775.5254000000004,
+            "catalogCpuMs": 7812.5,
+            "legacyCpuMs": 3453.125,
+            "cpuDeltaMs": 4359.375,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-08-catalog-result.json",
+            "legacyResult": "after-endpoint-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8271.9681,
+            "legacyMs": 3861.0328000000004,
+            "deltaMs": 4410.935299999999,
+            "catalogCpuMs": 7578.125,
+            "legacyCpuMs": 3359.375,
+            "cpuDeltaMs": 4218.75,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-09-catalog-result.json",
+            "legacyResult": "after-endpoint-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8124.1115,
+            "legacyMs": 4172.4885,
+            "deltaMs": 3951.6229999999996,
+            "catalogCpuMs": 7906.25,
+            "legacyCpuMs": 3593.75,
+            "cpuDeltaMs": 4312.5,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-10-catalog-result.json",
+            "legacyResult": "after-endpoint-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8296.4692,
+            "legacyMs": 4006.7583000000004,
+            "deltaMs": 4289.710899999999,
+            "catalogCpuMs": 7640.625,
+            "legacyCpuMs": 3437.5,
+            "cpuDeltaMs": 4203.125,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-11-catalog-result.json",
+            "legacyResult": "after-endpoint-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7845.241400000001,
+            "legacyMs": 4163.1974,
+            "deltaMs": 3682.044000000001,
+            "catalogCpuMs": 7500,
+            "legacyCpuMs": 3437.5,
+            "cpuDeltaMs": 4062.5,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-12-catalog-result.json",
+            "legacyResult": "after-endpoint-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8169.3671,
+            "legacyMs": 4252.354,
+            "deltaMs": 3917.0131,
+            "catalogCpuMs": 8250,
+            "legacyCpuMs": 3531.25,
+            "cpuDeltaMs": 4718.75,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-13-catalog-result.json",
+            "legacyResult": "after-endpoint-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8690.8123,
+            "legacyMs": 4288.4954,
+            "deltaMs": 4402.3169,
+            "catalogCpuMs": 7531.25,
+            "legacyCpuMs": 3718.75,
+            "cpuDeltaMs": 3812.5,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-14-catalog-result.json",
+            "legacyResult": "after-endpoint-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8154.8732,
+            "legacyMs": 4211.0221,
+            "deltaMs": 3943.8511,
+            "catalogCpuMs": 7375,
+            "legacyCpuMs": 3625,
+            "cpuDeltaMs": 3750,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-15-catalog-result.json",
+            "legacyResult": "after-endpoint-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 9243.898500000001,
+            "legacyMs": 4365.8894,
+            "deltaMs": 4878.009100000001,
+            "catalogCpuMs": 8375,
+            "legacyCpuMs": 3421.875,
+            "cpuDeltaMs": 4953.125,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-16-catalog-result.json",
+            "legacyResult": "after-endpoint-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8802.2588,
+            "legacyMs": 4574.6328,
+            "deltaMs": 4227.625999999999,
+            "catalogCpuMs": 7984.375,
+            "legacyCpuMs": 3718.75,
+            "cpuDeltaMs": 4265.625,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-17-catalog-result.json",
+            "legacyResult": "after-endpoint-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8725.049500000001,
+            "legacyMs": 4454.0162,
+            "deltaMs": 4271.033300000001,
+            "catalogCpuMs": 7578.125,
+            "legacyCpuMs": 3546.875,
+            "cpuDeltaMs": 4031.25,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-18-catalog-result.json",
+            "legacyResult": "after-endpoint-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8175.0896,
+            "legacyMs": 4290.0336,
+            "deltaMs": 3885.0560000000005,
+            "catalogCpuMs": 7375,
+            "legacyCpuMs": 3609.375,
+            "cpuDeltaMs": 3765.625,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-19-catalog-result.json",
+            "legacyResult": "after-endpoint-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 9014.9627,
+            "legacyMs": 4779.530000000001,
+            "deltaMs": 4235.432699999999,
+            "catalogCpuMs": 7843.75,
+            "legacyCpuMs": 3937.5,
+            "cpuDeltaMs": 3906.25,
+            "catalogStdoutBytes": 1630,
+            "legacyStdoutBytes": 1983,
+            "catalogResult": "after-endpoint-20-catalog-result.json",
+            "legacyResult": "after-endpoint-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 8218.0402,
+          "p95Ms": 9014.9627,
+          "minMs": 7845.241400000001,
+          "maxMs": 9243.898500000001
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 4217.23265,
+          "p95Ms": 4574.6328,
+          "minMs": 3861.0328000000004,
+          "maxMs": 4779.530000000001
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 4002.259499999999,
+          "p95Ms": 4567.227499999999,
+          "minMs": 3534.1847,
+          "maxMs": 4878.009100000001
+        },
+        "catalogProcessCpu": {
+          "n": 20,
+          "medianMs": 7578.125,
+          "p95Ms": 8250,
+          "minMs": 7375,
+          "maxMs": 8375
+        },
+        "legacyProcessCpu": {
+          "n": 20,
+          "medianMs": 3531.25,
+          "p95Ms": 3859.375,
+          "minMs": 3359.375,
+          "maxMs": 3937.5
+        },
+        "pairedProcessCpuDelta": {
+          "n": 20,
+          "medianMs": 4039.0625,
+          "p95Ms": 4718.75,
+          "minMs": 3750,
+          "maxMs": 4953.125
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1630
+          ],
+          "legacy": [
+            1983
+          ]
+        }
+      },
+      {
+        "mode": "offline",
+        "pairs": [
+          {
+            "block": 1,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 6683.1125,
+            "legacyMs": 5323.2378,
+            "deltaMs": 1359.8747000000003,
+            "catalogCpuMs": 4296.875,
+            "legacyCpuMs": 3156.25,
+            "cpuDeltaMs": 1140.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-01-catalog-result.json",
+            "legacyResult": "after-offline-01-legacy-result.json"
+          },
+          {
+            "block": 2,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 6544.1113000000005,
+            "legacyMs": 5182.8714,
+            "deltaMs": 1361.2399000000005,
+            "catalogCpuMs": 4125,
+            "legacyCpuMs": 2906.25,
+            "cpuDeltaMs": 1218.75,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-02-catalog-result.json",
+            "legacyResult": "after-offline-02-legacy-result.json"
+          },
+          {
+            "block": 3,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 6783.066900000001,
+            "legacyMs": 6061.8529,
+            "deltaMs": 721.2140000000009,
+            "catalogCpuMs": 4359.375,
+            "legacyCpuMs": 3171.875,
+            "cpuDeltaMs": 1187.5,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-03-catalog-result.json",
+            "legacyResult": "after-offline-03-legacy-result.json"
+          },
+          {
+            "block": 4,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7026.2636,
+            "legacyMs": 5666.3199,
+            "deltaMs": 1359.9436999999998,
+            "catalogCpuMs": 4718.75,
+            "legacyCpuMs": 2921.875,
+            "cpuDeltaMs": 1796.875,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-04-catalog-result.json",
+            "legacyResult": "after-offline-04-legacy-result.json"
+          },
+          {
+            "block": 5,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7798.832600000001,
+            "legacyMs": 5664.9276,
+            "deltaMs": 2133.9050000000007,
+            "catalogCpuMs": 4625,
+            "legacyCpuMs": 2953.125,
+            "cpuDeltaMs": 1671.875,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-05-catalog-result.json",
+            "legacyResult": "after-offline-05-legacy-result.json"
+          },
+          {
+            "block": 6,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7233.1502,
+            "legacyMs": 5732.362700000001,
+            "deltaMs": 1500.7874999999995,
+            "catalogCpuMs": 4546.875,
+            "legacyCpuMs": 2906.25,
+            "cpuDeltaMs": 1640.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-06-catalog-result.json",
+            "legacyResult": "after-offline-06-legacy-result.json"
+          },
+          {
+            "block": 7,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7354.6810000000005,
+            "legacyMs": 5269.4767,
+            "deltaMs": 2085.2043000000003,
+            "catalogCpuMs": 3968.75,
+            "legacyCpuMs": 3000,
+            "cpuDeltaMs": 968.75,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-07-catalog-result.json",
+            "legacyResult": "after-offline-07-legacy-result.json"
+          },
+          {
+            "block": 8,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 6471.8719,
+            "legacyMs": 5563.2477,
+            "deltaMs": 908.6242000000002,
+            "catalogCpuMs": 4421.875,
+            "legacyCpuMs": 3171.875,
+            "cpuDeltaMs": 1250.0,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-08-catalog-result.json",
+            "legacyResult": "after-offline-08-legacy-result.json"
+          },
+          {
+            "block": 9,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 6505.001,
+            "legacyMs": 5703.923400000001,
+            "deltaMs": 801.0775999999996,
+            "catalogCpuMs": 4312.5,
+            "legacyCpuMs": 3281.25,
+            "cpuDeltaMs": 1031.25,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-09-catalog-result.json",
+            "legacyResult": "after-offline-09-legacy-result.json"
+          },
+          {
+            "block": 10,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8860.5094,
+            "legacyMs": 5712.9809000000005,
+            "deltaMs": 3147.5285000000003,
+            "catalogCpuMs": 5468.75,
+            "legacyCpuMs": 2953.125,
+            "cpuDeltaMs": 2515.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-10-catalog-result.json",
+            "legacyResult": "after-offline-10-legacy-result.json"
+          },
+          {
+            "block": 11,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7127.0072,
+            "legacyMs": 5875.1758,
+            "deltaMs": 1251.8314,
+            "catalogCpuMs": 4281.25,
+            "legacyCpuMs": 3078.125,
+            "cpuDeltaMs": 1203.125,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-11-catalog-result.json",
+            "legacyResult": "after-offline-11-legacy-result.json"
+          },
+          {
+            "block": 12,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 8835.7251,
+            "legacyMs": 5893.8986,
+            "deltaMs": 2941.826499999999,
+            "catalogCpuMs": 4875,
+            "legacyCpuMs": 3265.625,
+            "cpuDeltaMs": 1609.375,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-12-catalog-result.json",
+            "legacyResult": "after-offline-12-legacy-result.json"
+          },
+          {
+            "block": 13,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 8078.7727,
+            "legacyMs": 5574.9988,
+            "deltaMs": 2503.7739,
+            "catalogCpuMs": 5000,
+            "legacyCpuMs": 3281.25,
+            "cpuDeltaMs": 1718.75,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-13-catalog-result.json",
+            "legacyResult": "after-offline-13-legacy-result.json"
+          },
+          {
+            "block": 14,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7787.1611,
+            "legacyMs": 5567.9529,
+            "deltaMs": 2219.2082,
+            "catalogCpuMs": 5125,
+            "legacyCpuMs": 3484.375,
+            "cpuDeltaMs": 1640.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-14-catalog-result.json",
+            "legacyResult": "after-offline-14-legacy-result.json"
+          },
+          {
+            "block": 15,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7645.0225,
+            "legacyMs": 5590.0825,
+            "deltaMs": 2054.9399999999996,
+            "catalogCpuMs": 5062.5,
+            "legacyCpuMs": 3359.375,
+            "cpuDeltaMs": 1703.125,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-15-catalog-result.json",
+            "legacyResult": "after-offline-15-legacy-result.json"
+          },
+          {
+            "block": 16,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7798.6949,
+            "legacyMs": 5919.5721,
+            "deltaMs": 1879.1228,
+            "catalogCpuMs": 5218.75,
+            "legacyCpuMs": 3328.125,
+            "cpuDeltaMs": 1890.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-16-catalog-result.json",
+            "legacyResult": "after-offline-16-legacy-result.json"
+          },
+          {
+            "block": 17,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7155.534500000001,
+            "legacyMs": 5597.598800000001,
+            "deltaMs": 1557.9357,
+            "catalogCpuMs": 4656.25,
+            "legacyCpuMs": 3421.875,
+            "cpuDeltaMs": 1234.375,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-17-catalog-result.json",
+            "legacyResult": "after-offline-17-legacy-result.json"
+          },
+          {
+            "block": 18,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7405.8829000000005,
+            "legacyMs": 5917.9107,
+            "deltaMs": 1487.9722000000002,
+            "catalogCpuMs": 4953.125,
+            "legacyCpuMs": 3312.5,
+            "cpuDeltaMs": 1640.625,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-18-catalog-result.json",
+            "legacyResult": "after-offline-18-legacy-result.json"
+          },
+          {
+            "block": 19,
+            "order": [
+              "catalog",
+              "legacy"
+            ],
+            "catalogMs": 7494.689600000001,
+            "legacyMs": 6071.2676,
+            "deltaMs": 1423.4220000000005,
+            "catalogCpuMs": 5203.125,
+            "legacyCpuMs": 3546.875,
+            "cpuDeltaMs": 1656.25,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-19-catalog-result.json",
+            "legacyResult": "after-offline-19-legacy-result.json"
+          },
+          {
+            "block": 20,
+            "order": [
+              "legacy",
+              "catalog"
+            ],
+            "catalogMs": 7207.061900000001,
+            "legacyMs": 5810.2637,
+            "deltaMs": 1396.7982000000002,
+            "catalogCpuMs": 4875,
+            "legacyCpuMs": 3593.75,
+            "cpuDeltaMs": 1281.25,
+            "catalogStdoutBytes": 1189,
+            "legacyStdoutBytes": 1232,
+            "catalogResult": "after-offline-20-catalog-result.json",
+            "legacyResult": "after-offline-20-legacy-result.json"
+          }
+        ],
+        "catalog": {
+          "n": 20,
+          "medianMs": 7293.9156,
+          "p95Ms": 8835.7251,
+          "minMs": 6471.8719,
+          "maxMs": 8860.5094
+        },
+        "legacy": {
+          "n": 20,
+          "medianMs": 5685.121650000001,
+          "p95Ms": 6061.8529,
+          "minMs": 5182.8714,
+          "maxMs": 6071.2676
+        },
+        "pairedDelta": {
+          "n": 20,
+          "medianMs": 1494.3798499999998,
+          "p95Ms": 2941.826499999999,
+          "minMs": 721.2140000000009,
+          "maxMs": 3147.5285000000003
+        },
+        "catalogProcessCpu": {
+          "n": 20,
+          "medianMs": 4687.5,
+          "p95Ms": 5218.75,
+          "minMs": 3968.75,
+          "maxMs": 5468.75
+        },
+        "legacyProcessCpu": {
+          "n": 20,
+          "medianMs": 3218.75,
+          "p95Ms": 3546.875,
+          "minMs": 2906.25,
+          "maxMs": 3593.75
+        },
+        "pairedProcessCpuDelta": {
+          "n": 20,
+          "medianMs": 1625.0,
+          "p95Ms": 1890.625,
+          "minMs": 968.75,
+          "maxMs": 2515.625
+        },
+        "stdoutBytes": {
+          "catalog": [
+            1189
+          ],
+          "legacy": [
+            1232
+          ]
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "label": "after-endpoint-diagnostic-catalog",
+        "variant": "catalog",
+        "mode": "endpoint",
+        "startupMs": 8532.391800000001,
+        "startupCpuMs": 7250,
+        "wholeCliMs": 11530.806400000001,
+        "processCpuMs": 9546.875,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 15,
+        "allPreviewEvents": 25,
+        "outcome": "full-managed-sync"
+      },
+      {
+        "label": "after-endpoint-diagnostic-legacy",
+        "variant": "legacy",
+        "mode": "endpoint",
+        "startupMs": null,
+        "startupCpuMs": null,
+        "wholeCliMs": 4943.0729,
+        "processCpuMs": 3453.125,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 0,
+        "allPreviewEvents": 0,
+        "outcome": "full-managed-sync"
+      },
+      {
+        "label": "after-offline-diagnostic-catalog",
+        "variant": "catalog",
+        "mode": "offline",
+        "startupMs": 3943.8162,
+        "startupCpuMs": 1125,
+        "wholeCliMs": 7950.6999000000005,
+        "processCpuMs": 4609.375,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 0,
+        "allPreviewEvents": 10,
+        "outcome": "full-managed-sync"
+      },
+      {
+        "label": "after-offline-diagnostic-legacy",
+        "variant": "legacy",
+        "mode": "offline",
+        "startupMs": null,
+        "startupCpuMs": null,
+        "wholeCliMs": 6032.6205,
+        "processCpuMs": 3296.875,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 0,
+        "allPreviewEvents": 0,
+        "outcome": "legacy-provider-connections-preserved"
+      },
+      {
+        "label": "after-publisher-only-diagnostic-catalog",
+        "variant": "catalog",
+        "mode": "publisher-only",
+        "startupMs": 2868.1654000000003,
+        "startupCpuMs": 1578.125,
+        "wholeCliMs": 6827.1803,
+        "processCpuMs": 4734.375,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 0,
+        "allPreviewEvents": 10,
+        "outcome": "full-managed-sync"
+      },
+      {
+        "label": "after-publisher-only-diagnostic-legacy",
+        "variant": "legacy",
+        "mode": "publisher-only",
+        "startupMs": null,
+        "startupCpuMs": null,
+        "wholeCliMs": 5022.1681,
+        "processCpuMs": 3406.25,
+        "fetchCount": 1,
+        "httpProbes": 0,
+        "preMainPreviewEvents": 0,
+        "allPreviewEvents": 0,
+        "outcome": "full-managed-sync"
+      }
+    ],
+    "allOutliersRetained": true,
+    "modelTurns": 0,
+    "liveMcpCalls": 0
+  },
+  "warmNoOp": {
+    "samples": 20,
+    "observer": "full, original startup import-to-main boundaries",
+    "medianMs": 1049.731,
+    "p95Ms": 1240.7921000000001,
+    "minMs": 813.0698,
+    "maxMs": 1473.1295,
+    "goalMedianMs": 1000,
+    "goalP95Ms": 2000,
+    "passed": false,
+    "allNineInputGuardsPassed": true,
+    "allOutliersRetained": true
+  },
+  "moduleLoadCalibration": {
+    "pairs": 8,
+    "oldMedianMs": 13.435950000000002,
+    "newMedianMs": 13.82065,
+    "pairedDeltaMedianMs": 0.559899999999999,
+    "pairedDeltasMs": [
+      -15.180700000000002,
+      1.8038999999999987,
+      -0.2757000000000005,
+      2.2348,
+      -2.2645999999999997,
+      2.2842000000000002,
+      -1.5146999999999995,
+      1.3954999999999984
+    ],
+    "scope": "module-only fresh process controls, not full Startup attribution or acceptance"
+  },
+  "nativeGitCounts": [
+    {
+      "mode": "publisher-only",
+      "side": "before",
+      "file": "build\\test-results\\g3\\paired-modes-20261024\\fixed-publisher-only-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 5,
+        "fetch": 1,
+        "merge": 1,
+        "show": 3
+      }
+    },
+    {
+      "mode": "publisher-only",
+      "side": "after",
+      "file": "build\\test-results\\g3\\publisher-cost-repair-20261024\\after-publisher-only-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 5,
+        "fetch": 1,
+        "merge": 1,
+        "show": 3
+      }
+    },
+    {
+      "mode": "endpoint",
+      "side": "before",
+      "file": "build\\test-results\\g3\\paired-modes-20261024\\fixed-endpoint-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 5,
+        "fetch": 1,
+        "merge": 1,
+        "show": 3
+      }
+    },
+    {
+      "mode": "endpoint",
+      "side": "after",
+      "file": "build\\test-results\\g3\\publisher-cost-repair-20261024\\after-endpoint-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 5,
+        "fetch": 1,
+        "merge": 1,
+        "show": 3
+      }
+    },
+    {
+      "mode": "offline",
+      "side": "before",
+      "file": "build\\test-results\\g3\\paired-modes-20261024\\offline2-offline-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 6,
+        "fetch": 1,
+        "show": 6
+      }
+    },
+    {
+      "mode": "offline",
+      "side": "after",
+      "file": "build\\test-results\\g3\\publisher-cost-repair-20261024\\after-offline-diagnostic-catalog-git.jsonl",
+      "counts": {
+        "rev-parse": 4,
+        "fetch": 1,
+        "show": 3
+      }
+    }
+  ],
+  "caseSemantics": {
+    "baseRevision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+    "cases": [
+      {
+        "scenario": "publisher-only",
+        "targetUrl": "",
+        "targetRevision": "df186e4d3dd1f875639093a708add94c14b2d3d8",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "endpoint",
+        "targetUrl": "http://127.0.0.1:9/g3-paired-endpoint",
+        "targetRevision": "fd20e608cb9057bc9fa33ce248e08ce3a7a46ec2",
+        "home": "home-seed"
+      },
+      {
+        "scenario": "offline",
+        "targetUrl": "",
+        "targetRevision": null,
+        "home": "home-offline"
+      }
+    ],
+    "publisherChanged": [
+      "publishedAt"
+    ],
+    "endpointChanged": [
+      "hosts[dev-ermakov].servers[graph].url"
+    ],
+    "verified": true,
+    "verifierCorrection": "Initial post-analysis check expected old harness publication marker; corrected to declared g3-publisher-cost-repair-20261024. No primary data changed."
+  },
+  "historicalComparison": {
+    "report": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\openspec\\changes\\add-product-project-registry\\evidence\\g3-paired-dynamic-cost-2026-10-24.json",
+    "sha256": "40b4fbf9506571ad0a592a2c3a295bf2a55a199ba9785703a198677e3a1cfe88",
+    "before": [
+      {
+        "mode": "publisher-only",
+        "catalogMedianMs": 15901.2057,
+        "legacyMedianMs": 10595.328550000002,
+        "pairedDeltaMedianMs": 6205.672550000001
+      },
+      {
+        "mode": "endpoint",
+        "catalogMedianMs": 19699.95085,
+        "legacyMedianMs": 8819.83875,
+        "pairedDeltaMedianMs": 10543.994250000002
+      },
+      {
+        "mode": "offline",
+        "catalogMedianMs": 12646.13135,
+        "legacyMedianMs": 8580.27325,
+        "pairedDeltaMedianMs": 3801.00345
+      }
+    ],
+    "causalSpeedupClaim": false,
+    "reason": "Sequential package runs on a shared busy host; legacy time also changed materially; no percent improvement attributed to code alone"
+  },
+  "mainWriterDecision": {
+    "decision": "retain normal main preview; no implementation",
+    "reason": "After publisher-only startup bypass, main preview is the one current read of on-demand executable availability and UI tool readiness, which are not fully represented by cached noOpInputs; skipping it needs a separate complete dependency contract or cache and is unnecessary for this bounded repair",
+    "evidence": [
+      "agent-1c.ondemand-mcp.ps1 Write-ItlOnDemandMcpClientConfig executable Test-Path",
+      "agent-1c.ui-tools.ps1 Sync-ItlUiToolsMcp readiness producers"
+    ],
+    "unrunPrototype": "final/ prepared only, no update, lease or measurement executed; no main fast path was implemented",
+    "proposedTestNotExecuted": true,
+    "existingChecksWeakened": false
+  },
+  "preservation": {
+    "historicalRoots": [
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5",
+        "head": "6de621e48689c9cce297d0fc3419449fa1d7c31d",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight",
+        "head": "9269a4fb1cd8f267eccea4a0ca8884b394f0346b",
+        "untracked": []
+      },
+      {
+        "changed": [
+          ".agent-1c/project.json"
+        ],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project",
+        "head": "308ac59380112deb797e3eaeafbfa115bd605f4a",
+        "untracked": []
+      },
+      {
+        "changed": [],
+        "root": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch",
+        "head": "1db160699bc69643e5d7f926139846b009f2f754",
+        "untracked": []
+      }
+    ],
+    "capsule": {
+      "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+      "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "artifactsVerified": 11
+    },
+    "originRevision": "c943f8e6ca1f536b2c3692e4bf4115d8daf84351",
+    "utc": "2026-10-24T11:13:19.2194356Z",
+    "currentRoots": [
+      {
+        "untracked": [],
+        "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+        "changed": [],
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "head": "160616d6a310b8401f23da0cc44361943970f7fd"
+      },
+      {
+        "untracked": [],
+        "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+        "changed": [],
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "head": "48062b1e0672515586ba829000ca2c3b5116c8cd"
+      }
+    ],
+    "historicalFiles": [
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.agent-1c\\release-e2e.json",
+        "sha256": "bf5cef7d0cbf2aaf364e920af4d4c31d6680893ccb187e3b364081f4a5981c92",
+        "bytes": 34718
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5-workflow-release-e2e-preflight\\.agent-1c\\dev-branches\\workflow-release-e2e-preflight.json",
+        "sha256": "9d9888c6a5f77cd2b051ce3a69ccadaf5162bfd383a35fcc3d25a761a5f64456",
+        "bytes": 21228
+      },
+      {
+        "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+        "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+        "bytes": 8643
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\legacy-caller-20261020\\late-restore-format.diff",
+        "sha256": "0e9f8753905740798c313a587628e5375e912603b1684eefd4f77e7121c4dc38",
+        "bytes": 5277
+      },
+      {
+        "path": "C:\\itlj\\g3-legacy-caller-20261020\\q Проект\\develop-c2c570fe1ec5-c264cbe52ed7-2b787635\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+        "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+        "bytes": 3295928320
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\DataProcessors\\упо_ПомощникПереходаИзРМ4ВРМ5\\Forms\\Форма\\Ext\\Form\\Module.bsl",
+        "sha256": "67cd5e318d5b2c40d3cb513a435b7c2b07fac24572915d314c80b7cce3289782",
+        "bytes": 844555
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\Configuration.xml",
+        "sha256": "bb127cb4e355cf2d23e8ec5d7acde9bb4f35198aa9492bbf6230d511fcd86faa",
+        "bytes": 525269
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\src\\cf\\InformationRegisters\\упо_ОшибкиОтраженияДокументовВПроектномБюджетировании.xml",
+        "sha256": "484c1f0de97c1f856328b71a0c1a7851042a93e484912a0a0dd0ca95a171db2d",
+        "bytes": 13917
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-rejection20261020-125958-768-40636-c5337f9a.json",
+        "sha256": "ff6c8e909e30dcd73830c42bf678586a6e008d2832ee8cad33792fc3b33e433d",
+        "bytes": 2739
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-gate6-configuration-20261020-125134-031-40636-327a5286.result",
+        "sha256": "2f4c9d6172031c39c0f142273e263da9077f93986c9f206584bdff275c92db05",
+        "bytes": 6
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125134-040-40636-27494daf.log",
+        "sha256": "6631d07d3f9c4900c1e0ac540ba644695c728791ed3d3ea4997402f9ab971726",
+        "bytes": 141700
+      },
+      {
+        "path": "C:\\itlj\\g3-prompt-20261020\\q Проект\\develop-c2c570fe1ec5-2f996692108d-599e6611\\branch\\logs\\1c\\1c-20261020-125843-740-40636-4c252572.log",
+        "sha256": "6230fbd57642780232514940803af334476e724f1f9a359667ef31004e9f8cd4",
+        "bytes": 93
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "8ec8af0a98f4a91b11f97942841feb0f1afa223732621a18ee55c0e69c546a4c",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-capsule-recovery-20261020\\q Проект\\develop-c2c570fe1ec5-b4338057d74f-e77efefc\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "6e3c249ea46e1451489e39e0489c890c6d69fc772c0d623603fdb8ccd95cd796",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\project.json",
+        "sha256": "05d773cf1c9d54674d8e9900d5aef5892cb02867152f2e010bb1eea1b71ff391",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\project\\.agent-1c\\dependency-lock.json",
+        "sha256": "b4b97e15b003ced4a2d176705e859de6ee0dbff615b8d397cedf4702f61cf541",
+        "bytes": 16521
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\project.json",
+        "sha256": "ed4daf2f5c3429f9ba0a636c8eb09b1df7809a5d0136bcab7030ec5312d662df",
+        "bytes": 2793
+      },
+      {
+        "path": "C:\\itlj\\g3-enrollment-20261020\\q Проект\\develop-c2c570fe1ec5-8ee68833c1e9-2069d528\\branch\\.agent-1c\\dependency-lock.json",
+        "sha256": "5c06d4e1ba1c6dbb542746e62d1a9a040eaaef0ff40b1dedde8da981eb526beb",
+        "bytes": 16521
+      }
+    ],
+    "runtime": [
+      {
+        "beforeSha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        "sha256": "030ea32bedb5fea318cc4fad15edb49d1c0c2ca4c4c8b4a45fbfeee5b38779a4",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+        "sha256": "2ca646fd8c0e7844480f8d6628f39da34b5e34aef5accaf7555d333bb66c8232",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+        "sha256": "e3cf8bfc951a75d966ca4fab8e8bd7819e756b65b6dffd3e41c4983d12cb8428",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": null,
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-jsonc.ps1",
+        "sha256": null,
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+        "sha256": "68f01db2beee1941ab58a57d366d861b9fc47c3d47b6e1d726f0f53befe95b3a",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+        "sha256": "dc8c5776be672b638ecba0159db7f011724ab11495f24f8c4bf73f1e0546c0e8",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        "sha256": "fd87a9335325764611a1c59cf0ba4fa89c728ec20c05ec61e04eeab2097d164f",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+        "sha256": "7959c8fb846516305a2a43d39bcd46f98d5ed265e5c1ef50c75cb16ed34d66fc",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "5413a3442d5fc92e60460eda5550737574f609d429b20a15f26bbfaa49db9a67",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "sha256": "d101f84193286312fcb0576b21d9e037abf8f822b76d0affe5883d9ad1170d3d",
+        "sourceEqualsInstalled": true
+      },
+      {
+        "beforeSha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+        "sha256": "5cf5a7a2d337fa40cf36e0220c326e29a100b838325bc7b3bf85f6434e59f818",
+        "sourceEqualsInstalled": true
+      }
+    ],
+    "allPreserved": true,
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    }
+  },
+  "originalGuardPaths": 46,
+  "priorManifests": {
+    "utc": "2026-10-24T11:18:04.884351+00:00",
+    "manifests": [
+      {
+        "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\paired-modes-20261024\\raw-evidence-manifest.json",
+        "sha256": "7cc2561cd9a1e3b6234c41259436a7f46f244a94d5ab40651fbc54eea80ce522",
+        "files": 2952
+      },
+      {
+        "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\completion-20261023\\raw-evidence-manifest.json",
+        "sha256": "34af1dc8c747868742d6a330b3a7e57d770f08eaa86740e5171206d4b4e34df4",
+        "files": 702
+      },
+      {
+        "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\cost-baseline-20261024\\raw-evidence-manifest.json",
+        "sha256": "2afb421ee52c3c8d0c2b31b4ddf0ff31218178b8f6d096e55dfa05b0b2b2b6e0",
+        "files": 659
+      },
+      {
+        "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\native-pm5-clients-20261024\\raw-evidence-manifest.json",
+        "sha256": "b9901b815b7f16888bcd319089fde1ac8cc3f01e495711612e61491f2aaf1932",
+        "files": 486
+      },
+      {
+        "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\remaining-20261024\\raw-evidence-manifest.json",
+        "sha256": "44d09f51696c0817e38ac2aaeee732ded2595d9e99dab1631117675135ca84f3",
+        "files": 793
+      }
+    ],
+    "filesVerified": 5592,
+    "allPreserved": true
+  },
+  "rawEvidence": {
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\publisher-cost-repair-20261024",
+    "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\publisher-cost-repair-20261024\\raw-evidence-manifest.json",
+    "sha256": "fab1cf123fc566cd8a4fb5ce9626cd970fd2fa2a69f5cbb73335f015b8b80f0b",
+    "files": 2535,
+    "lateDeliverySeparate": true
+  },
+  "remaining": [
+    "G3-PM5-WARM-STARTUP-MEDIAN: current median 1049.731ms exceeds 1000ms by49.731ms; p95 1240.7921ms satisfies2000ms; no relaxation or pass rerun",
+    "Full B1-B4/platform/PM4/native client/installed lifecycle matrix",
+    "B5 cold/stalled remote/other platform and client cost scope",
+    "Mandatory pre-release registry population AC36-38 / memory AC44"
+  ],
+  "notRun": [
+    "Native OpenCode skipped by user",
+    "Gate6",
+    "G4",
+    "working-project migration",
+    "workflow/shared registry publication",
+    "live MCP tools",
+    "model turns",
+    "1C"
+  ],
+  "noAlwaysOnContextOrToolSchemaChange": true
+}
