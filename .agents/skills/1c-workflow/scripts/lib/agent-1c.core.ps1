@@ -4215,6 +4215,7 @@ function Sync-WorkflowManagedDependencyLockEntries {
     }
     $before = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $manifest = Get-WorkflowDependencySyncManifest -Plan $plan -Before $before
+    $persistedMode = [string]$manifest.mode
     $changed = (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $before) -Depth 100 -Compress) -cne
         (ConvertTo-Json (ConvertTo-DependencyLockComparableValue $manifest) -Depth 100 -Compress)
     if ($changed) {
@@ -4224,18 +4225,18 @@ function Sync-WorkflowManagedDependencyLockEntries {
     $config = Get-Variable -Name ConfigPath -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $config -and $config.Value -and (Test-Path -LiteralPath ([string]$config.Value))) {
         $project = Read-Utf8Text -Path ([string]$config.Value) | ConvertFrom-Json
-        if ([string](Get-ConfigValueFromObject $project 'dependencyMode' '') -ne 'workflow') {
-            $project | Add-Member -NotePropertyName dependencyMode -NotePropertyValue workflow -Force
+        if ([string](Get-ConfigValueFromObject $project 'dependencyMode' '') -ne $persistedMode) {
+            $project | Add-Member -NotePropertyName dependencyMode -NotePropertyValue $persistedMode -Force
             Write-Utf8TextAtomic -Path ([string]$config.Value) -Value (($project | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
             Read-ProjectConfig
         }
     }
     if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.dev.env')) {
-        if ([string](Get-EnvValue -Name DEPENDENCY_MODE -Default '') -ne 'workflow') {
-            Set-DotEnvValues -Values @{ DEPENDENCY_MODE = 'workflow' }
+        if ([string](Get-EnvValue -Name DEPENDENCY_MODE -Default '') -ne $persistedMode) {
+            Set-DotEnvValues -Values @{ DEPENDENCY_MODE = $persistedMode }
         }
     }
-    return [pscustomobject]@{ mode='workflow'; changed=$changed; entries=@(Get-WorkflowManagedDependencyLockEntryNames) }
+    return [pscustomobject]@{ mode=$persistedMode; changed=$changed; entries=@(Get-WorkflowManagedDependencyLockEntryNames) }
 }
 
 function Update-DependencyLockEntry {
@@ -4270,7 +4271,9 @@ function Update-DependencyLockEntry {
     $entry["updatedAt"] = (Get-Date).ToString("o")
     $dependencies[$Name] = $entry
     $manifest["dependencies"] = $dependencies
-    $manifest["mode"] = "workflow"
+    $wire = Get-WorkflowDependencyWireFormat
+    $manifest["schemaVersion"] = $wire.schemaVersion
+    $manifest["mode"] = $wire.mode
     Write-DependencyLockManifest -Manifest $manifest
 }
 

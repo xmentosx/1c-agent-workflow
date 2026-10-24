@@ -1,0 +1,72 @@
+{
+  "observedUtc": "2026-10-24T18:26:02.961451+00:00",
+  "implementationCommit": "6673930a8c152b6de7a5b9fc7190da89b6eb483e",
+  "status": "MODE_FIX_TESTED_NATIVE_DOWNGRADE_BLOCKED_FURTHER_PAUSED",
+  "namedModeBlockerClosed": false,
+  "fullG3Accepted": false,
+  "oldSourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+  "tests": {
+    "stage": "owners-v2",
+    "durationMs": 459564,
+    "files": [
+      "tests/pester/DependencyLocks.Tests.ps1",
+      "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+    ],
+    "allOwners": true,
+    "skipped": 0,
+    "passed": 97,
+    "notRun": 0,
+    "failed": 0
+  },
+  "modernPrecondition": [
+    {
+      "workflow": "6673930a8c152b6de7a5b9fc7190da89b6eb483e",
+      "lockMode": "workflow",
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+      "projectMode": "workflow",
+      "schemaVersion": 2,
+      "envMode": "DEPENDENCY_MODE=workflow"
+    },
+    {
+      "workflow": "6673930a8c152b6de7a5b9fc7190da89b6eb483e",
+      "lockMode": "workflow",
+      "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "projectMode": "workflow",
+      "schemaVersion": 2,
+      "envMode": "DEPENDENCY_MODE=workflow"
+    }
+  ],
+  "upgrade": {
+    "exitCode": 0,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v2-upgrade-native\\update-workflow-95e8b95087144b928820c045fd585e8b.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v2-upgrade-native\\update-workflow-95e8b95087144b928820c045fd585e8b.stderr.log",
+    "durationMs": 290120
+  },
+  "directDowngrade": {
+    "exitCode": 1,
+    "stdout": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v2-downgrade-native\\update-workflow-a0fd2d58c1e44f4f84b6367335dce9ee.stdout.log",
+    "stderr": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024\\direct-v2-downgrade-native\\update-workflow-a0fd2d58c1e44f4f84b6367335dce9ee.stderr.log",
+    "durationMs": 87125
+  },
+  "newBlocker": {
+    "id": "G3-MANAGED-DOWNGRADE-AI-RULES-NOT-NEWER",
+    "error": "ai_rules_1c migration is blocked (not-newer): target downstream revision is not newer than the installed controlled fork. Recovery report: C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\runs\\ai-rules-migration-recovery-20261024-212321-787\\recovery-report.json"
+  },
+  "pendingSnapshot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-400b27db91cc4fdb80a81e70a998ad29",
+  "snapshotId": "400b27db91cc4fdb80a81e70a998ad29",
+  "finalPreservationAndDirectSuccessProofNotExecuted": true,
+  "rawRoot": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\downgrade-mode-repair-20261024",
+  "rawSealed": false,
+  "pausedForColdAB": {
+    "threadId": "01a16ac9-2534-7ad2-bacd-63ca076c80fe",
+    "authorizedByUser": true,
+    "newTestsRegistrationAndLifecycleDeferred": true
+  },
+  "scope": {
+    "openCodeSkipped": true,
+    "gate6": false,
+    "g4": false,
+    "workingMigration": false,
+    "publication": false
+  }
+}

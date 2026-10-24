@@ -98,6 +98,142 @@
     }
 }
 
+Describe 'Legacy dependency handoff uses the existing update snapshot' -Tag G3DowngradeDependencyMode {
+    It 'does not replay bundle writers after legacy <phase>' -ForEach @(@{phase='master-commit-ready'},@{phase='master-committed'}) {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive ('Legacy committed '+$phase))
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $template=ConvertTo-Agent1cHashtable (New-DefaultDependencyLockManifest)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'templates')|Out-Null
+        $template.schemaVersion=1;$template.mode='fresh'
+        Write-Utf8Text (Join-Path $fixture.root 'templates/dependency-lock.json') ($template|ConvertTo-Json -Depth 100)
+        $template.mode='locked';Write-DependencyLockManifest $template
+        $plan=Get-WorkflowDependencyPlan -SourceRoot $fixture.root
+        $source=[pscustomobject]@{root=$repoRoot;commit=('b'*40);source='path';ref='master';repo='fixture'}
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','templates','.agent-1c/project.json','.agent-1c/dependency-lock.json','.dev.env') -SnapshotParent (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase $phase
+        Mock Invoke-AiRulesBaselineMigration {throw 'A commit checkpoint must not replay rules migration'}
+        Mock Sync-WorkflowManagedDependencyLockEntries {throw 'A commit checkpoint must not replay dependency sync'}
+        Mock Invoke-Agent1cFreshProcess {
+            (Get-WorkflowUpdatePendingSnapshot).receipt.phase|Should -BeExactly $phase
+            Assert-WorkflowUpdateSnapshotCurrentState -Pending (Get-WorkflowUpdatePendingSnapshot)
+            [pscustomobject]@{exitCode=1}
+        }
+        {Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $snapshot -Source $source}|Should -Throw '*master commit checkpoint is preserved*'
+        Should -Invoke Invoke-AiRulesBaselineMigration -Times 0 -Exactly
+        Should -Invoke Sync-WorkflowManagedDependencyLockEntries -Times 0 -Exactly
+        Should -Invoke Invoke-Agent1cFreshProcess -Times 1 -Exactly
+        (Get-WorkflowUpdatePendingSnapshot).receipt.phase|Should -BeExactly $phase
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending (Get-WorkflowUpdatePendingSnapshot)
+    }
+    It 'retains the rules owner refusal and honors SkipAiRules=<skip>' -ForEach @(@{skip=$false},@{skip=$true}) {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive ('Legacy rules boundary '+$skip))
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $template=ConvertTo-Agent1cHashtable (New-DefaultDependencyLockManifest)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'templates')|Out-Null
+        $template.schemaVersion=1;$template.mode='fresh'
+        Write-Utf8Text (Join-Path $fixture.root 'templates/dependency-lock.json') ($template|ConvertTo-Json -Depth 100)
+        Write-DependencyLockManifest $template
+        $source=[pscustomobject]@{root=$repoRoot;commit=('b'*40);source='path';ref='master';repo='fixture'}
+        $plan=Get-WorkflowDependencyPlan -SourceRoot $fixture.root
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','templates','.agent-1c/project.json','.agent-1c/dependency-lock.json','.dev.env') -SnapshotParent (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-failed
+        Mock Add-WorkflowDotEnvPolicySnapshotPaths {}
+        Mock Invoke-AiRulesBaselineMigration { [pscustomobject]@{migrated=$false;suppressRegularUpdate=$true;status='not-newer';reason='fixture refusal'} }
+        Mock Invoke-Agent1cFreshProcess { throw 'fixture child reached' }
+        $SkipAiRules=$skip
+        if($skip){
+            {Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $snapshot -Source $source}|Should -Throw '*fixture child reached*'
+            Should -Invoke Invoke-AiRulesBaselineMigration -Times 0 -Exactly
+            Should -Invoke Invoke-Agent1cFreshProcess -Times 1 -Exactly
+        }else{
+            {Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $snapshot -Source $source}|Should -Throw '*ai_rules_1c migration is blocked (not-newer)*'
+            Should -Invoke Invoke-AiRulesBaselineMigration -Times 1 -Exactly
+            Should -Invoke Invoke-Agent1cFreshProcess -Times 0 -Exactly
+        }
+        $pending=Get-WorkflowUpdatePendingSnapshot
+        $pending.receipt.phase|Should -BeExactly 'post-copy-failed'
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+    }
+    It 'replaces an explicit modern mode exactly once in the child command without changing the parent arguments' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Legacy child arguments')
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $script:Agent1cReexecArguments=@('-Action','help','-DependencyMode','workflow','-LifecyclePhase','old-phase')
+        Mock Invoke-ItlNativeProcessCapture {
+            param($Arguments)
+            @($Arguments|Where-Object {$_ -ieq '-DependencyMode'}).Count|Should -Be 1
+            @($Arguments|Where-Object {$_ -ieq '-LifecyclePhase'}).Count|Should -Be 1
+            ($Arguments -join '|')|Should -Match '-LifecyclePhase\|post-copy\|-DependencyMode\|locked$'
+            $Arguments|Should -Not -Contain workflow
+            $Arguments|Should -Not -Contain old-phase
+            [pscustomobject]@{exitCode=0;stdout='';stderr=''}
+        }
+        $result=Invoke-Agent1cFreshProcess -AdditionalArguments @('-LifecyclePhase','post-copy','-DependencyMode','locked') -ReturnExitStatus
+        $result.exitCode|Should -Be 0
+        $script:Agent1cReexecArguments|Should -Contain workflow
+        Should -Invoke Invoke-ItlNativeProcessCapture -Times 1 -Exactly
+    }
+    It 'hands readable settings to the fresh child and restores exact prior bytes after its failure' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Downgrade протокол с пробелом')
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $template=ConvertTo-Agent1cHashtable (New-DefaultDependencyLockManifest)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'templates')|Out-Null
+        $template.schemaVersion=1;$template.mode='fresh'
+        Write-Utf8Text (Join-Path $fixture.root 'templates/dependency-lock.json') ($template|ConvertTo-Json -Depth 100)
+        $template.schemaVersion=2;$template.mode='workflow'
+        Write-DependencyLockManifest $template
+        $config=Read-Utf8Text $script:ConfigPath|ConvertFrom-Json
+        $config|Add-Member -NotePropertyName dependencyMode -NotePropertyValue workflow -Force
+        Write-Utf8Text $script:ConfigPath ($config|ConvertTo-Json -Depth 100)
+        Set-DotEnvValues -Values @{DEPENDENCY_MODE='workflow'}
+        Write-Utf8Text (Join-Path $fixture.root '.ai-rules.json') 'original rules manifest'
+        $original=@{}
+        foreach($rel in @('.agent-1c/project.json','.agent-1c/dependency-lock.json','.dev.env','.ai-rules.json')){
+            $original[$rel]=[IO.File]::ReadAllBytes((Join-Path $fixture.root $rel))
+        }
+        $source=[pscustomobject]@{root=$repoRoot;commit=('b'*40);source='path';ref='master';repo='fixture'}
+        $plan=Get-WorkflowDependencyPlan -SourceRoot $fixture.root
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','templates','.agent-1c/project.json','.agent-1c/dependency-lock.json','.dev.env','.ai-rules.json') -SnapshotParent (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-failed
+        Mock Add-WorkflowDotEnvPolicySnapshotPaths {}
+        Mock Invoke-AiRulesBaselineMigration {
+            (Get-WorkflowDependencyPlan).workflowTransition|Should -BeTrue
+            Write-Utf8Text (Join-Path $script:ProjectRoot '.ai-rules.json') 'selected legacy rules manifest'
+            [pscustomobject]@{migrated=$true;suppressRegularUpdate=$true;status='migrated'}
+        }
+        Mock Invoke-Agent1cFreshProcess {
+            param($AdditionalArguments)
+            [Environment]::GetEnvironmentVariable('DEPENDENCY_MODE', 'Process')|Should -BeExactly 'locked'
+            ($AdditionalArguments -join '|')|Should -BeExactly '-LifecyclePhase|post-copy|-DependencyMode|locked'
+            (Read-DependencyLockManifest).mode|Should -BeExactly 'locked'
+            (Read-Utf8Text $script:ConfigPath|ConvertFrom-Json).dependencyMode|Should -BeExactly 'locked'
+            (Read-Utf8Text (Join-Path $script:ProjectRoot '.dev.env'))|Should -Match '(?m)^DEPENDENCY_MODE=locked\r?$'
+            $pending=Get-WorkflowUpdatePendingSnapshot
+            $pending.receipt.dependencyPlan.manifest.mode|Should -BeExactly 'workflow'
+            Read-Utf8Text (Join-Path $script:ProjectRoot '.ai-rules.json')|Should -BeExactly 'selected legacy rules manifest'
+            Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+            [pscustomobject]@{exitCode=1}
+        }
+        $previousMode=$env:DEPENDENCY_MODE
+        try {
+            $env:DEPENDENCY_MODE='workflow'
+            {Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $snapshot -Source $source}|Should -Throw '*Fresh workflow post-copy process failed*'
+            $env:DEPENDENCY_MODE|Should -BeExactly 'workflow'
+        } finally { $env:DEPENDENCY_MODE=$previousMode }
+        Should -Invoke Invoke-Agent1cFreshProcess -Times 1 -Exactly
+        Should -Invoke Invoke-AiRulesBaselineMigration -Times 1 -Exactly
+        $pending=Get-WorkflowUpdatePendingSnapshot
+        $pending.receipt.phase|Should -BeExactly 'post-copy-failed'
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        Restore-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot
+        foreach($rel in @($original.Keys)){
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $fixture.root $rel)))|Should -BeExactly ([Convert]::ToBase64String($original[$rel]))
+        }
+    }
+}
+
 Describe 'Scoped reconciliation of an interrupted post-copy stage' {
     It 'preserves ambiguous bytes and acknowledges reviewed helper outputs without changing business staging or HEAD, then resumes the original owner' {
         $fixture = New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Прерванный post-copy с пробелом') -PendingInterruption
