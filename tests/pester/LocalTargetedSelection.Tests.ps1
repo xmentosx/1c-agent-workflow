@@ -36,6 +36,7 @@ Describe "Local quality gate contract" {
             $text.Replace($signature,'function Renamed-Owner {'),
             ($text+"`nfunction New-Owner {}"),
             ($text+"`n{"),
+            '',
             $null
         )) {
             $fallback = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $mutation
@@ -45,6 +46,9 @@ Describe "Local quality gate contract" {
         $fallback = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $null -CurrentText $changed
         $fallback.reason | Should -Be 'missing-baseline'
         @($fallback.tests) | Should -Be $full
+        $emptyBaseline = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText '' -CurrentText $changed
+        $emptyBaseline.fallback | Should -BeTrue
+        @($emptyBaseline.tests) | Should -Be $full
         # A dependency first admitted by the broad gate must not silently gain
         # narrow ownership on the next edit without a reviewed catalog update.
         $expandedBaseline = $text.Replace($signature,$signature+"`n    New-UnknownDependency")
