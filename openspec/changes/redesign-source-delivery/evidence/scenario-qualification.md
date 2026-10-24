@@ -77,3 +77,15 @@ scenario decisions. Source SHA authentication still precedes every cache use;
 null refusals are cached, and the next lookup starts empty. Regressions retain
 tampered-input, ambient/top-level and ordinal BOM rejection. This measurement
 is a lookup improvement, not final publication timing acceptance.
+
+The complete Plan then took 177s and correctly refused the same 120s limit.
+Its full profile measured 6184 normalizations consuming 87.5s, including 51.9s
+of scenario selection before lookup. The existing stateless token accelerator
+was limited to large inputs. It now also handles small function bodies; the
+original fallback and parser-error refusal remain available. Both small and
+large Unicode/newline inputs must match that fallback exactly, and regressions
+assert that small inputs actually select the accelerator.
+The same complete calculation then passed at 108s (110.6s with profiling),
+within the original 120s limit. Normalization fell from 87.5s to 19.2s and
+scenario selection from 51.9s to 12.7s. The 30s target warning remains visible;
+this is not a claim that the target has been reached.

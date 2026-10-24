@@ -135,7 +135,9 @@ function ConvertTo-DevelopSourceTokens {
     $tokens=$null; $errors=$null
     [void][Management.Automation.Language.Parser]::ParseInput($Text,[ref]$tokens,[ref]$errors)
     if (@($errors).Count) { throw 'DEVELOP_SOURCE_PROJECTION_PARSE_ERROR' }
-    if($tokens.Count -ge 4096) {
+    # A real plan normalizes thousands of small function bodies. Applying the
+    # same stateless accelerator only to large files leaves that cost dominant.
+    if($tokens.Count) {
         $normalizer=Get-DevelopSourceTokenNormalizer
         if($normalizer) {
             try {return $normalizer::Normalize($tokens)}
