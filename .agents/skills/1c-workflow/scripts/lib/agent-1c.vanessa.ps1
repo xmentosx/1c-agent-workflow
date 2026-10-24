@@ -1535,6 +1535,19 @@ function Assert-VanessaVerificationPreflight {
     if ($changed.Count -gt 0) {
         Write-VanessaAuthoringLintWarnings -FeatureRecords $changed
     }
+
+    # Resolve the same execution scope as the cycle, without retaining a plan
+    # across the load: preparation may change the inputs or proof identity.
+    $yaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    $selectionPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
+    if ($null -ne $selectionPlan -and $selectionPlan.mode -eq 'reuse') { return }
+    $selectedFeatureFiles = if ($null -ne $selectionPlan) { @($selectionPlan.selectedFeatureFiles) } else { $applicationFeatures }
+    try {
+        Get-VanessaTestClientTopology -FeatureFiles $selectedFeatureFiles -FilterTags $VanessaFilterTags | Out-Null
+    } catch {
+        Set-RunFailureContext -Category $(if ($_.Exception.Message -match '^ITL_VANESSA_TEST_FIXTURE_') { 'test-fixture' } else { 'runner' }) -RequiredAction '/itl-verify-fix'
+        throw
+    }
 }
 
 function New-VanessaRunDirectory {

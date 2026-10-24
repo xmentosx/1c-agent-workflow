@@ -88,3 +88,62 @@ MCP runtime, прикладной PM5, установленные копии и 
 Регистрация и итоговый Targeted принадлежат `source-delivery.ps1`; их состояние
 и результаты читаются через `-Action Status`. Этот текст не заменяет ledger
 и не объявляет регистрацию, публикацию, установку или live-приёмку выполненными.
+
+## Уточнения после критического ревью
+
+Следующее поручение исправляет потерю adoption baseline, уточняет первый
+сквозной срез и переносит существующую проверку профилей до загрузки ИБ.
+Controlled fork r47 и его pin в этой доработке не меняются.
+
+После ранней классификации `Invoke-DevBranchCheck` перечитывает state:
+классификация может впервые сохранить `yaxunitApplicabilityBaseline`, а
+последующая запись event-log cursor не должна затереть его старым объектом.
+Регрессия использует реальные applicability, JSON-сохранение state и event-log
+owners, включая существующий cursor и ошибку загрузки. До исправления она
+отказала на пустом baseline; после исправления baseline сохраняется, а новая
+собственная BSL-правка требует классификации и не принимается повторно за legacy.
+
+Выбор Vanessa до загрузки и внутри verification cycle использует один
+`Get-ItlVanessaVerificationSelectionPlan`: прежняя логика перенесена без нового
+алгоритма выбора или состояния. Сохраняются observed receipts, YAxUnit selection,
+one-off-only, auxiliary и diagnostic scope. При `reuse` профильный preflight не
+читает manifest; для запуска проверяет только выбранные файлы с текущим tag
+filter. Проверка topology перед фактическим запуском сохранена, а ранний plan
+не кешируется через загрузку: входы и identity могли измениться.
+
+Это перенос прежнего условия отказа исполнителя, а не новая проверка всей
+среды. Ошибка сообщает отсутствующие профили/manifest и прежнее продолжение
+`/itl-verify-fix`. Fixture проверяет отказ до загрузки и расходования repair
+attempt, исправление manifest и успех повторной исходной команды. Отдельно
+проверены incremental suites, reuse без доступного manifest, disabled Vanessa,
+именованный explicit-вызов, diagnostic и auxiliary tag filters.
+
+В существующей OpenSpec-reference первый наблюдаемый срез изменения сквозного
+пути теперь проходит минимальную реальную цепочку до расширения вариантов и
+матриц. Недоступная среда оставляет зависимое доказательство открытым, не
+останавливая независимые задачи. Нового документа или обязательного gate нет;
+финальная приёмка сохранена. On-demand reference: +1012 UTF-8 байт
+(примерно 253 токена по bytes/4); always-on delta = 0.
+
+Focused batch из VerificationSelection, VanessaRunnerTopology, VanessaAuthoring
+и VanessaAuthoringLint: 90 passed, один статический тест отказал из-за переноса
+ветки selection в общий helper. Проверка обновлена на его вызов до исполнителей
+и прежний classification continuation; отдельный повтор: 1 passed. Два
+существующих docs/budget checks также passed; предупреждения о review thresholds
+относятся к неизменённым файлам, обязательные контракты не сокращались.
+
+Стоимость измерена на одном и том же синтетическом Git-проекте с двумя features
+(acceptance и explicit), реальными catalog/selection/topology и корректным
+manifest, без 1С. После прогрева пять парных измерений: медиана прежнего preflight
+154 мс, нового 621 мс (+467 мс); диапазоны 106–311 и 425–1535 мс. Это цена
+дополнительной ранней оценки, не замер PM5 и не обещание общего ускорения.
+Evidence и воспроизводимый скрипт — ignored
+`build/test-results/preload-review-fixes`; Targeted и регистрацию показывает
+существующий delivery ledger.
+
+Первый RegisterChange остановился на encoding preflight: при редактировании
+VanessaRunnerTopology был потерян исходный UTF-8 BOM. Кандидат и failed proof
+сохранены владельцем регистрации, принятые refs не изменены. BOM восстановлен;
+encoding preflight для всех шести изменённых PowerShell-файлов passed.
+Все восемь новых поведенческих случаев дополнительно прошли в Windows
+PowerShell 5.1, включая точные Unicode-пути с пробелами.

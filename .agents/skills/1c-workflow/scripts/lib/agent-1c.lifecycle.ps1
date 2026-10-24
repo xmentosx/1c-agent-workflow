@@ -20273,6 +20273,9 @@ function Invoke-DevBranchCheck {
             # Keep the cycle's assessment: preparation may still change inputs.
             Repair-OneCSourceLineEndings | Out-Null
             Assert-VerificationClassificationReady -Reason 'check-dev-branch before infobase load' -RequireVanessa:$classificationVanessa.run -RequireYAxUnit:$classificationYaxunit.run | Out-Null
+            # Classification may persist the first adoption baseline. Do not
+            # overwrite it when the event-log owners save their next updates.
+            $state = Read-DevBranchState -Name $DevBranchName
         }
     }
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null

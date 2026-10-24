@@ -22,6 +22,9 @@
                     . $WorkflowHelperPath -ProjectRoot $tempRoot -Action help *> $null
                     $script:RunErrorCategory = ""
                     $script:RunRequiredAction = ""
+                    # This fixture owns byte safety. Selection/proof has its own
+                    # integration coverage; retain the real topology parser.
+                    function Get-ItlVanessaVerificationSelectionPlan { $null }
                     try {
                         Assert-VanessaVerificationPreflight -Trigger command
                         [pscustomobject]@{ message = "passed"; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }

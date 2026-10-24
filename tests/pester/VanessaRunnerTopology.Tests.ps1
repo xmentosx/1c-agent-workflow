@@ -398,6 +398,107 @@
         }
     }
 
+    It 'rejects selected profiles before loading and resumes the same check after manifest repair' {
+        $fixtureRoot = Join-Path $TestDrive 'profile preflight База'
+        $fixture = New-VanessaRunnerFixture -Root $fixtureRoot `
+            -FeatureText "# language: ru`nФункционал: Preflight`nСценарий: Selected`n  Дано я подключаю профиль TestClient `"Required`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Other"}]}'
+        & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $DevBranchName = 'fixture'
+            $VerificationTrigger = 'repair'
+            $ExplicitVerificationComponent = @()
+            $script:Loads = 0
+            $script:Attempts = 0
+            $script:Verified = 0
+            function Read-DevBranchState { $fixture.state }
+            function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{ run = $Component -eq 'vanessa' } }
+            function Assert-ItlVerificationRepairScope {}
+            function Assert-VerificationClassificationReady {}
+            function Repair-OneCSourceLineEndings {}
+            function Get-DevBranchKind { 'configuration' }
+            function Get-ExportPath { 'src/cf' }
+            function Assert-ExportPathInsideProject { $fixtureRoot }
+            function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+            function Restore-ConfigDumpInfoLoadSnapshot {}
+            function Remove-ConfigDumpInfoLoadSnapshot {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}
+            function Get-VanessaChangedFeatureRecords { @() }
+            function New-VerificationSelectionPlan {
+                param($ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+                $RequireObservedReceipts | Should -BeTrue
+                $YAxUnitVerificationPlanned | Should -BeFalse
+                [pscustomobject]@{ mode = 'full'; selectedFeatureFiles = $ApplicationFeatureFiles }
+            }
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-ItlMatchingVerificationRepairSession { [pscustomobject]@{ kind = 'canonical-repair' } }
+            function Use-ItlVerificationRepairAttempt { $script:Attempts++ }
+            function Ensure-DevBranchEventLogBaseline { param($State) $State }
+            function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'fixture'; capturedAt = [datetime]'2026-10-24' } }
+            function Update-DevBranchBase { $script:Loads++ }
+            function Invoke-ItlVerificationCycle { $script:Verified++ }
+            function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {}
+            function Get-VerificationState { [pscustomobject]@{ isFreshPassed = $true } }
+            function Complete-ItlVerificationRepairSession {}
+            function Complete-ItlVerificationRepairFailure {}
+            function Write-DevBranchVerificationRunUserReport {}
+            $fixture.state | Add-Member -NotePropertyName lastVerificationEvidenceKind -NotePropertyValue 'full'
+
+            { Invoke-DevBranchCheck } | Should -Throw '*ITL_VANESSA_TESTCLIENT_PROFILES_MISSING*Required*'
+            $script:Loads | Should -Be 0
+            $script:Attempts | Should -Be 0
+            $script:Verified | Should -Be 0
+            $script:RunErrorCategory | Should -Be 'runner'
+            $script:RunRequiredAction | Should -Be '/itl-verify-fix'
+            Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Required"}]}'
+            Invoke-DevBranchCheck
+            $script:Loads | Should -Be 1
+            $script:Attempts | Should -Be 1
+            $script:Verified | Should -Be 1
+        }
+    }
+
+    It 'checks only the effective profile scope for <caseName>' -TestCases @(
+        @{ caseName = 'incremental suites'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'incremental'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'reused proof'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'reuse'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'disabled Vanessa'; testingMode = 'off'; trigger = 'command'; named = @(); planMode = 'full'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 0 },
+        @{ caseName = 'named Vanessa overrides off'; testingMode = 'off'; trigger = 'explicit'; named = @('vanessa'); planMode = 'incremental'; tags = ''; diagnostic = $false; auxiliary = $false; expectPlans = 1 },
+        @{ caseName = 'diagnostic tag filter'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'full'; tags = '@Selected'; diagnostic = $true; auxiliary = $false; expectPlans = 0 },
+        @{ caseName = 'auxiliary tag filter'; testingMode = 'auto'; trigger = 'command'; named = @(); planMode = 'full'; tags = '@Selected'; diagnostic = $false; auxiliary = $true; expectPlans = 0 }
+    ) {
+        param($caseName, $testingMode, $trigger, $named, $planMode, $tags, $diagnostic, $auxiliary, $expectPlans)
+        $fixtureRoot = Join-Path $TestDrive 'selected profiles Кириллица'
+        $fixture = New-VanessaRunnerFixture -Root $fixtureRoot `
+            -FeatureText "# language: ru`nФункционал: Selected`n@Selected`nСценарий: Available`n  Дано я подключаю профиль TestClient `"Available`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Available"}]}'
+        $other = Join-Path (Split-Path -Parent $fixture.featurePath) 'other.feature'
+        Set-Content -LiteralPath $other -Encoding UTF8 -Value "# language: ru`nФункционал: Other`n@Other`nСценарий: Missing`n  Дано я подключаю профиль TestClient `"Missing`""
+        & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $VanessaFilterTags = $tags
+            $VanessaFeaturePath = ''
+            $script:ActiveAuxiliaryVanessaContext = if ($auxiliary) { [pscustomobject]@{ featuresPath = 'tests/features' } } else { $null }
+            $script:PlanCalls = 0
+            $script:ProfileModes = @{ ITL_VANESSA_TESTING = $testingMode; ITL_YAXUNIT_TESTING = 'off' }
+            function Get-EnvValue { param($Name, $Default) if ($script:ProfileModes.ContainsKey($Name)) { $script:ProfileModes[$Name] } else { $Default } }
+            function Get-VanessaChangedFeatureRecords { @() }
+            function Test-ItlDiagnosticVerificationScope { $diagnostic }
+            function New-VerificationSelectionPlan {
+                param($ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+                $script:PlanCalls++
+                $RequireObservedReceipts | Should -BeTrue
+                @($ApplicationFeatureFiles).Count | Should -Be 2
+                [pscustomobject]@{ mode = $planMode; selectedFeatureFiles = @($fixture.featurePath) }
+            }
+            if ($planMode -eq 'reuse') {
+                # No runner is due: even an unavailable manifest is irrelevant.
+                Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{invalid'
+            }
+            Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $named
+            $script:PlanCalls | Should -Be $expectPlans
+        }
+    }
+
     It "reports all missing profiles but classifies a truly unresolved placeholder as fixture" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-preflight-" + [guid]::NewGuid().ToString("N"))
         try {
