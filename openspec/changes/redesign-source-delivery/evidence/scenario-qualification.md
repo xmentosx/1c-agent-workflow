@@ -48,3 +48,15 @@ enabled/unknown product context, pending operations, new ambient dependencies,
 unmapped functions or top-level changes keep conservative native coverage.
 Scenario changes must update this matrix and explain measured cost without
 increasing targets.
+
+The first real candidate reached 3719/0/0 static tests (168 of 193 shards
+reused on the installable tree), but upgrade was correctly rejected after a
+private Designer probe input rename raised a sharing error. This is failed
+native evidence, not a configuration rejection or an operational speed claim.
+The private unique input is now exclusively created and closed before child
+startup, without publishing it through the shared atomic writer. Regressions
+retain the full Unicode ownership inventory, reject incomplete writes and
+preserve existing-file collisions; process ownership and release checks are
+unchanged. The failed checkpoint and queue remain available for supported replan.
+The original transport regression failed before the repair; all 83 Designer
+completion tests passed afterward on Windows PowerShell 5.1 (zero skipped).
