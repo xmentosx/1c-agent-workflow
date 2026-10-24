@@ -133,6 +133,19 @@ function Write-SourceE2EFixtureTerminal {
     } finally {if($localLease){$localLease.Dispose()}}
 }
 
+function Get-SourceE2EFixtureReaderInventory {
+    # Never treat a partial/failed query as an empty reader list. One fresh
+    # retry tolerates transient WMI load; persistent failure retains the copy.
+    for($attempt=1;$attempt -le 2;$attempt++) {
+        try {
+            $rows=@(Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -OperationTimeoutSec 2 -ErrorAction Stop)
+            return $rows
+        } catch {
+            if($attempt -eq 2) {throw "FIXTURE_COPY_PROCESS_INVENTORY_UNAVAILABLE: preserve the copy and repeat the same cleanup when CIM responds. $($_.Exception.Message)"}
+        }
+    }
+}
+
 function Remove-SourceE2EFixtureCopy {
     param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive)
     $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
@@ -169,7 +182,7 @@ function Remove-SourceE2EFixtureCopy {
         if($env:OS -eq 'Windows_NT'){
             # Independent copies have independent roots. Never terminate a reader
             # to make cleanup possible, including an editor opened on this copy.
-            $readers=@(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop|Where-Object {
+            $readers=@(Get-SourceE2EFixtureReaderInventory|Where-Object {
                 $_.ProcessId -ne $PID -and [string]$_.CommandLine -and
                 (([string]$_.CommandLine).IndexOf($parent,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
                  ($RecoveryCleanup -and (Test-SourceE2ECopyProducerCommand -CommandLine $_.CommandLine -ProjectsRoot $ProjectsRoot)))

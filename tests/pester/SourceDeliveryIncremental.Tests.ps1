@@ -397,6 +397,30 @@ $value=@{schemaVersion=3;kind='itl-develop-e2e';status='passed';candidate=@{tree
     Test-DevelopE2ERouteReport -Path $next -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeFalse
 }
 
+It 'retains native proof across copy cleanup changes but rejects a changed space admission input' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $relative='scripts/source-e2e-storage.ps1';$path=Join-Path $f.root $relative
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
+    $f.catalog.contracts[0].paths+=@($relative)
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'storage native input baseline'
+    $f.base=(& git -C $f.root rev-parse HEAD).Trim()
+    Save-IncrementalJourneyProofs $f
+    $before=[IO.File]::ReadAllText($path)
+    [IO.File]::WriteAllText($path,$before.Replace('-OperationTimeoutSec 2','-OperationTimeoutSec 3'))
+    & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'cleanup reader change'
+    $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $commit -CandidateTree $tree -ArtifactBinding $f.binding
+    @($plan.stages|Where-Object id -ne 'develop.static'|ForEach-Object execution) | Should -Be @('reuse','reuse')
+    [IO.File]::WriteAllText($path,[IO.File]::ReadAllText($path).Replace('$full=[IO.Path]::GetFullPath($Path)',"Write-Verbose 'changed space admission';`$full=[IO.Path]::GetFullPath(`$Path)"))
+    & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'space admission change'
+    $commit=(& git -C $f.root rev-parse HEAD).Trim();$tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $changed=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $commit -CandidateTree $tree -ArtifactBinding $f.binding
+    @($changed.stages|Where-Object id -ne 'develop.static'|ForEach-Object execution) | Should -Be @('execute','execute')
+}
+
 It 'canonicalizes the actual sole client without hiding ambiguity, another client or unknown identity fields' {
     $root=Join-Path $TestDrive 'Клиент с пробелом';[void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
     $path=Join-Path $root '.agent-1c/project.json'
