@@ -1,4 +1,4 @@
-# Immutable component verification and publication finalization.
+﻿# Immutable component verification and publication finalization.
 . (Join-Path $PSScriptRoot 'client-mcp-build.ps1')
 
 function ConvertTo-DeliveryNativeArgument {
@@ -18,6 +18,37 @@ function Get-DeliveryGitHubRepository {
     return [pscustomobject]@{ owner = $match.Groups["owner"].Value; repo = $match.Groups["repo"].Value; slug = ($match.Groups["owner"].Value + "/" + $match.Groups["repo"].Value) }
 }
 
+function Get-DeliveryRemoteAssetDigest {
+    param([string]$Url, [string]$ExpectedSha256)
+    # Query the publisher on every call. A local file/receipt is not evidence
+    # that the locked remote asset still exists or retains the same bytes.
+    $match = [regex]::Match($Url, '^https://github\.com/(?<owner>[^/?#]+)/(?<repo>[^/?#]+)/releases/download/(?<tag>[^/?#]+)/(?<asset>[^/?#]+)$')
+    if (-not $match.Success) { return $null }
+    $tag = [Uri]::UnescapeDataString($match.Groups['tag'].Value)
+    $name = [Uri]::UnescapeDataString($match.Groups['asset'].Value)
+    $endpoint = 'https://api.github.com/repos/' + $match.Groups['owner'].Value + '/' + $match.Groups['repo'].Value + '/releases/tags/' + [Uri]::EscapeDataString($tag)
+    try {
+        $release = Invoke-RestMethod -Uri $endpoint -Headers @{ Accept='application/vnd.github+json'; 'User-Agent'='ITL-source-delivery' } -TimeoutSec 15
+    } catch { return $null } # Retain the byte-download path for unavailable metadata.
+    if (-not $release -or -not $release.PSObject.Properties['tag_name'] -or [string]$release.tag_name -cne $tag -or
+        -not $release.PSObject.Properties['draft'] -or [bool]$release.draft -or -not $release.PSObject.Properties['assets']) { return $null }
+    $assets = @($release.assets | Where-Object { $_.PSObject.Properties['name'] -and [string]$_.name -ceq $name })
+    if ($assets.Count -ne 1) { return $null }
+    $asset = $assets[0]
+    if (-not $asset.PSObject.Properties['state'] -or [string]$asset.state -cne 'uploaded' -or
+        -not $asset.PSObject.Properties['browser_download_url'] -or [string]$asset.browser_download_url -cne $Url -or
+        -not $asset.PSObject.Properties['digest'] -or [string]$asset.digest -cnotmatch '^sha256:[a-f0-9]{64}$') { return $null }
+    $sha = ([string]$asset.digest).Substring(7)
+    if ($sha -cne $ExpectedSha256.ToLowerInvariant()) {
+        throw [IO.InvalidDataException]::new("Published owned component asset SHA256 mismatch. expected='$ExpectedSha256'; actual='$sha'.")
+    }
+    # Metadata alone must not certify a broken download route. HEAD follows
+    # the same locked HTTPS URL without transferring the asset body.
+    try { $head=Invoke-WebRequest -UseBasicParsing -Method Head -Uri $Url -TimeoutSec 15 } catch { return $null }
+    if ([int]$head.StatusCode -ne 200) { return $null }
+    return [pscustomobject]@{ status='matched'; sha256=$sha; verification='github-sha256-digest' }
+}
+
 function Get-DeliveryRemoteAssetState {
     param(
         [string]$Url,
@@ -25,6 +56,9 @@ function Get-DeliveryRemoteAssetState {
         [ValidateRange(1, 3)][int]$NetworkAttempts = 3,
         [ValidateRange(1, 12)][int]$AvailabilityAttempts = 1
     )
+    if ($ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Owned component asset requires an exact SHA256.' }
+    $digest = Get-DeliveryRemoteAssetDigest -Url $Url -ExpectedSha256 $ExpectedSha256
+    if ($null -ne $digest) { return $digest }
     for ($availabilityAttempt = 1; $availabilityAttempt -le $AvailabilityAttempts; $availabilityAttempt++) {
         $downloadPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-component-download-" + [guid]::NewGuid().ToString("N") + ".bin")
         try {

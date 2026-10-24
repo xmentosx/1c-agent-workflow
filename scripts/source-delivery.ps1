@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("RegisterChange", "Status", "Plan", "Cleanup", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster")]
@@ -30,6 +30,10 @@ param(
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
 )
+
+$deliveryInvocationWatch = [Diagnostics.Stopwatch]::StartNew()
+$deliveryPlanResult = $null
+$deliveryPlanTiming = [ordered]@{}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -332,12 +336,15 @@ try {
         $legacyCalculator=$ownerPlanSource -match '(?m)^function New-AccumulatedDeliveryPlan \{' -and
             $ownerPlanSource.Contains('Get-SourceRegistrationSnapshot') -and
             $ownerPlanSource.Contains('Get-SourceRegistrationStartPoint') -and
-            $ownerPlanSource -notmatch '(?m)^function Invoke-DeliveryCandidatePlanCalculation \{'
+            ($ownerPlanSource -notmatch '(?m)^function Invoke-DeliveryCandidatePlanCalculation \{' -or
+             $ownerPlanSource -notmatch '(?m)^function Invoke-DeliveryCandidateComponentPlan \{')
     }
     # Non-Plan options still reach the owner's normal validation. The read-only
     # bridge accepts only the standard planning interface, including RequireRelease.
     $planOptions=@('Action','RepositoryRoot','Remote','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot','RequireRelease')
     if(@($PSBoundParameters.Keys | Where-Object {$_ -notin $planOptions}).Count) {$legacyCalculator=$false}
+    $deliveryPlanTiming['supervisorPreparationDurationMs'] = $deliveryInvocationWatch.ElapsedMilliseconds
+    $deliverySupervisedPlanWatch = [Diagnostics.Stopwatch]::StartNew()
     if($legacyCalculator) {
         $readerArguments=@{Action='Status'}
         foreach($name in @('RepositoryRoot','Remote','SupervisorCommit','SupervisorChannel','BootstrapSupervisor','AiRulesSource','E2EProjectRoot','AgentTarget','FreshProjectsRoot')) {
@@ -351,11 +358,23 @@ try {
             . $module
             New-AccumulatedDeliveryPlan -RequireRelease:$release -PreviewOnly
         } $supervisorPath $readerArguments (Join-Path $PSScriptRoot 'source-delivery-plan.ps1') ([bool]$RequireRelease)
-        $plan | ConvertTo-Json -Depth 24
+        $deliveryPlanResult = $plan
+    } elseif ($Action -eq 'Plan') {
+        $deliveryPlanJson = & $supervisorPath @arguments
+        $deliveryPlanResult = ($deliveryPlanJson -join [Environment]::NewLine) | ConvertFrom-Json
     } else { & $supervisorPath @arguments }
+    $deliveryPlanTiming['supervisedPlanDurationMs'] = $deliverySupervisedPlanWatch.ElapsedMilliseconds
 } finally {
+    $deliveryCleanupWatch = [Diagnostics.Stopwatch]::StartNew()
     if ($supervisorRoot -and (Test-Path -LiteralPath $supervisorRoot -PathType Container)) {
         & git -C $candidateRoot worktree remove --force -- $supervisorRoot 2>$null
         if ($LASTEXITCODE -ne 0) { Write-Warning "Stable delivery supervisor worktree could not be removed: $supervisorRoot" }
     }
+}
+
+if ($Action -eq 'Plan' -and $null -ne $deliveryPlanResult) {
+    $deliveryPlanTiming['supervisorCleanupDurationMs'] = $deliveryCleanupWatch.ElapsedMilliseconds
+    $deliveryPlanTiming['invocationDurationMs'] = $deliveryInvocationWatch.ElapsedMilliseconds
+    $deliveryPlanResult | Add-Member -NotePropertyName invocationTiming -NotePropertyValue ([pscustomobject]$deliveryPlanTiming) -Force
+    $deliveryPlanResult | ConvertTo-Json -Depth 24
 }

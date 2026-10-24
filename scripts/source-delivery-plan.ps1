@@ -702,6 +702,39 @@ function Invoke-DeliveryCandidatePlanCalculation {
     return $plan
 }
 
+function Invoke-DeliveryCandidateComponentPlan {
+    param([string]$CandidateRoot, [string]$CandidateCommit)
+    $module = Join-Path $CandidateRoot 'scripts/source-delivery-component.ps1'
+    if (-not (Test-Path -LiteralPath $module -PathType Leaf)) {
+        return Get-OwnedComponentPublicationPlan -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+    }
+    $head = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    if ($head -cne $CandidateCommit -or @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','-z')).Count) {
+        throw 'DELIVERY_PLAN_CANDIDATE_CHANGED: component inspection requires the exact clean candidate.'
+    }
+    $sha = Get-DeliveryFileSha256 $module
+    $tokens=$null; $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($module,[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw 'DELIVERY_PLAN_COMPONENT_INSPECTOR_INVALID: candidate component module has parse errors.' }
+    $definitions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -in @('Get-DeliveryRemoteAssetDigest','Get-DeliveryRemoteAssetState')},$true))
+    # Historical candidates keep the published byte-verification path. Only
+    # stateless remote inspection is delegated, never finalization or preflight.
+    $result = if (@($definitions | Where-Object Name -eq 'Get-DeliveryRemoteAssetDigest').Count -eq 1 -and $definitions.Count -eq 2) {
+        & {
+            param($nodes,$root,$commit)
+            foreach($node in $nodes) { . ([scriptblock]::Create($node.Extent.Text)) }
+            Get-OwnedComponentPublicationPlan -CandidateRoot $root -CandidateCommit $commit
+        } $definitions $CandidateRoot $CandidateCommit
+    } else { Get-OwnedComponentPublicationPlan -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit }
+    $after=(Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    if ($after -cne $CandidateCommit -or (Get-DeliveryFileSha256 $module) -cne $sha -or
+        @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','-z')).Count) {
+        throw 'DELIVERY_PLAN_CANDIDATE_CHANGED: component inspection changed its pinned inputs.'
+    }
+    return $result
+}
+
 function New-AccumulatedDeliveryPlan {
     param([switch]$RequireRelease,[switch]$PreviewOnly)
     Assert-CleanDeliveryWorktree
@@ -716,14 +749,14 @@ function New-AccumulatedDeliveryPlan {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries -PublishedDevelop $remoteBefore
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
-        $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+        $componentPlan = Invoke-DeliveryCandidateComponentPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries
         if($PreviewOnly) {
             $plan | Add-Member -NotePropertyName resumable -NotePropertyValue $false
-            $plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published calculator predates candidate delegation; advisory preview only, publication requires a supported replan under the published owner'
+            $plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published planner predates candidate calculation or component inspection; advisory preview only, publication requires a supported replan under the published owner'
         } else {
             $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         }

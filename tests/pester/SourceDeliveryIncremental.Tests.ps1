@@ -93,7 +93,41 @@ It 'selects only planner regressions for discovery changes without native fixtur
     @($route.unknownPaths) | Should -BeNullOrEmpty
 }
 
-It 'uses the pinned candidate calculator through the native legacy Plan shim without changing authority or saved proof' {
+It 'delegates only remote component inspection from a clean pinned candidate (<Case>)' -TestCases @(
+    @{Case='exact'},@{Case='dirty'},@{Case='mutation'},@{Case='historical'}
+) {
+    param($Case)
+    & {
+        $f=New-IncrementalPlanFixture
+        $module=Join-Path $f.root 'scripts/source-delivery-component.ps1'
+        $inspector='function Get-DeliveryRemoteAssetDigest { }; function Get-DeliveryRemoteAssetState { [pscustomobject]@{status="matched";sha256=("a"*64)} }'
+        if($Case -eq 'mutation') {$inspector='function Get-DeliveryRemoteAssetDigest { }; function Get-DeliveryRemoteAssetState { [IO.File]::AppendAllText("'+$module.Replace('"','""')+'","# mutation"); [pscustomobject]@{status="matched"} }'}
+        if($Case -eq 'historical') {$inspector='# historical module without a digest inspector'}
+        [IO.File]::WriteAllText($module,$inspector,[Text.UTF8Encoding]::new($true))
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'candidate component inspector'
+        $head=(& git -C $f.root rev-parse HEAD).Trim()
+        function Invoke-WorktreeGit {param($Root,$Arguments); Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments}
+        function Get-DeliveryRemoteAssetState { [pscustomobject]@{status='historical-byte-check'} }
+        function Get-OwnedComponentPublicationPlan {
+            param($CandidateRoot,$CandidateCommit)
+            $remote=Get-DeliveryRemoteAssetState
+            [pscustomobject]@{status='planned';candidateCommit=$CandidateCommit;requiredReleaseCapabilities=@('extension-smoke');remote=$remote}
+        }
+        if($Case -eq 'dirty') {[IO.File]::AppendAllText($module,'# dirty input')}
+        if($Case -in @('dirty','mutation')) {
+            {Invoke-DeliveryCandidateComponentPlan -CandidateRoot $f.root -CandidateCommit $head} | Should -Throw '*CANDIDATE_CHANGED*'
+        } else {
+            $plan=Invoke-DeliveryCandidateComponentPlan -CandidateRoot $f.root -CandidateCommit $head
+            $plan.candidateCommit | Should -BeExactly $head
+            @($plan.requiredReleaseCapabilities) | Should -Be @('extension-smoke')
+            $plan.remote.status | Should -BeExactly $(if($Case -eq 'historical') {'historical-byte-check'} else {'matched'})
+            (Get-DeliveryRemoteAssetState).status | Should -BeExactly 'historical-byte-check' -Because 'candidate query definitions cannot escape their child scope'
+        }
+    }
+}
+
+It 'uses the pinned candidate calculator through the native legacy <LegacyPart> Plan shim without changing authority or saved proof' -TestCases @(@{LegacyPart='calculator'},@{LegacyPart='component-inspection'}) {
+        param($LegacyPart)
         $f=New-IncrementalPlanFixture; $script:Root=$f.root
         $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
         foreach($name in $modules) {Copy-Item -LiteralPath (Join-Path $RepoRoot ('scripts/'+$name)) -Destination (Join-Path $f.root ('scripts/'+$name)) -Force}
@@ -142,7 +176,8 @@ if($Action -eq 'Plan') {
 '@
         [IO.File]::WriteAllText((Join-Path $f.root 'scripts/source-delivery-supervisor.ps1'),$legacy,[Text.UTF8Encoding]::new($true))
         $publishedCalculator=Join-Path $f.root 'scripts/source-delivery-plan.ps1'
-        [IO.File]::WriteAllText($publishedCalculator,([IO.File]::ReadAllText($publishedCalculator).Replace('function Invoke-DeliveryCandidatePlanCalculation {','function Legacy-CandidateCalculationPlaceholder {')),[Text.UTF8Encoding]::new($true))
+        $legacyFunction=if($LegacyPart -eq 'calculator') {'Invoke-DeliveryCandidatePlanCalculation'} else {'Invoke-DeliveryCandidateComponentPlan'}
+        [IO.File]::WriteAllText($publishedCalculator,([IO.File]::ReadAllText($publishedCalculator).Replace(('function '+$legacyFunction+' {'),'function Legacy-CalculationPlaceholder {')),[Text.UTF8Encoding]::new($true))
         $f.catalog.contracts[0].paths+='scripts/source-delivery-supervisor.ps1'
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'legacy published owner'
@@ -171,6 +206,11 @@ if($Action -eq 'Plan') {
         $LASTEXITCODE | Should -Be 0
         $plan=Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json
         $plan.resumable | Should -BeFalse
+        $plan.invocationTiming.invocationDurationMs | Should -BeGreaterThan 0
+        $plan.invocationTiming.invocationDurationMs | Should -BeGreaterThan $plan.planningDurationMs
+        $plan.invocationTiming.supervisorPreparationDurationMs | Should -BeGreaterThan 0
+        $plan.invocationTiming.supervisedPlanDurationMs | Should -BeGreaterThan 0
+        $plan.invocationTiming.supervisorCleanupDurationMs | Should -BeGreaterThan 0
         $plan.calculator.commit | Should -BeExactly $head
         $plan.stages[0].reason | Should -BeExactly 'candidate policy selected'
         (Get-FileHash -LiteralPath $savedPath).Hash | Should -BeExactly $savedSha

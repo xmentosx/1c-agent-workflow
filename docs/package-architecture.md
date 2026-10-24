@@ -47,7 +47,11 @@ and push remain with the published owner. A newer shim talking to a legacy owner
 returns one advisory candidate calculation through the owner's read-only readers
 and queue/preflight functions; existing saved plans remain unchanged. The preview
 is never persisted as resumable authority and the legacy calculator does not run.
-This adds no coordinator,
+The same child-scope calculation boundary admits only the candidate's stateless
+remote asset query functions. The published component selection and preflight
+still own required Release capabilities; changed candidate bytes are rejected
+before and after inspection. Older planners use the advisory preview boundary
+for this calculation too. This adds no coordinator,
 installed migration, runtime owner or permission to execute a delivery stage.
 
 The user approved bounded frozen-scope recovery on 2026-10-16. Explicit

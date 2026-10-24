@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $script:RepoRoot = $context.RepoRoot
@@ -270,8 +270,10 @@ Describe "Immutable asset download retry policy" {
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($deliveryPath, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-DeliveryRemoteAssetState" }, $true)
-        Invoke-Expression $definition.Extent.Text
+        $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @("Get-DeliveryRemoteAssetDigest", "Get-DeliveryRemoteAssetState") }, $true))
+        $definitions.Count | Should -Be 2
+        foreach ($definition in $definitions) { Invoke-Expression $definition.Extent.Text }
 
         Mock Invoke-ItlImmutableFileDownload {
             $script:RequestCount++

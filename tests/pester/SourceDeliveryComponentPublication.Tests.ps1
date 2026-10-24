@@ -1,6 +1,97 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+    It 'authenticates current remote asset digests with byte fallback (<Case>)' -TestCases @(
+        @{Case='exact'; Fallback=$false}, @{Case='no-digest'; Fallback=$true},
+        @{Case='malformed'; Fallback=$true}, @{Case='wrong-url'; Fallback=$true},
+        @{Case='draft'; Fallback=$true}, @{Case='wrong-tag'; Fallback=$true},
+        @{Case='missing'; Fallback=$true}, @{Case='duplicate'; Fallback=$true},
+        @{Case='not-uploaded'; Fallback=$true}, @{Case='api-failure'; Fallback=$true},
+        @{Case='download-route-failure'; Fallback=$true}
+    ) {
+        param($Case,$Fallback)
+        & {
+            foreach($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryRemoteAssetDigest','Get-DeliveryRemoteAssetState')) {Invoke-Expression $definition.Extent.Text}
+            $url='https://github.com/owner/repo/releases/download/v1%20%D1%82%D0%B5%D1%81%D1%82/a.zip'
+            $sha='a'*64
+            $script:remoteCalls=0; $script:byteCalls=0
+            $asset=[pscustomobject]@{name='a.zip';state='uploaded';browser_download_url=$url;digest=('sha256:'+$sha)}
+            $script:metadata=[pscustomobject]@{tag_name='v1 тест';draft=$false;assets=@($asset)}
+            switch($Case) {
+                'no-digest' {$asset.PSObject.Properties.Remove('digest')}
+                'malformed' {$asset.digest='sha256:unknown'}
+                'wrong-url' {$asset.browser_download_url=$url+'?other'}
+                'draft' {$script:metadata.draft=$true}
+                'wrong-tag' {$script:metadata.tag_name='another'}
+                'missing' {$script:metadata.assets=@()}
+                'duplicate' {$script:metadata.assets=@($asset,$asset)}
+                'not-uploaded' {$asset.state='new'}
+            }
+            function Invoke-RestMethod {
+                param($Uri,$Headers,$TimeoutSec)
+                $script:remoteCalls++
+                $Uri | Should -BeExactly 'https://api.github.com/repos/owner/repo/releases/tags/v1%20%D1%82%D0%B5%D1%81%D1%82'
+                $Headers.Accept | Should -BeExactly 'application/vnd.github+json'
+                if($Case -eq 'api-failure') {throw 'rate limited or unavailable'}
+                return $script:metadata
+            }
+            function Invoke-WebRequest {
+                param([switch]$UseBasicParsing,$Method,$Uri,$TimeoutSec)
+                $Method | Should -BeExactly 'Head'
+                $Uri | Should -BeExactly $url
+                if($Case -eq 'download-route-failure') {throw 'HTTP download route unavailable'}
+                [pscustomobject]@{StatusCode=200}
+            }
+            function Invoke-ItlImmutableFileDownload {
+                param($Uri,$DestinationPath,$ExpectedSha256,$Label,$MaxAttempts,$TimeoutSeconds)
+                $script:byteCalls++
+                $Uri | Should -BeExactly $url
+                $ExpectedSha256 | Should -BeExactly $sha
+                return [pscustomobject]@{sha256=$ExpectedSha256}
+            }
+            $result=Get-DeliveryRemoteAssetState -Url $url -ExpectedSha256 $sha
+            $result.status | Should -BeExactly 'matched'
+            $result.sha256 | Should -BeExactly $sha
+            $script:remoteCalls | Should -Be 1
+            $script:byteCalls | Should -Be ([int]$Fallback)
+            if(-not $Fallback) {$result.verification | Should -BeExactly 'github-sha256-digest'}
+        }
+    }
+
+    It 'never hides a remote digest mismatch behind a matching local asset or byte fallback' {
+        & {
+            foreach($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryRemoteAssetDigest','Get-DeliveryRemoteAssetState')) {Invoke-Expression $definition.Extent.Text}
+            $url='https://github.com/owner/repo/releases/download/v1/a.zip'
+            $script:metadataCalls=0
+            function Invoke-RestMethod {
+                $script:metadataCalls++
+                [pscustomobject]@{tag_name='v1';draft=$false;assets=@([pscustomobject]@{name='a.zip';state='uploaded';browser_download_url=$url;digest=('sha256:'+('b'*64))})}
+            }
+            function Invoke-ItlImmutableFileDownload {throw 'byte fallback must not run'}
+            {Get-DeliveryRemoteAssetState -Url $url -ExpectedSha256 ('a'*64)} | Should -Throw '*SHA256 mismatch*'
+            {Get-DeliveryRemoteAssetState -Url $url -ExpectedSha256 ('a'*64)} | Should -Throw '*SHA256 mismatch*'
+            $script:metadataCalls | Should -Be 2 -Because 'a previous observation never replaces a current remote check'
+        }
+    }
+
+    It 'retains missing-asset classification and byte SHA rejection when metadata is unavailable (<Case>)' -TestCases @(@{Case='missing'},@{Case='corrupt'}) {
+        param($Case)
+        & {
+            foreach($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryRemoteAssetDigest','Get-DeliveryRemoteAssetState')) {Invoke-Expression $definition.Extent.Text}
+            function Invoke-RestMethod {throw 'API unavailable'}
+            function Invoke-ItlImmutableFileDownload {
+                if($Case -eq 'corrupt') {throw [IO.InvalidDataException]::new('SHA256 mismatch from bytes')}
+                throw 'HTTP 404'
+            }
+            function Get-ItlHttpFailureStatusCode {return 404}
+            if($Case -eq 'corrupt') {
+                {Get-DeliveryRemoteAssetState -Url 'https://github.com/owner/repo/releases/download/v1/a.zip' -ExpectedSha256 ('a'*64)} | Should -Throw '*SHA256 mismatch from bytes*'
+            } else {
+                (Get-DeliveryRemoteAssetState -Url 'https://github.com/owner/repo/releases/download/v1/a.zip' -ExpectedSha256 ('a'*64)).status | Should -BeExactly 'missing'
+            }
+        }
+    }
+
     It "finalizes every owned release surface and excludes external pinned dependencies" {
         foreach ($name in @(
             'Invoke-AiRulesComponentPublicationFinalize',
