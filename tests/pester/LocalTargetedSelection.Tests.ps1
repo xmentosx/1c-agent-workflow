@@ -5,10 +5,159 @@
 }
 
 Describe "Local quality gate contract" {
+    It 'narrows only declared check functions while retaining the complete fallback for <module>' -TestCases @(
+        @{ module='lifecycle'; functionName='Invoke-DevBranchCheck' },
+        @{ module='vanessa'; functionName='Assert-VanessaVerificationPreflight' },
+        @{ module='verification-modes'; functionName='Get-ItlVanessaVerificationSelectionPlan' }
+    ) {
+        param($module, $functionName)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.'+$module+'.ps1'
+        $text = [IO.File]::ReadAllText((Join-Path $RepoRoot $path))
+        $signature = 'function '+$functionName+' {'
+        $changed = $text.Replace($signature, $signature+"`n    # local control-flow edit")
+        $changed | Should -Not -Be $text
+        $impact = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $changed
+        $impact.fallback | Should -BeFalse
+        @($impact.impacts.name) | Should -Be @($functionName)
+        $expected = @($catalog.semanticTargeting.libraries.PSObject.Properties[$path].Value.functions.PSObject.Properties[$functionName].Value.tests | Sort-Object)
+        @($impact.tests) | Should -Be $expected
+        $full = @( (Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)).tests )
+        $impact.tests.Count | Should -BeLessThan $full.Count
+        @($impact.tests) | Should -Not -Contain 'tests/pester/WorkflowUpdateRollback.Tests.ps1'
+        foreach ($mutation in @(
+            $text.Replace($signature,$signature+"`n    New-UnknownDependency"),
+            $text.Replace($signature,$signature+"`n    & `$script:DynamicDependency"),
+            $text.Replace($signature,$signature+"`n    [NewOwner]::Run()"),
+            $text.Replace($signature,$signature+"`n    function global:New-Owner {}"),
+            ($changed+"`n'new startup behavior'"),
+            ("param([string]`$Shared = 'new')`n"+$changed),
+            $text.Replace($signature,'function Renamed-Owner {'),
+            ($text+"`nfunction New-Owner {}"),
+            ($text+"`n{"),
+            $null
+        )) {
+            $fallback = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $mutation
+            $fallback.fallback | Should -BeTrue
+            @($fallback.tests) | Should -Be $full
+        }
+        $fallback = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $null -CurrentText $changed
+        $fallback.reason | Should -Be 'missing-baseline'
+        @($fallback.tests) | Should -Be $full
+        # A dependency first admitted by the broad gate must not silently gain
+        # narrow ownership on the next edit without a reviewed catalog update.
+        $expandedBaseline = $text.Replace($signature,$signature+"`n    New-UnknownDependency")
+        $expandedCurrent = $expandedBaseline.Replace($signature,$signature+"`n    # next local edit")
+        $unreviewed = Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $expandedBaseline -CurrentText $expandedCurrent
+        $unreviewed.fallback | Should -BeTrue
+        @($unreviewed.tests) | Should -Be $full
+        $unknownName = @( (Get-Agent1cSemanticModel -Text $text -Library).functions.Keys | Where-Object { $_ -ne $functionName } | Sort-Object )[0]
+        $mixed = $changed.Replace(('function '+$unknownName+' {'),('function '+$unknownName+" {`n    # unknown owner"))
+        $mixed | Should -Not -Be $changed
+        @((Resolve-Agent1cSemanticImpact -Catalog $catalog -LibraryPath $path -BaselineText $text -CurrentText $mixed).tests) | Should -Be $full
+    }
+
+    It 'carries library ownership and fallback through the real BaseRef selector and kills a skipped preflight' {
+        $root = Join-Path $TestDrive 'check owner путь с пробелом'
+        & git clone --quiet --shared --no-hardlinks -- $RepoRoot $root
+        $LASTEXITCODE | Should -Be 0
+        foreach ($path in @('scripts/quality-contracts.ps1','tests/quality-contracts.json','tests/pester/DevBranchCheck.Tests.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $path) -Destination (Join-Path $root $path) -Force
+        }
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid add --all
+        # A committed candidate already contains these exact files. Keep one
+        # baseline commit in both the dirty-source and committed-source fixture.
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit --allow-empty -qm ownership
+        $LASTEXITCODE | Should -Be 0
+        $base = (& git -C $root rev-parse HEAD).Trim()
+        $resolver = Join-Path $RepoRoot 'scripts/resolve-targeted-tests.ps1'
+        $path = '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+        $file = Join-Path $root $path
+        $text = [IO.File]::ReadAllText($file)
+        $changed = $text.Replace('function Invoke-DevBranchCheck {',"function Invoke-DevBranchCheck {`n    # owned edit")
+        [IO.File]::WriteAllText($file,$changed,[Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base,'-ChangedPath',$path)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $selection = ($run.stdout -join "`n") | ConvertFrom-Json
+        $entrypoint = '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        @($selection.additionalInputs) | Should -Be @($entrypoint,$path | Sort-Object)
+        @($selection.semanticImpacts.name) | Should -Be @('Invoke-DevBranchCheck')
+        @($selection.tests) | Should -Not -Contain 'tests/pester/WorkflowUpdateRollback.Tests.ps1'
+        @($selection.tests) | Should -Contain 'tests/pester/DevBranchCheck.Tests.ps1'
+
+        $ordinaryPlan = Join-Path $root 'build/ordinary-selection.json'
+        $ordinary = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base,'-ChangedPath','tests/pester/DevBranchCheck.Tests.ps1','-OutputPath',$ordinaryPlan)
+        $ordinary.exitCode | Should -Be 0 -Because $ordinary.combinedText
+        $ordinarySelection = Get-Content $ordinaryPlan -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($ordinarySelection.semanticImpacts).Count | Should -Be 0
+        $accepted = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'build/ordinary'),'-JunitPath',(Join-Path $root 'build/ordinary.xml'),'-SelectionPath',$ordinaryPlan,'-InputIdentityOnly')
+        $accepted.exitCode | Should -Be 0 -Because $accepted.combinedText
+        $catalogPath = Join-Path $root 'tests/quality-contracts.json'
+        $catalogText = [IO.File]::ReadAllText($catalogPath)
+        try {
+            $emptyCatalog = $catalogText | ConvertFrom-Json
+            $emptyCatalog.semanticTargeting.libraries = [pscustomobject]@{}
+            $emptyCatalog | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+            $ordinary = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base,'-ChangedPath','tests/pester/DevBranchCheck.Tests.ps1','-OutputPath',$ordinaryPlan)
+            $ordinary.exitCode | Should -Be 0 -Because $ordinary.combinedText
+            $accepted = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'build/empty-libraries'),'-JunitPath',(Join-Path $root 'build/empty-libraries.xml'),'-SelectionPath',$ordinaryPlan,'-InputIdentityOnly')
+            $accepted.exitCode | Should -Be 0 -Because $accepted.combinedText
+        } finally { [IO.File]::WriteAllText($catalogPath,$catalogText,[Text.UTF8Encoding]::new($false)) }
+
+        $invalidPlan = Join-Path $root 'build/missing-library-input.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $invalidPlan) | Out-Null
+        $selection.additionalInputs = @($entrypoint)
+        $selection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $invalidPlan -Encoding UTF8
+        $rejected = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',(Join-Path $root 'build/rejected'),'-JunitPath',(Join-Path $root 'build/rejected.xml'),'-SelectionPath',$invalidPlan,'-InputIdentityOnly')
+        $rejected.exitCode | Should -Not -Be 0
+        $rejected.combinedText | Should -Match 'complete library in additionalInputs'
+
+        # Keep the callee inventory unchanged: this mutation must be detected by
+        # behavior tests, rather than escaping to the broad fallback.
+        $ast = [Management.Automation.Language.Parser]::ParseInput($text,[ref]$null,[ref]$null)
+        $definition = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-DevBranchCheck'},$true)
+        $body = $definition.Extent.Text
+        $mutant = $body.Replace('Assert-VanessaVerificationPreflight -Trigger','if ($false) { Assert-VanessaVerificationPreflight -Trigger')
+        $line = @($mutant -split "`n" | Where-Object { $_ -match 'if \(\$false\) \{ Assert-VanessaVerificationPreflight' })
+        $line.Count | Should -Be 1
+        $mutant = $mutant.Replace($line[0],$line[0]+' }')
+        [IO.File]::WriteAllText($file,$text.Replace($body,$mutant),[Text.UTF8Encoding]::new($true))
+        $plan = Join-Path $root 'build/check-selection.json'
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base,'-ChangedPath',$path,'-OutputPath',$plan)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $selection = Get-Content $plan -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($selection.semanticImpacts.name) | Should -Be @('Invoke-DevBranchCheck')
+        $output = Join-Path $root 'build/mutant-proof'
+        $proof = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),'-WorkerCount','3','-SelectionPath',$plan)
+        $proof.exitCode | Should -Not -Be 0
+        Test-Path -LiteralPath (Join-Path $output 'pester.xml') | Should -BeTrue -Because $proof.combinedText
+        [xml]$junit = Get-Content (Join-Path $output 'pester.xml') -Raw -Encoding UTF8
+        @($junit.SelectNodes('//testcase[failure]') | Where-Object { $_.name -match 'rejects a selected missing profile through the public check' }).Count | Should -Be 1
+
+        [IO.File]::WriteAllText($file,$text,[Text.UTF8Encoding]::new($true))
+        $renamed = $path.Replace('.lifecycle.','.перенесённый модуль.')
+        & git -C $root mv -- $path $renamed
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -qm rename
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $selection = ($run.stdout -join "`n") | ConvertFrom-Json
+        @($selection.additionalInputs) | Should -Be @($entrypoint,$renamed | Sort-Object)
+        @($selection.tests) | Should -Contain 'tests/pester/WorkflowUpdateRollback.Tests.ps1'
+        @($selection.semanticImpacts.kind) | Should -Be @('fallback')
+        & git -C $root rm -- $entrypoint
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -qm missing-entrypoint
+        $run = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$root,'-BaseRef',$base)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $selection = ($run.stdout -join "`n") | ConvertFrom-Json
+        @($selection.semanticImpacts.name) | Should -Contain 'missing-current-entrypoint'
+        @($selection.tests) | Should -Contain 'tests/pester/WorkflowUpdateRollback.Tests.ps1'
+    }
+
     It "invalidates every extracted lifecycle shard when their shared fixture changes" {
         . (Join-Path $RepoRoot "scripts/quality-contracts.ps1")
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        $expected = @('DevBranchLifecycle','DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' } | Sort-Object)
+        $expected = @('DevBranchLifecycle','DevBranchCheck','DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' } | Sort-Object)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/pester/DevBranchLifecycleSupport.ps1')
         @($selection.unknownPaths).Count | Should -Be 0
         @($selection.tests) | Should -Be $expected
@@ -110,6 +259,10 @@ Describe "Local quality gate contract" {
         $canonicalRun.exitCode | Should -Be 0 -Because ((@($canonicalRun.stdout) + @($canonicalRun.stderr)) -join [Environment]::NewLine)
         $canonicalSelection = ($canonicalRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
         @($canonicalSelection.semanticImpacts.name) | Should -Be @("no-semantic-impact") -Because "CRLF checkout bytes and LF git-show bytes must compare through the canonical Git filter"
+        $unknownPath = 'неизвестно/Путь с пробелом.ps1'
+        $rejected = Invoke-TestPowerShellFile -FilePath $resolver -Arguments @('-RepositoryRoot',$RepoRoot,'-ChangedPath',$unknownPath)
+        $rejected.exitCode | Should -Not -Be 0
+        $rejected.combinedText.Contains($unknownPath) | Should -BeTrue -Because 'the UTF-8 child boundary must retain the exact whitespace-and-Cyrillic path in its diagnostic'
     }
 
     It "falls back for a deleted or exactly renamed semantic entrypoint without reading a missing file" {
@@ -188,6 +341,7 @@ Describe "Local quality gate contract" {
             & git -C $root config user.email "itl-test@example.invalid"
             foreach ($relativePath in @(
                 "scripts\quality-contracts.ps1",
+                "tests\pester\DevBranchCheck.Tests.ps1",
                 "scripts\develop-configuration-rejection.ps1",
                 "tests\quality-contracts.json",
                 "tests\pester\DevelopConfigurationRejection.Tests.ps1",

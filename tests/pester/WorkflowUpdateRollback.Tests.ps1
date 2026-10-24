@@ -1286,6 +1286,10 @@ Describe 'Workflow dependency transition snapshot' -Tag WorkflowDependencyTransa
 
 Describe 'Legacy raw-copy recovery without receipt or backup' {
     BeforeAll {
+        # Cache only immutable historical source/compiled definitions in this
+        # worker. Every case still creates its own repositories, commits and
+        # incident by executing the real historical updater below.
+        $script:legacyUpdaterSource = $null
         function New-LegacyRawCopyFixture {
             param([string]$Root, [string]$Candidate, [string]$Executor)
             foreach ($directory in @($Root,$Candidate,$Executor)) {
@@ -1301,8 +1305,20 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                 [IO.File]::WriteAllText($path, 'candidate bytes', [Text.UTF8Encoding]::new($false))
             }
-            $oldBlob=(& git -C $repoRoot rev-parse '6bb6932802f78f8699b06ed49b69eba14dceff09:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').Trim()
-            $oldText=[Text.Encoding]::UTF8.GetString((Get-GitBlobBytesBatch -Root $repoRoot -ObjectIds @($oldBlob))[$oldBlob])
+            if ($null -eq $script:legacyUpdaterSource) {
+                $oldBlob=(& git -C $repoRoot rev-parse '6bb6932802f78f8699b06ed49b69eba14dceff09:.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1').Trim()
+                $oldText=[Text.Encoding]::UTF8.GetString((Get-GitBlobBytesBatch -Root $repoRoot -ObjectIds @($oldBlob))[$oldBlob])
+                $parseErrors=$null
+                $ast=[Management.Automation.Language.Parser]::ParseInput($oldText,[ref]$null,[ref]$parseErrors)
+                @($parseErrors).Count | Should -Be 0
+                $definitions=@(foreach($name in @('Update-WorkflowPackage','New-WorkflowUpdateRollbackSnapshot','Remove-WorkflowUpdateRollbackSnapshot')) {
+                    $matches=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+                    $matches.Count | Should -Be 1
+                    [scriptblock]::Create($matches[0].Extent.Text)
+                })
+                $script:legacyUpdaterSource=[pscustomobject]@{text=$oldText;definitions=$definitions}
+            }
+            $oldText=$script:legacyUpdaterSource.text
             $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
             $path=Join-Path $Candidate $relative
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
@@ -1344,11 +1360,7 @@ Describe 'Legacy raw-copy recovery without receipt or backup' {
             # functions. Only dependency provisioning and its child boundary are
             # stubbed. The missing receipt/backup is produced, not prearranged.
             & {
-                $ast=[Management.Automation.Language.Parser]::ParseInput($oldText,[ref]$null,[ref]$null)
-                foreach($name in @('Update-WorkflowPackage','New-WorkflowUpdateRollbackSnapshot','Remove-WorkflowUpdateRollbackSnapshot')) {
-                    $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true)
-                    . ([scriptblock]::Create($definition.Extent.Text))
-                }
+                foreach($definition in $script:legacyUpdaterSource.definitions) { . $definition }
                 $oldRemove=(Get-Item Function:Remove-WorkflowUpdateRollbackSnapshot).ScriptBlock
                 function Remove-WorkflowUpdateRollbackSnapshot {
                     param($Snapshot)

@@ -530,6 +530,16 @@ if ($SelectionPath) {
                 $semanticPath -notin $selectionAdditionalInputs) {
                 throw "Targeted semantic selection must include the complete entrypoint in additionalInputs: $semanticPath"
             }
+            $libraries = $semanticCatalogProperty.Value.PSObject.Properties['libraries']
+            if ($libraries) {
+                foreach ($libraryPath in @($libraries.Value.PSObject.Properties | ForEach-Object { [string]$_.Name })) {
+                    if (($libraryPath -in @($selection.paths) -or $libraryPath -in @($selection.semanticImpacts | ForEach-Object { [string]$_.owner })) -and
+                        (Test-Path -LiteralPath (Join-Path $RepositoryRoot $libraryPath) -PathType Leaf) -and
+                        $libraryPath -notin $selectionAdditionalInputs) {
+                        throw "Targeted semantic selection must include the complete library in additionalInputs: $libraryPath. Regenerate the selection with resolve-targeted-tests.ps1."
+                    }
+                }
+            }
         }
     } elseif ($schemaProperty -and [int]$schemaProperty.Value -ne 1) {
         throw "Unsupported Pester selection schemaVersion: $($schemaProperty.Value)."

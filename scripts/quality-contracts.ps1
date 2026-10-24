@@ -222,7 +222,8 @@ function Get-PublicLifecycleActions {
 function Get-Agent1cSemanticModel {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
-        [string]$SourceName = "agent-1c.ps1"
+        [string]$SourceName = "agent-1c.ps1",
+        [switch]$Library
     )
 
     $tokens = $null
@@ -231,13 +232,14 @@ function Get-Agent1cSemanticModel {
     if (@($errors).Count -gt 0) {
         return [pscustomobject]@{ valid = $false; reason = "parse-error"; detail = [string]$errors[0].Message }
     }
-    if ($null -eq $ast.ParamBlock) { return [pscustomobject]@{ valid = $false; reason = "missing-param-block"; detail = "" } }
+    if ($null -eq $ast.ParamBlock -and -not $Library) { return [pscustomobject]@{ valid = $false; reason = "missing-param-block"; detail = "" } }
+    if ($Library -and $null -ne $ast.ParamBlock) { return [pscustomobject]@{ valid = $false; reason = "library-param-block"; detail = "" } }
 
     $parameters = @{}
     $functions = @{}
     $actions = @{}
     $spans = New-Object System.Collections.Generic.List[object]
-    foreach ($parameter in @($ast.ParamBlock.Parameters)) {
+    foreach ($parameter in @(if ($null -ne $ast.ParamBlock) { $ast.ParamBlock.Parameters })) {
         $name = [string]$parameter.Name.VariablePath.UserPath
         if (-not $name -or $parameters.ContainsKey($name)) { return [pscustomobject]@{ valid = $false; reason = "dynamic-or-duplicate-parameter"; detail = $name } }
         $parameters[$name] = [string]$parameter.Extent.Text
@@ -250,6 +252,7 @@ function Get-Agent1cSemanticModel {
         $spans.Add([pscustomobject]@{ start = [int]$definition.Extent.StartOffset; length = [int]($definition.Extent.EndOffset - $definition.Extent.StartOffset); marker = "__ITL_FUNCTION_$name`__" }) | Out-Null
     }
 
+    if (-not $Library) {
     $dispatches = @($ast.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.SwitchStatementAst] -and $node.Condition.Extent.Text.Trim() -ceq '$Action'
@@ -268,6 +271,7 @@ function Get-Agent1cSemanticModel {
         # therefore never mistaken for a leaf body edit.
         $spans.Add([pscustomobject]@{ start = [int]$body.Extent.StartOffset; length = [int]($body.Extent.EndOffset - $body.Extent.StartOffset); marker = "__ITL_ACTION_BODY_$name`__" }) | Out-Null
     }
+    }
 
     $shared = New-Object System.Text.StringBuilder($Text)
     foreach ($span in @($spans | Sort-Object start -Descending)) {
@@ -282,6 +286,7 @@ function Get-Agent1cSemanticModel {
         functions = $functions
         actions = $actions
         shared = $shared.ToString()
+        ast = $ast
     }
 }
 
@@ -289,12 +294,22 @@ function Resolve-Agent1cSemanticImpact {
     param(
         [Parameter(Mandatory = $true)][object]$Catalog,
         [AllowNull()][AllowEmptyString()][object]$CurrentText,
-        [AllowNull()][AllowEmptyString()][object]$BaselineText
+        [AllowNull()][AllowEmptyString()][object]$BaselineText,
+        [string]$LibraryPath = ''
     )
 
     $semantic = $Catalog.semanticTargeting
+    $library = if ($LibraryPath) { $semantic.libraries.PSObject.Properties[$LibraryPath].Value } else { $null }
     $fallback = {
         param([string]$Reason)
+        if ($LibraryPath) {
+            $selection = Resolve-QualityContractsForPaths -Catalog $Catalog -Paths @($LibraryPath)
+            return [pscustomobject]@{
+                fallback = $true; reason = $Reason
+                impacts = @([pscustomobject]@{ kind = 'fallback'; name = $Reason; owner = $LibraryPath })
+                tests = @($selection.tests)
+            }
+        }
         $contract = @($Catalog.contracts | Where-Object { [string]$_.id -eq [string]$semantic.fallbackContract }) | Select-Object -First 1
         return [pscustomobject]@{
             fallback = $true
@@ -305,8 +320,8 @@ function Resolve-Agent1cSemanticImpact {
     }
     if ($null -eq $BaselineText) { return & $fallback "missing-baseline" }
     if ($null -eq $CurrentText) { return & $fallback "missing-current-entrypoint" }
-    $before = Get-Agent1cSemanticModel -Text ([string]$BaselineText) -SourceName "baseline/agent-1c.ps1"
-    $after = Get-Agent1cSemanticModel -Text ([string]$CurrentText) -SourceName "current/agent-1c.ps1"
+    $before = Get-Agent1cSemanticModel -Text ([string]$BaselineText) -SourceName "baseline/$LibraryPath" -Library:([bool]$LibraryPath)
+    $after = Get-Agent1cSemanticModel -Text ([string]$CurrentText) -SourceName "current/$LibraryPath" -Library:([bool]$LibraryPath)
     if (-not $before.valid) { return & $fallback ("baseline-" + [string]$before.reason) }
     if (-not $after.valid) { return & $fallback ("current-" + [string]$after.reason) }
 
@@ -319,6 +334,25 @@ function Resolve-Agent1cSemanticImpact {
 
     $impacts = New-Object System.Collections.Generic.List[object]
     $tests = New-Object System.Collections.Generic.List[string]
+    if ($LibraryPath) {
+        foreach ($name in @($before.functions.Keys | Sort-Object)) {
+            if ([string]$before.functions[$name] -ceq [string]$after.functions[$name]) { continue }
+            $node = $library.functions.PSObject.Properties[$name]
+            if (-not $node) { return & $fallback "unproven-function-$name" }
+            # A new callee or invocation mechanism widens the declared owner.
+            # Keep the existing complete path selection until it is reviewed.
+            $beforeCalls = Get-QualityFunctionInvocationInventory -Model $before -Name $name
+            $afterCalls = Get-QualityFunctionInvocationInventory -Model $after -Name $name
+            if ($null -eq $beforeCalls -or $null -eq $afterCalls -or $beforeCalls -cne $afterCalls -or
+                $afterCalls -cne [string]$node.Value.callsSha256) {
+                return & $fallback "function-dependencies-changed-$name"
+            }
+            foreach ($test in @($node.Value.tests)) { $tests.Add([string]$test) | Out-Null }
+            $impacts.Add([pscustomobject]@{ kind = 'function'; name = $name; owner = $LibraryPath }) | Out-Null
+        }
+        if ($impacts.Count -eq 0) { return & $fallback 'no-semantic-impact' }
+        return [pscustomobject]@{ fallback = $false; reason = ''; impacts = @($impacts.ToArray()); tests = @($tests | Sort-Object -Unique) }
+    }
     foreach ($test in @($semantic.commonTests)) { $tests.Add(([string]$test).Replace('\', '/')) | Out-Null }
     foreach ($definition in @(
         [pscustomobject]@{ kind = "parameter"; plural = "parameters"; owners = $semantic.parameterOwners; selective = $semantic.selectiveNodes.parameters },
@@ -348,6 +382,35 @@ function Resolve-Agent1cSemanticImpact {
         impacts = @($impacts | ForEach-Object { $_ })
         tests = @($tests | Sort-Object -Unique)
     }
+}
+
+function Get-QualityFunctionInvocationInventory {
+    param([object]$Model, [string]$Name)
+    $definition = @($Model.ast.EndBlock.Statements | Where-Object {
+        $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $Name
+    })[0]
+    if (@($definition.Body.FindAll({param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -or $node -is [Management.Automation.Language.TypeDefinitionAst]
+    }, $true)).Count -gt 0) { return $null }
+    $calls = New-Object Collections.Generic.List[string]
+    foreach ($call in @($definition.FindAll({ param($node)
+        $node -is [Management.Automation.Language.CommandAst] -or $node -is [Management.Automation.Language.InvokeMemberExpressionAst]
+    }, $true))) {
+        if ($call -is [Management.Automation.Language.CommandAst]) {
+            $command = $call.GetCommandName()
+            if (-not $command -or $call.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Unknown) { return $null }
+            $calls.Add("command:$command") | Out-Null
+        } else {
+            if ($call.Member -isnot [Management.Automation.Language.StringConstantExpressionAst]) { return $null }
+            # Bind the target as well as the member: File.Delete and an owned
+            # list's Delete must never share an invocation identity.
+            $calls.Add("member:$($call.Expression.Extent.Text):$($call.Member.Extent.Text):$($call.Static)") | Out-Null
+        }
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes((@($calls | Sort-Object -Unique) -join "`n"))))).Replace('-','').ToLowerInvariant()
+    } finally { $sha.Dispose() }
 }
 
 function Get-Agent1cEntrypointProbeInventory {
@@ -407,7 +470,8 @@ function Test-QualityContractCatalog {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][object]$Catalog,
-        [switch]$SkipSemanticEntrypointValidation
+        [switch]$SkipSemanticEntrypointValidation,
+        [string[]]$SkipSemanticLibraryValidation = @()
     )
 
     $releaseCatalogPath = Join-Path $RepositoryRoot 'scripts/release-e2e/stages.json'
@@ -443,7 +507,7 @@ function Test-QualityContractCatalog {
         $rulePaths=@()
         foreach($rule in @($Catalog.developJourneys.scenarioInputs)) {
             if($rule.path -in $rulePaths -or [IO.Path]::IsPathRooted($rule.path) -or $rule.path -match '(^|/)\.\.(/|$)' -or
-                -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $rule.path) -PathType Leaf) -or
+                ($rule.path -notin $SkipSemanticLibraryValidation -and -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $rule.path) -PathType Leaf)) -or
                 @($rule.PSObject.Properties.Name | Where-Object {$_ -notin @('path','functions','requiresNoProductContext')}).Count) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
             if($rule.PSObject.Properties['requiresNoProductContext'] -and $rule.requiresNoProductContext -isnot [bool]) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
             $rulePaths+=([string]$rule.path)
@@ -604,6 +668,43 @@ function Test-QualityContractCatalog {
             }
         }
     }
+    }
+    $semanticProperty = $Catalog.PSObject.Properties['semanticTargeting']
+    $libraryProperty = if ($semanticProperty) { $semanticProperty.Value.PSObject.Properties['libraries'] } else { $null }
+    if ($libraryProperty) {
+        foreach ($library in @($libraryProperty.Value.PSObject.Properties)) {
+            $path = [string]$library.Name
+            if ($path -notmatch '^\.agents/skills/1c-workflow/scripts/lib/agent-1c\.[a-z0-9-]+\.ps1$' -or
+                @($Catalog.contracts | Where-Object { $path -in @($_.paths) }).Count -eq 0) {
+                throw "Semantic library '$path' must be an exact catalog-owned helper module."
+            }
+            $model = if ($path -notin $SkipSemanticLibraryValidation) {
+                Get-Agent1cSemanticModel -Text ([IO.File]::ReadAllText((Join-Path $RepositoryRoot $path), [Text.Encoding]::UTF8)) -Library
+            } else { $null }
+            if ($null -ne $model -and -not $model.valid) { throw "Semantic library '$path' is not parseable." }
+            foreach ($node in @($library.Value.functions.PSObject.Properties)) {
+                # The existing entrypoint validation proves this declared set;
+                # its missing-file fallback must still select complete tests.
+                $libraryActions = @($Catalog.lifecycleActions.journey) + @($Catalog.lifecycleActions.boundary)
+                if ($null -ne $model -and -not $model.functions.ContainsKey($node.Name)) { throw "Semantic library function '$($node.Name)' does not exist in '$path'." }
+                $tests = @($node.Value.tests)
+                $ids = @($node.Value.probes)
+                if ($tests.Count -eq 0 -or @($tests | Sort-Object -Unique).Count -ne $tests.Count -or
+                    @($tests | Where-Object { $_ -notin $ownedTests }).Count -gt 0 -or
+                    $ids.Count -eq 0 -or @($ids | Sort-Object -Unique).Count -ne $ids.Count -or
+                    [string]$node.Value.action -notin $libraryActions -or
+                    [string]$node.Value.callsSha256 -cnotmatch '^[a-f0-9]{64}$') {
+                    throw "Semantic library function '$($node.Name)' needs owned tests and unique public probes."
+                }
+                $libraryProbes = @(Get-Agent1cEntrypointProbeInventory -RepositoryRoot $RepositoryRoot -TestPaths $tests)
+                foreach ($id in $ids) {
+                    $probe = @($libraryProbes | Where-Object id -CEQ $id)
+                    if ($probe.Count -ne 1 -or [string]$probe[0].action -cne [string]$node.Value.action) {
+                        throw "Semantic library function '$($node.Name)' has no matching public probe '$id'."
+                    }
+                }
+            }
+        }
     }
     return $true
 }

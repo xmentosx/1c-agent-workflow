@@ -318,12 +318,15 @@ Describe 'Source quality catalog contracts' {
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=192
         }
         [double]$trackedTimings.files.'LocalGateTransport.Tests.ps1' | Should -Be 20
-        # 3e589904 actual named JUnit sums plus 5 seconds, rounded up.
-        [double]$trackedTimings.files.'LocalTargetedSelection.Tests.ps1' | Should -Be 224
+        # 2026-10-24 ownership-bound/optional-shapes: 328.54/354.32s.
+        # Round ordering weights up to 30s; historical observations below and
+        # all verification deadlines remain unchanged.
+        [double]$trackedTimings.files.'LocalTargetedSelection.Tests.ps1' | Should -Be 360
         [double]$trackedTimings.files.'LocalShardCache.Tests.ps1' | Should -Be 162
         [double]$trackedTimings.files.'CompactRunnerFreshContinuation.Tests.ps1' | Should -Be 183
         [double]$trackedTimings.files.'CompactRunnerLongContinuation.Tests.ps1' | Should -Be 145
-        [double]$trackedTimings.files.'SourceQualityCatalog.Tests.ps1' | Should -Be 153
+        # ownership-bound worker: 214.386s with the new catalog validation.
+        [double]$trackedTimings.files.'SourceQualityCatalog.Tests.ps1' | Should -Be 240
         # 2026-10-23 native scheduler: ten incremental/native-boundary cases
         # completed in 94.59s. Reserve five seconds; do not change deadlines.
         [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 100
@@ -407,7 +410,8 @@ Describe 'Source quality catalog contracts' {
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $snapshotConsumer = 'tests/pester/ContinuationStatusSnapshot.Tests.ps1'
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
-        $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+        $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery','DevBranchCheck' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
+        $checkConsumer = 'tests/pester/DevBranchCheck.Tests.ps1'
         $gitTransportConsumer = 'tests/pester/RepositoryGitTransport.Tests.ps1'
         $classificationConsumer = 'tests/pester/ToolingReadiness.Tests.ps1'
         $registrySetupConsumers = @('tests/pester/ProductProjectContext.Tests.ps1','tests/pester/ProductProjectSetup.Tests.ps1')
@@ -419,8 +423,8 @@ Describe 'Source quality catalog contracts' {
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
         @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 3)
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 4)
         @($selection.tests) | Should -Contain $snapshotConsumer
         $snapshotOwner = @($catalog.contracts | Where-Object id -eq 'compact-helper-continuation-inputs')[0]
         @($snapshotOwner.tests) | Should -Contain $snapshotConsumer
@@ -502,8 +506,8 @@ Describe 'Source quality catalog contracts' {
             "tests/quality-contracts.json"))
         # One additional real catalog consumer; historical observed timings above
         # remain unchanged, and the exact added selection is checked below.
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 3)
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 4)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
