@@ -193,7 +193,8 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
-    It 'keeps accelerated token normalization identical to its original fallback on large Unicode source' {
+    It 'keeps accelerated token normalization identical to its original fallback on Unicode source (<Repeat>)' -TestCases @(@{Repeat=1},@{Repeat=180}) {
+        param($Repeat)
         $chunk=@'
 function Read-Example {
     $path = 'C:\путь с пробелом'
@@ -210,15 +211,18 @@ function Read-Example {
     'separate statement'
 }
 '@
-        $text=([string][char]0xFEFF)+(@(1..180|ForEach-Object {$chunk}) -join "`n")
+        $text=([string][char]0xFEFF)+(@(1..$Repeat|ForEach-Object {$chunk}) -join "`n")
         $tokens=$null;$errors=$null
         [void][Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xFEFF),[ref]$tokens,[ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        $tokens.Count | Should -BeGreaterThan 4096
+        if($Repeat -eq 180) {$tokens.Count | Should -BeGreaterThan 4096}
+        else {$tokens.Count | Should -BeLessThan 4096}
         $normalizer=Get-DevelopSourceTokenNormalizer
         ($normalizer -is [type]) | Should -BeTrue
         $fast=$normalizer::Normalize($tokens)
+        Mock Get-DevelopSourceTokenNormalizer {$normalizer}
         ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
+        Should -Invoke Get-DevelopSourceTokenNormalizer -Times 1 -Exactly
         Mock Get-DevelopSourceTokenNormalizer {$null}
         ConvertTo-DevelopSourceTokens $text | Should -BeExactly $fast
         {ConvertTo-DevelopSourceTokens ($text+"`nfunction broken {")} | Should -Throw '*PARSE_ERROR*'
