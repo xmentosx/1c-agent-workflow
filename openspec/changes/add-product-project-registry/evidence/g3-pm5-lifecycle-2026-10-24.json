@@ -1,0 +1,289 @@
+{
+  "observedUtc": "2026-10-24T17:24:01.703785+00:00",
+  "sourceCommit": "34c623e6e9cc6f33737f3c3cd4642f1a26e3f35b",
+  "status": "PARTIAL_WITH_FUNCTIONAL_BLOCKER",
+  "fullG3Accepted": false,
+  "canary": {
+    "projectRoot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+    "branchRoot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+    "capsule": {
+      "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+      "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "phase": "Develop",
+      "workflowCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264"
+    },
+    "claim": {
+      "schemaVersion": 2,
+      "kind": "itl-qualification-fixture-target",
+      "status": "ready",
+      "projectRoot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+      "branchRoot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+      "capsuleSha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "capsulePath": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+      "candidateCommit": "34c623e6e9cc6f33737f3c3cd4642f1a26e3f35b",
+      "phase": "Develop",
+      "copyRoot": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864",
+      "projectsRoot": "C:\\itlj\\g3-lifecycle-20261024",
+      "workflowCommonGit": "C:\\Users\\xment\\OneDrive\\Документы\\1c-agent-workflow\\.git",
+      "databaseBytes": 4294967296,
+      "sourceAdmission": "sealed-capsule",
+      "databaseBytesBasis": "declared-capacity-budget",
+      "restoreDurationMs": 66951,
+      "preparationDurationMs": 166955
+    },
+    "execution": "executed"
+  },
+  "results": [
+    {
+      "name": "first-legacy-unattended-update",
+      "status": "PASS",
+      "fromCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "toCommit": "34c623e6e9cc6f33737f3c3cd4642f1a26e3f35b",
+      "durationMs": 322555,
+      "scope": "main+sibling clean, no project binding or later consent invented"
+    },
+    {
+      "name": "late-list-preview-select",
+      "status": "PASS",
+      "scope": "public installed commands on new unbound PM5; Kilo-only seed membership; memory opt-in remains false"
+    },
+    {
+      "name": "bound-incompatible-package-rejection",
+      "status": "PASS",
+      "exitCode": 1,
+      "scope": "CATALOG_PACKAGE_INCOMPATIBLE before copying; protected inputs and three helper code files unchanged on main+sibling"
+    },
+    {
+      "name": "compatibility-restore",
+      "status": "PASS_WITH_FORMAT_LIMIT",
+      "proof": {
+        "passed": true,
+        "descriptorExact": true,
+        "bindingAbsent": true,
+        "clients": [
+          {
+            "path": ".kilo/kilo.json",
+            "exists": true,
+            "absencePreserved": false,
+            "valuesEqual": true,
+            "bytesEqual": false,
+            "beforeSha256": "ab37c251a44ce7d3bcd59ac6dfe484520db39b4f2236311507a0ff3b9300b59b",
+            "afterSha256": "02130f76f36a173d8f42077354e963d900f2de2a691855743b537ad2e9ca9f4d"
+          },
+          {
+            "path": ".cursor/mcp.json",
+            "exists": false,
+            "absencePreserved": true
+          }
+        ],
+        "initialProofInvalid": "Previous shell check did not stop on absent optional Cursor file; retained as invalid. This proof uses exact archived existence and validates only present files; missing remains missing."
+      }
+    },
+    {
+      "name": "actual-managed-downgrade",
+      "status": "FAIL",
+      "exitCode": 1,
+      "durationMs": 70843,
+      "outerError": "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: snapshot and receipt preserved at 'C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-3ad27342dd144f5487c218e946340715'. Repeat update-workflow to resume this exact state. Fresh workflow post-copy process failed with exit code 1; its original terminal operation evidence is retained.",
+      "childError": "Invalid dependency mode: workflow. Use fresh or locked."
+    },
+    {
+      "name": "fork-readiness-admission",
+      "status": "BLOCKED_EXPECTED_GUARD",
+      "scope": "ITL_INFOBASE_APPLICATION_NOT_READY before creating a worktree; configLoadStatus pending; completing update-dev-branch-base would reach Gate6"
+    },
+    {
+      "name": "source-side-recovery-status",
+      "status": "PASS_EXPLICIT_SOURCE_AND_GUID",
+      "exitCode": 0,
+      "scope": "validated report has 0 changed paths; receipt unchanged; this is diagnostics, not completed downgrade or recovery"
+    }
+  ],
+  "blocker": {
+    "id": "G3-MANAGED-DOWNGRADE-DEPENDENCY-MODE",
+    "owner": "shared update-workflow/dependency post-copy handoff",
+    "phase": "post-copy-failed",
+    "candidate": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+    "producer": "New-WorkflowDependencyPlan produces schemaVersion2/mode workflow",
+    "consumer": "old ConvertTo-DependencyMode accepts fresh/latest or locked/pinned only",
+    "noImplementationChange": true,
+    "checkpoint": {
+      "phase": "post-copy-failed",
+      "path": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-3ad27342dd144f5487c218e946340715\\transaction.json",
+      "sha256": "d11643ab3efc79bd001438087fc7869ec2531d1153a65c93e4a3f6d12b42ad82",
+      "sourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "dependencyMode": "workflow"
+    },
+    "next": "Fix or qualify the supported dependency handoff at its authoritative owner; repeat the same native downgrade on the retained canary without changing workload or editing receipts. No gate bypass."
+  },
+  "diagnosticQualificationLimit": "Default SourceRoot invocation failed before owner because parameter default evaluated an empty PSScriptRoot; explicit supported -SourceRoot works. Initial SnapshotId incorrectly included directory prefix; correct id is the 32 hex GUID. Those original errors are retained. Only explicit-source/GUID diagnostics qualified.",
+  "harnessNotes": [
+    "Initial long-path old-source checkout was not used; retained without force/cleanup, exact clean candidate prepared in a separate shorter private clone.",
+    "Catalog wrapper initially reused validated Action variable from dot-sourced fixture entrypoint; renamed before native catalog call; original log retained.",
+    "Initial optional-Cursor verification did not stop on missing files and is retained as invalid. Correct proof validates recorded existence: Cursor absent before and after. Present Kilo values equal; full file byte identity is false and not claimed."
+  ],
+  "finalCanary": {
+    "memoryRequests": 0,
+    "originalChildError": "Invalid dependency mode: workflow. Use fresh or locked.",
+    "roots": [
+      {
+        "untracked": [],
+        "head": "a096c4451f440ab412d4b5d57b67ff820182e955",
+        "helperSha256": "3f760f936e9ed66a9c5ca9cd7710e5307b1171bdd76cd3277eb1337bec58c6c2",
+        "gate6Artifacts": 0,
+        "dirty": [
+          ".agent-1c/dependency-lock.json",
+          ".agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json",
+          ".agents/skills/1c-workflow/assets/product-project-compatibility.json",
+          ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md.template",
+          ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template",
+          ".agents/skills/1c-workflow/references/advanced-actions.md",
+          ".agents/skills/1c-workflow/references/init-setup.md",
+          ".agents/skills/1c-workflow/references/mcp.md",
+          ".agents/skills/1c-workflow/references/platform-validation-evidence.md",
+          ".agents/skills/1c-workflow/references/tooling-recovery.md",
+          ".agents/skills/1c-workflow/references/verification-result.md",
+          ".agents/skills/1c-workflow/references/workflow-incidents.md",
+          ".agents/skills/1c-workflow/references/yaxunit-tests.md",
+          ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.auxiliary.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-opencode.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.openspec-cli.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-diagnostics.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-console.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-runtime.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-source-evidence.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
+          ".agents/skills/1c-workflow/scripts/lib/itl-powershell-environment.ps1",
+          ".agents/skills/1c-workflow/scripts/run-itl-command.ps1",
+          ".agents/skills/itl-remote-runner/scripts/itl_remote/execution_guard.py",
+          ".agents/skills/itl-roctup-1c-data/SKILL.md",
+          ".agents/skills/itl-vanessa-ui-mcp/SKILL.md",
+          ".agents/skills/product-docs/SKILL.md",
+          "AGENT-INSTALL.md",
+          "USER-RULES.md",
+          "docs/itl-workflow/dependency-versions.md",
+          "templates/USER-RULES.append.md",
+          "templates/ai-rules-overlay/sections.json",
+          "templates/dependency-lock.json",
+          "templates/dev.env.example",
+          "templates/product-project-registry/README.md",
+          "templates/product-project-registry/pilot/catalog.json",
+          "templates/product-project-registry/pilot/product-relations.json",
+          "templates/product-project-registry/schemas/catalog.schema.json",
+          "templates/product-project-registry/schemas/product-relations.schema.json",
+          "templates/project.json"
+        ],
+        "bindingPresent": false,
+        "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project",
+        "lockWorkflow": "fa0e3c91694112c1da3ecda7209a8a81ea828264"
+      },
+      {
+        "untracked": [],
+        "head": "07e15f4daa6ec61e7fd66e34b1343be665429d86",
+        "helperSha256": "9e0f210cde5f745a8dceb0df55d1c7ede0c6f5196a09023f44ea14f136f8ea30",
+        "gate6Artifacts": 0,
+        "dirty": [],
+        "bindingPresent": false,
+        "root": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch",
+        "lockWorkflow": "34c623e6e9cc6f33737f3c3cd4642f1a26e3f35b"
+      }
+    ],
+    "openCodeSkipped": true,
+    "sourceCommit": "34c623e6e9cc6f33737f3c3cd4642f1a26e3f35b",
+    "workingMigration": false,
+    "oldCandidateSourceClean": true,
+    "gate6Started": false,
+    "pending": {
+      "phase": "post-copy-failed",
+      "path": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\project\\.agent-1c\\snapshots\\workflow-update\\itl-workflow-update-rollback-3ad27342dd144f5487c218e946340715\\transaction.json",
+      "sha256": "d11643ab3efc79bd001438087fc7869ec2531d1153a65c93e4a3f6d12b42ad82",
+      "sourceCommit": "fa0e3c91694112c1da3ecda7209a8a81ea828264",
+      "dependencyMode": "workflow"
+    },
+    "publication": false,
+    "database": {
+      "unchangedSinceFirstUpgrade": true,
+      "path": "C:\\itlj\\g3-lifecycle-20261024\\q Проект\\develop-c2c570fe1ec5-34c623e6e9cc-c1ed2864\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    }
+  },
+  "preservation": {
+    "currentStandAndOldRoots": [
+      {
+        "untracked": [],
+        "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+        "changed": [],
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\project",
+        "head": "160616d6a310b8401f23da0cc44361943970f7fd"
+      },
+      {
+        "untracked": [],
+        "workflow": "78f11bd861543dfea89eab722d4f5b869dd64c25",
+        "changed": [],
+        "aiRules": "987320be139b4ac0d28f1f5b0f2515f63c7f140f",
+        "root": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch",
+        "head": "48062b1e0672515586ba829000ca2c3b5116c8cd"
+      }
+    ],
+    "database": {
+      "path": "C:\\itlj\\g3-pm5-current-20261022\\q Проект\\develop-c2c570fe1ec5-d109a95dc1db-4b0defed\\branch\\.agent-1c\\infobases\\dev-branches\\workflow-release-e2e-preflight\\1Cv8.1CD",
+      "sha256": "c323a334fdd08907a31e783bc2f57e4dbacf98de192aff569a6a119d097ae045",
+      "bytes": 3295928320
+    },
+    "historicalFiles": 21,
+    "historicalRoots": 4,
+    "capsule": {
+      "path": "D:\\Git\\itl-workflow-e2e-pm5\\.git\\itl\\qualification-fixtures\\develop-7c26dab0382f41afa212d7ae199dc1b3\\capsule.json",
+      "sha256": "c2c570fe1ec57619f1a516b9752c48159da7b703eb8c8bb275977abde19cd8b6",
+      "artifactsVerified": 11
+    },
+    "allPreserved": true
+  },
+  "unresolved": [
+    "Fresh init not exercised; capsule restore is not init proof or original live-seed currentness.",
+    "Positive new branch/fork/refresh require ready configuration/native load; Gate6 excluded, so no bypass or positive acceptance.",
+    "Remaining foreground first-legacy choose/new/later variants are not all qualified by unattended update and late explicit select.",
+    "PM4/platform/native-client matrix and mandatory release population retain prior scope."
+  ],
+  "exclusions": [
+    "OpenCode SKIPPED",
+    "Gate6 not run or changed",
+    "G4 not started",
+    "working migration not started",
+    "workflow/shared-registry publication not started"
+  ],
+  "warmStartup": "49.731ms accepted deviation remains non-blocking; no performance batch",
+  "rawEvidence": {
+    "root": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\lifecycle-pm5-20261024",
+    "manifest": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\lifecycle-pm5-20261024\\raw-evidence-manifest.json",
+    "sha256": "5693e939a725381145a99d701467f72ccf18c61ba3038b42e0f5e68c6b84a20e",
+    "files": 957,
+    "failedSnapshotArchive": {
+      "path": "C:\\Users\\xment\\.codex\\worktrees\\product-project-registry-g3\\1c-agent-workflow\\build\\test-results\\g3\\lifecycle-pm5-20261024\\failed-downgrade-snapshot.zip",
+      "sha256": "88b317d3d2740311d9d9a6e2bd2f278efc8606c9e8aab610fec9b780e0058a38",
+      "bytes": 3381258
+    }
+  }
+}
