@@ -221,7 +221,7 @@ function Get-PublicLifecycleActions {
 
 function Get-Agent1cSemanticModel {
     param(
-        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
         [string]$SourceName = "agent-1c.ps1",
         [switch]$Library
     )
