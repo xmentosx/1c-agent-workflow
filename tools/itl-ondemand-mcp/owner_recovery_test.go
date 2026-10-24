@@ -95,6 +95,95 @@ func recoveryGatewayCall(t *testing.T, session *mcp.ClientSession, name string) 
 	return result
 }
 
+type budgetRecoveryBroker struct {
+	*ownerRecoveryFixture
+	deadline time.Time
+	t        *testing.T
+}
+
+func (b *budgetRecoveryBroker) Ensure(ctx context.Context) (*backendInfo, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) < 90*time.Second {
+		return nil, fmt.Errorf("cold readiness lost the caller's two-minute budget: %s", time.Until(deadline))
+	}
+	b.deadline = deadline
+	return b.ownerRecoveryFixture.Ensure(ctx)
+}
+
+func (b *budgetRecoveryBroker) MarkRunning(ctx context.Context, previous *backendInfo) (*backendInfo, error) {
+	if deadline, _ := ctx.Deadline(); deadline != b.deadline {
+		b.t.Fatal("mark-running restarted or truncated the startup budget")
+	}
+	return b.ownerRecoveryFixture.MarkRunning(ctx, previous)
+}
+
+func TestOwnerRecoveryUsesTheSameColdAndWarmPhaseBudgetWithoutReplay(t *testing.T) {
+	for _, family := range []string{"roctup", "vanessa-ui"} {
+		t.Run(family, func(t *testing.T) {
+			reads := 0
+			rt, session, fixture := newOwnerRecoveryFixture(t, family, func(string) (*mcp.CallToolResult, error) {
+				reads++
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "usable connection"}}}, nil
+			})
+			rt.broker = &budgetRecoveryBroker{ownerRecoveryFixture: fixture, t: t}
+			for _, state := range []string{"cold", "warm"} {
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool,
+					Arguments: map[string]any{"name": ownerRecoveryTool, "arguments": map[string]any{}},
+					Meta:      mcp.Meta{"itlPhaseRemainingMs": 120000}})
+				if err != nil || result.IsError {
+					t.Fatalf("%s recovery failed: %v %v", state, result, err)
+				}
+				if reads != 0 || rt.executionOwner != nil || rt.cleanupUnconfirmed {
+					t.Fatal("recovery replayed a call or retained its guard")
+				}
+			}
+			if result := recoveryGatewayCall(t, session, recoveryReadName(family)); result.IsError || reads != 1 {
+				t.Fatalf("original safe task did not continue: %v", result)
+			}
+		})
+	}
+}
+
+type readinessFailureBroker struct {
+	*ownerRecoveryFixture
+	fail bool
+}
+
+func (b *readinessFailureBroker) MarkRunning(ctx context.Context, previous *backendInfo) (*backendInfo, error) {
+	if b.fail {
+		return nil, fmt.Errorf("simulated helper exit status 1 without stdout")
+	}
+	return b.ownerRecoveryFixture.MarkRunning(ctx, previous)
+}
+
+func TestOwnerRecoveryReadinessFailureRetainsPhaseAndCleansBeforeSafeContinuation(t *testing.T) {
+	for _, family := range []string{"roctup", "vanessa-ui"} {
+		t.Run(family, func(t *testing.T) {
+			reads := 0
+			rt, session, fixture := newOwnerRecoveryFixture(t, family, func(string) (*mcp.CallToolResult, error) {
+				reads++
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "continued safe task"}}}, nil
+			})
+			broker := &readinessFailureBroker{ownerRecoveryFixture: fixture, fail: true}
+			rt.broker = broker
+			result := recoveryGatewayCall(t, session, ownerRecoveryTool)
+			details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+			for _, marker := range []string{"phase=mark-running", "elapsedMs=", "remainingMs=", "helper exit status 1"} {
+				if !result.IsError || !strings.Contains(fmt.Sprint(details["reason"]), marker) {
+					t.Fatalf("lost startup failure diagnostic %q: %v", marker, result)
+				}
+			}
+			if rt.backend != nil || rt.executionOwner != nil || rt.cleanupUnconfirmed || reads != 0 || details["callOutcome"] != "not-started" {
+				t.Fatal("readiness failure leaked runtime/guard, replayed a call, or reported a false outcome")
+			}
+			broker.fail = false
+			if following := recoveryGatewayCall(t, session, recoveryReadName(family)); following.IsError || reads != 1 {
+				t.Fatalf("safe continuation after changed readiness state failed: %v", following)
+			}
+		})
+	}
+}
+
 func TestOwnerRecoveryDrainsIdleDebtBeforeDispatchForBothFamilies(t *testing.T) {
 	for _, family := range []string{"roctup", "vanessa-ui"} {
 		t.Run(family, func(t *testing.T) {

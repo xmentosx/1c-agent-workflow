@@ -648,8 +648,9 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 	if err := r.enterDatabasePreparationMode(ctx); err != nil {
 		return err
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "broker-start")
+	completePhase := r.backendPhase(ctx, "broker-start")
 	info, err := r.broker.Ensure(ctx)
+	err = completePhase(err)
 	if err != nil {
 		return err
 	}
@@ -677,7 +678,7 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 			r.testClientState = info.TestClientState
 		}
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "mcp-connect", "url", info.URL)
+	completePhase := r.backendPhase(ctx, "mcp-connect")
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-mcp", Version: version}, &mcp.ClientOptions{
 		Capabilities: &mcp.ClientCapabilities{},
 		ProgressNotificationHandler: func(ctx context.Context, req *mcp.ProgressNotificationClientRequest) {
@@ -703,12 +704,14 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 		MaxRetries: 2,
 	}
 	session, err := client.Connect(ctx, transport, nil)
+	err = completePhase(err)
 	if err != nil {
 		r.stopBrokerAfterFailure(ctx)
 		return fmt.Errorf("connect backend MCP: %w", err)
 	}
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "catalog-verify")
+	completePhase = r.backendPhase(ctx, "catalog-verify")
 	_, diff, err := r.waitForCatalog(ctx, session)
+	err = completePhase(err)
 	if err != nil {
 		_ = session.Close()
 		r.stopBrokerAfterFailure(ctx)
@@ -722,15 +725,17 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	}
 	r.session = session
 	r.mismatch = nil
-	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "preflight")
-	if err := r.preflightVanessa(ctx, session); err != nil {
+	completePhase = r.backendPhase(ctx, "preflight")
+	if err := completePhase(r.preflightVanessa(ctx, session)); err != nil {
 		r.session = nil
 		_ = session.Close()
 		r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
 		return err
 	}
+	completePhase = r.backendPhase(ctx, "mark-running")
 	confirmed, err := r.broker.MarkRunning(ctx, info)
+	err = completePhase(err)
 	if err != nil {
 		r.session = nil
 		_ = session.Close()

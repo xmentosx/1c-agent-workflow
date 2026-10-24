@@ -832,6 +832,43 @@ function Stop-ItlOnDemandBackendInstance {
     Invoke-WithItlOnDemandRuntimeMutation -Family $Family -InstanceIds @($InstanceId) -OwnerFunction 'Stop-ItlOnDemandBackendInstanceCore' -OwnerArguments $PSBoundParameters
 }
 
+function Test-ItlOnDemandPeerSessionOwnership {
+    param([int]$ProcessId, [object]$Base, [object]$StoppingRuntime)
+    # Classification only: this owner never stops, drains, or leases a peer.
+    # Warm runtimes intentionally survive between exclusive database calls.
+    $provenPeers = @()
+    foreach ($peer in @(Get-ItlOnDemandRuntimeInstances -Strict)) {
+        if ([int](Get-StateValue $peer 'schemaVersion' 0) -lt 4 -or
+            [string]$peer.family -notin @('roctup','vanessa-ui') -or
+            [string]$peer.instanceId -notmatch '^[a-f0-9]{32}$' -or
+            ([string]$peer.family -ceq [string]$StoppingRuntime.family -and [string]$peer.instanceId -ceq [string]$StoppingRuntime.instanceId) -or
+            [string](Get-StateValue $peer 'status' '') -cne 'running') { continue }
+        $manager = [int]$peer.pid -eq $ProcessId
+        $child = [string]$peer.family -ceq 'vanessa-ui' -and [int](Get-StateValue $peer 'testClientPid' 0) -eq $ProcessId
+        if (-not $manager -and -not $child) { continue }
+        $kind = $(if ($manager) { $peer.managerInfoBaseKind } else { $peer.infoBaseKind })
+        $path = $(if ($manager) { $peer.managerInfoBasePath } else { $peer.infoBasePath })
+        if ([string]$kind -cne [string]$Base.kind -or -not (Test-ItlOnDemandInfoBaseMatch $path $Base.path)) { continue }
+        try {
+            if (@($peer.ownershipMarkers).Count -lt 2 -or
+                -not [bool](Get-ItlOnDemandProcessOwnershipProof -RuntimeState $peer -ExactStart).owned -or
+                -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$peer.port) -ProcessId ([int]$peer.pid))) { continue }
+            if ($child) {
+                if (@($peer.testClientOwnershipMarkers).Count -lt 2) { continue }
+                $children = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $peer -ExactStart -RegisteredOnly | Where-Object { [int]$_.process.Id -eq $ProcessId })
+                if ($children.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$peer.testClientPort) -ProcessId $ProcessId)) { continue }
+            }
+            # Re-read after process inspection. Replaced registrations/leases
+            # cannot turn an unknown same-base session into a proven peer.
+            $current = Read-ItlOnDemandRuntimeState -Family $peer.family -InstanceId $peer.instanceId
+            if ($null -eq $current) { continue }
+            Assert-ItlOnDemandCleanupIdentity -Actual $current -Expected $peer
+            $provenPeers += $peer
+        } catch { continue }
+    }
+    return $provenPeers.Count -eq 1
+}
+
 function Stop-ItlOnDemandBackendInstanceCore {
     param(
         [string]$Family,
@@ -893,7 +930,11 @@ function Stop-ItlOnDemandBackendInstanceCore {
             $bases=@(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtimeState -Family $Family -FallbackTarget ([pscustomobject]@{kind=$runtimeState.infoBaseKind;path=$runtimeState.infoBasePath}))
             foreach ($base in $bases) {
                 $foreign=@(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $base.kind -InfoBasePath $base.path | Where-Object { [int]$_.pid -notin $ownedPids })
-                if ($foreign.Count -gt 0) { throw 'ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: unidentified exact-base 1C sessions remain; wait for their owner to finish, then retry the original operation. No foreign process was stopped.' }
+                foreach ($session in $foreign) {
+                    if (-not (Test-ItlOnDemandPeerSessionOwnership -ProcessId ([int]$session.pid) -Base $base -StoppingRuntime $runtimeState)) {
+                        throw 'ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT: unidentified exact-base 1C sessions remain; wait for their owner to finish, then retry the original operation. No foreign process was stopped.'
+                    }
+                }
             }
         }
         if ($null -ne $ExpectedRuntimeState) {
