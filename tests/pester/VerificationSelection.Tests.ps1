@@ -746,7 +746,11 @@ Describe "Branch-first verification suite selection" {
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeGreaterThan -1
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Invoke-YAxUnitVerification')
         $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Run-DevBranchTests')
-        $cycle | Should -Match 'classification-required'
+        $resolver = [regex]::Match($modes, '(?s)function Get-ItlVanessaVerificationSelectionPlan \{(?<body>.*?)\n\}').Groups['body'].Value
+        $cycle.IndexOf('Get-ItlVanessaVerificationSelectionPlan') | Should -BeGreaterThan -1
+        $cycle.IndexOf('Get-ItlVanessaVerificationSelectionPlan') | Should -BeLessThan $cycle.IndexOf('Invoke-YAxUnitVerification')
+        $resolver | Should -Match 'classification-required'
+        $resolver | Should -Match 'classify-tests-and-repeat-original-itl-command'
     }
 
     It "checks classification before releasing runtime or loading the infobase" {
@@ -874,6 +878,73 @@ Describe 'Classification before infobase preparation' {
         $script:PreflightEvents | Should -Contain 'verified'
         $script:PreflightEvents | Should -Contain 'repair-complete'
         $script:PreflightEvents[-1] | Should -Be 'report'
+    }
+
+    It 'preserves the adopted dirty-source baseline through cursor persistence and a failed load' {
+        $fixtureRoot = Join-Path $TestDrive 'baseline legacy База'
+        $helper = Join-Path $preflightRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot 'src/cf/CommonModules/Owned/Ext') | Out-Null
+        & git -C $fixtureRoot init -b master *> $null
+        & git -C $fixtureRoot config user.email 'tests@example.invalid'
+        & git -C $fixtureRoot config user.name 'ITL Tests'
+        $sourcePath = Join-Path $fixtureRoot 'src/cf/CommonModules/Owned/Ext/Module.bsl'
+        Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// committed'
+        & git -C $fixtureRoot add src
+        & git -C $fixtureRoot commit -qm baseline
+        Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// dirty before adoption'
+        & {
+            . $helper -ProjectRoot $fixtureRoot -Action help *> $null
+            $DevBranchName = 'branch1'
+            $VerificationTrigger = 'command'
+            $ExplicitVerificationComponent = @()
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $script:ApplicabilityCatalog = [pscustomobject]@{ groups = @(); assignments = @(); registrationPaths = @(); notApplicable = @() }
+            $eventBaselinePath = Join-Path $fixtureRoot 'event-baseline.json'
+            Write-Utf8TextAtomic -Path $eventBaselinePath -Value '{}'
+            $script:FixtureStatePath = Save-DevBranchState -SafeDevBranchName 'branch1' -State @{
+                devBranchName = 'branch1'; safeDevBranchName = 'branch1'
+                eventLogBaselinePath = $eventBaselinePath
+            }
+            function Read-DevBranchState { Read-DevBranchStateFile -Path $script:FixtureStatePath }
+            $cursorPath = Join-Path $fixtureRoot 'pending-cursor.json'
+            Write-Utf8TextAtomic -Path $cursorPath -Value '{"capturedAt":"2026-10-24T00:00:00Z","sourceKey":"fixture","activeSegment":"segment"}'
+            function Get-DevBranchEventLogPendingCursorPath { $cursorPath }
+            function Get-ItlVerificationExecutionDecision { param($Component) [pscustomobject]@{ run = $Component -eq 'yaxunit' } }
+            function Assert-ItlVerificationRepairScope {}
+            function Get-DevBranchKind { 'configuration' }
+            function Get-ExportPath { 'src/cf' }
+            function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }
+            function Restore-ConfigDumpInfoLoadSnapshot {}
+            function Remove-ConfigDumpInfoLoadSnapshot {}
+            function Repair-OneCSourceLineEndings {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-VerificationAcceptedMasterInput { [pscustomobject]@{ importedPaths = @() } }
+            # Keep real applicability, state serialization and both event-log
+            # owners. The inventory envelope and native load are separate owners.
+            function Update-VerificationSuiteInventory {
+                $applicability = Get-YAxUnitProductionApplicability -Catalog $script:ApplicabilityCatalog
+                [pscustomobject]@{
+                    vanessaClassificationComplete = $true; yaxunit = $applicability
+                    classificationIssues = @($applicability.issues)
+                }
+            }
+            function Update-DevBranchBase { throw 'FIXTURE_LOAD_FAILED' }
+
+            { Invoke-DevBranchCheck } | Should -Throw '*FIXTURE_LOAD_FAILED*'
+            $persisted = Read-DevBranchState
+            $baseline = Get-StateValue -State $persisted -Name 'yaxunitApplicabilityBaseline' -Default $null
+            $baseline | Should -Not -BeNullOrEmpty
+            @($baseline.legacySourceOids).Count | Should -Be 1
+            $persisted.eventLogPendingCursorPath | Should -Be $cursorPath
+            $adoptedOid = $baseline.legacySourceOids[0].sourceOid
+
+            Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// own change after the failed load'
+            $next = Get-YAxUnitProductionApplicability -Catalog $script:ApplicabilityCatalog
+            $next.classificationComplete | Should -BeFalse
+            $next.issues -join ';' | Should -Match 'unclassified or stale'
+            (Read-DevBranchState).yaxunitApplicabilityBaseline.legacySourceOids[0].sourceOid | Should -BeExactly $adoptedOid
+        }
     }
 
     It 'preserves component selection for <caseName>' -TestCases @(

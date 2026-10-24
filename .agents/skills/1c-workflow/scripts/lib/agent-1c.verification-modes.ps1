@@ -524,6 +524,30 @@ function Complete-ItlVerificationRepairFailure {
     Set-RunFailureContext -RequiredAction "report-blocker"
 }
 
+function Get-ItlVanessaVerificationSelectionPlan {
+    param([switch]$YAxUnitVerificationPlanned)
+
+    if ($script:ActiveAuxiliaryVanessaContext -or (Test-ItlDiagnosticVerificationScope)) { return $null }
+    $featuresPath = Get-VanessaFeaturesPath
+    $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+    $oneOffObligations = @(Get-VerificationOneOffObligations)
+    if ($applicationFeatureFiles.Count -eq 0 -and $oneOffObligations.Count -eq 0) { return $null }
+    $vanessaCatalog = if ($applicationFeatureFiles.Count -eq 0) { Read-VerificationSuiteCatalog -ApplicationFeatureFiles @() } else { $null }
+    if ($applicationFeatureFiles.Count -eq 0 -and -not $vanessaCatalog.available -and $oneOffObligations.Count -gt 0) {
+        return [pscustomobject]@{
+            mode = 'reuse'; reason = 'No retained Vanessa acceptance suite exists; one-off proof is assessed separately.'
+            selectedFeatureFiles = @(); selectedSuiteIds = @(); acceptanceSuiteIds = @(); acceptanceSuites = @()
+            catalogFingerprint = ''; currentTree = Get-VerificationSelectionEffectiveTree; catalogAvailable = $false
+        }
+    }
+    $plan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$YAxUnitVerificationPlanned -RequireObservedReceipts
+    if ($plan.mode -eq 'classification-required') {
+        Set-RunFailureContext -Category 'missing-suite' -RequiredAction 'classify-tests-and-repeat-original-itl-command'
+        throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($plan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
+    }
+    return $plan
+}
+
 function Invoke-ItlVerificationCycle {
     param(
         [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command",
@@ -556,28 +580,8 @@ function Invoke-ItlVerificationCycle {
         Assert-VerificationClassificationReady -Reason "check-dev-branch preflight" -RequireVanessa:$vanessa.run -RequireYAxUnit:$yaxunit.run | Out-Null
         $state = Read-DevBranchState -Name $DevBranchName
     }
-    if (-not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
-        if ($vanessa.run) {
-            $featuresPath = Get-VanessaFeaturesPath
-            $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
-            $oneOffObligations = @(Get-VerificationOneOffObligations)
-            if ($applicationFeatureFiles.Count -gt 0 -or $oneOffObligations.Count -gt 0) {
-                $vanessaCatalog = if ($applicationFeatureFiles.Count -eq 0) { Read-VerificationSuiteCatalog -ApplicationFeatureFiles @() } else { $null }
-                if ($applicationFeatureFiles.Count -eq 0 -and -not $vanessaCatalog.available -and $oneOffObligations.Count -gt 0) {
-                    $selectionPlan = [pscustomobject]@{
-                        mode = 'reuse'; reason = 'No retained Vanessa acceptance suite exists; one-off proof is assessed separately.'
-                        selectedFeatureFiles = @(); selectedSuiteIds = @(); acceptanceSuiteIds = @(); acceptanceSuites = @()
-                        catalogFingerprint = ''; currentTree = Get-VerificationSelectionEffectiveTree; catalogAvailable = $false
-                    }
-                } else {
-                    $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$yaxunit.run -RequireObservedReceipts
-                }
-                if ($selectionPlan.mode -eq "classification-required") {
-                    Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
-                    throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($selectionPlan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
-                }
-            }
-        }
+    if ($vanessa.run) {
+        $selectionPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
     }
 
     if ($yaxunit.run) {
