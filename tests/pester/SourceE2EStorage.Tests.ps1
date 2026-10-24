@@ -411,6 +411,30 @@ Describe 'Failed factory and unclosed qualification copy recovery' {
         (Get-FileHash -LiteralPath $retained.retainedSource).Hash.ToLowerInvariant()|Should -BeExactly $retained.sha256
         Test-Path -LiteralPath (Join-Path $diagnostics 'source.bundle')|Should -BeTrue
     }
+    It 'requires a complete fresh reader inventory after a transient query failure (<Mode>)' -ForEach @(
+        @{Mode='empty';ExpectedRemoved=1},@{Mode='reader';ExpectedRemoved=0},@{Mode='unavailable';ExpectedRemoved=0}
+    ) {
+        $root=Join-Path $TestDrive ('CIM повтор Пример '+$Mode);$copy=New-RecoverableStorageCopy -Root $root -State preparation-failed
+        $script:inventoryAttempts=0
+        Mock Get-CimInstance {
+            $script:inventoryAttempts++
+            # A provider may emit rows before its terminal error. They must
+            # never become a successful empty/partial snapshot.
+            if($script:inventoryAttempts -eq 1 -or $Mode -eq 'unavailable') {
+                [pscustomobject]@{ProcessId=999992;CommandLine='unrelated.exe'}
+                throw [TimeoutException]::new('reader enumeration timed out')
+            }
+            if($Mode -eq 'reader') {[pscustomobject]@{ProcessId=999991;CommandLine=('editor.exe "'+$copy.fixture.branchRoot+'"')}}
+        }
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy
+        $result.removed | Should -Be $ExpectedRemoved
+        (Test-Path -LiteralPath $copy.root) | Should -Be ($ExpectedRemoved -eq 0)
+        Should -Invoke Get-CimInstance -Times 2 -Exactly -ParameterFilter {
+            $ClassName -eq 'Win32_Process' -and $OperationTimeoutSec -eq 2 -and
+            (@($Property | Sort-Object) -join ',') -eq 'CommandLine,ProcessId'
+        }
+        if($Mode -eq 'unavailable') {$result.entries[0].reason | Should -Match 'FIXTURE_COPY_PROCESS_INVENTORY_UNAVAILABLE'}
+    }
     It 'requires hashed terminal owner proof for an old ready copy, then completes the same cleanup' {
         $root=Join-Path $TestDrive 'старая проверка';$copy=New-RecoverableStorageCopy -Root $root -State ready
         $copy.claim.schemaVersion=1;foreach($key in @('copyRoot','projectsRoot','workflowCommonGit')){$copy.claim.Remove($key)}

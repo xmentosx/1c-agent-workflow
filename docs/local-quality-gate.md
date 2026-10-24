@@ -183,9 +183,11 @@ current candidate's complete static proof. The cache remains under the existing
 are immutable; warm reuse preserves the existing certificate and cannot refer
 to itself. Repeated compositions reference the original scenario certificate
 after rechecking direct input equivalence; they do not grow a chain of complete
-reports. A full certificate still validates every required scenario. Scenario
-policy, source inputs, stand/positive-stand facts, effective
-client selection, runtime, fork and all three physical artifact hashes bind reuse.
+reports. A full certificate still validates every required scenario. Copy-GC
+retention/reporting changes use their current static owner proof; fixture
+preparation and space admission remain native inputs. Scenario policy, source
+inputs, stand/positive-stand facts, effective client selection, runtime, fork and
+all three physical artifact hashes bind reuse.
 The stateless client writer uses upgrade update and fresh install/branch as
 native representatives alongside the current static preservation/PlanOnly/atomic
 write tests. Other unchanged consumers may retain proof after those producers
@@ -1012,6 +1014,10 @@ checkpoints, Git bundle, изменения и незарегистрирова�
 каталоге `itl/evidence/fixture-cleanup`. Это квитанция уборки, а не новая
 квалификация тестов. Активная/retained ссылка, занятая copy lease, живой процесс,
 оставшаяся база, reparse point или незавершённый checkpoint сохраняют копию.
+Снимок читателей запрашивает у CIM только PID и командную строку всех процессов.
+При ошибке разрешён один новый запрос с прежним лимитом 2 секунды; частичный
+результат не используется. Повторная ошибка сохраняет копию и требует повторить
+ту же уборку после восстановления CIM; обнаруженный читатель также запрещает её.
 Подготовка пишет owner claim и внешнюю квитанцию до клонирования, удерживает
 copy lease и записывает исходную ошибку как `preparation-failed`. Незавершённый
 Develop factory target не используется повторно: повтор готовит новую копию из

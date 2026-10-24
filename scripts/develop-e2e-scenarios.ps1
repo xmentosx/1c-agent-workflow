@@ -110,6 +110,9 @@ function Get-DevelopScenarioSourceProjection {
     $bom=[string]$Text.StartsWith([string][char]0xfeff)
     $controller=@()
     switch -Exact ($Path) {
+        # Copy GC retains/reports resources; it cannot grant journey status.
+        # Fixture preparation, space admission and native assertions stay bound.
+        'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
         'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
