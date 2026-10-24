@@ -288,11 +288,78 @@ function Get-DeliveryStaticObservedSeconds {
     return $seconds
 }
 
+
+function Get-DeliveryStaticWorkloadPreview {
+    param([string]$CandidateRoot,[object]$Catalog,[string]$BaseCommit)
+    $runner=Join-Path $CandidateRoot 'scripts/invoke-pester-shards.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { return $null }
+    $workers=Resolve-PesterWorkerCount -Mode Develop -RequestedWorkerCount 3 -Explicit $false -Catalog $Catalog
+    $output=Join-Path $CandidateRoot 'build/delivery-plan-static'
+    $rules=[string](Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue)
+    # Same digest, runtime observation, legacy lookup, SHA and path checks as
+    # execution; PlanOnly never starts a test worker or restores/promotes proof.
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $preview=& $runner -RepositoryRoot $CandidateRoot -OutputRoot $output -JunitPath (Join-Path $output 'unused.xml') -AiRulesSource $rules -WorkerCount $workers -PlanOnly -BaseRef $BaseCommit
+        return (($preview -join [Environment]::NewLine) | ConvertFrom-Json)
+    }
+    # Full/Develop use Desktop. Core has a different string sort order and must
+    # not predict misses using a differently ordered digest inventory.
+    [void][IO.Directory]::CreateDirectory($output)
+    $name=Join-Path $output ([guid]::NewGuid().ToString('N'))
+    $arguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$runner,'-RepositoryRoot',$CandidateRoot,
+        '-OutputRoot',$output,'-JunitPath',(Join-Path $output 'unused.xml'),'-AiRulesSource',$rules,
+        '-WorkerCount',[string]$workers,'-PlanOnly','-BaseRef',$BaseCommit)
+    $job=$null
+    try {
+        $job=Start-DeliveryProcess -ArgumentList (($arguments | ForEach-Object {ConvertTo-GitProcessArgument $_}) -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath ($name+'.json') -StandardErrorPath ($name+'.stderr.log')
+        if(-not $job.process.WaitForExit(120000)) {throw 'Static reuse preview exceeded the unchanged 120-second planning deadline.'}
+        $job.process.WaitForExit()
+        if($job.process.ExitCode -ne 0) {throw ('Static reuse preview failed: '+[IO.File]::ReadAllText(($name+'.stderr.log'),[Text.Encoding]::UTF8))}
+        return (Get-Content -LiteralPath ($name+'.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
+    } finally {
+        if($job) {Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $job.process;$job.process.Dispose()}
+    }
+}
+
+function Get-DeliveryStaticReuseEstimate {
+    param([object]$Preview,[object]$Plan,[object[]]$Runs)
+    $observations=@($Runs | Where-Object {$_.mode -ceq 'Develop' -and $_.status -ceq 'passed'} | Select-Object -First 5)
+    $needsFixture=@($Plan.stages | Where-Object {$_.id -like 'develop.*' -and $_.id -ne 'develop.static'}).Count -gt 0 -or [bool]$Plan.requireRelease
+    $samples=@(foreach($run in $observations) {
+        $stages=@($run.stages | Where-Object {$_.name -notlike 'develop-e2e-*' -and
+            $_.name -ne 'pester' -and ($needsFixture -or $_.name -ne 'qualification-fixture-inputs')})
+        $compat=0.0;$other=0.0
+        foreach($stage in $stages) {
+            if($stage.name -eq 'ai-rules-compatibility') {$compat=[math]::Max($compat,[double]$stage.durationMs/1000)}
+            else {$other += [double]$stage.durationMs/1000}
+        }
+        [math]::Max([double]$Preview.estimatedSeconds,$compat)+$other+[double]$Preview.durationMs/1000
+    })
+    $samples=@($samples | Sort-Object)
+    $seconds=$null
+    if($samples.Count) {
+        $middle=[int][math]::Floor($samples.Count/2)
+        $seconds=[int][math]::Ceiling($(if($samples.Count%2){$samples[$middle]}else{($samples[$middle-1]+$samples[$middle])/2}))
+    }
+    return [pscustomobject]@{estimatedSeconds=$seconds;sampleCount=$samples.Count;basis='current-shard-reuse-and-historical-overhead';
+        pesterSeconds=$Preview.estimatedSeconds;executedFiles=$Preview.executedCount;reusedFiles=$Preview.reusedCount;
+        fixtureInputsRequired=$needsFixture;planningOverheadSeconds=[int][math]::Ceiling($Preview.durationMs/1000);
+        mandatoryRepeats=@($Preview.files | Where-Object {$_.execution -eq 'execute' -and $_.reason -like 'unqualified external*'} | Select-Object path,estimatedSeconds,reason);
+        expensiveRepeats=@($Preview.files | Where-Object execution -eq execute | Sort-Object estimatedSeconds -Descending | Select-Object -First 10 path,estimatedSeconds,reason,changedInputs);
+        repeatReasons=@($Preview.files | Where-Object execution -eq execute | Group-Object reason | ForEach-Object {[pscustomobject]@{reason=$_.Name;count=$_.Count}})}
+}
+
 function Get-DeliveryPlanTimeEstimate {
-    param([object]$Plan,[AllowEmptyCollection()][object[]]$Runs=@())
+    param([object]$Plan,[AllowEmptyCollection()][object[]]$Runs=@(),[object]$StaticPreview)
     $details=@(foreach($stage in $Plan.stages) {
         $samples=@()
+        $staticDetail=$null
         if($stage.execution -eq 'reuse') { $seconds=0; $basis='reuse-after-current-static' }
+        elseif($stage.id -eq 'develop.static' -and $StaticPreview) {
+            $staticDetail=Get-DeliveryStaticReuseEstimate -Preview $StaticPreview -Plan $Plan -Runs $Runs
+            $seconds=$staticDetail.estimatedSeconds;$basis=$staticDetail.basis
+            $samples=@(1..([int]$staticDetail.sampleCount) | Where-Object {$staticDetail.sampleCount -gt 0})
+        }
         else {
             $name=([string]$stage.id).Replace('develop.','develop-e2e-')
             $scenarioRecords=@()
@@ -321,7 +388,9 @@ function Get-DeliveryPlanTimeEstimate {
                 $basis='historical-stage-median-advisory'
             }
         }
-        [pscustomobject]@{id=$stage.id;estimatedSeconds=$seconds;sampleCount=$samples.Count;basis=$basis;hardLimitSeconds=$stage.budgetSeconds}
+        $detail=[pscustomobject]@{id=$stage.id;estimatedSeconds=$seconds;sampleCount=$samples.Count;basis=$basis;hardLimitSeconds=$stage.budgetSeconds}
+        if($staticDetail) {$detail | Add-Member -NotePropertyName workload -NotePropertyValue $staticDetail}
+        $detail
     })
     $unknown=@($details | Where-Object {$null -eq $_.estimatedSeconds})
     $known=[int](($details | Measure-Object estimatedSeconds -Sum).Sum)
@@ -470,6 +539,7 @@ function New-DeliveryQualityPlanForCandidate {
         }
     }
     }
+    $staticPreview=Get-DeliveryStaticWorkloadPreview -CandidateRoot $CandidateRoot -Catalog $catalog -BaseCommit $BaseCommit
     $watch.Stop()
     Assert-DeliveryPlanningBudget -ElapsedMilliseconds $watch.ElapsedMilliseconds
     [int64]$executedBudget = 0
@@ -489,7 +559,7 @@ function New-DeliveryQualityPlanForCandidate {
     if(Get-Command Get-DeliveryRunHistory -ErrorAction SilentlyContinue) {
         $timingRuns=@((Get-DeliveryRunHistory -Limit 32 -IncludeDetails).lastRuns)
     }
-    $plan | Add-Member -NotePropertyName timeEstimate -NotePropertyValue (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $timingRuns)
+    $plan | Add-Member -NotePropertyName timeEstimate -NotePropertyValue (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $timingRuns -StaticPreview $staticPreview)
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
     return $plan
 }

@@ -8,7 +8,9 @@ param(
     [ValidateRange(1, 4)][int]$WorkerCount = 3,
     [ValidateRange(0, 4)][int]$RequestedWorkerCount = 0,
     [switch]$WorkerCountDefaulted,
-    [switch]$InputIdentityOnly
+    [switch]$InputIdentityOnly,
+    [switch]$PlanOnly,
+    [string]$BaseRef = ""
 )
 
 Set-StrictMode -Version Latest
@@ -20,6 +22,27 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = $utf8NoBom
 $workerCountParameterExplicit = $PSBoundParameters.ContainsKey("WorkerCount")
 $reportedRequestedWorkerCount = $(if ($RequestedWorkerCount -gt 0) { $RequestedWorkerCount } else { $WorkerCount })
+
+
+function Get-PesterWorkloadEstimate {
+    param([object[]]$Files, [ValidateRange(1,4)][int]$WorkerCount)
+    $pending = @($Files | Where-Object {$_.execution -eq 'execute'})
+    $total = 0.0
+    # Match admission barriers: preflight, LPT parallel files, then serial files.
+    foreach ($preflight in @($true,$false)) {
+        $slots = New-Object double[] $WorkerCount
+        foreach ($file in @($pending | Where-Object {-not $_.serial -and $_.preflight -eq $preflight} |
+            Sort-Object @{Expression={[double]$_.estimatedSeconds};Descending=$true},@{Expression={[string]$_.path}})) {
+            $next = 0
+            for ($i=1; $i -lt $WorkerCount; $i++) { if ($slots[$i] -lt $slots[$next]) { $next=$i } }
+            $slots[$next] += [double]$file.estimatedSeconds
+        }
+        $total += ($slots | Measure-Object -Maximum).Maximum
+    }
+    foreach ($file in $pending) { if ($file.serial) { $total += [double]$file.estimatedSeconds } }
+    return [int][math]::Ceiling($total)
+}
+
 
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -56,6 +79,7 @@ $script:pesterTrackedIdentityCache = @{}
 $script:pesterIdentityInventoryMs = 0L
 $script:pesterCacheLookupMs = 0L
 $script:pesterLegacyDigestCount = 0
+$script:pesterOwnerInputSnapshot = $null
 $pesterExternalInputsByTest = @{}
 $pesterExternalInputsProperty = $catalog.PSObject.Properties["pesterExternalInputs"]
 if ($pesterExternalInputsProperty) {
@@ -135,6 +159,7 @@ function Test-PesterShardResultRuntime {
 }
 
 function Initialize-VanessaSourceBuildArchiveForPester {
+    param([switch]$ReadOnly)
     $lockPath = Join-Path $RepositoryRoot "templates\dependency-lock.json"
     if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
         throw "Pester Vanessa source-build resolution requires the canonical dependency lock: $lockPath"
@@ -216,6 +241,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         return
     }
 
+    if ($ReadOnly) { return }
     $url = [string]$lock.url
     if (-not $url) { throw "Locked Vanessa source-build URL is missing and no exact shared candidate was found." }
     New-Item -ItemType Directory -Force -Path $sharedDirectory | Out-Null
@@ -368,6 +394,24 @@ function Get-ShardInputDigest {
     # Unknown external runtime identity cannot qualify a reusable shard. For
     # example, the OneScript probe executes installed engine assemblies.
     if ($nonReusableProperty -and @($relativeTests | Where-Object { $_ -in @($nonReusableProperty.Value) }).Count -gt 0) { return '' }
+    $snapshotVariable=Get-Variable -Name pesterOwnerInputSnapshot -Scope Script -ErrorAction SilentlyContinue
+    if (-not $snapshotVariable -or -not $snapshotVariable.Value -or
+        -not [object]::ReferenceEquals($snapshotVariable.Value.catalog,$catalog) -or
+        -not [object]::ReferenceEquals($snapshotVariable.Value.inventory,$trackedPaths) -or
+        $snapshotVariable.Value.root -cne $RepositoryRoot) {
+        $script:pesterOwnerInputSnapshot=[pscustomobject]@{catalog=$catalog;inventory=$trackedPaths;root=$RepositoryRoot}
+        if($PreparedInputs) {$PreparedInputs.Value=$null}
+        $script:pesterContractInputCache=@{};$script:pesterPatternInputs=@{};$script:pesterContractsByTest=@{}
+        foreach ($contract in $catalog.contracts) {
+            foreach ($test in @($contract.tests)) {
+                $test=([string]$test).Replace('\','/')
+                if (-not $script:pesterContractsByTest.ContainsKey($test)) {
+                    $script:pesterContractsByTest[$test]=New-Object System.Collections.Generic.List[object]
+                }
+                $script:pesterContractsByTest[$test].Add($contract)
+            }
+        }
+    }
     # One local reference per item holds only paths resolved from the same
     # immutable catalog/tracked inventory snapshot. Runtime/environment variants
     # below still obtain their own identity lines and verify protected results.
@@ -376,15 +420,26 @@ function Get-ShardInputDigest {
         $inputs = @($PreparedInputs.Value.paths)
     } else {
         if ($PreparedInputs) { $PreparedInputs.Value = $null }
-        $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
-        foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
+        foreach ($test in $relativeTests) { if (-not $script:pesterContractsByTest.ContainsKey($test)) { return '' } }
+        $contracts = @($relativeTests | ForEach-Object { $script:pesterContractsByTest[$_].ToArray() })
         # Loaded dependencies qualify reuse without widening Targeted selection.
         $reusePatterns = @($contracts | ForEach-Object { Get-QualityContractReuseInputPaths -Contract $_ } | Sort-Object -Unique)
-        foreach ($pattern in $reusePatterns) {
-            if (@($trackedPaths | Where-Object { ([string]$_).Replace('\','/') -like $pattern }).Count -eq 0) { return '' }
-        }
         $patterns = @(@($contracts | ForEach-Object { @($_.paths) }) + $reusePatterns | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
-        $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
+        $patternKey = @($patterns + '<required>' + $reusePatterns) -join [char]0
+        if (-not $script:pesterContractInputCache.ContainsKey($patternKey)) {
+            foreach ($pattern in $patterns) {
+                if (-not $script:pesterPatternInputs.ContainsKey($pattern)) {
+                    $script:pesterPatternInputs[$pattern] = @(Select-QualityPaths -Paths $trackedPaths -Pattern @($pattern))
+                }
+            }
+            $complete = @($reusePatterns | Where-Object {$script:pesterPatternInputs[$_].Count -eq 0}).Count -eq 0
+            $script:pesterContractInputCache[$patternKey] = [pscustomobject]@{
+                complete=$complete; paths=@($patterns | ForEach-Object {$script:pesterPatternInputs[$_]} | Sort-Object -Unique)
+            }
+        }
+        $resolved = $script:pesterContractInputCache[$patternKey]
+        if (-not $resolved.complete) { return '' }
+        $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($resolved.paths) | Sort-Object -Unique)
         if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
     $lines = New-Object System.Collections.Generic.List[string]
@@ -396,10 +451,10 @@ function Get-ShardInputDigest {
     $runtime = $receiptVariable.Value.identity
     # Parallelism belongs to the parent scheduler; each isolated child receives
     # the same test/runner inputs. Retain old keys only for verified cache lookup.
-    $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|child=$($runtime.identitySha256)"
+    $runtimeIdentity = "powershell=$($runtime.powerShellVersion)|pester=$($runtime.pesterVersion)|child=$($runtime.identitySha256)"
     # Old scheduler keys are lookup candidates only. Their protected result must
     # independently prove the current child identity before any reuse.
-    if ($LegacyWorkerCount -gt 0) { $runtimeIdentity = "powershell=$($PSVersionTable.PSVersion)|pester=$($runtime.pesterVersion)|workers=$LegacyWorkerCount" }
+    if ($LegacyWorkerCount -gt 0) { $runtimeIdentity = "powershell=$($runtime.powerShellVersion)|pester=$($runtime.pesterVersion)|workers=$LegacyWorkerCount" }
     $lines.Add($runtimeIdentity)
     $externalInputNames = if ($IncludeLegacyGlobalExternalInputs) {
         @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
@@ -413,9 +468,9 @@ function Get-ShardInputDigest {
         else { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
     }
     foreach ($path in $inputs) {
-        $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
-        if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$(Get-ShardTrackedFileIdentity -RelativePath $path -AbsolutePath $absolute)")}
-        else{$lines.Add("$path=<missing>")}
+        $absolute=[IO.Path]::Combine($RepositoryRoot,$path.Replace('/','\'))
+        if([IO.File]::Exists($absolute)) {$lines.Add("$path=$(Get-ShardTrackedFileIdentity -RelativePath $path -AbsolutePath $absolute)")}
+        else {$lines.Add("$path=<missing>")}
     }
     return Get-TextSha256 -Lines $lines
 }
@@ -452,13 +507,14 @@ function Get-ShardCacheEntryRoot {
 }
 
 function Restore-ShardCache {
-    param([string]$Digest, [string]$ResultPath, [string]$JunitPath, [int]$Worker, [string]$TestPath)
+    param([string]$Digest, [string]$ResultPath, [string]$JunitPath, [int]$Worker, [string]$TestPath, [switch]$ReadOnly)
     $entryRoot = Get-ShardCacheEntryRoot -Digest $Digest -TestPath $TestPath
     if (-not $entryRoot) { return $null }
     $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"
     try {
         $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0) { return $null }
+        if ($ReadOnly) { return $result }
         Copy-Item -LiteralPath $cachedJunit -Destination $JunitPath -Force
         $result | Add-Member -NotePropertyName worker -NotePropertyValue $Worker -Force
         $result.paths = @($TestPath)
@@ -552,7 +608,7 @@ if ($SelectionPath) {
 } else { $testFiles = @(Get-ChildItem -LiteralPath $testRoot -File -Filter "*.Tests.ps1" | Sort-Object Name) }
 if ($testFiles.Count -eq 0) { throw "No Pester test files were discovered." }
 if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 0) {
-    Initialize-VanessaSourceBuildArchiveForPester
+    Initialize-VanessaSourceBuildArchiveForPester -ReadOnly:$PlanOnly
 }
 # CompactItlRunner sends a real console Ctrl+C to process-group zero, which
 # broadcasts within its attached console. Keep it out of the parallel set.
@@ -582,6 +638,9 @@ $entries = New-Object System.Collections.Generic.List[object]
 $pendingParallel = New-Object System.Collections.Generic.Queue[object]
 $pendingSerial = New-Object System.Collections.Generic.Queue[object]
 $results = @()
+$preview = New-Object System.Collections.Generic.List[object]
+$previewChangedPaths=@()
+if($PlanOnly -and $BaseRef) {$previewChangedPaths=@(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff","--name-only","-z",$BaseRef,"HEAD","--"))}
 $failures = @()
 $index = 0
 Initialize-PesterTrackedIdentityCache
@@ -608,7 +667,7 @@ foreach ($item in $items) {
     $preparedInputs = $null
     $digest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -PreparedInputs ([ref]$preparedInputs)
     $legacyDigests = New-Object System.Collections.Generic.List[string]
-    if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
+    if (-not $PlanOnly -and (Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
             $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $priorResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -624,11 +683,13 @@ foreach ($item in $items) {
             }
         } catch {}
     }
-    Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
-    [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
+    if (-not $PlanOnly) {
+        Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
+        [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
+    }
 
     $lookupStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
+    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path) -ReadOnly:$PlanOnly
     $lookupStopwatch.Stop()
     $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
     $reuseReason = "exact owner input fingerprint"
@@ -668,20 +729,34 @@ foreach ($item in $items) {
         $script:pesterLegacyDigestCount += $legacyDigests.Count
         foreach ($legacyDigest in $legacyDigests) {
             $lookupStopwatch.Restart()
-            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
+            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path) -ReadOnly:$PlanOnly
             $lookupStopwatch.Stop()
             $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
             if (-not $cached) { continue }
             $cached | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
-            [IO.File]::WriteAllText($resultPath, (($cached | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+            if (-not $PlanOnly) {
+                [IO.File]::WriteAllText($resultPath, (($cached | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+            }
             $reuseReason = "legacy scheduler or external identity normalized to exact owner inputs"
             break
         }
     }
+    $relativeItemPath = Get-ShardRelativeTestPath -Path ([string]$item.path)
+    $nonReusable = $catalog.PSObject.Properties['pesterNonReusableTests']
+    $changedInputs=@($previewChangedPaths | Where-Object {$preparedInputs -and $preparedInputs.paths -contains $_})
+    $repeatReason = if ($cached) { $reuseReason } elseif ($nonReusable -and $relativeItemPath -in @($nonReusable.Value)) {
+        'unqualified external runtime; mandatory native boundary'
+    } elseif ($script:pesterRuntimeReceipt.status -ne 'known') { 'unknown child runtime identity' }
+    elseif (-not $digest) { 'incomplete owner inputs' }
+    elseif($changedInputs.Count) {'changed owner inputs; exact passed proof unavailable'} else { 'no valid passed proof for exact owner inputs and runtime' }
+    $preview.Add([pscustomobject]@{path=$relativeItemPath;execution=$(if($cached){'reuse'}else{'execute'});reason=$repeatReason;
+        inputDigest=$digest;changedInputs=$changedInputs;estimatedSeconds=$(if($cached){0.0}else{[double]$item.weight});serial=[bool]$item.serial;preflight=[bool]$item.preflight})
+    if ($PlanOnly) { continue }
     $payload = [ordered]@{
         schemaVersion = 1
         worker = $index
+        repeatReason = $repeatReason
         estimatedSeconds = [double]$item.weight
         inputDigest = $digest
         legacyInputDigests = @($legacyDigests)
@@ -703,6 +778,14 @@ foreach ($item in $items) {
     }
 }
 $fingerprintPlanStopwatch.Stop()
+if ($PlanOnly) {
+    [pscustomobject]@{schemaVersion=1;kind='itl-pester-reuse-plan';workerCount=$WorkerCount;
+        estimatedSeconds=(Get-PesterWorkloadEstimate -Files @($preview.ToArray()) -WorkerCount $WorkerCount);
+        executedCount=@($preview | Where-Object execution -eq execute).Count;reusedCount=@($preview | Where-Object execution -eq reuse).Count;
+        runtimeIdentityStatus=$script:pesterRuntimeReceipt.status;files=@($preview.ToArray());
+        durationMs=([int64]$fingerprintPlanStopwatch.ElapsedMilliseconds + [int64]$script:pesterRuntimeReceipt.durationMs)} | ConvertTo-Json -Depth 8
+    return
+}
 
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
@@ -722,6 +805,7 @@ function Complete-PesterFileEntry {
             return $false
         }
         $workerResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
+        $workerResult | Add-Member -NotePropertyName repeatReason -NotePropertyValue ([string]$plan.repeatReason) -Force
         if ($Entry.digest -and -not (Test-PesterShardResultRuntime -Result $workerResult)) {
             $Entry.digest = ''
             $workerResult | Add-Member -NotePropertyName reuseReason -NotePropertyValue 'Actual worker runtime differs from qualified probe or changed during execution; result is not reusable.' -Force

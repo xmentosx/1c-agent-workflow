@@ -128,6 +128,69 @@ Describe 'Delivery v3 immutable selective plan' {
         $estimate.note | Should -Match 'not expected duration'
     }
 
+
+
+    It 'uses the checker Desktop host for a Core preview and preserves the Unicode candidate path' -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
+        $root=Join-Path $TestDrive 'план с пробелами'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root scripts))
+        $stub='param($RepositoryRoot,$OutputRoot,$JunitPath,$AiRulesSource,$WorkerCount,[switch]$PlanOnly,$BaseRef)'+[Environment]::NewLine+'[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);[pscustomobject]@{kind="itl-pester-reuse-plan";edition=$PSVersionTable.PSEdition;root=$RepositoryRoot;planOnly=[bool]$PlanOnly}|ConvertTo-Json'
+        [IO.File]::WriteAllText((Join-Path $root scripts/invoke-pester-shards.ps1),$stub,[Text.UTF8Encoding]::new($true))
+        $entry=Join-Path $TestDrive 'core preview.ps1'
+        $lines=@()
+        foreach($module in @('git-path-list.ps1','quality-contracts.ps1','source-delivery-process.ps1','source-delivery-plan.ps1')) {
+            $lines+=". '"+(Join-Path $RepoRoot ('scripts/'+$module)).Replace("'","''")+"'"
+        }
+        $lines+="Get-DeliveryStaticWorkloadPreview -CandidateRoot '"+$root.Replace("'","''")+"' -Catalog @{} -BaseCommit $('a'*40) | ConvertTo-Json"
+        [IO.File]::WriteAllText($entry,($lines -join [Environment]::NewLine),[Text.UTF8Encoding]::new($true))
+        $core=(Get-Command pwsh.exe -CommandType Application|Select-Object -First 1).Source
+        $wrapper=Join-Path $TestDrive invoke-core-preview.ps1
+        [IO.File]::WriteAllText($wrapper,("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(0); & '"+$core.Replace("'","''")+"' -NoLogo -NoProfile -File '"+$entry.Replace("'","''")+"'"),[Text.UTF8Encoding]::new($true))
+        $run=Invoke-TestPowerShellFile -FilePath $wrapper
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $preview=($run.stdout -join [Environment]::NewLine)|ConvertFrom-Json
+        $preview.edition | Should -BeExactly Desktop
+        $preview.root | Should -BeExactly $root
+        $preview.planOnly | Should -BeTrue
+    }
+
+    It 'estimates current shard reuse, preserves parallel overlap and charges fixture inputs only when selected' {
+        $preview=[pscustomobject]@{estimatedSeconds=120;executedCount=2;reusedCount=190;durationMs=2000;files=@(
+            @{path='slow';execution='execute';estimatedSeconds=120;reason='unqualified external runtime'},
+            @{path='cached';execution='reuse';estimatedSeconds=0;reason='exact owner input fingerprint'})}
+        $plan=[pscustomobject]@{requireRelease=$false;executedBudgetSeconds=4200;stages=@(
+            @{id='develop.static';mode='Develop';execution='execute';budgetSeconds=4200})}
+        $run=[pscustomobject]@{mode='Develop';status='passed';stages=@(
+            @{name='qualification-fixture-inputs';durationMs=600000},
+            @{name='pester';durationMs=900000},
+            @{name='ai-rules-compatibility';durationMs=180000},
+            @{name='release-readiness';durationMs=20000})}
+        $estimate=Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run) -StaticPreview $preview
+        $estimate.estimatedSeconds | Should -Be 202
+        $estimate.stages[0].workload.reusedFiles | Should -Be 190
+        $estimate.stages[0].workload.fixtureInputsRequired | Should -BeFalse
+        $preview.estimatedSeconds=500
+        (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run) -StaticPreview $preview).estimatedSeconds | Should -Be 522
+        $plan.requireRelease=$true
+        (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($run) -StaticPreview $preview).estimatedSeconds | Should -Be 1122
+        (Get-DeliveryPlanTimeEstimate -Plan $plan -StaticPreview $preview).estimatedSeconds | Should -BeNullOrEmpty
+    }
+
+    It 'accounts for preflight and serial admission barriers while reused files consume no worker slots' {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PesterWorkloadEstimate'},$true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $files=@(
+            @{path='pre';execution='execute';serial=$false;preflight=$true;estimatedSeconds=5},
+            @{path='a';execution='execute';serial=$false;preflight=$false;estimatedSeconds=10},
+            @{path='b';execution='execute';serial=$false;preflight=$false;estimatedSeconds=8},
+            @{path='c';execution='execute';serial=$false;preflight=$false;estimatedSeconds=4},
+            @{path='serial';execution='execute';serial=$true;preflight=$false;estimatedSeconds=7},
+            @{path='cached';execution='reuse';serial=$true;preflight=$false;estimatedSeconds=900})
+        Get-PesterWorkloadEstimate -Files $files -WorkerCount 2 | Should -Be 24
+    }
+
     It 'estimates only the matching scenario workload and excludes composition-only and legacy full timings' {
         $plan=[pscustomobject]@{executedBudgetSeconds=3600;stages=@([pscustomobject]@{
             id='develop.fresh';mode='Develop';execution='execute';budgetSeconds=3600;scenarios=@(

@@ -22,7 +22,7 @@ Describe 'Source quality catalog contracts' {
                     [pscustomobject]@{tests=@('b.Tests.ps1');paths=@('b.txt')}
                 )}
                 $sharedInputs=@();$pesterExternalInputsByTest=@{'a.Tests.ps1'=@('ITL_AI_RULES_SOURCE_PATH')}
-                $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{pesterVersion='fixture';identitySha256=('a'*64)}}
+                $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{powerShellVersion=[string]$PSVersionTable.PSVersion;pesterVersion='fixture';identitySha256=('a'*64)}}
                 foreach($name in @('Get-ShardRelativeTestPath','Get-TextSha256','Get-ShardInputDigest')) {
                     $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
                     . ([scriptblock]::Create($definition.Extent.Text))
@@ -910,7 +910,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
             $catalogPath=Join-Path $RepositoryRoot 'tests/quality-contracts.json'
             Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination $catalogPath
             $catalog=$actualCatalog
-            $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{pesterVersion='fixture';identitySha256=('a'*64)}}
+            $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{powerShellVersion=[string]$PSVersionTable.PSVersion;pesterVersion='fixture';identitySha256=('a'*64)}}
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
             $consumers=@('LocalQualityGate','LocalGateTransport','LocalTargetedSelection','LocalShardCache','DevelopStaticQualificationCache','DevelopE2EQualification','ReleaseReadiness','ReleaseGate','AiRulesCompatibilityPromotion','HostTestSelection',

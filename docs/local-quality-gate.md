@@ -1,4 +1,4 @@
-# Проверки и доставка исходного workflow
+﻿# Проверки и доставка исходного workflow
 
 Обычная доработка не запускает общий gate. Агент создаёт один связный локальный
 коммит и регистрирует его:
@@ -427,6 +427,34 @@ Git worktree lock и повторяет cleanup. Чужой lock не снима
 ## Публикация develop
 
 ### Инкрементальность и защита от замедления
+
+Static ETA uses the current full Pester inventory's read-only cache lookup:
+the same owner digests, observed child runtime, legacy lookup, manifest/JUnit
+SHA and selected-test checks as execution. It reports execute/reuse counts,
+mandatory external-runtime repeats, the ten most expensive misses and changed
+owner inputs. PlanOnly never launches test workers, provisions downloads,
+restores or promotes qualification. Execution revalidates proof; a preview
+cannot authorize reuse.
+
+The estimate schedules only cache misses with the normal preflight/parallel/
+serial barriers and catalog timing weights. Historical non-Pester overhead is
+combined with Pester through max for parallel compatibility, not a sum.
+Fixture capture is charged only when the plan selects E2E or Release.
+Unknown historical overhead remains unknown; the hard deadline is never an ETA.
+Weights are advisory observations, not a guarantee for a changed workload.
+
+Pester reuse keys describe the actual child PowerShell/Pester executable and
+module bytes, independently of the parent's shell version. Input ownership,
+wildcard matches are resolved once per invocation against its fixed inventory.
+Each digest still checks file existence and authenticates dirty/unindexed bytes;
+changing catalog/inventory/root resets the transient selection cache. Missing ownership/required inputs, unknown runtime, failed or
+altered proof still prevent reuse. The external-runtime non-reuse list remains
+mandatory: Windows process/CIM/window/file-lock probes, installed
+OneScript/Python/Go tools and transport/runtime fixtures lack a complete
+external identity. Removing their blanket non-reuse requires proving those
+inputs first; a small source diff alone cannot supply that proof.
+
+
 
 Малый diff сам по себе не доказывает малый риск. Но количество изменённых
 файлов также не разрешает выбирать все live journeys. Один контракт

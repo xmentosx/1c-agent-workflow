@@ -27,6 +27,11 @@ Describe "Local quality gate contract" {
         $invoke = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
         $output = Join-Path $root 'out'
         foreach ($attempt in 1..2) {
+            $previewRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', $selectionPath, '-PlanOnly')
+            $previewRun.exitCode | Should -Be 0 -Because $previewRun.combinedText
+            $preview = ($previewRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $preview.executedCount | Should -Be 1
+            $preview.files[0].reason | Should -Match 'unqualified external runtime'
             $run = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', $selectionPath)
             $run.exitCode | Should -Be 0 -Because ($run.stderr -join [Environment]::NewLine)
             $summary = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
