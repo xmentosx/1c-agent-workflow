@@ -40,6 +40,11 @@ that own their result:
 started deliberately and excluded from normal acceptance. Reserve `always=true`
 for a genuinely cheap invariant, not as a substitute for owner classification.
 
+The default `ITL_VERIFICATION_MODEL=change` uses a helper-owned current scope;
+see [current change verification](verification-change.md). The catalogs still own
+retained tests. Catalog-wide one-off readiness below describes `cumulative`;
+change mode assesses current observations and preserves task acceptance separately.
+
 Schema 2 separates the behavior to prove from the decision to retain a test.
 An obligation identifies its expected result, affected inputs, admissible proof,
 retention decision, and cadence. A retained suite or YAxUnit group binds to one

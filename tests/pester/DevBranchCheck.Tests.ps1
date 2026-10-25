@@ -1,6 +1,7 @@
 ﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'DevBranchLifecycleSupport.ps1')
     . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+    function Get-VerificationModel { 'cumulative' }
     . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
 }
 
@@ -11,7 +12,7 @@ Describe 'Check lifecycle and cursor ownership' {
             New-Item -ItemType Directory -Force -Path (Join-Path $root $relative) | Out-Null
         }
         Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"masterBranch":"master","testsPath":"tests/features","vanessaAutomation":{"testClientManifestPath":"tests/vanessa-testclients.json"}}'
-        Set-Content -LiteralPath (Join-Path $root '.dev.env') -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_YAXUNIT_TESTING=off"
+        Set-Content -LiteralPath (Join-Path $root '.dev.env') -Encoding UTF8 -Value "ITL_VERIFICATION_MODEL=cumulative`nITL_VANESSA_TESTING=auto`nITL_YAXUNIT_TESTING=off"
         Set-Content -LiteralPath (Join-Path $root 'tests/features/Selected.feature') -Encoding UTF8 -Value "# language: ru`nФункционал: Selected`nСценарий: Selected`n  Дано я подключаю профиль TestClient `"Required`""
         Set-Content -LiteralPath (Join-Path $root 'tests/verification-suites.branch.json') -Encoding UTF8 -Value '{"schemaVersion":1,"suites":[{"id":"selected","purpose":"acceptance","featurePaths":["tests/features/Selected.feature"],"ownerPaths":["src/cf/**"]}]}'
         Set-Content -LiteralPath (Join-Path $root 'tests/vanessa-testclients.json') -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Other"}]}'
@@ -54,6 +55,7 @@ Describe 'Check lifecycle and cursor ownership' {
 
         $result = & {
             . $HelperPath -ProjectRoot $targetRoot -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{ devBranch = 'itldev/branch1'; devBranchName = 'branch1'; safeDevBranchName = 'branch1'; devBranchInfoBasePath = 'C:\base'; infoBaseKind = 'file' }
             $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
             $script:CursorChangedByLoad = $false

@@ -188,7 +188,7 @@ function Get-VerificationObligationInputIdentity {
     return (Get-VerificationSelectionSha256 -Text ((@('obligation-inputs-v1') + @($parts)) -join "`n"))
 }
 
-function Get-VerificationOneOffObligations {
+function Get-VerificationCatalogOneOffObligations {
     $result = [Collections.Generic.List[object]]::new()
     $catalogPaths = @(
         @(Get-VerificationSuiteCatalogPaths | ForEach-Object { [pscustomobject]@{ path = $_; runner = 'vanessa'; entries = 'suites' } }) +
@@ -210,6 +210,14 @@ function Get-VerificationOneOffObligations {
         throw 'VERIFICATION_ONE_OFF_ID_DUPLICATE: obligation ids must be unique across Vanessa and YAxUnit catalogs.'
     }
     return @($result.ToArray())
+}
+
+function Get-VerificationOneOffObligations {
+    if ((Get-VerificationModel) -eq 'change') {
+        $change = Read-VerificationChange
+        if ($null -ne $change) { return @($change.checks | Where-Object retention -eq 'one-off') }
+    }
+    return @(Get-VerificationCatalogOneOffObligations)
 }
 
 function Get-VerificationOneOffProofPath {
@@ -975,6 +983,13 @@ function Test-VerificationConfigurationMetadataPath {
 }
 
 function New-VerificationSelectionPlan {
+    param([string[]]$ApplicationFeatureFiles, [switch]$YAxUnitVerificationPlanned, [switch]$RequireObservedReceipts)
+    $plan = New-VerificationCumulativeSelectionPlan @PSBoundParameters
+    if ((Get-VerificationModel) -eq 'change') { return (Get-VerificationChangeSelectionPlan -Plan $plan) }
+    return $plan
+}
+
+function New-VerificationCumulativeSelectionPlan {
     param(
         [string[]]$ApplicationFeatureFiles,
         [switch]$YAxUnitVerificationPlanned,
@@ -983,6 +998,12 @@ function New-VerificationSelectionPlan {
 
     $allFiles = @($ApplicationFeatureFiles | Sort-Object -Unique)
     $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $allFiles
+    if ((Get-VerificationModel) -eq 'change') {
+        $active = Read-VerificationChange
+        if ($null -ne $active) {
+            $catalog.obligations = @($catalog.obligations | Where-Object retention -eq 'retained') + @($active.checks | Where-Object retention -eq 'one-off')
+        }
+    }
     $currentTree = ""
     try { $currentTree = Get-VerificationSelectionEffectiveTree } catch {}
     $acceptedMasterInput = $null
@@ -1175,6 +1196,7 @@ function New-VerificationSelectionPlan {
             '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
             '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1',
             '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1',
+            '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1',
             '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1'
         )) {
             $fullReasons.Add("The verification owner changed at '$changedPath'; the complete acceptance set is required.")
@@ -1294,7 +1316,7 @@ function Get-VerificationRetainedTargetIdentity {
 
 function Get-VerificationRetainedCheckerIdentity {
     $parts = @('retained-checker-v1', (Get-VerificationOneOffCheckerIdentity -ProofType 'vanessa-junit'))
-    foreach ($name in @('Get-VerificationRetainedTargetIdentity', 'Get-VerificationCurrentProofAssessment',
+    foreach ($name in @('Get-VerificationRetainedTargetIdentity', 'Get-VerificationCurrentProofAssessment', 'Get-VerificationCumulativeProofAssessment',
         'Get-VerificationSuiteJUnitCoverage', 'Assert-VerificationRecordedSuiteCoverage', 'Assert-VerificationRetainedSuiteCoverage',
         'Get-VanessaFeatureScenarioDefinitions', 'Get-VanessaJunitSummary')) {
         $command = Get-Command -Name $name -CommandType Function -ErrorAction Stop
@@ -1463,6 +1485,12 @@ function Assert-VerificationComponentEvidence {
 
 function Get-VerificationCurrentProofAssessment {
     param([object]$State, [string]$Fingerprint)
+    if ((Get-VerificationModel) -eq 'change') { return (Get-VerificationChangeAssessment -State $State -Fingerprint $Fingerprint) }
+    return (Get-VerificationCumulativeProofAssessment -State $State -Fingerprint $Fingerprint)
+}
+
+function Get-VerificationCumulativeProofAssessment {
+    param([object]$State, [string]$Fingerprint, [AllowEmptyCollection()][object[]]$OneOffOverride, [string[]]$UnaffectedSuiteIds = @())
 
     $issues = [Collections.Generic.List[string]]::new()
     $oneOffIssues = [Collections.Generic.List[string]]::new()
@@ -1491,7 +1519,7 @@ function Get-VerificationCurrentProofAssessment {
         if (-not $catalog.classificationComplete -or -not $yaxCatalog.classificationComplete) {
             throw "VERIFICATION_CLASSIFICATION_REQUIRED: $(@(@($catalog.issues) + @($yaxCatalog.issues)) -join '; ')"
         }
-        $oneOff = @(Get-VerificationOneOffObligations)
+        $oneOff = @(if ($PSBoundParameters.ContainsKey('OneOffOverride')) { $OneOffOverride } else { Get-VerificationCatalogOneOffObligations })
         $applicability = Get-YAxUnitProductionApplicability -Catalog $yaxCatalog -State $State -ReadOnly -OneOffObligations $oneOff
         if (-not $applicability.classificationComplete) { throw ($applicability.issues -join '; ') }
         Assert-VerificationComponentEvidence -State $State -Component 'event-log' -Fingerprint $Fingerprint
@@ -1504,10 +1532,11 @@ function Get-VerificationCurrentProofAssessment {
             $obligation = @($catalog.obligations | Where-Object suiteId -eq $suite.id)[0]
             $oldSuite = @(Get-VerificationCatalogValue -Value $proof -Name 'acceptanceSuites' -Default @() | Where-Object id -eq $suite.id)
             $receipt = @(Get-VerificationCatalogValue -Value $proof -Name 'suiteEvidence' -Default @() | Where-Object id -eq $suite.id)
-            if ($oldSuite.Count -ne 1 -or [string]$oldSuite[0].fingerprint -cne [string]$suite.fingerprint -or
+            $unaffected = [string]$suite.id -in $UnaffectedSuiteIds
+            if ($oldSuite.Count -ne 1 -or (-not $unaffected -and [string]$oldSuite[0].fingerprint -cne [string]$suite.fingerprint) -or
                 $receipt.Count -ne 1 -or [int]$receipt[0].schemaVersion -ne 1 -or [string]$receipt[0].status -cne 'passed' -or
                 [string]$receipt[0].obligationHash -cne (Get-VerificationOneOffObligationHash -Obligation $obligation) -or
-                [string]$receipt[0].inputIdentity -cne (Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish $currentTree) -or
+                (-not $unaffected -and [string]$receipt[0].inputIdentity -cne (Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish $currentTree)) -or
                 [string]$receipt[0].runtimeIdentity -cne (Get-VerificationRelevantDependencyLockFingerprint -Treeish $currentTree) -or
                 [string]::IsNullOrWhiteSpace([string]$receipt[0].loadedBaseIdentity) -or
                 [string]$receipt[0].targetIdentity -cne (Get-VerificationRetainedTargetIdentity -State $State) -or
@@ -1640,6 +1669,16 @@ function Get-YAxUnitProductionApplicability {
     }
     $baselineTree = ([string](Get-GitOutput @("rev-parse", "$baselineCommit^{tree}"))).Trim()
     $legacySourceOids = if ($baseline.PSObject.Properties["legacySourceOids"]) { @($baseline.legacySourceOids) } else { @() }
+    $acceptedChangeTree = ''
+    if ((Get-VerificationModel) -eq 'change') {
+        $change = Read-VerificationChange
+        if ($null -ne $change -and $change.acceptedArtifact) {
+            $accepted = Read-VerificationChangeAcceptedRecord -Change $change
+            if ([string]$accepted.targetIdentity -ceq (Get-VerificationRetainedTargetIdentity -State $state)) {
+                $acceptedChangeTree = [string]$accepted.tree
+            }
+        }
+    }
     $changedPaths = @(Get-VerificationSelectionChangedPaths -BaseTree $baselineTree -CurrentTree $currentTree)
     $acceptedMasterInput = Get-VerificationAcceptedMasterInput -ChangedPaths $changedPaths -CurrentTree $currentTree
     $issues = [Collections.Generic.List[string]]::new()
@@ -1655,6 +1694,9 @@ function Get-YAxUnitProductionApplicability {
         if (@($sourceRoots | Where-Object { $path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
         $sourceOid = Get-GitObjectIdForTreePath -Treeish $currentTree -RepoPath $path
         if ($sourceOid -notmatch '^[a-f0-9]{40}$') { continue } # A deleted module has no new behavior to cover.
+        if ($acceptedChangeTree -and $sourceOid -ceq (Get-GitObjectIdForTreePath -Treeish $acceptedChangeTree -RepoPath $path)) {
+            continue # Accepted by an observed increment, unchanged since; adoption baseline stays immutable.
+        }
         if (@($legacySourceOids | Where-Object {
             $_.path -ieq $path -and $_.sourceOid -ceq $sourceOid
         }).Count -gt 0) { continue }

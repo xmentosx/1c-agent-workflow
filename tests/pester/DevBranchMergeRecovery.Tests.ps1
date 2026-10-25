@@ -1450,7 +1450,10 @@
         @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
         @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
         @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
-        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' },
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-change' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-change' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-change' }
     ) {
         param($Checkpoint, $Operation, $EvidenceKind)
         $fixture = if ($Checkpoint -eq 'merge') {
@@ -1460,6 +1463,7 @@
             $result = & {
                 param($Fixture, $Checkpoint, $Operation, $EvidenceKind)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                function Get-VerificationModel { 'cumulative' }
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
                     safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
@@ -1567,7 +1571,9 @@
         @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
         @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
         @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
-        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-change' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-change' }
     ) {
         param($Operation, $EvidenceKind)
         $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
@@ -1575,6 +1581,7 @@
             $result = & {
                 param($Fixture, $Operation, $EvidenceKind)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                function Get-VerificationModel { 'cumulative' }
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
                     safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
@@ -1619,6 +1626,7 @@
             $result = & {
                 param($Fixture, $Operation, $EvidenceKind)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                function Get-VerificationModel { 'cumulative' }
                 $DevBranchName = 'test'
                 $state = [pscustomobject]@{
                     safeDevBranchName = 'test'; devBranchName = 'test'; devBranch = 'itldev/test'

@@ -531,7 +531,8 @@ function Get-ItlVanessaVerificationSelectionPlan {
     $featuresPath = Get-VanessaFeaturesPath
     $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
     $oneOffObligations = @(Get-VerificationOneOffObligations)
-    if ($applicationFeatureFiles.Count -eq 0 -and $oneOffObligations.Count -eq 0) { return $null }
+    $currentChange = if ((Get-VerificationModel) -eq 'change') { Read-VerificationChange } else { $null }
+    if ($applicationFeatureFiles.Count -eq 0 -and $oneOffObligations.Count -eq 0 -and ($null -eq $currentChange -or @($currentChange.checks).Count -eq 0)) { return $null }
     $vanessaCatalog = if ($applicationFeatureFiles.Count -eq 0) { Read-VerificationSuiteCatalog -ApplicationFeatureFiles @() } else { $null }
     if ($applicationFeatureFiles.Count -eq 0 -and -not $vanessaCatalog.available -and $oneOffObligations.Count -gt 0) {
         return [pscustomobject]@{
@@ -645,11 +646,18 @@ function Invoke-ItlVerificationCycle {
     $verification = Get-VerificationState -State $state
     if ($verification.isFreshPassed) {
         Update-DevBranchState -State $state -Updates @{
-            lastVerificationEvidenceKind = $(if ([string](Get-StateValue -State $verification -Name 'assessmentKind' -Default '') -eq 'current-obligations') { 'complete/current-obligations' } else { 'full' })
+            lastVerificationEvidenceKind = $(if ([string](Get-StateValue -State $verification -Name 'assessmentKind' -Default '') -eq 'current-obligations') { 'complete/current-obligations' } elseif ((Get-VerificationModel) -eq 'change') { 'complete/current-change' } else { 'full' })
             lastVerificationTrigger = $Trigger
             lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
         }
         Write-Host 'Canonical verification passed: current observed obligations and exact loaded target are complete; skipped runners were not started.'
+    } elseif ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue -State $verification -Name 'changeFreshPassed' -Default $false)) {
+        Update-DevBranchState -State $state -Updates @{
+            lastVerificationEvidenceKind = 'change/task-pending'
+            lastVerificationTrigger = $Trigger
+            lastVerificationSkippedComponents = @($skipped | ForEach-Object component)
+        }
+        Write-Host "Current change checks passed; whole-task acceptance remains pending: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', '). Complete the change record without repeating successful observations; keep the remaining criteria open."
     } elseif ($skipped.Count -gt 0) {
         Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger
     } else {

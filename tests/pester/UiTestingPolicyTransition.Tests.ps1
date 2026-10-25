@@ -335,6 +335,7 @@ Describe 'Essential policy update integration' {
                 Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value ($text.Replace('UI_TESTING=essential','UI_TESTING=manual'))
                 $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths ($ownedPaths + @('.agent-1c/migrations/ui-testing-essential-v1.json')) -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
                 Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-running
+                Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
                 Invoke-WorkflowPackageFilePostCopy | Out-Null
                 $laterText = Read-Utf8Text -Path (Join-Path $root '.dev.env')
                 $unchangedReceipt = (Get-FileHash -LiteralPath (Get-UiTestingPolicyReceiptPath)).Hash -ceq $receiptHash
@@ -363,10 +364,10 @@ Describe 'Essential policy update integration' {
             }
         }
         if ($Kind -in @('skip-then-upgrade','skip-empty')) {
-            $result.skipText | Should -Be $before
+            $result.skipText | Should -Be ($before + "ITL_VERIFICATION_MODEL=change`n")
             $result.skipReceipt | Should -BeFalse
             $result.receipt.eligibility | Should -Be 'first-supported-ai-rules'
-            $result.laterText | Should -Be $manualText
+            $result.laterText | Should -Be ($manualText + "ITL_VERIFICATION_MODEL=change`n")
             $result.unchangedReceipt | Should -BeTrue
         }
         if ($Kind -eq 'same-supported') {
@@ -377,7 +378,9 @@ Describe 'Essential policy update integration' {
             $result.receipt.beforeValue | Should -Be ''
             $result.receipt.converted | Should -BeTrue
         }
-        $result.text | Should -Be "UI_TESTING=$Expected`nITL_VANESSA_TESTING=auto`nTOOL_BROWSER=auto`n"
+        $modelText = if ($Kind -eq 'pinned-old') { '' } else { "ITL_VERIFICATION_MODEL=change`n" }
+        $result.text | Should -Be ("UI_TESTING=$Expected`nITL_VANESSA_TESTING=auto`nTOOL_BROWSER=auto`n" + $modelText)
+        if ($Kind -ne 'pinned-old') { $result.actualSnapshotPaths | Should -Contain '.agent-1c/migrations/verification-model-change-v1.json' }
         $result.savedDecision.run | Should -BeTrue
     }
     It 'uses owned snapshot bytes for prior capability and rejects changed rules and a commented source declaration' {
@@ -699,7 +702,7 @@ Describe 'Workflow post-copy policy format chain' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), '{"dependencies":{"workflowPackage":{"commit":"old-source"}}}', [Text.UTF8Encoding]::new($false))
         Set-TestUiTestingRulesFixture -Root $root -Supported $false
         $result = & {
-            $names = @('CAVEMAN','UI_TESTING','ITL_VANESSA_TESTING','OTHER','ONEC_MAX_CONCURRENT_SESSIONS')
+            $names = @('CAVEMAN','UI_TESTING','ITL_VANESSA_TESTING','OTHER','ONEC_MAX_CONCURRENT_SESSIONS','ITL_VERIFICATION_MODEL')
             $saved = @{}
             foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
             try {
@@ -735,7 +738,7 @@ Describe 'Workflow post-copy policy format chain' {
                 foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
             }
         }
-        $expected = $before.Replace('CAVEMAN=On','CAVEMAN=auto').Replace('UI_TESTING=manual','UI_TESTING=essential') + "ONEC_MAX_CONCURRENT_SESSIONS=3${NewLine}"
+        $expected = $before.Replace('CAVEMAN=On','CAVEMAN=auto').Replace('UI_TESTING=manual','UI_TESTING=essential') + "ITL_VERIFICATION_MODEL=change${NewLine}ONEC_MAX_CONCURRENT_SESSIONS=3${NewLine}"
         [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble() + $encoding.GetBytes($expected))))
         $result.beforeSupport | Should -Be 'unsupported'
         $result.postCopy.Count | Should -Be 1

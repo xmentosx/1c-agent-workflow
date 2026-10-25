@@ -8,6 +8,7 @@
         [IO.Directory]::CreateDirectory($root) | Out-Null
         & {
             . $helper -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:Action = 'export-dev-branch-result'
             $script:ResultPurpose = 'development'
             $script:calls = [Collections.Generic.List[string]]::new()

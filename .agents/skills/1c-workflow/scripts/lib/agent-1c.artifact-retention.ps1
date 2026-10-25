@@ -145,6 +145,19 @@ function Get-ItlArtifactProtectedPaths {
             }
         } catch { throw "ITL_ARTIFACT_RETAINED_RECEIPT_UNREADABLE: $selectionPath`: $($_.Exception.Message)" }
     }
+    [void]$paths.Add((Join-Path $ProjectRoot '.agent-1c/verification-selection/changes'))
+    $changePath=Join-Path $ProjectRoot '.agent-1c/verification-selection/current-change.json'
+    if (Test-Path -LiteralPath $changePath -PathType Leaf) {
+        try {
+            $change=Read-Utf8Text -Path $changePath | ConvertFrom-Json -ErrorAction Stop
+            [void]$paths.Add($changePath)
+            foreach ($reference in @($change.planArtifact)+@($change.requirements)) {
+                $full=[IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$reference.path)))
+                if (-not (Test-ItlArtifactPathInside -Root $ProjectRoot -Path $full)) { throw 'change evidence escaped the project' }
+                [void]$paths.Add($full)
+            }
+        } catch { throw "ITL_ARTIFACT_CHANGE_RECEIPT_UNREADABLE: $changePath`: $($_.Exception.Message)" }
+    }
     return $paths
 }
 

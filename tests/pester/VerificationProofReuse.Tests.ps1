@@ -23,6 +23,7 @@ Describe 'Fresh explicit verification proof' {
         & git -C $root commit -qm 'checker acceptance inputs'
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:CheckerState = [pscustomobject]@{stateProjectRoot=$root;infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'base');lastConfigDesignerFingerprint='loaded-source';configLoadStatus='passed'}
             function Read-DevBranchState { $script:CheckerState }
             function Assert-DevelopmentBranchWorktreeContext { param($State,$Operation) }
@@ -75,6 +76,7 @@ Describe 'Fresh explicit verification proof' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{
                 stateProjectRoot = $root; infoBaseKind = 'file'; devBranchInfoBasePath = (Join-Path $root 'base')
                 toolingInfoBaseGeneration = 'target'; vanessaServiceInfoBaseGeneration = 'runner'
@@ -110,6 +112,7 @@ Describe 'Fresh explicit verification proof' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{
                 stateProjectRoot = $root
                 infoBaseKind = 'file'
@@ -153,6 +156,7 @@ Describe 'Fresh explicit verification proof' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:updates = 0
             function Get-VerificationState { param($State) [pscustomobject]@{ isFreshPassed = $true } }
             function Update-DevBranchState { param($State, $Updates) $script:updates++ }
@@ -169,6 +173,7 @@ Describe 'Fresh explicit verification proof' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:updates = @()
             function Get-VerificationState { param($State) [pscustomobject]@{ isFreshPassed = $false } }
             function Update-DevBranchState { param($State, $Updates) $script:updates += $Updates }
@@ -206,6 +211,7 @@ Describe 'Fresh explicit verification proof' {
         $unrelated = (& git -C $root rev-parse HEAD).Trim()
         $first = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             [pscustomobject]@{
                 before = Get-VerificationRelevantDependencyLockFingerprint -Treeish $baseline
                 after = Get-VerificationRelevantDependencyLockFingerprint -Treeish $unrelated
@@ -222,6 +228,7 @@ Describe 'Fresh explicit verification proof' {
         $relevant = (& git -C $root rev-parse HEAD).Trim()
         $second = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             [pscustomobject]@{
                 fingerprint = Get-VerificationRelevantDependencyLockFingerprint -Treeish $relevant
                 changed = @(Get-VerificationSelectionChangedPaths -BaseTree $unrelated -CurrentTree $relevant)
@@ -250,6 +257,7 @@ Describe 'Fresh explicit verification proof' {
         & git -C $root commit -qm 'baseline requirements'
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             function Get-VerificationAcceptedMasterInput { param($ChangedPaths, $CurrentTree) [pscustomobject]@{ importedPaths = @() } }
             function Get-VerificationLegacySourceBaseline { $null }
             $feature = Join-Path $root 'tests/features/Orders.feature'
