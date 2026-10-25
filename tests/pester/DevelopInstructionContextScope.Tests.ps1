@@ -30,11 +30,12 @@ BeforeAll {
         $f.base=(& git -C $f.root rev-parse HEAD).Trim()
         return $f
     }
-    function Set-ProductContextScopeChange($Fixture) {
+    function Set-ProductContextScopeChange {
+        param($Fixture,[string]$FunctionName='Get-ItlProductProjectPublisherContext')
         $path=Join-Path $Fixture.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1'
         $text=[IO.File]::ReadAllText($path);$tokens=$null;$errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
-        $node=$ast.EndBlock.Statements|Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq 'Get-ItlProductProjectPublisherContext'}
+        $node=$ast.EndBlock.Statements|Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq $FunctionName}
         $bytes=[IO.File]::ReadAllBytes($path);$bom=$bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191
         [IO.File]::WriteAllText($path,$text.Insert($node.Body.EndBlock.Statements[0].Extent.StartOffset,"Write-Verbose 'changed product publisher'`n"),[Text.UTF8Encoding]::new($bom))
     }
@@ -43,6 +44,39 @@ BeforeAll {
 Describe 'Consumed native instruction and product inputs' {
     BeforeEach {
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    }
+    It 'retains binding admission while the disabled post-update offer avoids product work (interactive=<Interactive>)' -TestCases @(@{Interactive=$false},@{Interactive=$true}) {
+        param($Interactive)
+        $definitions=@{}
+        foreach($entry in @(
+            @{file='agent-1c.product-project-context.ps1';name='Get-ItlProductProjectBinding'},
+            @{file='agent-1c.product-project-ui.ps1';name='Invoke-ItlProductProjectPostUpdateOffer'}
+        )) {
+            $tokens=$null;$errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('.agents/skills/1c-workflow/scripts/lib/'+$entry.file)),[ref]$tokens,[ref]$errors)
+            @($errors)|Should -BeNullOrEmpty
+            $definitions[$entry.name]=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $entry.name},$true).Extent.Text
+        }
+        $seen=& {
+            $trace=@{binding=0;settings=0;answers=0}
+            $script:LifecycleOperationIsContinuation=$false
+            $script:LifecycleOperationTerminalWrittenByContinuation=$false
+            foreach($definition in $definitions.Values){. ([scriptblock]::Create($definition))}
+            function Get-ConfigValue {param($Path,$Default);$Path|Should -Be 'productProject';$trace.binding++;return $null}
+            function Test-InteractiveInputAvailable {return $Interactive}
+            function Read-ItlProductProjectSetting {param($Name);$Name|Should -Be 'selection';$trace.settings++;return @{}}
+            function Get-ItlCatalogField {return $null}
+            function Read-InitOptional {$trace.answers++;return ''}
+            function Read-ItlProductProjectSnapshot {throw 'Disabled context reached snapshot work'}
+            function Set-ItlProductProjectAppliedContext {throw 'Disabled context reached apply work'}
+            function Get-ItlProductProjectPublisherContext {throw 'Disabled context reached publisher work'}
+            function Initialize-ItlProductProjectContext {throw 'Disabled context reached initialization'}
+            Invoke-ItlProductProjectPostUpdateOffer
+            return $trace
+        }
+        $seen.binding|Should -Be 1
+        $seen.settings|Should -Be ([int]$Interactive)
+        $seen.answers|Should -Be ([int]$Interactive)
     }
     It 'reuses all authenticated scenarios after main guidance content changes while binding presence and fast-skill runtime content' {
         $f=New-InstructionContextFixture
@@ -77,13 +111,19 @@ Describe 'Consumed native instruction and product inputs' {
         Test-DevelopJourneyUnaffectedPath $f.root $relative '' fresh | Should -BeFalse
     }
 
-    It 'reuses product-only changes for a known disabled context across all roots (positive=<Positive>)' -TestCases @(@{Positive=$false},@{Positive=$true}) {
-        param($Positive)
+    It 'reuses audited product changes with disabled context (positive=<Positive>, function=<ContextFunction>)' -TestCases @(
+        @{Positive=$false;ContextFunction='Get-ItlProductProjectPublisherContext'},
+        @{Positive=$true;ContextFunction='Get-ItlProductProjectPublisherContext'},
+        @{Positive=$false;ContextFunction='Read-ItlProductProjectSnapshot'},
+        @{Positive=$false;ContextFunction='Initialize-ItlProductProjectContext'},
+        @{Positive=$false;ContextFunction='Set-ItlProductProjectAppliedContext'}
+    ) {
+        param($Positive,$ContextFunction)
         $f=New-InstructionContextFixture -Positive $Positive
         Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
         Save-IncrementalJourneyProofs $f
         $old=Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
-        Set-ProductContextScopeChange $f
+        Set-ProductContextScopeChange $f -FunctionName $ContextFunction
         & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'product-only publisher change'
         $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
         foreach($journey in @('fresh','upgrade')) {
@@ -95,6 +135,10 @@ Describe 'Consumed native instruction and product inputs' {
         }
         $path=Join-Path $f.root '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1'
         $knownBytes=[IO.File]::ReadAllBytes($path)
+        Set-ProductContextScopeChange $f -FunctionName Get-ItlProductProjectBinding
+        $guard=Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
+        Test-DevelopScenarioEquivalentInput $f.root $old $guard $f.base @('verification') $f.catalog | Should -BeFalse
+        [IO.File]::WriteAllBytes($path,$knownBytes)
         [IO.File]::AppendAllText($path,"`nfunction New-UnknownProductFunction { 'new input' }`n")
         $unknown=Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
         Test-DevelopScenarioEquivalentInput $f.root $old $unknown $f.base @('verification') $f.catalog | Should -BeFalse
