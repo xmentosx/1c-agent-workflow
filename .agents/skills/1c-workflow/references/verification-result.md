@@ -6,6 +6,13 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
+`ITL_VERIFICATION_MODEL=change` selects current-change verification; `cumulative`
+preserves the previous catalog-wide assessment. For change mode, prepare and
+complete the helper-owned increment following [current change verification](verification-change.md).
+A verified increment does not close pending criteria of the whole task. The
+normal unfiltered check and all execution/provider/repair limits below remain
+in force; this model does not authorize a new run or a policy bypass.
+
 Use targeted/static checks while implementing. Use `/itl-check` or helper action `check-dev-branch` as the only executable gate: before completion after the last verification-relevant edit, and earlier only at a milestone whose runtime result decides whether implementation can continue. The final run must be unfiltered. It ensures the copied branch infobase matches current configuration/extension sources, skips Designer/Enterprise when the fingerprint is already current, evaluates `ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, and `ITL_CHECK_EVENT_LOG`, and runs permitted components. YAxUnit runs the hierarchical test extension first; Vanessa then uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
 Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns the helper Job Object (`KILL_ON_JOB_CLOSE`), abrupt helper-exit detection, stale-status watchdog even when `liveness` is empty, and the `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` ceiling (default 3600). Long native waits publish a generic helper heartbeat; Designer and Vanessa add operation-specific progress/stall evidence, so the generic stale watchdog does not preempt a live operation that is still within its published stall budget. After an abrupt helper exit, the runner first uses the exact persisted database/native recovery ticket and retained `ownedProcessScopes`; legacy exact Vanessa evidence remains only a fallback. A verified recovery releases the database, reports stopped owned PIDs with `foreignProcessesStopped=[]`, and returns `retry-original-command` rather than asking for manual process cleanup. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.

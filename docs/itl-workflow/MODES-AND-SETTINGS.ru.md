@@ -4,12 +4,15 @@
 
 `UI_TESTING=essential` автоматически требует проверку основных сценариев изменённых форм, команд, документов и отчётов после загрузки изменения. Косметика и чистый рефакторинг сами по себе её не требуют. В ITL-проекте используется поддержанный управляемый UI-провайдер, включая Vanessa UI MCP; отсутствие провайдера оставляет проверку невыполненной. Сохранённые Vanessa Automation-тесты по-прежнему управляются `ITL_VANESSA_TESTING` и не отключаются значением `UI_TESTING=manual` или `off`. При переходе на эту версию прежний `UI_TESTING=manual` однократно заменяется на `essential` в каждом обновляемом проекте и ветке; `off`/`auto` сохраняются. Последующий сознательный выбор `manual` сохраняется при повторном обновлении.
 
+`ITL_VERIFICATION_MODEL=change` проверяет текущее изменение по helper-owned плану влияния и отдельно сохраняет приёмку всей задачи. `cumulative` включает прежнюю накопительную оценку. Однократное обновление записывает `change`, если ключ отсутствует; явный выбор `cumulative` и последующие настройки сохраняются. Смена модели не отключает проверки загрузки, журнал, ограничения исполнителей и критерии приёмки. План влияния и необходимые доказательства готовит агент; отдельный документ планирования для прямой задачи не требуется.
+
 ## Что использовать обычно
 
 Для большинства задач ничего менять не нужно:
 
 ```text
 стандартная разработка
+  ├─ модель приёмки: ITL_VERIFICATION_MODEL=change
   ├─ статические проверки: VERIFICATION_DEPTH=standard
   ├─ YAxUnit: ITL_YAXUNIT_TESTING=auto
   ├─ Vanessa: ITL_VANESSA_TESTING=auto
@@ -40,6 +43,7 @@ ITL не включает и не выключает Browser Automation и не 
 |---|---|---|---|---|
 | Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `standard` | проект |
 | Интерактивная проверка UI по правилам `ai_rules_1c` | `UI_TESTING` | `essential`, `auto`, `manual`, `off` | `essential` | проект |
+| Модель проверки и приёмки | `ITL_VERIFICATION_MODEL` | `change`, `cumulative` | `change` | проект/worktree |
 | ITL YAxUnit | `/itl-litemode`, `ITL_YAXUNIT_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |

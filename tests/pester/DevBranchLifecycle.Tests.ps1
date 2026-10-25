@@ -2010,6 +2010,7 @@ try {
     It "does not let failed or legacy verification evidence become fresh" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $current = Get-VerificationFingerprint
             $failed = Get-VerificationState -State ([pscustomobject]@{
                 lastVerificationStatus = "failed"
@@ -2783,6 +2784,7 @@ try {
     It "exports a freshly verified dirty working tree without invoking the clean Git guard" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:CapturedManifest = $null
             $state = [pscustomobject]@{
                 devBranch = "itldev/branch1"

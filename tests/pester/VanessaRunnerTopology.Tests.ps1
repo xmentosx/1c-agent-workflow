@@ -405,6 +405,7 @@
             -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Other"}]}'
         & {
             . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $DevBranchName = 'fixture'
             $VerificationTrigger = 'repair'
             $ExplicitVerificationComponent = @()

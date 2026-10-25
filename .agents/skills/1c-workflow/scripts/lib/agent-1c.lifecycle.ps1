@@ -7264,7 +7264,7 @@ function Write-WorkflowUpdateFollowUp {
     Add-RunUserReportLine -Lines $reportLines -Label "Коммит master" -Value ([string]$CommitResult.commit)
     Add-RunUserReportLine -Lines $reportLines -Label "Новый коммит создан" -Value $(if ($CommitResult.created) { "да" } else { "нет, workflow уже актуален" })
     Add-RunUserReportLine -Lines $reportLines -Label "Tracked-состояние master" -Value "clean"
-    foreach ($policy in @('caveman', 'ui-testing')) {
+    foreach ($policy in @('caveman', 'ui-testing', 'verification-model')) {
         $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
         $masterPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor
         if (Test-Path -LiteralPath $masterPolicyReceiptPath -PathType Leaf) {
@@ -7301,7 +7301,7 @@ function Write-WorkflowUpdateFollowUp {
         foreach ($outcome in @($outcomes | Sort-Object branch)) {
             $reportLines.Add("  - $($outcome.branch): $($outcome.status); $($outcome.root)")
             if ([string]$outcome.status -eq 'completed') {
-                foreach ($policy in @('caveman', 'ui-testing')) {
+                foreach ($policy in @('caveman', 'ui-testing', 'verification-model')) {
                     $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
                     $branchPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor -Root ([string]$outcome.root)
                     if (Test-Path -LiteralPath $branchPolicyReceiptPath -PathType Leaf) {
@@ -7539,7 +7539,7 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
         @($AiRulesPathsAfter) +
         $(if ($SourceRoot) { @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot) }) +
         @('.dev.env', '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
-          '.agent-1c/migrations/caveman-auto-v1.json', '.agent-1c/migrations/ui-testing-essential-v1.json')
+          '.agent-1c/migrations/caveman-auto-v1.json', '.agent-1c/migrations/ui-testing-essential-v1.json', '.agent-1c/migrations/verification-model-change-v1.json')
     ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ } | Select-Object -Unique
     return @($paths | Where-Object {
         $path = [string]$_
@@ -8358,6 +8358,17 @@ function Test-WorkflowSourceUiTestingPolicy {
             $node.Name -ieq 'Invoke-UiTestingPolicyTransition'
     }, $true)
 }
+function Test-WorkflowSourceVerificationModelPolicy {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $tokens=$null; $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path),[ref]$tokens,[ref]$errors)
+    if (@($errors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-VerificationModelPolicyTransition'},$true)
+}
+
 function Test-WorkflowSourceLayeredOpenCodeConfig {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SourceRoot)
     if (-not $SourceRoot) { return $false }
@@ -8390,6 +8401,7 @@ function Add-WorkflowDotEnvPolicySnapshotPaths {
     param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Pending)
     $policies = @('caveman')
     if (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'ui-testing' }
+    if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'verification-model' }
     $admissions = @($policies | ForEach-Object {
         [pscustomobject]@{ relativePath = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'; policy = [string]$_ }
     })
@@ -8822,7 +8834,15 @@ function Get-WorkflowUpdateWorktreeInventory {
 }
 
 function Get-DotEnvPolicyTransitionDescriptor {
-    param([Parameter(Mandatory = $true)][ValidateSet('caveman', 'ui-testing')][string]$Policy)
+    param([Parameter(Mandatory = $true)][ValidateSet('caveman', 'ui-testing', 'verification-model')][string]$Policy)
+    if ($Policy -eq 'verification-model') {
+        return [pscustomobject]@{
+            migrationId='verification-model-change-v1'; key='ITL_VERIFICATION_MODEL'; fromValue=''; toValue='change'
+            errorPrefix='VERIFICATION_MODEL_POLICY'; newScopeDefault=$true; defaultExistingScope=$true
+            preserveValueWhitespace=$true; preserveUtf8Bom=$true; label='Verification model'; reportTransition='default -> change (once)'
+            notice='Verification model default recorded once: change. Explicit cumulative remains supported.'
+        }
+    }
     if ($Policy -eq 'caveman') {
         return [pscustomobject]@{
             migrationId = 'caveman-auto-v1'; key = 'CAVEMAN'; fromValue = 'on'; toValue = 'auto'
@@ -9095,7 +9115,7 @@ function Invoke-DotEnvPolicyTransition {
             $pendingValue = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $pendingAssignment
             $sourceMatches = $pendingMatches.Count -eq 1 -and $pendingValue -ieq [string]$Descriptor.fromValue
             $newDefault = [bool]$Descriptor.newScopeDefault -and
-                ([string]$receipt.scopeKind -eq 'new' -or [string]$receipt.eligibility -eq 'first-supported-ai-rules') -and
+                ([string]$receipt.scopeKind -eq 'new' -or [string]$receipt.eligibility -eq 'first-supported-ai-rules' -or [bool](Get-ConfigValueFromObject -Object $Descriptor -Path 'defaultExistingScope' -Default $false)) -and
                 $pendingMatches.Count -le 1 -and -not $pendingValue
             if (-not $sourceMatches -and -not $newDefault) {
                 throw "${errorPrefix}_CONFLICT: source setting no longer matches $receiptPath"
@@ -9128,7 +9148,7 @@ function Invoke-DotEnvPolicyTransition {
     $targetWorkflowCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
     $eligibility = if ($NewScope) { 'new-scope' } elseif ($FirstSupportedRules) { 'first-supported-ai-rules' } elseif (-not $EvaluatePackageEligibility) { 'direct-legacy-transition' } elseif ($PreviousWorkflowCommit -and $PreviousWorkflowCommit -ceq $targetWorkflowCommit) { 'already-current-package' } elseif ($PreviousWorkflowCommit) { 'older-package' } else { 'legacy-unpinned-package' }
     $convert = (-not $NewScope -and $beforeValue -ieq [string]$Descriptor.fromValue -and $eligibility -ne 'already-current-package') -or
-        (($NewScope -or $FirstSupportedRules) -and [bool]$Descriptor.newScopeDefault -and -not $beforeValue)
+        (($NewScope -or $FirstSupportedRules -or [bool](Get-ConfigValueFromObject -Object $Descriptor -Path 'defaultExistingScope' -Default $false)) -and [bool]$Descriptor.newScopeDefault -and -not $beforeValue)
     $afterText = $envText
     if ($convert) {
         $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $assignment -Utf8Bom:$hasUtf8Bom
@@ -9170,6 +9190,11 @@ function Invoke-UiTestingPolicyTransition {
     param([switch]$NewScope, [switch]$EvaluatePackageEligibility, [switch]$FirstSupportedRules, [string]$PreviousWorkflowCommit = '')
     return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) `
         -NewScope:$NewScope -EvaluatePackageEligibility:$EvaluatePackageEligibility -FirstSupportedRules:$FirstSupportedRules -PreviousWorkflowCommit $PreviousWorkflowCommit)
+}
+
+function Invoke-VerificationModelPolicyTransition {
+    param([switch]$NewScope)
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -NewScope:$NewScope)
 }
 
 function Copy-DotEnvPolicyReceiptToWorktree {
@@ -9269,6 +9294,27 @@ function Assert-UiTestingPolicyUpdateSnapshot {
     throw "UI_TESTING_POLICY_LEGACY_SNAPSHOT: the old updater did not capture the new UI receipt. No UI policy has been written. $continuation"
 }
 
+function Assert-VerificationModelPolicyUpdateSnapshot {
+    param([object]$Pending = (Get-WorkflowUpdatePendingSnapshot))
+    if ($null -eq $pending) {
+        throw 'VERIFICATION_MODEL_POLICY_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; verification model policy cannot be applied by a standalone post-copy call.'
+    }
+    if (-not (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$pending.receipt.sourceRoot))) { return }
+    $relative = '.agent-1c/migrations/verification-model-change-v1.json'
+    foreach ($record in @($pending.snapshot.records)) {
+        $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if ($relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)) { return }
+    }
+    # The old parent still holds its original snapshot in memory and can rewrite
+    # transaction.json after a failed child. Extending it here would lose the new
+    # record again. Re-enter the existing source-side owner before pre-copy instead.
+    $snapshotId = (Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+    $sourceRoot = [string]$pending.receipt.sourceRoot
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its new parent admits the policy receipts to the existing snapshot before it resumes the same post-copy; do not restore or edit a pending receipt manually. SnapshotId: $snapshotId. Original candidate: '$sourceRoot'. The original workflow target, snapshot and recovery are preserved."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "VERIFICATION_MODEL_POLICY_LEGACY_SNAPSHOT: the old updater did not capture the new UI receipt. No verification model policy has been written. $continuation"
+}
+
 function Invoke-WorkflowPackageFilePostCopy {
     Invoke-Vibecoding1cMcpRegistryOperation { Invoke-WorkflowPackageFilePostCopyCore }
 }
@@ -9284,6 +9330,8 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         $script:ItlOpenCodeOperationConfigPathsMode = if ($null -eq $policyPending -or (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$policyPending.receipt.sourceRoot))) { 'layered' } else { 'legacy-root' }
         Assert-WorkflowUpdateMcpConfigSnapshot -Pending $policyPending
         Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
+        Assert-VerificationModelPolicyUpdateSnapshot -Pending $policyPending
+        if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)) { Invoke-VerificationModelPolicyTransition | Out-Null }
         $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
         $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
             Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
@@ -10757,6 +10805,7 @@ function Copy-DotEnvToWorktree {
     }
     Copy-CavemanPolicyReceiptToWorktree -WorktreePath $WorktreePath
     Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $WorktreePath
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -WorktreePath $WorktreePath
 }
 
 function Copy-KiloProjectConfigToWorktree {
@@ -11207,6 +11256,12 @@ function Write-DevBranchVerificationRunUserReport {
     if ($null -ne $Failure) {
         Add-RunUserReportLine -Lines $lines -Label 'Ошибка' -Value $Failure.Exception.Message
     } else {
+        Add-RunUserReportLine -Lines $lines -Label 'Модель проверки' -Value (Get-StateValue $verification 'verificationModel' 'cumulative')
+        if ([string](Get-StateValue $verification 'verificationModel' '') -eq 'change') {
+            Add-RunUserReportLine -Lines $lines -Label 'Проверки текущего изменения пройдены' -Value ([string][bool](Get-StateValue $verification 'changeFreshPassed' $false))
+            Add-RunUserReportLine -Lines $lines -Label 'Приёмка всей задачи завершена' -Value ([string][bool](Get-StateValue $verification 'taskAccepted' $false))
+            Add-RunUserReportLine -Lines $lines -Label 'Остаток приёмки' -Value (@(Get-StateValue $verification 'acceptanceRemaining' @()) -join ', ')
+        }
         $skipped = @(Get-StateValue -State $State -Name 'lastVerificationSkippedComponents' -Default @())
         if ($skipped.Count -gt 0) { Add-RunUserReportLine -Lines $lines -Label 'Пропущенные компоненты' -Value ($skipped -join ', ') }
         $issues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @()) + @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
@@ -14312,7 +14367,7 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
     $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
     if (-not $verification.isFreshPassed -or
-        $evidenceKind -cnotin @('full', 'complete/current-obligations') -or
+        $evidenceKind -cnotin @('full', 'complete/current-obligations', 'complete/current-change') -or
         $configLoadStatus -notin @("passed", "fallback-succeeded") -or
         -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $false
@@ -16432,6 +16487,7 @@ function Fork-DevBranch {
     }
     Copy-CavemanPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
     Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy verification-model) -WorktreePath $targetWorktreePath
     if (-not $preserveTargetEnv) {
         Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
     }
@@ -19438,6 +19494,7 @@ function Reset-DevBranch {
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
             $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
             $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
+            Archive-VerificationChangeForReset -State $state
             Add-PendingDevBranchMergeClearUpdates -Updates $completion
             Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates $completion
         }
@@ -20545,6 +20602,11 @@ function Show-WorkflowStatus {
     Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
     Write-Host "Verification status: $($verification.effectiveStatus)"
     Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
+    Write-Host "Verification model: $(Get-VerificationModel)"
+    if ((Get-VerificationModel) -eq 'change') {
+        Write-Host "Whole task accepted: $([bool](Get-StateValue -State $verification -Name 'taskAccepted' -Default $false))"
+        Write-Host "Acceptance remaining: $(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', ')"
+    }
     if ($verification.verifiedAt) {
         Write-Host "Last verified at: $($verification.verifiedAt)"
     }
@@ -20581,10 +20643,13 @@ function Invoke-DevBranchCheck {
     if (-not $script:ActiveAuxiliaryVanessaContext) {
         $classificationYaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $trigger -ExplicitComponents $explicit
         $classificationVanessa = Get-ItlVerificationExecutionDecision -Component 'vanessa' -Trigger $trigger -ExplicitComponents $explicit
-        if ($classificationYaxunit.run -or $classificationVanessa.run) {
+        if ($classificationYaxunit.run -or $classificationVanessa.run -or (Get-VerificationModel) -eq 'change') {
             # Assess the same prepared source bytes that the load will consume.
-            # Keep the cycle's assessment: preparation may still change inputs.
             Repair-OneCSourceLineEndings | Out-Null
+        }
+        if ((Get-VerificationModel) -eq 'change') { Assert-VerificationChangeReady -State $state | Out-Null }
+        if ($classificationYaxunit.run -or $classificationVanessa.run) {
+            # Keep the cycle's assessment: preparation may still change inputs.
             Assert-VerificationClassificationReady -Reason 'check-dev-branch before infobase load' -RequireVanessa:$classificationVanessa.run -RequireYAxUnit:$classificationYaxunit.run | Out-Null
             # Classification may persist the first adoption baseline. Do not
             # overwrite it when the event-log owners save their next updates.
@@ -20653,7 +20718,8 @@ function Invoke-DevBranchCheck {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
         $verification = Get-VerificationState -State $verifiedState
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
-        if ($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations')) {
+        if (($verification.isFreshPassed -and $evidenceKind -in @('full', 'complete/current-obligations', 'complete/current-change')) -or
+            ((Get-VerificationModel) -eq 'change' -and [bool](Get-StateValue $verification 'changeFreshPassed' $false) -and $evidenceKind -eq 'change/task-pending')) {
             Complete-ItlVerificationRepairSession
             $repairVerificationPassed = $true
         } elseif ($scenarioLoopDiagnostic) {

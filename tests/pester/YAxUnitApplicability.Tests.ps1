@@ -10,6 +10,7 @@
         $result = & {
             $DevBranchName = "legacy"
             . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
             function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $true } } }
             function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
             function Get-GitOutput { '2' * 40 }
@@ -28,6 +29,7 @@
         $catalogPath = Join-Path $TestDrive 'yaxunit-suites.branch.json'
         $result = & {
             . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
             . $YAxUnitModule
             function Get-YAxUnitSuiteCatalogPaths { @($catalogPath) }
             function Get-YAxUnitTestsPath { 'tests/yaxunit' }
@@ -52,6 +54,7 @@
             $script:Changed = @('src/cf/CommonModules/Тест Выбора/Ext/Module.bsl')
             $script:SourceOid = '4' * 40
             . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
             function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $false } } }
             function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
             function Get-GitOutput { '2' * 40 }
@@ -79,6 +82,7 @@
     It 'classifies current one-off coverage without calling it not-applicable and leaves unrelated new BSL unclassified' {
         $result = & {
             . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion=1;commit=('1'*40);legacy=$false } }
             function Get-StateValue { param($State,$Name,$Default) if($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]){return $Default};$State.$Name }
             function Get-GitOutput { '2'*40 }
@@ -118,6 +122,7 @@
                 $DevBranchName = 'current'
                 . $YAxUnitModule
                 . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
                 function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $false } } }
                 function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
                 function Get-GitOutput { '2' * 40 }
@@ -165,6 +170,7 @@
                 $DevBranchName = 'current'
                 . $YAxUnitModule
                 . $SelectionModule
+            function Get-VerificationModel { 'cumulative' }
                 function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $false } } }
                 function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
                 function Get-GitOutput { '2' * 40 }
@@ -222,6 +228,7 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-VerificationModel { 'cumulative' }
                 $script:AdoptionState = [pscustomobject]@{ yaxunitApplicabilityBaseline = $null }
                 function Read-DevBranchState { param($Name) $script:AdoptionState }
                 function Update-DevBranchState { param($State, $Updates) $script:AdoptionState.yaxunitApplicabilityBaseline = $Updates.yaxunitApplicabilityBaseline }

@@ -59,7 +59,7 @@ Ask setup questions only when the helper cannot collect them. Store secrets only
 
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
-Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. For change/cumulative proof planning, follow `references/verification-change.md`. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 

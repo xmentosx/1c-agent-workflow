@@ -415,6 +415,7 @@ Describe 'Source quality catalog contracts' {
         $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $snapshotConsumer = 'tests/pester/ContinuationStatusSnapshot.Tests.ps1'
+        $changeModelConsumer = 'tests/pester/VerificationChangeModel.Tests.ps1'
         $qualificationConsumer = 'tests/pester/SourceQualificationFixture.Tests.ps1'
         $lifecycleConsumers = @('DevBranchWorktrees','DevBranchForkContinuation','DevBranchMergeRecovery','DevBranchCheck' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $checkConsumer = 'tests/pester/DevBranchCheck.Tests.ps1'
@@ -428,9 +429,13 @@ Describe 'Source quality catalog contracts' {
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 4)
+        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 5)
+        @($selection.tests) | Should -Contain $changeModelConsumer
+        $changeModelOwner=@($catalog.contracts|Where-Object id -eq 'vanessa-verification')[0]
+        @($changeModelOwner.tests) | Should -Contain $changeModelConsumer
+        @($changeModelOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1'
         @($selection.tests) | Should -Contain $snapshotConsumer
         $snapshotOwner = @($catalog.contracts | Where-Object id -eq 'compact-helper-continuation-inputs')[0]
         @($snapshotOwner.tests) | Should -Contain $snapshotConsumer
@@ -499,7 +504,13 @@ Describe 'Source quality catalog contracts' {
         # continuation-status-snapshot/focused.json: four cases, 23.52s;
         # reserve 30s without rewriting the historical cohort measurements.
         $snapshotSeconds = 30.0
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds
+        # change-verification-model/owned-final: 15 cases, 135.982s in WinPS 5.1.
+        # integration-cases adds the current-plan profile case at 6.18s.
+        # Reserve 180s for this additional consumer; keep every historical cohort,
+        # its observed timings and all runtime/hard watchdogs unchanged.
+        $changeModelSeconds = 180.0
+        [double]$changeModelOwner.budgetSeconds | Should -BeGreaterOrEqual $changeModelSeconds
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -512,8 +523,8 @@ Describe 'Source quality catalog contracts' {
             "tests/quality-contracts.json"))
         # One additional real catalog consumer; historical observed timings above
         # remain unchanged, and the exact added selection is checked below.
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 4)
+        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 5)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -527,7 +538,7 @@ Describe 'Source quality catalog contracts' {
         # capacity model; no removed cohort, timeout change or cache assumption.
         $autonomyObservedSeconds = 33.218
         [double]$trackedTimings.files.'LifecycleGitContinuation.Tests.ps1' | Should -Be ([Math]::Ceiling($autonomyObservedSeconds))
-        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds
+        $currentEstimatedCriticalPath = $preludeSeconds + $currentParallelSpanSeconds + $serialReleaseSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + $registryBudgetReserve + $autonomyObservedSeconds + $snapshotSeconds + $changeModelSeconds
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)

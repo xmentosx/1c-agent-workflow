@@ -1517,6 +1517,15 @@ function Assert-VanessaVerificationPreflight {
 
     $featuresPath = Get-VanessaFeaturesPath
     $resolved = Resolve-ProjectPath $featuresPath
+    if ((Get-VerificationModel) -eq 'change' -and -not (Test-ItlDiagnosticVerificationScope) -and @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath).Count -eq 0) {
+        $yaxunit = Get-ItlVerificationExecutionDecision -Component 'yaxunit' -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+        $currentPlan = Get-ItlVanessaVerificationSelectionPlan -YAxUnitVerificationPlanned:$yaxunit.run
+        if ($null -ne $currentPlan -and $currentPlan.mode -eq 'reuse' -and @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath).Count -eq 0) {
+            # An observed current obligation has no saved UI runner to preflight.
+            # Completion still requires its receipt, loaded target and event log.
+            return
+        }
+    }
     if (-not (Test-Path -LiteralPath $resolved -ErrorAction SilentlyContinue)) {
         Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
         throw "missing-suite: Vanessa testsPath was not found: $resolved"
@@ -4788,6 +4797,7 @@ function Get-VerificationFingerprintScopePaths {
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1"
     ) + @(Get-VerificationDeclaredInputScopes) | Select-Object -Unique)
 }
@@ -5011,7 +5021,18 @@ function Get-VerificationState {
     $hasCurrentProofReceipts = $hasComponentReceipts -or @(
         Get-VerificationCatalogValue -Value (Read-VerificationSelectionProof) -Name 'suiteEvidence' -Default @()
     ).Count -gt 0
-    if ($hasCurrentProofReceipts -and $currentFingerprintValue) {
+    $verificationModel = Get-VerificationModel
+    $taskAccepted = $true
+    $acceptanceRemaining = @()
+    if ($verificationModel -eq 'change') {
+        $assessment = Get-VerificationChangeAssessment -State $State -Fingerprint $currentFingerprintValue
+        $oneOffIssues = @($assessment.oneOffIssues)
+        $assessmentIssues = @($assessment.issues)
+        $isFresh = [bool]$assessment.passed
+        $taskAccepted = [bool]$assessment.taskAccepted
+        $acceptanceRemaining = @($assessment.acceptanceRemaining)
+        if ($isFresh) { $status = 'passed' }
+    } elseif ($hasCurrentProofReceipts -and $currentFingerprintValue) {
         $assessment = Get-VerificationCurrentProofAssessment -State $State -Fingerprint $currentFingerprintValue
         $oneOffIssues = @($assessment.oneOffIssues)
         $assessmentIssues = @($assessment.issues)
@@ -5029,15 +5050,31 @@ function Get-VerificationState {
         if ($oneOffIssues.Count -gt 0) { $isFresh = $false }
     }
 
+    if ($verificationModel -eq 'cumulative') {
+        $activeChange = Read-VerificationChange
+        if ($null -ne $activeChange) {
+            $task=Get-VerificationChangeTaskAssessment -Change $activeChange
+            $taskAccepted = [bool]$task.accepted
+            $acceptanceRemaining = @($task.remaining)
+        }
+    }
+
+    $changeFreshPassed = $isFresh
+    if (-not $taskAccepted) { $isFresh = $false }
+
     $effectiveStatus = $status
     if ($status -eq "passed" -and -not $isFresh) {
-        $effectiveStatus = $(if ($oneOffIssues.Count -gt 0 -or $assessmentIssues.Count -gt 0) { 'partial' } else { 'stale' })
+        $effectiveStatus = $(if ($oneOffIssues.Count -gt 0 -or $assessmentIssues.Count -gt 0 -or -not $taskAccepted) { 'partial' } else { 'stale' })
     }
 
     return [pscustomobject]@{
         status = $status
         effectiveStatus = $effectiveStatus
         isFreshPassed = $isFresh
+        changeFreshPassed = $changeFreshPassed
+        verificationModel = $verificationModel
+        taskAccepted = $taskAccepted
+        acceptanceRemaining = $acceptanceRemaining
         verifiedCommit = $commit
         currentCommit = $currentCommitValue
         verifiedFingerprint = $fingerprint
@@ -5050,7 +5087,7 @@ function Get-VerificationState {
         reason = ((@([string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")) + @($oneOffIssues) + @($assessmentIssues) | Where-Object { $_ }) -join '; ')
         oneOffIssues = @($oneOffIssues)
         assessmentIssues = @($assessmentIssues)
-        assessmentKind = $(if ($hasCurrentProofReceipts) { 'current-obligations' } else { 'legacy-full' })
+        assessmentKind = $(if ($verificationModel -eq 'change') { 'current-change' } elseif ($hasCurrentProofReceipts) { 'current-obligations' } else { 'legacy-full' })
     }
 }
 
@@ -5082,8 +5119,15 @@ function Confirm-UnverifiedProceed {
     )
 
     $verification = if ($null -ne $VerificationState) { $VerificationState } else { Get-VerificationState -State $State }
-    if ($verification.isFreshPassed) {
+    $taskAccepted = [bool](Get-StateValue -State $verification -Name 'taskAccepted' -Default $true)
+    if ($verification.isFreshPassed -and $taskAccepted) {
         return $false
+    }
+    if ($verification.isFreshPassed -and -not $taskAccepted) {
+        $verification = $verification.PSObject.Copy()
+        $verification.isFreshPassed = $false
+        $verification.effectiveStatus = 'partial'
+        $verification.reason = "VERIFICATION_TASK_ACCEPTANCE_PENDING: resolve the existing task criteria ($(@(Get-StateValue -State $verification -Name 'acceptanceRemaining' -Default @()) -join ', ')), then complete-verification-change and repeat $Operation. An accepted increment is not whole-task acceptance."
     }
 
     $policy = Get-VerificationPolicy

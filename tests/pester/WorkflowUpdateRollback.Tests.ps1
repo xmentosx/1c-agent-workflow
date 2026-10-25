@@ -1321,6 +1321,9 @@ Describe 'OpenCode project inputs stay rollback-owned and Git-foreign' -Tag 'Ope
         $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@('AGENT-INSTALL.md') + @(Get-WorkflowUpdateClientConfigRelativePaths -Client opencode)) -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-running
         Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
+        # This fixture delegates dotenv policy and injects failure at the next owner.
+        # Migration and rollback are exercised by their policy contract fixtures.
+        Mock Invoke-VerificationModelPolicyTransition {}
         Mock Restore-UnfinishedForkCopiedMcpOwnership { throw ('observed path count=' + @(Get-ItlOpenCodeOperationConfigPaths).Count) }
         if ($Kind -eq 'old') { $script:ItlOpenCodeOperationConfigPathsMode = 'layered' }
         else { Remove-Variable -Name ItlOpenCodeOperationConfigPathsMode -Scope Script -ErrorAction SilentlyContinue }

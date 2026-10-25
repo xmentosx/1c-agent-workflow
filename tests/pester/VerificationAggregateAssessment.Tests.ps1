@@ -20,6 +20,7 @@ Describe 'Producer feature title identities in native JUnit coverage' {
             [IO.File]::WriteAllText($reportPath, $JUnitText, [Text.UTF8Encoding]::new($false))
             & {
                 . $helperPath -ProjectRoot $Root -Action help *> $null
+                function Get-VerificationModel { 'cumulative' }
                 $catalog = [pscustomobject]@{assignments=$assignments}
                 $junit = Get-VanessaJunitSummary -ReportPaths @($reportPath)
                 [pscustomobject]@{
@@ -144,6 +145,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         & git -C $root commit -qm 'selected suite coverage inputs'
         $actual = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{stateProjectRoot=$root;infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'База 1С');toolingInfoBaseGeneration='base-generation';vanessaServiceInfoBaseGeneration='runner-generation'}
             $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
             $plan = [pscustomobject]@{catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('orders','integration');mode='full'}
@@ -179,6 +181,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         [IO.File]::WriteAllText((Join-Path $root 'tests/features/outline.feature'),"Функционал: Примеры`nСтруктура сценария: Значение <Value>`nКогда Проверено <Value>`nПримеры:`n| Value |`n| 1 |`n| 2 |`nПримеры:`n| Value |`n| 3 |`n",[Text.UTF8Encoding]::new($false))
         $actual = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $catalog = [pscustomobject]@{assignments=@(
                 [pscustomobject]@{path='tests/features/Orders/shared.feature';fullPath=(Join-Path $root 'tests/features/Orders/shared.feature');suiteId='orders'},
                 [pscustomobject]@{path='tests/features/Integration/shared.feature';fullPath=(Join-Path $root 'tests/features/Integration/shared.feature');suiteId='integration'},
@@ -209,6 +212,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{}',[Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $state = [pscustomobject]@{stateProjectRoot=$root;infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'База 1С');toolingInfoBaseGeneration='base-generation';vanessaServiceInfoBaseGeneration='runner-generation'}
             $primary = Get-VerificationRetainedTargetIdentity -State $state
             $missing = @()
@@ -262,6 +266,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         & git -C $root commit -qm 'current proof inputs'
         $actual = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-VerificationModel { 'cumulative' }
             $script:AggregateState = [pscustomobject]@{
                 stateProjectRoot=$root;devBranchName='aggregate';safeDevBranchName='aggregate';infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'База 1С')
                 lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint;configLoadStatus='passed'

@@ -12,6 +12,26 @@
 }
 
 Describe 'ITL artifact retention' {
+    It 'protects current impact inputs and immutable accepted history after retiring a task' {
+        $root=Join-Path $TestDrive 'История приёмки с пробелом'
+        $selection=Join-Path $root '.agent-1c/verification-selection'
+        $run=Join-Path $root '.agent-1c/runs/current'
+        New-Item -ItemType Directory -Force -Path $selection,$run | Out-Null
+        $change=@{planArtifact=@{path='.agent-1c/runs/current/plan.json'};requirements=@(@{path='requirements.md'})}
+        $path=Join-Path $selection 'current-change.json'
+        [IO.File]::WriteAllText($path,($change|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        Mock Get-DevBranchStateFiles { @() }
+        $protected=Get-ItlArtifactProtectedPaths -ProjectRoot $root
+        (Test-ItlArtifactProtected -Path $run -ProtectedPaths $protected) | Should -BeTrue
+        (Test-ItlArtifactProtected -Path (Join-Path $root 'requirements.md') -ProtectedPaths $protected) | Should -BeTrue
+        $change.requirements[0].path='../foreign.md'
+        [IO.File]::WriteAllText($path,($change|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        { Get-ItlArtifactProtectedPaths -ProjectRoot $root } | Should -Throw '*ITL_ARTIFACT_CHANGE_RECEIPT_UNREADABLE*'
+        Remove-Item -LiteralPath $path -Force
+        $protected=Get-ItlArtifactProtectedPaths -ProjectRoot $root
+        (Test-ItlArtifactProtected -Path (Join-Path $selection 'changes/accepted.json') -ProtectedPaths $protected) | Should -BeTrue
+    }
+
     It 'protects the observed run artifacts named by a passed one-off receipt' {
         $root = Join-Path $TestDrive 'One off проект'
         $run = Join-Path $root '.agent-1c/runs/run-001'

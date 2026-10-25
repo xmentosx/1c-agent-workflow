@@ -415,11 +415,16 @@
         }
     }
 
-    It "reports missing-suite before any infobase update through status JSON" {
+    It "reports missing-suite before any infobase update through status JSON (<Model>)" -TestCases @(
+        @{ Model='cumulative'; RequiredAction='/itl-verify-fix' },
+        @{ Model='default'; RequiredAction='prepare-current-change-plan-and-repeat-original-itl-command' }
+    ) {
+        param($Model,$RequiredAction)
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-verification-status-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
+            if ($Model -eq 'cumulative') { Set-Content -LiteralPath (Join-Path $tempRoot '.dev.env') -Encoding UTF8 -Value 'ITL_VERIFICATION_MODEL=cumulative' }
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "tests@example.invalid"
             & git -C $tempRoot config user.name "ITL Tests"
@@ -445,7 +450,7 @@
             $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.stage | Should -Not -Match 'update|designer'
             $status.errorCategory | Should -Be 'missing-suite'
-            $status.requiredAction | Should -Be '/itl-verify-fix'
+            $status.requiredAction | Should -Be $RequiredAction
             @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatus'
             @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatePath'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -456,6 +461,7 @@
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
+            Set-Content -LiteralPath (Join-Path $tempRoot '.dev.env') -Encoding UTF8 -Value 'ITL_VERIFICATION_MODEL=cumulative'
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "tests@example.invalid"
             & git -C $tempRoot config user.name "ITL Tests"

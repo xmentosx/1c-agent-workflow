@@ -21,6 +21,7 @@ Describe "Branch-first verification suite selection" {
                 function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
                 [pscustomobject]@{
                     catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($first, $second)
@@ -54,6 +55,7 @@ Describe "Branch-first verification suite selection" {
             function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
             function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
             . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
             $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
             $retained = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
             $catalog.obligations += @{ id = 'orders-observed'; expectedResult = 'Order total observed'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation'); retention = 'one-off'; retentionReason = 'The scenario is too expensive to retain'; cadence = 'explicit' }
@@ -121,6 +123,7 @@ Describe "Branch-first verification suite selection" {
             function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
             function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
             . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
             function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'orders-result'; expectedResult = 'Order total is 42'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation', 'vanessa-junit') }) }
             function Read-DevBranchState { [pscustomobject]@{ name = 'branch' } }
             function Assert-DevelopmentBranchWorktreeContext { param($State, $Operation) }
@@ -219,6 +222,7 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
                 function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
                 function Get-YAxUnitTestsPath { "tests/yaxunit" }
@@ -325,6 +329,7 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
                 function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
                 function Get-VerificationAcceptedMasterInput { param([string[]]$ChangedPaths, [string]$CurrentTree) [pscustomobject]@{ importedPaths = @(); acceptedCommit = '' } }
@@ -376,6 +381,7 @@ Describe "Branch-first verification suite selection" {
                 function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
                 New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
             }
@@ -558,6 +564,7 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
                 . $ModulePath
+                function Get-VerificationModel { 'cumulative' }
                 function Get-VerificationSelectionStateRoot { Join-Path $script:ProjectRoot ".agent-1c\verification-selection" }
                 $script:ActiveAuxiliaryVanessaContext = $null
                 function Get-VanessaFeaturesPath { $feature }
@@ -808,6 +815,7 @@ Describe 'Classification before infobase preparation' {
         . (Join-Path $preflightLib 'agent-1c.verification-selection.ps1')
         . (Join-Path $preflightLib 'agent-1c.verification-modes.ps1')
         . (Join-Path $preflightLib 'agent-1c.lifecycle.ps1')
+        function Get-VerificationModel { 'cumulative' }
         $script:PreflightCycle = ${function:Invoke-ItlVerificationCycle}
         $script:PreflightEvents = [Collections.Generic.List[string]]::new()
         $script:PreflightModes = @{ ITL_YAXUNIT_TESTING = 'auto'; ITL_VANESSA_TESTING = 'off'; ITL_CHECK_EVENT_LOG = 'off' }
@@ -880,7 +888,8 @@ Describe 'Classification before infobase preparation' {
         $script:PreflightEvents[-1] | Should -Be 'report'
     }
 
-    It 'preserves the adopted dirty-source baseline through cursor persistence and a failed load' {
+    It 'preserves the adopted dirty-source baseline through cursor persistence and a failed load (<Model>)' -TestCases @(@{Model='cumulative'},@{Model='change'}) {
+        param($Model)
         $fixtureRoot = Join-Path $TestDrive 'baseline legacy База'
         $helper = Join-Path $preflightRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'
         New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot 'src/cf/CommonModules/Owned/Ext') | Out-Null
@@ -894,6 +903,11 @@ Describe 'Classification before infobase preparation' {
         Set-Content -LiteralPath $sourcePath -Encoding UTF8 -Value '// dirty before adoption'
         & {
             . $helper -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:ClassificationFixtureModel=$Model
+            function Get-VerificationModel { $script:ClassificationFixtureModel }
+            # Current-plan validity belongs to the model owner tests; keep real
+            # applicability, baseline serialization and event-log persistence here.
+            if ($Model -eq 'change') { function Assert-VerificationChangeReady { param($State) } }
             $DevBranchName = 'branch1'
             $VerificationTrigger = 'command'
             $ExplicitVerificationComponent = @()
