@@ -936,7 +936,7 @@ function ConvertTo-DeliveryRunHotIndexEntry {
         [Parameter(Mandatory = $true)][object]$Record,
         [Parameter(Mandatory = $true)][string]$RawPath
     )
-    return [pscustomobject][ordered]@{
+    $entry = [pscustomobject][ordered]@{
         rawPath=[IO.Path]::GetFullPath($RawPath)
         schemaVersion=$(if($Record.PSObject.Properties["schemaVersion"]){[int]$Record.schemaVersion}else{0})
         id=$(if($Record.PSObject.Properties["id"]){[string]$Record.id}else{""})
@@ -953,6 +953,10 @@ function ConvertTo-DeliveryRunHotIndexEntry {
         stages=$(if($Record.PSObject.Properties["stages"]){@($Record.stages)}else{@()})
         releaseE2E=$(if($Record.PSObject.Properties["releaseE2E"]){$Record.releaseE2E}else{$null})
     }
+    if ($Record.PSObject.Properties['journeyScenarioExecution']) {
+        $entry | Add-Member -NotePropertyName journeyScenarioExecution -NotePropertyValue $Record.journeyScenarioExecution
+    }
+    return $entry
 }
 
 function New-DeliveryRunHotIndex {
@@ -1151,6 +1155,9 @@ function Write-DeliveryRunRecord {
         } catch { $releaseE2E = $null }
     }
     $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; releaseCapabilities = $(if ($summary -and $summary.PSObject.Properties["releaseCapabilities"]) { @($summary.releaseCapabilities) } else { @($ReleaseCapability) }); tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
+    if ($summary -and $summary.PSObject.Properties['journeyScenarioExecution']) {
+        $record['journeyScenarioExecution'] = $summary.journeyScenarioExecution
+    }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
     $indexLock = $null
     $pendingMarker = $null

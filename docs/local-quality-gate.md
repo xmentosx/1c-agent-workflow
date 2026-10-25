@@ -137,6 +137,18 @@ and publication channels below remain authoritative.
 
 ### Maintaining selection, cost and reuse
 
+Implicit Full/Develop/Release Pester uses the catalog's
+`pesterWorkers.qualificationImplicitDefault`, capped by available processors.
+An explicit worker count remains authoritative; legacy catalogs retain their
+previous choice. Private manifest continuation fixtures run alongside independent
+files; real console/global boundaries remain serial. Ordering weights use observed
+native file times, separately from hard deadlines. Plan reads its timing samples
+from the existing bounded run index before filtering each stage; Targeted bursts
+cannot displace qualification observations. Native scenario execution survives
+the check-summary/raw-record/index boundary, so partial and composed coverage
+cannot masquerade as a complete timing sample. Release estimates use executed
+component wall time, never aggregate or reused-proof duration.
+
 For changes to test suites, selection rules or production/input dependencies,
 acceptance includes selection, measured cost and reuse applicability, alongside
 behavioral correctness. Use the existing selection plan, shard/check summaries

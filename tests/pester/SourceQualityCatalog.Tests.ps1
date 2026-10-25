@@ -235,7 +235,7 @@ Describe 'Source quality catalog contracts' {
         $serialAssignment | Should -Not -BeNullOrEmpty
         . ([scriptblock]::Create($serialAssignment.Extent.Text))
         @($serialTestNames) | Should -Be @('CompactItlRunner.Tests.ps1','DependencyLocks.Tests.ps1','ReleaseGate.Tests.ps1',
-            'ReleaseOrchestration.Tests.ps1','DevelopManifestContinuation.Tests.ps1','E2EClientSelection.Tests.ps1',
+            'ReleaseOrchestration.Tests.ps1','E2EClientSelection.Tests.ps1',
             'ReleaseSnapshotContinuation.Tests.ps1','ReleaseAdmission.Tests.ps1')
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'Invoke-PowerShellChild -ScriptPath \$shardRunner -Arguments \$shardArguments -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
@@ -245,7 +245,7 @@ Describe 'Source quality catalog contracts' {
         [int]($catalog.contracts | Where-Object id -eq "source-delivery-candidate").budgetSeconds | Should -BeGreaterOrEqual 1200
     }
 
-    It "uses the catalog Targeted worker default only when PesterWorkers is implicit" {
+    It "uses bounded catalog workers for implicit Targeted and qualification while preserving explicit and legacy choices" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 4
@@ -253,8 +253,12 @@ Describe 'Source quality catalog contracts' {
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 0 | Should -Be 1
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
-        foreach ($mode in @("Smoke", "Full", "Develop", "Release")) {
-            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        Resolve-PesterWorkerCount -Mode Smoke -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        foreach ($mode in @("Full", "Develop", "Release")) {
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog ([pscustomobject]@{pesterWorkers=[ordered]@{targetedImplicitDefault=4}}) -ProcessorCount 8 | Should -Be 3
         }
 
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
@@ -314,7 +318,9 @@ Describe 'Source quality catalog contracts' {
             "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=91
             "SourceDeliveryProcessLifetime.Tests.ps1"=7
             "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
-            "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
+            # 2026-10-25 original native files, four concurrent workers:
+            # 168.641/128.145s, rounded up; assertions and cases unchanged.
+            "SourceDeliveryPublishQualification.Tests.ps1"=169; "SourceDeliveryPublishRecovery.Tests.ps1"=129
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=192
         }
         [double]$trackedTimings.files.'LocalGateTransport.Tests.ps1' | Should -Be 20
@@ -332,7 +338,7 @@ Describe 'Source quality catalog contracts' {
         [double]$trackedTimings.files.'SourceDeliveryIncremental.Tests.ps1' | Should -Be 100
         # Retained 955db4d1 worker results: 341s fixture and 338s replan.
         # Keep these costly files out of the default one-second tail.
-        [double]$trackedTimings.files.'SourceQualificationFixture.Tests.ps1' | Should -Be 342
+        [double]$trackedTimings.files.'SourceQualificationFixture.Tests.ps1' | Should -Be 290
         [double]$trackedTimings.files.'SourceDeliveryReplan.Tests.ps1' | Should -Be 339
         foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
         # 012a1225 named worker JUnit: same original 56 expanded cases.
@@ -346,7 +352,7 @@ Describe 'Source quality catalog contracts' {
         # transferred groups now have individual measured-cost ordering weights.
         [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 10
         [double]$trackedTimings.files."ReleaseOrchestration.Tests.ps1" | Should -Be 285
-        [double]$trackedTimings.files."DevelopManifestContinuation.Tests.ps1" | Should -Be 328
+        [double]$trackedTimings.files."DevelopManifestContinuation.Tests.ps1" | Should -Be 184
         [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
         [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 305
         $estimate = {

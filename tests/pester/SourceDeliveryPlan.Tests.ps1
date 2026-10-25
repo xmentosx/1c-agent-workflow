@@ -1,6 +1,31 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1') }
 
 Describe 'Delivery v3 immutable selective plan' {
+    It 'retains passed qualification timing after a burst of Targeted runs without reading raw records' {
+        function Get-DeliveryRunHistory {
+            param([int]$Limit,[switch]$IncludeDetails)
+            $script:timingHistoryLimit=$Limit
+            [pscustomobject]@{lastRuns=@(@(1..40|ForEach-Object {[pscustomobject]@{mode='Targeted';status='passed'}})+
+                @([pscustomobject]@{mode='Develop';status='failed'},[pscustomobject]@{mode='Develop';status='passed';stages=@(@{name='develop-e2e-fresh';status='passed';durationMs=2400000})},[pscustomobject]@{mode='Release';status='passed';stages=@()})) | Select-Object -First $Limit}
+        }
+        $runs=@(Get-DeliveryPlanTimingRuns)
+        $script:timingHistoryLimit | Should -BeGreaterThan 40
+        @($runs.mode) | Should -Be @('Develop','Release')
+        $plan=[pscustomobject]@{executedBudgetSeconds=3600;stages=@(@{id='develop.fresh';mode='Develop';execution='execute';budgetSeconds=3600})}
+        $estimate=Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $runs
+        $estimate.estimatedSeconds | Should -Be 2400
+        $estimate.stages[0].sampleCount | Should -Be 1
+    }
+    It 'estimates a Release capability from executed component time without charging aggregate or reused proof time' {
+        $plan=[pscustomobject]@{executedBudgetSeconds=1500;stages=@(@{id='release.ondemand-mcp';mode='Release';execution='execute';budgetSeconds=1500})}
+        $runs=@(
+            [pscustomobject]@{mode='Release';status='passed';stages=@(@{name='release-e2e';status='passed';durationMs=1800000});releaseE2E=@{slowestStages=@(@{name='ondemand-mcp';execution='executed';durationMs=110000})}},
+            [pscustomobject]@{mode='Release';status='passed';releaseE2E=@{slowestStages=@(@{name='ondemand-mcp';execution='reused';durationMs=0;proofDurationMs=999000})}})
+        $estimate=Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $runs
+        $estimate.estimatedSeconds | Should -Be 110
+        $estimate.stages[0].sampleCount | Should -Be 1
+        (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs @($runs[1])).estimatedSeconds | Should -BeNullOrEmpty
+    }
     It 'batch-matches the same ordered Unicode inventory with the original wildcard semantics' {
         $paths=@('scripts/a.ps1','SCRIPTS/b.PS1','tests/путь с пробелом/a.Tests.ps1','src/a[1].bsl','src/a1.bsl','other/file')
         foreach($patterns in @(@('scripts/*'),@('tests/*/*.Tests.ps1','scripts/?.ps1'),@('src/a[1].bsl'),@('src/a`[1`].bsl'),@('missing/*'),@('*','scripts/*'))) {

@@ -359,6 +359,16 @@ function Get-DeliveryStaticReuseEstimate {
         repeatReasons=@($Preview.files | Where-Object execution -eq execute | Group-Object reason | ForEach-Object {[pscustomobject]@{reason=$_.Name;count=$_.Count}})}
 }
 
+function Get-DeliveryPlanTimingRuns {
+    if (-not (Get-Command Get-DeliveryRunHistory -ErrorAction SilentlyContinue)) { return @() }
+    # Read the existing bounded hot index, never the raw run directory. Filter
+    # before limiting so a burst of Targeted runs cannot evict Develop samples.
+    $history=Get-DeliveryRunHistory -Limit ([int]::MaxValue) -IncludeDetails
+    # Each stage below selects its own five matching observations. Other Release
+    # capabilities must not displace this stage's samples either.
+    $history.lastRuns | Where-Object {$_.mode -cin @('Develop','Release') -and $_.status -ceq 'passed'}
+}
+
 function Get-DeliveryPlanTimeEstimate {
     param([object]$Plan,[AllowEmptyCollection()][object[]]$Runs=@(),[object]$StaticPreview)
     $details=@(foreach($stage in $Plan.stages) {
@@ -378,6 +388,16 @@ function Get-DeliveryPlanTimeEstimate {
             $samples=@($Runs | Where-Object {$_.mode -ceq $stage.mode -and $_.status -ceq 'passed'} |
                 ForEach-Object {
                     if($stage.id -eq 'develop.static') { Get-DeliveryStaticObservedSeconds -Run $_ }
+                    elseif($stage.id -like 'release.*') {
+                        $run=$_;$component=([string]$stage.id).Substring('release.'.Length)
+                        # The gate stores component wall time in releaseE2E,
+                        # while its ordinary stage is only the aggregate runner.
+                        if($run.PSObject.Properties['releaseE2E'] -and $run.releaseE2E) {
+                            @($run.releaseE2E.slowestStages | Where-Object {
+                                $_.name -ceq $component -and $_.execution -ceq 'executed' -and $_.durationMs -gt 0
+                            } | ForEach-Object {[double]$_.durationMs/1000})
+                        }
+                    }
                     else {
                         $run=$_;$journey=([string]$stage.id).Replace('develop.','')
                         $hasScope=($run -is [Collections.IDictionary] -and $run.Contains('journeyScenarioExecution')) -or $run.PSObject.Properties['journeyScenarioExecution']
@@ -565,10 +585,7 @@ function New-DeliveryQualityPlanForCandidate {
         $plan | Add-Member -NotePropertyName releaseEnclosingOverheadSeconds -NotePropertyValue $releaseEnclosingOverhead
         $plan.executedBudgetSeconds += $releaseEnclosingOverhead
     }
-    $timingRuns=@()
-    if(Get-Command Get-DeliveryRunHistory -ErrorAction SilentlyContinue) {
-        $timingRuns=@((Get-DeliveryRunHistory -Limit 32 -IncludeDetails).lastRuns)
-    }
+    $timingRuns=@(Get-DeliveryPlanTimingRuns)
     $plan | Add-Member -NotePropertyName timeEstimate -NotePropertyValue (Get-DeliveryPlanTimeEstimate -Plan $plan -Runs $timingRuns -StaticPreview $staticPreview)
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
     return $plan
