@@ -233,7 +233,8 @@ function Get-DevelopScenarioSourceProjection {
         if($rule[0].PSObject.Properties['requiresNoProductContext'] -and $rule[0].requiresNoProductContext -and -not $NoProductContext) {return $null}
         if($ProbeOnly) {return $true}
         $excluded=@(foreach($property in $rule[0].functions.PSObject.Properties) {
-            if(-not @($property.Value | Where-Object {$_ -in @($Scenario | ForEach-Object {"$Journey.$_"})}).Count) {$property.Name}
+            $outsideDisabled=$rule[0].PSObject.Properties['outsideWhenNoProductContext'] -and $rule[0].outsideWhenNoProductContext -and $NoProductContext
+            if($outsideDisabled -or -not @($property.Value | Where-Object {$_ -in @($Scenario | ForEach-Object {"$Journey.$_"})}).Count) {$property.Name}
         })
         $tokens=$null;$errors=$null;$source=$Text.TrimStart([char]0xfeff)
         $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
@@ -349,7 +350,7 @@ function Test-DevelopScenarioEquivalentInput {
             } else {[Text.Encoding]::UTF8.GetBytes($a)}
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/references/mcp.md','.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json','templates/dependency-lock.json','.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json')) {
+            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow/references/mcp.md','.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json','templates/dependency-lock.json','.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json')) {
                 # Git stores LF while an older Windows checkout can have CRLF.
                 # Authenticate that exact alternative before semantic projection;
                 # never normalize native artifacts or arbitrary source inputs.

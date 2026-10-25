@@ -400,6 +400,10 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/CompactItlRunner.Tests.ps1",
             "tests/pester/LifecycleOperationLock.Tests.ps1")
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $historicalPaths
+        # Preserve the historical cohort counts; all ten moved groups are
+        # additional current workers, with their own measured timing weights.
+        $splitWorkflowConsumers=@(($catalog.contracts|Where-Object id -eq 'workflow-update-producers').tests|Where-Object {$_ -ne 'tests/pester/WorkflowUpdateRollback.Tests.ps1'})
+        @($splitWorkflowConsumers|Where-Object {$_ -notin @($selection.tests)}).Count | Should -Be 0
         $productionPreparationConsumer = 'tests/pester/PlatformProductionPreparation.Tests.ps1'
         $gate6Tests = @(
             "tests/pester/PlatformGate6Trigger.Tests.ps1",
@@ -430,9 +434,9 @@ Describe 'Source quality catalog contracts' {
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 5)
+        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 5 + $splitWorkflowConsumers.Count)
         @($selection.tests) | Should -Contain $changeModelConsumer
         $changeModelOwner=@($catalog.contracts|Where-Object id -eq 'vanessa-verification')[0]
         @($changeModelOwner.tests) | Should -Contain $changeModelConsumer
@@ -524,8 +528,8 @@ Describe 'Source quality catalog contracts' {
             "tests/quality-contracts.json"))
         # One additional real catalog consumer; historical observed timings above
         # remain unchanged, and the exact added selection is checked below.
-        @($currentSelection.tests|Where-Object {$_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 5)
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 5 + $splitWorkflowConsumers.Count)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -543,6 +547,26 @@ Describe 'Source quality catalog contracts' {
         $currentEstimatedCriticalPath | Should -BeGreaterThan $estimatedCriticalPath
         ([double]$catalog.budgets.targetedHardSeconds - $currentEstimatedCriticalPath) | Should -BeGreaterOrEqual 120
         [double]$catalog.budgets.targetedHardSeconds | Should -BeLessThan ([double]$catalog.budgets.fullHardSeconds)
+    }
+
+    It 'keeps workflow scenario selection independent while binding every shared producer and fixture' {
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $producer=@($catalog.contracts|Where-Object id -eq 'workflow-update-producers')[0]
+        $groups=@($producer.tests)
+        $groups.Count | Should -Be 11
+        foreach($file in $groups) {
+            @((Resolve-QualityContractsForPaths $catalog @($file)).tests) | Should -Be @($file)
+        }
+        @((Resolve-QualityContractsForPaths $catalog @('tests/pester/WorkflowUpdateRollback.TestSupport.ps1')).tests) | Should -Be @($groups|Sort-Object)
+        $runtime=Resolve-QualityContractsForPaths $catalog @('.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+        @($groups|Where-Object {$_ -notin @($runtime.tests)}) | Should -BeNullOrEmpty
+        $sibling=Resolve-QualityContractsForPaths $catalog @('tests/pester/UiTestingPolicyTransition.Tests.ps1')
+        @($sibling.tests|Where-Object {$_ -in $groups}) | Should -BeNullOrEmpty
+        $invalid=$catalog|ConvertTo-Json -Depth 32|ConvertFrom-Json
+        $rule=@($invalid.developJourneys.scenarioInputs|Where-Object {$_.PSObject.Properties['outsideWhenNoProductContext'] -and $_.outsideWhenNoProductContext})[0]
+        $rule.PSObject.Properties.Remove('requiresNoProductContext')
+        {Test-QualityContractCatalog $RepoRoot $invalid} | Should -Throw '*DEVELOP_SCENARIO_INPUT_INVALID*'
     }
 
     It "does not cache a shard whose external runtime identity is not modeled" {

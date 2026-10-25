@@ -519,8 +519,10 @@ function Test-QualityContractCatalog {
         foreach($rule in @($Catalog.developJourneys.scenarioInputs)) {
             if($rule.path -in $rulePaths -or [IO.Path]::IsPathRooted($rule.path) -or $rule.path -match '(^|/)\.\.(/|$)' -or
                 ($rule.path -notin $SkipSemanticLibraryValidation -and -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $rule.path) -PathType Leaf)) -or
-                @($rule.PSObject.Properties.Name | Where-Object {$_ -notin @('path','functions','requiresNoProductContext')}).Count) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
+                @($rule.PSObject.Properties.Name | Where-Object {$_ -notin @('path','functions','requiresNoProductContext','outsideWhenNoProductContext')}).Count) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
             if($rule.PSObject.Properties['requiresNoProductContext'] -and $rule.requiresNoProductContext -isnot [bool]) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
+            if($rule.PSObject.Properties['outsideWhenNoProductContext'] -and
+                ($rule.outsideWhenNoProductContext -isnot [bool] -or -not $rule.PSObject.Properties['requiresNoProductContext'] -or -not $rule.requiresNoProductContext)) {throw 'DEVELOP_SCENARIO_INPUT_INVALID'}
             $rulePaths+=([string]$rule.path)
             foreach($function in $rule.functions.PSObject.Properties) {
                 if(-not $function.Name -or @($function.Value).Count -eq 0 -or
