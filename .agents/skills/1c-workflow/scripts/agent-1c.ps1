@@ -6,6 +6,11 @@ param(
     [string]$ProjectRoot = (Get-Location).Path,
     [ValidateSet('', 'status', 'resume', 'restore', 'cancel', 'restore-compatible', 'list', 'preview', 'select', 'create', 'sync', 'context')]
     [string]$CatalogAction = '',
+    [ValidateSet('', 'enable', 'disable', 'status', 'checkpoint')]
+    [string]$MemoryAction = '',
+    [string]$MemorySettingsPath = '',
+    [string]$MemoryPolicyPath = '',
+    [string]$MemoryCheckpointPath = '',
     [string]$CatalogProjectId='',
     [string]$CatalogProfileId='',
     [string]$CatalogRecordPath='',
@@ -496,6 +501,10 @@ $script:InitDatabaseSettingsReady = $false
 $script:CatalogRegistryOperationOwned=$false
 $script:PreparedCatalogCandidate=$null
 try {
+    if($MemoryAction){
+        if($InternalOnDemandOperation -or $CatalogAction -or $Action -notin @('vibecoding1c-mcp-select','vibecoding1c-mcp-status') -or ($Action -eq 'vibecoding1c-mcp-status' -and $MemoryAction -ne 'status')){throw 'MEMORY_ACTION_SCOPE: use existing MCP select for explicit mutation, status for local read-only diagnostics.'}
+        . Import-ItlMemory
+    }
     if($CatalogAction){
         if($InternalOnDemandOperation -or $Action -notin @('vibecoding1c-mcp-select','vibecoding1c-mcp-status') -or ($Action -eq 'vibecoding1c-mcp-status' -and $CatalogAction -notin @('status','list','preview','context'))){throw 'CATALOG_ACTION_SCOPE: use vibecoding1c-mcp-select for mutation/recovery or vibecoding1c-mcp-status for read-only catalog commands.'}
         . Import-ItlProductProject
@@ -556,6 +565,9 @@ try {
             -ReplacementInstanceId $InternalOnDemandReplacementInstanceId `
             -ExpectedPid $InternalOnDemandExpectedPid `
             -ExpectedPort $InternalOnDemandExpectedPort
+    } elseif($MemoryAction){
+        $checkpoint=if($MemoryCheckpointPath){Read-ItlMemoryJson $MemoryCheckpointPath}else{$null}
+        Invoke-ItlMemorySetup -Mode $MemoryAction -SettingsPath $MemorySettingsPath -PolicyPath $MemoryPolicyPath -Client $(if($Client){$Client}else{Get-ItlActiveClient}) -Checkpoint $checkpoint | ConvertTo-Json -Depth 20 -Compress
     } else { switch ($Action) {
         "help" { Show-Help }
         "doctor" { Show-ItlDoctor }

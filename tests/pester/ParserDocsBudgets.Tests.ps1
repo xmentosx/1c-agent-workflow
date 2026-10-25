@@ -218,7 +218,7 @@
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1630; rationale = "explicit direct CheckConfig intent adds 12 words and 28 byte-4 proxy tokens (738/1597 to 750/1625 words/tokens); hard tokens increase 1600 to 1630 for the required action/flag mapping. Review threshold, word budget and safety contracts remain; duplicated command-template guidance is removed" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 1180; reviewApproxTokens = 2300; maxApproxTokens = 2500; rationale = "ITL cadence needs an always-on USER override of generic Gate 6 and explicit production purpose, Release exception and deployment boundary. Proof and legacy details stay on demand; duplicated fast-router guidance is removed. Required routing changes 1132/2373 to 1164/2472 words/byte-4 proxy tokens (+32/+99), so maxWords 1160 to 1180 and hard tokens 2400 to 2500 preserve complete meaning; review threshold stays unchanged" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 1180; reviewApproxTokens = 2300; maxApproxTokens = 2525; rationale = "ITL cadence needs an always-on USER override of generic Gate 6 and explicit production purpose, Release exception and deployment boundary. Proof and legacy details stay on demand; duplicated fast-router guidance is removed. Required routing changes 1132/2373 to 1164/2472 words/byte-4 proxy tokens (+32/+99), so maxWords 1160 to 1180 and hard tokens 2400 to 2500 preserve complete meaning; G4 qualified/private fallback and strict root eligibility remain mandatory. Remove only the duplicated no-default/only-relevant recall wording: the merged candidate keeps 1176 words (limit 1180) and 10088 raw UTF-8 bytes including CRLF and the independently queued 65-byte owner guidance. Hard proxy tokens increase 2500 to 2525 for required meaning, with measured named-encoding delta in G4 evidence; review threshold and runtime deadlines remain unchanged" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1475; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract; conditional retained small-suite guidance changes the measured C4 guide from 1439/2618 to 1464/2656 words/byte-4 proxy tokens (+25/+38), so maxWords increases 1450 to 1475 with the same 11-word margin; review and hard token limits and runtime safety rules remain" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }
@@ -480,9 +480,12 @@
         foreach ($marker in @(
             'shared across projects, not project memory',
             'verified, non-confidential facts safe and useful across unrelated projects',
-            'project-specific facts and corrections in that project''s `memory.md`',
+            'With explicitly qualified `scoped-cognee-memory-v1`',
+            'ITL private continuation/pending',
+            'retain all four root `memory.md` criteria',
+            'Otherwise keep the installed project-local fallback',
             'correction capture never requires shared `remember`',
-            'Do not run shared `recall` by default',
+            'Shared `recall` requires relevant cross-project platform/tooling/workflow/team knowledge',
             'verify results against the current project',
             '`templatesearch` is unaffected'
         )) {

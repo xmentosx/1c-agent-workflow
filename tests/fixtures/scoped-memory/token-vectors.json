@@ -1,0 +1,45 @@
+{
+  "oracle": "openai/tiktoken 0.12.0 encode_ordinary; pinned ranks hashes in asset manifest",
+  "vectors": [
+    {
+      "text": "",
+      "cl100k_base": 0,
+      "o200k_base": 0
+    },
+    {
+      "text": "Hello, world!",
+      "cl100k_base": 4,
+      "o200k_base": 4
+    },
+    {
+      "text": "Путь с пробелом и кириллицей",
+      "cl100k_base": 14,
+      "o200k_base": 10
+    },
+    {
+      "text": "Если ЗначениеЗаполнено(Объект.Ссылка) Тогда\n    Возврат Истина;\nКонецЕсли;",
+      "cl100k_base": 38,
+      "o200k_base": 26
+    },
+    {
+      "text": "It's a test. We'll preserve it. 1234567890",
+      "cl100k_base": 15,
+      "o200k_base": 13
+    },
+    {
+      "text": "{\"noteId\":\"x\",\"fact\":\"Current fact\",\"status\":\"verified\"}",
+      "cl100k_base": 15,
+      "o200k_base": 15
+    },
+    {
+      "text": "  \t\n\r\n trailing    ",
+      "cl100k_base": 5,
+      "o200k_base": 5
+    },
+    {
+      "text": "日本語と中文 Ελληνικά İıI i Привет",
+      "cl100k_base": 23,
+      "o200k_base": 12
+    }
+  ]
+}

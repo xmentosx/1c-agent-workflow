@@ -35,6 +35,12 @@
     return $Default
 }
 
+function Import-ItlMemory {
+    . Import-ItlProductProject
+    if (-not (Test-Path -LiteralPath 'Function:\Invoke-ItlMemoryRemember')) { . (Join-Path $PSScriptRoot 'agent-1c.memory.ps1') }
+    if (-not (Test-Path -LiteralPath 'Function:\Invoke-ItlMemorySetup')) { . (Join-Path $PSScriptRoot 'agent-1c.memory-context.ps1') }
+}
+
 function Import-ItlProductProject {
     # These are owned dot-sourced functions. Missing Get-Command lookups search
     # PATH/modules; the function provider checks only the visible session scope.
@@ -4097,6 +4103,19 @@ function Write-Vibecoding1cMcpClientConfig {
     $registryOperation = Get-Variable -Name ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
     $preserveRemote = -not $UsePinnedCatalog -and $null -ne $registryOperation -and $null -ne $registryOperation.Value.error
     $requests = @(if (-not $preserveRemote) { $selectedClients | ForEach-Object { [pscustomobject]@{client=[string]$_; owner='vibecoding1c'; endpoints=$endpoints; replaceAiRulesServerIds=$ReplaceAiRulesServerIds} } })
+    # Memory is a leaf of this same client plan/receipt owner, never a fourth
+    # product role. A missing binding does not import code or touch the network.
+    $memoryRoot=Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding'
+    if(Test-Path -LiteralPath $memoryRoot -PathType Container){
+        . Import-ItlMemory
+        foreach($selectedClient in $selectedClients){
+            $memoryEndpoint=Get-ItlMemoryClientEndpoint -Client $selectedClient
+            $memoryEndpoints=@(if($memoryEndpoint){$memoryEndpoint})
+            if($memoryEndpoint -or @(Get-ItlManagedMcpOwnerKeys -Owner 'scoped-memory' -Client $selectedClient).Count){
+                $requests += [pscustomobject]@{client=$selectedClient;owner='scoped-memory';endpoints=$memoryEndpoints;replaceAiRulesServerIds=@()}
+            }
+        }
+    }
     if ($IncludeClientSurfaces) {
         foreach ($selectedClient in $selectedClients) {
             $facade = Write-ItlOnDemandMcpClientConfig -Client $selectedClient -PlanOnly

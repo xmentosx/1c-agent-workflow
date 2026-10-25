@@ -1,13 +1,26 @@
 # Tasks
 
-## План G4 подготовлен, 2026-10-25 — реализация не начата
+## G4: исходная реализация, 2026-10-26
+
+Пользователь согласовал план и разрешил G4. Реализован scoped Cognee consumer:
+шесть областей, exact-ID REST/stdio, cycle/continuation/pending/source, existing
+registry/client/lifecycle owners и отдельный qualified fork candidate.
+[Общая source-матрица и границы](evidence/g4-source-implementation-2026-10-26.md)
+отделяют fixtures, native proof и регистрацию. G5, Gate 6, рабочая миграция и
+публикация workflow не запускались и не разрешены. R6/закрытый G3 прежние;
+отсутствие homes не обходится. Исторические запреты G4 ниже относятся к прежним
+поручениям. Source checkbox разделов 2–5 не закрывают native/installed часть:
+она остаётся в 6.2–6.4/6.6b. Регистрация определяется только RegisterChange/Status.
+
+
+## Исторический план G4, 2026-10-25
 
 - [x] Подготовить [конкретную последовательность G4.0–G4.7](g4-implementation-plan.md), привязанную к прежним задачам 2.1–5.5/6.1/6.5; сверить опубликованный R6, применимый G1 и actual controlled fork r47.
 
-Этапы плана не создают второй task ledger: runtime задачи ниже остаются
-невыполненными. Shared-product native часть 6.6b остаётся G5; R6/6.6a закрыты.
-G4 apply, Gate6, рабочая миграция, изменение fork/lock и публикация workflow
-не разрешены этим поручением. Обычная регистрация документации не является apply.
+Текущий статус — секция G4 от 2026-10-26 выше. Source части разделов 2–5
+выполнены; установленные/native формулировки сохраняются в G5 6.2–6.4/6.6b.
+6.5 завершается только RegisterChange/Status, не ручным Targeted; этот файл
+не дублирует runtime queue ledger. Shared-product native часть — G5.
 
 ## R6 закрыт: данные опубликованы, 2026-10-25
 
@@ -112,47 +125,47 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 
 ## 2. Шесть областей и штатная привязка Cognee
 
-- [ ] 2.1 Добавить минимальную модель workspace/developer/workplace/scope IDs: private lazy datasets и native admin-prepared shared IDs/grants без ITL provisioning; fixtures проверяют RDP/rename/копию, инструкция администратора — одного владельца общих областей, AC-01/05/33.
-- [ ] 2.2 Реализовать чистый read/write scope resolver над effective context/grants с явным `dataset_name` и canonical home/read set; доказать subset/no-default-global, отсутствие silent task default и сохранность постоянного условия, AC-02/03/18/31/32.
-- [ ] 2.3 Подключить context-bound MCP frontend через существующего client owner с native-shaped remember/recall/status; проверить минимальную schema и отсутствие provider patches/SQL/new coordinator, AC-06/24.
-- [ ] 2.4 После native допуска 1.3 подключить exact-ID shared read/write через штатный SDK/REST при недостаточном MCP name lookup; два пользователя используют один admin-prepared ID без private дублей/admin key/unscoped fallback, AC-04/33.
-- [ ] 2.5 Добавить note envelope и qualified native original/current-status lookup, precise correction/retirement; доказать старый chunk без заголовка и без correction в semantic hits, source preservation и отсутствие своего versioning store, AC-09/19/20/34.
-- [ ] 2.6 Добавить bounded native write/status, durable/indexing/rejection/unconfirmed state и scoped receipts; проверить timeout после принятия и restart без слепого duplicate save, AC-07/08.
+- [x] 2.1 Добавить минимальную модель workspace/developer/workplace/scope IDs: private lazy datasets и native admin-prepared shared IDs/grants без ITL provisioning; fixtures проверяют RDP/rename/копию, инструкция администратора — одного владельца общих областей, AC-01/05/33.
+- [x] 2.2 Реализовать чистый read/write scope resolver над effective context/grants с явным `dataset_name` и canonical home/read set; доказать subset/no-default-global, отсутствие silent task default и сохранность постоянного условия, AC-02/03/18/31/32.
+- [x] 2.3 Подключить context-bound MCP frontend через существующего client owner с native-shaped remember/recall/status; проверить минимальную schema и отсутствие provider patches/SQL/new coordinator, AC-06/24.
+- [x] 2.4 После native допуска 1.3 подключить exact-ID shared read/write через штатный SDK/REST при недостаточном MCP name lookup; два пользователя используют один admin-prepared ID без private дублей/admin key/unscoped fallback, AC-04/33.
+- [x] 2.5 Добавить note envelope и qualified native original/current-status lookup, precise correction/retirement; доказать старый chunk без заголовка и без correction в semantic hits, source preservation и отсутствие своего versioning store, AC-09/19/20/34.
+- [x] 2.6 Добавить bounded native write/status, durable/indexing/rejection/unconfirmed state и scoped receipts; проверить timeout после принятия и restart без слепого duplicate save, AC-07/08.
 
 ## 3. Цикл задачи и точное продолжение
 
-- [ ] 3.1 Добавить cycle allocation/activation к существующим branch/reset transitions, сохранив guard и recovery owner; fixture и исходный reset подтверждают новый cycle при неизменном HEAD, AC-11.
-- [ ] 3.2 Связать interrupt/resume с тем же pending cycle и исключить старый scope до retrieval нового контекста; проверить разные reset phases и Cognee offline, AC-12/13.
-- [ ] 3.3 Сохранить компактное continuation вне reset tree с целью/ограничениями/next step и ссылками на существующие proofs; новый сеанс без search продолжает задачу, AC-10.
-- [ ] 3.4 Сохранить scoped pending/unconfirmed и receipts вне tracked/reset tree; новый memory-only сеанс прямо обнаруживает актуальные pending без Cognee, reconcile остаётся bounded и в исходном scope. Проверить reset постоянного project/workspace условия и old task history, AC-08/14/23/31.
-- [ ] 3.5 Добавить первое назначение local IDs/current cycle существующей ветки у lifecycle/state owner без reset/init; доказать повтор/resume/два сеанса/disable-enable и старый chat binding, сохранив базу/HEAD/соседние worktrees и прежний runtime proof owner (AC-40).
+- [x] 3.1 Добавить cycle allocation/activation к существующим branch/reset transitions, сохранив guard и recovery owner; fixture и исходный reset подтверждают новый cycle при неизменном HEAD, AC-11.
+- [x] 3.2 Связать interrupt/resume с тем же pending cycle и исключить старый scope до retrieval нового контекста; проверить разные reset phases и Cognee offline, AC-12/13.
+- [x] 3.3 Сохранить компактное continuation вне reset tree с целью/ограничениями/next step и ссылками на существующие proofs; новый сеанс без search продолжает задачу, AC-10.
+- [x] 3.4 Сохранить scoped pending/unconfirmed и receipts вне tracked/reset tree; новый memory-only сеанс прямо обнаруживает актуальные pending без Cognee, reconcile остаётся bounded и в исходном scope. Проверить reset постоянного project/workspace условия и old task history, AC-08/14/23/31.
+- [x] 3.5 Добавить первое назначение local IDs/current cycle существующей ветки у lifecycle/state owner без reset/init; доказать повтор/resume/два сеанса/disable-enable и старый chat binding, сохранив базу/HEAD/соседние worktrees и прежний runtime proof owner (AC-40).
 
 ## 4. Потребление реестра и policy владельцев
 
-- [ ] 4.1 Использовать общий Cognee descriptor и личный выбор existing MCP owner, provider-local shared IDs и принятый registry home contract; проверить old/off/legacy без четвёртой проектной роли или наследования адреса памяти, AC-15/21/28/35.
-- [ ] 4.2 Подключить memory context к одному startup snapshot без второго fetch/updater: current project/base product/customizations и выбранные sources с origin/назначением и registry version/index info. Registry DTO/owner-сценарии и [CLI presentation repair](../add-product-project-registry/evidence/g3-context-cli-output-2026-10-21.md) проверены для custom → typical / ПРОФ → КОРП; public CLI compact JSON, внутренний helper возвращает прежний DTO. Native Codex и legacy installed b4338057 имеют прежние отдельные области; Kilo aliases/API и full client/installed/platform/cost proof открыты. Это не реализация consumer. Проверить override/conflict/defer/offline/recovery/nested context и ограничения через одну applied projection, без своего renderer/verifier/probes/backend requirements (AC-15/16/20/25/35/43). Aliases/`$schema` не IDs/datasets/home/grants; исходные failures сохраняются. Стоимость registry no-op отдельно квалифицирована в [PM5 A/B](../add-product-project-registry/evidence/g3-cost-baseline-2026-10-24.md); это не G4 consumer или G5 cost proof.
-- [ ] 4.3 Потребить known knowledgeArea/availableIn/conditions и canonical homes через registry resolver, не дублируя policy; ERP+PM пишет один общий PM факт в КОРП, допустимый ПРОФ читает, ERP/customization зависимости исключены, unknown home остаётся candidate, AC-18/19/20/32.
-- [ ] 4.4 Согласовать и изменить managed boundary только у controlled-fork owner: qualified opt-in/явное назначение, private fallback/read route, shared templates wording; semantic diff сохраняет triggers/TOOL/query budget/native calls/Memory line и подтверждает AC-22/23/31, без patch установленной копии.
-- [ ] 4.5 Согласовать source `USER-RULES.append.md` с qualified fork route: legacy root fallback сохраняется, qualified private fallback ссылается на D6 без дублирования policy. Передавать только effective scope/назначения и compact cards без повторных GUID; измерить bytes/tokens, сохранить restrictions/evidence и memory.md/evolve границы, AC-23/24/26/37.
-- [ ] 4.6 Сохранить optional OpenViking без установки/репликации; fixtures проверяют Cognee-only, существующий eligible reader и required gap без расширения scope, AC-21/22.
-- [ ] 4.7 Подключить separate memory opt-in к existing registry setup после native/compatibility/client-context checks; fixtures доказывают later/unattended/нет ответа/off/required и qualified enable/partial/disable/owned restore без повторного выбора project или обязательного per-scope диалога (AC-39/41, registry AC-31–34).
-- [ ] 4.8 Сохранить legacy memory.md/local notes/receipts при update/enable и исключить bulk remember/очистку/автообобщение. Проверить исходные hashes и strict-rule route; выбранный перенос одного факта использует обычный scoped remember/evidence/durable contract отдельным явным действием, не новый import service (AC-42).
+- [x] 4.1 Использовать общий Cognee descriptor и личный выбор existing MCP owner, provider-local shared IDs и принятый registry home contract; проверить old/off/legacy без четвёртой проектной роли или наследования адреса памяти, AC-15/21/28/35.
+- [x] 4.2 Подключить memory context к одному startup snapshot без второго fetch/updater: current project/base product/customizations и выбранные sources с origin/назначением и registry version/index info. Registry DTO/owner-сценарии и [CLI presentation repair](../add-product-project-registry/evidence/g3-context-cli-output-2026-10-21.md) проверены для custom → typical / ПРОФ → КОРП; public CLI compact JSON, внутренний helper возвращает прежний DTO. Native Codex и legacy installed b4338057 имеют прежние отдельные области; Kilo aliases/API и full client/installed/platform/cost proof открыты. Это не реализация consumer. Проверить override/conflict/defer/offline/recovery/nested context и ограничения через одну applied projection, без своего renderer/verifier/probes/backend requirements (AC-15/16/20/25/35/43). Aliases/`$schema` не IDs/datasets/home/grants; исходные failures сохраняются. Стоимость registry no-op отдельно квалифицирована в [PM5 A/B](../add-product-project-registry/evidence/g3-cost-baseline-2026-10-24.md); это не G4 consumer или G5 cost proof.
+- [x] 4.3 Потребить known knowledgeArea/availableIn/conditions и canonical homes через registry resolver, не дублируя policy; ERP+PM пишет один общий PM факт в КОРП, допустимый ПРОФ читает, ERP/customization зависимости исключены, unknown home остаётся candidate, AC-18/19/20/32.
+- [x] 4.4 Согласовать и изменить managed boundary только у controlled-fork owner: qualified opt-in/явное назначение, private fallback/read route, shared templates wording; semantic diff сохраняет triggers/TOOL/query budget/native calls/Memory line и подтверждает AC-22/23/31, без patch установленной копии.
+- [x] 4.5 Согласовать source `USER-RULES.append.md` с qualified fork route: legacy root fallback сохраняется, qualified private fallback ссылается на D6 без дублирования policy. Передавать только effective scope/назначения и compact cards без повторных GUID; измерить bytes/tokens, сохранить restrictions/evidence и memory.md/evolve границы, AC-23/24/26/37.
+- [x] 4.6 Сохранить optional OpenViking без установки/репликации; fixtures проверяют Cognee-only, существующий eligible reader и required gap без расширения scope, AC-21/22.
+- [x] 4.7 Подключить separate memory opt-in к existing registry setup после native/compatibility/client-context checks; fixtures доказывают later/unattended/нет ответа/off/required и qualified enable/partial/disable/owned restore без повторного выбора project или обязательного per-scope диалога (AC-39/41, registry AC-31–34).
+- [x] 4.8 Сохранить legacy memory.md/local notes/receipts при update/enable и исключить bulk remember/очистку/автообобщение. Проверить исходные hashes и strict-rule route; выбранный перенос одного факта использует обычный scoped remember/evidence/durable contract отдельным явным действием, не новый import service (AC-42).
 
 ## 5. Поиск, бюджет и восстановление
 
-- [ ] 5.1 Реализовать CHUNKS по allowed dataset set: начальные 24 backend candidates → bounded original/status/applicability checks → 8 карточек/1600 токенов, без второй модели; релевантный факт ниже первых восьми не теряется внутри cap, AC-24/36.
-- [ ] 5.2 Сохранить один task query/reader, standing query и одну reformulation только после пустого relevant answer; никаких доборов ради восьми карточек. Проверить partial/cap/deadline status, отдельный счёт native lookups и reuse без обещания нулевого context cost, AC-25/26/36/37.
-- [ ] 5.3 Связать прежний client owner с административной процедурой D5: память закрыта во время restore, недопущенные области/старые кеши не используются, после native проверки доступ возвращается только к подтверждённым областям с cache reset/new context. Проверить unknown late changes → область недоступна/независимая задача продолжается; required gap не обойдён fallback. Native proof отделить от owner fixtures/installed G5, не добавлять restore-реестр/epoch/versioning/backup service, AC-02/09/27/34.
-- [ ] 5.4 Добавить disable/owned rollback через existing client owner с сохранением datasets/receipts/External MCP и штатным reload; проверить возвращение прежнего task/reset пути, AC-17/28.
-- [ ] 5.5 Применить qualified `self_improvement=false` к первому ingestion профилю, сохранив native graph и не инициируя отдельные improve/background jobs; отсутствие flag не скрывается default costs, AC-26/37.
+- [x] 5.1 Реализовать CHUNKS по allowed dataset set: начальные 24 backend candidates → bounded original/status/applicability checks → 8 карточек/1600 токенов, без второй модели; релевантный факт ниже первых восьми не теряется внутри cap, AC-24/36.
+- [x] 5.2 Сохранить один task query/reader, standing query и одну reformulation только после пустого relevant answer; никаких доборов ради восьми карточек. Проверить partial/cap/deadline status, отдельный счёт native lookups и reuse без обещания нулевого context cost, AC-25/26/36/37.
+- [x] 5.3 Связать прежний client owner с административной процедурой D5: память закрыта во время restore, недопущенные области/старые кеши не используются, после native проверки доступ возвращается только к подтверждённым областям с cache reset/new context. Проверить unknown late changes → область недоступна/независимая задача продолжается; required gap не обойдён fallback. Native proof отделить от owner fixtures/installed G5, не добавлять restore-реестр/epoch/versioning/backup service, AC-02/09/27/34.
+- [x] 5.4 Добавить disable/owned rollback через existing client owner с сохранением datasets/receipts/External MCP и штатным reload; проверить возвращение прежнего task/reset пути, AC-17/28.
+- [x] 5.5 Применить qualified `self_improvement=false` к первому ingestion профилю, сохранив native graph и не инициируя отдельные improve/background jobs; отсутствие flag не скрывается default costs, AC-26/37.
 
 ## 6. Конечная приёмка и решение о rollout
 
-- [ ] 6.1 Выполнить только непосредственно затронутые owner suites по local-quality-gate, сохранив tracked state; evidence с exact inputs закрывает соответствующие fixtures AC, не объявляя live успех.
+- [x] 6.1 Выполнить только непосредственно затронутые owner suites по local-quality-gate, сохранив tracked state; evidence с exact inputs закрывает соответствующие fixtures AC, не объявляя live успех.
 - [ ] 6.2 После полного G1/D10 выполнить native smoke всех scopes: write/status → fresh reader, два обычных пользователя/один shared ID, collision и old fragment/current status в допущенном store; AC-01–09/27/33/34 не закрываются tools/list или одной фиксацией profile 1.3.
 - [ ] 6.3 В G5 пройти legacy update → explicit association → separate memory opt-in/initial cycle без reset, затем new-chat/reset постоянного условия, ERP+PM → home КОРП → допустимый ПРОФ, update/conflict/offline/reload/disable/recovery. Original task, сохранность old notes и AC-10–23/28/30–35/39–42 доказаны; неподтверждённые Windows/terminal варианты названы.
 - [ ] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
-- [ ] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
+- [x] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
 - [x] 6.6a Подтвердить единое обязательное наполнение у registry owner по 1.9–1.11/5.7 и AC-36–38; указать опубликованный SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` в memory acceptance. [R6 / registry dependency AC-44 закрыта](../add-product-project-registry/evidence/r6-publication-2026-10-25.md); seed не используется, optional homes отложены осознанно, второго каталога/ingestion нет.
 - [ ] 6.6b В G5 для объявленных shared-product сценариев проверить home/applicability и отдельные native IDs/grants/currentness. Это сохранённая native часть прежней 6.6/AC-44, не новая проверка; в registry-only выпуске shared remember не разрешён, G4/G5 не начаты.
 
