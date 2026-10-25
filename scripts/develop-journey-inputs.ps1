@@ -267,8 +267,42 @@ function Get-DevelopJourneySourceProjection {
     return ([string]$hasBom)+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
 }
 
+function Test-DevelopGoBuildOnlyPath {
+    param([string]$RepositoryRoot,[string]$Path,[string]$Commit='')
+    # The native runner builds this main package with -SkipTests. Go excludes
+    # *_test.go; README is not compiled. Explicit embed can consume either, so
+    # refuse this exception if any compiled source contains an embed directive.
+    if($Path -cne 'tools/itl-ondemand-mcp/README.md' -and $Path -cnotmatch '^tools/itl-ondemand-mcp/[^/]+_test\.go$') {return $false}
+    try {
+        # Pin the audited consumers too: a future runner/builder could read
+        # tests or docs as data. Such a change closes this exception until its
+        # native input contract is reviewed, even after a new baseline passes.
+        $consumers=@{
+            'scripts/invoke-develop-e2e.ps1'='ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d'
+            'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'
+        }
+        foreach($consumer in $consumers.Keys) {
+            $text=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $consumer}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $consumer)))}
+            $sha=[Security.Cryptography.SHA256]::Create()
+            try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+            if($hash -cne $consumers[$consumer]) {return $false}
+        }
+        $arguments=if($Commit){@('ls-tree','-r','--name-only','-z',$Commit,'--')}else{@('ls-files','-z','--')}
+        $sources=@(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments $arguments | Where-Object {
+            $_ -cmatch '^tools/itl-ondemand-mcp/[^/]+\.go$' -and $_ -cnotmatch '_test\.go$'})
+        if(-not $sources.Count) {return $false}
+        foreach($source in $sources) {
+            $text=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $source}else{[IO.File]::ReadAllText((Join-Path $RepositoryRoot $source))}
+            if($text -match 'go:embed') {return $false}
+        }
+        return $true
+    } catch {return $false}
+}
+
 function Test-DevelopJourneyUnaffectedPath {
     param([string]$RepositoryRoot,[string]$Path,[string]$BaseRef,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    if($BaseRef -and (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path) -and
+        (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path $BaseRef)) {return $true}
     $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if(-not $scope) { return $false }
     if($scope.ContainsKey('whole')) { return $true }
@@ -301,7 +335,7 @@ function Test-DevelopE2EEquivalentInput {
             foreach($owner in @($value.contracts)) {
                 $owner.paths=@($owner.paths | Where-Object {$_ -notlike 'tests/pester/*.Tests.ps1'})
             }
-            Get-DevelopE2ECanonicalJsonSha256 $value
+            Get-DevelopScenarioWorkloadHash $value
         })
         if($contracts[0] -cne $contracts[1]) { return $false }
         $oldExternal=$Recorded.inventory.external | ConvertTo-Json -Depth 24 | ConvertFrom-Json

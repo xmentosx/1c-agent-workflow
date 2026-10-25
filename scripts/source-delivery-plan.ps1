@@ -539,6 +539,7 @@ function New-DeliveryQualityPlanForCandidate {
         if($scenarioRecords.Count) {
             $view=@(foreach($record in $scenarioRecords) {
                 [pscustomobject]@{id=$record.id;execution=$record.execution;dependsOn=$record.dependsOn;applicable=$record.applicable;
+                    selectionReasons=@(if($journeyPlan.PSObject.Properties['scenarioReasons']) {$journeyPlan.scenarioReasons.$journey | Where-Object {$record.id -in @($_.scenarios)}});
                     evidenceCommit=$(if($record.proof){$record.proof.report.repository.commit}else{''});
                     evidenceSha256=$(if($record.proof){$record.proof.sha256}else{''});reuseDiagnostics=@($record.reuseDiagnostics | Select-Object -First 1);
                     omittedDiagnosticCount=[math]::Max(0,@($record.reuseDiagnostics).Count-1)}

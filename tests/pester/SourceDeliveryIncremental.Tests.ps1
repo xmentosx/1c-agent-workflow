@@ -371,6 +371,128 @@ It 'authenticates source on every reuse while comparing each file pair once per 
     Should -Invoke Get-DevelopChangedFunctions -Times 4 -Exactly
 }
 
+It 'keeps authenticated scenario proof through routing-policy additions and still rejects changed workloads and artifact hashes' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    Save-IncrementalJourneyProofs $f
+    $old=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $original=Join-Path $f.root '.git/upgrade.json';$originalHash=(Get-FileHash $original).Hash
+    $baselineTree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $rawPath=Join-Path $f.root '.git/policy-baseline.json'
+    $raw=@{schemaVersion=3;status='passed';candidate=@{tree=$baselineTree};requestedJourneys=@('upgrade');journeys=@(@{name='upgrade';status='passed';coverage=@($f.catalog.developJourneys.scenarios.upgrade.id)})}
+    [IO.File]::WriteAllText($rawPath,($raw|ConvertTo-Json -Depth 8))
+    Save-DevelopScenarioExecution $f.root $rawPath upgrade $old $old $f.catalog | Should -Not -BeNullOrEmpty
+    $old=$old | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    # New ownership for an unchanged node is routing metadata, not new native work.
+    $f.catalog.developJourneys.scenarioInputs[0].functions | Add-Member -NotePropertyName 'Untouched-Owner' -NotePropertyValue @('fresh.install')
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'classify an independent owner'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    (Get-DevelopScenarioWorkloadHash $old.inventory.contract) | Should -BeExactly (Get-DevelopScenarioWorkloadHash $current.inventory.contract)
+    $catalogBefore=Get-DevelopHistoricalSourceText $f.root $f.base 'tests/quality-contracts.json'
+    $catalogAfter=[IO.File]::ReadAllText((Join-Path $f.root 'tests/quality-contracts.json'))
+    (Get-DevelopScenarioSourceProjection 'tests/quality-contracts.json' $catalogBefore upgrade @('update') $f.catalog) |
+        Should -BeExactly (Get-DevelopScenarioSourceProjection 'tests/quality-contracts.json' $catalogAfter upgrade @('update') $f.catalog)
+    Test-DevelopScenarioEquivalentInput $f.root $old $current $f.base @('update') $f.catalog | Should -BeTrue
+    $records=@(Get-DevelopScenarioReusePlan $f.root $tree upgrade $current $f.catalog -AllowPendingStatic)
+    @($records|Where-Object execution -eq reuse).Count | Should -Be 3 -Because ($records | ConvertTo-Json -Depth 10 -Compress)
+    @($records|Where-Object {$_.proof.report.schemaVersion -eq 3}).Count | Should -Be 3
+    (Get-FileHash $original).Hash | Should -BeExactly $originalHash
+    Test-DevelopScenarioEquivalentInput $f.root $old $current $f.base @('update') $f.catalog | Should -BeTrue
+    $changed=$current|ConvertTo-Json -Depth 32|ConvertFrom-Json
+    $changed.inventory.external.artifacts.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='d'*64
+    $changed.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $changed.inventory
+    Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('update') $f.catalog | Should -BeFalse
+    $changed=$current|ConvertTo-Json -Depth 32|ConvertFrom-Json
+    $changed.inventory.contract.scenarios[0].operations+=@('new-native-assertion')
+    $changed.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $changed.inventory
+    Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('update') $f.catalog | Should -BeFalse
+    # The current route, not the old classification, decides source equivalence.
+    Set-ScenarioFixtureChange $f 'Change-Update'
+    $changed=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('update') $f.catalog | Should -BeFalse
+    Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('configuration-rejection') $f.catalog | Should -BeTrue
+}
+
+It 'keeps Go test and README changes native-free while preserving runtime and embed invalidation' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $catalog=Get-QualityContractCatalog $RepoRoot
+    $paths=@('tools/itl-ondemand-mcp/main.go','tools/itl-ondemand-mcp/main_test.go','tools/itl-ondemand-mcp/README.md')
+    Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/Build-ItlOnDemandMcp.ps1') -Destination (Join-Path $f.root 'scripts/Build-ItlOnDemandMcp.ps1')
+    foreach($path in $paths) {
+        $full=Join-Path $f.root $path;[void][IO.Directory]::CreateDirectory((Split-Path $full))
+        [IO.File]::WriteAllText($full,"package main`n")
+    }
+    $f.catalog.contracts[0].paths+=@($paths)+@('tools/itl-ondemand-mcp/*')
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'native Go baseline'
+    $base=(& git -C $f.root rev-parse HEAD).Trim()
+    $f.base=$base
+    Save-IncrementalJourneyProofs $f
+    foreach($path in $paths[1..2]) {
+        [IO.File]::AppendAllText((Join-Path $f.root $path),"// static-only change`n")
+        $route=Resolve-DevelopE2EJourneyPlanCore $f.root $base @($path) $catalog
+        @($route.journeys).Count | Should -Be 0
+        $before=Get-DevelopHistoricalSourceText $f.root $base $path
+        $after=[IO.File]::ReadAllText((Join-Path $f.root $path))
+        (Get-DevelopScenarioSourceProjection $path $before fresh @('verification') $catalog -RepositoryRoot $f.root -Commit $base) |
+            Should -BeExactly (Get-DevelopScenarioSourceProjection $path $after fresh @('verification') $catalog -RepositoryRoot $f.root)
+        @((Resolve-QualityContractsForPaths $catalog @($path)).tests).Count | Should -BeGreaterThan 0
+        & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'static-only Go input'
+        $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+        $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+        $records=@(Get-DevelopScenarioReusePlan $f.root $tree fresh $current $f.catalog -AllowPendingStatic)
+        @($records|Where-Object execution -eq reuse).Count | Should -Be 6 -Because ($records|ConvertTo-Json -Depth 8 -Compress)
+    }
+    [IO.File]::WriteAllText((Join-Path $f.root 'tools/itl-ondemand-mcp/added_test.go'),"package main`n")
+    Remove-Item -LiteralPath (Join-Path $f.root $paths[1])
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'add and retire static Go regressions'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $current=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    @((Get-DevelopScenarioReusePlan $f.root $tree fresh $current $f.catalog -AllowPendingStatic)|Where-Object execution -eq reuse).Count | Should -Be 6
+    $runtime=Join-Path $f.root $paths[0]
+    [IO.File]::AppendAllText($runtime,"// changed broker runtime`n")
+    @(Resolve-DevelopE2EJourneyPlanCore $f.root $base @($paths[0]) $catalog).journeys | Should -Contain 'fresh'
+    $builder=Join-Path $f.root 'scripts/Build-ItlOnDemandMcp.ps1'
+    $originalBuilder=[IO.File]::ReadAllBytes($builder)
+    [IO.File]::AppendAllText($builder,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    [IO.File]::WriteAllBytes($builder,$originalBuilder)
+    [IO.File]::AppendAllText($runtime,"//go:embed README.md`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    @(Resolve-DevelopE2EJourneyPlanCore $f.root $base @($paths[2]) $catalog).journeys | Should -Contain 'fresh'
+}
+
+It 'scopes the actual dependency synchronizer to its callers without repeating independent export and close scenarios' {
+    $f=New-IncrementalPlanFixture
+    $catalog=Get-QualityContractCatalog $RepoRoot
+    $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1'
+    $path=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $path))
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'real dependency owner'
+    $base=(& git -C $f.root rev-parse HEAD).Trim()
+    $original=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+    $source=$original.TrimStart([char]0xfeff);$tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+    $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Sync-WorkflowManagedDependencyLockEntries'},$true)
+    $changed=$source.Insert($node.Body.EndBlock.Statements[0].Extent.StartOffset,"Write-Verbose 'dependency regression'`n")
+    [IO.File]::WriteAllText($path,$changed,[Text.UTF8Encoding]::new($original.StartsWith([string][char]0xfeff)))
+    $materialized=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+    $route=Resolve-DevelopE2EJourneyPlanCore $f.root $base @($relative) $catalog
+    @($route.scenarios.fresh) | Should -Be @('install','branch','verification','refresh')
+    @($route.scenarioReasons.fresh.functions) | Should -Be @('Sync-WorkflowManagedDependencyLockEntries')
+    (Get-DevelopScenarioSourceProjection $relative $original fresh @('stale-export','close') $catalog) |
+        Should -BeExactly (Get-DevelopScenarioSourceProjection $relative $materialized fresh @('stale-export','close') $catalog)
+    [IO.File]::WriteAllText($path,$changed+"`nWrite-Verbose `$script:newAmbientDependency`n",[Text.UTF8Encoding]::new($original.StartsWith([string][char]0xfeff)))
+    $route=Resolve-DevelopE2EJourneyPlanCore $f.root $base @($relative) $catalog
+    @($route.scenarios.fresh) | Should -Be @($catalog.developJourneys.scenarios.fresh.id)
+    @($route.scenarioReasons.fresh.fallback) | Should -Be @('ambient-or-top-level-change')
+}
+
 It 'retains ambient and top-level refusal while analyzing changed functions only' {
     $before='function Untouched { $global:existing }; function Changed { param($value) $local=1; foreach($item in @(1)) { $local += $item }; return $value+$local+$script:shared }'
     $after=$before.Replace('$local=1','$local=2')
@@ -397,6 +519,7 @@ It 'selects changed behavior, preserves prerequisite closure and reuses independ
     $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $head -CandidateTree $tree
     $stage=@($plan.stages|Where-Object id -eq "develop.$Journey")[0]
     @($stage.scenarios | Where-Object execution -ne 'reuse' | ForEach-Object id) | Should -Be $Execute
+    @($stage.scenarios | ForEach-Object selectionReasons | ForEach-Object functions) | Should -Contain $Function
     @($stage.scenarios | Where-Object execution -eq 'reuse').Count | Should -BeGreaterThan 0
     foreach($record in @($stage.scenarios | Where-Object execution -eq 'reuse')) {$record.evidenceCommit|Should -BeExactly $f.base}
     $estimate=Get-DeliveryPlanTimeEstimate $plan @()

@@ -215,6 +215,20 @@
     },
     "scenarioInputs": [
       {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        "functions": {
+          "Sync-WorkflowManagedDependencyLockEntries": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.refresh"],
+          "Update-DependencyLockEntry": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"]
+        }
+      },
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.dependencies.ps1",
+        "functions": {
+          "Get-WorkflowDependencySyncManifest": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.refresh"],
+          "Get-WorkflowDependencyWireFormat": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"]
+        }
+      },
+      {
         "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1",
         "functions": {
           "Write-ItlClientMcpEndpoints": [

@@ -12,6 +12,16 @@ function Expand-DevelopScenarioSelection {
     return @($items | Where-Object {$_.id -in $wanted} | ForEach-Object {[string]$_.id})
 }
 
+function Get-DevelopScenarioWorkloadHash {
+    param([object]$Contract,[ValidateSet('scenarioInputs','inputs')][string]$RoutingField='scenarioInputs')
+    # Routing describes which source nodes affect a scenario, not its native
+    # assertions. Current policy must still project and authenticate both source
+    # snapshots. Keep every workload/unknown field and never rewrite old proof.
+    $workload=$Contract | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+    $workload.PSObject.Properties.Remove($RoutingField)
+    return Get-DevelopE2ECanonicalJsonSha256 $workload
+}
+
 function Assert-DevelopScenarioCompletion {
     param([object]$Catalog,[string]$Journey,[object]$Result,[object[]]$Steps)
     if($Journey -eq 'fresh') {
@@ -81,21 +91,24 @@ function Resolve-DevelopScenarioSelection {
         if($path -notin @($Catalog.developJourneys.fullPaths) -and
             -not @($selection.contracts.id | Where-Object {$_ -in @($Catalog.developJourneys.routes.$Journey.contracts)}).Count) {continue}
         $rules=@($Catalog.developJourneys.scenarioInputs | Where-Object {$_.path -ceq $path})
-        $affected=@();$matched=$false
+        $affected=@();$matched=$false;$changed=@();$unmapped=@();$fallback='no-scenario-owner'
         if($rules.Count -eq 1 -and $BaseRef -and $rules[0].PSObject.Properties['functions']) {
             try {
                 $old=Get-DevelopHistoricalSourceText $RepositoryRoot $BaseRef $path
                 $new=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $path)))
                 $changed=Get-DevelopChangedFunctions $old $new
-                if($null -ne $changed -and @($changed | Where-Object {$_ -notin @($rules[0].functions.PSObject.Properties.Name)}).Count -eq 0) {
+                $unmapped=@($changed | Where-Object {$_ -notin @($rules[0].functions.PSObject.Properties.Name)})
+                $fallback=if($null -eq $changed){'ambient-or-top-level-change'}elseif($unmapped.Count){'unmapped-function'}else{''}
+                if($null -ne $changed -and $unmapped.Count -eq 0) {
                     $matched=$true
                     foreach($name in $changed) {$affected+=@($rules[0].functions.$name | Where-Object {$_ -like "$Journey.*"} | ForEach-Object {$_.Substring($Journey.Length+1)})}
                 }
-            } catch {$matched=$false}
+            } catch {$matched=$false;$fallback='source-analysis-unavailable'}
         }
         if(-not $matched) {$affected=@($items.id)}
         $selected+=@($affected)
-        if($affected.Count) {$reasons+=,[pscustomobject]@{path=$path;scenarios=@($affected | Sort-Object -Unique);basis=$(if($matched){'changed-owned-functions'}else{'unclassified-native-input'})}}
+        if($affected.Count) {$reasons+=,[pscustomobject]@{path=$path;scenarios=@($affected | Sort-Object -Unique);basis=$(if($matched){'changed-owned-functions'}else{'unclassified-native-input'});
+            functions=@($changed | Select-Object -First 12);unmappedFunctions=@($unmapped | Select-Object -First 12);fallback=$fallback}}
     }
     return [pscustomobject]@{selected=@(Expand-DevelopScenarioSelection $Catalog $Journey $selected);reasons=$reasons}
 }
@@ -113,16 +126,24 @@ function Get-DevelopScenarioCoverage {
 }
 
 function Get-DevelopScenarioSourceProjection {
-    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false)
+    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='')
+    if($RepositoryRoot -and (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path $Commit)) {return 'outside-native-go-build'}
     $Text=$Text.Replace("`r`n","`n")
     $bom=[string]$Text.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal)
+    if($Path -ceq 'tests/quality-contracts.json') {
+        # The raw catalog may also be in a legacy owner's source inventory.
+        # Ignore only this same routing field; all other JSON fields still bind.
+        $catalogSource=$Text.TrimStart([char]0xfeff) | ConvertFrom-Json
+        $catalogSource.developJourneys.PSObject.Properties.Remove('scenarioInputs')
+        return $bom+"`n"+(Get-DevelopE2ECanonicalJsonSha256 $catalogSource)
+    }
     $controller=@()
     switch -Exact ($Path) {
         # Copy GC retains/reports resources; it cannot grant journey status.
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {
@@ -190,7 +211,7 @@ function Test-DevelopScenarioEquivalentInput {
             $contract=$value.inventory.contract | ConvertTo-Json -Depth 24 | ConvertFrom-Json
             $contract.PSObject.Properties.Remove('hardSeconds')
             foreach($owner in @($contract.contracts)) {$owner.paths=@($owner.paths | Where-Object {$_ -notlike 'tests/pester/*.Tests.ps1'})}
-            Get-DevelopE2ECanonicalJsonSha256 $contract
+            Get-DevelopScenarioWorkloadHash $contract
         })
         if($contracts[0] -cne $contracts[1]) {return $false}
         # Authenticate the original nested positive fingerprint before changing
@@ -217,6 +238,16 @@ function Test-DevelopScenarioEquivalentInput {
             }
         }
         if((Get-DevelopE2ECanonicalJsonSha256 $old.inventory.external) -cne (Get-DevelopE2ECanonicalJsonSha256 $new.inventory.external)) {return $false}
+        # These paths belong to the current static proof, including additions
+        # and deletions. Audited consumers and absence of embed must hold in
+        # BOTH snapshots before their inventories can be projected out.
+        if((Test-DevelopGoBuildOnlyPath $RepositoryRoot 'tools/itl-ondemand-mcp/README.md') -and
+            (Test-DevelopGoBuildOnlyPath $RepositoryRoot 'tools/itl-ondemand-mcp/README.md' $QualifiedCommit)) {
+            foreach($value in @($old,$new)) {
+                $value.inventory.inputs=@($value.inventory.inputs | Where-Object {
+                    $_.path -cne 'tools/itl-ondemand-mcp/README.md' -and $_.path -cnotmatch '^tools/itl-ondemand-mcp/[^/]+_test\.go$'})
+            }
+        }
         $before=@{};foreach($entry in $old.inventory.inputs) {$before[$entry.path]=$entry}
         foreach($entry in @($new.inventory.inputs | Sort-Object {if($_.path -eq 'scripts/invoke-develop-e2e.ps1'){0}else{1}})) {
             if(-not $before.ContainsKey($entry.path)) {return $false}
@@ -231,7 +262,10 @@ function Test-DevelopScenarioEquivalentInput {
             } else {[Text.Encoding]::UTF8.GetBytes($a)}
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-            if($hash -cne $prior.sha256 -and $entry.path -ceq '.agents/skills/1c-workflow/references/workflow-update-recovery.md') {
+            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json')) {
+                # Git stores LF while an older Windows checkout can have CRLF.
+                # Authenticate that exact alternative before semantic projection;
+                # never normalize native artifacts or arbitrary source inputs.
                 $sha=[Security.Cryptography.SHA256]::Create()
                 try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($a.Replace("`r`n","`n").Replace("`n","`r`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
             }
@@ -248,8 +282,8 @@ function Test-DevelopScenarioEquivalentInput {
                 if($null -eq $changed) {return $false}
             }
             $noProduct=$new.inventory.external.PSObject.Properties['productContext'] -and $new.inventory.external.productContext.known -and $new.inventory.external.productContext.disabled
-            $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct)
-            $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct)
+            $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit
+            $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot
             if($null -eq $x -or $x -cne $y) {return $false}
             $prior.sha256=$entry.sha256
         }

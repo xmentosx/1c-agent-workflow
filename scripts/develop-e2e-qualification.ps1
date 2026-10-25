@@ -304,8 +304,8 @@ function Get-DevelopE2EAncestorQualification {
                     continue
                 }
                 if([int]$report.schemaVersion -in @(2,3) -and
-                    (Get-DevelopE2ECanonicalJsonSha256 $report.plan.scenarioContracts.$Journey) -cne
-                    (Get-DevelopE2ECanonicalJsonSha256 ([ordered]@{scenarios=$Catalog.developJourneys.scenarios.$Journey;inputs=$Catalog.developJourneys.scenarioInputs}))) {
+                    (Get-DevelopScenarioWorkloadHash $report.plan.scenarioContracts.$Journey -RoutingField inputs) -cne
+                    (Get-DevelopScenarioWorkloadHash ([ordered]@{scenarios=$Catalog.developJourneys.scenarios.$Journey;inputs=$Catalog.developJourneys.scenarioInputs}) -RoutingField inputs)) {
                     Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'SCENARIO_CONTRACT_CHANGED' -Commit $qualifiedCommit -Inputs $RequiredScenario
                     continue
                 }

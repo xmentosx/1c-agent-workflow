@@ -211,9 +211,18 @@ to itself. Repeated compositions reference the original scenario certificate
 after rechecking direct input equivalence; they do not grow a chain of complete
 reports. A full certificate still validates every required scenario. Copy-GC
 retention/reporting changes use their current static owner proof; fixture
-preparation and space admission remain native inputs. Scenario policy, source
+preparation and space admission remain native inputs. Scenario workload, source
 inputs, stand/positive-stand facts, effective client selection, runtime, fork and
 all three physical artifact hashes bind reuse.
+Current authenticated routing policy projects both source snapshots. Adding or
+refining `scenarioInputs` alone does not change a native assertion and therefore
+does not invalidate existing proof. The raw JSON catalog has the same narrow
+projection; every other field and all scenario operations/dependencies still bind.
+Historical catalog LF/CRLF variants must match the recorded SHA before projection.
+Go unit tests and README of the on-demand main package stay under static proof.
+They do not select a native journey only with the audited runner/builder hashes
+and no `go:embed` in compiled package source, on both historical/current snapshots.
+Consumer drift, embedding, missing source or unknown paths close this exception.
 The stateless client writer uses upgrade update and fresh install/branch as
 native representatives alongside the current static preservation/PlanOnly/atomic
 write tests. Other unchanged consumers may retain proof after those producers
@@ -232,7 +241,8 @@ Newer applicable failures continue to reject reuse; scoped failures bind their
 executed scenarios, while legacy failures retain conservative journey scope.
 
 Plan lists each scenario as execution, setup or reuse with its evidence/rejection
-reason. Whole-journey timing samples are not estimates for a partial workload:
+reason and changed source functions or the conservative fallback cause.
+Whole-journey timing samples are not estimates for a partial workload:
 without an applicable measurement its duration is unknown. Keep hard deadlines
 separate and use retained canary/warm evidence before claiming an operational
 speedup. The regression matrix must exercise real candidate planning, checker
