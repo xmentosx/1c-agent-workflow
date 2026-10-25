@@ -2,6 +2,8 @@
 
 Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Vanessa UI MCP, External MCP preservation, and legacy branch Data MCP. Do not load it for ordinary lifecycle commands unless MCP is part of the request or helper failure.
 
+Optional explicitly qualified Cognee memory uses the same client owner; load only [scoped-memory.md](scoped-memory.md) for its opt-in, pending/status or recovery. Project association alone never enables it.
+
 ## Families And Ownership
 
 - ROCTUP MCP Toolkit is the preferred branch-local data channel for `itldev/*` infobases and does not require web publication.

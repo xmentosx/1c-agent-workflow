@@ -536,6 +536,14 @@ function Test-ItlProductProjectCatalogRole {
 
 function Assert-ItlProductProjectPackageCompatibility {
     param([string]$SourceRoot)
+    if(Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container){
+        . Import-ItlMemory
+        $memory=Read-ItlMemoryJson (Get-ItlMemoryPath binding $script:ProjectRoot)
+        if($memory -and $memory.mode -eq 'enabled'){
+            $capability=Read-ItlMemoryJson (Join-Path $SourceRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
+            if(-not $capability -or @($capability.capabilities) -cnotcontains $memory.capability){throw 'MEMORY_PACKAGE_INCOMPATIBLE: no helper files were replaced. Use the current helper -Action vibecoding1c-mcp-select -MemoryAction disable, reload the client, then repeat the same update-workflow. Private pending/receipts and datasets remain preserved.'}
+        }
+    }
     $binding=Get-ItlProductProjectBinding
     if(-not $binding){return}
     $path=Join-Path $SourceRoot '.agents/skills/1c-workflow/assets/product-project-compatibility.json'

@@ -1,5 +1,18 @@
 # План приёмки
 
+## G4 consumer: исходная реализация, 2026-10-26
+
+По отдельному одобрению реализован consumer памяти G4.
+[Единая source-матрица](../add-scoped-cognee-memory/evidence/g4-source-implementation-2026-10-26.md)
+фиксирует scope, fixtures, fork candidate и регистрацию отдельно от native G5.
+Потреблён один existing applied context/pinned snapshot/resolver; в каталоге
+остаются три MCP-роли. Mapping/grants памяти — provider-local, не в реестре;
+новые homes/проекты/связи/данные не публиковались. R6 SHA
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` и закрытый G3 прежние.
+G5, Gate6, рабочая миграция и публикация workflow не запускались и не разрешены.
+Исторические запреты G4 ниже относятся к прежним поручениям.
+
+
 ## R6: фактическая приёмка наполнения, 2026-10-25
 
 Registry AC-36–38: PASS, задачи 1.9–1.11/5.7 выполнены.

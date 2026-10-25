@@ -24,6 +24,15 @@ function Write-ItlProductProjectRecord {
     $path=Get-ItlProductProjectPath $Kind
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
     Write-Utf8TextAtomic -Path $path -Value ((ConvertTo-Json -InputObject $Record -Depth 100)+[Environment]::NewLine)
+    if($Kind -eq 'applied' -and (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){
+        . Import-ItlMemory
+        try{
+            $op=Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
+            $snapshot=if($op){Get-ItlCatalogField $op.Value 'catalogSnapshot'}else{$null}
+            Sync-ItlMemoryContext -Context $Record.context -Snapshot $snapshot
+        }catch{Write-Warning 'Memory binding needs explicit setup/reload for this applied context; registry apply completed and ordinary workflow remains available.'}
+    }
+
 }
 
 function ConvertFrom-ItlCatalogClientEntry {

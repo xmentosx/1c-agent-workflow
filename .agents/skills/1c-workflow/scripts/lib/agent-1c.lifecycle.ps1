@@ -9448,7 +9448,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
     param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null)
 
     Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
-    if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
+    if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
     $registeredState = Read-DevBranchState -Name ''
     Assert-WorkflowUpdateDevelopmentBranchRoot -State $registeredState
     $pending = Get-WorkflowUpdatePendingSnapshot
@@ -10165,7 +10165,7 @@ function Update-WorkflowPackage {
         }
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
-        if(Get-ConfigValue -Path productProject -Default $null){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
+        if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
         $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $source
         $previousRolloutPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
         if (Test-Path -LiteralPath $previousRolloutPath -PathType Leaf) {
@@ -10494,6 +10494,29 @@ Keep `.dev.env`, `.agent-1c/dev-branches/*.json`, `.agent-1c/event-log-baselines
     } else {
         Write-Utf8Text -Path $path -Value $block.TrimStart()
     }
+}
+
+function Get-ItlMemoryCycleUpdates {
+    param([object]$State,[ValidateSet('initial','reserve','complete')][string]$Transition,[string]$WorkspaceId='')
+    $stateValues=ConvertTo-Agent1cHashtable $State
+    $cycle=if($stateValues.Contains('memoryCycle')){$stateValues['memoryCycle']}else{$null}
+    if(-not $cycle){
+        if($Transition -ne 'initial'){return @{}}
+        return @{memoryCycle=[ordered]@{current=[guid]::NewGuid().ToString('N');reserved='';workspaceId=$WorkspaceId}}
+    }
+    $cycle=ConvertTo-Agent1cHashtable $cycle
+    if($Transition -eq 'initial' -and $WorkspaceId -and (-not $cycle.Contains('workspaceId') -or $cycle.workspaceId -cne $WorkspaceId)){
+        # A copied branch record is not permission to reuse its parent's task
+        # dataset. First opt-in binds a fresh cycle to this local workspace.
+        if($cycle.reserved){throw 'MEMORY_CYCLE_RESUME: finish the existing reset before binding a workspace.'}
+        $cycle['workspaceId']=$WorkspaceId;$cycle['current']=[guid]::NewGuid().ToString('N')
+    }
+    if($Transition -eq 'reserve' -and -not $cycle.reserved){$cycle['reserved']=[guid]::NewGuid().ToString('N')}
+    if($Transition -eq 'complete'){
+        if(-not $cycle.reserved){throw 'MEMORY_CYCLE_RESUME: preserve reset state; resume its reserved cycle before activation.'}
+        $cycle['current']=$cycle.reserved;$cycle['reserved']=''
+    }
+    return @{memoryCycle=$cycle}
 }
 
 function Save-DevBranchState {
@@ -14742,6 +14765,10 @@ function Initialize-DevBranchRuntime {
     $stateHash["createdWithWorktree"] = $CreatedWithWorktree
     $stateHash["worktreePath"] = $WorktreePath
     $stateHash["mainWorktreePath"] = $MainProjectRoot
+    if(-not $stateHash.ContainsKey('memoryCycle')){
+        $stateHash['memoryCycle']=@{current=[guid]::NewGuid().ToString('N');reserved=''}
+    }
+
     if ($WorkspaceProvider) {
         $stateHash["workspaceProvider"] = $WorkspaceProvider
         $stateHash["clientWorkspaceId"] = $ClientWorkspaceId
@@ -19342,7 +19369,8 @@ function Reset-DevBranch {
             $masterSource = $inputs.masterSource
             $oldHead = Get-CurrentCommit
             $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
-            Update-DevBranchState -State $state -Updates @{
+            $memoryCycleUpdate=Get-ItlMemoryCycleUpdates $state reserve
+            $resetStart=@{
                 resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
                 resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
                 resetMasterFingerprint = [string]$masterSource.fingerprint
@@ -19351,6 +19379,8 @@ function Reset-DevBranch {
                 resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
                 resetDiscardedRefreshOperation = $discardedRefresh
             }
+            foreach($field in $memoryCycleUpdate.Keys){$resetStart[$field]=$memoryCycleUpdate[$field]}
+            Update-DevBranchState -State $state -Updates $resetStart
             $state = Read-DevBranchState -Name $DevBranchName
         } else {
             Assert-DevBranchResetResumeInputs -State $state -SeedIdentity $inputs.seedIdentity
@@ -19439,7 +19469,13 @@ function Reset-DevBranch {
             $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
             $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
             Add-PendingDevBranchMergeClearUpdates -Updates $completion
+            $memoryComplete=Get-ItlMemoryCycleUpdates $state complete
+            foreach($field in $memoryComplete.Keys){$completion[$field]=$memoryComplete[$field]}
             Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates $completion
+            if(Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container){
+                . Import-ItlMemory
+                try{Sync-ItlMemoryContext -Context $null}catch{Write-Warning 'Memory context requires explicit setup/reload; reset completed and the previous task binding is stale.'}
+            }
         }
 
         $completed = Read-DevBranchState -Name $DevBranchName

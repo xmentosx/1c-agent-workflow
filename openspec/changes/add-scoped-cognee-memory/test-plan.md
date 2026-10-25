@@ -1,5 +1,18 @@
 # Acceptance and Evidence Plan
 
+## G4: исходная реализация, 2026-10-26
+
+Пользователь согласовал план и разрешил G4. Реализован scoped Cognee consumer:
+шесть областей, exact-ID REST/stdio, cycle/continuation/pending/source, existing
+registry/client/lifecycle owners и отдельный qualified fork candidate.
+[Общая source-матрица и границы](evidence/g4-source-implementation-2026-10-26.md)
+отделяют fixtures, native proof и регистрацию. G5, Gate 6, рабочая миграция и
+публикация workflow не запускались и не разрешены. R6/закрытый G3 прежние;
+отсутствие homes не обходится. Исторические запреты G4 ниже относятся к прежним
+поручениям. Source checkbox разделов 2–5 не закрывают native/installed часть:
+она остаётся в 6.2–6.4/6.6b. Регистрация определяется только RegisterChange/Status.
+
+
 ## Граница проверки плана G4, 2026-10-25
 
 [План G4](g4-implementation-plan.md) использует прежние AC и frozen B01–B12;

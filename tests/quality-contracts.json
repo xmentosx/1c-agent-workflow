@@ -370,6 +370,22 @@
       "tests": ["tests/pester/ProductProjectCallerInput.Tests.ps1"]
     },
     {
+      "id": "scoped-cognee-memory",
+      "owner": "existing ITL MCP leaf and lifecycle cycle",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ScopedCogneeMemory.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.memory*.ps1",
+        ".agents/skills/1c-workflow/scripts/cognee-memory-mcp.ps1",
+        ".agents/skills/1c-workflow/assets/scoped-memory-policy.json",
+        ".agents/skills/1c-workflow/assets/memory-tokenizer/*",
+        ".agents/skills/1c-workflow/references/scoped-memory.md",
+        "tests/fixtures/scoped-memory/*"
+      ],
+      "tests": ["tests/pester/ScopedCogneeMemory.Tests.ps1"]
+    },
+    {
       "id": "product-project-client-apply",
       "owner": "existing MCP client writer and lifecycle dispatcher",
       "gate": "targeted",
