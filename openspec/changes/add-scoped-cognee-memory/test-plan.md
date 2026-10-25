@@ -1,5 +1,14 @@
 # Acceptance and Evidence Plan
 
+## R6: фактическая приёмка наполнения, 2026-10-25
+
+Memory AC-44: registry population dependency CLOSED; native shared-product/G5 часть остаётся непроверенной, память не принята.
+**Published SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`**, восемь типовых проектов, 22+22 области,
+owner approval, сохранённый publisher registry и 8/8 immutable contexts —
+[единая квитанция](../add-product-project-registry/evidence/r6-publication-2026-10-25.md). Критерии ниже не ослаблены; это статус их
+registry-only исполнения. R1–R5, G4/G5 и запрет Gate6/рабочей миграции/публикации
+workflow сохранены. Новые native G3 сценарии не запускались.
+
 ## Актуальная граница G3 — согласована 2026-10-25
 
 **G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
