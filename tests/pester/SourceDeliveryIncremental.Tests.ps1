@@ -129,7 +129,7 @@ It 'delegates only remote component inspection from a clean pinned candidate (<C
 It 'uses the pinned candidate calculator through the native legacy <LegacyPart> Plan shim without changing authority or saved proof' -TestCases @(@{LegacyPart='calculator'},@{LegacyPart='component-inspection'}) {
         param($LegacyPart)
         $f=New-IncrementalPlanFixture; $script:Root=$f.root
-        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
+        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','delivery-native-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
         foreach($name in $modules) {Copy-Item -LiteralPath (Join-Path $RepoRoot ('scripts/'+$name)) -Destination (Join-Path $f.root ('scripts/'+$name)) -Force}
         $f.catalog.contracts[0].paths+=@($modules|ForEach-Object{'scripts/'+$_})
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))
@@ -184,8 +184,10 @@ if($Action -eq 'Plan') {
         $published=(& git -C $f.root rev-parse HEAD).Trim()
         & git -C $f.root update-ref refs/remotes/origin/develop $published
         $calculator=Join-Path $f.root 'scripts/source-delivery-plan.ps1'
-        $text=[IO.File]::ReadAllText($calculator).Replace('complete static inventory with per-file proof reuse','candidate policy selected')
-        [IO.File]::WriteAllText($calculator,$text,[Text.UTF8Encoding]::new($true))
+        $text=[IO.File]::ReadAllText($calculator)
+        $nativeCalculator=Join-Path $f.root 'scripts/delivery-native-plan.ps1'
+        $nativeText=[IO.File]::ReadAllText($nativeCalculator).Replace('complete static inventory with per-file proof reuse','candidate policy selected')
+        [IO.File]::WriteAllText($nativeCalculator,$nativeText,[Text.UTF8Encoding]::new($true))
         & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'new candidate policy'
         $head=(& git -C $f.root rev-parse HEAD).Trim()
         # A frozen legacy plan already exists. A read-only preview must not
@@ -230,10 +232,11 @@ if($Action -eq 'Plan') {
         {Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $f.root -BaseCommit $published -CandidateCommit $badHead -CandidateTree $badTree} | Should -Throw '*CALCULATOR_INVALID*'
         # A self-consistent calculator hash cannot waive the parent's required
         # component capabilities, even if its own policy proposes no Release.
-        $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$t,[ref]$e)
-        $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-DeliveryQualityPlanForCandidate'},$true)
-        $withoutRelease=$text.Insert($node.Body.EndBlock.Statements[0].Extent.StartOffset,'$RequireRelease=$false; $ReleaseCapability=@(); ')
-        [IO.File]::WriteAllText($calculator,$withoutRelease,[Text.UTF8Encoding]::new($true))
+        $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($nativeText,[ref]$t,[ref]$e)
+        $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-DeliveryNativeQualityPlanForCandidate'},$true)
+        $withoutRelease=$nativeText.Insert($node.Body.EndBlock.Statements[0].Extent.StartOffset,'$RequireRelease=$false; $ReleaseCapability=@(); ')
+        [IO.File]::WriteAllText($calculator,$text,[Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText($nativeCalculator,$withoutRelease,[Text.UTF8Encoding]::new($true))
         [void][IO.Directory]::CreateDirectory((Join-Path $f.root 'scripts/release-e2e'))
         Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts/release-e2e/stages.json') -Destination (Join-Path $f.root 'scripts/release-e2e/stages.json')
         $f.catalog.budgets=(Get-QualityContractCatalog $RepoRoot).budgets
@@ -752,6 +755,150 @@ It 'checkpoints a native subset without granting full qualification and composes
     (Get-Content $full -Raw -Encoding UTF8|ConvertFrom-Json).schemaVersion | Should -Be 2
     Test-DevelopE2ERouteReport -Path $full -Tree $tree -Journey fresh -IdentitySha256 ('a'*64) -StandStateSha256 ('c'*64) | Should -BeTrue
     Should -Invoke Invoke-PowerShellChild -Times 0 -Exactly
+}
+
+It 'reuses only broker-independent scenarios after an actual locked broker and Go source change (positive=<PositiveStand>)' -TestCases @(@{PositiveStand=$false},@{PositiveStand=$true}) {
+    param($PositiveStand)
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    if($PositiveStand) {
+        $positive=Join-Path $f.root '.git/positive'
+        [void][IO.Directory]::CreateDirectory((Join-Path $positive '.agent-1c'))
+        foreach($relative in @('.agent-1c/project.json','.agent-1c/release-e2e.json','.dev.env')) {
+            Copy-Item -LiteralPath (Join-Path $f.stand $relative) -Destination (Join-Path $positive $relative)
+        }
+        $positiveDevelop=Join-Path $f.root '.git/positive-develop'
+        [void][IO.Directory]::CreateDirectory((Join-Path $positiveDevelop '.agent-1c'))
+        Copy-Item -LiteralPath (Join-Path $positive '.agent-1c/project.json') -Destination (Join-Path $positiveDevelop '.agent-1c/project.json')
+        [IO.File]::WriteAllText((Join-Path $positive '.agent-1c/release-e2e.json'),(@{developWorktreePath=$positiveDevelop}|ConvertTo-Json))
+        [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/release-e2e.json'),(@{developConfigurationRejection=@{positiveProjectRoot=$positive}}|ConvertTo-Json -Depth 6))
+    }
+    $f.catalog.contracts[0].paths+=@('tools/itl-ondemand-mcp/main.go')
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    $source=Join-Path $f.root 'tools/itl-ondemand-mcp/main.go'
+    [void][IO.Directory]::CreateDirectory((Split-Path $source))
+    [IO.File]::WriteAllText($source,"package main`nfunc main() {}")
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'broker baseline'
+    $f.base=(& git -C $f.root rev-parse HEAD).Trim()
+    Save-IncrementalJourneyProofs $f
+    $old=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $broker=Join-Path $f.root '.git/new-broker.exe'
+    [IO.File]::WriteAllBytes($broker,[byte[]](4,5,6,7))
+    $f.binding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=$broker
+    $lockPath=Join-Path $f.root 'templates/dependency-lock.json'
+    $lock=Get-Content $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $lock.dependencies.itlOndemandMcp.sha256=(Get-FileHash $broker).Hash.ToLowerInvariant()
+    $lock.dependencies.itlOndemandMcp.version='2'
+    [IO.File]::WriteAllText($lockPath,($lock|ConvertTo-Json -Depth 8))
+    [IO.File]::AppendAllText($source,"`n// changed native broker implementation")
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'new locked broker'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $now | Should -Not -BeNullOrEmpty
+    $records=@(Get-DevelopScenarioReusePlan $f.root $tree fresh $now $f.catalog -AllowPendingStatic)
+    Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('verification') $f.catalog | Should -BeTrue
+    @($records|Where-Object execution -eq reuse|ForEach-Object id) | Should -Be @('stale-export','close')
+    @($records|Where-Object execution -eq setup|ForEach-Object id) | Should -Be @('verification')
+    @($records|Where-Object execution -eq execute|ForEach-Object id) | Should -Be @('install','branch','refresh')
+    foreach($scenario in @('install','branch','refresh','future-scenario')) {
+        Test-DevelopArtifactIdentityDifference $old $now fresh @($scenario) | Should -BeTrue
+    }
+    Test-DevelopArtifactIdentityDifference $old $now fresh | Should -BeTrue
+    Test-DevelopArtifactIdentityDifference $old $now upgrade @('update') | Should -BeTrue
+    # A change to a native consumer is still bound, even for these scenarios.
+    $runner=Join-Path $f.root 'scripts/invoke-develop-e2e.ps1'
+    $runnerBytes=[IO.File]::ReadAllBytes($runner)
+    [IO.File]::AppendAllText($runner,"`nWrite-Output 'new shared native consumer'`n")
+    $consumerChanged=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $consumerChanged $f.base @('verification') $f.catalog | Should -BeFalse
+    [IO.File]::WriteAllBytes($runner,$runnerBytes)
+    foreach($artifact in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','futureArtifact')) {
+        $different=$now|ConvertTo-Json -Depth 32|ConvertFrom-Json
+        $different.inventory.external.artifacts|Add-Member -NotePropertyName $artifact -NotePropertyValue ('e'*64) -Force
+        $different.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $different.inventory
+        Test-DevelopScenarioEquivalentInput $f.root $old $different $f.base @('verification') $f.catalog | Should -BeFalse
+    }
+    if($PositiveStand) {
+        [IO.File]::AppendAllText((Join-Path $positive '.dev.env'),"`nUI_TESTING=false`n")
+        $standChanged=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+        Test-DevelopScenarioEquivalentInput $f.root $old $standChanged $f.base @('verification') $f.catalog | Should -BeFalse
+    }
+    # A tampered physical broker is rejected when taking the CURRENT binding;
+    # a scenario projection never replaces that exact-byte admission.
+    [IO.File]::AppendAllText($broker,'tamper')
+    {Get-SourceE2EArtifactBindingHashes $f.root $f.binding} | Should -Throw '*HASH_MISMATCH*'
+}
+
+It 'rejects an unprojectable native consumer before expensive source comparison without granting proof' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $f.catalog.contracts[0].paths+=@('native-consumer.ps1')
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    $path=Join-Path $f.root 'native-consumer.ps1'
+    [IO.File]::WriteAllText($path,"Write-Output 'original native consumer'")
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'native consumer baseline'
+    Save-IncrementalJourneyProofs $f
+    [IO.File]::AppendAllText($path,"`nWrite-Output 'changed native consumer'")
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'native consumer change'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Mock Test-DevelopScenarioEquivalentInput {throw 'Unprojectable inputs must reject before expensive comparison'}
+    $records=@(Get-DevelopScenarioReusePlan $f.root $tree fresh $now $f.catalog -AllowPendingStatic)
+    @($records|Where-Object execution -eq reuse).Count | Should -Be 0
+    @($records|ForEach-Object reuseDiagnostics|ForEach-Object code) | Should -Contain 'NATIVE_CONSUMER_INPUT_CHANGED'
+    Should -Invoke Test-DevelopScenarioEquivalentInput -Times 0 -Exactly
+}
+
+It 'keeps Pester routing edits outside native workload but rejects unknown catalog fields' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $old=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $f.catalog.contracts[0].tests+=@('tests/pester/Future.Tests.ps1')
+    $f.catalog|Add-Member -NotePropertyName pesterWorkers -NotePropertyValue @{qualificationImplicitDefault=2} -Force
+    $path=Join-Path $f.root 'tests/quality-contracts.json'
+    [IO.File]::WriteAllText($path,($f.catalog|ConvertTo-Json -Depth 24))
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('install') $f.catalog | Should -BeTrue
+    $f.catalog|Add-Member -NotePropertyName unknownNativePolicy -NotePropertyValue 'must bind'
+    [IO.File]::WriteAllText($path,($f.catalog|ConvertTo-Json -Depth 24))
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('install') $f.catalog | Should -BeFalse
+}
+
+It 'keeps the linked MCP reference under static proof without exempting unknown references or unauthenticated source' {
+    Mock Get-DevelopE2EStandStateSha256 {'c'*64}
+    $f=New-ScenarioPlanFixture
+    Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
+    $relative='.agents/skills/1c-workflow/references/mcp.md'
+    $path=Join-Path $f.root $relative
+    [void][IO.Directory]::CreateDirectory((Split-Path $path))
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
+    $f.catalog.contracts[0].paths+=@($relative)
+    [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'MCP reference baseline'
+    $f.base=(& git -C $f.root rev-parse HEAD).Trim()
+    Save-IncrementalJourneyProofs $f
+    $old=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    [IO.File]::AppendAllText($path,"`nUpdated broker recovery instructions.`n")
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'MCP reference documentation'
+    $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
+    $selected=Resolve-DevelopE2EJourneyPlanCore -RepositoryRoot $f.root -BaseRef $f.base -ChangedPath @($relative) -Catalog $f.catalog
+    @($selected.journeys) | Should -BeNullOrEmpty
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    $records=@(Get-DevelopScenarioReusePlan $f.root $tree fresh $now $f.catalog -AllowPendingStatic)
+    @($records|Where-Object execution -eq reuse).Count | Should -Be 6
+    $tampered=$old|ConvertTo-Json -Depth 32|ConvertFrom-Json
+    ($tampered.inventory.inputs|Where-Object path -eq $relative).sha256='e'*64
+    $tampered.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $tampered.inventory
+    Test-DevelopScenarioEquivalentInput $f.root $tampered $now $f.base @('verification') $f.catalog | Should -BeFalse
+    $unknown='.agents/skills/1c-workflow/references/unknown-native.md'
+    [IO.File]::WriteAllText((Join-Path $f.root $unknown),'unknown native input')
+    & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'unknown reference'
+    $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
+    Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('verification') $f.catalog | Should -BeFalse
 }
 
 }

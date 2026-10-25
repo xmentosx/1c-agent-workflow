@@ -21,6 +21,7 @@ function Get-DeliveryCommonGitDirectory {
     (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim()
 }
 . (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1')
+. (Join-Path $RepoRoot 'scripts/delivery-native-plan.ps1')
 . (Join-Path $RepoRoot 'scripts/source-e2e-artifact-discovery.ps1')
 $checkerTokens = $null; $checkerErrors = $null
 $checkerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts\check.ps1'), [ref]$checkerTokens, [ref]$checkerErrors)

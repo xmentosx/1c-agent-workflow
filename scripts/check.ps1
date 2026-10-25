@@ -521,6 +521,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\source-delivery-queue.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-component.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-plan.ps1"),
+        (Join-Path $repoRoot "scripts\delivery-native-plan.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-resources.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-ref-cleanup.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-candidate.ps1"),

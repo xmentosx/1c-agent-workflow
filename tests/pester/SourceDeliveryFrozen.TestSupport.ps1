@@ -8,7 +8,7 @@
         New-Item -ItemType Directory -Force -Path $scripts | Out-Null
         # Custom-gate children return before artifact discovery; keep that unused
         # module out of the fixture so its edits cannot invalidate publication proof.
-        $paths=@($DeliverySourcePaths)+@('release-artifact-paths.ps1','git-path-list.ps1','release-qualification.ps1','quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-proof-json.ps1','invoke-pester-runtime.ps1','develop-e2e-cleanup.ps1' | ForEach-Object {Join-Path $RepoRoot "scripts/$_"})
+        $paths=@($DeliverySourcePaths)+@('release-artifact-paths.ps1','git-path-list.ps1','release-qualification.ps1','quality-contracts.ps1','stand-env-identity.ps1','source-proof-json.ps1','invoke-pester-runtime.ps1','develop-e2e-cleanup.ps1' | ForEach-Object {Join-Path $RepoRoot "scripts/$_"})
         foreach($path in @($paths|Sort-Object -Unique)){Copy-Item -LiteralPath $path -Destination $scripts}
         $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1'
         $target=Join-Path $fixture.root $relative
