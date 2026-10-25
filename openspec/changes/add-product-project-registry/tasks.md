@@ -1,5 +1,15 @@
 # Tasks
 
+## R6: итоговый кандидат данных для согласования, 2026-10-25
+
+- [x] Записать подтверждённую владельцем PM4 карту доступности/ограничений отдельно от PM5: 22+22 области, без объявления PM5 документацией PM4.
+- [x] Заполнить УНФ+PM4 Mantis: единственный проект «04. PM и ERP+PM (поддержка)», search/create327; сохранить остальные подтверждённые связи.
+- [x] Сверить СППР URL с действующим reader config, проверить 8/8 immutable selected contexts и подготовить [единую итоговую таблицу](evidence/r6-final-catalog-review-2026-10-25.md), data commit `2cde7b6f1479cbdf5030cba34be4f3ab9adce521` (не опубликован).
+- [ ] Итогово согласовать кандидат, выпускной охват и явно отложенные optional homes/внешние проекты.
+- [ ] После отдельного разрешения опубликовать согласованный data snapshot и закрепить published SHA; только тогда закрывать R6/registry AC-36–38/memory AC-44.
+
+Это конечный остаток подготовки данных, не новые проверки G3. Регистрацию source-документов определяет RegisterChange/Status. G4/Gate6/рабочая миграция/публикация не запускались. Предыдущие записи о незаполненных PM4/УНФ+PM4/СППР URL исторические.
+
 ## R6: Git deadline repair, 2026-10-25
 
 - [x] Устранить подтверждённый registration blocker у existing process cleanup owner: пропуск отсутствующих PID до CIM, exact identity guard/закреплённый handle, fail closed при ошибке lookup. [Единый результат](evidence/r6-git-deadline-repair-2026-10-25.md): исходный GitSave test/10 s/reserve3s неизменны; промежуточный owner batch27/0/0 и final focused5/0/0, instrumentation удалено.
