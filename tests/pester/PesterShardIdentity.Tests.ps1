@@ -201,6 +201,41 @@ Describe 'Pester shard selected-test identity' {
         $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
     }
 
+    It 'reuses an unchanged workflow operation group after a sibling edit but invalidates the shared fixture' {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root=New-ShardIdentityFixture 'Workflow operation scope'
+        $tests=@('tests/pester/WorkflowUpdateRollback.Tests.ps1','tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1')
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $owners=@($catalog.contracts|Where-Object {@($_.tests|Where-Object {$_ -in $tests}).Count})
+        $patterns=@($owners|ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+        $tracked=@(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--'))
+        foreach($relative in @(Select-QualityPaths $tracked $patterns)) {
+            $target=Join-Path $root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        foreach($test in $tests) {
+            [IO.File]::WriteAllText((Join-Path $root $test),"Describe 'Workflow fixture' { It 'passed' { `$true|Should -BeTrue } }")
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=$tests}|ConvertTo-Json))
+        & git -C $root add --all;& git -C $root commit -qm 'workflow group scope'
+        $first=Invoke-ShardIdentityFixture $root 'out-workflow-first'
+        $first.executedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root $tests[1]),"`n# changed receipt regression")
+        & git -C $root add --all;& git -C $root commit -qm 'one operation regression'
+        $warm=Invoke-ShardIdentityFixture $root 'out-workflow-sibling'
+        $warm.executedWorkerCount | Should -Be 1
+        $warm.reusedWorkerCount | Should -Be 1
+        @($warm.workers|Where-Object execution -eq reused|ForEach-Object {$_.paths[0]})[0] | Should -BeLike ('*'+(Split-Path $tests[0] -Leaf))
+        @((Resolve-QualityContractsForPaths $catalog @($tests[1])).tests) | Should -Be @($tests[1])
+        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/WorkflowUpdateRollback.TestSupport.ps1'),"`n# changed shared fixture")
+        & git -C $root add --all;& git -C $root commit -qm 'shared workflow fixture'
+        $changed=Invoke-ShardIdentityFixture $root 'out-workflow-shared'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+    }
+
     It 'rejects malformed reuse input paths: <kind>' -TestCases @(
         @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
         @{kind='outside';paths=@('../secret.ps1')},

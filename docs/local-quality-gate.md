@@ -223,6 +223,12 @@ platform, compatibility minimum, other artifacts and unknown fields remain bound
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
+The main `1c-workflow/SKILL.md` content uses the same static boundary, with
+authenticated prior/current file presence. Addition/removal remains conservative.
+The fast skill retains exact native content: its contract marker and SHA are read.
+Declared product-context functions may retain native proof only with known disabled
+context across all target roots and no pending operation. Enabled/unknown context,
+unknown functions and top-level execution remain bound.
 The exact new broker still requires the real ondemand-mcp Release capability for
 both backend families; Develop reuse cannot qualify its RPC behavior.
 Retained-launch cleanup is an internal broker RPC path. Develop lifecycle drain

@@ -215,6 +215,42 @@
     },
     "scenarioInputs": [
       {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        "requiresNoProductContext": true,
+        "outsideWhenNoProductContext": true,
+        "functions": {
+          "Get-ItlProductProjectBinding": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Assert-ItlProductProjectBindingValue": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Read-ItlProductProjectConfig": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Set-ItlProductProjectBinding": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Read-ItlProductProjectSetting": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Set-ItlProductProjectSetting": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectStartupDisposition": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Read-ItlProductProjectSnapshot": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectOperationContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Set-ItlProductProjectOperationContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Resolve-ItlProductProjectEndpointIntent": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Resolve-ItlProductProjectRuntimeContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectEffectiveSnapshot": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "New-ItlProductProjectPreview": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Test-ItlProductProjectPreviewClientChanges": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Test-ItlProductProjectPreviewAlreadyApplied": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectSourceSummary": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Show-ItlProductProjectPreview": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Resolve-ItlProductProjectPreviewDecision": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Set-ItlProductProjectAppliedContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectPublisherContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Initialize-ItlProductProjectContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectResolvedHash": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectNoOpInputs": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectSetupContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Test-ItlProductProjectCatalogRole": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Assert-ItlProductProjectPackageCompatibility": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "Get-ItlProductProjectIntegrationIntent": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
+          "New-ItlProductProjectMantisWriteArguments": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"]
+        }
+      },
+      {
         "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
         "functions": {
           "Sync-WorkflowManagedDependencyLockEntries": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.refresh"],
@@ -855,6 +891,247 @@
       "tests": ["tests/pester/DevelopBrokerInputScope.Tests.ps1"]
     },
     {
+      "id": "workflow-update-producers",
+      "owner": "Shared executable inputs of preserved workflow update scenarios",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/kilo-command-templates/*",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/execution-guard-cutover-paths.json",
+        ".agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.branch-deletion.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.merge-preservation.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-diagnostics.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-evidence.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-impact.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/itl-runner-timeout.ps1",
+        ".agents/skills/1c-workflow/scripts/run-*.ps1",
+        ".agents/skills/1c-workflow/scripts/workflow-local-patch.ps1",
+        ".agents/skills/1c-workflow/tools/auto-update/*",
+        "AGENT-INSTALL.md",
+        "install-agent-1c-workflow.ps1",
+        "scripts/update-installed-workflow.ps1",
+        "templates/AGENTS.append.md",
+        "templates/USER-RULES.append.md",
+        "templates/dev.env.example",
+        "templates/gitignore.append",
+        "templates/project.json",
+        "templates/release-e2e.example.json",
+        "templates/tools.json",
+        "tests/pester/WorkflowUpdateRollback.TestSupport.ps1"
+      ],
+      "reuseInputPaths": [
+        ".agents/skills/1c-workflow/scripts/lib/*.ps1",
+        "templates/*",
+        "scripts/git-path-list.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateHandoff.Tests.ps1",
+        "tests/pester/WorkflowUpdateReconciliation.Tests.ps1",
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+        "tests/pester/WorkflowUpdateSnapshotStatus.Tests.ps1",
+        "tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1",
+        "tests/pester/WorkflowUpdateOpenCodeSnapshot.Tests.ps1",
+        "tests/pester/WorkflowUpdateLegacyRecovery.Tests.ps1",
+        "tests/pester/WorkflowUpdateSourceCutover.Tests.ps1",
+        "tests/pester/WorkflowUpdateFinalization.Tests.ps1",
+        "tests/pester/WorkflowUpdateLegacyRetirement.Tests.ps1",
+        "tests/pester/WorkflowUpdateCommitRecovery.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatehandoff",
+      "owner": "Independent WorkflowUpdateHandoff regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateHandoff.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateHandoff.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateHandoff.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatereconciliation",
+      "owner": "Independent WorkflowUpdateReconciliation regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateReconciliation.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateReconciliation.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateReconciliation.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdaterollback",
+      "owner": "Independent WorkflowUpdateRollback regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateRollback.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateRollback.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatesnapshotstatus",
+      "owner": "Independent WorkflowUpdateSnapshotStatus regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateSnapshotStatus.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateSnapshotStatus.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateSnapshotStatus.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatereceiptrecovery",
+      "owner": "Independent WorkflowUpdateReceiptRecovery regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdateopencodesnapshot",
+      "owner": "Independent WorkflowUpdateOpenCodeSnapshot regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateOpenCodeSnapshot.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateOpenCodeSnapshot.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateOpenCodeSnapshot.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatelegacyrecovery",
+      "owner": "Independent WorkflowUpdateLegacyRecovery regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateLegacyRecovery.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateLegacyRecovery.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateLegacyRecovery.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatesourcecutover",
+      "owner": "Independent WorkflowUpdateSourceCutover regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateSourceCutover.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateSourceCutover.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateSourceCutover.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatefinalization",
+      "owner": "Independent WorkflowUpdateFinalization regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateFinalization.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateFinalization.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateFinalization.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatelegacyretirement",
+      "owner": "Independent WorkflowUpdateLegacyRetirement regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateLegacyRetirement.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateLegacyRetirement.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateLegacyRetirement.Tests.ps1"
+      ]
+    },
+    {
+      "id": "workflow-scenario-workflowupdatecommitrecovery",
+      "owner": "Independent WorkflowUpdateCommitRecovery regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/WorkflowUpdateCommitRecovery.Tests.ps1",
+      "paths": [
+        "tests/pester/WorkflowUpdateCommitRecovery.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/WorkflowUpdateCommitRecovery.Tests.ps1"
+      ]
+    },
+    {
+      "id": "develop-instruction-context-scope",
+      "owner": "Native guidance content and disabled product context selection and reuse",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/DevelopInstructionContextScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DevelopInstructionContextScope.Tests.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        "scripts/quality-contracts.ps1",
+        ".agents/skills/1c-workflow/SKILL.md",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1"
+      ],
+      "reuseInputPaths": [
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/release-qualification.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/stand-env-identity.ps1",
+        "scripts/check.ps1",
+        "scripts/source-delivery-plan.ps1",
+        "scripts/delivery-native-plan.ps1",
+        "scripts/source-e2e-artifact-discovery.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "scripts/develop-configuration-rejection.ps1",
+        "scripts/source-e2e-fixture.ps1",
+        "scripts/update-installed-workflow.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/*.ps1",
+        "templates/dependency-lock.json"
+      ],
+      "tests": [
+        "tests/pester/DevelopInstructionContextScope.Tests.ps1"
+      ]
+    },
+    {
       "id": "source-delivery-incremental-inputs",
       "owner": "end-to-end incremental selection and reuse against actual journey sources",
       "gate": "targeted",
@@ -1131,9 +1408,33 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1", "AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "scripts/update-installed-workflow.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
-      "reuseInputPaths": ["scripts/git-path-list.ps1"],
-      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/CavemanPolicyTransition.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.package-content.ps1",
+        "AGENT-INSTALL.md",
+        "install-agent-1c-workflow.ps1",
+        "scripts/update-installed-workflow.ps1",
+        "tests/pester/SourceUpgradeHandoff.Tests.ps1",
+        "tests/pester/UiTestingPolicyTransition.Tests.ps1",
+        "templates/AGENTS.append.md",
+        "templates/dev.env.example",
+        "templates/gitignore.append",
+        "templates/project.json",
+        "templates/release-e2e.example.json",
+        "templates/tools.json",
+        "templates/USER-RULES.append.md",
+        ".agents/skills/1c-workflow/kilo-command-templates/*"
+      ],
+      "reuseInputPaths": [
+        "scripts/git-path-list.ps1"
+      ],
+      "tests": [
+        "tests/pester/BootstrapUpdate.Tests.ps1",
+        "tests/pester/SourceUpgradeHandoff.Tests.ps1",
+        "tests/pester/CavemanPolicyTransition.Tests.ps1",
+        "tests/pester/UiTestingPolicyTransition.Tests.ps1",
+        "tests/pester/DependencyLocks.Tests.ps1",
+        "tests/pester/GitHubDependencyFallback.Tests.ps1"
+      ]
     },
     {
       "id": "lifecycle-test-fixtures",
@@ -1194,9 +1495,12 @@
         "tests/pester/LifecycleGitContinuation.Tests.ps1",
         "tests/pester/Agent1cEntrypoint.Tests.ps1",
         "tests/pester/ArtifactRetentionAndBranchDeletion.Tests.ps1",
-        "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1",
+        "tests/pester/DevBranchLifecycle.Tests.ps1",
+        "tests/pester/DevBranchCheck.Tests.ps1",
+        "tests/pester/DevBranchWorktrees.Tests.ps1",
+        "tests/pester/DevBranchForkContinuation.Tests.ps1",
+        "tests/pester/DevBranchMergeRecovery.Tests.ps1",
         "tests/pester/WorktreeInventory.Tests.ps1",
-        "tests/pester/WorkflowUpdateRollback.Tests.ps1",
         "tests/pester/PendingMergeWorkflowTransition.Tests.ps1",
         "tests/pester/MergePreservation.Tests.ps1",
         "tests/pester/WorkflowLocalPatch.Tests.ps1",
