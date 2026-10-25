@@ -61,6 +61,10 @@ to repeat native work. Unknown/new ambient dependencies remain conservative.
 * Plan records per-scenario source paths/functions and the reason for falling
   back to complete coverage. It does not hide environment/contract rejection
   behind a source-selection explanation.
+* The cache lookup rejects an authenticated inventory's differing artifact SHA
+  before reading/projecting its report. This preserves every acceptance check
+  for matching inputs, while old component baselines cannot exhaust the Plan
+  budget through repeated expensive comparison for every scenario.
 
 ## Regression acceptance
 

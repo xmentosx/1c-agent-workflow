@@ -291,6 +291,14 @@ function Get-DevelopE2EAncestorQualification {
                 (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$manifest.inputIdentity.fingerprint) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'MANIFEST_INVALID'; continue
             }
+            # A different physical artifact always rejects reuse. Reject after
+            # authenticating the input inventory, before reading/normalizing
+            # hundreds of inapplicable reports. This cannot grant any proof;
+            # candidates with matching artifacts still traverse every check.
+            if(Test-DevelopArtifactIdentityDifference $manifest.inputIdentity $InputIdentity) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_INPUTS_CHANGED' -Inputs @('external:artifacts')
+                continue
+            }
             $reportPath = Join-Path $file.DirectoryName 'route-report.json'
             if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'REPORT_SHA_MISMATCH'; continue

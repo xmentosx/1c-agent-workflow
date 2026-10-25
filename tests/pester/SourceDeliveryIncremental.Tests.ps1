@@ -414,6 +414,14 @@ It 'keeps authenticated scenario proof through routing-policy additions and stil
     $changed=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey upgrade -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
     Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('update') $f.catalog | Should -BeFalse
     Test-DevelopScenarioEquivalentInput $f.root $old $changed $f.base @('configuration-rejection') $f.catalog | Should -BeTrue
+    $changed=$current|ConvertTo-Json -Depth 32|ConvertFrom-Json
+    $changed.inventory.external.artifacts.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='d'*64
+    $changed.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $changed.inventory
+    Mock Test-DevelopScenarioEquivalentInput {throw 'Different artifacts must be rejected before workload/source projection'}
+    $records=@(Get-DevelopScenarioReusePlan $f.root $tree upgrade $changed $f.catalog -AllowPendingStatic)
+    @($records|Where-Object execution -eq reuse).Count | Should -Be 0
+    @($records|ForEach-Object reuseDiagnostics|ForEach-Object code) | Should -Contain 'ARTIFACT_INPUTS_CHANGED'
+    Should -Invoke Test-DevelopScenarioEquivalentInput -Times 0 -Exactly
 }
 
 It 'keeps Go test and README changes native-free while preserving runtime and embed invalidation' {

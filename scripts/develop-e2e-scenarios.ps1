@@ -22,6 +22,20 @@ function Get-DevelopScenarioWorkloadHash {
     return Get-DevelopE2ECanonicalJsonSha256 $workload
 }
 
+function Test-DevelopArtifactIdentityDifference {
+    param([object]$Recorded,[object]$Current)
+    $values=[Collections.Generic.List[object]]::new()
+    foreach($identity in @($Recorded,$Current)) {
+        $external=$identity.inventory.external;$artifacts=$null
+        if($external -is [Collections.IDictionary]) {$artifacts=$external['artifacts']}
+        elseif($external.PSObject.Properties['artifacts']) {$artifacts=$external.artifacts}
+        $values.Add($artifacts)
+    }
+    if($null -eq $values[0] -and $null -eq $values[1]) {return $false}
+    if($null -eq $values[0] -or $null -eq $values[1]) {return $true}
+    return (Get-DevelopE2ECanonicalJsonSha256 $values[0]) -cne (Get-DevelopE2ECanonicalJsonSha256 $values[1])
+}
+
 function Assert-DevelopScenarioCompletion {
     param([object]$Catalog,[string]$Journey,[object]$Result,[object[]]$Steps)
     if($Journey -eq 'fresh') {
@@ -143,7 +157,7 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {

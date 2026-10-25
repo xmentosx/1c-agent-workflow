@@ -223,6 +223,9 @@ Go unit tests and README of the on-demand main package stay under static proof.
 They do not select a native journey only with the audited runner/builder hashes
 and no `go:embed` in compiled package source, on both historical/current snapshots.
 Consumer drift, embedding, missing source or unknown paths close this exception.
+After authenticating a cache input inventory, reject differing artifact hashes
+before expensive report/source projection. Matching artifacts still require every
+existing workload, provenance, static, environment and failure check.
 The stateless client writer uses upgrade update and fresh install/branch as
 native representatives alongside the current static preservation/PlanOnly/atomic
 write tests. Other unchanged consumers may retain proof after those producers
