@@ -8,7 +8,13 @@
 
 ### Requirement: Отдельный checkpoint G3 и совместимый переход
 
+Приёмка G3 SHALL отделять согласованный проверенный PM5/Windows 11/Kilo/Cursor контур (Codex только core/API) от расширенной выпускной квалификации. По решению пользователя 2026-10-25 этот контур SHALL считаться принятым согласно [итоговой матрице](../../g3-acceptance.md); R1–R6 SHALL оставаться отдельным остатком до выпуска, без объявления непроверенного PASS или сокращения поддержки. Эта приёмка SHALL NOT разрешать G4, Gate 6, рабочую миграцию или публикацию.
+
 Реализация installed binding/recovery/startup G3 SHALL требовать отдельно одобренной границы checkpoint и разрешения соответствующего apply; approval D9 памяти или completed G2 SHALL NOT заменять их. Один существующий MCP/client owner SHALL владеть local plan до первой записи, receipts, applied marker и pinned resume/owned restore; dispatcher SHALL использовать этот owner после прежнего lifecycle admission. Новая общая очередь/lock family/coordinator SHALL NOT требоваться. Capability SHALL проверяться до первой binding записи. Штатный downgrade к неподдерживающему пакету SHALL сначала выполнить совместимый owned restore либо остановиться до замены helper; исторический permissive parser SHALL NOT объявляться проверяющим новые поля. Legacy unbound SHALL сохранять прежнее поведение. Наполнение AC-36–38 SHALL оставаться обязательным до выпуска, а не новым startup barrier.
+
+#### Scenario: Принятый контур и недоступные стенды
+- **WHEN** выполнены доказательства согласованного PM5 контура, но PM4/platform/client/full lifecycle клетки остаются UNVERIFIED
+- **THEN** G3 закрыт в согласованной границе, R1–R6 сохранены для выпуска, а новые сценарии не добавляются автоматически
 
 #### Scenario: Документ checkpoint готов
 - **WHEN** G2 завершён, D9 согласован и G3 checkpoint подготовлен, но G3 apply не разрешён

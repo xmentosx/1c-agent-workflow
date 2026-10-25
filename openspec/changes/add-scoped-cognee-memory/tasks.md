@@ -1,5 +1,16 @@
 # Tasks
 
+## Актуальная граница G3 — согласована 2026-10-25
+
+**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
+
+- [x] Принять и закрыть согласованный контур G3 по существующим доказательствам, включая G3-LD1 и регистрацию bf5a46e6; новых canary не добавлять.
+- [x] Разделить registry dependency и ещё не реализованные memory consumer/G4/G5/AC-43; единое наполнение AC-36–38 / AC-44 не дублировать.
+- [ ] Выпускной остаток R1–R5: PM4, платформы/сессии, полный lifecycle/foreground выбор, остальные native clients и cost области — по единой матрице, отдельным поручением.
+- [ ] До первого выпуска выполнить R6: подтверждённое наполнение продуктов/проектов/настроек и карты функциональности, точный опубликованный SHA. Pilot/synthetic данные не закрывают задачу.
+
+Прежние агрегатные checkbox сохраняют историческую полноту охвата; открытые части относятся к R1–R6 и не переоткрывают принятый контур G3. Этот change целиком не архивируется.
+
 [G3-LD1 / integrated native PASS, 2026-10-25](../add-product-project-registry/evidence/g3-legacy-executor-integrated-2026-10-25.md): после сохранения обеих сторон конфликта повторён исходный single PM5 downgrade source7ba9→oldfa0, exit0/381883мс; main+sibling clean, old helper/pins0.4.15/schema1/locked, pending0 и CF/DB/history unchanged. Два downgrade blocker закрыты. Новых cases нет; регистрация отдельно подтверждается source-delivery Status. Full G3/AC18/39 и memory AC43/G5 открыты; OpenCode SKIPPED, Gate6/G4/рабочая миграция/публикация вне допуска.
 
 [Промежуточный mode repair до migration handoff, 2026-10-24](../add-product-project-registry/evidence/g3-managed-downgrade-mode-partial-2026-10-24.md): legacy wire/environment/argument исправлены, 97/0/0/0 owner tests. На той же PM5-копии direct downgrade прошёл прежнюю mode error, но exit1/87125мс на **G3-MANAGED-DOWNGRADE-AI-RULES-NOT-NEWER**; snapshot 400b27db91cc4fdb80a81e70a998ad29 сохранён. Named downgrade/G3/AC-39/memory AC-43/G5 ещё не приняты. Текущие процессы завершены; новые проверки/регистрация/lifecycle отложены на согласованное пользователем окно холодного A/B. OpenCode SKIPPED; Gate6/G4/рабочая миграция/публикация не выполнялись.

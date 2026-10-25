@@ -36,7 +36,13 @@ Remember/recall/startup памяти SHALL NOT добавлять Code/Graph pro
 
 ### Requirement: Раздельный допуск основы и runtime памяти
 
+Зависимость installed G3 SHALL считаться принятой в согласованном пользователем PM5/Windows 11/Kilo/Cursor контуре, с Codex только core/API, по [единой матрице реестра](../../../add-product-project-registry/g3-acceptance.md). R1–R5 SHALL оставаться отдельной расширенной выпускной квалификацией, R6/registry AC-36–38 SHALL оставаться обязательным наполнением для AC-44. Закрытый G3 SHALL NOT означать реализацию/разрешение G4, приёмку G5 или AC-43 целиком; отдельные G1/G2/D9 и runtime критерии сохраняются.
+
 Зависимая реализация G4 SHALL начинаться только после применимого native G1, квалифицированного интерфейса G2 и отдельного одобрения границы D9/разрешения кода. G2 qualification SHALL опираться на действительные reader/resolver/publisher и consumer fixture, а не документы/mock. Pure G2 SHALL оставаться независимым от Cognee/D9; installed G3 SHALL отдельно владеть association/startup/applied snapshot/recovery. Память SHALL потреблять revision, provenance, выбранную применимость/home/read candidates и hashes settings/knowledge из одного resolver, не создавать второй business resolver/updater. Ни один из этих допусков SHALL NOT объявляться installed приёмкой G5.
+
+#### Scenario: Registry G3 принят без реализации памяти
+- **WHEN** пользователь принял проверенный PM5 контур G3 и сохранил выпускной остаток R1–R6
+- **THEN** registry dependency закрыта в этой границе, память остаётся не реализованной, а непроверенные платформы и consumer journeys не объявляются PASS
 
 #### Scenario: Checkpoint подготовлен и native proof получен
 - **WHEN** D9 описан, G1 passed, но G2 interface ещё не квалифицирован или отдельное одобрение D9 отсутствует
