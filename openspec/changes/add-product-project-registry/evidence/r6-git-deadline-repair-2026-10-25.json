@@ -1,0 +1,63 @@
+{
+  "sourceBase": "f1d823fc4be1a37264b98fa4aa0230bbd3e3444b",
+  "acceptedQueueHeadBeforeRepair": "051c556ee07e8287de1d9126541b6255adbde54e",
+  "originalTestBlob": "389beeda0c5e1e0313ebcdad988c5bb2fd965418",
+  "originalReproducerChanged": false,
+  "transportReserveSeconds": 3,
+  "returnThresholdSeconds": 10,
+  "beforeCimCalls": 6,
+  "afterCimCalls": 2,
+  "beforeCimMilliseconds": 2162.1116,
+  "afterCimMilliseconds": 784.5139,
+  "redundantGonePidMilliseconds": 1398.2391,
+  "focused": {
+    "passed": 5,
+    "skipped": 0,
+    "failed": 0,
+    "notRun": 23
+  },
+  "intermediateOwnedBatch": {
+    "passed": 27,
+    "skipped": 0,
+    "failed": 0
+  },
+  "files": [
+    {
+      "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1",
+      "sha256": "7e2cea1ace2987515f244469f7045e78047e96e3188784110a9b0005bc62019f"
+    },
+    {
+      "path": "tests/pester/UiTools.Tests.ps1",
+      "sha256": "49392247c5868a72ab1dcd3b9c46f269d48059395c82dda54c479d3663a464df"
+    },
+    {
+      "path": "tests/pester/ProductProjectGitSave.Tests.ps1",
+      "sha256": "7279edbf4ff3d03c9ada83c222787ad96e6a2622de4036a1568048f460a8588b"
+    },
+    {
+      "path": "build/registry-population-20261025/deadline-before.trace.jsonl",
+      "sha256": "197833628bd00bdd2eed2e1cd6f0c59c9532d0a7bb18c985d202cae3ba7eeddb"
+    },
+    {
+      "path": "build/registry-population-20261025/deadline-after.trace.jsonl",
+      "sha256": "f7a5699237f88370cd79885c5a2bb0d30b86b016effe263ff06b2792c2eb0392"
+    },
+    {
+      "path": "build/registry-population-20261025/deadline-owned.xml",
+      "sha256": "8865f3b41434ba16dbaca484da396c3f0ec3f0956fc24d5a5656744ec490bfb3"
+    },
+    {
+      "path": "build/registry-population-20261025/deadline-final-focused.xml",
+      "sha256": "979e1d72b33cab8d7182457e382451064d7b88154d8119949ad06d68e9970d9a"
+    }
+  ],
+  "registration": {
+    "queueId": "product-project-registry-g2",
+    "owner": "source-delivery RegisterChange",
+    "result": "authoritative source-delivery Status/queue ledger"
+  },
+  "dataCandidateUnchanged": "fae719cac93c820add276ff7201d84473b621543",
+  "g4Started": false,
+  "workingMigration": false,
+  "publication": false
+}

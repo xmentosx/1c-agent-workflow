@@ -76,11 +76,33 @@ function Stop-ItlUiToolProcessTree {
     }
     $errors = @()
     foreach ($item in @($owned | Sort-Object CreationDate -Descending)) {
-        $actual = Get-CimInstance Win32_Process -Filter "ProcessId=$($item.ProcessId)"
-        if ($null -eq $actual) { continue }
-        if ($actual.CreationDate -ne $item.CreationDate) { $errors += "PID $($item.ProcessId) identity changed"; continue }
-        $termination = Stop-NativeProcessForSafety -Process (Get-Process -Id $item.ProcessId -ErrorAction Stop)
-        if (-not $termination.confirmed) { $errors += "PID $($item.ProcessId): $($termination.error)" }
+        # Killing the transport leaf commonly completes its Git parents too.
+        # Do not spend another CIM round trip proving each vanished PID absent.
+        try { $opened = Get-Process -Id $item.ProcessId -ErrorAction Stop }
+        catch {
+            if ($_.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenId,*') {
+                $errors += "PID $($item.ProcessId): $($_.Exception.Message)"
+            }
+            continue
+        }
+        if ($null -eq $opened) { continue }
+        try {
+            if ($opened.HasExited) { continue }
+            # Keep the validated instance pinned across the identity read/kill;
+            # a recycled PID must never redirect cleanup to another process.
+            $null = $opened.Handle
+            $actual = Get-CimInstance Win32_Process -Filter "ProcessId=$($item.ProcessId)"
+            if ($null -eq $actual) { continue }
+            if ($actual.CreationDate -ne $item.CreationDate) { $errors += "PID $($item.ProcessId) identity changed"; continue }
+            $termination = Stop-NativeProcessForSafety -Process $opened -UseOpenedProcess
+            if (-not $termination.confirmed) { $errors += "PID $($item.ProcessId): $($termination.error)" }
+        } catch {
+            $failure = $_
+            try { if ($opened.HasExited) { continue } } catch { }
+            $errors += "PID $($item.ProcessId): $($failure.Exception.Message)"
+        } finally {
+            $opened.Dispose()
+        }
     }
     return [pscustomobject]@{ confirmed = ($errors.Count -eq 0); error = ($errors -join '; ') }
 }
