@@ -1,5 +1,16 @@
 # Design
 
+## Конкретный план G4, 2026-10-25 — только подготовка
+
+[План реализации G4](g4-implementation-plan.md) фиксирует G4.0–G4.7, шесть
+областей, native REST frontend в existing MCP owner, cycle/continuation,
+qualified fork/host route и конечную source границу перед G5. Он использует
+опубликованный R6 SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` и actual r47 lock;
+назначенных homes в R6 нет, shared-product write не включается по догадке.
+D9 остаётся одобренным; план не является разрешением реализации, новой
+квалификацией G3 или приёмкой памяти. Gate6/рабочая миграция/публикация workflow
+не запускаются. Исторические readiness формулировки ниже читать через эту границу.
+
 ## R6 закрыт: данные опубликованы, 2026-10-25
 
 Пользователь согласовал восьмипроектный кандидат и явно разрешил публикацию данных.
@@ -101,7 +112,7 @@ Frontend сохраняет native-shaped `remember(data, dataset_name)`, `recal
 
 Зависимый change предоставляет стабильные IDs, effective settings, pinned SHA/hash и resolver `product-knowledge-applicability`. Он задаёт проектные роли только `code`, `graph`, `productDocs`; остальные MCP общие. Поэтому descriptor общего Cognee находится в существующих общих MCP settings/профиле организации и endpoint registry. Выбор business project/product определяет datasets и применимость, не собственный адрес Cognee и не четвёртую MCP-роль. Прежняя цепочка local override → project → profile → product относится к трём указанным ролям и не переносится на память. Личный выбор/disabled/TOOL off сохраняется у текущего MCP owner; qualified memory opt-in не включает выключенный provider.
 
-**Согласованный interface dependency:** 2026-10-18 в `add-product-project-registry/product-knowledge-applicability` включено необязательное `knowledgeAreas.<area>.memoryHomeProductId` того же `catalog/product-relations.json` snapshot. Один непустой stable product ID должен существовать в каталоге и входить в `availableIn` области; массив/null/невалидная ссылка отклоняются registry validator. Назначение/изменение home подтверждается человеком как общее правило. Отсутствие поля валидно, но общее назначение не угадывается; при разных homes неоднозначных областей остаётся исходный project/task candidate. Поле не даёт доступа, не содержит provider URL/dataset ID и не создаёт новую область. Source schema/resolver и подтверждённая seed-карта ещё не реализованы: документальное согласование не закрывает runtime dependency. Memory consumer получает resolved контекст у прежнего владельца и не дублирует его policy.
+**Согласованный interface dependency:** 2026-10-18 в `add-product-project-registry/product-knowledge-applicability` включено необязательное `knowledgeAreas.<area>.memoryHomeProductId` того же `catalog/product-relations.json` snapshot. Один непустой stable product ID должен существовать в каталоге и входить в `availableIn` области; массив/null/невалидная ссылка отклоняются registry validator. Назначение/изменение home подтверждается человеком как общее правило. Отсутствие поля валидно, но общее назначение не угадывается; при разных homes неоднозначных областей остаётся исходный project/task candidate. Поле не даёт доступа, не содержит provider URL/dataset ID и не создаёт новую область. Source schema/resolver квалифицированы G2; G3 принят в согласованном контуре, R6 опубликован. Реальных назначенных homes в R6 пока нет; memory consumer ещё не реализован, документальное согласование не заменяет его runtime proof. Memory consumer получает resolved контекст у прежнего владельца и не дублирует его policy.
 
 Read set включает текущий product и канонические homes только тех известных knowledgeAreas, для которых resolver подтвердил `availableIn`, состав/зависимости/условия; затем пересекается с backend grants. Это не все связанные продукты. Широкий product dataset может содержать неприменимые текущему варианту функции: функциональный фильтр D8 обязателен, а private project scope не расширяется. Provider-local deployment mapping из D2 хранит IDs реально подготовленных общих datasets отдельно от business catalog; личные ключи/пути/receipts остаются ignored. Каталог не создаёт datasets/пользователей и не выдаёт grants.
 
@@ -227,7 +238,7 @@ Rollback выполняет существующий client/settings owner: disa
 - **Граф сохраняет superseded/чужой факт** → scope до retrieval и native current-status/source proof независимо от semantic top_k; отсутствие native пути блокирует квалификацию до зависимой реализации.
 - **Краткая выдача пропускает нужный опыт** → paired baseline оценивает успешное действие и повторную работу, не только размер ответа; параметры подстраиваются без ослабления scope.
 - **Правила fork и host расходятся** → один semantic diff у fork owner, host несёт ссылки/данные; managed fallback изменение отдельно обозначено в D7.
-- **Реестр ещё только постановка** → contract fixtures независимы, конечная приёмка ждёт реальную зависимость; собственный обходной каталог не строится.
+- **Homes для shared-product пока не назначены** → использовать опубликованный R6 через существующий resolver, неизвестное общее назначение оставлять task/project candidate; свой каталог или automatic lineage sharing не строить.
 
 ## Migration Plan
 
