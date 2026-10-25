@@ -178,8 +178,9 @@ Describe 'Source quality catalog contracts' {
         $unrelatedLifecycle = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1")
         @($unrelatedLifecycle.tests) | Should -Not -Contain "tests/pester/RoctupPortLifecycle.Tests.ps1"
         $onDemandOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1")
-        @($onDemandOnly.contracts.id) | Should -Be @("mcp-hosts")
+        @($onDemandOnly.contracts.id) | Should -Be @("develop-broker-input-scope", "mcp-hosts")
         @($onDemandOnly.tests) | Should -Contain "tests/pester/OnDemandMcp.Tests.ps1"
+        @($onDemandOnly.tests) | Should -Contain "tests/pester/DevelopBrokerInputScope.Tests.ps1"
         $dependencyLockOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("templates/dependency-lock.json")
         @($dependencyLockOnly.contracts.id) | Should -Be @("dependency-lock")
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/DependencyLocks.Tests.ps1"
@@ -1093,7 +1094,7 @@ Describe 'Source catalog Develop journey selection' {
     It "routes each installed owner to the journey that exercises its behavior" {
         $installed = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
         $installed.reason | Should -Be 'quality-contract-route'
-        @($installed.contracts) | Should -Be @('mcp-hosts')
+        @($installed.contracts) | Should -Be @('develop-broker-input-scope','mcp-hosts')
         @($installed.journeys) | Should -Be @('fresh')
         @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('templates/dependency-lock.json') | Select-Object -ExpandProperty journeys) | Should -Be @('fresh')
         @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/build-ai-rules-release.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade')
