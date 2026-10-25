@@ -893,12 +893,12 @@
     },
     {
       "path": "content/rules/dev-standards-env.md",
-      "requirementId": "ITL-AI-RULES-R42",
+      "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Accepted Q23: empty UI_TESTING defaults to essential; invalid UI_TESTING falls back to manual. Retire the old UI-only invalid-value correction requirement, retaining strict handling for other settings and named one-off/broader no-UI precedence. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R46: adopt audited upstream 2f640143 with the agreed support endpoint and metadata/KD20 fixes; retain ITL lifecycle, ROCTUP/Vanessa routing and qualified metadata writer repairs where shared. Remove only the redundant display label (KD20) beside the identical 1c-kd20 connection name: 40966 to 40959 normalized UTF-8 bytes under the unchanged 40960 limit; triggers, obligations, aliases in the routed catalog, exceptions and failure outcomes are preserved.",
+      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Accepted Q23: empty UI_TESTING defaults to essential; invalid UI_TESTING falls back to manual. Retire the old UI-only invalid-value correction requirement, retaining strict handling for other settings and named one-off/broader no-UI precedence. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R46: adopt audited upstream 2f640143 with the agreed support endpoint and metadata/KD20 fixes; retain ITL lifecycle, ROCTUP/Vanessa routing and qualified metadata writer repairs where shared. Remove only the redundant display label (KD20) beside the identical 1c-kd20 connection name: 40966 to 40959 normalized UTF-8 bytes under the unchanged 40960 limit; triggers, obligations, aliases in the routed catalog, exceptions and failure outcomes are preserved. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
       "upstreamSha256": "2ca04075b9ce243d958694b2802caa981f6525bae7c9e41a7a9ddfcdf499cc87",
       "baselineSha256": "ebc5e758f85088a9d31a76fb555f0957d6035202f23dde4f3652cf71f54fcd4e",
-      "resultSha256": "b31d0799fdfee43c573598ccf7132660932343885053f8b099086a50429e6766"
+      "resultSha256": "3b1e34e658b25529b47d779640c85485de7d04e9d6d1394f27f91a3263caa7ca"
     },
     {
       "path": "content/rules/edt-workflow.md",
@@ -1028,12 +1028,12 @@
     },
     {
       "path": "content/rules/sdd-integrations.md",
-      "requirementId": "ITL-PLANNING-SUFFICIENCY-001",
+      "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage.",
+      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
       "upstreamSha256": "0c4dda48f15addc69b08c27060b0109292f47263f012a9a16519ceb9fb93439e",
       "baselineSha256": "f18f30484abccbdda49e24a28a82f2df55a146baf2964a6430d87a91bb647528",
-      "resultSha256": "048cf041c6c23eec227b44c0249f2447f8d82990f663a9670a02949e9de4872b"
+      "resultSha256": "cea3e4dd47584ca89225e0d881659d6c6c6354fedc1dd480da0f0ae788ff6e91"
     },
     {
       "path": "content/rules/subagent-core.md",
@@ -1100,12 +1100,12 @@
     },
     {
       "path": "content/rules/verification-delivery.md",
-      "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
+      "disposition": "resolved",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
       "upstreamSha256": "92c9734c33d5db396e39d6ca2698e8e24e04f0a8b913aaf11d9c792c75291e89",
       "baselineSha256": "7400ebb69da8f87529e754379a1d69c5e44a8e0c4fa1ea91f1e106c357125879",
-      "resultSha256": "7400ebb69da8f87529e754379a1d69c5e44a8e0c4fa1ea91f1e106c357125879"
+      "resultSha256": "2270f1eafaf0d0b5bfae4bd417b06861a84d9608e3f71714d0df34c9843f380e"
     },
     {
       "path": "content/rules/verification-gates.md",
@@ -1118,12 +1118,12 @@
     },
     {
       "path": "content/rules/verification-policy.md",
-      "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R44: assess AI findings before blocking or editing; auto failure continues with compensation and unverified AI evidence, required capabilities and confirmed defects remain binding. Retain raw evidence, no blind replay, fresh applicable correction proof and host delivery authority; qualify saved-case decisions and installed routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
+      "disposition": "resolved",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R44: assess AI findings before blocking or editing; auto failure continues with compensation and unverified AI evidence, required capabilities and confirmed defects remain binding. Retain raw evidence, no blind replay, fresh applicable correction proof and host delivery authority; qualify saved-case decisions and installed routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
       "upstreamSha256": "4e7e09e9da2f351ecf1b1fbe1f20a8ca370af160fb65bb6bddf6650e6f2ec186",
       "baselineSha256": "e4fd7479d4873873ea5397443a86b1aa76c6aa093e2014820c7b9f283e1e917f",
-      "resultSha256": "e4fd7479d4873873ea5397443a86b1aa76c6aa093e2014820c7b9f283e1e917f"
+      "resultSha256": "a755d3095cd8d7418d90bb18ab9788bd165c1342ca259d6f11e525a089bd44cf"
     },
     {
       "path": "content/skills/1c-change-package/references/manual-implementation.md",
@@ -2702,12 +2702,12 @@
     },
     {
       "path": "tools/validate-rules.ps1",
-      "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
+      "disposition": "resolved",
+      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
       "upstreamSha256": "8004df5e36718b44ecf29c8c3a26d12abc155900fdd8d9d6d00216b062f4467a",
       "baselineSha256": "6394a4c1435e40360d08adff2e3ef9efc1e15f0ea17d5b4066687ca7648f1e6d",
-      "resultSha256": "6394a4c1435e40360d08adff2e3ef9efc1e15f0ea17d5b4066687ca7648f1e6d"
+      "resultSha256": "a9af342765a110f5ef7798ac2b76e4bcf41d6fed04a87218024156da3e6ad01c"
     },
     {
       "path": "USER-RULES.md",

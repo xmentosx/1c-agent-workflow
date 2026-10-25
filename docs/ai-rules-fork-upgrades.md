@@ -1,6 +1,19 @@
 # Controlled ai_rules_1c upgrades
 
-## Current candidate: planning sufficiency, local r47
+## Current candidate: proportionate result acceptance, local r48
+
+The local r48 candidate `b45e2164440b81ab0c68985da086341efa39c4da`
+continues r47 without changing upstream. Existing triage, UI confirmation and
+OpenSpec DoD select proof by the changed behaviour: internal changes may use
+unit/integration/data evidence, local UI edits need affected-state observation,
+and new workflows need a principal user path. An originally agreed mockup is
+compared only for affected commitments. Unfinished requirements remain defects;
+optional polish does not expand acceptance. No new gate or per-edit UI suite is
+introduced. Exact local checks, context cost and delivery limits are recorded in
+[proportionate acceptance](proportionate-user-acceptance.md). The new pin is
+`pending`; registration does not publish or install this candidate.
+
+## Earlier planning candidate r47 (historical preparation)
 
 The r47 candidate continues the exact r46 intake of upstream
 `2f640143756ecd01fed42100e412632aa9082385` and changes only the common grilling
