@@ -1,5 +1,9 @@
 # Design
 
+## R6: владелец timeout cleanup
+
+[Исправление подтверждённой причины Git deadline](evidence/r6-git-deadline-repair-2026-10-25.md) сохраняет existing cleanup owner и его authority. Неиспользуемые CIM-запросы к уже завершившимся Git parents исключены; live identity, pinned handle и ошибки lookup проверены. Original ProductProjectGitSave.Tests.ps1 и оба deadline assertions неизменны. Final focused5/0/0; source registration — отдельно через RegisterChange/Status. Memory не получает нового cleanup/updater, budget или installed state. Данные реестра/fae719c и принятая граница G3 не менялись; публикация и G4 не разрешены.
+
 ## Актуальная граница G3 — согласована 2026-10-25
 
 **G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
@@ -606,3 +610,6 @@ Legacy master-commit-ready/master-committed checkpoints продолжают т�
 ## G3-LD1: интеграция без потери соседних изменений
 
 [Исходный PM5 повтор на объединённом коде — PASS](evidence/g3-legacy-executor-integrated-2026-10-25.md), `7ba9f0a3ce6ebd08b227b4b35b65e43fe5b2f99c` → oldfa0, exit0/381883мс. Три конфликта lifecycle.ps1 разрешены rebase на принятый candidate8f7aaee4: сохранены foreign legacy master-only recovery, temporary-patch retirement Bind и наши exact executor/branch dependency plan; старый760 остаётся ancestor, ручных merge/queue правок нет. Первый native proof и конфликт регистрации сохранены отдельно. Та же topology, workload и assertions повторены; новые проверки не добавлялись. Full G3 не закрыт. Факт регистрации финального doc-only head читается из source-delivery Status для product-project-registry-g2; это отдельное доказательство доставки.
+## R6: подтверждённые ERP+PM5 / УНФ+PM5 Mantis настройки
+
+[Единый актуальный data result](evidence/release-population-2026-10-25.md) фиксирует решение владельца 2026-10-25: ошибки ERP+PM5 → поддержка PM5 (699), поиск ERP+PM5 → разработка PM5 (609) и поддержка PM5 (699); поиск УНФ+PM5 → разработка PM5 (609) и поддержка УНФ+PM5 (814), ошибки УНФ остаются814. Развитие обоих →609. Это данные одного каталога, не второй routing owner или новая memory policy. Data revision fae719cac93c820add276ff7201d84473b621543; pending scopes/target сняты. Registry reader/intent8/8 подтверждены, native write/client apply/публикации нет. G3 остаётся принят в согласованном контуре; G4, Gate6 и рабочая миграция не разрешены, предшествующий registration blocker не снят.

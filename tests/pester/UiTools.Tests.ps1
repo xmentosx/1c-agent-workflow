@@ -128,6 +128,43 @@
         $result.continued | Should -Contain $pidPath
     }
 
+    It "skips vanished parents and keeps the live process identity guard: changed=<IdentityChanged>, lookup=<LookupFailed>" -TestCases @(
+        @{ IdentityChanged = $false; LookupFailed = $false },
+        @{ IdentityChanged = $true; LookupFailed = $false },
+        @{ IdentityChanged = $false; LookupFailed = $true }
+    ) {
+        param([bool]$IdentityChanged, [bool]$LookupFailed)
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1')
+        $script:cleanupStarted = [DateTime]::UtcNow.AddMinutes(-1)
+        $script:cleanupChildCreated = $script:cleanupStarted.AddSeconds(1)
+        $script:cleanupIdentityChanged = $IdentityChanged
+        $script:cleanupLookupFailed = $LookupFailed
+        $script:cleanupOpened = [pscustomobject]@{ Id = 9002; HasExited = $false; Handle = [IntPtr]7; disposed = $false }
+        $script:cleanupOpened | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $this.disposed = $true }
+        Mock Get-CimInstance {
+            if ($Filter) {
+                return [pscustomobject]@{ ProcessId = 9002; CreationDate = $(if ($script:cleanupIdentityChanged) { $script:cleanupChildCreated.AddSeconds(10) } else { $script:cleanupChildCreated }) }
+            }
+            @([pscustomobject]@{ ProcessId = 9001; ParentProcessId = 1; CreationDate = $script:cleanupStarted },
+              [pscustomobject]@{ ProcessId = 9002; ParentProcessId = 9001; CreationDate = $script:cleanupChildCreated })
+        }
+        Mock Get-Process { if ($Id -eq 9002) { if ($script:cleanupLookupFailed) { throw 'Process lookup failed' }; return $script:cleanupOpened } }
+        Mock Stop-NativeProcessForSafety { [pscustomobject]@{ confirmed = $true; error = '' } }
+        $result = Stop-ItlUiToolProcessTree -Process ([pscustomobject]@{ Id = 9001; StartTime = $script:cleanupStarted })
+        Should -Invoke Get-CimInstance -Times $(if ($LookupFailed) { 0 } else { 1 }) -Exactly -ParameterFilter { $Filter -eq 'ProcessId=9002' }
+        Should -Invoke Get-CimInstance -Times 0 -Exactly -ParameterFilter { $Filter -eq 'ProcessId=9001' }
+        $script:cleanupOpened.disposed | Should -Be (-not $LookupFailed)
+        if ($IdentityChanged -or $LookupFailed) {
+            $result.confirmed | Should -BeFalse
+            $result.error | Should -Match $(if ($LookupFailed) { 'Process lookup failed' } else { 'identity changed' })
+            Should -Invoke Stop-NativeProcessForSafety -Times 0 -Exactly
+        } else {
+            $result.confirmed | Should -BeTrue
+            Should -Invoke Stop-NativeProcessForSafety -Times 1 -Exactly -ParameterFilter { $UseOpenedProcess -and $Process -eq $script:cleanupOpened }
+        }
+    }
+
     It "skips automatic disabled or invalid providers without changing a named invocation policy" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -1,5 +1,11 @@
 # Tasks
 
+## R6: Git deadline repair, 2026-10-25
+
+- [x] Устранить подтверждённый registration blocker у existing process cleanup owner: пропуск отсутствующих PID до CIM, exact identity guard/закреплённый handle, fail closed при ошибке lookup. [Единый результат](../add-product-project-registry/evidence/r6-git-deadline-repair-2026-10-25.md): исходный GitSave test/10 s/reserve3s неизменны; промежуточный owner batch27/0/0 и final focused5/0/0, instrumentation удалено.
+
+Регистрацию финального source head определяет штатный RegisterChange/Status, не новый tracked checkbox. Предыдущие сообщения о неснятом code blocker ниже исторические; R6 data/release остаток и запреты G4/Gate6/рабочей миграции/публикации сохранены.
+
 ## Актуальная граница G3 — согласована 2026-10-25
 
 **G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
@@ -10,6 +16,17 @@
 - [ ] До первого выпуска выполнить R6: подтверждённое наполнение продуктов/проектов/настроек и карты функциональности, точный опубликованный SHA. Pilot/synthetic данные не закрывают задачу.
 
 Прежние агрегатные checkbox сохраняют историческую полноту охвата; открытые части относятся к R1–R6 и не переоткрывают принятый контур G3. Этот change целиком не архивируется.
+### R6 — наполнение, 2026-10-25
+
+- [x] Подготовить [неопубликованный data-кандидат](../add-product-project-registry/evidence/release-population-2026-10-25.md) в существующем registry Git: 8 типовых проектов, 10 продуктов с компонентами, 9 MCP sources, 27 PM5 областей; commit 8f3033ffd21512a32f836eb7148f9ab3b28a3bc4, publisher bytes сохранены, commit-bound reader 8/8.
+- [x] Исправить подтверждённое несовпадение publisher configId / legacy id у существующего catalog validator; новая owner regression passed, но общий Targeted дважды остановлен существующим Git deadline тестом (10.868/10.491 с при <10 с), регистрация не завершена. Порог сохранён; детали в R6 evidence, новый G3 canary не назначен.
+- [x] Учесть ответы владельца: без отдельных расширений; один СППР «PM5» UUID 76bcfc1f-e8c2-4cd6-80ef-997b99bca476 для КОРП/ПРОФ/ERP+PM5/УНФ+PM5, у PM4 проекта СППР нет. Data commit ba084c6f505583acf79249d4f7193649c61396aa: четыре links.sppr, 22 core PM5 areas, no publisher changes, reader 8/8.
+- [x] Внести подтверждённую собственную пару ERP+PM5 dev-karimov-new/erppm5-lts без fallback на PM КОРП и Mantis routes: развитие PM5 КОРП/ПРОФ/УНФ+PM5/ERP+PM5 → «Разработка «1С:PM5»» (609); ошибки КОРП/ПРОФ →699, УНФ+PM5 →814; PM4 КОРП/ПРОФ/ERP+PM4 → bug327/dev305. Data commit 2ee75f83df5fb9abae0b40d31749ea6d4151a653, reader/intent 8/8; без external writes.
+- [x] По подтверждению владельца: ERP+PM5 bug →699 «Поддержка PM5, EPR+PM5, Модуль PM5», search →609/699; УНФ+PM5 search →609/814, bug814 и развитие609 сохранены. Data commit fae719cac93c820add276ff7201d84473b621543; immutable reader8/8, intent точных scopes/targets passed; pending/defer сняты, остальные связи сохранены, публикации нет.
+- [ ] Закрыть оставшиеся настройки/выпускной review: Mantis link УНФ+PM4 либо явное исключение, URL СППР instance, полнота карты PM4/остальных optional exceptions и точный опубликованный data SHA. Подтверждённые ERP/УНФ bug/search больше не входят в остаток; source registration blocker прежний.
+- [ ] Дополнить и подтвердить PM4 functionality map/полноту PM5, подтвердить source limitations; optional memory homes остаются явно отложенными без догадок.
+- [ ] После отдельного разрешения опубликовать data-кандидат и подтвердить точный общий SHA registry/catalog/relations; AC-36–38 / memory AC-44 остаются открытыми. G3 закрыт, G4 и рабочая миграция не начинаются.
+
 
 [G3-LD1 / integrated native PASS, 2026-10-25](../add-product-project-registry/evidence/g3-legacy-executor-integrated-2026-10-25.md): после сохранения обеих сторон конфликта повторён исходный single PM5 downgrade source7ba9→oldfa0, exit0/381883мс; main+sibling clean, old helper/pins0.4.15/schema1/locked, pending0 и CF/DB/history unchanged. Два downgrade blocker закрыты. Новых cases нет; регистрация отдельно подтверждается source-delivery Status. Full G3/AC18/39 и memory AC43/G5 открыты; OpenCode SKIPPED, Gate6/G4/рабочая миграция/публикация вне допуска.
 

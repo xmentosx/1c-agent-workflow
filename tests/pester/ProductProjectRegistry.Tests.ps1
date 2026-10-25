@@ -82,6 +82,18 @@
         {Assert-ItlProductCatalog $s.catalog $s.relations $s.registry} | Should -Throw '*unknown/ambiguous*'
     }
 
+    It 'accepts publisher configId entries without rewriting the endpoint registry' {
+        $s = New-CatalogFixture
+        $s.registry.hosts[0].configurations = @(@{ configId = 'corp'; id = 'legacy-other' })
+        $s.registry.hosts[1].configurations = @(@{ configId = 'other' })
+        $before = $s.registry | ConvertTo-Json -Depth 30 -Compress
+        $null = Assert-ItlProductCatalog $s.catalog $s.relations $s.registry
+        (Resolve-ItlProductContext $s typical).roles.code.source.endpoint.configId | Should -Be 'corp'
+        ($s.registry | ConvertTo-Json -Depth 30 -Compress) | Should -Be $before
+        $s.catalog.sources[0].endpoint.configId = 'legacy-other'
+        { Assert-ItlProductCatalog $s.catalog $s.relations $s.registry } | Should -Throw '*CATALOG_INVALID*'
+    }
+
     It 'rejects invalid catalog input: <Case>' -TestCases @(
         @{ Case = 'schema' }, @{ Case = 'duplicate' }, @{ Case = 'reference' }, @{ Case = 'cycle' },
         @{ Case = 'home-null' }, @{ Case = 'home-array' }, @{ Case = 'home-unknown' }, @{ Case = 'home-outside' },

@@ -199,7 +199,8 @@ function Assert-ItlProductCatalog {
         if ($server.Count -ne 1) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.serverId is unknown/ambiguous" }
         $publishedConfigId = Get-ItlCatalogField $server[0] 'configId'
         if ($configId -and $publishedConfigId -and $configId -cne $publishedConfigId) { throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.configId does not match the published server" }
-        if ($configId -and -not @((Get-ItlCatalogField $hostEntry[0] 'configurations' @()) | Where-Object { (Get-ItlCatalogField $_ 'id') -ceq $configId }).Count) {
+        # The schema-v2 publisher uses configId; retain id for earlier catalog fixtures/readers.
+        if ($configId -and -not @((Get-ItlCatalogField $hostEntry[0] 'configurations' @()) | Where-Object { (Get-ItlCatalogField $_ 'configId' (Get-ItlCatalogField $_ 'id')) -ceq $configId }).Count) {
             throw "CATALOG_INVALID: sources.$($source.sourceId).endpoint.configId is unknown"
         }
     }
