@@ -1,14 +1,13 @@
 # Tasks
 
-## R6: итоговый кандидат данных для согласования, 2026-10-25
+## R6 закрыт: данные опубликованы, 2026-10-25
 
-- [x] Записать подтверждённую владельцем PM4 карту доступности/ограничений отдельно от PM5: 22+22 области, без объявления PM5 документацией PM4.
-- [x] Заполнить УНФ+PM4 Mantis: единственный проект «04. PM и ERP+PM (поддержка)», search/create327; сохранить остальные подтверждённые связи.
-- [x] Сверить СППР URL с действующим reader config, проверить 8/8 immutable selected contexts и подготовить [единую итоговую таблицу](../add-product-project-registry/evidence/r6-final-catalog-review-2026-10-25.md), data commit `2cde7b6f1479cbdf5030cba34be4f3ab9adce521` (не опубликован).
-- [ ] Итогово согласовать кандидат, выпускной охват и явно отложенные optional homes/внешние проекты.
-- [ ] После отдельного разрешения опубликовать согласованный data snapshot и закрепить published SHA; только тогда закрывать R6/registry AC-36–38/memory AC-44.
+- [x] Подтвердить у владельца восемь типовых проектов, настройки, карту PM4/PM5 и явные исключения/optional homes registry-only выпуска.
+- [x] Опубликовать данные в main существующего Git-реестра: **`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`**; сохранить актуальный publisher registry.json.
+- [x] Прочитать published snapshot одним immutable reader, schema/reference и 8/8 resolved contexts; закрепить [общую квитанцию](../add-product-project-registry/evidence/r6-publication-2026-10-25.md).
+- [x] Закрыть R6 / registry AC-36–38 и registry population dependency memory AC-44; G3 не переоткрывать.
 
-Это конечный остаток подготовки данных, не новые проверки G3. Регистрацию source-документов определяет RegisterChange/Status. G4/Gate6/рабочая миграция/публикация не запускались. Предыдущие записи о незаполненных PM4/УНФ+PM4/СППР URL исторические.
+Нативная shared-product память и memory acceptance остаются G4/G5, R1–R5 — отдельным выпускным остатком. Source-регистрация определяется RegisterChange/Status. Опубликованы только данные; workflow/G4/Gate6/рабочая миграция не запускались. Прежние сообщения об открытом R6 ниже исторические.
 
 ## R6: Git deadline repair, 2026-10-25
 
@@ -18,14 +17,14 @@
 
 ## Актуальная граница G3 — согласована 2026-10-25
 
-**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
+**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация workflow не разрешены; данные реестра опубликованы по отдельному разрешению R6.
 
 - [x] Принять и закрыть согласованный контур G3 по существующим доказательствам, включая G3-LD1 и регистрацию bf5a46e6; новых canary не добавлять.
 - [x] Разделить registry dependency и ещё не реализованные memory consumer/G4/G5/AC-43; единое наполнение AC-36–38 / AC-44 не дублировать.
 - [ ] Выпускной остаток R1–R5: PM4, платформы/сессии, полный lifecycle/foreground выбор, остальные native clients и cost области — по единой матрице, отдельным поручением.
-- [ ] До первого выпуска выполнить R6: подтверждённое наполнение продуктов/проектов/настроек и карты функциональности, точный опубликованный SHA. Pilot/synthetic данные не закрывают задачу.
+- [x] До первого выпуска выполнить R6: owner-approved наполнение опубликовано одним SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`; [квитанция](../add-product-project-registry/evidence/r6-publication-2026-10-25.md).
 
-Прежние агрегатные checkbox сохраняют историческую полноту охвата; открытые части относятся к R1–R6 и не переоткрывают принятый контур G3. Этот change целиком не архивируется.
+Прежние агрегатные checkbox сохраняют историческую полноту охвата; открытые части относятся к R1–R5 и memory G4/G5 и не переоткрывают принятый контур G3. Этот change целиком не архивируется.
 ### R6 — наполнение, 2026-10-25
 
 - [x] Подготовить [неопубликованный data-кандидат](../add-product-project-registry/evidence/release-population-2026-10-25.md) в существующем registry Git: 8 типовых проектов, 10 продуктов с компонентами, 9 MCP sources, 27 PM5 областей; commit 8f3033ffd21512a32f836eb7148f9ab3b28a3bc4, publisher bytes сохранены, commit-bound reader 8/8.
@@ -33,9 +32,9 @@
 - [x] Учесть ответы владельца: без отдельных расширений; один СППР «PM5» UUID 76bcfc1f-e8c2-4cd6-80ef-997b99bca476 для КОРП/ПРОФ/ERP+PM5/УНФ+PM5, у PM4 проекта СППР нет. Data commit ba084c6f505583acf79249d4f7193649c61396aa: четыре links.sppr, 22 core PM5 areas, no publisher changes, reader 8/8.
 - [x] Внести подтверждённую собственную пару ERP+PM5 dev-karimov-new/erppm5-lts без fallback на PM КОРП и Mantis routes: развитие PM5 КОРП/ПРОФ/УНФ+PM5/ERP+PM5 → «Разработка «1С:PM5»» (609); ошибки КОРП/ПРОФ →699, УНФ+PM5 →814; PM4 КОРП/ПРОФ/ERP+PM4 → bug327/dev305. Data commit 2ee75f83df5fb9abae0b40d31749ea6d4151a653, reader/intent 8/8; без external writes.
 - [x] По подтверждению владельца: ERP+PM5 bug →699 «Поддержка PM5, EPR+PM5, Модуль PM5», search →609/699; УНФ+PM5 search →609/814, bug814 и развитие609 сохранены. Data commit fae719cac93c820add276ff7201d84473b621543; immutable reader8/8, intent точных scopes/targets passed; pending/defer сняты, остальные связи сохранены, публикации нет.
-- [ ] Закрыть оставшиеся настройки/выпускной review: Mantis link УНФ+PM4 либо явное исключение, URL СППР instance, полнота карты PM4/остальных optional exceptions и точный опубликованный data SHA. Подтверждённые ERP/УНФ bug/search больше не входят в остаток; source registration blocker прежний.
-- [ ] Дополнить и подтвердить PM4 functionality map/полноту PM5, подтвердить source limitations; optional memory homes остаются явно отложенными без догадок.
-- [ ] После отдельного разрешения опубликовать data-кандидат и подтвердить точный общий SHA registry/catalog/relations; AC-36–38 / memory AC-44 остаются открытыми. G3 закрыт, G4 и рабочая миграция не начинаются.
+- [x] Закрыть оставшиеся настройки/review: карта PM4 подтверждена, УНФ+PM4 Mantis327, СППР URL проверен, кандидат согласован и опубликован; [R6 closed](../add-product-project-registry/evidence/r6-publication-2026-10-25.md).
+- [x] Подтвердить PM4/PM5 карту и source limitations; optional homes осознанно отложены владельцем для registry-only. [R6](../add-product-project-registry/evidence/r6-publication-2026-10-25.md).
+- [x] По отдельному разрешению опубликовать data snapshot `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` и закрыть R6/AC-36–38; memory AC-44 population dependency закрыта, G4/миграция/workflow release не начаты.
 
 
 [G3-LD1 / integrated native PASS, 2026-10-25](../add-product-project-registry/evidence/g3-legacy-executor-integrated-2026-10-25.md): после сохранения обеих сторон конфликта повторён исходный single PM5 downgrade source7ba9→oldfa0, exit0/381883мс; main+sibling clean, old helper/pins0.4.15/schema1/locked, pending0 и CF/DB/history unchanged. Два downgrade blocker закрыты. Новых cases нет; регистрация отдельно подтверждается source-delivery Status. Full G3/AC18/39 и memory AC43/G5 открыты; OpenCode SKIPPED, Gate6/G4/рабочая миграция/публикация вне допуска.
@@ -145,7 +144,8 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 - [ ] 6.3 В G5 пройти legacy update → explicit association → separate memory opt-in/initial cycle без reset, затем new-chat/reset постоянного условия, ERP+PM → home КОРП → допустимый ПРОФ, update/conflict/offline/reload/disable/recovery. Original task, сохранность old notes и AC-10–23/28/30–35/39–42 доказаны; неподтверждённые Windows/terminal варианты названы.
 - [ ] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
 - [ ] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
-- [ ] 6.6 До первого выпуска памяти проверить обязательное наполнение у registry owner по задачам 1.9–1.11/5.7 и AC-36–38: подтверждённый выпускной набор продуктов/проектов, resolved MCP/СППР/Mantis и карта основной функциональности на одном опубликованном SHA, с первичными ссылками/ограничениями/optional homes. Зафиксировать тот же SHA в acceptance evidence и проверить заявленные shared-product сценарии: home/applicability плюс отдельные native IDs/grants/currentness. Seed/synthetic fixture не заменяет наполнение; нет второго каталога, bulk ingestion или нового runtime gate. AC-44 остаётся открытым, начало G4 от этой выпускной задачи не зависит.
+- [x] 6.6a Подтвердить единое обязательное наполнение у registry owner по 1.9–1.11/5.7 и AC-36–38; указать опубликованный SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` в memory acceptance. [R6 / registry dependency AC-44 закрыта](../add-product-project-registry/evidence/r6-publication-2026-10-25.md); seed не используется, optional homes отложены осознанно, второго каталога/ingestion нет.
+- [ ] 6.6b В G5 для объявленных shared-product сценариев проверить home/applicability и отдельные native IDs/grants/currentness. Это сохранённая native часть прежней 6.6/AC-44, не новая проверка; в registry-only выпуске shared remember не разрешён, G4/G5 не начаты.
 
 Изначальное уточнение разрешало только OpenSpec. Последующее прямое поручение одобрило source G3 реестра; его setup/startup/binding/recovery и fixture-only compatibility path реализуются у registry owner. G4, наполнение и миграция действующих установленных проектов не разрешены. Registry-only выпуск также требует наполнения AC-36–38, но не memory readiness; memory opt-in остаётся отдельным и off по умолчанию.
 

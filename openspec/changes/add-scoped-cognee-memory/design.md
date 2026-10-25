@@ -1,15 +1,16 @@
 # Design
 
-## R6: итоговый кандидат данных для согласования, 2026-10-25
+## R6 закрыт: данные опубликованы, 2026-10-25
 
-[2cde7b6f: единая итоговая таблица и остаток](../add-product-project-registry/evidence/r6-final-catalog-review-2026-10-25.md) закрывает PM4 карту по
-подтверждению владельца (та же доступность/ограничения, что у PM5, без приравнивания
-реализаций), Mantis УНФ+PM4 (единственная связь 327 для search/create) и URL СППР
-по deployed reader config. Восемь проектов, 44 области, immutable reader 8/8;
-publisher registry unchanged. Optional homes отложены явно, PM4 productDocs disabled.
-Runtime, MCP, ai_rules_1c и memory ownership не меняются; нет нового context loader.
-R6/AC-36–38/AC-44 остаются открыты: итоговое согласование и опубликованный SHA.
-G3 не переоткрывается; G4/Gate6/рабочая миграция/публикация не разрешены.
+Пользователь согласовал восьмипроектный кандидат и явно разрешил публикацию данных.
+[Единая публикационная квитанция](../add-product-project-registry/evidence/r6-publication-2026-10-25.md): main существующего Git-реестра,
+SHA **`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`**; registry/catalog/relations прочитаны из одного commit,
+schema/reference и 8/8 resolved contexts passed. Актуальный publisher registry
+сохранён без ручных правок. Registry AC-36–38 и R6 выполнены; в memory AC-44
+закрыта зависимость наполнения. Optional homes отложены осознанно для registry-only;
+shared-product native приёмка, G4/G5 и R1–R5 от этого не становятся PASS.
+Runtime, MCP, ai_rules_1c и ownership не меняются. Разрешение относилось только
+к данным: G4/Gate6/рабочая миграция/публикация workflow не выполнялись.
 
 ## R6: владелец timeout cleanup
 
@@ -17,7 +18,7 @@ G3 не переоткрывается; G4/Gate6/рабочая миграция
 
 ## Актуальная граница G3 — согласована 2026-10-25
 
-**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация не разрешены.
+**G3 закрыт в принятом PM5 / Windows 11 / Kilo и Cursor контуре; Codex — только core/API.** [Единая итоговая матрица и остаток до выпуска](../add-product-project-registry/g3-acceptance.md) определяет текущий статус, приоритетный перед историческими записями ниже. Непроверенные клетки не стали PASS; заявленная поддержка сохранена. Полная выпускная квалификация отделена от закрытого G3. G4, Gate 6, рабочая миграция и публикация workflow не разрешены; данные реестра опубликованы по отдельному разрешению R6.
 
 [G3-LD1 / integrated native PASS, 2026-10-25](../add-product-project-registry/evidence/g3-legacy-executor-integrated-2026-10-25.md): после сохранения обеих сторон конфликта повторён исходный single PM5 downgrade source7ba9→oldfa0, exit0/381883мс; main+sibling clean, old helper/pins0.4.15/schema1/locked, pending0 и CF/DB/history unchanged. Два downgrade blocker закрыты. Новых cases нет; регистрация отдельно подтверждается source-delivery Status. Full G3/AC18/39 и memory AC43/G5 открыты; OpenCode SKIPPED, Gate6/G4/рабочая миграция/публикация вне допуска.
 
