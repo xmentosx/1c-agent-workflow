@@ -103,3 +103,14 @@ same-checkout proof cannot substitute for an unobserved environment. The three
 explicit original-workload exceptions above also remain. Concurrent queue runtime
 changes can independently require fresh and ondemand-mcp Release qualification;
 the external-shard optimization does not authorize skipping those stages.
+
+The final parallel original workload exposed a shared CodeChecker config write
+race in Get-SourceHostTestPython. Preparation now uses an invocation-local config
+and the existing installer's component-local maintenance lease; test bodies and
+other components remain parallel. Timeout retains the environment and tells the
+caller to wait and repeat its component test. A native two-process regression
+retains an open config reader, cold concurrent venv preparation, exact Unicode
+paths, one isolated generation and released lease. The previous helper fails on
+the shared WriteAllText; the repaired helper passed (3.51s body). Existing bootstrap
+repair and package/isolation assertions remain unchanged. No new coordinator or
+installed-runtime ownership was introduced.

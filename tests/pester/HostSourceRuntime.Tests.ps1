@@ -15,6 +15,64 @@
     }
 }
 Describe 'Source host Python environment ownership' {
+    It 'prepares one component concurrently without rewriting another callers open config' {
+        $root=New-SourceRuntimeFixture
+        $runtime=Join-Path $root 'build/host-test-runtime'
+        [void][IO.Directory]::CreateDirectory($runtime)
+        $legacyConfig=Join-Path $runtime 'codechecker.config.json'
+        [IO.File]::WriteAllText($legacyConfig,(@{schemaVersion=1;stateRoot=(Join-Path $runtime 'codechecker-state')}|ConvertTo-Json))
+        $before=(Get-FileHash $legacyConfig).Hash
+        $reader=[IO.File]::Open($legacyConfig,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        $bootstrap=(Get-Command python -CommandType Application | Where-Object Source -NotMatch 'WindowsApps' | Select-Object -First 1).Source
+        . (Join-Path $root 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1') -Action status -ConfigPath $legacyConfig *> $null
+        $worker=Join-Path $root 'parallel-worker.ps1'
+        [IO.File]::WriteAllText($worker,@'
+param($source,$root,$id,$bootstrap)
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$OutputEncoding=[Console]::OutputEncoding
+$env:ITL_SOURCE_TEST_PYTHON=$bootstrap
+. (Join-Path $source 'scripts/host-test-runtime.ps1')
+[IO.File]::WriteAllText((Join-Path $root ('ready-'+$id)),'ready')
+$deadline=[DateTime]::UtcNow.AddSeconds(30)
+while(-not [IO.File]::Exists((Join-Path $root 'start'))){
+    if([DateTime]::UtcNow -gt $deadline){throw 'Parallel runtime fixture did not start.'}
+    Start-Sleep -Milliseconds 20
+}
+$python=Get-SourceHostTestPython -RepositoryRoot $root -Component CodeChecker
+$probe=& $python -I -B -c 'import sys; print(sys.prefix != sys.base_prefix)'
+if($LASTEXITCODE -ne 0 -or $probe -ne 'True'){throw 'Parallel component runtime is not isolated.'}
+[IO.File]::WriteAllText((Join-Path $root ('result-'+$id)), $python)
+'@,[Text.UTF8Encoding]::new($true))
+        $jobs=@()
+        try {
+            foreach($i in 1..2){
+                $arguments=Join-HostProcessArguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$worker,$RepoRoot,$root,[string]$i,$bootstrap)
+                $process=Start-Process -FilePath powershell.exe -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $root ('stdout-'+$i)) -RedirectStandardError (Join-Path $root ('stderr-'+$i))
+                $null=$process.Handle
+                $jobs+=$process
+            }
+            $deadline=[DateTime]::UtcNow.AddSeconds(30)
+            while(-not ([IO.File]::Exists((Join-Path $root 'ready-1')) -and [IO.File]::Exists((Join-Path $root 'ready-2')))){
+                if([DateTime]::UtcNow -gt $deadline){throw 'Parallel runtime workers did not become ready.'}
+                Start-Sleep -Milliseconds 20
+            }
+            [IO.File]::WriteAllText((Join-Path $root 'start'),'start')
+            foreach($job in $jobs){$job.WaitForExit(60000) | Should -BeTrue;$job.ExitCode | Should -Be 0 -Because ((Get-Content (Join-Path $root 'stderr-*') -Raw -Encoding UTF8) -join '')}
+            $paths=@(1..2|ForEach-Object {[IO.File]::ReadAllText((Join-Path $root ('result-'+$_)))})
+            $paths.Count | Should -Be 2
+            $paths[0] | Should -BeExactly $paths[1]
+            $paths[0] | Should -Match ([regex]::Escape($root))
+            @(Get-ChildItem $runtime -Filter prepared.json -Recurse).Count | Should -Be 1
+            (Get-FileHash $legacyConfig).Hash | Should -BeExactly $before
+            @(Get-ChildItem $runtime -Filter '*.config.json').Count | Should -Be 1
+            $lease=[IO.File]::Open((Join-Path $runtime 'codechecker-state/host-maintenance.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+            $lease.Dispose()
+        } finally {
+            $reader.Dispose()
+            foreach($job in $jobs){if(-not $job.HasExited){Stop-HostProcessTree -Process $job};$job.Dispose()}
+        }
+    }
     It 'prepares only the selected isolated component and reuses it with an explicit bootstrap and poisoned PATH' {
         $root=New-SourceRuntimeFixture
         $oldBootstrap=$env:ITL_SOURCE_TEST_PYTHON; $oldPath=$env:PATH

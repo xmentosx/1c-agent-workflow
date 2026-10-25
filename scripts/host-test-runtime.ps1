@@ -9,13 +9,19 @@
     $root=[IO.Path]::GetFullPath($RepositoryRoot)
     $runtimeRoot=Join-Path $root 'build/host-test-runtime'
     New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
-    $configPath=Join-Path $runtimeRoot ($Component.ToLowerInvariant()+'.config.json')
+    $configPath=Join-Path $runtimeRoot ($Component.ToLowerInvariant()+'.'+[guid]::NewGuid().ToString('N')+'.config.json')
     $config=@{schemaVersion=1;stateRoot=(Join-Path $runtimeRoot ($Component.ToLowerInvariant()+'-state'))}
     if($env:ITL_SOURCE_TEST_PYTHON){$config.pythonPath=$env:ITL_SOURCE_TEST_PYTHON}
     if($Component -eq 'Sppr' -and $env:SPPR_TEST_PYTHON){$config.pythonPath=$env:SPPR_TEST_PYTHON}
+    try {
     [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     & {
         . (Join-Path $root 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1') -Action status -ConfigPath $configPath *> $null
+        # Reuse the installer owner's component-local preparation lease. Test
+        # bodies run after release; other components retain independent leases.
+        $lease=Enter-McpHostMaintenanceLock -Config $config -Operation ('source-test-'+$Component) -WaitSeconds 180
+        if(-not $lease.acquired){throw "Source $Component preparation is still active. Wait for it to finish and repeat the same component test; its environment was not changed."}
+        try {
         $bootstrap=Resolve-PythonExecutable -Config $config
         $probeCode='import json,sys; print(json.dumps(dict(executable=sys.executable,version=list(sys.version_info[:3]),prefix=sys.prefix,base_prefix=sys.base_prefix)))'
         $probe=Invoke-ProcessWithTimeout -FilePath $bootstrap -Arguments @('-I','-S','-B','-X','utf8','-c',$probeCode) -TimeoutSec 30
@@ -78,5 +84,7 @@
         }
         if(-not $external){[IO.File]::WriteAllText($receipt,$identityJson,[Text.UTF8Encoding]::new($false))}
         return [IO.Path]::GetFullPath($python)
+        } finally {Exit-McpHostMaintenanceLock -Lease $lease}
     }
+    } finally {[IO.File]::Delete($configPath)}
 }
