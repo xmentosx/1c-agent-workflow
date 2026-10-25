@@ -128,7 +128,7 @@ function Get-PesterExternalProfile {
             if($config -match '(?i)(?:^|\x00)(?:includeif\.[^\n]+|core\.(?:hookspath|attributesfile|excludesfile)|init\.templatedir)\n'){
                 throw 'Git conditional configuration or external hooks/attribute/template paths are not qualified; execute without reuse.'
             }
-            if(@(Get-ChildItem Env:|Where-Object {$_.Name -match '^GIT_' -and $_.Value}).Count){
+            if(@(Get-ChildItem Env:|Where-Object {$_.Name -match '^GIT_' -and $_.Value -and -not ($_.Name -eq 'GIT_PAGER' -and $_.Value -ceq 'cat')}).Count){
                 throw 'Git process overrides are not qualified; execute without reuse.'
             }
             $userRoot=if($env:HOME){$env:HOME}else{$env:USERPROFILE}
@@ -259,7 +259,9 @@ function Get-PesterExternalProfile {
         'windows' {'^(COMPLUS|COR_|CLR_)'}
         default {'^$'}
     }
-    $environment=@(Get-ChildItem Env:|Where-Object {$_.Name -match $environmentPattern}|Sort-Object Name|ForEach-Object {$_.Name+'='+$_.Value})
+    # All these Git observations and original fixtures capture stdout through
+    # pipes. The tool host's inert cat pager must not split identical proofs.
+    $environment=@(Get-ChildItem Env:|Where-Object {$_.Name -match $environmentPattern -and -not ($_.Name -eq 'GIT_PAGER' -and $_.Value -ceq 'cat' -and $Definition.kind -in @('git','published-ancestor','inventory'))}|Sort-Object Name|ForEach-Object {$_.Name+'='+$_.Value})
     $lines.Add('environment='+(Get-PesterExternalSha $environment))
     return Get-PesterExternalSha $lines.ToArray()
 }

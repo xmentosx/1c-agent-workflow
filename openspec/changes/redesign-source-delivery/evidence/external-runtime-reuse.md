@@ -78,3 +78,12 @@ profile qualification before inventory/pattern preparation. The original host
 unknown-runtime reproducer still supplies no inventory, and its assertions are
 unchanged. Only its extracted helper dependency was added. The host refusal,
 fingerprint variants and real cold/warm regression passed 3/3 (63.66s).
+
+The exact accepted candidate 063f0b85 passed Targeted, and its original 17-file
+native workload passed 269/0/0. That real invocation exposed an overbroad Git
+override rejection: the execution host inherits GIT_PAGER=cat. The original Git
+calls capture stdout through pipes, so this pager does not select an external
+runtime/input. A follow-up admits this exact setting and normalizes it out of
+Git/ancestor/inventory identity; other overrides remain unqualified. Native
+regressions compare unset and cat identity, while retaining hooks and template
+rejection. All three Git configuration cases passed.

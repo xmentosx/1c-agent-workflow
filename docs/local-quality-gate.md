@@ -466,8 +466,10 @@ Windows/CLR inputs, OneScript engine/libraries, Node executable/DLLs, isolated
 Python bootstrap and complete per-component venv/package bytes, and the local
 pinned Go compiler plus offline source closure from `go list`. Unknown Node/OneScript search paths, Go overlays/CGo or
 missing modules fail closed for reuse. Custom Python startup/search hooks and
-Git process overrides, conditional configuration or external hook/attribute paths
-also disable reuse; the original checks remain executable. Go observation disables
+Git path/execution overrides, conditional configuration or external hook/attribute paths
+also disable reuse; the original checks remain executable. The noninteractive
+`GIT_PAGER=cat` host setting is ignored consistently by Git, ancestor and inventory
+identity, so it neither disables nor splits an otherwise identical proof. Go observation disables
 downloads.
 Source stdlib-only venv creation uses `-I -S` so global Python site plugins are
 not unobserved inputs. BookStack/SPPR keep their original direct package tests:

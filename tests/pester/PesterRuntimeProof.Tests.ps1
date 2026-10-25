@@ -367,6 +367,19 @@ Describe 'External Pester runtime custom configuration' {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         . (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')
     }
+    It 'qualifies the noninteractive cat pager without splitting the default Git identity' {
+        $saved=$env:GIT_PAGER
+        try {
+            $profiles=[pscustomobject]@{git=[pscustomobject]@{kind='git'}}
+            $env:GIT_PAGER=$null
+            $plain=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $env:GIT_PAGER='cat'
+            $hostPager=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $plain.git.status | Should -BeExactly known
+            $hostPager.git.status | Should -BeExactly known
+            $hostPager.git.sha256 | Should -BeExactly $plain.git.sha256
+        } finally {$env:GIT_PAGER=$saved}
+    }
     It 'does not qualify external hooks referenced by Git configuration' {
         $root=New-RuntimeProofFixture 'External Git hooks'
         & git -C $root config core.hooksPath (Join-Path $TestDrive 'external hooks Внешний')
