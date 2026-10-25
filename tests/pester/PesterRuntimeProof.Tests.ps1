@@ -367,6 +367,33 @@ Describe 'External Pester runtime custom configuration' {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         . (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')
     }
+    It 'reuses real Git proof across equal worktree configuration and rejects a changed setting' {
+        $root=New-RuntimeProofFixture 'Real Git profile'
+        $other=Join-Path $TestDrive 'Real Git другой worktree'
+        $catalogPath=Join-Path $root 'tests/quality-contracts.json'
+        $c=Get-Content $catalogPath -Raw|ConvertFrom-Json
+        $c|Add-Member pesterExternalRuntimeProfiles ([pscustomobject]@{git=[pscustomobject]@{kind='git'}})
+        $c|Add-Member pesterExternalRuntimeTests ([pscustomobject]@{'tests/pester/Runtime.Tests.ps1'=@('git')})
+        [IO.File]::WriteAllText($catalogPath,($c|ConvertTo-Json -Depth 8))
+        & git -C $root add --all; & git -C $root commit -qm 'real Git qualification'
+        & git -C $root config extensions.worktreeConfig true
+        & git -C $root config --worktree core.abbrev 12
+        try {
+            & git -C $root worktree add --quiet --detach $other HEAD
+            & git -C $other config --worktree core.abbrev 12
+            $cold=Invoke-RuntimeProofFixture $root out-first
+            $cold.executedWorkerCount | Should -Be 1
+            $cross=Invoke-RuntimeProofFixture $other out-equal
+            $cross.reusedWorkerCount | Should -Be 1
+            Test-Path (Join-Path $other counter.txt) | Should -BeFalse
+            & git -C $other config --worktree core.abbrev 13
+            $changed=Invoke-RuntimeProofFixture $other out-changed
+            $changed.executedWorkerCount | Should -Be 1
+            $rewarm=Invoke-RuntimeProofFixture $other out-rewarm
+            $rewarm.reusedWorkerCount | Should -Be 1
+            @(Get-Content (Join-Path $other counter.txt)).Count | Should -Be 1
+        } finally {& git -C $root worktree remove --force $other}
+    }
     It 'qualifies the noninteractive cat pager without splitting the default Git identity' {
         $saved=$env:GIT_PAGER
         try {

@@ -123,8 +123,10 @@ function Get-PesterExternalProfile {
                 if([IO.File]::Exists($file)){Add-PesterExternalFile $file $lines}else{$lines.Add($file+'=<missing>')}
             }
             # Config includes can point outside these files; let Git resolve and
-            # hash the effective values without exposing credentials in receipts.
-            $config=Invoke-PesterExternalCommand $git @('config','--null','--list','--show-origin') $RepositoryRoot
+            # hash ordered effective values without exposing credentials in receipts.
+            # A worktree config's origin path is bookkeeping, not a setting;
+            # equal settings must qualify across candidate worktrees.
+            $config=Invoke-PesterExternalCommand $git @('config','--null','--list') $RepositoryRoot
             if($config -match '(?i)(?:^|\x00)(?:includeif\.[^\n]+|core\.(?:hookspath|attributesfile|excludesfile)|init\.templatedir)\n'){
                 throw 'Git conditional configuration or external hooks/attribute/template paths are not qualified; execute without reuse.'
             }

@@ -87,3 +87,19 @@ runtime/input. A follow-up admits this exact setting and normalizes it out of
 Git/ancestor/inventory identity; other overrides remain unqualified. Native
 regressions compare unset and cat identity, while retaining hooks and template
 rejection. All three Git configuration cases passed.
+
+The accepted 2a01f1cb workload passed 269/0/0 with 17 qualified files; its warm
+run executed zero files and reused all 17. A separate exact-candidate worktree
+then exposed a false Git mismatch: effective ordered settings matched, but
+--show-origin included different administrative config.worktree paths. The
+observer now hashes ordered effective settings without their origin spelling.
+A real two-worktree regression first failed on that mismatch; it also requires
+execution after a changed worktree setting and reuse only after requalification.
+Conditional configuration and external hook/attribute/template rejection remain.
+
+Reuse of checkout-local Python environments remains conditional on their actual
+bytes. A clean planner copy with no component venv must execute those seven files;
+same-checkout proof cannot substitute for an unobserved environment. The three
+explicit original-workload exceptions above also remain. Concurrent queue runtime
+changes can independently require fresh and ondemand-mcp Release qualification;
+the external-shard optimization does not authorize skipping those stages.
