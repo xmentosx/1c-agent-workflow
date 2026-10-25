@@ -1,5 +1,16 @@
 # Design
 
+## R6: итоговый кандидат данных для согласования, 2026-10-25
+
+[2cde7b6f: единая итоговая таблица и остаток](../add-product-project-registry/evidence/r6-final-catalog-review-2026-10-25.md) закрывает PM4 карту по
+подтверждению владельца (та же доступность/ограничения, что у PM5, без приравнивания
+реализаций), Mantis УНФ+PM4 (единственная связь 327 для search/create) и URL СППР
+по deployed reader config. Восемь проектов, 44 области, immutable reader 8/8;
+publisher registry unchanged. Optional homes отложены явно, PM4 productDocs disabled.
+Runtime, MCP, ai_rules_1c и memory ownership не меняются; нет нового context loader.
+R6/AC-36–38/AC-44 остаются открыты: итоговое согласование и опубликованный SHA.
+G3 не переоткрывается; G4/Gate6/рабочая миграция/публикация не разрешены.
+
 ## R6: владелец timeout cleanup
 
 [Исправление подтверждённой причины Git deadline](../add-product-project-registry/evidence/r6-git-deadline-repair-2026-10-25.md) сохраняет existing cleanup owner и его authority. Неиспользуемые CIM-запросы к уже завершившимся Git parents исключены; live identity, pinned handle и ошибки lookup проверены. Original ProductProjectGitSave.Tests.ps1 и оба deadline assertions неизменны. Final focused5/0/0; source registration — отдельно через RegisterChange/Status. Memory не получает нового cleanup/updater, budget или installed state. Данные реестра/fae719c и принятая граница G3 не менялись; публикация и G4 не разрешены.
