@@ -225,6 +225,14 @@ runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
 The exact new broker still requires the real ondemand-mcp Release capability for
 both backend families; Develop reuse cannot qualify its RPC behavior.
+Retained-launch cleanup is an internal broker RPC path. Develop lifecycle drain
+does not supply `RetainedRuntimeState`. Its source projection excludes only the
+closed `if ($retained)` block and its exclusive peer-ownership helper; registered
+drain, parameter defaults, retained-mode admission, shared/new callers and all
+other module code remain bound. An unknown AST shape closes this exception.
+Selection and authenticated ancestor reuse share this projection. Static
+regressions retain the exact caller set and reject shared-path changes; real
+broker Release qualification remains responsible for the retained-launch case.
 Current authenticated routing policy projects both source snapshots. Adding or
 refining routing alone does not change a native assertion and therefore does not
 invalidate existing proof. Known Pester policy, contract selection, fullPaths and

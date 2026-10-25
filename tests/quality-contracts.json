@@ -845,6 +845,16 @@
       "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1"]
     },
     {
+      "id": "develop-broker-input-scope",
+      "owner": "retained broker cleanup selection and native ancestor reuse",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/DevelopBrokerInputScope.Tests.ps1",
+      "paths": ["tests/pester/DevelopBrokerInputScope.Tests.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"],
+      "reuseInputPaths": ["tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", "scripts/release-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/stand-env-identity.ps1", "scripts/check.ps1", "scripts/source-delivery-plan.ps1", "scripts/delivery-native-plan.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/source-e2e-fixture.ps1", "scripts/update-installed-workflow.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/lib/*.ps1", "templates/dependency-lock.json"],
+      "tests": ["tests/pester/DevelopBrokerInputScope.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-incremental-inputs",
       "owner": "end-to-end incremental selection and reuse against actual journey sources",
       "gate": "targeted",

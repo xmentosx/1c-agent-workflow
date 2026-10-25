@@ -165,6 +165,10 @@ function Get-DevelopScenarioCoverage {
 
 function Get-DevelopScenarioSourceProjection {
     param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly)
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1') {
+        if($ProbeOnly) {return $true}
+        return Get-DevelopBrokerCleanupSourceProjection $Text
+    }
     if($RepositoryRoot -and (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path $Commit)) {return 'outside-native-go-build'}
     if(Test-DevelopScenarioBrokerIndependent $Journey $Scenario) {
         if($Path -cmatch '^tools/itl-ondemand-mcp/[^/]+\.go$') {return 'outside-broker-independent-scenario'}

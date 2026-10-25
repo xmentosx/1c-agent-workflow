@@ -184,8 +184,58 @@ function Get-DevelopHistoricalSourceText {
     return $text
 }
 
+function Get-DevelopBrokerCleanupSourceProjection {
+    param([string]$Text)
+    # Develop never invokes the signed internal broker operation. Only that RPC
+    # path supplies RetainedRuntimeState; ordinary lifecycle drain uses the
+    # registered-instance path. Keep that path and the rest of this module exact.
+    $Text=$Text.Replace("`r`n","`n")
+    $bom=[string]$Text.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal)
+    $source=$Text.TrimStart([char]0xfeff);$tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+    if(@($errors).Count) {throw 'DEVELOP_BROKER_SCOPE_PARSE_ERROR'}
+    $functions=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst]})
+    $stop=@($functions | Where-Object Name -eq 'Stop-ItlOnDemandBackendInstanceCore')
+    if($stop.Count -ne 1) {throw 'DEVELOP_BROKER_SCOPE_UNKNOWN'}
+    $parameter=@($stop[0].Body.ParamBlock.Parameters | Where-Object {$_.Name.VariablePath.UserPath -eq 'RetainedRuntimeState'})
+    $assignments=@($stop[0].Body.FindAll({param($n)
+        $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ieq '$retained'
+    },$true))
+    if($parameter.Count -ne 1 -or -not $parameter[0].DefaultValue -or
+        $parameter[0].DefaultValue.Extent.Text -ine '$null' -or $assignments.Count -ne 1 -or
+        (ConvertTo-DevelopSourceTokens $assignments[0].Extent.Text) -cne (ConvertTo-DevelopSourceTokens '$retained = $null -ne $RetainedRuntimeState')) {
+        throw 'DEVELOP_BROKER_SCOPE_UNKNOWN'
+    }
+    $blocks=@($stop[0].Body.FindAll({param($n)
+        $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses.Count -eq 1 -and
+        -not $n.ElseClause -and $n.Clauses[0].Item1.Extent.Text.Trim() -ieq '$retained'
+    },$true))
+    if($blocks.Count -ne 1) {throw 'DEVELOP_BROKER_SCOPE_UNKNOWN'}
+    $spans=@($blocks[0])+@($functions | Where-Object Name -eq 'Test-ItlOnDemandPeerSessionOwnership')
+    foreach($command in @($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst]},$true))) {
+        # A helper promoted to a shared path immediately closes this exception.
+        if($command.GetCommandName() -eq 'Test-ItlOnDemandPeerSessionOwnership' -and
+            ($command.Extent.StartOffset -lt $blocks[0].Extent.StartOffset -or $command.Extent.EndOffset -gt $blocks[0].Extent.EndOffset)) {
+            throw 'DEVELOP_BROKER_SCOPE_SHARED_CALLER'
+        }
+        if(@($command.CommandElements | Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'RetainedRuntimeState'}).Count) {
+            $parent=$command.Parent
+            while($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) {$parent=$parent.Parent}
+            if(-not $parent -or $parent.Name -notin @('Recover-ItlOnDemandBackendInstanceCore','Invoke-ItlOnDemandBackendBroker')) {throw 'DEVELOP_BROKER_SCOPE_SHARED_CALLER'}
+        }
+    }
+    $builder=[Text.StringBuilder]::new($source)
+    foreach($node in @($spans | Sort-Object {$_.Extent.StartOffset} -Descending)) {
+        [void]$builder.Remove($node.Extent.StartOffset,$node.Extent.EndOffset-$node.Extent.StartOffset)
+    }
+    return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
+}
+
 function Get-DevelopJourneySourceProjection {
     param([string]$Path,[AllowEmptyString()][string]$Text,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1') {
+        return Get-DevelopBrokerCleanupSourceProjection $Text
+    }
     $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if (-not $scope) { return $null }
     if ($scope.ContainsKey('whole')) { return 'outside-requested-journey' }
@@ -308,6 +358,13 @@ function Test-DevelopJourneyUnaffectedPath {
     param([string]$RepositoryRoot,[string]$Path,[string]$BaseRef,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
     if($BaseRef -and (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path) -and
         (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path $BaseRef)) {return $true}
+    if($BaseRef -and $Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1') {
+        try {
+            $before=Get-DevelopHistoricalSourceText $RepositoryRoot $BaseRef $Path
+            $after=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $Path)))
+            return (Get-DevelopBrokerCleanupSourceProjection $before) -ceq (Get-DevelopBrokerCleanupSourceProjection $after)
+        } catch {return $false}
+    }
     $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if(-not $scope) { return $false }
     if($scope.ContainsKey('whole')) { return $true }
