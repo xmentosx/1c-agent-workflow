@@ -688,9 +688,9 @@ if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 
 }
 # CompactItlRunner sends a real console Ctrl+C to process-group zero, which
 # broadcasts within its attached console. Keep it out of the parallel set.
-# Preserve the former ReleaseGate serial admission for every extracted group.
-# A file transfer alone is not evidence that these native boundaries may overlap.
-$serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "DevelopManifestContinuation.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
+# DevelopManifestContinuation uses private Temp/Git fixtures and no console
+# interruption. Keep actual console/global boundaries in the serial cohort.
+$serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
 # These existing short owner checks finish before costly native files start.
 # Keep this scheduling policy beside serial admission; cached files stay reused.
 $preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1")

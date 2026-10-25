@@ -114,3 +114,41 @@ paths, one isolated generation and released lease. The previous helper fails on
 the shared WriteAllText; the repaired helper passed (3.51s body). Existing bootstrap
 repair and package/isolation assertions remain unchanged. No new coordinator or
 installed-runtime ownership was introduced.
+
+## Repeated qualification audit, 2026-10-25
+
+Candidate 495491ae contained 79 changed paths in four queues. Its 113 Pester
+executions comprised 50 files with changed owner inputs, 53 unchanged files
+without an admissible isolated-environment proof and ten external-runtime
+exceptions. Read-only replay of globally bound legacy keys found no additional
+qualified entries; the pre-isolation namespace is not migrated or trusted.
+Full/static completeness, child isolation, input SHA and newer-failure guards
+remain authoritative. Per-file evidence is retained in build/repeat-audit-113.csv.
+
+Qualification had retained three implicit workers while Targeted already used
+four. The existing catalog now selects up to four for Full/Develop/Release too,
+bounded by available processors; explicit and legacy choices remain unchanged.
+DevelopManifestContinuation has private Temp/Git fixtures, no console broadcast
+or shared native stand. It leaves the inherited ReleaseGate serial cohort;
+the actual console/global cases retain their barriers.
+
+Four original native files ran concurrently with unchanged cases and assertions:
+ReleaseExtensionRecovery 33 passed / 170.614s, SourceDeliveryPublishQualification
+3 / 168.641s, SourceDeliveryPublishRecovery 2 / 128.145s and
+DevelopManifestContinuation 22 / 183.237s. All 60 cases passed, none skipped;
+the warm invocation reused all four and executed zero. Ordering weights are
+rounded-up native observations rather than the stale 823/460/333/328s values.
+The earlier original 269-case workload supplies the observed external-file
+weights; no unchanged test was rerun for timing. Hard deadlines do not change.
+
+Plan formerly sampled the latest 32 runs across all modes, so Targeted activity
+could erase every Develop timing observation. It now uses the existing bounded
+hot index and selects matching samples per stage. Scenario execution is retained
+through check-summary, raw run and authenticated index; partial/composed runs
+cannot acquire full-workload timing. Release capability estimates read executed
+component wall time already recorded in releaseE2E, not the aggregate gate or
+reused proof duration. These are advisory estimates, never qualification proof.
+
+Both current E2E journeys remain required by the other queued runtime changes:
+dependency lock serialization/update recovery and MCP broker startup/cleanup.
+The scheduler/timing repair does not exempt those changes or authorize publishing.

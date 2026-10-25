@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
     . (Join-Path $PSScriptRoot 'PesterRuntimeSupport.ps1')
@@ -33,6 +33,35 @@ BeforeAll {
 }
 
 Describe 'Native short owner admission before expensive Pester files' {
+    It 'admits private manifest fixtures alongside another native worker and reuses both proofs' {
+        $root=New-RuntimeProofFixture 'Parallel manifest копия'
+        foreach($name in @('Runtime','DevelopManifestContinuation')) {
+            $other=if($name -eq 'Runtime') {'DevelopManifestContinuation'}else{'Runtime'}
+            $body=@"
+Describe 'private $name fixture' { It 'overlaps its independent peer' {
+    `$root=Join-Path `$PSScriptRoot '../..'
+    [IO.File]::WriteAllText((Join-Path `$root '$name.ready'),'ready')
+    `$deadline=[DateTime]::UtcNow.AddSeconds(10)
+    while(-not [IO.File]::Exists((Join-Path `$root '$other.ready'))) {
+        if([DateTime]::UtcNow -gt `$deadline){throw 'Independent peer was blocked by serial admission.'}
+        Start-Sleep -Milliseconds 20
+    }
+    `$true | Should -BeTrue
+} }
+"@
+            [IO.File]::WriteAllText((Join-Path $root ('tests/pester/'+$name+'.Tests.ps1')),$body,[Text.UTF8Encoding]::new($true))
+        }
+        Add-Content (Join-Path $root '.gitignore') '*.ready'
+        $catalog=@{schemaVersion=1;contracts=@(@{id='parallel';owner='private fixture';gate='targeted';budgetSeconds=30;primaryTest='tests/pester/Runtime.Tests.ps1';paths=@('scripts/*');tests=@('tests/pester/Runtime.Tests.ps1','tests/pester/DevelopManifestContinuation.Tests.ps1')})}
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all;& git -C $root commit -qm 'independent native fixtures'
+        $first=Invoke-PreflightFixture $root out-cold
+        $first.executedWorkerCount | Should -Be 2
+        $first.passed | Should -Be 2
+        $warm=Invoke-PreflightFixture $root out-warm
+        $warm.executedWorkerCount | Should -Be 0
+        $warm.reusedWorkerCount | Should -Be 2
+    }
     It 'finishes the short task before two independent workers and reuses all three proofs' {
         $root = New-PreflightFixture 'Preflight passing'
         $first = Invoke-PreflightFixture $root 'out-first'

@@ -53,6 +53,25 @@ Describe 'Delivery run hot index' {
         $script:CommonGit = ''
     }
 
+    It 'preserves native scenario execution through the raw record and authenticated hot index' {
+        $runRoot=New-RunIndexStore
+        $started=[DateTime]::UtcNow
+        $summaryRoot=Join-Path $TestDrive 'build/test-results/local'
+        [void][IO.Directory]::CreateDirectory($summaryRoot)
+        $summary=@{startedAt=$started.ToString('o');tests=$null;stages=@();journeyScenarioExecution=@{fresh=@('install','branch')}}
+        [IO.File]::WriteAllText((Join-Path $summaryRoot 'check-summary.json'),($summary|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+        $raw=Write-DeliveryRunRecord -Mode Develop -Status passed -WorkingRoot $TestDrive -StartedAt $started -FinishedAt $started.AddSeconds(3) -ExitCode 0
+        @((Get-Content $raw -Raw|ConvertFrom-Json).journeyScenarioExecution.fresh) | Should -Be @('install','branch')
+        $history=Get-DeliveryRunHistory -IncludeDetails
+        @($history.lastRuns[0].journeyScenarioExecution.fresh) | Should -Be @('install','branch')
+        $indexPath=Get-DeliveryRunHotIndexPath
+        $index=Get-Content $indexPath -Raw|ConvertFrom-Json
+        $index.entries[0].journeyScenarioExecution.fresh=@('install')
+        [IO.File]::WriteAllText($indexPath,($index|ConvertTo-Json -Depth 16),[Text.UTF8Encoding]::new($false))
+        (Read-DeliveryRunHotIndex).status | Should -BeExactly corrupt
+        (Get-DeliveryRunHistory -IncludeDetails).lastRuns.Count | Should -Be 0
+    }
+
     It 'reads the immutable legacy Core proof on either runtime and rejects changed payload' {
         $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
         $script:CommonGit = "C:\proof fixture $nonAscii"
