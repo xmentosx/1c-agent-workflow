@@ -17,8 +17,16 @@ SHA remain authenticated during reuse; missing/new input cannot acquire old proo
 contract marker and SHA. It retains exact binding. Unknown instructions remain
 conservative. Current static package-copy/presence proof is still required.
 
-Product context is lazily imported behind configured productProject / pending
-operation / explicit catalog dispatch. Develop requests no catalog operation.
+Product business operations require configured productProject / pending operation
+or explicit catalog dispatch. Develop requests no catalog operation. The updater
+also calls PostUpdateOffer without that configuration: its binding getter runs
+before the interactive-input check. Binding and settings readers therefore remain
+exact native inputs. A RED regression rejected the earlier module-wide exception;
+the exception now covers only Read-ItlProductProjectSnapshot,
+Set-ItlProductProjectAppliedContext, Get-ItlProductProjectPublisherContext and
+Initialize-ItlProductProjectContext. The actual getter and post-update offer are
+executed in regressions with headless and empty-answer interactive input; both
+retain admission while avoiding these four business operations.
 The existing input identity observes main, develop and positive roots, their
 configuration hashes and pending operations. The new catalog flag
 `outsideWhenNoProductContext` requires `requiresNoProductContext=true`; it excludes
@@ -72,3 +80,41 @@ one-worker execution plus one reuse after a sibling edit, and two executions aft
 a shared fixture edit. The actual workflow cases above run separately from those
 small cache fixtures. Registration remains responsible for Targeted on the combined
 candidate; no Full, Develop, Release or publication is authorized by this change.
+
+## Preserved planner scenarios
+
+The first combined Targeted run measured SourceDeliveryIncremental at about 993 seconds
+for 36 expanded cases. Its obsolete 100-second ordering weight described an older
+ten-case suite. AST extraction preserved all 22 current It definitions and full
+parameter data, splitting them into eight workers: native selection, pinned
+candidate bridge, proof authentication, catalog inputs, Go inputs, scenario
+selection, setup inputs and native-child proof composition. Shared fixture bodies
+are preserved in SourceDeliveryIncremental.TestSupport.ps1. Only exact selection
+assertions expand to name the moved consumers; no reproducer or guard changes.
+
+The producer contract retains the union of all previous production/reuse inputs,
+including the real catalog. Separate self owners prevent a sibling test edit from
+invalidating unrelated groups. Shared implementation/fixture changes retain all
+consumers. Selection and production cache regressions cover both split families.
+
+All 36 moved planner cases passed without skips through the production shard
+runner. The following elapsed times set the new individual scheduling weights;
+previously passed exact workers were reused while fixing selection regressions.
+
+| Worker | Passed cases | Observed ms | New weight seconds |
+| --- | ---: | ---: | ---: |
+| SourceDeliveryIncremental | 9 | 119044 | 120 |
+| DeliveryCandidatePlanBridge | 6 | 94143 | 95 |
+| DeliveryScenarioAuthentication | 4 | 87279 | 88 |
+| DeliveryCatalogInputScope | 3 | 83726 | 84 |
+| DeliveryGoInputScope | 3 | 158486 | 159 |
+| DeliveryScenarioSelection | 5 | 65950 | 66 |
+| DeliverySetupInputScope | 3 | 35391 | 36 |
+| DeliveryScenarioComposition | 3 | 99349 | 100 |
+
+One concurrent run of the composition group reported a null Git HEAD read in
+New-DevelopE2ERouteReport. The unchanged three-case suite then passed, including
+the same native child, topology, workload, partial-proof rejection and corruption
+assertions. Failed output is retained in build/incremental-split-final; the
+unchanged diagnostic rerun is build/composition-repro. The cause of that single
+transport failure is not established; no assertion or failing path was bypassed.

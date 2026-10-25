@@ -226,9 +226,11 @@ source SHA still authenticates this projection.
 The main `1c-workflow/SKILL.md` content uses the same static boundary, with
 authenticated prior/current file presence. Addition/removal remains conservative.
 The fast skill retains exact native content: its contract marker and SHA are read.
-Declared product-context functions may retain native proof only with known disabled
-context across all target roots and no pending operation. Enabled/unknown context,
-unknown functions and top-level execution remain bound.
+The four declared product snapshot/publisher/initialization/application functions
+may retain native proof only with known disabled context across all target roots
+and no pending operation. Binding and settings readers remain exact inputs:
+the updater calls binding admission even when context is disabled. Enabled/unknown
+context, unknown functions and top-level execution remain bound.
 The exact new broker still requires the real ondemand-mcp Release capability for
 both backend families; Develop reuse cannot qualify its RPC behavior.
 Retained-launch cleanup is an internal broker RPC path. Develop lifecycle drain

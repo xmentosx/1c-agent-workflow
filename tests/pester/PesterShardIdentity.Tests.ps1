@@ -193,7 +193,7 @@ Describe 'Pester shard selected-test identity' {
         $warm.workers[0].inputDigest | Should -Be $first.workers[0].inputDigest
         $selected=Resolve-QualityContractsForPaths $catalog @('scripts/delivery-native-plan.ps1')
         @($selected.tests) | Should -Not -Contain $test
-        @($selected.tests | Sort-Object) | Should -Be @('tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryPlan.Tests.ps1')
+        @($selected.tests | Sort-Object) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryPlan.Tests.ps1')
         [IO.File]::AppendAllText((Join-Path $root 'scripts/source-delivery-candidate.ps1'),"`n# orchestration change")
         & git -C $root add --all; & git -C $root commit -qm 'orchestration change'
         $changed=Invoke-ShardIdentityFixture $root 'out-scope-changed'
@@ -201,11 +201,15 @@ Describe 'Pester shard selected-test identity' {
         $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
     }
 
-    It 'reuses an unchanged workflow operation group after a sibling edit but invalidates the shared fixture' {
+    It 'reuses an unchanged <Family> group after a sibling edit but invalidates the shared fixture' -TestCases @(
+        @{Family='workflow';First='WorkflowUpdateRollback';Second='WorkflowUpdateReceiptRecovery';Support='WorkflowUpdateRollback.TestSupport.ps1'},
+        @{Family='planner';First='SourceDeliveryIncremental';Second='DeliveryScenarioAuthentication';Support='SourceDeliveryIncremental.TestSupport.ps1'}
+    ) {
+        param($Family,$First,$Second,$Support)
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
-        $root=New-ShardIdentityFixture 'Workflow operation scope'
-        $tests=@('tests/pester/WorkflowUpdateRollback.Tests.ps1','tests/pester/WorkflowUpdateReceiptRecovery.Tests.ps1')
+        $root=New-ShardIdentityFixture ('Operation scope '+$Family)
+        $tests=@(('tests/pester/'+$First+'.Tests.ps1'),('tests/pester/'+$Second+'.Tests.ps1'))
         $catalog=Get-QualityContractCatalog $RepoRoot
         $owners=@($catalog.contracts|Where-Object {@($_.tests|Where-Object {$_ -in $tests}).Count})
         $patterns=@($owners|ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
@@ -229,7 +233,7 @@ Describe 'Pester shard selected-test identity' {
         $warm.reusedWorkerCount | Should -Be 1
         @($warm.workers|Where-Object execution -eq reused|ForEach-Object {$_.paths[0]})[0] | Should -BeLike ('*'+(Split-Path $tests[0] -Leaf))
         @((Resolve-QualityContractsForPaths $catalog @($tests[1])).tests) | Should -Be @($tests[1])
-        [IO.File]::AppendAllText((Join-Path $root 'tests/pester/WorkflowUpdateRollback.TestSupport.ps1'),"`n# changed shared fixture")
+        [IO.File]::AppendAllText((Join-Path $root ('tests/pester/'+$Support)),"`n# changed shared fixture")
         & git -C $root add --all;& git -C $root commit -qm 'shared workflow fixture'
         $changed=Invoke-ShardIdentityFixture $root 'out-workflow-shared'
         $changed.executedWorkerCount | Should -Be 2

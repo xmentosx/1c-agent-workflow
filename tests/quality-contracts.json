@@ -219,35 +219,50 @@
         "requiresNoProductContext": true,
         "outsideWhenNoProductContext": true,
         "functions": {
-          "Get-ItlProductProjectBinding": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Assert-ItlProductProjectBindingValue": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Read-ItlProductProjectConfig": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Set-ItlProductProjectBinding": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Read-ItlProductProjectSetting": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Set-ItlProductProjectSetting": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectStartupDisposition": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Read-ItlProductProjectSnapshot": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectOperationContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Set-ItlProductProjectOperationContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Resolve-ItlProductProjectEndpointIntent": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Resolve-ItlProductProjectRuntimeContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectEffectiveSnapshot": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "New-ItlProductProjectPreview": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Test-ItlProductProjectPreviewClientChanges": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Test-ItlProductProjectPreviewAlreadyApplied": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectSourceSummary": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Show-ItlProductProjectPreview": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Resolve-ItlProductProjectPreviewDecision": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Set-ItlProductProjectAppliedContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectPublisherContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Initialize-ItlProductProjectContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectResolvedHash": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectNoOpInputs": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectSetupContext": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Test-ItlProductProjectCatalogRole": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Assert-ItlProductProjectPackageCompatibility": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "Get-ItlProductProjectIntegrationIntent": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"],
-          "New-ItlProductProjectMantisWriteArguments": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"]
+          "Read-ItlProductProjectSnapshot": [
+            "upgrade.update",
+            "upgrade.configuration-rejection",
+            "upgrade.verification-export",
+            "fresh.install",
+            "fresh.branch",
+            "fresh.verification",
+            "fresh.stale-export",
+            "fresh.refresh",
+            "fresh.close"
+          ],
+          "Set-ItlProductProjectAppliedContext": [
+            "upgrade.update",
+            "upgrade.configuration-rejection",
+            "upgrade.verification-export",
+            "fresh.install",
+            "fresh.branch",
+            "fresh.verification",
+            "fresh.stale-export",
+            "fresh.refresh",
+            "fresh.close"
+          ],
+          "Get-ItlProductProjectPublisherContext": [
+            "upgrade.update",
+            "upgrade.configuration-rejection",
+            "upgrade.verification-export",
+            "fresh.install",
+            "fresh.branch",
+            "fresh.verification",
+            "fresh.stale-export",
+            "fresh.refresh",
+            "fresh.close"
+          ],
+          "Initialize-ItlProductProjectContext": [
+            "upgrade.update",
+            "upgrade.configuration-rejection",
+            "upgrade.verification-export",
+            "fresh.install",
+            "fresh.branch",
+            "fresh.verification",
+            "fresh.stale-export",
+            "fresh.refresh",
+            "fresh.close"
+          ]
         }
       },
       {
@@ -842,8 +857,24 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
-      "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1"],
-      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1"]
+      "paths": [
+        "scripts/source-delivery.ps1",
+        "scripts/source-delivery-supervisor.ps1"
+      ],
+      "tests": [
+        "tests/pester/SourceDeliveryQueue.Tests.ps1",
+        "tests/pester/SourceDeliveryAdmission.Tests.ps1",
+        "tests/pester/SourceDeliveryAuthority.Tests.ps1",
+        "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1",
+        "tests/pester/SourceDeliveryRefCleanup.Tests.ps1",
+        "tests/pester/SourceDeliveryPlan.Tests.ps1",
+        "tests/pester/SourceDeliveryReplan.Tests.ps1",
+        "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1",
+        "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1",
+        "tests/pester/SourceDeliveryControllerRollback.Tests.ps1",
+        "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1",
+        "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-plan",
@@ -856,11 +887,17 @@
         "scripts/release-e2e/stages.json"
       ],
       "tests": [
-        "tests/pester/SourceDeliveryIncremental.Tests.ps1",
-        "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1",
+        "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1",
+        "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1",
+        "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1",
+        "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1",
         "tests/pester/SourceDeliveryPlan.Tests.ps1",
-        "tests/pester/ReleaseGate.Tests.ps1"
-      , "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1"]
+        "tests/pester/ReleaseGate.Tests.ps1",
+        "tests/pester/SourceDeliveryReplan.Tests.ps1",
+        "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1",
+        "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1",
+        "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-artifact-discovery",
@@ -868,8 +905,12 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/SourceDeliveryPlan.Tests.ps1",
-      "paths": ["scripts/source-e2e-artifact-discovery.ps1"],
-      "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1"]
+      "paths": [
+        "scripts/source-e2e-artifact-discovery.ps1"
+      ],
+      "tests": [
+        "tests/pester/SourceDeliveryPlan.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-plan-checker",
@@ -877,8 +918,20 @@
       "gate": "targeted",
       "budgetSeconds": 90,
       "primaryTest": "tests/pester/SourceDeliveryPlan.Tests.ps1",
-      "paths": ["scripts/check.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/quality-contracts.ps1", "scripts/git-path-list.ps1", "scripts/stand-env-identity.ps1", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/delivery-native-plan.ps1"],
-      "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1"]
+      "paths": [
+        "scripts/check.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/stand-env-identity.ps1",
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "scripts/delivery-native-plan.ps1"
+      ],
+      "tests": [
+        "tests/pester/SourceDeliveryPlan.Tests.ps1"
+      ]
     },
     {
       "id": "develop-broker-input-scope",
@@ -1106,7 +1159,8 @@
         "scripts/develop-e2e-scenarios.ps1",
         "scripts/quality-contracts.ps1",
         ".agents/skills/1c-workflow/SKILL.md",
-        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1"
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1"
       ],
       "reuseInputPaths": [
         "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
@@ -1132,14 +1186,166 @@
       ]
     },
     {
-      "id": "source-delivery-incremental-inputs",
-      "owner": "end-to-end incremental selection and reuse against actual journey sources",
+      "id": "incremental-scenario-sourcedeliveryincremental",
+      "owner": "Independent SourceDeliveryIncremental regression worker",
       "gate": "targeted",
-      "budgetSeconds": 120,
+      "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryIncremental.Tests.ps1",
-      "paths": ["tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/quality-contracts.json"],
-      "reuseInputPaths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/develop-static-qualification.ps1", "scripts/release-qualification.ps1", "scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1", "scripts/source-delivery-candidate.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
-      "tests": ["tests/pester/SourceDeliveryIncremental.Tests.ps1"]
+      "paths": [
+        "tests/pester/SourceDeliveryIncremental.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/SourceDeliveryIncremental.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliverycandidateplanbridge",
+      "owner": "Independent DeliveryCandidatePlanBridge regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryCandidatePlanBridge.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryCandidatePlanBridge.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryCandidatePlanBridge.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliveryscenarioauthentication",
+      "owner": "Independent DeliveryScenarioAuthentication regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryScenarioAuthentication.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryScenarioAuthentication.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryScenarioAuthentication.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliverycataloginputscope",
+      "owner": "Independent DeliveryCatalogInputScope regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryCatalogInputScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryCatalogInputScope.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryCatalogInputScope.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliverygoinputscope",
+      "owner": "Independent DeliveryGoInputScope regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryGoInputScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryGoInputScope.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryGoInputScope.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliveryscenarioselection",
+      "owner": "Independent DeliveryScenarioSelection regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryScenarioSelection.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryScenarioSelection.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryScenarioSelection.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliverysetupinputscope",
+      "owner": "Independent DeliverySetupInputScope regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliverySetupInputScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliverySetupInputScope.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliverySetupInputScope.Tests.ps1"
+      ]
+    },
+    {
+      "id": "incremental-scenario-deliveryscenariocomposition",
+      "owner": "Independent DeliveryScenarioComposition regression worker",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DeliveryScenarioComposition.Tests.ps1",
+      "paths": [
+        "tests/pester/DeliveryScenarioComposition.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/DeliveryScenarioComposition.Tests.ps1"
+      ]
+    },
+    {
+      "id": "source-delivery-incremental-inputs",
+      "owner": "Preserved incremental delivery scenarios and their shared executable inputs",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/SourceDeliveryIncremental.Tests.ps1",
+      "paths": [
+        "scripts/check.ps1",
+        "scripts/delivery-native-plan.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/release-e2e/stages.json",
+        "scripts/source-delivery-plan.ps1",
+        "scripts/source-delivery-supervisor.ps1",
+        "scripts/source-delivery.ps1",
+        "scripts/source-e2e-artifact-discovery.ps1",
+        "scripts/stand-env-identity.ps1",
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "tests/quality-contracts.json",
+        "tests/pester/SourceDeliveryIncremental.TestSupport.ps1"
+      ],
+      "reuseInputPaths": [
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "scripts/check.ps1",
+        "scripts/delivery-native-plan.ps1",
+        "scripts/develop-configuration-rejection.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/develop-static-qualification.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/release-e2e/stages.json",
+        "scripts/release-qualification.ps1",
+        "scripts/source-delivery-candidate.ps1",
+        "scripts/source-delivery-plan.ps1",
+        "scripts/source-delivery-supervisor.ps1",
+        "scripts/source-delivery.ps1",
+        "scripts/source-e2e-artifact-discovery.ps1",
+        "scripts/stand-env-identity.ps1",
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "tests/pester/SourceDeliveryIncremental.TestSupport.ps1"
+      ],
+      "tests": [
+        "tests/pester/SourceDeliveryIncremental.Tests.ps1",
+        "tests/pester/DeliveryCandidatePlanBridge.Tests.ps1",
+        "tests/pester/DeliveryScenarioAuthentication.Tests.ps1",
+        "tests/pester/DeliveryCatalogInputScope.Tests.ps1",
+        "tests/pester/DeliveryGoInputScope.Tests.ps1",
+        "tests/pester/DeliveryScenarioSelection.Tests.ps1",
+        "tests/pester/DeliverySetupInputScope.Tests.ps1",
+        "tests/pester/DeliveryScenarioComposition.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-resources",
