@@ -44,6 +44,11 @@ Schema 2 separates the behavior to prove from the decision to retain a test.
 An obligation identifies its expected result, affected inputs, admissible proof,
 retention decision, and cadence. A retained suite or YAxUnit group binds to one
 obligation by `suiteId` or `groupId`; a one-off obligation has no retained test.
+Derive the expected result from the agreed task outcome. Select proportionate
+behavioural proof using the installed `verification-delivery.md`, Soft gate D:
+classify applicable UI/user-path and affected agreed-mockup obligations here,
+then use the same retained or one-off evidence assessment. Internal-only changes
+do not require a UI walkthrough or a new saved suite.
 Schema 1 remains readable and maps existing acceptance/default-fast entries to
 `affected` and existing explicit entries to `explicit`, without deleting tests.
 
