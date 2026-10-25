@@ -1,5 +1,29 @@
 # Context Sources
 
+## Актуальные входы плана G4, 2026-10-25
+
+[План G4](g4-implementation-plan.md) имеет приоритет для текущей готовности над
+историческими baseline/readiness формулировками ниже. Source base
+`568379a540e3504bcce1b65e94c853f1704154f7`; опубликованный registry snapshot
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` содержит 44 области и 0 назначенных homes.
+Qualified G2, принятый G3 и закрытый R6 подтверждены их существующими evidence.
+
+Текущий lock прочитан на месте: `itl-main-2f640143-r47`, fork commit
+`c91682404a498f356810b179ce8336711a411170`, upstream
+`2f640143756ecd01fed42100e412632aa9082385`. Из точного Git объекта прочитан
+`content/rules/project-memory.md` (blob `5fe9348da25fd364fb455bad96e3e97f0e78994e`);
+root `memory.md` blob `dd3bbbd3896a7ca3e7ebc28a42806b782eb7593e`.
+Managed boundary ещё исключает Cognee/OpenViking, templates wording конфликтует
+с shared boundary `templates/USER-RULES.append.md`; это известная D7 адаптация
+у fork owner, не разрешение патчить установленный ruleset.
+
+Local qualification-result-r2.json этапа C существует, SHA-256
+`be8219d1d090343f2d7deebace513b77d5aa7a322e353f10b9f3324d7048582d` совпал.
+Q1–Q7 имеют passed для exact local profile; это не свежий live probe. Стенд,
+runtime/API, assets/lock/fork, registry данные, datasets и grants не менялись.
+Полный старый контекст и hashes ниже остаются evidence на дату первоначального
+чтения, не актуальным fork pin и не доказательством текущего работающего сервера.
+
 ## Основание и границы проверки
 
 Текущая source граница G3: registry Git/source contracts и client apply/recovery подключены к выбору проекта, bootstrap/startup, конфликтам, ordinary sync и fixture-only compatibility path по отдельному approval. Pure G2 home/read interface уже проверен; источник фактической G3 приёмки — соседний registry test-plan. Эти source/isolated client fixtures не квалифицируют память, весь installed G3 или активные MCP tools. G4/реальные installed migration не начаты. Таблица dependency hashes ниже обновлена по этой source постановке; G1/D9 evidence и budgets не меняются.

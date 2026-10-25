@@ -1,5 +1,15 @@
 # Acceptance and Evidence Plan
 
+## Граница проверки плана G4, 2026-10-25
+
+[План G4](g4-implementation-plan.md) использует прежние AC и frozen B01–B12;
+новые native сценарии не добавлены. Q1–Q7 reused только для совпавшего exact
+profile, source/owner fixtures относятся к G4, native frontend/installed/paired
+proof 6.2–6.4/6.6b — к отдельно разрешённому G5. Контекст R6 опубликован,
+но homes не назначены: shared-product canary ждёт подтверждённых home/IDs/grants.
+При подготовке плана провайдер, стенды, tests и lifecycle не запускались;
+документальная регистрация отдельно принадлежит штатному RegisterChange.
+
 ## R6: фактическая приёмка наполнения, 2026-10-25
 
 Memory AC-44: registry population dependency CLOSED; native shared-product/G5 часть остаётся непроверенной, память не принята.

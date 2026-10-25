@@ -1,5 +1,15 @@
 # Design
 
+## План потребителя памяти G4, 2026-10-25
+
+[План G4 у memory owner](../add-scoped-cognee-memory/g4-implementation-plan.md)
+потребляет один effective applied context прежнего registry owner: project/product,
+source origin/limitations, knowledge applicability и hashes. R6 закрыт на
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`; нового fetch/updater, четвёртой MCP-роли,
+provider IDs/grants или auto-home в каталоге нет. Отложенные optional homes
+не назначаются этим планом; runtime-код общего маршрута не включает его без
+подтверждённой карты. Новых работ G3/Gate6/миграции/публикации план не запускает.
+
 ## R6 закрыт: данные опубликованы, 2026-10-25
 
 Пользователь согласовал восьмипроектный кандидат и явно разрешил публикацию данных.

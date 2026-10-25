@@ -1,5 +1,13 @@
 # Tasks
 
+## Связь с подготовленным планом G4, 2026-10-25
+
+- [x] Согласовать dependency границу [плана memory G4](../add-scoped-cognee-memory/g4-implementation-plan.md): опубликованный R6, один effective snapshot/resolver, три проектные MCP-роли, homes отсутствуют осознанно, provider mapping отдельно.
+
+Это документальное согласование двух OpenSpec; реализация G4 остаётся у memory
+owner и сейчас не разрешена. G3/R6 не переоткрываются, registry code/data/roles
+не меняются, Gate6/рабочая миграция/публикация workflow не запускаются.
+
 ## R6 закрыт: данные опубликованы, 2026-10-25
 
 - [x] Подтвердить у владельца восемь типовых проектов, настройки, карту PM4/PM5 и явные исключения/optional homes registry-only выпуска.
