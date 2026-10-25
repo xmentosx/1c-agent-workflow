@@ -279,6 +279,9 @@ function Get-DevelopE2EAncestorQualification {
         return $null
     }
     $seenJourney=$false
+    $currentSource=@{};foreach($entry in $InputIdentity.inventory.inputs) {$currentSource[$entry.path]=$entry.sha256}
+    $externalView=$InputIdentity.inventory.external|ConvertTo-Json -Depth 24|ConvertFrom-Json
+    $noProduct=$externalView.PSObject.Properties['productContext'] -and $externalView.productContext.known -and $externalView.productContext.disabled
     $files=if($null -ne $QualificationInventory) {$QualificationInventory} else {Get-ChildItem -LiteralPath $root -Recurse -File -Filter manifest.json | Sort-Object LastWriteTimeUtc -Descending}
     foreach ($file in @($files)) {
         if($file.FullName.StartsWith((Join-Path $root '.references')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {continue}
@@ -291,13 +294,26 @@ function Get-DevelopE2EAncestorQualification {
                 (Get-DevelopE2ECanonicalJsonSha256 -Value $manifest.inputIdentity.inventory) -cne [string]$manifest.inputIdentity.fingerprint) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'MANIFEST_INVALID'; continue
             }
-            # A different physical artifact always rejects reuse. Reject after
-            # authenticating the input inventory, before reading/normalizing
-            # hundreds of inapplicable reports. This cannot grant any proof;
-            # candidates with matching artifacts still traverse every check.
-            if(Test-DevelopArtifactIdentityDifference $manifest.inputIdentity $InputIdentity) {
+            # Reject differing consumed artifacts before expensive projection.
+            # A scoped match only continues to every source, workload, stand,
+            # report SHA, static-proof and newer-failure check below.
+            if(Test-DevelopArtifactIdentityDifference $manifest.inputIdentity $InputIdentity $Journey $RequiredScenario) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_INPUTS_CHANGED' -Inputs @('external:artifacts')
                 continue
+            }
+            if($RequiredScenario.Count) {
+                # A changed native input with no projection cannot pass later
+                # equivalence. Reject it here, after inventory authentication,
+                # before report/positive-stand reconstruction and AST reads.
+                $previousSource=@{};foreach($entry in $manifest.inputIdentity.inventory.inputs) {$previousSource[$entry.path]=$entry.sha256}
+                $unprojectable=@(foreach($entry in @($manifest.inputIdentity.inventory.inputs)+@($InputIdentity.inventory.inputs)) {
+                    if($previousSource[$entry.path] -cne $currentSource[$entry.path] -and
+                        -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $Journey -Scenario $RequiredScenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly)) {$entry;break}
+                })
+                if($unprojectable.Count) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NATIVE_CONSUMER_INPUT_CHANGED' -Inputs @($unprojectable | ForEach-Object {'source:'+$_.path})
+                    continue
+                }
             }
             $reportPath = Join-Path $file.DirectoryName 'route-report.json'
             if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.identity.reportSha256) {

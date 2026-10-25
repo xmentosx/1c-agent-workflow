@@ -213,17 +213,30 @@ reports. A full certificate still validates every required scenario. Copy-GC
 retention/reporting changes use their current static owner proof; fixture
 preparation and space admission remain native inputs. Scenario workload, source
 inputs, stand/positive-stand facts, effective client selection, runtime, fork and
-all three physical artifact hashes bind reuse.
+consumed physical artifact hashes bind reuse. Current binding admission always
+checks all three physical files against the candidate lock. Fresh verification,
+stale-export and close do not install or execute the broker: only these scenarios
+can project out its hash, compiled root Go source and known release identity
+fields. Install, branch, refresh, upgrade, whole-journey and unknown requests
+retain the exact broker identity. Runner, builder, PowerShell consumers, transport,
+platform, compatibility minimum, other artifacts and unknown fields remain bound.
+The linked `references/mcp.md` agent instruction is a static input; neither native
+runner reads it. Unknown references keep conservative binding and historical
+source SHA still authenticates this projection.
+The exact new broker still requires the real ondemand-mcp Release capability for
+both backend families; Develop reuse cannot qualify its RPC behavior.
 Current authenticated routing policy projects both source snapshots. Adding or
-refining `scenarioInputs` alone does not change a native assertion and therefore
-does not invalidate existing proof. The raw JSON catalog has the same narrow
-projection; every other field and all scenario operations/dependencies still bind.
+refining routing alone does not change a native assertion and therefore does not
+invalidate existing proof. Known Pester policy, contract selection, fullPaths and
+scenarioInputs are routing; authenticated source inventory, unknown fields and all
+scenario operations/dependencies still bind. Removing a declared native input
+does not remove its old inventory entry or authorize reuse with missing source.
 Historical catalog LF/CRLF variants must match the recorded SHA before projection.
 Go unit tests and README of the on-demand main package stay under static proof.
 They do not select a native journey only with the audited runner/builder hashes
 and no `go:embed` in compiled package source, on both historical/current snapshots.
 Consumer drift, embedding, missing source or unknown paths close this exception.
-After authenticating a cache input inventory, reject differing artifact hashes
+After authenticating a cache input inventory, reject differing consumed hashes
 before expensive report/source projection. Matching artifacts still require every
 existing workload, provenance, static, environment and failure check.
 The stateless client writer uses upgrade update and fresh install/branch as
@@ -385,6 +398,16 @@ dirty-state и E2E obligations сохраняются. Ручной дополн
 его test-файлов и не расширяет выбор `Targeted` по `paths`. Контракт нативной
 сборки учитывает весь набор модулей хелпера и зависимостей guard. Отсутствующий
 вход отключает reuse; некорректные шаблоны отклоняет владелец каталога.
+
+Нативный расчёт и оценка времени находятся в `scripts/delivery-native-plan.ps1`.
+Supervisor с явным custom gate возвращает его план до загрузки этого модуля и
+Develop qualification. Поэтому native planner/qualification не входят в digest
+frozen publication, integrity, registration и recovery fixtures с подставным gate.
+Их прежние проверки очереди, SHA, rollback и настоящего supervisor сохраняются.
+Нативный планировщик проверяют SourceDeliveryPlan и SourceDeliveryIncremental;
+регрессия PesterShardIdentity подтверждает настоящий cache hit после его изменения
+и обязательный повтор после изменения orchestration. После изменения самого
+разделения первый прогон затронутых fixture suites остаётся обязательным.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
 ранние возможности. `tests/quality-contracts.json` объявляет пять continuation

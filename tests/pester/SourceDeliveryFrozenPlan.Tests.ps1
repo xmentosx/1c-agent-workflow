@@ -13,5 +13,19 @@ Describe 'Frozen source publication membership' {
         $plan.supervisor.commit | Should -Be ('a'*40)
     }
 
+    It 'runs the real custom-gate supervisor without native planner or qualifier modules' {
+        $fixture=New-FrozenFixture
+        try {
+            foreach($name in @('delivery-native-plan.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1')) {
+                Test-Path -LiteralPath (Join-Path $fixture.root ('scripts/'+$name)) | Should -BeFalse
+            }
+            Add-FrozenTask $fixture alpha | Out-Null
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $plan=(Invoke-FrozenDelivery $fixture Plan).stdout | ConvertFrom-Json
+            $plan.status | Should -Be 'ready'
+            @($plan.stages.id) | Should -Be @('develop.custom-gate')
+        } finally {Remove-DeliveryFixture $fixture}
+    }
+
     It 'publishes a saved plan current without absorbing a later task before the first attempt' { Invoke-FrozenSavedPlan -Record current -Legacy:$false }
 }

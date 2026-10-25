@@ -160,6 +160,47 @@ Describe 'Pester shard selected-test identity' {
         @($nativeInputs | Where-Object {$path=$_;@($patterns | Where-Object {$path -like $_}).Count -eq 0}) | Should -BeNullOrEmpty
     }
 
+    It 'reuses custom-gate publication proof across native planner changes and invalidates an orchestration change' {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $root=New-ShardIdentityFixture 'Native scope'
+        $test='tests/pester/SourceDeliveryFrozenPublication.Tests.ps1'
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $owners=@($catalog.contracts|Where-Object {$test -in @($_.tests)})
+        $patterns=@($owners|ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+        $tracked=@(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--'))
+        foreach($relative in @(Select-QualityPaths $tracked $patterns)) {
+            $target=Join-Path $root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination (Join-Path $root 'tests/quality-contracts.json') -Force
+        # The actual frozen fixture suites separately execute the real custom
+        # gate. This fixture checks production shard selection/cache admission.
+        [IO.File]::WriteAllText((Join-Path $root $test),"Describe 'Publication fixture' { It 'passed' { `$true|Should -BeTrue } }")
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($test)}|ConvertTo-Json))
+        & git -C $root add --all; & git -C $root commit -qm 'custom gate scope'
+        $first=Invoke-ShardIdentityFixture $root 'out-scope-first'
+        $first.executedWorkerCount | Should -Be 1
+        $first.workers[0].inputDigest | Should -Not -BeNullOrEmpty
+        foreach($path in @('scripts/delivery-native-plan.ps1','scripts/develop-e2e-qualification.ps1','scripts/develop-journey-inputs.ps1','scripts/develop-e2e-scenarios.ps1')) {
+            $native=Join-Path $root $path
+            [IO.File]::WriteAllText($native,"throw 'native planner must not load for a custom gate'")
+        }
+        & git -C $root add --all; & git -C $root commit -qm 'native planner only'
+        $warm=Invoke-ShardIdentityFixture $root 'out-scope-warm'
+        $warm.reusedWorkerCount | Should -Be 1
+        $warm.workers[0].inputDigest | Should -Be $first.workers[0].inputDigest
+        $selected=Resolve-QualityContractsForPaths $catalog @('scripts/delivery-native-plan.ps1')
+        @($selected.tests) | Should -Not -Contain $test
+        @($selected.tests | Sort-Object) | Should -Be @('tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceDeliveryPlan.Tests.ps1')
+        [IO.File]::AppendAllText((Join-Path $root 'scripts/source-delivery-candidate.ps1'),"`n# orchestration change")
+        & git -C $root add --all; & git -C $root commit -qm 'orchestration change'
+        $changed=Invoke-ShardIdentityFixture $root 'out-scope-changed'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.workers[0].inputDigest | Should -Not -Be $first.workers[0].inputDigest
+    }
+
     It 'rejects malformed reuse input paths: <kind>' -TestCases @(
         @{kind='empty';paths=@()}, @{kind='blank';paths=@('')},
         @{kind='outside';paths=@('../secret.ps1')},

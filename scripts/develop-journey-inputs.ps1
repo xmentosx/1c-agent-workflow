@@ -34,6 +34,11 @@ function Get-DevelopInputDifferenceNames {
 # Never turn a node exclusion into an exemption for a shared runtime file.
 function Get-DevelopJourneyExcludedScope {
     param([string]$Path,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
+    if($Path -ceq '.agents/skills/1c-workflow/references/mcp.md') {
+        # A linked agent instruction, never read or executed by either native
+        # runner. Its managed copy/content remains under current static proof.
+        return @{whole=$true}
+    }
     if($Path -ceq 'scripts/stand-env-identity.ps1') {
         # Discovery reads source artifacts for planning; it does not implement
         # either native journey. The rest of the shared stand contract binds.

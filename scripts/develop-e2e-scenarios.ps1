@@ -19,17 +19,41 @@ function Get-DevelopScenarioWorkloadHash {
     # snapshots. Keep every workload/unknown field and never rewrite old proof.
     $workload=$Contract | ConvertTo-Json -Depth 24 | ConvertFrom-Json
     $workload.PSObject.Properties.Remove($RoutingField)
+    # Source selection is checked against both authenticated inventories below;
+    # it does not change the native workload certified by an ancestor.
+    $workload.PSObject.Properties.Remove('contracts')
+    $workload.PSObject.Properties.Remove('fullPaths')
     return Get-DevelopE2ECanonicalJsonSha256 $workload
 }
 
+function Test-DevelopScenarioBrokerIndependent {
+    param([string]$Journey,[string[]]$Scenario=@())
+    return ($Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and
+        -not @($Scenario | Where-Object {$_ -cnotin @('verification','stale-export','close')}).Count)
+}
+
+function ConvertTo-DevelopScenarioArtifactIdentity {
+    param([object]$Artifacts,[string]$Journey,[string[]]$Scenario=@())
+    $copy=$Artifacts | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+    # These operations neither install the broker nor start its RPC process.
+    # Installation/configuration/refresh, whole journeys and unknown scenarios
+    # retain the exact broker hash. Vanessa and client CFE always remain exact.
+    if((Test-DevelopScenarioBrokerIndependent $Journey $Scenario) -and
+        $copy -and $copy.PSObject.Properties['ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE'] -and
+        [string]$copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE -cmatch '^[a-f0-9]{64}$') {
+        $copy.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE='opaque-broker-not-executed'
+    }
+    return $copy
+}
+
 function Test-DevelopArtifactIdentityDifference {
-    param([object]$Recorded,[object]$Current)
+    param([object]$Recorded,[object]$Current,[string]$Journey='', [string[]]$Scenario=@())
     $values=[Collections.Generic.List[object]]::new()
     foreach($identity in @($Recorded,$Current)) {
         $external=$identity.inventory.external;$artifacts=$null
         if($external -is [Collections.IDictionary]) {$artifacts=$external['artifacts']}
         elseif($external.PSObject.Properties['artifacts']) {$artifacts=$external.artifacts}
-        $values.Add($artifacts)
+        $values.Add((ConvertTo-DevelopScenarioArtifactIdentity $artifacts $Journey $Scenario))
     }
     if($null -eq $values[0] -and $null -eq $values[1]) {return $false}
     if($null -eq $values[0] -or $null -eq $values[1]) {return $true}
@@ -140,15 +164,36 @@ function Get-DevelopScenarioCoverage {
 }
 
 function Get-DevelopScenarioSourceProjection {
-    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='')
+    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly)
     if($RepositoryRoot -and (Test-DevelopGoBuildOnlyPath $RepositoryRoot $Path $Commit)) {return 'outside-native-go-build'}
+    if(Test-DevelopScenarioBrokerIndependent $Journey $Scenario) {
+        if($Path -cmatch '^tools/itl-ondemand-mcp/[^/]+\.go$') {return 'outside-broker-independent-scenario'}
+        if($Path -ceq 'templates/dependency-lock.json') {
+            if($ProbeOnly) {return $true}
+            $lock=$Text.TrimStart([char]0xfeff) | ConvertFrom-Json
+            # Keep transport/platform/unknown fields, all other dependencies,
+            # and the JSON envelope. Only the opaque component release changes.
+            foreach($name in @('version','releaseTag','url','sha256')) {$lock.dependencies.itlOndemandMcp.PSObject.Properties.Remove($name)}
+            return Get-DevelopE2ECanonicalJsonSha256 $lock
+        }
+        if($Path -ceq '.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json') {
+            if($ProbeOnly) {return $true}
+            $compatibility=$Text.TrimStart([char]0xfeff) | ConvertFrom-Json
+            $compatibility.PSObject.Properties.Remove('facadeVersion')
+            return Get-DevelopE2ECanonicalJsonSha256 $compatibility
+        }
+    }
     $Text=$Text.Replace("`r`n","`n")
     $bom=[string]$Text.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal)
     if($Path -ceq 'tests/quality-contracts.json') {
+        if($ProbeOnly) {return $true}
         # The raw catalog may also be in a legacy owner's source inventory.
         # Ignore only this same routing field; all other JSON fields still bind.
         $catalogSource=$Text.TrimStart([char]0xfeff) | ConvertFrom-Json
-        $catalogSource.developJourneys.PSObject.Properties.Remove('scenarioInputs')
+        foreach($field in @('contracts','pesterNonReusableTests','pesterExternalRuntimeProfiles','pesterExternalRuntimeTests','pesterWorkers','smokeTests','retiredTests','pesterExternalInputs','semanticTargeting','lifecycleActions','continuationScopes')) {
+            $catalogSource.PSObject.Properties.Remove($field)
+        }
+        foreach($field in @('scenarioInputs','routes','fullPaths')) {$catalogSource.developJourneys.PSObject.Properties.Remove($field)}
         return $bom+"`n"+(Get-DevelopE2ECanonicalJsonSha256 $catalogSource)
     }
     $controller=@()
@@ -157,10 +202,11 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Get-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {
+        if($ProbeOnly) {return $true}
         $tokens=$null;$errors=$null;$source=$Text.TrimStart([char]0xfeff)
         $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
         if(@($errors).Count) {throw 'DEVELOP_SCENARIO_SOURCE_PARSE_ERROR'}
@@ -171,6 +217,7 @@ function Get-DevelopScenarioSourceProjection {
         return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
     }
     if($Path -ceq 'scripts/invoke-develop-e2e.ps1') {
+        if($ProbeOnly) {return $true}
         # Bind control flow and failure/cleanup handling too. Named operations
         # alone cannot authenticate an old runner after changing its envelope.
         # The existing closed journey projection is the sole proven exception.
@@ -180,6 +227,7 @@ function Get-DevelopScenarioSourceProjection {
     $rule=@($Catalog.developJourneys.scenarioInputs | Where-Object {$_.path -ceq $Path})
     if($rule.Count -eq 1 -and $rule[0].PSObject.Properties['functions']) {
         if($rule[0].PSObject.Properties['requiresNoProductContext'] -and $rule[0].requiresNoProductContext -and -not $NoProductContext) {return $null}
+        if($ProbeOnly) {return $true}
         $excluded=@(foreach($property in $rule[0].functions.PSObject.Properties) {
             if(-not @($property.Value | Where-Object {$_ -in @($Scenario | ForEach-Object {"$Journey.$_"})}).Count) {$property.Name}
         })
@@ -192,7 +240,10 @@ function Get-DevelopScenarioSourceProjection {
         }
         return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
     }
-    if(Get-DevelopJourneyExcludedScope $Path $Journey) {return Get-DevelopJourneySourceProjection $Path $Text $Journey}
+    if(Get-DevelopJourneyExcludedScope $Path $Journey) {
+        if($ProbeOnly) {return $true}
+        return Get-DevelopJourneySourceProjection $Path $Text $Journey
+    }
     return $null
 }
 
@@ -235,6 +286,7 @@ function Test-DevelopScenarioEquivalentInput {
             if((Get-DevelopE2ECanonicalJsonSha256 $new.positiveInputIdentity.inventory) -cne $new.positiveInputIdentity.fingerprint -or
                 $new.positiveInputIdentity.fingerprint -cne $new.inventory.external.positiveStandInputIdentity) {return $false}
             $positive=$new.positiveInputIdentity.inventory.external | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+            $positive.artifacts=$old.inventory.external.artifacts
             $oldClient=$old.inventory.external.client | ConvertFrom-Json
             $positiveClient=$positive.client | ConvertFrom-Json
             $positiveClient.requestedAgentTarget=$oldClient.requestedAgentTarget
@@ -245,6 +297,9 @@ function Test-DevelopScenarioEquivalentInput {
             $new.inventory.external.PSObject.Properties.Remove('positiveStandInputIdentity')
         }
         foreach($value in @($old,$new)) {
+            if($value.inventory.external.PSObject.Properties['artifacts']) {
+                $value.inventory.external.artifacts=ConvertTo-DevelopScenarioArtifactIdentity $value.inventory.external.artifacts $value.inventory.journey $Scenario
+            }
             $value.inventory.external.client=ConvertTo-DevelopEffectiveClientIdentity $value.inventory.external.client
             if($value.inventory.external.PSObject.Properties['freshProjectsRoot']) {
                 if(-not [IO.Path]::IsPathRooted([string]$value.inventory.external.freshProjectsRoot)) {return $false}
@@ -262,7 +317,21 @@ function Test-DevelopScenarioEquivalentInput {
                     $_.path -cne 'tools/itl-ondemand-mcp/README.md' -and $_.path -cnotmatch '^tools/itl-ondemand-mcp/[^/]+_test\.go$'})
             }
         }
+        $brokerScoped=Test-DevelopScenarioBrokerIndependent $new.inventory.journey $Scenario
+        if($brokerScoped) {
+            foreach($value in @($old,$new)) {
+                $value.inventory.inputs=@($value.inventory.inputs | Where-Object {$_.path -cnotmatch '^tools/itl-ondemand-mcp/[^/]+\.go$'})
+            }
+        }
         $before=@{};foreach($entry in $old.inventory.inputs) {$before[$entry.path]=$entry}
+        $noProduct=$new.inventory.external.PSObject.Properties['productContext'] -and $new.inventory.external.productContext.known -and $new.inventory.external.productContext.disabled
+        # A changed input without a scenario projection cannot qualify anyway.
+        # Reject before historical Git/AST reads. This rejection grants no proof;
+        # every eligible path still authenticates both sources below.
+        foreach($entry in $new.inventory.inputs) {
+            if($before.ContainsKey($entry.path) -and $before[$entry.path].sha256 -cne $entry.sha256 -and
+                -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $new.inventory.journey -Scenario $Scenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly)) {return $false}
+        }
         foreach($entry in @($new.inventory.inputs | Sort-Object {if($_.path -eq 'scripts/invoke-develop-e2e.ps1'){0}else{1}})) {
             if(-not $before.ContainsKey($entry.path)) {return $false}
             $prior=$before[$entry.path]
@@ -276,7 +345,7 @@ function Test-DevelopScenarioEquivalentInput {
             } else {[Text.Encoding]::UTF8.GetBytes($a)}
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json')) {
+            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/references/mcp.md','.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json','templates/dependency-lock.json','.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json')) {
                 # Git stores LF while an older Windows checkout can have CRLF.
                 # Authenticate that exact alternative before semantic projection;
                 # never normalize native artifacts or arbitrary source inputs.
@@ -295,7 +364,6 @@ function Test-DevelopScenarioEquivalentInput {
                 }
                 if($null -eq $changed) {return $false}
             }
-            $noProduct=$new.inventory.external.PSObject.Properties['productContext'] -and $new.inventory.external.productContext.known -and $new.inventory.external.productContext.disabled
             $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit
             $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot
             if($null -eq $x -or $x -cne $y) {return $false}

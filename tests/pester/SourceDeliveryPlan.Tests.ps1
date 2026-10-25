@@ -162,7 +162,7 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText((Join-Path $root scripts/invoke-pester-shards.ps1),$stub,[Text.UTF8Encoding]::new($true))
         $entry=Join-Path $TestDrive 'core preview.ps1'
         $lines=@()
-        foreach($module in @('git-path-list.ps1','quality-contracts.ps1','source-delivery-process.ps1','source-delivery-plan.ps1')) {
+        foreach($module in @('git-path-list.ps1','quality-contracts.ps1','source-delivery-process.ps1','source-delivery-plan.ps1','delivery-native-plan.ps1')) {
             $lines+=". '"+(Join-Path $RepoRoot ('scripts/'+$module)).Replace("'","''")+"'"
         }
         $lines+="Get-DeliveryStaticWorkloadPreview -CandidateRoot '"+$root.Replace("'","''")+"' -Catalog @{} -BaseCommit $('a'*40) | ConvertTo-Json"

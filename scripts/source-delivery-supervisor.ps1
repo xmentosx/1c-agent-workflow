@@ -60,7 +60,6 @@ if (-not $RepositoryRoot) { throw "Stable delivery supervisor requires an explic
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
-. (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
 
 $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
