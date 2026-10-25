@@ -1,4 +1,9 @@
 ﻿# Stateless validation and mounts; cutover owns admission, replacement and rollback.
+function Get-HostCodeRepairPackage {
+    # A delivery copy of the distribution's authoritative package.
+    return (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'code-package.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
+}
+
 function Get-QualifiedHostOwnerRepairMounts {
     param([object]$Config, [object]$Server)
     $spec = Get-ObjectValue -Object $Server -Name 'ownerRepair' -Default $null
@@ -8,6 +13,13 @@ function Get-QualifiedHostOwnerRepairMounts {
     $targets = @{
         code = @{driver='/app/src/index_generation/driver.py';main='/app/src/main.py'}
         graph = @{run='/app/run.py';score_floor='/app/score_floor.py';common_forms='/app/common_forms.py'}
+    }
+    $xsdFixture = [string](Get-ObjectValue -Object $spec -Name 'xsdFixtureSha256' -Default '')
+    if ($id -eq 'code' -and [int](Get-ObjectValue -Object $spec -Name 'schemaVersion' -Default 1) -ge 2 -and -not $xsdFixture) {
+        throw "Code package requires XSD qualification; restore the shared package and rerun its original fixtures before stable-preflight. $continuation"
+    }
+    if ($id -eq 'code' -and $xsdFixture) {
+        $targets.code.xsd_schema_generator = '/app/src/xsd_schema_generator.py'
     }
     $repositories = @{code='comol/1c_code_metadata_mcp';graph='comol/1c_graph_metadata'}
     $image = [string](Get-ObjectValue -Object $Server -Name 'image' -Default '')
@@ -19,10 +31,31 @@ function Get-QualifiedHostOwnerRepairMounts {
     $proof = Get-Content -LiteralPath $proofPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($proof.schemaVersion -ne 1 -or $proof.accepted -ne $true -or $proof.image -cne $image -or $proof.host -cne (Get-HostId -Config $Config) -or $proof.isolated -ne $true -or $proof.network -cne 'none' -or $proof.liveIndexMounted -ne $false -or [string]$spec.fixtureSha256 -cnotmatch '^[a-f0-9]{64}$' -or $proof.fixtureSha256 -cne [string]$spec.fixtureSha256) { throw "Host owner qualification has the wrong native invariant or scope. $continuation" }
     if ($id -eq 'code') {
-    if ($proof.negativeControlReproduced -ne $true) { throw "Host owner qualification has the wrong native invariant or scope. $continuation" }
+    $resumeFixedUpstream = $false
+    if ($xsdFixture -and (Get-ObjectValue -Object $proof -Name 'resumeUpstreamPassed' -Default $false) -eq $true) {
+        $rows = @([string]$proof.upstreamRegressionOutput -split "`n" | Where-Object { $_.StartsWith('{') } | ForEach-Object { $_ | ConvertFrom-Json })
+        $originalResume = @($rows | Where-Object test -eq 'interrupted_incremental_resume')
+        $originalSelection = @($rows | Where-Object test -eq 'selective_repair')
+        $resumeFixedUpstream = $originalResume.Count -eq 1 -and $originalSelection.Count -eq 1 -and
+            $originalResume[0].modules -eq 2 -and $originalResume[0].new_function_found -eq $true -and
+            $originalResume[0].ancestor_unchanged -eq $true -and $originalSelection[0].preserves_vectors -eq $true -and
+            $originalSelection[0].honors_omissions -eq $true
+    }
+    if ($proof.negativeControlReproduced -ne $true -and -not $resumeFixedUpstream) { throw "Host owner qualification has the wrong native invariant or scope. $continuation" }
     $resume = @($proof.regression | Where-Object test -eq 'interrupted_incremental_resume')
     $selection = @($proof.regression | Where-Object test -eq 'selective_repair')
     if ($resume.Count -ne 1 -or $selection.Count -ne 1 -or $resume[0].modules -ne 2 -or $resume[0].new_function_found -ne $true -or $resume[0].ancestor_unchanged -ne $true -or $selection[0].preserves_vectors -ne $true -or $selection[0].honors_omissions -ne $true) { throw "Code owner original native regression did not pass. $continuation" }
+    if ($xsdFixture) {
+        $xsd = Get-ObjectValue -Object $proof -Name 'xsd' -Default @{}
+        $controls = Convert-ToHash -Object (Get-ObjectValue -Object $xsd -Name 'negativeControls' -Default @{})
+        $names = @('unknown-root','unknown-deep-child','wrong-title-child','wrong-nesting')
+        if ($xsdFixture -cnotmatch '^[a-f0-9]{64}$' -or [string]$proof.xsdFixtureSha256 -cne $xsdFixture -or
+            $xsd.positive -ne $true -or $xsd.parserLimitsPreserved -ne $true -or $xsd.xsdLaneOnlyInvalidated -ne $true -or
+            (($controls.Keys | Sort-Object) -join ',') -cne (($names | Sort-Object) -join ',') -or
+            @($names | Where-Object { $controls[$_] -cne 'invalid' }).Count -gt 0) {
+            throw "Code owner original XSD regression did not pass. $continuation"
+        }
+    }
     } else {
         $suites = @{fulltext=13;commonForms=14;combined=3}
         if (@($proof.nativeSuites).Count -ne $suites.Count) { throw "Graph owner original native regression did not pass. $continuation" }
@@ -33,6 +66,15 @@ function Get-QualifiedHostOwnerRepairMounts {
     }
     $expected = Convert-ToHash -Object $spec.files
     $observed = Convert-ToHash -Object $proof.files
+    if ($id -eq 'code' -and $xsdFixture) {
+        $package = Get-HostCodeRepairPackage
+        $shared = Convert-ToHash -Object $package.files
+        if ([string]$package.image -cne $image -or [string]$package.xsdFixtureSha256 -cne $xsdFixture -or
+            (($shared.Keys | Sort-Object) -join ',') -cne (($expected.Keys | Sort-Object) -join ',') -or
+            @($shared.Keys | Where-Object { [string]$shared[$_] -cne [string]$expected[$_] }).Count -gt 0) {
+            throw "Code image or files differ from the shared four-target package; intake and qualify one common package before retrying stable-preflight. $continuation"
+        }
+    }
     $names = ($targets[$id].Keys | Sort-Object) -join ','
     if ((($expected.Keys | Sort-Object) -join ',') -cne $names -or (($observed.Keys | Sort-Object) -join ',') -cne $names) { throw "Host owner repair must contain every exact file. $continuation" }
     foreach ($name in $targets[$id].Keys) {

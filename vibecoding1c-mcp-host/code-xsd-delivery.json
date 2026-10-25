@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
+  "distributionCommit": "6c88c5a93d01a9290091a84641367d55c24606f3",
+  "distributionBase": "4fae2d6",
+  "package": "hosts/dev-karimov-new/code-package.json",
+  "packageId": "code-xsd-v2",
+  "image": "comol/1c_code_metadata_mcp@sha256:303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536",
+  "files": {
+    "driver": "7000a217743a95cca07f7453c4adf60767607be69fd393ac90226603af4cf953",
+    "main": "0b679a5679cd8a09e9156f8d560356c8d08526350a2d1880f1e94fdfbeafc962",
+    "xsd_schema_generator": "cedcecefd097c9d54a4eed1829643c4e4cd16e8d6e2e842dff77f2807c18e14b"
+  },
+  "targets": {
+    "dev-ermakov": [
+      "pm4corp",
+      "pm5corp"
+    ],
+    "dev-karimov-new": [
+      "unfpm5-code",
+      "erppm5-lts-code"
+    ]
+  },
+  "nativeProofSha256": "f4f64a2e1fcc9443877152ee32d4751a0cd4cf5eeef373afb7880900e6559072",
+  "nativeQualification": {
+    "isolated": true,
+    "network": "none",
+    "liveIndexMounted": false,
+    "originalResume": "failed: module 1/2",
+    "patchedResume": "passed: module 2/2, ancestor unchanged",
+    "selectiveRepair": "passed: vectors and omissions preserved",
+    "originalXsd": "failed: depth truncation",
+    "patchedXsd": "passed: positive and four negative controls",
+    "parserLimits": "passed",
+    "xsdLaneOnlyInvalidation": "passed",
+    "realForms": {
+      "unchangedInputs": true,
+      "copiedCorpusFiles": 1889,
+      "corpusIncludesPositiveForms": true,
+      "originalErrorCounts": [
+        135,
+        8,
+        21
+      ],
+      "patchedErrorCounts": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "localChecks": {
+    "pythonHostOwner": {
+      "run": 90,
+      "failed": 0,
+      "skipped": 4
+    },
+    "sharedPackage": {
+      "run": 2,
+      "failed": 0
+    },
+    "pesterOwnerRepair": {
+      "passed": 3,
+      "failed": 0
+    },
+    "exactSourceRebaseAndChangedSourceRefusal": "passed"
+  },
+  "deliveryStatus": "local candidate; publication and installation not performed",
+  "acceptanceLimit": "Generated nested structure only. Working MCP endpoints and their published indices remain unchanged; complete normative enum/type coverage is not claimed."
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "code-xsd-v2",
+  "image": "comol/1c_code_metadata_mcp@sha256:303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536",
+  "files": {
+    "driver": "7000a217743a95cca07f7453c4adf60767607be69fd393ac90226603af4cf953",
+    "main": "0b679a5679cd8a09e9156f8d560356c8d08526350a2d1880f1e94fdfbeafc962",
+    "xsd_schema_generator": "cedcecefd097c9d54a4eed1829643c4e4cd16e8d6e2e842dff77f2807c18e14b"
+  },
+  "xsdFixtureSha256": "0b20ef528929e7705efad236cf40b062e8d8180965171011581107eccc7ce4ee",
+  "fixtureSha256": "2170e6e8e18a31e8b414708c5eead237b359eb9cd8ec642186ff4c85aa2c2e0a",
+  "targets": {
+    "dev-ermakov": [
+      "pm4corp",
+      "pm5corp"
+    ],
+    "dev-karimov-new": [
+      "unfpm5-code",
+      "erppm5-lts-code"
+    ]
+  },
+  "qualification": "qualifications/303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536/xsd-v2/proof.json",
+  "coverage": "Generated nested structure and unknown-element/nesting controls; not a complete normative Designer XSD or enum/type proof."
+}

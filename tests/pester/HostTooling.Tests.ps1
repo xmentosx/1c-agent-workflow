@@ -4978,7 +4978,8 @@ services:
         }
     }
 
-    It "binds qualified Code repairs to the exact image, native fixture, host and two read-only files" -Tag HostOwnerRepair {
+    It "binds qualified Code repairs and XSD=<Xsd> to the exact image and original native proof" -Tag HostOwnerRepair -TestCases @(@{Xsd=$false},@{Xsd=$true}) {
+        param($Xsd)
         $configPath=Join-Path $TestDrive 'repair config.json'
         $repairState=Join-Path $TestDrive 'ремонт Code с пробелом'
         @{schemaVersion=1;hostId='fixture';stateRoot=$repairState}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
@@ -4989,17 +4990,50 @@ services:
             $root=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
             $null=New-Item -ItemType Directory -Path $root -Force
             $hashes=[ordered]@{}
-            foreach($n in @('driver','main')){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
+            foreach($n in @('driver','main') + $(if($Xsd){@('xsd_schema_generator')}else{@()})){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
             $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true})}
             $spec=@{image=$image;fixtureSha256=('b'*64);files=$hashes;proofSha256=''}
+            if($Xsd){
+                $spec.schemaVersion=2;$spec.xsdFixtureSha256=('c'*64)
+                $registeredPackage=Get-HostCodeRepairPackage
+                $registeredPackage.image|Should -Match '^comol/1c_code_metadata_mcp@sha256:[a-f0-9]{64}$'
+                @($registeredPackage.targets.'dev-ermakov').Count|Should -Be 2
+                @($registeredPackage.targets.'dev-karimov-new').Count|Should -Be 2
+                $script:SharedPackageDrift=$false
+                function Get-HostCodeRepairPackage { return @{image=$(if($script:SharedPackageDrift){'changed'}else{$image});files=$hashes;xsdFixtureSha256=$spec.xsdFixtureSha256} }
+                $proof.xsdFixtureSha256=$spec.xsdFixtureSha256
+                $proof.xsd=@{positive=$true;parserLimitsPreserved=$true;xsdLaneOnlyInvalidated=$true;negativeControls=@{'unknown-root'='invalid';'unknown-deep-child'='invalid';'wrong-title-child'='invalid';'wrong-nesting'='invalid'}}
+            }
             $server=@{id='code';image=$image;ownerRepair=$spec}
             function Save-CodeOwnerTestProof { [IO.File]::WriteAllText((Join-Path $root 'qualification.json'),($proof|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false));$spec.proofSha256=(Get-FileHash -LiteralPath (Join-Path $root 'qualification.json')).Hash.ToLowerInvariant() }
             Save-CodeOwnerTestProof
             $mounts=@(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server)
-            $mounts.Count|Should -Be 2
-            @($mounts|Where-Object readOnly -eq $true).Count|Should -Be 2
+            $mounts.Count|Should -Be $(if($Xsd){3}else{2})
+            @($mounts|Where-Object readOnly -eq $true).Count|Should -Be $(if($Xsd){3}else{2})
             $mounts.container|Should -Contain '/app/src/main.py'
             $mounts.container|Should -Contain '/app/src/index_generation/driver.py'
+            if($Xsd){
+                $mounts.container|Should -Contain '/app/src/xsd_schema_generator.py'
+                $script:SharedPackageDrift=$true
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*shared four-target package*'
+                $script:SharedPackageDrift=$false
+                $proof.xsd.positive=$false;Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original XSD regression*'
+                $proof.xsd.positive=$true
+                $proof.xsd.negativeControls['wrong-nesting']='valid';Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*original XSD regression*'
+                $proof.xsd.negativeControls['wrong-nesting']='invalid';Save-CodeOwnerTestProof
+                $saved=$spec.xsdFixtureSha256;$spec.Remove('xsdFixtureSha256')
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*XSD qualification*'
+                $spec.xsdFixtureSha256=$saved
+                $proof.negativeControlReproduced=$false;$proof.resumeUpstreamPassed=$true
+                $proof.upstreamRegressionOutput=($proof.regression|ForEach-Object{$_|ConvertTo-Json -Compress}) -join "`n"
+                Save-CodeOwnerTestProof
+                @(Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server).Count|Should -Be 3
+                $proof.upstreamRegressionOutput='';Save-CodeOwnerTestProof
+                {Get-QualifiedHostOwnerRepairMounts -Config $config -Server $server}|Should -Throw '*wrong native invariant or scope*'
+                $proof.negativeControlReproduced=$true;$proof.resumeUpstreamPassed=$false;Save-CodeOwnerTestProof
+            }
             $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
             function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
             Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
@@ -5010,7 +5044,7 @@ services:
             function Get-HostLocalValues { return @{} }
             function Get-HostDefaultVolumeEntries { return @() }
             function Test-HostServerNeedsEmbedding { return $false }
-            @(Resolve-ServerVolumes -Config $config -Server $server).Count|Should -Be 2
+            @(Resolve-ServerVolumes -Config $config -Server $server).Count|Should -Be $(if($Xsd){3}else{2})
             $script:OwnerMounts[0].RW=$true
             {Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}}|Should -Throw '*read-only*'
             $script:OwnerMounts[0].RW=$false

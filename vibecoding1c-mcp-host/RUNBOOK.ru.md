@@ -743,6 +743,19 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 Для Code/Graph с image-specific repair versioned manifest задаёт `ownerRepair`:
 точный `image`, SHA `proofSha256` и `fixtureSha256`, hashes всех `files`.
+
+Общая поставка Code с XSD использует `ownerRepair.schemaVersion=2` и
+`xsdFixtureSha256`: к прежним двум runtime-файлам добавляется
+`xsd_schema_generator.py`. Exact proof обязан подтвердить исходный XSD positive,
+четыре unknown/nesting controls, сохранение parser limits и XSD-only invalidation.
+Все четыре Code получают один image digest и три SHA из общего
+`hosts/dev-karimov-new/code-package.json` дистрибутива. Исторический schema-1
+контракт сохраняется для прежних поставок. Новый schema-2 пакет без XSD proof
+не принимается; восстановите общий пакет и повторите исходную квалификацию.
+Каждый новый pin требует переноса на точные vendor bytes и обеих native fixtures;
+публикация/установка пакета и последующий `reindex(force=false)` остаются отдельными
+операциями владельцев. Подробности — `releases/2026-10-25-code-xsd/README.md` поставки.
+
 Файлы находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
 Code содержит `driver.py` и `main.py`; Graph — `run.py`, `score_floor.py`,
 `common_forms.py`. Proof schema 1 закрепляет host и исходную изолированную
