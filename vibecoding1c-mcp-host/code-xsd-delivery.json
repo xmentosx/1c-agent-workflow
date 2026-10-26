@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "4831bee89854005f1b21f77a24d4654802175fc4",
+  "distributionCommit": "cad14933910b67afaced7844ba6293fcf24a4635",
   "distributionBase": "4626e6fc7b28054589e320894ce6aa617299a566",
   "package": "hosts/dev-karimov-new/code-package.json",
   "packageId": "code-xsd-v2",
@@ -65,7 +65,7 @@
     },
     "exactSourceRebaseAndChangedSourceRefusal": "passed"
   },
-  "deliveryStatus": "standalone MCP package published in GitLab; workflow remains unpublished; host acceptance is retained separately in deployment receipts",
+  "deliveryStatus": "Standalone MCP package and deployed proofs published in GitLab; all four Code installed, reindexed and accepted; workflow remains unpublished.",
   "acceptanceLimit": "Generated nested structure and preserved native parser limits; full normative Designer enum/type coverage is not claimed. Per-host deployment and reindex acceptance are separate from package qualification.",
   "currentBaselineQualification": {
     "completedUtc": "2026-10-26T06:01:01.908323+00:00",
@@ -88,5 +88,94 @@
   "windowsOwnerPackage": "hosts/dev-ermakov/owner-package.json",
   "windowsLegacyProofPreserved": true,
   "workflowPublicationRequired": false,
-  "linuxLegacyOverlayPreparationRegression": "exact active legacy files staged before full qualification; changed active bytes rejected before installed package changes"
+  "linuxLegacyOverlayPreparationRegression": "exact active legacy files staged before full qualification; changed active bytes rejected before installed package changes",
+  "runtimePackageSourceCommit": "ae6bee0734f0b473a13871ea813638acdbb0795f",
+  "deployedAcceptance": {
+    "completedUtc": "2026-10-26T10:07:13.606057+00:00",
+    "distributionEvidence": "releases/2026-10-25-code-xsd/deployed-acceptance-20261026.json",
+    "report": "releases/2026-10-25-code-xsd/deployed-report-20261026.md",
+    "allFourDeliveryAccepted": true,
+    "publication": true,
+    "installation": true,
+    "normalReindexForce": false,
+    "mainOnlyControlPassed": true,
+    "sameImageAndRuntimeSha256": true,
+    "workflowPublished": false,
+    "working1cDatabaseOperations": false,
+    "targets": {
+      "unfpm5": {
+        "generation": "20261026T071600Z-2d563768",
+        "sourceIdentities": {
+          "modules": 17411,
+          "objects": 95930,
+          "forms": 7164
+        },
+        "ownPositiveFormsPassed": 1,
+        "ownNegativeControlsRejected": 4,
+        "originalWf04ErrorCounts": [
+          3,
+          0,
+          0
+        ]
+      },
+      "erppm5-lts": {
+        "generation": "20261026T081739Z-7b8af6cd",
+        "sourceIdentities": {
+          "modules": 28466,
+          "objects": 170425,
+          "forms": 12163
+        },
+        "ownPositiveFormsPassed": 1,
+        "ownNegativeControlsRejected": 4,
+        "originalWf04ErrorCounts": [
+          5,
+          0,
+          0
+        ]
+      },
+      "pm5corp": {
+        "generation": "20261026T085825Z-18434817",
+        "sourceIdentities": {
+          "modules": 5025,
+          "objects": 20341,
+          "forms": 1892
+        },
+        "ownPositiveFormsPassed": 1,
+        "ownNegativeControlsRejected": 4,
+        "originalWf04ErrorCounts": [
+          0,
+          0,
+          0
+        ]
+      },
+      "pm4corp": {
+        "generation": "20261026T094741Z-d972befd",
+        "sourceIdentities": {
+          "modules": 3663,
+          "objects": 15722,
+          "forms": 1592
+        },
+        "ownPositiveFormsPassed": 1,
+        "ownNegativeControlsRejected": 4,
+        "originalWf04ErrorCounts": [
+          3,
+          0,
+          0
+        ]
+      }
+    },
+    "remainingCompatibility": "Original WF-04 Admin input from the PM5 branch corpus still produces 3/5/3 errors on UNF/ERP/PM4 inferred schemas. The unchanged original three inputs pass on PM5. Failed cross-corpus results remain failed; no training on these foreign inputs and no schema weakening.",
+    "proofArchives": [
+      {
+        "file": "xsd-linux-deployed-20261026.tar.gz",
+        "bytes": 23373255,
+        "sha256": "744c6e3fab8c047f48917d16c91e96c9591afc2981483eff807015c4dd00d618"
+      },
+      {
+        "file": "xsd-windows-deployed-20261026.zip",
+        "bytes": 2215010,
+        "sha256": "215d201ef4d68c2dbfe555bd8af325c0bee07179715a3933dcae4457d2e7d893"
+      }
+    ]
+  }
 }
