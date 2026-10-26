@@ -147,8 +147,9 @@ function Get-SourceE2EFixtureReaderInventory {
 }
 
 function Remove-SourceE2EFixtureCopy {
-    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive)
-    $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
+    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive,[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null)
+    $contextArguments=@{}+ $PSBoundParameters;$contextArguments.Remove('InactiveBeforeUtc');$contextArguments.Remove('ArchiveBudget')
+    $context=Get-SourceE2EFixtureCopyContext @contextArguments
     $parent=$context.parent;$prefix=$context.prefix;$claim=$context.claim;$claimPath=$context.claimPath;$archivedClaim=$context.archivedClaim;$report=$context.report
     if(-not $RecoveryCleanup -and [string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
     if(-not (Test-Path -LiteralPath $parent)){return @{status='removed';root=$parent;diagnostics=$DiagnosticRoot;alreadyRemoved=$true}}
@@ -157,9 +158,10 @@ function Remove-SourceE2EFixtureCopy {
         if($RecoveryCleanup){
             # Preparation may finish between discovery and admission. Rebind
             # under the same lease before deciding whether its base is disposable.
-            $context=Get-SourceE2EFixtureCopyContext @PSBoundParameters
+            $context=Get-SourceE2EFixtureCopyContext @contextArguments
             $claim=$context.claim;$report=$context.report
         }
+        if($InactiveBeforeUtc -ne [datetime]::MinValue -and (-not $ArchiveInactive -or [string]$claim.status -cne 'ready')){throw 'FIXTURE_COPY_ACTIVITY_CHANGED: retain the copy; retry cleanup after the owner completes'}
         if($ArchiveInactive){
             $ledgerPath=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot) 'itl/resources/v1/ledger.json'
             if(Test-Path -LiteralPath $ledgerPath){
@@ -205,6 +207,11 @@ function Remove-SourceE2EFixtureCopy {
                     $files.Add($item);$bytes += $item.Length
                 }
             }
+        }
+        if($InactiveBeforeUtc -ne [datetime]::MinValue -and @($files|Where-Object LastWriteTimeUtc -gt $InactiveBeforeUtc).Count){throw 'FIXTURE_COPY_RECENT_ACTIVITY: retain the copy until its inactivity interval expires'}
+        if($ArchiveInactive -and $null -ne $ArchiveBudget){
+            if($ArchiveBudget.remaining -le 0){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
+            $ArchiveBudget.remaining--
         }
         if($RecoveryCleanup){
             $databases=@($files|Where-Object Name -ieq '1Cv8.1CD')
@@ -268,9 +275,95 @@ function Remove-SourceE2EFixtureCopy {
     }
 }
 
+function Get-SourceE2EProjectsRoots {
+    param([string]$ProjectsRoot,[switch]$IncludeNestedRoots)
+    [void](Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath 'q Проект')
+    $ProjectsRoot
+    if(-not $IncludeNestedRoots -or -not (Test-Path -LiteralPath $ProjectsRoot -PathType Container)){return}
+    # One grouping level covers custom canaries without walking Git/source/base trees.
+    foreach($group in @(Get-ChildItem -LiteralPath $ProjectsRoot -Directory -Force)){
+        if($group.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+        $nested=Join-Path $group.FullName 'q Проект'
+        if((Test-Path -LiteralPath $nested -PathType Container) -and -not ((Get-Item -LiteralPath $nested -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){$group.FullName}
+    }
+}
+
+function Get-SourceE2ECopyRetentionSettings {
+    param([string]$CandidateRoot)
+    $values=@{ITL_SOURCE_FIXTURE_CLEANUP_ENABLED='true';ITL_SOURCE_FIXTURE_RETENTION_DAYS='7';ITL_SOURCE_FIXTURE_KEEP_COUNT='1';ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE='1'}
+    # Cleanup executors are temporary worktrees. The primary source .dev.env is
+    # the fallback, with a checkout-local override and process env taking priority.
+    $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
+    $paths=@()
+    if((Split-Path -Leaf $common) -ieq '.git'){$paths+=Join-Path (Split-Path -Parent $common) '.dev.env'}
+    $paths+=Join-Path $CandidateRoot '.dev.env'
+    foreach($path in @($paths|Select-Object -Unique)){
+        if(-not (Test-Path -LiteralPath $path -PathType Leaf)){continue}
+        foreach($line in Read-Utf8Lines -Path $path){
+            $text=$line.Trim();$index=$text.IndexOf('=')
+            if($index -lt 1 -or $text.StartsWith('#')){continue}
+            $name=$text.Substring(0,$index).Trim()
+            if(-not $values.ContainsKey($name)){continue}
+            $value=$text.Substring($index+1).Trim()
+            if(($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))){$value=$value.Substring(1,$value.Length-2)}
+            $values[$name]=$value
+        }
+    }
+    foreach($name in @($values.Keys)){$value=[Environment]::GetEnvironmentVariable($name,'Process');if($value){$values[$name]=$value}}
+    [bool]$enabled=$false;[int]$days=0;[int]$keep=0;[int]$batch=0
+    if(-not [bool]::TryParse($values.ITL_SOURCE_FIXTURE_CLEANUP_ENABLED,[ref]$enabled) -or
+        -not [int]::TryParse($values.ITL_SOURCE_FIXTURE_RETENTION_DAYS,[ref]$days) -or $days -lt 0 -or
+        -not [int]::TryParse($values.ITL_SOURCE_FIXTURE_KEEP_COUNT,[ref]$keep) -or $keep -lt 0 -or
+        -not [int]::TryParse($values.ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE,[ref]$batch) -or $batch -lt 1){throw 'FIXTURE_RETENTION_SETTINGS_INVALID: correct ITL_SOURCE_FIXTURE_* in source .dev.env or process env, then repeat the same operation'}
+    return @{enabled=$enabled;days=$days;keep=$keep;batch=$batch}
+}
+
+function Get-SourceE2ECopyRetentionPlan {
+    param([string[]]$ProjectsRoots,[string]$CandidateRoot,[int]$RetentionDays=7,[int]$KeepCount=1,[datetime]$NowUtc=[datetime]::UtcNow)
+    if($RetentionDays -lt 0 -or $KeepCount -lt 0){throw 'FIXTURE_RETENTION_SETTINGS_INVALID'}
+    $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
+    $copies=@(foreach($root in $ProjectsRoots){
+        $container=Resolve-QualificationFixtureChild -Root $root -RelativePath 'q Проект'
+        if(-not (Test-Path -LiteralPath $container -PathType Container)){continue}
+        foreach($directory in @(Get-ChildItem -LiteralPath $container -Directory -Force)){
+            if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+            try {
+                $claimPath=Resolve-QualificationFixtureChild -Root $directory.FullName -RelativePath 'qualification-fixture.json'
+                $claim=Read-QualificationFixtureJson -Path $claimPath
+                if([int]$claim.schemaVersion -ne 2 -or [string]$claim.kind -cne 'itl-qualification-fixture-target' -or
+                    [string]$claim.workflowCommonGit -ine $common -or [string]$claim.copyRoot -ine $directory.FullName -or
+                    [string]$claim.phase -notin @('Develop','Release') -or [string]$claim.status -cne 'ready'){continue}
+                [pscustomobject]@{path=$directory.FullName;phase=[string]$claim.phase;updated=(Get-Item -LiteralPath $claimPath).LastWriteTimeUtc}
+            } catch { Write-Verbose "Unproven fixture excluded from retention planning: $($directory.FullName)" }
+        }
+    })
+    $cutoff=$NowUtc.AddDays(-$RetentionDays)
+    $eligible=@(foreach($phase in @('Develop','Release')){
+        # Keep count is global across the grouping roots, independently per phase.
+        foreach($copy in @($copies|Where-Object phase -eq $phase|Sort-Object @{Expression='updated';Descending=$true},path|Select-Object -Skip $KeepCount)){
+            if($copy.updated -le $cutoff){$copy.path}
+        }
+    })
+    return @{archivePaths=$eligible;inactiveBeforeUtc=$cutoff}
+}
+
 function Remove-CompletedSourceE2ECopies {
-    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot,[switch]$IncludeLegacy,[string[]]$PreservePaths=@())
+    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot,[switch]$IncludeLegacy,[string[]]$PreservePaths=@(),[switch]$IncludeNestedRoots,[string[]]$ArchiveReadyPaths=@(),[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null)
     $container=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath 'q Проект'
+    if($IncludeNestedRoots){
+        # Custom canaries use <FreshProjectsRoot>/<run>/q Проект. Inspect one
+        # grouping level only; never recursively walk project/Git/database trees.
+        $roots=@(foreach($path in Get-SourceE2EProjectsRoots -ProjectsRoot $ProjectsRoot -IncludeNestedRoots){
+            [pscustomobject]@{path=$path;diagnostics=$(if($path -ieq $ProjectsRoot){$DiagnosticRoot}else{Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath ('nested/'+(Split-Path -Leaf $path))})}
+        })
+        $entries=[Collections.Generic.List[object]]::new();$removed=0;$retained=0;[int64]$bytes=0
+        foreach($root in $roots){
+            $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root.path -CandidateRoot $CandidateRoot -DiagnosticRoot $root.diagnostics -IncludeLegacy:$IncludeLegacy -PreservePaths $PreservePaths -ArchiveReadyPaths $ArchiveReadyPaths -InactiveBeforeUtc $InactiveBeforeUtc -ArchiveBudget $ArchiveBudget
+            $removed+=$result.removed;$retained+=$result.retained;$bytes+=$result.removedBytes
+            foreach($entry in $result.entries){$entries.Add($entry)}
+        }
+        return @{removed=$removed;retained=$retained;removedBytes=$bytes;entries=@($entries)}
+    }
     $removed=0;$retained=0;[int64]$removedBytes=0;$entries=[Collections.Generic.List[object]]::new()
     if(-not (Test-Path -LiteralPath $container -PathType Container)){return @{removed=0;retained=0;removedBytes=0;entries=@()}}
     $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
@@ -282,6 +375,23 @@ function Remove-CompletedSourceE2ECopies {
             foreach($preserved in $PreservePaths){
                 $p=[IO.Path]::GetFullPath($preserved).TrimEnd('\','/')
                 if($directory.FullName -ieq $p -or $p.StartsWith($directory.FullName+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $directory.FullName.StartsWith($p+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_COPY_PRESERVED: active or retained owner reference'}
+            }
+            $diagnostics=Resolve-QualificationFixtureChild -Root $DiagnosticRoot -RelativePath $directory.Name
+            $archiveProof=Join-Path $diagnostics 'cleanup-proof.json';$archivePending=$false
+            if($claim -and [string]$claim.status -ceq 'disposed' -and (Test-Path -LiteralPath $archiveProof -PathType Leaf)){
+                $proof=Read-QualificationFixtureJson -Path $archiveProof
+                $archivePending=[string]$proof.kind -ceq 'itl-fixture-copy-cleanup-proof' -and [string]$proof.reason -ceq 'archive-inactive-qualification' -and
+                    [string]$proof.copyRoot -ieq $directory.FullName -and [string]$proof.workflowCommonGit -ieq $common -and [string]$proof.candidateCommit -ceq [string]$claim.candidateCommit
+            }
+            if($archivePending -or $ArchiveReadyPaths -icontains $directory.FullName){
+                if(-not $archivePending -and $InactiveBeforeUtc -eq [datetime]::MinValue){throw 'FIXTURE_RETENTION_INACTIVITY_REQUIRED'}
+                if(-not $archivePending -and $null -ne $ArchiveBudget -and $ArchiveBudget.remaining -le 0){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
+                $cutoff=if($archivePending){[datetime]::MinValue}else{$InactiveBeforeUtc}
+                # Already archived disposal must finish even when this sweep has
+                # no budget for another new archive.
+                $budget=if($archivePending){$null}else{$ArchiveBudget}
+                $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=(Join-Path $directory.FullName 'project')} -CandidateRoot $CandidateRoot -ReportPath $archiveProof -DiagnosticRoot $diagnostics -RecoveryCleanup -ArchiveInactive -ProjectsRoot $ProjectsRoot -InactiveBeforeUtc $cutoff -ArchiveBudget $budget
+                $removed++;$removedBytes+=$result.removedBytes;$entries.Add($result);continue
             }
             $legacy=$IncludeLegacy -and $claim -and [int]$claim.schemaVersion -eq 1 -and [string]$claim.phase -eq 'Develop' -and [string]$claim.status -eq 'disposed'
             if($legacy){

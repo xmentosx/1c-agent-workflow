@@ -276,13 +276,17 @@ function Remove-SourceDeliveryStaleReleaseSeedArchives {
 
 function Remove-SourceDeliveryCompletedFixtureCopies {
     param([string]$FreshProjectsRoot,[string[]]$PreservePaths=@())
-    # Load the existing copy owner in a child scope. Cleanup does not adopt
-    # Release/resumable copies or maintain a second resource registry.
+    # The same copy owner plans retention and archives inactive owned copies.
+    # Its lease, reader, ledger, checkpoint, archive and infobase guards still bind.
     & {
         param($ownerRoot,$copyRoot,$preserved)
         . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
         $diagnostics=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $ownerRoot) 'itl/evidence/fixture-cleanup'
-        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved
+        $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $ownerRoot
+        $plan=@{archivePaths=@();inactiveBeforeUtc=[datetime]::MinValue}
+        if($settings.enabled){$plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots @(Get-SourceE2EProjectsRoots -ProjectsRoot $copyRoot -IncludeNestedRoots) -CandidateRoot $ownerRoot -RetentionDays $settings.days -KeepCount $settings.keep}
+        $budget=@{remaining=$settings.batch}
+        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved -IncludeNestedRoots -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget
     } $script:Root $FreshProjectsRoot $PreservePaths
 }
 
