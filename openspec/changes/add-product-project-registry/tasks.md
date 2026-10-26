@@ -1,5 +1,16 @@
 # Tasks
 
+## G5 B03/B09–B10: ограниченное продолжение, 2026-10-26
+
+[Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует подготовленный repair оснастки B03 и
+фактический повтор шести сохранённых backend-запросов B09/B10:82 HTTP200,
+без Ladybug locks/recall errors. Native cache4→6, прежние image/data/account,
+параллелизм2 и лимиты2CPU/5GiB; старый контейнер и stopped backup сохранены.
+Это backend subset; полные ответы агента B03/B09/B10 не приняты. Пользователь
+сейчас работает на ПК, поэтому UI-ввод остановлен до свободного окна; состояние
+и восстановление тестовых настроек сохранены в continuation. G5/N5 остаток открыт,
+исходные оценки не заменены. Новых случаев, Gate6, рабочей миграции и публикации нет.
+
 ## G5 N7 follow-up, 2026-10-26
 
 [Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует зарегистрированный watchdog/API-key
