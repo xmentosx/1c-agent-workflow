@@ -133,6 +133,29 @@ Describe 'Terminal disposable Develop copy retention' {
         $result.removed|Should -Be 1;$result.retained|Should -Be 0
         Test-Path -LiteralPath $copy.root|Should -BeFalse
     }
+    It 'cleans terminal copies in nested Unicode canary roots and retries a leased copy without traversing foreign projects' {
+        $root=Join-Path $TestDrive 'nested Пример'
+        $direct=New-StorageCopy -Root $root
+        $nested=New-StorageCopy -Root (Join-Path $root 'canary Один')
+        $leased=New-StorageCopy -Root (Join-Path $root 'canary Два')
+        foreach($copy in @($direct,$nested,$leased)){
+            Write-SourceE2EFixtureTerminal -Fixture $copy.fixture -CandidateRoot $RepoRoot -ReportPath $copy.report
+        }
+        $foreign=Join-Path $root 'foreign/project/q Проект/keep.txt'
+        Write-Utf8Text -Path $foreign -Value 'outside the one grouping level'
+        $lease=Open-SourceE2EFixtureUse -ProjectRoot $leased.fixture.projectRoot
+        $arguments=@{ProjectsRoot=$root;CandidateRoot=$RepoRoot;DiagnosticRoot=(Join-Path $root 'diagnostics');IncludeNestedRoots=$true}
+        try {
+            $result=Remove-CompletedSourceE2ECopies @arguments
+            $result.removed|Should -Be 2;$result.retained|Should -Be 1
+            Test-Path -LiteralPath $leased.root|Should -BeTrue
+            Test-Path -LiteralPath $foreign|Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $root ('diagnostics/nested/canary Один/'+(Split-Path -Leaf $nested.root)+'/qualification-fixture.json'))|Should -BeTrue
+        } finally {$lease.Dispose()}
+        (Remove-CompletedSourceE2ECopies @arguments).removed|Should -Be 1
+        (Remove-CompletedSourceE2ECopies @arguments).removed|Should -Be 0
+        Test-Path -LiteralPath $foreign|Should -BeTrue
+    }
     It 'retains a <reason> copy before any recursive deletion' -ForEach @(
         @{reason='lease'},@{reason='legacy'},@{reason='Release'},@{reason='foreign-owner'},@{reason='external-worktree'},@{reason='reparse'},@{reason='database'}
     ) {
@@ -229,6 +252,109 @@ Describe 'Legacy disposed copy cleanup through the existing owner' {
                 (Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -IncludeLegacy).removed|Should -Be 1
             }
         } finally {if($lease){$lease.Dispose()}}
+    }
+}
+
+Describe 'Inactive qualification copy retention during project operations' {
+    It 'keeps one newest owned ready copy per phase across nested roots and respects the configured age' {
+        $root=Join-Path $TestDrive 'age policy Пример';$now=[datetime]::UtcNow
+        $expected=@()
+        foreach($phase in @('Develop','Release')){
+            foreach($age in @(20,10)){
+                $copy=New-StorageCopy -Root (Join-Path $root ($phase+$age)) -Phase $phase
+                $copy.claim.status='ready';Write-QualificationFixtureJson -Path (Join-Path $copy.root 'qualification-fixture.json') -Value $copy.claim
+                (Get-Item -LiteralPath (Join-Path $copy.root 'qualification-fixture.json')).LastWriteTimeUtc=$now.AddDays(-$age)
+                if($age -eq 20){$expected+=$copy.root}
+            }
+        }
+        $foreign=New-StorageCopy -Root (Join-Path $root 'foreign')
+        $foreign.claim.status='ready';$foreign.claim.workflowCommonGit='foreign-owner'
+        Write-QualificationFixtureJson -Path (Join-Path $foreign.root 'qualification-fixture.json') -Value $foreign.claim
+        $roots=@(Get-SourceE2EProjectsRoots -ProjectsRoot $root -IncludeNestedRoots)
+        $plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots $roots -CandidateRoot $RepoRoot -NowUtc $now
+        $plan.archivePaths.Count|Should -Be 2
+        foreach($path in $expected){$plan.archivePaths|Should -Contain $path}
+        (Get-SourceE2ECopyRetentionPlan -ProjectsRoots $roots -CandidateRoot $RepoRoot -RetentionDays 30 -NowUtc $now).archivePaths.Count|Should -Be 0
+        (Get-SourceE2ECopyRetentionPlan -ProjectsRoots $roots -CandidateRoot $RepoRoot -KeepCount 0 -NowUtc $now).archivePaths.Count|Should -Be 4
+    }
+    It 'reads source env limits without importing unrelated settings and rejects invalid values before deletion' {
+        $root=Join-Path $TestDrive 'settings Пример';$primary=Join-Path $root 'primary';$candidate=Join-Path $root 'executor'
+        Mock Get-RepositoryCommonGitDirectory {Join-Path $primary '.git'} -ParameterFilter {$RepositoryRoot -eq $candidate}
+        $names=@('ITL_SOURCE_FIXTURE_CLEANUP_ENABLED','ITL_SOURCE_FIXTURE_RETENTION_DAYS','ITL_SOURCE_FIXTURE_KEEP_COUNT','ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE')
+        $saved=@{};foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process');[Environment]::SetEnvironmentVariable($name,$null,'Process')}
+        try {
+            $defaults=Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate
+            $defaults.enabled|Should -BeTrue;$defaults.days|Should -Be 7;$defaults.keep|Should -Be 1;$defaults.batch|Should -Be 1
+            Write-Utf8Text -Path (Join-Path $primary '.dev.env') -Value "ITL_SOURCE_FIXTURE_CLEANUP_ENABLED=false`nITL_SOURCE_FIXTURE_RETENTION_DAYS='14'`nITL_SOURCE_FIXTURE_KEEP_COUNT=2`nITL_RETENTION_TEST_UNRELATED=do-not-import"
+            Write-Utf8Text -Path (Join-Path $candidate '.dev.env') -Value 'ITL_SOURCE_FIXTURE_KEEP_COUNT="1"'
+            $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate
+            $settings.enabled|Should -BeFalse;$settings.days|Should -Be 14;$settings.keep|Should -Be 1
+            [Environment]::GetEnvironmentVariable('ITL_RETENTION_TEST_UNRELATED','Process')|Should -BeNullOrEmpty
+            $env:ITL_SOURCE_FIXTURE_KEEP_COUNT='0'
+            (Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate).keep|Should -Be 0
+            $env:ITL_SOURCE_FIXTURE_RETENTION_DAYS='-1'
+            {Get-SourceE2ECopyRetentionSettings -CandidateRoot $candidate}|Should -Throw '*FIXTURE_RETENTION_SETTINGS_INVALID*repeat the same operation*'
+        } finally {foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}}
+    }
+    It 'archives an expired ready copy automatically and resumes interrupted removal from the same verified archive' {
+        $root=Join-Path $TestDrive 'automatic archive Пример';$copy=New-RecoverableStorageCopy -Root (Join-Path $root 'old canary') -State ready
+        $new=New-RecoverableStorageCopy -Root (Join-Path $root 'new canary') -State ready
+        $script:retentionDatabase=Join-Path $copy.fixture.branchRoot '.agent-1c/infobases/test/1Cv8.1CD'
+        Write-Utf8Text -Path $script:retentionDatabase -Value 'database unique to original failed canary'
+        Get-ChildItem -LiteralPath $copy.root -Recurse -Force -File | ForEach-Object {
+            # Desktop .NET cannot stamp read-only Git objects. Restore their
+            # original attributes so the old-copy fixture retains the real shape.
+            $attributes=$_.Attributes
+            try {$_.IsReadOnly=$false;$_.LastWriteTimeUtc=[datetime]::UtcNow.AddDays(-10)}finally{$_.Attributes=$attributes}
+        }
+        Mock Invoke-SourceFixtureInstalledAction {
+            param($Root,$Arguments)
+            $Arguments|Should -Contain '-ArchivedInactive'
+            Remove-Item -LiteralPath $script:retentionDatabase
+            $path=Join-Path (Split-Path -Parent $Root) 'qualification-fixture.json';$claim=Read-QualificationFixtureJson -Path $path
+            $claim.status='disposed';$claim|Add-Member -NotePropertyName disposal -NotePropertyValue @{status='disposed';candidateCommit=$claim.candidateCommit}
+            Write-QualificationFixtureJson -Path $path -Value $claim
+        }
+        $script:interruptRetention=$true
+        Mock Remove-Item {
+            param($LiteralPath)
+            if($script:interruptRetention){throw 'injected interruption after retention disposal'}
+            if(-not [IO.Path]::GetFullPath($LiteralPath).StartsWith([IO.Path]::GetFullPath($TestDrive)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'TEST_DELETE_OUTSIDE_TESTDRIVE'}
+            foreach($file in [IO.Directory]::EnumerateFiles($LiteralPath,'*',[IO.SearchOption]::AllDirectories)){[IO.File]::SetAttributes($file,[IO.FileAttributes]::Normal)}
+            [IO.Directory]::Delete($LiteralPath,$true)
+        } -ParameterFilter {$LiteralPath -eq $copy.root}
+        $roots=@(Get-SourceE2EProjectsRoots -ProjectsRoot $root -IncludeNestedRoots)
+        $plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots $roots -CandidateRoot $RepoRoot
+        $plan.archivePaths.Count|Should -Be 1
+        $arguments=@{ProjectsRoot=$root;CandidateRoot=$RepoRoot;DiagnosticRoot=(Join-Path $root 'diagnostics');IncludeNestedRoots=$true}
+        $budget=@{remaining=0}
+        $deferred=Remove-CompletedSourceE2ECopies @arguments -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget
+        ($deferred.entries|Where-Object root -eq $copy.root).reason|Should -BeLike '*FIXTURE_COPY_ARCHIVE_DEFERRED*'
+        $budget.remaining=1
+        $first=Remove-CompletedSourceE2ECopies @arguments -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget
+        $budget.remaining|Should -Be 0
+        $first.removed|Should -Be 0
+        $archive=Join-Path $root ('diagnostics/nested/old canary/'+(Split-Path -Leaf $copy.root)+'/recovery.zip')
+        $sha=(Get-FileHash -LiteralPath $archive).Hash
+        $script:interruptRetention=$false
+        (Get-SourceE2ECopyRetentionPlan -ProjectsRoots $roots -CandidateRoot $RepoRoot).archivePaths.Count|Should -Be 0
+        (Remove-CompletedSourceE2ECopies @arguments -ArchiveBudget $budget).removed|Should -Be 1
+        (Get-FileHash -LiteralPath $archive).Hash|Should -BeExactly $sha
+        Test-Path -LiteralPath $new.root|Should -BeTrue
+        Test-Path -LiteralPath $copy.root|Should -BeFalse
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 1 -Exactly
+    }
+    It 'rechecks all file activity under the copy lease before creating an automatic archive' {
+        $root=Join-Path $TestDrive 'recent activity Пример';$copy=New-RecoverableStorageCopy -Root $root -State ready
+        (Get-Item -LiteralPath (Join-Path $copy.root 'qualification-fixture.json')).LastWriteTimeUtc=[datetime]::UtcNow.AddDays(-10)
+        $plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots @($root) -CandidateRoot $RepoRoot -KeepCount 0
+        $plan.archivePaths.Count|Should -Be 1
+        Mock Invoke-SourceFixtureInstalledAction {throw 'must not dispose a recently active copy'}
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc
+        $result.removed|Should -Be 0;$result.entries[0].reason|Should -BeLike '*FIXTURE_COPY_RECENT_ACTIVITY*'
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+        @(Get-ChildItem -LiteralPath (Join-Path $root 'diagnostics') -Recurse -Filter '*.zip' -ErrorAction SilentlyContinue).Count|Should -Be 0
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
     }
 }
 
