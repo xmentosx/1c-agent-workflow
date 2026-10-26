@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "a6212e085a9a258557fdb8d0c4f5fb0ebe46f808",
+  "distributionCommit": "4831bee89854005f1b21f77a24d4654802175fc4",
   "distributionBase": "4626e6fc7b28054589e320894ce6aa617299a566",
   "package": "hosts/dev-karimov-new/code-package.json",
   "packageId": "code-xsd-v2",
@@ -65,14 +65,14 @@
     },
     "exactSourceRebaseAndChangedSourceRefusal": "passed"
   },
-  "deliveryStatus": "standalone package qualified; publication and deployment authorized, not yet performed",
-  "acceptanceLimit": "Generated nested structure only. Working MCP endpoints and their published indices remain unchanged; complete normative enum/type coverage is not claimed.",
+  "deliveryStatus": "standalone MCP package published in GitLab; workflow remains unpublished; host acceptance is retained separately in deployment receipts",
+  "acceptanceLimit": "Generated nested structure and preserved native parser limits; full normative Designer enum/type coverage is not claimed. Per-host deployment and reindex acceptance are separate from package qualification.",
   "currentBaselineQualification": {
     "completedUtc": "2026-10-26T06:01:01.908323+00:00",
     "nativeProofSha256": "b69def04e33171d1c97c4b204bc2d5710a87c74ada65c665840621c867d1ca1a",
     "distributionEvidence": "hosts/dev-karimov-new/evidence/20261026-xsd-native-current.json",
     "hostOwnerTests": {
-      "run": 266,
+      "run": 270,
       "failed": 0,
       "skipped": 35
     },
@@ -87,5 +87,6 @@
   "deliveryMode": "standalone MCP package in GitLab; no workflow publication",
   "windowsOwnerPackage": "hosts/dev-ermakov/owner-package.json",
   "windowsLegacyProofPreserved": true,
-  "workflowPublicationRequired": false
+  "workflowPublicationRequired": false,
+  "linuxLegacyOverlayPreparationRegression": "exact active legacy files staged before full qualification; changed active bytes rejected before installed package changes"
 }
