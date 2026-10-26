@@ -282,6 +282,20 @@ executed scenarios, while legacy failures retain conservative journey scope.
 
 Plan lists each scenario as execution, setup or reuse with its evidence/rejection
 reason and changed source functions or the conservative fallback cause.
+Fork provenance retains its exact commit/tree. A different fork may reuse native
+scenario proof only through `ai-rules-native-inputs.ps1`: both complete Git trees
+must authenticate, the audited installer/readers must be unchanged, and differences
+must be audited rule bodies with identical frontmatter and consumed UI-capability
+signals, or the source-only validator. Reader inventory has its own cheap check.
+Unknown files, layout/mode changes and changed consumers retain native execution.
+Current exact fork Full and workflow static proof remain mandatory. Compatibility
+also checks qualified-old init then current update for the affected clients,
+matching changed payloads to current clean init and preserving user-owned files.
+Its SHA-addressed transition receipt is bound into Full and copied with static
+cache/continuation proof. Plan may forecast pending static; execution never saves
+that forecast as a pass. Original native reports and legacy fingerprints are not
+rewritten; unavailable historical inputs select execution. Pester fork identity,
+stand/runtime/artifact bindings and newer applicable failures remain strict.
 Whole-journey timing samples are not estimates for a partial workload:
 without an applicable measurement its duration is unknown. Keep hard deadlines
 separate and use retained canary/warm evidence before claiming an operational

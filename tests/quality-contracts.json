@@ -19,6 +19,8 @@
     "python-package-dependencies": {"kind":"python-package-dependencies"}
   },
   "pesterExternalRuntimeTests": {
+    "tests/pester/DevelopForkInputScope.Tests.ps1": ["git","windows"],
+    "tests/pester/DevelopForkConsumerInventory.Tests.ps1": ["git","windows"],
     "tests/pester/SourceE2EStorage.Tests.ps1": ["windows","git"],
     "tests/pester/SourceE2EDiskMonitor.Tests.ps1": ["windows"],
     "tests/pester/VanessaNestedSelection.Tests.ps1": ["onescript","git","windows"],
@@ -932,6 +934,26 @@
       "tests": [
         "tests/pester/SourceDeliveryPlan.Tests.ps1"
       ]
+    },
+    {
+      "id": "develop-fork-input-scope",
+      "owner": "Authenticated fork native inputs and exact old-to-new installation proof",
+      "gate": "targeted",
+      "budgetSeconds": 240,
+      "primaryTest": "tests/pester/DevelopForkInputScope.Tests.ps1",
+      "paths": ["scripts/ai-rules-native-inputs.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/develop-static-qualification.ps1", "scripts/release-qualification.ps1", "tests/pester/DevelopForkInputScope.Tests.ps1"],
+      "reuseInputPaths": ["tests/pester/SourceDeliveryIncremental.TestSupport.ps1", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", "scripts/source-delivery-plan.ps1", "scripts/delivery-native-plan.ps1", "scripts/check.ps1", "scripts/stand-env-identity.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", "scripts/develop-journey-inputs.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
+      "tests": ["tests/pester/DevelopForkInputScope.Tests.ps1"]
+    },
+    {
+      "id": "develop-fork-consumer-inventory",
+      "owner": "Closed runtime readers of audited fork instruction bodies",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/DevelopForkConsumerInventory.Tests.ps1",
+      "paths": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1", "scripts/ai-rules-native-inputs.ps1", ".agents/skills/1c-workflow/scripts/*"],
+      "reuseInputPaths": ["scripts/develop-e2e-qualification.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1"],
+      "tests": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1"]
     },
     {
       "id": "develop-broker-input-scope",

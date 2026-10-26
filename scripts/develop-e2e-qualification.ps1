@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 . (Join-Path $PSScriptRoot 'develop-journey-inputs.ps1')
 . (Join-Path $PSScriptRoot 'develop-e2e-scenarios.ps1')
+. (Join-Path $PSScriptRoot 'ai-rules-native-inputs.ps1')
 
 function Get-DevelopE2EInputFileSha256 {
     param([string]$Path, [string]$RelativePath)
@@ -168,6 +169,9 @@ function Get-DevelopE2EInputIdentity {
             # one fresh qualification rather than an unauthenticated cache rewrite.
             $body = [ordered]@{ schemaVersion=2; journey=$Journey; contract=$projection; inputs=$inputs; external=$ExternalBinding }
             $result = [pscustomobject]@{ schemaVersion=2; fingerprint=Get-DevelopE2ECanonicalJsonSha256 -Value $body; inventory=$body }
+            # Lookup location only; every cross-fork comparison authenticates
+            # the actual clean Git commit/tree. It is not a fingerprint input.
+            if($AiRulesSource) {$result | Add-Member rulesSourceRoot ([IO.Path]::GetFullPath($AiRulesSource))}
             if ($positiveIdentity) { $result | Add-Member -NotePropertyName positiveInputIdentity -NotePropertyValue $positiveIdentity }
             return $result
         }
@@ -308,8 +312,14 @@ function Get-DevelopE2EAncestorQualification {
                 # before report/positive-stand reconstruction and AST reads.
                 $previousSource=@{};foreach($entry in $manifest.inputIdentity.inventory.inputs) {$previousSource[$entry.path]=$entry.sha256}
                 $unprojectable=@(foreach($entry in @($manifest.inputIdentity.inventory.inputs)+@($InputIdentity.inventory.inputs)) {
+                    $forkProbe=$null
+                    if($entry.path -ceq 'templates/dependency-lock.json' -and $previousSource[$entry.path] -cne $currentSource[$entry.path] -and
+                        ($manifest.inputIdentity.inventory.external.rulesCommit -cne $InputIdentity.inventory.external.rulesCommit -or $manifest.inputIdentity.inventory.external.rulesTree -cne $InputIdentity.inventory.external.rulesTree)) {
+                        $cache=if($null -ne $LookupContext -and $LookupContext.ContainsKey('forkBridges')){$LookupContext.forkBridges}else{$null}
+                        $forkProbe=Get-DevelopForkNativeBridge $manifest.inputIdentity $InputIdentity -Cache $cache
+                    }
                     if($previousSource[$entry.path] -cne $currentSource[$entry.path] -and
-                        -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $Journey -Scenario $RequiredScenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly)) {$entry;break}
+                        -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $Journey -Scenario $RequiredScenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly -ForkBridge $forkProbe)) {$entry;break}
                 })
                 if($unprojectable.Count) {
                     Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NATIVE_CONSUMER_INPUT_CHANGED' -Inputs @($unprojectable | ForEach-Object {'source:'+$_.path})
@@ -361,6 +371,16 @@ function Get-DevelopE2EAncestorQualification {
             }
             if (-not $continuation) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'LINEAGE_OR_CURRENT_STATIC_UNPROVEN' -Commit $qualifiedCommit; continue
+            }
+            $forkChanged=$manifest.inputIdentity.inventory.external.rulesCommit -cne $InputIdentity.inventory.external.rulesCommit -or $manifest.inputIdentity.inventory.external.rulesTree -cne $InputIdentity.inventory.external.rulesTree
+            if($forkChanged -and -not (Test-DevelopForkTransitionProof $StaticProof $manifest.inputIdentity $InputIdentity $current $Tree)) {
+                if(-not $AllowPendingStatic) {
+                    Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'CURRENT_FORK_TRANSITION_UNPROVEN' -Commit $qualifiedCommit
+                    continue
+                }
+                # Advisory only. Execution reruns this reader after Full and
+                # cannot persist a pending transition as a passed scenario.
+                $continuation=[pscustomobject]@{proofKind='pending-current-static'}
             }
             if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity -RequiredScenario $RequiredScenario) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NEWER_APPLICABLE_FAILURE' -Commit $qualifiedCommit; continue
