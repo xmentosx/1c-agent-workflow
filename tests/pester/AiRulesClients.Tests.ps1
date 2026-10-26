@@ -48,9 +48,128 @@
             $result.selected | Should -Be $result.defaultClient
             @($result.choices)[0] | Should -Be $result.defaultClient
             @($result.choices | Select-Object -Unique).Count | Should -Be $result.supportedCount
-            @($result.lines) | Should -Contain "1. $($result.defaultClient) (recommended)"
+            @($result.lines) | Should -Contain "1. [x] $($result.defaultClient) (recommended)"
+            @($result.lines | Where-Object { $_ -match '^\d+\. \[ \]' }).Count | Should -Be ($result.supportedCount - 1)
             $result.prompt | Should -Match ("\[" + [regex]::Escape($result.defaultClient) + "\]$")
         }
+    }
+
+    It "adds multiple clients by number or name and deduplicates them while keeping the default" {
+        $results = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            foreach ($answer in @("2, 4", "KILO cursor codex kilo", "2 cursor, 1")) {
+                $inputAnswer = $answer
+                function Read-Host { return $inputAnswer }
+                [pscustomobject]@{ selected = @(Read-InitAgentTarget -DefaultClient codex 6>$null) }
+            }
+        }
+        foreach ($result in @($results)) {
+            @($result.selected) | Should -Be @("codex", "kilocode", "cursor")
+        }
+    }
+
+    It "rejects the whole invalid selection and does not retain clients from failed input" {
+        $results = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            foreach ($invalid in @("2 unknown", "4 99", "0", "-1", ",,,")) {
+                $inputs = [Collections.Generic.Queue[string]]::new()
+                $inputs.Enqueue($invalid)
+                $inputs.Enqueue("")
+                function Read-Host { return $inputs.Dequeue() }
+                [pscustomobject]@{
+                    selected = @(Read-InitAgentTarget -DefaultClient codex 6>$null)
+                    remaining = $inputs.Count
+                }
+            }
+        }
+        foreach ($result in @($results)) {
+            @($result.selected) | Should -Be @("codex")
+            $result.remaining | Should -Be 0
+        }
+    }
+
+    It "carries wizard selection '<inputValue>' through normalization and persistence to rules installation" -ForEach @(
+        @{ inputValue = ""; expectedClients = @("codex") }
+        @{ inputValue = "2 cursor"; expectedClients = @("codex", "kilocode", "cursor") }
+    ) {
+        $root = Join-Path $TestDrive "client selection Кириллица"
+        New-Item -ItemType Directory -Path (Join-Path $root ".agent-1c") -Force | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = ""
+            function Get-InitAgentTargetDefault { return "codex" }
+            function Read-Host { return $inputValue }
+            function Read-InitPlatformPath { return "C:\platform\1cv8.exe" }
+            function Import-ItlProductProjectSetup {}
+            function Read-ItlProductProjectInitFamily { return "PM5" }
+            function Get-ItlCatalogField { return "" }
+            $script:PreparedCatalogCandidate = @{ binding = @{ projectId = "fixture" } }
+            function Read-InitInfoBaseKind { return "file" }
+            function Read-InitWizardFileInfoBaseAnswers {
+                return [pscustomobject]@{ sourceInfoBasePath = "C:\bases\source"; sourceUsesRepository = $false }
+            }
+            $raw = Read-InitWizardAnswersOnce 6>$null
+            # The catalog and dependency owners are outside this client-selection fixture.
+            $raw.catalogMode = "legacy"
+            $raw.projectId = ""
+            $answers = Normalize-InitAnswers -Answers $raw
+            Assert-InitAnswers -Answers $answers
+            $summary = [Collections.Generic.List[string]]::new()
+            function Write-Host { param([Parameter(Position=0)]$Object) [void]$summary.Add([string]$Object) }
+            Write-InitWizardAnswersSummary -Answers $raw
+            function Set-DotEnvValues {}
+            function Set-ProjectBaseConfigurationVersion {}
+            function Set-DependencyLockMode {}
+            function Import-DotEnv {}
+            Save-InitAnswers -Answers $answers
+            Read-ProjectConfig
+            # A plain terminal has no executor marker. The initial wizard choice
+            # remains the session client even when several clients are attached.
+            Remove-Variable -Name AgentTarget -Scope Local
+            function Get-InitAgentExecutionEnvironment { return @{} }
+            function Get-InitAgentExecutionProcessChain { return @() }
+            # Installer consumes this same project set; session selection must not collapse it.
+            [pscustomobject]@{
+                rawClients = $raw.agentTargets
+                normalizedClients = $answers.agentTargets
+                tools = @(Get-AiRules1cTools)
+                session = Get-ItlActiveClient
+                summary = @($summary)
+            }
+        }
+        @($result.rawClients) | Should -Be $expectedClients
+        @($result.normalizedClients) | Should -Be $expectedClients
+        @($result.tools) | Should -Be $expectedClients
+        $result.session | Should -Be "codex"
+        $result.summary | Should -Contain ("Agent clients: " + ($expectedClients -join ", "))
+        $saved = Get-Content (Join-Path $root ".agent-1c/project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($saved.aiRules.tools) | Should -Be $expectedClients
+    }
+
+    It "keeps legacy JSON client answers and validates an explicit client set before saving" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $AgentTarget = ""
+            $legacy = Normalize-InitAnswers -Answers ([pscustomobject]@{
+                agentTarget = "codex"; platformPath = "C:\1cv8.exe"; sourceInfoBasePath = "C:\base"; sourceUsesRepository = $false; sourceInfoBaseUnsafeActionProtectionMode = "manual-confirm"
+            })
+            Assert-InitAnswers -Answers $legacy
+            $multiple = Normalize-InitAnswers -Answers ([pscustomobject]@{
+                agentTargets = @("codex", "cursor", "codex"); platformPath = "C:\1cv8.exe"; sourceInfoBasePath = "C:\base"; sourceUsesRepository = $false; sourceInfoBaseUnsafeActionProtectionMode = "manual-confirm"
+            })
+            Assert-InitAnswers -Answers $multiple
+            $errors = foreach ($clients in @(@("unknown"), @("cursor"), @())) {
+                $invalid = $legacy | Select-Object *
+                $invalid.agentTargets = $clients
+                try { Assert-InitAnswers -Answers $invalid; "unexpected" } catch { $_.Exception.Message }
+            }
+            [pscustomobject]@{ legacy = $legacy; multiple = $multiple; errors = @($errors) }
+        }
+        @($result.legacy.agentTargets) | Should -Be @("codex")
+        @($result.multiple.agentTargets) | Should -Be @("codex", "cursor")
+        $result.multiple.agentTarget | Should -Be "codex"
+        $result.errors.Count | Should -Be 3
+        foreach ($errorText in $result.errors) { $errorText | Should -Match "agentTargets" }
     }
 
     It "detects supported agent runtimes from inherited markers and the process chain" {
