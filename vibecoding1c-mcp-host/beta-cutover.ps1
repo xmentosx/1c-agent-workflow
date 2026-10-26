@@ -447,6 +447,12 @@ function Get-BetaCutoverContext {
         $runtime.url = "$baseUrl`:$($runtime.hostPort)/mcp"
     }
     $runtime.proxyContainerName = [string](Get-ObjectValue -Object $old -Name "proxyContainerName" -Default "$($old.containerName)-tools-list-proxy")
+    $repairChanged = $retainedIndex -and $ServerId -eq 'code' -and (Test-QualifiedHostCodeRepairChange -Config $Config -Server $betaServer -OldRuntime $old)
+    if ($repairChanged) {
+        # Ordinary native reconciliation keeps a same-image container. An explicit
+        # qualified repair cutover must use its declared candidate for rollback.
+        $runtime.containerName = Expand-Template -Template ([string]$betaServer.containerNameTemplate) -ConfigId $ConfigId -ServerId $ServerId
+    }
     if ($NativeEndpoint) {
         if (-not $retainedIndex -or $oldChannel -ne "stable") { throw "Native endpoint conversion requires an accepted versioned stable server." }
         if ([string](Get-ObjectValue -Object $old -Name "endpointMode" -Default "") -eq "direct") { throw "This deployment already uses its native public endpoint." }
@@ -490,7 +496,6 @@ function Get-BetaCutoverContext {
         $sourceCompose = Join-Path (Get-DistributionRoot -Config $Config) ([string]$betaServer.composePath)
         [void](Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $betaServer -ComposeText (Read-Text -Path $sourceCompose))
     }
-    $repairChanged = $retainedIndex -and $ServerId -eq 'code' -and (Test-QualifiedHostCodeRepairChange -Config $Config -Server $betaServer -OldRuntime $old)
     $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and ($oldImage -cne [string]$runtime.image -or $repairChanged)
     return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; retainedVersionChange = $retainedVersionChange; nativeEndpoint = [bool]$NativeEndpoint }
 }

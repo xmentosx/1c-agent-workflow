@@ -5161,13 +5161,16 @@ services:
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
             $legacy = @{ id = 'code'; scope = 'project'; mcpNameTemplate = 'itl-{projectSlug}-code' }
-            $candidate = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'itl-{projectSlug}-code' }
+            $candidate = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'itl-{projectSlug}-code'; containerNameTemplate = 'itl-{projectSlug}-code-xsd-v2' }
             function Read-DistributionManifest { param($ManifestPath) if ($ManifestPath) { return @{ servers = @($candidate) } }; return @{ servers = @($legacy) } }
             $old = @{ channel = 'beta'; containerName = 'old-code'; name = 'itl-pm4-code'; directUrl = 'http://host:1/mcp'; hostPort = 1; proxyContainerName = 'proxy'; embeddingModel = 'qwen' }
             function Get-TrackedHostServerForIdentity { return $old }
             function Read-HostState { return @{ configurations = @(@{ configId = 'pm4' }) } }
             function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'old-code') { return 'running' }; return 'missing' }
-            function New-ServerRuntime { return [pscustomobject]@{ name = 'itl-pm4-code'; containerName = 'new-code'; hostPort = 2; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)); embeddingModel = 'qwen' } }
+            $script:StableReuseNative = $false
+            $script:StableRepairChanged = $false
+            function Test-QualifiedHostCodeRepairChange { return $script:StableRepairChanged }
+            function New-ServerRuntime { return [pscustomobject]@{ name = 'itl-pm4-code'; containerName = $(if($script:StableReuseNative){'old-code'}else{'new-code'}); hostPort = 2; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)); embeddingModel = 'qwen' } }
             $script:StableFixtureEnv = @{ RESET_DATABASE = 'false'; RESET_CACHE = 'false' }
             function Resolve-ServerEnv { return $script:StableFixtureEnv }
             function Get-BetaProjectIndexSettings { return @{ generation = 'accepted' } }
@@ -5180,6 +5183,14 @@ services:
             (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeTrue
             $old.image = $context.runtime.image
             (Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release).retainedVersionChange | Should -BeFalse
+            $script:StableReuseNative = $true
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*distinct container*'
+            $script:StableRepairChanged = $true
+            $patched = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
+            $patched.runtime.containerName | Should -Be 'itl-pm4-code-xsd-v2'
+            $patched.retainedVersionChange | Should -BeTrue
+            $script:StableRepairChanged = $false
+            $script:StableReuseNative = $false
             $context.runtime.hostPort | Should -Be 1
             $context.runtime.url | Should -Be 'http://host:1/mcp'
             $script:StableFixtureEnv.RESET_CACHE = 'true'
