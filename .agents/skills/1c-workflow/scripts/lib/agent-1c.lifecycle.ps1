@@ -8505,6 +8505,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
         throw "WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: preserve '$($Snapshot.root)' and repeat the original update after reconciliation."
     }
     $masterOnly = [string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only'
+    $savedRolloutScope = Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null
     $repeatAction = if ($masterOnly) { 'Repeat the same source-side -Recovery legacy-copy command with its pinned decision file' } else { 'Repeat update-workflow' }
     $childScript = $script:Agent1cScriptPath
     $executorRoot = [string](Get-ConfigValueFromObject $pending.receipt 'recoveryExecutorRoot' '')
@@ -8566,7 +8567,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
             # reports deferred/blocked branches. Do not recreate a failed
             # receipt after that terminal checkpoint or recopy master files.
             $rolloutFailure = ''
-            try { if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) | Out-Null } }
+            try { if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) -RolloutScope $savedRolloutScope | Out-Null } }
             catch { $rolloutFailure = $_.Exception.Message }
             if ($rolloutFailure -match '^WORKFLOW_UPDATE_BRANCHES_INCOMPLETE:') {
                 throw $rolloutFailure
@@ -8595,7 +8596,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
                 -not [string]::Equals([string]$completed.receipt.sourceRoot,[string]$Source.root,[StringComparison]::OrdinalIgnoreCase)) {
                 throw 'WORKFLOW_UPDATE_POST_COPY_TERMINAL_UNCONFIRMED: child retained a different source identity.'
             }
-            if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) | Out-Null }
+            if (-not $masterOnly) { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$Source.commit) -RolloutScope $savedRolloutScope | Out-Null }
         } else {
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-complete
             Retain-WorkflowUpdateRollbackSnapshot -Snapshot $Snapshot | Out-Null
@@ -8750,7 +8751,7 @@ function Get-WorkflowUpdateRootWriteSetConflicts {
 }
 
 function Get-WorkflowUpdateWorktreeInventory {
-    param([string]$TargetCommit = '')
+    param([string]$TargetCommit = '', [string[]]$SelectedRoot = @())
 
     $mainRoot = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
     $worktrees = @(Get-GitWorktrees)
@@ -8763,6 +8764,7 @@ function Get-WorkflowUpdateWorktreeInventory {
     $inventory = @()
     foreach ($worktree in $worktrees) {
         $root = [IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\', '/')
+        if ($SelectedRoot -and $root -notin $SelectedRoot) { continue }
         $branch = [string]$worktree.branch
         $kind = if ([string]::Equals($root, $mainRoot, [StringComparison]::OrdinalIgnoreCase)) { 'master' } elseif ($branch -like 'itldev/*') { 'development' } else { 'other' }
         $available = Test-Path -LiteralPath $root -PathType Container
@@ -9718,6 +9720,34 @@ function Get-WorkflowUpdateBranchContinuation {
     return $(if ($Default) { $Default } else { 'Resolve the reported branch conflict, then repeat update-workflow from master.' })
 }
 
+function Resolve-WorkflowUpdateRolloutScope {
+    param([string]$SourceCommit, [object]$RecordedScope, [string]$InputFile = '')
+    $requested = $null
+    if ($InputFile) { $requested = Read-Utf8Text -Path $InputFile | ConvertFrom-Json -ErrorAction Stop }
+    $scopes = @($RecordedScope, $requested | Where-Object { $null -ne $_ })
+    $normalized = @()
+    foreach ($scope in $scopes) {
+        if ([int]$scope.schemaVersion -ne 1 -or [string]$scope.sourceCommit -cne $SourceCommit -or
+            [IO.Path]::GetFullPath([string]$scope.projectRoot).TrimEnd('\','/') -ine [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/')) {
+            throw 'WORKFLOW_UPDATE_SCOPE_IDENTITY_MISMATCH: preserve the receipt; repeat the same exact source and root scope.'
+        }
+        $roots = @($scope.roots | ForEach-Object { [IO.Path]::GetFullPath([string]$_).TrimEnd('\','/') } | Sort-Object)
+        if ($roots.Count -eq 0 -or @($roots | Sort-Object -Unique).Count -ne $roots.Count) {
+            throw 'WORKFLOW_UPDATE_SCOPE_INVALID: select a non-empty set of distinct registered development roots.'
+        }
+        $registered = @(Get-GitWorktrees | Where-Object { $_.branch -like 'itldev/*' } | ForEach-Object { [IO.Path]::GetFullPath([string]$_.path).TrimEnd('\','/') })
+        if (@($roots | Where-Object { $_ -notin $registered -or -not (Test-Path -LiteralPath $_ -PathType Container) }).Count) {
+            throw 'WORKFLOW_UPDATE_SCOPE_UNREGISTERED: scope must contain only existing registered development worktrees; repair registration through its owner.'
+        }
+        $normalized += [pscustomobject][ordered]@{schemaVersion=1;projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\','/');sourceCommit=$SourceCommit;roots=$roots}
+    }
+    if ($normalized.Count -eq 2 -and ($normalized[0] | ConvertTo-Json -Depth 8 -Compress) -ine ($normalized[1] | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'WORKFLOW_UPDATE_SCOPE_CHANGED: pending update retains its original scope; resume without changing the roots file.'
+    }
+    if ($normalized.Count) { return $normalized[0] }
+    return $null
+}
+
 function Invoke-WorkflowDevelopmentBranchRollout {
     param([Parameter(Mandatory = $true)][object]$Source)
 
@@ -9731,7 +9761,10 @@ function Invoke-WorkflowDevelopmentBranchRollout {
             throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: root or schema differs at '$reportPath'."
         }
     }
-    $inventory = @(Get-WorkflowUpdateWorktreeInventory -TargetCommit ([string]$Source.commit))
+    $scope = Get-ConfigValueFromObject $Source 'rolloutScope' $null
+    $scope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$Source.commit) -RecordedScope $scope
+    $selected = @(if ($null -ne $scope) { $scope.roots })
+    $inventory = @(Get-WorkflowUpdateWorktreeInventory -TargetCommit ([string]$Source.commit) -SelectedRoot $selected)
     $outcomes = [System.Collections.Generic.List[object]]::new()
     foreach ($item in @($inventory | Where-Object kind -EQ development)) {
         $status = [string]$item.eligibility
@@ -9831,13 +9864,13 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         })
     }
     $report = [ordered]@{ schemaVersion = 1; sourceCommit = [string]$Source.commit; sourceRoot = [string]$Source.root
-        mainRoot = $mainRoot; updatedAt = (Get-Date).ToString('o'); roots = @($outcomes.ToArray()) }
+        mainRoot = $mainRoot; updatedAt = (Get-Date).ToString('o'); rolloutScope = $scope; roots = @($outcomes.ToArray()) }
     Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $report
 }
 
 function Assert-WorkflowDevelopmentBranchRolloutComplete {
-    param([Parameter(Mandatory = $true)][string]$SourceCommit)
+    param([Parameter(Mandatory = $true)][string]$SourceCommit, [object]$RolloutScope = $null)
     $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
         throw "WORKFLOW_UPDATE_BRANCH_REPORT_MISSING: repeat update-workflow to classify every development worktree. $reportPath"
@@ -9847,6 +9880,13 @@ function Assert-WorkflowDevelopmentBranchRolloutComplete {
     if ([int]$report.schemaVersion -ne 1 -or [string]$report.sourceCommit -cne $SourceCommit -or
         [string]$report.mainRoot -cne [string]$script:ProjectRoot) {
         throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: source or root identity differs at $reportPath"
+    }
+    $actualScope = Get-ConfigValueFromObject $report 'rolloutScope' $null
+    if (($actualScope | ConvertTo-Json -Depth 8 -Compress) -ine ($RolloutScope | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'WORKFLOW_UPDATE_BRANCH_SCOPE_MISMATCH: a selected-root report cannot prove a complete ordinary rollout; repeat the original scoped update or run an ordinary update for all roots.'
+    }
+    if ($null -ne $RolloutScope -and (@($report.roots.root | Sort-Object) -join "`0") -ine (@($RolloutScope.roots | Sort-Object) -join "`0")) {
+        throw 'WORKFLOW_UPDATE_BRANCH_SCOPE_INCOMPLETE: retain the report and repeat the original update.'
     }
     $incomplete = @($report.roots | Where-Object { [string]$_.status -cne 'completed' })
     if ($incomplete.Count -gt 0) {
@@ -10132,6 +10172,8 @@ function Update-WorkflowPackage {
         Assert-WorkflowDependencySelectionScopes -Roots $selectionRoots
     }
 
+    $rolloutScope = $null
+    $scopeInput = Get-Variable -Name WorkflowUpdateBranchRootsFile -ValueOnly -ErrorAction SilentlyContinue
     if ($LifecyclePhase -eq 'post-copy') {
         if (-not $OperationContinuation) {
             throw 'WORKFLOW_UPDATE_POST_COPY_NOT_CONTINUATION: post-copy may only run as the fresh-process continuation of update-workflow.'
@@ -10141,6 +10183,7 @@ function Update-WorkflowPackage {
             throw 'WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: a legacy updater may have copied this package without a transaction. Preserve all current files; do not commit the incomplete package or repeat the dirty installed updater. Use a clean fixed source scripts/update-installed-workflow.ps1 with -Recovery legacy-status -LegacySourceRoot <exact-copied-payload-checkout>, then follow its reviewed recovery.'
         }
         Assert-WorkflowUpdateSnapshotCurrentState -Pending $pendingPostCopy
+        $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$pendingPostCopy.receipt.sourceCommit) -RecordedScope (Get-ConfigValueFromObject $pendingPostCopy.receipt 'rolloutScope' $null) -InputFile $scopeInput
     }
 
     if ($LifecyclePhase -ne "post-copy") {
@@ -10152,6 +10195,8 @@ function Update-WorkflowPackage {
         }
         $pending = Get-WorkflowUpdatePendingSnapshot
         if ($null -ne $pending) {
+            $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$pending.receipt.sourceCommit) -RecordedScope (Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null) -InputFile $scopeInput
+            if ($scopeInput -and $null -eq (Get-ConfigValueFromObject $pending.receipt 'rolloutScope' $null)) { throw 'WORKFLOW_UPDATE_SCOPE_CHANGED: an existing ordinary transaction cannot become scoped.' }
             if ([string]$pending.receipt.phase -notin @('prepared', 'post-copy-complete')) {
                 Assert-WorkflowUpdateRecordedSource -Receipt $pending.receipt
             }
@@ -10179,7 +10224,7 @@ function Update-WorkflowPackage {
                 Retain-WorkflowUpdateRollbackSnapshot -Snapshot $pending.snapshot | Out-Null
                 Write-Host 'Retained the completed workflow update snapshot for guarded rollback; no project files changed.'
                 if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
-                    Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $completedSourceCommit | Out-Null
+                    Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $completedSourceCommit -RolloutScope $rolloutScope | Out-Null
                 }
                 return
             }
@@ -10203,7 +10248,7 @@ function Update-WorkflowPackage {
                 if ($hadOverride) {$env:ITL_WORKFLOW_SOURCE_PATH=$previousOverride} else {Remove-Item Env:ITL_WORKFLOW_SOURCE_PATH -ErrorAction SilentlyContinue}
             }
             if ([string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
-                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$recordedSource.commit) | Out-Null
+                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$recordedSource.commit) -RolloutScope $rolloutScope | Out-Null
             }
             if ($null -ne $executor -and [string](Get-ConfigValueFromObject $pending.receipt 'legacyCopyRecovery.scope' '') -cne 'master-only') {
                 throw "WORKFLOW_UPDATE_NEW_CANDIDATE_PENDING: the interrupted pinned update '$($recordedSource.commit)' completed using helper '$($executor.commit)'. Repeat the same source-side update to install the requested new candidate; the completed root will not replay old post-copy."
@@ -10211,6 +10256,8 @@ function Update-WorkflowPackage {
             return
         }
         $source = Resolve-WorkflowPackageSource
+        $rolloutScope = Resolve-WorkflowUpdateRolloutScope -SourceCommit ([string]$source.commit) -RecordedScope $rolloutScope -InputFile $scopeInput
+        $source | Add-Member -NotePropertyName rolloutScope -NotePropertyValue $rolloutScope -Force
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
         if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
         $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $source
@@ -10227,7 +10274,7 @@ function Update-WorkflowPackage {
                 Assert-WorkflowTrackedGitClean
                 Set-RunStage -Stage 'workflow-update.resume-branches' -Detail 'Master is complete; retrying only deferred or blocked development worktrees.'
                 Invoke-WorkflowDevelopmentBranchRollout -Source $source | Out-Null
-                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) | Out-Null
+                Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) -RolloutScope (Get-ConfigValueFromObject $source 'rolloutScope' $null) | Out-Null
                 return
             }
         }
@@ -10257,7 +10304,7 @@ function Update-WorkflowPackage {
                 -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root -AiRulesPathsAfter $candidateRulesPaths) `
                 -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
             try {
-                $details = @{dependencyPlan=$dependencyPlan}
+                $details = @{dependencyPlan=$dependencyPlan;rolloutScope=$rolloutScope}
                 if ($null -ne $legacyExecutor) {
                     $details.recoveryExecutorRoot = [string]$legacyExecutor.root
                     $details.recoveryExecutorCommit = [string]$legacyExecutor.commit
@@ -10304,7 +10351,7 @@ function Update-WorkflowPackage {
         }
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
         Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $copySnapshot -Source $source
-        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) | Out-Null
+        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$source.commit) -RolloutScope (Get-ConfigValueFromObject $source 'rolloutScope' $null) | Out-Null
         return
     }
 
@@ -10385,6 +10432,7 @@ function Update-WorkflowPackage {
         ref = [string]$pendingPostCopy.receipt.sourceRef
         commit = [string]$pendingPostCopy.receipt.sourceCommit
         source = [string]$pendingPostCopy.receipt.sourceKind
+        rolloutScope = $rolloutScope
     }
     Set-RunStage -Stage 'workflow-update.branches' -Detail 'Updating eligible development worktrees with the same exact workflow candidate.'
     $masterOnly = [string](Get-ConfigValueFromObject $pendingPostCopy.receipt 'legacyCopyRecovery.scope' '') -ceq 'master-only'
@@ -10405,7 +10453,7 @@ function Update-WorkflowPackage {
     }
     if (@($branchReport.roots | Where-Object { [string]$_.status -ne 'completed' }).Count -gt 0) {
         Set-RunStage -Stage 'workflow-update.partial' -Detail 'Master is complete; some registered development worktrees require a repeated update-workflow.'
-        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) | Out-Null
+        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) -RolloutScope $rolloutScope | Out-Null
     } else {
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
         # New code must also offer on the FIRST upgrade from a pre-catalog

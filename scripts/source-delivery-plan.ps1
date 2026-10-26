@@ -487,6 +487,23 @@ function Invoke-DeliveryCandidateComponentPlan {
     return $result
 }
 
+function Add-DeliveryPreparationEstimate {
+    param([object]$Plan, [object]$Preparation, [switch]$PendingCompatibility, [object]$CompletedPreparation)
+    if (-not $Plan.PSObject.Properties['timeEstimate']) { return }
+    $estimate = $Plan.timeEstimate
+    $overhead = @('channel-cleanup-and-remote-finalization')
+    if ($Preparation -and -not $CompletedPreparation) { $overhead += 'stand-preparation-and-capture' }
+    if ($PendingCompatibility) { $overhead += 'preliminary-compatibility-Full' }
+    $estimate | Add-Member -NotePropertyName gateEstimatedSeconds -NotePropertyValue $estimate.estimatedSeconds -Force
+    $estimate | Add-Member -NotePropertyName unmeasuredPreparation -NotePropertyValue $overhead -Force
+    $estimate | Add-Member -NotePropertyName preparationSpentSeconds -NotePropertyValue $(if ($CompletedPreparation -and $CompletedPreparation.PSObject.Properties['durationMs']) { [int][math]::Ceiling($CompletedPreparation.durationMs/1000) } else { 0 }) -Force
+    # A main-gate subtotal is not a complete command ETA. Unknown preparatory
+    # work stays explicit; hard allowances must never stand in for samples.
+    $estimate.estimatedSeconds = $null
+    $estimate.note = 'gateEstimatedSeconds is the main-gate subtotal only. Total remaining duration is unknown while unmeasuredPreparation is non-empty; preparationSpentSeconds has already elapsed. Hard limits are stop deadlines.'
+    if ($Preparation) { $Plan | Add-Member -NotePropertyName standPreparation -NotePropertyValue $Preparation -Force }
+}
+
 function New-AccumulatedDeliveryPlan {
     param([switch]$RequireRelease,[switch]$PreviewOnly)
     Assert-CleanDeliveryWorktree
@@ -505,7 +522,14 @@ function New-AccumulatedDeliveryPlan {
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
+        $preparation = Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:([bool]($RequireRelease -or @($componentPlan.requiredReleaseCapabilities).Count))
+        Add-DeliveryPreparationEstimate -Plan $plan -Preparation $preparation -PendingCompatibility:([bool]@($componentPlan.components | Where-Object { $_.name -ceq 'aiRules1c' -and $_.compatibilityPromotionRequired }).Count)
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries
+        if ($preparation -and $preparation.requiresStateChange) {
+            $plan | Add-Member -NotePropertyName resumable -NotePropertyValue $false -Force
+            $plan | Add-Member -NotePropertyName continuation -NotePropertyValue 'Run PublishDevelop without ResumePlan to prepare the selected stand through its owners; it will freeze the executable plan afterward. Plan is read-only.' -Force
+            return $plan
+        }
         if($PreviewOnly) {
             $plan | Add-Member -NotePropertyName resumable -NotePropertyValue $false
             $plan | Add-Member -NotePropertyName plannerCompatibility -NotePropertyValue 'published planner predates candidate calculation or component inspection; advisory preview only, publication requires a supported replan under the published owner'

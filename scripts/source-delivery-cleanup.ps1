@@ -604,8 +604,17 @@ function Add-DeliveryCleanupResults {
 }
 
 function Invoke-PublishDevelopWithCleanup {
-    $pre = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase pre-operation
-    $published = Publish-AccumulatedDevelop
+    $checkpoint = if ($ResumePlan) { Read-DevelopPublicationAttempt } else { $null }
+    $previous = if ($checkpoint -and $checkpoint.PSObject.Properties['preOperationCleanup']) { $checkpoint.preOperationCleanup } else { $null }
+    if ($checkpoint -and $checkpoint.PSObject.Properties['planId'] -and [string]$checkpoint.planId -ceq $ResumePlan -and
+        $previous -and [string]$previous.status -ceq 'completed') {
+        # Best-effort garbage collection is not qualification or lock admission.
+        # Resume retains current process/lease guards and the full post cleanup.
+        $pre = [pscustomobject]@{status='reused';phase='pre-operation';planId=$ResumePlan;reason='completed-for-this-frozen-checkpoint'}
+    } else { $pre = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase pre-operation }
+    $script:DeliveryPreOperationCleanup = $pre
+    try { $published = Publish-AccumulatedDevelop }
+    finally { Remove-Variable -Name DeliveryPreOperationCleanup -Scope Script -ErrorAction SilentlyContinue }
     $post = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase post-operation -ExpectedCommit ([string]$published.commit)
     return Add-DeliveryCleanupResults -Result $published -Runs @($pre, $post)
 }

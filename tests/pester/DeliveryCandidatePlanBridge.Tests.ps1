@@ -1,7 +1,11 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1') }
 
 Describe 'Incremental delivery acceptance' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
 BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false

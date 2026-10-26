@@ -74,6 +74,8 @@
     "ParserDocsBudgets.Tests.ps1": 13.0,
     "ReleaseExtensionRecovery.Tests.ps1": 171,
     "ReleaseGate.Tests.ps1": 10.0,
+    "ReleaseRouting.Tests.ps1": 1.3,
+    "PesterProofSources.Tests.ps1": 46.0,
     "ReleaseOrchestration.Tests.ps1": 285.0,
     "DevelopManifestContinuation.Tests.ps1": 184,
     "E2EClientSelection.Tests.ps1": 10.0,

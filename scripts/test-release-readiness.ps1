@@ -3,6 +3,7 @@ param(
     [ValidateSet("Full", "Develop", "Release")]
     [string]$Mode = "Full",
     [string]$RepositoryRoot = "",
+    [string]$BaseRef = "",
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
     [string]$AgentTarget = "",
@@ -319,7 +320,7 @@ function Test-VanessaArchiveContract {
 function Test-PowerShellEncoding {
     $reportPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-powershell-encoding-" + [guid]::NewGuid().ToString("N") + ".json")
     try {
-        & (Join-Path $PSScriptRoot "test-powershell-encoding.ps1") -RepositoryRoot $RepositoryRoot -OutputPath $reportPath -ReportOnly | Out-Null
+        & (Join-Path $PSScriptRoot "test-powershell-encoding.ps1") -RepositoryRoot $RepositoryRoot -BaseRef $BaseRef -OutputPath $reportPath -ReportOnly | Out-Null
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($issue in @($report.issues)) {
             Add-ReadinessIssue -Code ([string]$issue.code) -Category "SOURCE_DEFECT" `

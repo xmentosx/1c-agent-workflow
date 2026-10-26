@@ -22,6 +22,7 @@ param(
     [string]$WorkflowUpdateLegacySourceRoot = "",
     [string]$WorkflowUpdateSnapshotId = "",
     [string]$WorkflowUpdateReconciliationFile = "",
+    [string]$WorkflowUpdateBranchRootsFile = "",
     [string]$OpenSpecChangeId = "",
     [switch]$OpenSpecArchiveSkipSpecs,
     [string]$ConfigPath,

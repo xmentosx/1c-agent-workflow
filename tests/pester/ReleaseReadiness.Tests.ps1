@@ -108,10 +108,11 @@ Describe "Deterministic Release readiness" {
         }
 
         function Invoke-ReadinessFixture {
-            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "", [string]$ResumeMode = "Auto")
+            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "", [string]$ResumeMode = "Auto", [string]$BaseRef = "")
             $quote = { param([string]$Value) '"' + $Value.Replace('"', '\"') + '"' }
             $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quote $script:ReadinessRunnerPath), "-Mode", (& $quote $Mode), "-RepositoryRoot", (& $quote $Root), "-OutputPath", (& $quote $OutputPath), "-ResumeMode", (& $quote $ResumeMode), "-Offline")
             if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", (& $quote $E2EProjectRoot)) }
+            if ($BaseRef) { $arguments += @('-BaseRef', (& $quote $BaseRef)) }
             $stdoutPath = $OutputPath + ".stdout.log"
             $stderrPath = $OutputPath + ".stderr.log"
             $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($arguments -join " ") -WindowStyle Hidden `
@@ -154,6 +155,20 @@ Describe "Deterministic Release readiness" {
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
+    }
+
+    It 'checks the frozen candidate base in a support clone without inventing an origin/master dependency' {
+        $fixture=New-ReadinessFixture -Root (Join-Path $TestDrive 'support clone')
+        & git -C $fixture.root update-ref -d refs/remotes/origin/master
+        $output=Join-Path $TestDrive 'support-context.json'
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $output -BaseRef HEAD | Should -Be 0
+        $context=Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        $context.status | Should -Be 'passed'
+        @($context.issues).Count | Should -Be 0
+        # The explicit base must still reject an invalid revision before Pester.
+        Invoke-ReadinessFixture -Root $fixture.root -OutputPath $output -BaseRef missing-immutable-base | Should -Not -Be 0
+        $context=Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($context.issues.code) | Should -Contain 'RELEASE_POWERSHELL_ENCODING_INVALID'
     }
 
     It "aggregates missing archive and compatibility drift before Pester" {

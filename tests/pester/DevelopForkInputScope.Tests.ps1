@@ -62,7 +62,11 @@ BeforeAll {
 }
 
 Describe 'Native fork input scope and authenticated transition' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
     BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
         $script:DeliverySupervisorCommit='1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel='master';$script:DeliverySupervisorBootstrap=$false

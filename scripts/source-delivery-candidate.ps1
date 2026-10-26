@@ -707,6 +707,10 @@ function Publish-AccumulatedDevelop {
         if ($ReplanQueueScope -eq 'Frozen') { $attempt | Add-Member -NotePropertyName replanQueueScope -NotePropertyValue 'Frozen' -Force }
         $attempt.candidate = $candidate
         $attempt.tree = $candidateTree
+        $preCleanup = Get-Variable -Name DeliveryPreOperationCleanup -ValueOnly -ErrorAction SilentlyContinue
+        if ($preCleanup -and [string]$preCleanup.status -ceq 'completed') {
+            $attempt | Add-Member -NotePropertyName preOperationCleanup -NotePropertyValue $preCleanup -Force
+        }
         Write-DevelopPublicationAttempt -Attempt $attempt
 
         $prePromotionInstallability = Get-DevelopCandidateInstallability -CandidateRoot $worktree.path
@@ -724,8 +728,20 @@ function Publish-AccumulatedDevelop {
             Write-DevelopPublicationAttempt -Attempt $attempt
         }
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
+        $standReadyBeforePlan = $false
+        # Once a plan is frozen, do not repair drift before comparing its inputs.
+        # Preparation belongs to the existing unplanned publication checkpoint.
+        if (-not $frozenPlan -and (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId)) {
+            $preparation = Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:$RequireRelease
+            if (-not $Replan) { $replacementAccepted = $true }
+            Invoke-DeliveryStandPreparation -CandidateRoot $worktree.path -Preparation $preparation -Attempt $attempt -RequireRelease:$RequireRelease
+            if ($RequireRelease) { Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path }
+            $standReadyBeforePlan = $true
+        }
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
+        $completedPreparation = if ($attempt.PSObject.Properties['standPreparation']) { $attempt.standPreparation } else { $null }
+        Add-DeliveryPreparationEstimate -Plan $deliveryPlan -CompletedPreparation $completedPreparation
         if (-not $frozenPlan -or $frozenPlan.PSObject.Properties['queue']) { Set-DeliveryPlanQueue -Plan $deliveryPlan -Entries $entries }
         $invalidEvidence = @(if ($Action -eq 'PublishDevelop') { Get-DeliveryPlanInvalidEvidence -Plan $deliveryPlan })
         if ($replacementOriginal -and $invalidEvidence.Count -eq 0) {
@@ -809,7 +825,7 @@ function Publish-AccumulatedDevelop {
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
-        if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
+        if ($RequireRelease -and -not $standReadyBeforePlan -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
             Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
             Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
         }

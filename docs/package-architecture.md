@@ -204,6 +204,30 @@ changes/failure, original-data exclusions and the real branch cleanup command.
 Rollback stops new enrollment; existing unknown kinds are retained by older
 consumers. Registration remains distinct from publication and installation.
 
+On 2026-10-26 the user approved automatic E2E stand preparation in future
+PublishDevelop operations. The existing publisher composes interrupted Release
+recovery, the source-side update-workflow launcher and Capture admission before
+freezing execution fingerprints. The reproducer was an expected 44-path package
+update after plan freeze, followed by a ResumePlan mismatch despite an unchanged
+candidate and scenario selection. Only the two capsule roots selected by the
+checker's shared-master fixture closure are admitted for rollout; arbitrary
+registered branches and read-only receipt references are not mutation roots.
+The lifecycle transaction retains the exact root/source scope across post-copy
+and recovery. Normal update-workflow still rolls out all development roots.
+The same publication checkpoint records preparation and its owner logs; no new
+coordinator, registry, lock family, service or machine prerequisite is added.
+Update waits at most 3600 seconds, each Capture 900 seconds; interrupted Release
+recovery retains its existing 7800-second allowance. Cancellation uses the
+existing owned child/job cleanup. Retry continues the unplanned checkpoint and
+the original lifecycle receipt; once a plan exists, unexpected drift still
+requires the existing explicit Replan. Original capsules, databases and SHA,
+business bytes, rollback snapshots, Windows/client/server support and all gates
+remain with their owners. Native Unicode-path composition, durable scope retry,
+ordinary full rollout and unexpected-drift regressions are the local canary;
+live publication acceptance remains outstanding. Rollback stops the new
+composition and retains all existing owner receipts for manual continuation.
+The publication already running at approval time is outside this change.
+
 The existing database-access coordinator is the authoritative owner for exact
 infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote
 operations. Calling it with an already supported access mode, resource set, and

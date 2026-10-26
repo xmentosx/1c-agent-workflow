@@ -45,6 +45,7 @@
 
 Describe 'Mutating source publication Release recovery' {
     BeforeEach {
+        $standReadyBeforePlan = $false
         $script:DeliveryCustomGateBoundary = $false
         $script:recoveryCandidate = Join-Path $TestDrive ('candidate путь ' + [guid]::NewGuid().ToString('N'))
         $script:E2EProjectRoot = Join-Path $TestDrive ('stand путь ' + [guid]::NewGuid().ToString('N'))

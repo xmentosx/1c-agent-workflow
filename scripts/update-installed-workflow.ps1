@@ -7,6 +7,7 @@ param(
     [string]$LegacySourceRoot = '',
     [string]$SnapshotId = '',
     [string]$ReconciliationFile = '',
+    [string]$WorkflowUpdateBranchRootsFile = '',
     [string]$DependencySelectionFile = '',
     [switch]$DependencyHotfixOnly
 )
@@ -65,6 +66,7 @@ try {
     if ($Recovery -ne 'update') { $arguments.WorkflowUpdateRecovery = $Recovery }
     if ($SnapshotId) { $arguments.WorkflowUpdateSnapshotId = $SnapshotId }
     if ($ReconciliationFile) { $arguments.WorkflowUpdateReconciliationFile = $ReconciliationFile }
+    if ($WorkflowUpdateBranchRootsFile) { $arguments.WorkflowUpdateBranchRootsFile = [IO.Path]::GetFullPath($WorkflowUpdateBranchRootsFile) }
     if ($LegacySourceRoot) { $arguments.WorkflowUpdateLegacySourceRoot = $LegacySourceRoot }
     if ($DependencySelectionFile) { $arguments.DependencySelectionFile = [IO.Path]::GetFullPath($DependencySelectionFile) }
     if ($DependencyHotfixOnly) { $arguments.DependencyHotfixOnly = $true }
