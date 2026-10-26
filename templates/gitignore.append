@@ -1,6 +1,7 @@
 .dev.env
 /handoffs/
 build/result/
+build/agent-artifacts/
 build/event-log/
 testResults.xml
 *.cf
