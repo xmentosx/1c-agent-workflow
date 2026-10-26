@@ -215,6 +215,7 @@ Describe 'Source quality catalog contracts' {
             "scripts/source-delivery-resources.ps1",
             "scripts/release-artifact-paths.ps1",
             "scripts/source-delivery-ref-cleanup.ps1",
+            "scripts/source-delivery-evidence.ps1",
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",
             "scripts/source-delivery-candidate.ps1",
@@ -281,7 +282,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1",
-            "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRetention.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
@@ -290,7 +291,7 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{

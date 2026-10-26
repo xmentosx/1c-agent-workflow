@@ -120,13 +120,13 @@ function Save-SourceRegistrationEvidence {
         }
     }
     $files = @(Get-ChildItem -LiteralPath $root -File -Recurse | Sort-Object FullName | ForEach-Object {
-        [ordered]@{ path=$_.FullName.Substring($root.Length + 1).Replace('\','/'); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+        [ordered]@{ path=$_.FullName.Substring($root.Length + 1).Replace('\','/'); sha256=(Get-DeliveryFileSha256 -Path $_.FullName) }
     })
     $manifest = Join-Path $root "manifest.json"
     [IO.File]::WriteAllText($manifest, ([ordered]@{ candidate=$Candidate; runRecord=[IO.Path]::GetFileName($RunRecordPath); files=$files } | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
     # This preserves audit artifacts; the existing input-bound shard cache is
     # still the only admission path for reusing test results.
-    return [pscustomobject]@{ path=$relative; manifestSha256=(Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant() }
+    return [pscustomobject]@{ path=$relative; manifestSha256=(Get-DeliveryFileSha256 -Path $manifest) }
 }
 
 function Try-AcceptSourceRegistration {

@@ -41,6 +41,7 @@ $OutputEncoding = $deliveryUtf8
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 $localSupervisor = Join-Path $PSScriptRoot "source-delivery-supervisor.ps1"
 if (-not (Test-Path -LiteralPath $localSupervisor -PathType Leaf)) { throw "Delivery supervisor is missing: $localSupervisor" }
 
@@ -171,7 +172,7 @@ try {
                 if (-not $activeAttempt -or -not $activeAttempt.PSObject.Properties['planId']) { throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: Frozen requires an active original checkpoint.' }
                 if ([string]$activeAttempt.planId -ceq $Replan) {
                     $transferFrozenReplan = $true
-                    $replanCheckpointSha256 = (Get-FileHash -LiteralPath $activeAttemptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $replanCheckpointSha256 = Get-DeliveryFileSha256 -Path $activeAttemptPath
                 } elseif ($activeAttempt.PSObject.Properties['replacesPlanId'] -and [string]$activeAttempt.replacesPlanId -ceq $Replan -and
                     $activeAttempt.PSObject.Properties['replanQueueScope'] -and [string]$activeAttempt.replanQueueScope -ceq 'Frozen') {
                     $ResumePlan = [string]$activeAttempt.planId

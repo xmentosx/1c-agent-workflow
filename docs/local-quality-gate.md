@@ -1001,8 +1001,8 @@ checkpoint остаётся диагностируемым отказом. Уд�
 проверяет manifest SHA/identity, active/retained записи и отсутствие reparse points.
 `Status` показывает count, bytes,
 возраст, последнюю ошибку и следующую попытку. Failed plans сохраняют ресурсы
-только для двух новейших plan и не дольше семи дней; evidence после уборки не
-удаляется.
+только для двух новейших plan и не дольше семи дней. Proof и stage evidence
+после уборки сохраняются; срок хранения крупных recovery payloads описан ниже.
 
 `Cleanup` также вызывает владельца qualification-копий в `FreshProjectsRoot/q Проект`.
 Современная Develop-копия удаляется только после terminal proof и утилизации базы.
@@ -1049,6 +1049,10 @@ seed DT, вынесенный по точному SHA, восстанавлив�
 включаются. Никаких passed-отметок или публикации этот режим не создаёт.
 Если данные изменились после первого архива, сохраняются обе версии: исходный
 архив не перезаписывается, новый вызов получает другой DiagnosticRoot.
+
+Срок хранения крупных recovery payloads и read-only предпросмотр ручной уборки:
+[source recovery retention](source-recovery-retention.md). Proofs, indexes и
+stage evidence сохраняются; publication sweeps не удаляют recovery payloads.
 
 Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
 `Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
