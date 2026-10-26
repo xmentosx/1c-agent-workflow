@@ -68,6 +68,11 @@
 
     It 'resolves six areas, rejects implicit writes and does not infer a product home' {
         @(Get-ItlMemoryScopes $b read).Count | Should -Be 6
+        $persisted=Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)
+        $destinations=@((Invoke-ItlMemoryStatus $persisted -LocalOnly).destinations)
+        @($destinations|Where-Object {-not $_.label -or -not $_.scopeKind -or -not $_.scopeId}).Count | Should -Be 0
+        @($destinations|Where-Object scopeKind -EQ project)[0].label | Should -BeExactly 'itl_project_customer'
+        @($destinations|Where-Object scopeKind -EQ organization)[0].label | Should -BeExactly 'itl_org_org'
         {Get-ItlMemoryScopes $b write} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         {Get-ItlMemoryScopes $b write 'itl_product_corp' 'planning'} | Should -Throw '*MEMORY_DESTINATION_REQUIRED*'
         $b.context.knowledgeContext.knowledgeAreas=@(@{areaId='planning';status='applicable';memoryHomeProductId='corp'})
@@ -118,6 +123,7 @@
         $r.state | Should -Be 'durable'
         ($script:Originals[$r.dataId]|ConvertFrom-Json).status | Should -Be 'verified'
         @($script:Calls|Where-Object method -EQ 'PATCH').Count | Should -Be 1
+        @($script:Calls|Where-Object method -EQ 'PATCH')[0].body | Should -Match 'Content-Disposition: form-data; name="data"; filename="memory.txt"'
         @($script:Calls|Where-Object path -EQ '/api/v1/remember').Count | Should -Be 1
     }
     It 'retains a changed unresolved pending instead of overwriting its source' {
@@ -278,9 +284,22 @@
         $policy=Install-MemoryPolicyFixture $b.projectRoot
         $script:DevBranchName='fixture'
         $script:InitialState=[pscustomobject]@{statePath=$b.cycleStatePath;worktreePath=$b.projectRoot}
-        $script:ItlMcpRegistryOperation=@{catalogSnapshot=@{catalogRevision=$b.context.catalogRevision;relations=@{relations=@();knowledgeAreas=@{}}}}
+        # The public memory entrypoint has no pre-seeded registry operation.
+        # Reuse its validated applied SHA through the registry owner, not HEAD
+        # or a second refresh when constructing the memory projection.
+        Remove-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
+        $b.context['registryMetadata']=@{schemaVersion=1}
+        $b.registryContextHash=Get-ItlCatalogHash $b.context
+        $script:MemoryAppliedSnapshot=@{catalogRevision=$b.context.catalogRevision;relations=@{relations=@();knowledgeAreas=@{}}}
         Mock Get-ItlProductProjectOperationContext {$b.context}
-        Mock Read-ItlProductProjectRecord {@{context=$b.context;contextHash=$b.registryContextHash}}
+        Mock Read-ItlProductProjectRecord {@{catalogRevision=$b.context.catalogRevision;context=$b.context;contextHash=$b.registryContextHash}}
+        Mock Get-Vibecoding1cMcpRegistryRoot {$TestDrive}
+        Mock Read-ItlProductCatalogSnapshot {
+            param($RepositoryRoot,$Commit)
+            $Commit | Should -BeExactly $b.context.catalogRevision
+            return $script:MemoryAppliedSnapshot
+        }
+        Mock Update-Vibecoding1cMcpRegistryCheckout {throw 'Memory enable must not refresh the registry'}
         Mock Read-DevBranchState {$script:InitialState}
         Mock Assert-CurrentProjectRootMatchesDevBranchState {}
         Mock Update-DevBranchState {param($State,$Updates)
@@ -296,6 +315,8 @@
         $second.workspaceId | Should -Be $first.workspaceId
         (Get-FileHash -LiteralPath $rootMemory -Algorithm SHA256).Hash | Should -Be $originalHash
         Should -Invoke Update-DevBranchState -Times 1 -Exactly
+        Should -Invoke Read-ItlProductCatalogSnapshot -Times 2 -Exactly
+        Should -Invoke Update-Vibecoding1cMcpRegistryCheckout -Times 0 -Exactly
         @($script:Calls|Where-Object {$_.method -ne 'GET' -or $_.path -ne '/api/v1/users/me'}).Count | Should -Be 0
     }
     It 'serializes two local sessions without losing records or misreading an active writer' {

@@ -99,6 +99,12 @@ function Get-ItlMemoryClientEndpoint {
 
 function Invoke-ItlMemorySetup {
     param([ValidateSet('enable','disable','status','checkpoint')][string]$Mode,[string]$SettingsPath='', [string]$PolicyPath='', [string]$Client='', [object]$Checkpoint=$null)
+    if($Mode -eq 'enable' -and -not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){
+        . Import-ItlProductProject
+        return Invoke-Vibecoding1cMcpRegistryOperation {
+            Invoke-ItlMemorySetup -Mode $Mode -SettingsPath $SettingsPath -PolicyPath $PolicyPath -Client $Client -Checkpoint $Checkpoint
+        }
+    }
     $bindingPath=Get-ItlMemoryPath binding $script:ProjectRoot
     if($Mode -eq 'status'){
         $binding=Read-ItlMemoryJson $bindingPath
@@ -128,6 +134,12 @@ function Invoke-ItlMemorySetup {
     if(-not $applied -or $applied.contextHash -cne (Get-ItlCatalogHash $context)){throw 'MEMORY_APPLIED_CONTEXT_REQUIRED: finish the existing catalog apply/recovery before memory opt-in.'}
     $operation=Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue
     $snapshot=if($operation){Get-ItlCatalogField $operation.Value 'catalogSnapshot'}else{$null}
+    if(-not $snapshot){
+        # Hydrate the validated applied revision through its existing owner.
+        # Explicit memory opt-in must not refresh or substitute the latest tip.
+        Set-ItlProductProjectAppliedContext -Applied $applied
+        $snapshot=Get-ItlCatalogField $operation.Value 'catalogSnapshot'
+    }
     if(-not $snapshot){throw 'MEMORY_REGISTRY_PROJECTION: run explicit setup under the existing pinned catalog operation; memory does not fetch.'}
     $projection=Get-ItlMemoryProjection $context $snapshot
     $branch=Read-DevBranchState -Name $DevBranchName
