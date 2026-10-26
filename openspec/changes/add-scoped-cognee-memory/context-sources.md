@@ -1,5 +1,15 @@
 # Context Sources
 
+## Уточнение пользователя, 2026-10-26
+
+Прямое поручение: шесть областей сохранить, разграничение прав убрать,
+подключение Cognee общее. Это основание пересмотра активных Q/AC и G5;
+историческая ACL qualification остаётся evidence старого профиля, не требованием
+первого выпуска. [Сверка с G4](g4-common-connection-alignment.md) прочитала current
+source owner contracts и фиксирует совместимость existing G4 с common account; документ не меняет runtime,
+server/grants, credentials, registered G4 proof или опубликованный R6 SHA.
+Прежние hashes ниже — исторический snapshot, не hashes пересмотренных документов.
+
 ## Актуальные входы плана G4, 2026-10-25
 
 [План G4](g4-implementation-plan.md) имеет приоритет для текущей готовности над

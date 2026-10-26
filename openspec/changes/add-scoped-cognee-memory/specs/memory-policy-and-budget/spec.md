@@ -36,7 +36,7 @@ Managed интеграция SHALL сохранять recall-first, correction-c
 
 ### Requirement: Выдача ограничена общим бюджетом
 
-Selected context SHALL вычисляться программно без LLM и загрузки всего каталога. Один тематический recall SHALL передавать объединённый разрешённый набор datasets вместо отдельного агентского запроса на каждую область. Ограниченный backend candidate set SHALL отличаться от меньшего final agent budget. Scope/ACL SHALL применяться до retrieval; native applicability filter до cap используется только при поддержке, иначе чистая проверка original/current status и применимости выполняется над ограниченными кандидатами до выдачи агенту. Выдача SHALL сохранять проверяемые ссылки, ограничения и статусы с общим provenance без ненужных повторов. Обязательные инструкции SHALL NOT теряться из-за retrieval budget. Служебные schemas и always-on инструкции SHALL оставаться минимальными и измеряемыми.
+Selected context SHALL вычисляться программно без LLM и загрузки всего каталога. Один тематический recall SHALL передавать объединённый разрешённый набор datasets вместо отдельного агентского запроса на каждую область. Ограниченный backend candidate set SHALL отличаться от меньшего final agent budget. Scope SHALL применяться до retrieval; native applicability filter до cap используется только при поддержке, иначе чистая проверка original/current status и применимости выполняется над ограниченными кандидатами до выдачи агенту. Выдача SHALL сохранять проверяемые ссылки, ограничения и статусы с общим provenance без ненужных повторов. Обязательные инструкции SHALL NOT теряться из-за retrieval budget. Служебные schemas и always-on инструкции SHALL оставаться минимальными и измеряемыми.
 
 #### Scenario: Все шесть областей содержат знания
 - **WHEN** выполняется один task recall в Cognee-only режиме
@@ -78,7 +78,7 @@ Selected context SHALL вычисляться программно без LLM и
 
 ### Requirement: Миграция включает память отдельным выбором
 
-Package update/registry association SHALL сохранять legacy/off до отдельного явного memory opt-in. Existing setup owner SHALL предлагать включить память/позже только при passed native Q, поддерживаемых helper/fork, registry context/grants и подтверждённом client reload; SHALL NOT обходить TOOL policy или спрашивать по каждой области. Unattended/отсутствие ответа SHALL NOT активировать память. Failure/partial memory binding SHALL иметь отдельный статус и прежний recovery owner; SHALL NOT превращать успешное независимое обновление/каталог в memory success либо блокировать их. Disable SHALL сохранять data/IDs/pending; downgrade SHALL проверять совместимость/owned restore.
+Package update/registry association SHALL сохранять legacy/off до отдельного явного memory opt-in. Existing setup owner SHALL предлагать включить память/позже только при passed native Q, поддерживаемых helper/fork, registry context/native mapping и подтверждённом client reload; SHALL NOT обходить TOOL policy или спрашивать по каждой области. Unattended/отсутствие ответа SHALL NOT активировать память. Failure/partial memory binding SHALL иметь отдельный статус и прежний recovery owner; SHALL NOT превращать успешное независимое обновление/каталог в memory success либо блокировать их. Disable SHALL сохранять data/IDs/pending; downgrade SHALL проверять совместимость/owned restore.
 
 #### Scenario: После обновления пользователь выбрал память позже
 - **WHEN** каталог уже выбран, но memory opt-in отсутствует, отложен или provider не qualified

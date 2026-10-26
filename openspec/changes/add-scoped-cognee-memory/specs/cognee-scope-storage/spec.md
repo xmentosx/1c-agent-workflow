@@ -6,9 +6,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Одно общее подключение без пользовательских ACL
+
+Первый выпуск SHALL использовать один Cognee instance и одно техническое подключение/account для workflow. Шесть областей SHALL обозначать принадлежность и применимость, SHALL NOT заявлять backend конфиденциальность между разработчиками. Аутентификация/secret storage SHALL сохраняться как транспорт подключения; ITL SHALL NOT требовать личные Cognee accounts, роли, membership, permissions matrix или outsider проверки. User-local IDs рабочего места SHALL оставаться независимыми от backend principal; смена сессии SHALL NOT менять workplace. При проверке pending/unknown native write SHALL сохраняться pin исходного instance/connection identity/exact dataset, без blind replay.
+
+#### Scenario: Несколько разработчиков используют один account
+- **WHEN** workflow использует один настроенный Cognee credential на разных рабочих местах
+- **THEN** общие product/project/org IDs совпадают по назначению, локальные workspace/task/workplace IDs сохраняют свою принадлежность; права людям не назначаются и не проверяются, retrieval остаётся ограниченным текущим контекстом
+
 ### Requirement: Шесть областей с устойчивой идентичностью
 
-Система SHALL различать `taskCycle`, `workspace`, `workplace`, `product`, `project`, `organization`. Задача, ветка и база SHALL иметь одну область текущего цикла. Область SHALL иметь стабильный ID и основной dataset; личные datasets создаются по необходимости, общие — по подтверждённой native привязке. Имя каталога, адрес сервера или имя ветки SHALL NOT подменять идентичность. Одно знание SHALL иметь одно основное место хранения, без обязательных копий по всем областям/провайдерам.
+Система SHALL различать `taskCycle`, `workspace`, `workplace`, `product`, `project`, `organization`. Задача, ветка и база SHALL иметь одну область текущего цикла. Область SHALL иметь стабильный ID и основной dataset; локальные task/workspace/workplace datasets создаются по необходимости, общие — по подтверждённой native привязке того же технического подключения. Имя каталога, адрес сервера или имя ветки SHALL NOT подменять идентичность. Одно знание SHALL иметь одно основное место хранения, без обязательных копий по всем областям/провайдерам.
 
 #### Scenario: Несколько локальных установок одного проекта
 - **WHEN** два разработчика работают с одним `projectId` в разных локальных установках
@@ -20,23 +28,23 @@
 
 ### Requirement: Штатный backend без форка Cognee
 
-Система SHALL использовать поддерживаемые Cognee MCP/SDK/REST и штатные datasets/permissions. Она SHALL NOT менять исходники Cognee, напрямую править его БД, добавлять свой граф/embedding pipeline или маскировать широкую выборку текстовой меткой проекта. Отсутствие нужной операции в конкретной версии SHALL давать неподтверждённый binding с понятным продолжением, без обхода scope.
+Система SHALL использовать поддерживаемые Cognee MCP/SDK/REST и штатные datasets под одним техническим подключением. Она SHALL NOT менять исходники Cognee, напрямую править его БД, добавлять свой граф/embedding pipeline или маскировать широкую выборку текстовой меткой проекта. Отсутствие нужной операции в конкретной версии SHALL давать неподтверждённый binding с понятным продолжением, без обхода scope.
 
 #### Scenario: MCP не адресует общий dataset по имени
-- **WHEN** общий dataset разрешён пользователю, но owner-scoped lookup имени через MCP не поддерживает его
-- **THEN** ITL использует штатный поддерживаемый API с точным dataset ID под той же разрешённой идентичностью либо оставляет этот binding неподтверждённым; поиск без dataset-ограничения не выполняется
+- **WHEN** общий dataset подготовлен под техническим подключением, но lookup имени через MCP не адресует его однозначно
+- **THEN** ITL использует штатный поддерживаемый API с точным dataset ID под той же технической identity подключения либо оставляет этот binding неподтверждённым; поиск без dataset-ограничения не выполняется
 
 ### Requirement: Проверенный контекст ограничивает чтение и запись
 
-ITL binding SHALL ограничивать datasets по подтверждённому пользователю и выбранному контексту до backend retrieval, graph expansion и генерации. Отсутствующий read scope SHALL разрешаться в закреплённый набор, а явно переданный SHALL только сужать его. В qualified managed route write destination SHALL явно выбираться через стандартный `dataset_name` из разрешённых назначений. Пропуск SHALL NOT молча направлять постоянное условие в taskCycle. Неизвестная/чужая область отклоняется до записи; неоднозначная остаётся локальным pending/candidate, без заявления durable save. Каталог SHALL NOT выдавать права; backend permissions применяются дополнительно. Скрытый общий административный пользователь SHALL NOT подменять пользователей.
+ITL binding SHALL ограничивать datasets по выбранному workspace/cycle/project/product контексту до backend retrieval и graph expansion. Это фильтрация релевантности, SHALL NOT обещать разграничение прав людей. Отсутствующий read scope SHALL разрешаться в закреплённый набор, explicit scope SHALL только сужать его. Qualified write SHALL явно выбирать один dataset через `dataset_name`; отсутствие SHALL сохранять локальный pending, SHALL NOT использовать silent task/global default. Native ID/owner/currentness SHALL подтверждаться независимо от label; неизвестное или неоднозначное назначение SHALL NOT вызывать запись. Персональные accounts/grants, outsider и publisher roles SHALL NOT быть условиями первого выпуска. Для совместимости existing G4 поле mapping `permissions` SHALL заполняться фиксированным `["read", "write"]` для всех областей; оно SHALL NOT моделировать права сотрудников или требовать отдельного setup выбора. `principalId` SHALL обозначать обычный технический account общего подключения, не личность разработчика.
 
 #### Scenario: Запрос чужой задачи
-- **WHEN** клиент текущей задачи передаёт dataset другой приватной задачи или опускает scope
+- **WHEN** клиент текущей задачи передаёт dataset другой задачи вне текущего контекста или опускает scope
 - **THEN** чужой dataset не запрашивается; пропущенный scope ограничивается текущим разрешённым набором, а ошибка получает способ выбрать допустимый контекст
 
 #### Scenario: Граф связывает одинаковые сущности
 - **WHEN** в двух проектах есть одноимённые объекты и совпадающие графовые сущности
-- **THEN** поиск одной области не извлекает закрытые факты другой через связи; это доказывается backend-вызовом, а не только очисткой итогового текста
+- **THEN** поиск одной области не извлекает факты другой вне выбранного контекста через связи; это доказывается backend-вызовом, а не только очисткой итогового текста
 
 #### Scenario: Не выбран dataset для постоянного условия
 - **WHEN** remember вызван без назначения или область постоянного исправления неоднозначна
@@ -44,15 +52,15 @@ ITL binding SHALL ограничивать datasets по подтверждён�
 
 ### Requirement: Общие datasets имеют одного подтверждённого владельца
 
-Product/project/organization datasets SHALL подготавливаться один раз администратором штатными средствами Cognee с точными dataset IDs и grants существующим пользователям. Binding SHALL использовать эти IDs для чтения и записи, включая поддерживаемый SDK/REST при owner-scoped MCP lookup. Одинаковые labels SHALL NOT считаться одной общей областью. ITL SHALL NOT создавать IAM/provisioning service, приватный дубль общего dataset или использовать admin key вместо пользователя. Отсутствующий native путь SHALL оставлять общий binding unverified.
+Product/project/organization datasets SHALL подготавливаться один раз штатным Cognee API под тем же общим техническим подключением; отдельный admin principal или grants разработчикам SHALL NOT требоваться. Binding SHALL использовать точные native IDs/owner для чтения и записи. Одинаковые labels SHALL NOT считаться доказательством одной области или основанием создать дубликат. ITL SHALL NOT вводить IAM/provisioning service. Отсутствие поддержанного native пути SHALL оставлять mapping unverified с continuation.
 
-#### Scenario: Два пользователя пишут в одну проектную область
-- **WHEN** администратор подготовил project dataset, а два допущенных пользователя выполняют scoped remember/recall
-- **THEN** оба используют один подтверждённый dataset ID под своими identities; одинаковое имя не создаёт два приватных dataset, пользователь без grants не читает общие записи
+#### Scenario: Два процесса используют общее подключение
+- **WHEN** два процесса разработчиков выполняют scoped remember/recall через один technical account для одного projectId
+- **THEN** оба используют один подтверждённый dataset ID; workspace/task contexts сохраняют собственные IDs, label collision не создаёт дубликаты и не расширяет retrieval set
 
 ### Requirement: Происхождение и жизненный цикл заметки
 
-Запись SHALL содержать самостоятельный факт, область, ID, дату, origin, applicability и evidence с ревизией при наличии. Гипотеза SHALL отличаться от подтверждённого вывода. English narrative и исходные 1C identifiers SHALL сохраняться по политике fork; секреты/PII не сохраняются. Индекс/граф SHALL быть производными от сохраняемых исходных записей. Исправление SHALL ссылаться на прежний ID; точечное обновление/удаление используется только при поддерживаемой операции и нужных правах. Перед выдачей как действующего факта SHALL подтверждаться original/envelope и авторитетный current revision/status через поддерживаемый scoped native путь по стабильному ID, независимо от semantic hits. Эта проверка SHALL относиться к текущему допущенному состоянию хранилища; SHALL NOT объявляться обнаружением скрытого rollback или доказательством сохранения изменений после даты backup. Unverified фрагмент SHALL NOT выдаваться как действующий. Собственный сервис версий SHALL NOT заменять отсутствие native возможности.
+Запись SHALL содержать самостоятельный факт, область, ID, дату, origin, applicability и evidence с ревизией при наличии. Гипотеза SHALL отличаться от подтверждённого вывода. English narrative и исходные 1C identifiers SHALL сохраняться по политике fork; секреты/PII не сохраняются. Индекс/граф SHALL быть производными от сохраняемых исходных записей. Исправление SHALL ссылаться на прежний ID; точечное обновление/удаление используется только при поддерживаемой операции через общее подключение. Перед выдачей как действующего факта SHALL подтверждаться original/envelope и авторитетный current revision/status через поддерживаемый scoped native путь по стабильному ID, независимо от semantic hits. Эта проверка SHALL относиться к текущему допущенному состоянию хранилища; SHALL NOT объявляться обнаружением скрытого rollback или доказательством сохранения изменений после даты backup. Unverified фрагмент SHALL NOT выдаваться как действующий. Собственный сервис версий SHALL NOT заменять отсутствие native возможности.
 
 #### Scenario: Ошибочное прежнее решение
 - **WHEN** новая проверка опровергает сохранённый подход
@@ -78,15 +86,15 @@ Product/project/organization datasets SHALL подготавливаться о�
 
 Первые три области SHALL быть пользовательскими по умолчанию; общие области SHALL использовать существующие разрешения и явную допустимость записи. Полезность для другого продукта SHALL NOT предоставлять доступ. Backup/restore SHALL принадлежать штатному администрированию Cognee. Backup SHALL быть согласованной копией originals и необходимого relational/graph/vector/mapping state на момент T с зафиксированной датой и возможным интервалом потери изменений после T. Полная неизменяемая история всех ревизий/отзывов и сохранение поздних изменений поверх старого snapshot SHALL NOT обещаться при отсутствии такой native гарантии.
 
-Контролируемый restore SHALL выполняться администратором при недоступной клиентам памяти. До возврата доступа администратор SHALL заново подтвердить актуальные grants без доверия только восстановленным ACL, повторить известные поздние correction/retirement/revoke штатными операциями и подтвердить результаты точным чтением/отрицательными проверками доступа. Клиентские кеши памяти SHALL сбрасываться, работа SHALL продолжаться в новом контексте. Область, актуальность которой не подтверждена, SHALL оставаться недопущенной и SHALL NOT возвращаться через старый кеш/fallback; независимый workflow продолжает работу, required gap относится только к зависимой memory operation. Эта процедура SHALL NOT требовать нового IAM/versioning/backup service, restore-реестра или фонового обнаружения скрытого rollback.
+Retirement SHALL адресовать точную заметку, SHALL NOT удалять dataset или другие originals; correction/delete SHALL иметь точное native подтверждение, с source/receipt preservation при unconfirmed результате. Backup SHALL согласованно сохранять необходимые relational/graph/vector/original/mapping данные на дату T. Контролируемый restore SHALL приостанавливать общее клиентское подключение. Оператор SHALL проверить exact originals, повторить известные поздние correction/delete при необходимости и подтвердить current state до допуска scopes и fresh client context. Интервал потери после T SHALL быть явным. Непроверенные области SHALL оставаться недопущенными; независимый workflow продолжается. ACL/grant/revoke/outsider checks SHALL NOT быть обязательными. Собственный IAM/versioning/backup service и hidden rollback detection SHALL NOT вводиться.
 
-#### Scenario: Доступ отозван
-- **WHEN** сервер подтверждает отзыв доступа к области
-- **THEN** она больше не запрашивается текущим binding и связанные кеши не используются; восстановленный ACL не считается основанием вернуть доступ без отдельной административной проверки
+#### Scenario: Техническое подключение не может прочитать область
+- **WHEN** сервер отклоняет чтение dataset через общее подключение
+- **THEN** она больше не запрашивается текущим binding и связанные кеши не используются; старый mapping не считается доказательством актуальных originals после restore
 
-#### Scenario: Старая копия вернула прежние ACL и удалённый факт
-- **WHEN** контролируемый restore к T вернул права и записи, отозванные или исправленные после T
-- **THEN** клиентский доступ к памяти ещё закрыт; администратор подтверждает актуальные grants, повторяет известные поздние изменения, проверяет deny/current originals и допускает только проверенные области; клиент продолжает с очищенным кешем в новом контексте
+#### Scenario: Старая копия вернула удалённый факт
+- **WHEN** контролируемый restore к T вернул записи, удалённые или исправленные после T
+- **THEN** оператор проверяет current originals и известные поздние correction/delete; только проверенные области допускаются после restore, клиент продолжает с очищенным кешем в новом контексте
 
 #### Scenario: Поздние изменения области нельзя подтвердить
 - **WHEN** после restore невозможно подтвердить актуальность области или восстановить необходимые поздние исправления/отзывы
@@ -94,7 +102,7 @@ Product/project/organization datasets SHALL подготавливаться о�
 
 ### Requirement: Native допуск предшествует зависимой разработке
 
-До разработки зависимого managed adapter/runtime SHALL быть пройдены Q1–Q7 выбранной версии Cognee по действующей редакции test-plan: exact-ID shared read/write под разными пользователями, scope до retrieval, durable/status/new-session read, original/envelope/current revision независимо от semantic hits в допущенном состоянии, precise correction/retirement/revoke и административный допуск после restore (Q5), bounded CHUNKS и функционально проверенный ограниченный профиль с воспроизводимыми измерениями всего прогона (Q7). Доказательства SHALL фиксировать version/schema/API mode, identity/grants, harmless corpus, редакцию expected/actual и passed/failed/unverified каждого Q. Старый failed результат SHALL сохраняться; изменение требования SHALL NOT автоматически закрывать новый сценарий. Config/tools-list/fixture SHALL NOT заменять functional proof; неизвестный cost SHALL NOT считаться нулевым. Неполная детализация внутренних операций SHALL NOT сама блокировать G4 при доказанном достаточном Q7 учёте, но непроверенные Q5/Q7 и нарушения безопасности блокируют допуск. Непройденная native возможность SHALL возвращать design на checkpoint без собственного IAM/versioning/graph service. Catalog-only работа SHALL оставаться независимой; installed canary/paired сравнение и подтверждение заявлений об экономии SHALL оставаться G5.
+До зависимого managed runtime SHALL быть подтверждены применимые native Q1–Q7: exact shared ID read/write через общее подключение в двух процессах, context scope до retrieval, durable/status/new-session, current original независимо от semantic hits, precise correction/retirement и проверка состояния после restore (Q5), bounded CHUNKS и ограниченный профиль с whole-run измерениями (Q7). Version/schema/models/connection identity, harmless corpus и expected/actual/status SHALL фиксироваться. Персональные ACL, разные accounts/grants, outsider deny и revoke SHALL NOT быть входами G5. Старое G1 evidence SHALL сохраняться исторически; изменённые документы SHALL NOT считаться новым native proof. Старый failed результат SHALL сохраняться; config/tools-list/fixtures SHALL NOT заменять functional proof. Неизвестный cost SHALL NOT считаться нулевым; неполная internal детализация SHALL NOT сама блокировать G4 при достаточном Q7 whole-run учёте. Не доказанная native возможность SHALL возвращаться на checkpoint без собственного IAM/versioning/graph service. Каталог SHALL оставаться независимым; installed canary, paired сравнение и заявления об экономии SHALL оставаться G5.
 
 #### Scenario: Native статус актуальности не доказан
 - **WHEN** оригинал/текущая correction доступны только как возможные semantic hits либо live proof отсутствует

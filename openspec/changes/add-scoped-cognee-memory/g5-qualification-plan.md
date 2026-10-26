@@ -1,211 +1,151 @@
-# G5: конечный план совместной квалификации
+# G5: конечный план квалификации общего подключения
 
-Статус 2026-10-26: **подготовлен для согласования; G5 не начат**. Разрешена
-только подготовка плана. Подготовка/запуск стенда, homes/grants, импорт корпуса,
-native/installed сценарии и измерения ниже — будущие действия после отдельного
-разрешения. Gate 6, рабочая миграция и публикация workflow исключены.
+Статус 2026-10-26: **пересмотрен по уточнению пользователя; G5 не начат**.
+Шесть областей сохраняются; подключение Cognee общее, пользовательского
+разграничения прав в первом выпуске нет. Убраны A/B/C/admin аккаунты, outsider,
+членство, publisher role, grants/deny и ACL restore checks. Это не отключает
+аутентификацию технического подключения или фильтрацию по контексту.
+Разрешены документы; стенд, данные, runtime G4 и installed settings не меняются.
+G5, Gate 6, рабочая миграция и публикация workflow запрещены.
 
-## Основание и конечный объём
+## Исходная граница и зависимости
 
-G4 зарегистрирован: workflow `17061155f12c1c39df37eb3564f919edd994b811`;
-source candidate `3633f1eec31aa6aa8b1e98168be08bbbc815190b`, Targeted passed.
-[Source-матрица G4](evidence/g4-source-implementation-2026-10-26.md) отделяет
-fixtures от ещё не выполненного G5. G3 закрыт в согласованном контуре;
-[R6](../add-product-project-registry/evidence/r6-publication-2026-10-25.md)
-опубликован SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`. Сейчас в нём
-нет назначенных `memoryHomeProductId`; это допустимый registry-only результат.
+G4 implementation `17061155f12c1c39df37eb3564f919edd994b811` зарегистрирован в
+старой модели; предыдущий план — `02925f66bec63c06776445062caafee524ca8597`.
+[Сверка с actual G4 и совместимость existing G4](g4-common-connection-alignment.md)
+подтверждает совместимость текущего runtime с common account при одинаковом read/write.
+Нового source gate нет; документы не дают новой native/client готовности.
+G3 принят в прежнем конечном контуре; R6 опубликован SHA
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` без назначенных product homes.
 
-Предлагаемый конечный контур G5: отдельная PM5-копия, Windows 11/PS5.1,
-Kilo VS Code и Cursor с реальными tool calls/reload; Codex — core/API,
-без заявления о native агенте. OpenCode — SKIPPED по решению пользователя.
-PM4, Windows 10/Server и реальные terminal sessions остаются UNVERIFIED,
-поддержка сохраняется. Они перечисляются в выпускном остатке, а не добавляются
-по ходу этого прогона. Новый обязательный случай требует отдельного решения.
+Контур остаётся PM5/Windows 11/PS5.1, Kilo VS Code и Cursor с actual tool
+calls/reload; Codex — core/API. OpenCode SKIPPED. PM4, Windows 10/Server и
+реальные terminal sessions остаются UNVERIFIED в выпускном остатке, поддержка
+сохраняется. Это организация прежних 6.2–6.4/6.6b, AC/D8/D10, без нового gate,
+перебора clients × products × lifecycle × OS или переоткрытия G3/R6.
 
-Это организация существующих задач **6.2–6.4/6.6b**, AC-01–44, D8/D10,
-а не новый gate, расширение G3 или пересмотр Q1–Q7. Общая матрица имеет строки
-ниже и статусы PASS / FAIL / BLOCKED / UNVERIFIED / SKIPPED, ссылки на actual
-evidence, тип source/fixture/native/client и exact inputs. Конфигурация,
-tools/list и успешная регистрация сами по себе native PASS не дают.
+## 1. Подготовка после отдельного разрешения G5
 
-## 1. Зафиксировать входы и изолировать стенд
-
-| Вход | План подготовки после разрешения G5 | Критерий допуска зависимого шага |
+| Вход | Конкретный план | Достаточная готовность |
 |---|---|---|
-| Cognee | Использовать прежний isolated Docker стенд **dev-karimov**, обычный loopback `18190`, отдельный admin `18191`; доступ только через настроенный защищённый канал. Перед запуском проверить actual deployment, занятость и сохранность прежних volumes/evidence. Текущая доступность не проверялась | Зафиксированы instance ID, endpoint, digest/schema/auth/models/resource limits; действующие сервисы/данные не заменены. Admin port закрыт обычным клиентам |
-| G1 profile | Cognee **1.6.5**, image `sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820`, OpenAPI SHA `b863f72d912c07ceb4bb914d790152659427c0ad33863d553d38b5fa64e24171`; qualification SHA `be8219d1d090343f2d7deebace513b77d5aa7a322e353f10b9f3324d7048582d` | Оператор сверил фактический профиль, не только settings label. Сохраняются GLiNER demo / fastembed `BAAI/bge-small-en-v1.5`, 384 dims, auth/ACL, `self_improvement=false`, без improve/background jobs. При отличии повторяется только затронутая capability Q, с решением о новом профиле, а не молчаливый reuse |
-| Ресурсы | Начальный предел прежнего профиля **2 CPU / 5 GiB**, ingestion последовательно/batch 1: прежний параллельный indexing приводил к OOM. Сохранить его failed proof; не запускать соседний diagnostic model process | Host budget и исходное состояние записаны. OOM/нехватка места — результат/блокер среды; durable/status reconciliation до retry. Новые модели и платные API не подключаются автоматически |
-| Workflow/fork | Закрепить фактически исполняемый clean workflow commit/tree и fork `162f2ea7a5734b65bc1de80943d057e9b7c0a525` из `D:/Git/itl_ai_rules_1c-scoped-cognee-g4`. Первая установка — через existing fixture/dependency owner | Release lock r47 остаётся прежним. `ITL_AI_RULES_SOURCE_PATH` выбирает чистый local checkout, **сам по себе не меняет r47 pin**. Нужен qualification-only immutable local tag/pin на candidate, подготовленный fork/fixture owner в отдельной локальной копии, без push/release. Совпадают tag/commit/manifest/owned hashes и approved clause. Нет поддержанного пути — pairing BLOCKED; ручная подмена installed rule/lock/receipt запрещена |
-| PM5 | Через существующий `scripts/source-e2e-fixture.ps1`/capsule owner подготовить отдельную копию из сохранённой capsule, записать exact root, DB/CF/capsule hashes и topology до первого изменения | Старые G3-стенды, failed copies и sealed evidence не меняются. Все update/reset/recovery только на новой копии; обычный пользователь без elevation. Существующий guard применяется, Gate 6 не запускается и не обходится; если операция требует его, зависимый шаг BLOCKED |
-| Реестр | Сначала тот же published R6 SHA и существующий applied context/resolver; настройки Code/Graph/СППР/Mantis берутся из него | Нет второго каталога, четвёртой MCP-роли, memory startup fetch, production-записей в СППР/Mantis или доработок Code/Graph. ERP+PM5 сохраняет собственный `erppm5-lts`; product home не меняет MCP source |
-| Corpus | Сверить frozen baseline manifest `b0cc2bcf94e06e7f6c504c0243c41af6e5f8e280d88a4ec2dade523d1f66ec3b`, 37 безвредных заметок/6 scope types, 43 payload hashes, B01–B12 | Сохраняются prompts, bodies, scope boundaries, evaluator-only expected results и protocol; native UUID назначаются отдельно. Synthetic IDs не выдаются за реальные products/projects |
+| Cognee | Прежний isolated Docker **dev-karimov**, ordinary loopback `18190` через настроенный защищённый канал. Проверить сохранность прежних volumes/evidence и actual profile перед запуском | Один instance/endpoint и один технический account/credential workflow; не личные accounts разработчиков. Текущая доступность не проверялась. Административный endpoint старого G1 не требуется клиентам или новому ACL прогону |
+| Native профиль | Cognee **1.6.5**, image `sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820`, OpenAPI SHA `b863f72d912c07ceb4bb914d790152659427c0ad33863d553d38b5fa64e24171`, G1 qualification SHA `be8219d1d090343f2d7deebace513b77d5aa7a322e353f10b9f3324d7048582d` | Сверить actual version/schema/models и аутентификацию общего подключения. Старый G1 переиспользуется только для применимых native возможностей; multi-user ACL proof исторический, не обязательный повтор |
+| Ресурсы | Прежние **2 CPU / 5 GiB**, GLiNER demo / fastembed `BAAI/bge-small-en-v1.5` 384 dims, sequential ingestion/batch1; `self_improvement=false`, без improve/background jobs | Зафиксированы host budget и models. Прежний OOM/failed proof сохранён. Новые модели/платные API автоматически не подключаются; auth отключать не требуется |
+| Source pair | Закрепить фактически исполняемый clean workflow/tree и совместимый fork candidate: сейчас `162f2ea7a5734b65bc1de80943d057e9b7c0a525`, `D:/Git/itl_ai_rules_1c-scoped-cognee-g4` | Existing fixture/dependency owner готовит local candidate pair. `ITL_AI_RULES_SOURCE_PATH` сам по себе не меняет r47 pin; нужен согласованный qualification-only immutable local tag/pin в изолированной копии, без публикации. Проверены manifest/ownership/approved clause; никаких ручных installed подмен |
+| PM5 | Через existing `scripts/source-e2e-fixture.ps1`/capsule owner отдельная копия; exact root/topology/DB/CF/capsule hashes до изменения | Старые стенды, failed copies, sealed evidence сохранены; обычный Windows пользователь. Gate 6 не запускается/не обходится; требующий его шаг остаётся BLOCKED |
+| Реестр | Один existing applied context/resolver, сначала published R6; ниже отдельный подтверждённый qualification snapshot homes | Native mapping/credential вне business registry. Три проектные MCP-роли; ERP+PM5 сохраняет собственный `erppm5-lts`. Нет второго updater, production СППР/Mantis writes или Code/Graph patches |
+| Corpus | Frozen 37 harmless notes/6 scopes, B01–B12, 43 payload hashes, manifest `b0cc2bcf94e06e7f6c504c0243c41af6e5f8e280d88a4ec2dade523d1f66ec3b` | Тела/prompts/expected results не меняются ради результата. Поля synthetic identity/allowedScopes трактуются как принадлежность/контекст отбора, не отдельные backend credentials или ACL |
 
-Путь frozen corpus: `C:/Users/xment/AppData/Local/Temp/cognee-q5-q7-r2-20261019T094637Z-b4127852/files-only-baseline/`;
-резервная исходная копия — прежний run на dev-karimov, указанный в
-[test-plan](test-plan.md). Утрата входов требует восстановления exact hashes,
-а не создания более удобного нового корпуса. Stand setup, identities, grants,
-backup и sanitized call logs сохраняются в ignored `build/test-results/g5/<run>/`.
-В Git — краткая итоговая матрица/выводы и ссылки/hash evidence; credentials,
-полные backups, runtime и пользовательские заметки туда не попадают.
+Исходный corpus: `C:/Users/xment/AppData/Local/Temp/cognee-q5-q7-r2-20261019T094637Z-b4127852/files-only-baseline/`;
+remote копия и frozen protocol указаны в [test-plan](test-plan.md). Native UUID
+назначаются отдельно. Evaluator-only ответы закрыты от оцениваемого агента;
+один account не даёт ему бесплатный full corpus scan.
 
-## 2. Подтвердить homes отдельно от provider mapping
+## 2. Минимальные homes на подтверждение
 
-Минимальный **кандидат для подтверждения владельцем**, не внесённый в реестр:
-
-| Существующая область | Предлагаемый `memoryHomeProductId` | Для чего нужна в G5 |
+| Existing knowledge area | Предложенный home | Нативный сценарий |
 |---|---|---|
-| `pm5-plan-model` | `pm5-corp` | Один PM-факт из `erppm5` читается КОРП, ПРОФ и УНФ+PM5 при доказанной применимости |
-| `pm5-project-requests` | `pm5-corp` | CORP/ERP факт исключён из ПРОФ/УНФ, хотя хранится в том же product dataset |
-| `pm5-payroll-allocation` | `erppm5` | ERP-only знание не переносится в независимый ПРОФ/КОРП по одному происхождению |
+| `pm5-plan-model` | `pm5-corp` | Один PM-факт из ERP+PM5 применим КОРП и ПРОФ при нужном evidence |
+| `pm5-project-requests` | `pm5-corp` | CORP-only факт в том же dataset исключён для ПРОФ/УНФ |
+| `pm5-payroll-allocation` | `erppm5` | ERP-dependent факт исключён из независимого КОРП/ПРОФ |
 
-Все три ссылки существуют в опубликованной карте и входят в `availableIn`.
-Предлагается подтвердить только эти назначения, не раздавать homes всем 44
-областям и не объединять поколения PM4/PM5. Это решение об authoritative месте
-знания, а не выданное право. Origin, versions, evidence и ограничения каждой
-заметки сохраняются независимо от home. Локальные customer facts — project,
-без добавления внешних проектов в выпускной реестр ради canary.
+Это пока кандидаты, не назначенные homes. Все ссылки существуют и входят в
+`availableIn`; подтверждение владельца нужно только для этих трёх областей,
+без массового назначения 44 homes или объединения PM4/PM5. После подтверждения
+registry owner подготавливает отдельный pinned qualification snapshot через
+existing validator/reader. Native proof на нём не выдаётся за публикацию.
+Перед выпуском памяти отдельно фиксируется published SHA тех же правил и
+сверяется затронутая proof. Без homes блокируется только shared-product строка.
+Product home не задаёт права и не меняет MCP source. Customer fact остаётся
+project, не становится общим продуктовым знанием автоматически.
 
-После подтверждения владелец registry подготавливает производный от R6
-qualification snapshot через существующий validator/reader; фиксируются его
-отдельный immutable commit/hash и applied context. Такой snapshot явно **не
-опубликован**. Прогон на нём даёт native proof подтверждённого candidate mapping,
-а не факт опубликованных homes. Публикация homes — отдельное разрешение;
-перед выпуском памяти должен быть зафиксирован опубликованный SHA этих же
-правил и сверена затронутая proof, без повторного прогона всего G5 по умолчанию.
-Исходный R6/G3 не переоткрываются. Без owner confirmation shared-product строка
-остаётся BLOCKED; нельзя подставить fixture home и назвать AC-32/44 принятыми.
-Private/project/org сценарии от этого независимо выполнимы после допуска G5.
+## 3. Шесть областей под одним техническим подключением
 
-В paired B01–B12 сохраняются исходные synthetic IDs/context `fixture-r2`;
-их отдельное test mapping не подменяет три реальных назначения выше.
-Не переписывать frozen prompts/corpus под реальные IDs. Это две явно названные
-линии доказательств: native поведение на синтетическом корпусе и consumer
-подтверждённого registry mapping на изолированной PM5-копии.
-
-## 3. Подготовить шесть областей и права
-
-Один Cognee, native datasets; namespace не является ACL. Admin оператор готовит
-shared datasets и grants штатным API, ordinary adapter их не создаёт и не
-получает admin credential. Записать exact instance/principal/dataset/owner IDs
-и назначение в provider-local settings вне Git. `permissions` в settings —
-декларация, допуск доказывается реальным allow/deny. Сохранить отдельный список
-только созданных test artifacts для точечной уборки, без удаления чужих datasets.
-
-| Область / label | Создание и субъект | Доступ и проверяемая граница |
+| Область / label | Привязка и подготовка | Проверяемый смысл |
 |---|---|---|
-| Задача+ветка+база / `itl_task_<cycleId>` | Lazy обычным A; ключ workspace+cycle | A читает/пишет; B/outsider не видят. Reset меняет cycle, не возвращает старый runtime proof |
-| Локальный проект / `itl_workspace_<workspaceId>` | Lazy обычным A | Та же рабочая копия переживает reset/new chat; другая независимая копия не получает её task/workspace данные |
-| Рабочее место / `itl_workplace_<id>` | Lazy A; principal+стабильный machine ID | Новая сессия того же пользователя/ПК не создаёт новый scope; другой principal/ПК не наследует private факты |
-| Продукт / `itl_product_<productId>` | Admin, только подтверждённые homes | A и B читают/пишут один exact ID. Outsider без grants не читает/пишет. У применимости и grants независимые проверки |
-| Проект / `itl_project_<projectId>` | Admin, explicit project binding | A/B с членством читают/пишут; чужой проект не попадает в read set. Customer знание не публикуется в product/org |
-| Организация / `itl_org_<organizationId>` | Admin, явная тестовая организация | A/B имеют read; A — назначенный publisher с write+delete, B без publisher права не исправляет/удаляет. Outsider вне неё не читает/пишет. Организация не означает default destination |
+| Задача+ветка+база / `itl_task_<cycleId>` | Lazy, workspace+cycle | Reset меняет cycle; старое runtime proof остаётся историей |
+| Локальный проект / `itl_workspace_<workspaceId>` | Lazy, конкретная рабочая копия | Переживает reset/new chat, независимая копия имеет другой workspace |
+| Рабочее место / `itl_workplace_<id>` | Lazy, стабильный user-local machine identity | Новая сессия того же пользователя/ПК сохраняет scope; backend principal не считается сотрудником |
+| Продукт / `itl_product_<productId>` | Один exact native ID подтверждённого home, подготовлен тем же common account | Общий факт записан один раз; availability/versions/dependencies проверяются отдельно |
+| Проект / `itl_project_<projectId>` | Один exact ID business project | Особенности проекта выбираются по контексту, не по членству/правам |
+| Организация / `itl_org_<organizationId>` | Один exact ID организации workflow | Общий подтверждённый опыт; не default destination, без publisher role |
 
-Нужны **A, B — два обычных пользователя, C — outsider, отдельный admin**;
-это разные native principals, не имена клиентов одного токена. Для shared
-product/project correction/retire A/B нужны native write+delete grants;
-native semantics этих прав проверяется фактическими действиями. Для каждого
-admitted ID выполняются remember/status → fresh reader/raw, allowed update/retire
-и denied чтение/запись под C; для organization writer проверяются A allow/B deny.
-Все CRUD canaries — только harmless записи своего run.
-Отдельно воспроизводится уже предусмотренная collision: тот же label у другого
-owner не подменяет exact shared ID. Нет персональных копий shared dataset.
-Private Windows storage вне reset/Git доступен только нужному пользователю;
-tokens не печатаются. Backend scope/grants действуют **до** retrieval/graph,
-проверка отсутствия foreign текста в конечном ответе сама по себе недостаточна.
+Общие datasets один раз подготавливает оператор штатным API под тем же account;
+отдельный admin/grant setup не нужен. Deployment mapping содержит instance,
+scope, exact ID/owner и current-state admission; Existing `permissions` сохраняется как
+фиксированное `["read", "write"]` у всех entries; настройка прав сотрудников
+не предлагается. `principalId` — один обычный технический account. Один label не доказывает native identity.
+Context set ограничивает backend **до retrieval/graph expansion**, независимо
+от широких технических возможностей account. User-local pending/continuation
+не пересылаются автоматически. Credential вне Git/reset, не попадает в журналы.
 
-## 4. Один ограниченный native прогон
+## 4. Конечные native сценарии
 
-Строки группируют существующие AC; не образуют декартово произведение
-clients × products × lifecycle × OS. Backend/data и PM5 lifecycle проходят
-один раз; native policy/read/write/reload повторяются только в двух клиентах.
-
-| Шаг / прежняя задача | Конкретная последовательность | Достаточное доказательство |
+| Шаг / прежние задачи | Действия | Критерий результата |
 |---|---|---|
-| N1 — 6.2, AC-01–09/18–20/33 | Подготовка IDs/grants по таблице; все 6 scopes: remember → status → новый ordinary процесс/reader; два пользователя одного shared ID, outsider deny и owner collision | Actual principal, exact dataset/data IDs, original hash и статус durable/index/searchable раздельно; ноль unauthorized/foreign фактов или незаявленных дублей |
-| N2 — 6.2, AC-06–09/27/34 | На тестовом канале воспроизвести accepted-request/body-loss; сохранить pending/receipt, перезапустить frontend, выполнить точный lookup до retry. Исправить и retire запись, передать сохранённый старый fragment без header | Unconfirmed не назван success/rejection и не отправлен повторно вслепую. Authorized current original имеет приоритет над stale fragment; удалена одна запись, чужие целы. Нет собственного version store |
-| N3 — 6.3, AC-10–23/31/39–42 | На отдельной legacy PM5-копии update → «позже» → association → отдельный memory opt-in → initial cycle без reset → new chat → reset при unchanged branch/HEAD, reserve/interruption/resume по существующему owner | First enable не меняет DB/HEAD/старые memory files; повтор/два сеанса/disable-enable стабильны. Один reserved cycle активируется после success; старый процесс не пишет новый task scope. Постоянное условие доступно после reset, старый runtime proof не current; независимая исходная задача завершена |
-| N4 — 6.6b, AC-32/35/44 | На подтверждённом qualification snapshot ERP+PM5 → общий PM home `pm5-corp`: одна запись с origin ERP → fresh КОРП → допустимый ПРОФ; отдельные CORP-only/ERP-dependent canaries, missing/ambiguous home | Один authoritative native original, нет автоматического fan-out; исключённые функции/ERP-зависимости не становятся фактами ПРОФ. Реестр, deployment map и actual rights различимы; ERP MCP остаётся собственным, private project scope не расширен |
-| N5 — 6.3, AC-15–17/21/28/35/39/41/43 | В Kilo/Cursor actual catalog и policy → remember/recall/status/retire → reload/new session. По existing writer: update/конфликт/cancel/partial recovery/offline → resume/owned restore → disable | Scope/principal/qualified fork проверены actual calls; TOOL off/required, standing query, strict-root, correction-capture, /evolve и Memory line сохраняются, одна durable write без root-дубля. IDs/source/pending/old notes/foreign MCP и disabled preferences сохранены; offline не блокирует независимый workflow. Core/API Codex отдельно, без ложного client PASS |
-| N6 — 6.2–6.3, AC-27/34/43 | На isolated backend admin закрывает ordinary доступ, делает согласованный native restore к T, сверяет grants и известные поздние correction/delete/revoke, проверяет allow/deny; frontend disable → admission только проверенных IDs → fresh context/reload | Неавторизованные клиенты не получают старый snapshot, неподтверждённые scopes недоступны. Старые cached facts не current. Указан интервал потери после T; нет обещания hidden rollback detection/полной истории. Независимая задача продолжается; port reopen только после proof |
-| N7 — 6.4, AC-24–26/29/36/37 | Парные files-only/Cognee B01–B12 по frozen protocol и разделу ниже, без изменения корпуса по результатам | Полезность/ошибки и полные расходы сопоставимы; измеренные, оценённые, unknown величины различимы; нет выдачи deterministic B09 order за semantic rank |
+| N1 — 6.2, AC-01–09/18–20/33 | Все6 scopes: write/status → fresh reader; два процесса одного подключения используют один shared ID; label/owner collision | Exact ID/owner и durable/index/searchable различимы; нет duplicate dataset, смешения contexts или silent write destination. Права людей/outsider не проверяются |
+| N2 — 6.2, AC-06–09/34 | Accepted-request/body-loss → pending/receipt → restart → точный lookup до retry; correction/retire и сохранённый stale fragment без header | Нет blind replay/дубля. Current original важнее semantic fragment; удалена ровно нужная заметка, прочие целы |
+| N3 — 6.3, AC-10–23/31/39–42 | Отдельная legacy PM5: update → позже → association → отдельный opt-in → initial cycle без reset → new chat → unchanged-HEAD reset/reserve/interruption/resume existing owner | DB/HEAD/старые notes при initial enable сохранены; один reserved cycle, стабильные IDs, stale process не пишет новый цикл; постоянное условие переживает reset, исходная задача завершена |
+| N4 — 6.6b, AC-32/35/44 | ERP+PM5 → одна запись в home КОРП → fresh КОРП/допустимый ПРОФ; CORP-only/ERP-dependent/missing home | Подтверждённые mapping/applicability/current original; нет fan-out или переноса неприменимых функций. Own ERP MCP сохранён |
+| N5 — 6.3, AC-15–17/21/28/35/39/41/43 | Kilo/Cursor actual tools и policy → remember/recall/status/retire → reload/new session; existing writer update/conflict/cancel/partial/offline/resume/owned restore/disable | Общий connection сохранён; TOOL/off/required, standing query, strict-root, correction-capture, /evolve, Memory line и одна durable write прежние. IDs/data/pending/foreign MCP/disabled preferences целы; core/API Codex отдельно |
+| N6 — 6.2–6.3, AC-27/34/43 | Приостановить общее клиентское подключение, native backup/restore к T; проверить originals/известные поздние correction/delete → допустить проверенные scopes → fresh context/reload | Непроверенное состояние не current, указана потеря после T. Нет mandatory ACL/grant/revoke/outsider проверки, hidden rollback detector или собственного versioning. Независимая задача продолжается |
+| N7 — 6.4, AC-24–26/29/36/37 | Frozen paired B01–B12 по разделу5 | Качество/rework и полная стоимость сопоставлены, measured/estimated/unknown различимы; deterministic B09 order не выдаётся за native semantic rank |
 
-При дефекте сохраняются исходный стенд/входы/failed proof. Исправляется
-подтверждённый owner в одобренной архитектуре и повторяется **тот же** affected
-сценарий; assertions, watchdog и guards не ослабляются. После двух repair cycles
-без принятия/сужения причины — checkpoint по package architecture, без наслоения
-новых механизмов и бессрочного расширения матрицы.
+Backend/data и PM5 lifecycle — один раз; native policy/read/write/reload — в двух
+клиентах, без полного произведения вариантов. Failed inputs/стенд сохраняются;
+подтверждённый owner repair повторяет тот же affected scenario. Не ослаблять
+маршрутизационные/currentness assertions, watchdog или guards. После двух repair
+cycles без принятия/сужения причины — architecture checkpoint, не новые слои.
 
-## 5. Конечное парное сравнение и бюджет
+## 5. Парная польза и стоимость
 
-B01 ошибка; B02 переформулировка; B03 причина решения; B04 успешный подход;
-B05 collision; B06 новый чат; B07 unchanged-HEAD reset; B08 correction;
-B09 CORP/PROF; B10 ERP dependency; B11 customer-only; B12 workplace.
-Для каждого — **одна пара**, итого 24 whole-task выполнения, с чередованием
-порядка files-first/Cognee-first. Cold preparation/ingestion показывается отдельно
-и включается в итог; фактические warm reuse и повторные context inputs считаются.
-Это matched-case оценка, не статистический SLA или доказательство всей продуктовой
-базы. Повтор допустим только при документированном техническом сбое с сохранённым
-исходным результатом, не до удобной стоимости/качества.
+B01 ошибка, B02 reformulation, B03 причина решения, B04 успешный подход,
+B05 scope collision, B06 new chat, B07 unchanged-HEAD reset, B08 correction,
+B09 CORP/PROF, B10 ERP dependency, B11 customer-only, B12 workplace.
+**Одна пара на задачу, 24 whole-task выполнения**, порядок files-first/Cognee-first
+чередуется. Один и тот же agent model/settings/prompt/context/revision/checkpoint;
+чистые независимые сессии не видят ответов другой половины. Synthetic identities
+сохраняются как corpus provenance; весь native run использует common connection.
+Corpus/expected answers не переписываются под новый удобный ranking.
 
-Одинаковы model/settings, prompt, разрешённый scope, catalog/evidence revision,
-checkpoint/private pending и критерий результата. Чистые независимые сессии
-не видят ответы другой половины пары; evaluator-only ожидаемые ответы закрыты
-от агента. Files-only не получает бесплатного полного corpus scan, Cognee —
-foreign scopes. Не импортировать реальные чаты/документы. Нативный B09 ranking
-сохраняется как получен; deterministic candidateOrder — отдельная fixture proof.
+Один union CHUNKS recall cap24 → original/currentness/applicability → final8/1600
+actual tokens. Read20s, write+status60s; standing query один раз на eligible
+unchanged context, одна reformulation только после пустого relevant answer.
+Не добирать8 дополнительными запросами; bounded/partial coverage честная.
 
-Один union recall по admitted IDs, CHUNKS cap24 → проверка originals/currentness
-и applicability → не более8 карточек/1600 actual tokens; общий read20s,
-write+status60s. Standing query — один раз на неизменный eligible session context,
-одна reformulation только после пустого relevant answer, без добора ради8.
-Сохраняются bounded/partial coverage и конкретное continuation. Дедлайны не
-продлеваются, cap не пополняется скрытыми запросами/LLM-классификатором.
+Включить ingestion/extraction/embedding/graph/index, source/status, errors/retries,
+tool/schema/rules, agent input/output/cached input и повторные карточки,
+CPU/peakRAM/wall host/container/frontend, cold compile/tokenizer rank load и reuse.
+Parent/child usage не считать дважды. Реальной модели нужен подтверждённый
+encoding; bytes/proxy/unsupported/non-BMP не выдаются за actual tokens.
+Null internal usage/money остаётся unknown; деньги только при valid usage/pricing.
 
-Учитывать tool/schema/rule inputs, ingestion/extraction/embedding/graph/index,
-source/status calls, ошибки/повторы, agent input/output/cached input, повторные
-карточки, latency/wall, CPU time/peak RAM host/container и frontend, включая
-первую компиляцию/tokenizer rank load. Parent/child usage не суммировать дважды.
-Для реальной модели сверить encoding; named cl100k/o200k не автоматически её
-tokenizer. UTF-8 bytes — proxy, unsupported/non-BMP — honest unknown с upper
-bound, не «измеренные токены». Null internal cost не ноль. Деньги вычисляются
-только при подтверждённых pricing/usage, иначе estimated/unknown.
+Обязательны ноль out-of-context фактов, объявленных применимыми, и ноль stale
+runtime фактов, объявленных текущими; это качество/актуальность, не confidentiality
+между людьми. Для каждой пары — success/missed knowledge/неприменимые советы/
+rework и затраты. Без доказанной пользы расширение rollout требует явного
+trade-off. Нет tuning/повтора ради цены или нового performance barrier;
+принятое G3 warm отклонение не переоткрывается.
 
-Безопасность и актуальность обязательны: ноль unauthorized facts и ноль stale
-runtime facts, объявленных текущими. Результат каждой пары — task success,
-полезные/пропущенные знания, неприменимые советы, rework плюс цена получения
-результата. Снижение числа токенов само по себе не PASS. Небольшое превышение
-инженерной цели записывается для решения, без новых performance barriers или
-повторов ради порога; принятый G3 warm excess не переоткрывается. Если Cognee
-не доказывает пользу либо повышает качество ценой затрат, это честный вывод
-и явный trade-off перед расширением rollout, а не бесконечный tuning.
+## 6. Готовность и конечная остановка
 
-## 6. Готовность, блокеры и остановка
+**До запуска:** отдельное разрешение G5; существующий G4/common configuration и
+зарегистрированная matching pair; сохранённый Cognee/profile/common credential;
+exact dataset mapping и harmless corpus; isolated PM5; подтверждённые homes для
+N4. Четырёх аккаунтов, матрицы grants и членства среди входов больше нет.
+Это зависимости плана, а не обнаруженные live отказы; независимые строки можно
+выполнить после разрешения G5, не выдавая BLOCKED N4 за PASS.
 
-**Готовность к запуску**: отдельно согласованы этот конечный контур и G5;
-доступен сохранённый dev-karimov profile; определены A/B/C/admin и test IDs;
-подтверждены три proposed homes и qualification snapshot; fixture owner выдаёт
-чистую isolated PM5-копию и действительную candidate fork/host пару; сохранён
-frozen corpus. Сейчас это план подготовки, **не подтверждение их наличия**.
+**Приёмка конечного контура:** N1–N7 доказаны actual native/client/paired evidence;
+нет открытых context/destination/currentness/durability/cycle/recovery дефектов;
+исходные задачи завершены, старые protected assets сохранны, стоимость/польза
+рассмотрены. Непройденный обязательный шаг не становится PASS; subset принимается
+только отдельным решением с точным остатком. Не добавлять новые случаи по ходу.
 
-**Конечная приёмка G5 в данном контуре**: N1–N7 имеют actual native/client/paired
-evidence для заявленного объёма; нет открытых scope/ACL/currentness/durability,
-cycle/continuation или recovery дефектов; исходная задача принятых сценариев
-завершена, test artifacts/исходные protected roots сохранны. Ограничения и
-результат пользы/стоимости рассмотрены, при необходимости принят явный trade-off.
-Незапущенная/заблокированная обязательная строка не превращается в PASS:
-завершённый subset можно принять только отдельным решением с точным остатком.
-
-Сегодня **потенциальные зависимости, не обнаруженные native отказы**: доступность
-Cognee, credentials/grants, homes и local candidate pairing. Отсутствие одного
-блокирует соответствующий шаг, не независимый каталог/исходную задачу.
-Непроверенные PM4/Windows/terminal/client области, публикация homes,
-подготовка dependency release/общая выпускная проверка остаются отдельно до
-выпуска; G5 не публикует fork/workflow, не выполняет Gate 6 или рабочую миграцию.
-
-Один итоговый отчёт у memory owner связывает строки с AC, pinned identities,
-actual/expected, calls и hashes, статусом и continuation/владельцем блокера;
-registry OpenSpec ссылается на него, не ведёт вторую матрицу.
-Документальные/исходные изменения завершаются одним coherent commit и штатным
-`source-delivery.ps1 -Action RegisterChange -QueueId product-project-registry-g2`;
-только этот helper выполняет Targeted. Регистрация и native приёмка — отдельные
-факты. Дополнительные gates/публикация из завершения G5 не следуют.
+Один итоговый отчёт у memory owner: exact inputs, expected/actual, hashes/calls,
+source/fixture/native/client proof, статус и continuation/владелец блокера.
+Registry ссылается на него, не ведёт вторую матрицу. PM4/platform/terminal/client
+пробелы, публикация homes, dependency release и общая выпускная квалификация
+остаются до выпуска отдельно. G5 не выполняет Gate6, рабочую миграцию,
+публикацию fork/workflow. Документальные/source изменения — один coherent commit
+и обычный RegisterChange; только helper владеет Targeted, отдельные gates не нужны.

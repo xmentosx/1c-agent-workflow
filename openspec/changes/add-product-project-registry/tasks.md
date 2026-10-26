@@ -1,8 +1,17 @@
 # Tasks
 
+## Память без пользовательских ACL, 2026-10-26
+
+- [x] Согласовать registry dependency с одним общим подключением Cognee и шестью областями: права/членство/outsider не определяются каталогом и не являются входами G5. [Единая сверка G4](../add-scoped-cognee-memory/g4-common-connection-alignment.md) фиксирует совместимый existing configuration contract, [пересмотренный G5](../add-scoped-cognee-memory/g5-qualification-plan.md) — конечную приёмку.
+
+Git write permissions, effective snapshot/resolver, три MCP-роли и опубликованный
+R6 прежние. Homes/applicability/native mapping/currentness остаются обязательными
+для заявленного shared-product сценария. Никакого запуска G5/Gate6, рабочей
+миграции или публикации; новая source/native готовность не заявляется.
+
 ## Dependency G5: план квалификации, 2026-10-26
 
-- [x] Сверить [единый план G5 у memory owner](../add-scoped-cognee-memory/g5-qualification-plan.md) с R6 и G3: предложить три existing-area homes на подтверждение; различать published R6, qualification snapshot, applicability, native IDs/grants и MCP source.
+- [x] Сверить [единый план G5 у memory owner](../add-scoped-cognee-memory/g5-qualification-plan.md) с R6 и G3: предложить три existing-area homes на подтверждение; различать published R6, qualification snapshot, applicability, native IDs и MCP source.
 
 Назначений/публикации homes пока нет; R6 SHA и принятый G3 прежние. После
 подтверждения mapping consumer проверяется на отдельном pinned qualification
@@ -17,7 +26,7 @@ snapshot; перед выпуском памяти требуется опубл
 [Единая source-матрица](../add-scoped-cognee-memory/evidence/g4-source-implementation-2026-10-26.md)
 фиксирует scope, fixtures, fork candidate и регистрацию отдельно от native G5.
 Потреблён один existing applied context/pinned snapshot/resolver; в каталоге
-остаются три MCP-роли. Mapping/grants памяти — provider-local, не в реестре;
+остаются три MCP-роли. Mapping памяти — provider-local, не в реестре;
 новые homes/проекты/связи/данные не публиковались. R6 SHA
 `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` и закрытый G3 прежние.
 G5, Gate6, рабочая миграция и публикация workflow не запускались и не разрешены.

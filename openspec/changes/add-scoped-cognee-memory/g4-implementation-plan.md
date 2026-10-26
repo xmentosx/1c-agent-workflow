@@ -1,5 +1,15 @@
 # G4: конкретный план реализации памяти
 
+## Семантическая поправка, 2026-10-26
+
+Этот документ сохраняет исходный одобренный план/реализацию G4 старой модели.
+Нынешняя цель — common connection без пользовательского ACL; прежние
+admin-prepared/grants/private backend требования superseded, а не новые условия.
+[Точная сверка G4](g4-common-connection-alignment.md) называет совместимость existing configuration,
+[новый G5](g5-qualification-plan.md) — конечный native план. Сверка не требует
+новой source-адаптации или переоткрытия G4; native часть остаётся G5.
+Код, стенд, G5/Gate6, рабочая миграция и публикация не изменяются.
+
 Статус 2026-10-26: **план одобрен, исходная реализация G4 выполнена; G5 не начат**.
 [Фактическая source-матрица и регистрационная граница](evidence/g4-source-implementation-2026-10-26.md).
 Действует одобренный D9, новая архитектура хранения не предлагается.
@@ -156,15 +166,15 @@ failure outcome. Внешние OpenViking entries сохраняются; manag
    Это не запрос новой архитектуры D9 и не разрешение менять рабочие установки.
 2. Доступный qualification endpoint с применимыми version/image/schema/auth/model
    identities; при остановленном стенде не делать вид, что он работает. Native
-   общие IDs/grants — от администратора, без передачи его ключа adapter.
+   общие IDs — техническая подготовка тем же common account, без grants людям.
 3. Для shared-product сценария — отдельно подтверждённые homes в registry и
    admitted exact IDs. Пока homes отсутствуют, код общего маршрута проверяется
    fixtures, shared-product runtime не включается; остальные срезы G4 не блокируются.
 4. Совместимая пара fork/host и source candidate; у client owner подтверждённый
    tool catalog после reload. До этого readiness не объявляется enabled.
 
-Q5 реализуется прежней процедурой admin close → restore → current grants и
-известные поздние correction/delete/revoke → native allow/deny → reopen только
+Q5 реализуется прежней процедурой admin close → restore → current originals и
+известные поздние correction/delete → native current original/status → reopen только
 подтверждённых scopes; client owner сбрасывает их cache/context. Неподтверждённая
 область закрыта, независимая задача продолжается. Скрытый rollback не обнаруживается
 новым ITL сервисом. Q7 сохраняет self_improvement=false, native graph и whole-run
