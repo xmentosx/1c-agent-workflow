@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1')
     function New-InstructionContextFixture {
         param([bool]$Positive=$false,[string]$Context='disabled')
@@ -7,7 +7,7 @@ BeforeAll {
         $f.catalog.developJourneys|Add-Member scenarios $actual.developJourneys.scenarios
         $f.catalog.developJourneys|Add-Member scenarioInputs @($actual.developJourneys.scenarioInputs|Where-Object path -eq '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')
         [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}')
-        foreach($relative in @('.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow-fast/SKILL.md','.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')) {
+        foreach($relative in @('.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow/references/advanced-actions.md','.agents/skills/1c-workflow/references/verification-change.md','.agents/skills/1c-workflow/references/verification-result.md','.agents/skills/1c-workflow/references/verification-suite-selection.md','.agents/skills/1c-workflow-fast/SKILL.md','.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')) {
             $target=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
             Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
             $f.catalog.contracts[0].paths+=@($relative)
@@ -78,12 +78,19 @@ Describe 'Consumed native instruction and product inputs' {
         $seen.settings|Should -Be ([int]$Interactive)
         $seen.answers|Should -Be ([int]$Interactive)
     }
-    It 'reuses all authenticated scenarios after main guidance content changes while binding presence and fast-skill runtime content' {
+    It 'reuses authenticated scenarios after audited guidance content changes (<Guidance>)' -TestCases @(
+        @{Guidance='.agents/skills/1c-workflow/SKILL.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/advanced-actions.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/verification-change.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/verification-result.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/verification-suite-selection.md'}
+    ) {
+        param($Guidance)
         $f=New-InstructionContextFixture
         Mock Get-Command {[pscustomobject]@{Source=$f.artifact}} -ParameterFilter {$Name -contains 'go.exe'}
         Save-IncrementalJourneyProofs $f
         $old=Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
-        $relative='.agents/skills/1c-workflow/SKILL.md';$path=Join-Path $f.root $relative
+        $relative=$Guidance;$path=Join-Path $f.root $relative
         [IO.File]::AppendAllText($path,"`nAdditional main agent guidance.`n")
         & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'main guidance content'
         $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
@@ -109,6 +116,8 @@ Describe 'Consumed native instruction and product inputs' {
         Test-DevelopJourneyUnaffectedPath $f.root $relative $f.base fresh | Should -BeFalse
         Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding | Should -BeNullOrEmpty
         Test-DevelopJourneyUnaffectedPath $f.root $relative '' fresh | Should -BeFalse
+        Test-DevelopJourneyUnaffectedPath $f.root $relative ($f.base+'^') fresh | Should -BeFalse
+        Get-DevelopJourneyExcludedScope '.agents/skills/1c-workflow/references/unknown-future.md' fresh | Should -BeNullOrEmpty
     }
 
     It 'reuses audited product changes with disabled context (positive=<Positive>, function=<ContextFunction>)' -TestCases @(

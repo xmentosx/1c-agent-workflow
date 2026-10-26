@@ -34,10 +34,16 @@ function Get-DevelopInputDifferenceNames {
 # Never turn a node exclusion into an exemption for a shared runtime file.
 function Get-DevelopJourneyExcludedScope {
     param([string]$Path,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
-    if($Path -ceq '.agents/skills/1c-workflow/SKILL.md') {
+    if($Path -cin @('.agents/skills/1c-workflow/SKILL.md',
+        '.agents/skills/1c-workflow/references/advanced-actions.md',
+        '.agents/skills/1c-workflow/references/verification-change.md',
+        '.agents/skills/1c-workflow/references/verification-result.md',
+        '.agents/skills/1c-workflow/references/verification-suite-selection.md')) {
         # Installed presence is required, content is agent guidance. The fast
         # skill is deliberately NOT here: its marker and SHA are read at runtime.
-        return @{whole=$true}
+        # Native callers print links to these references; static proof reads
+        # their contents. Keep this audited set explicit; unknown files bind.
+        return @{whole=$true;contentOnly=$true}
     }
     if($Path -ceq '.agents/skills/1c-workflow/references/mcp.md') {
         # A linked agent instruction, never read or executed by either native
@@ -373,7 +379,7 @@ function Test-DevelopJourneyUnaffectedPath {
     $scope=Get-DevelopJourneyExcludedScope -Path $Path -Journey $Journey
     if(-not $scope) { return $false }
     if($scope.ContainsKey('whole')) {
-        if($Path -ceq '.agents/skills/1c-workflow/SKILL.md') {
+        if($scope.ContainsKey('contentOnly')) {
             if(-not $BaseRef -or -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $Path) -PathType Leaf)) {return $false}
             try {[void](Get-DevelopHistoricalSourceText $RepositoryRoot $BaseRef $Path)} catch {return $false}
         }

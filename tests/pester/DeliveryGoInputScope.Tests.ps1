@@ -85,7 +85,13 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
         [IO.File]::WriteAllText((Join-Path $positive '.agent-1c/release-e2e.json'),(@{developWorktreePath=$positiveDevelop}|ConvertTo-Json))
         [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/release-e2e.json'),(@{developConfigurationRejection=@{positiveProjectRoot=$positive}}|ConvertTo-Json -Depth 6))
     }
-    $f.catalog.contracts[0].paths+=@('tools/itl-ondemand-mcp/main.go')
+    $guidance=@('advanced-actions','verification-change','verification-result','verification-suite-selection'|ForEach-Object {'.agents/skills/1c-workflow/references/'+$_+'.md'})
+    foreach($relative in $guidance) {
+        $target=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
+    }
+    # Bind the added guidance inputs to static ownership, as the actual catalog does.
+    $f.catalog.contracts[0].paths+=@('tools/itl-ondemand-mcp/main.go')+$guidance
     [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 24))
     $source=Join-Path $f.root 'tools/itl-ondemand-mcp/main.go'
     [void][IO.Directory]::CreateDirectory((Split-Path $source))
@@ -103,13 +109,14 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
     $lock.dependencies.itlOndemandMcp.version='2'
     [IO.File]::WriteAllText($lockPath,($lock|ConvertTo-Json -Depth 8))
     [IO.File]::AppendAllText($source,"`n// changed native broker implementation")
+    foreach($relative in $guidance) {[IO.File]::AppendAllText((Join-Path $f.root $relative),"`nChanged agent guidance, same native consumer.`n")}
     & git -C $f.root add --all; & git -C $f.root commit --quiet -m 'new locked broker'
     $tree=(& git -C $f.root rev-parse 'HEAD^{tree}').Trim()
     $now=Get-DevelopE2EInputIdentity -RepositoryRoot $f.root -Journey fresh -Catalog $f.catalog -ProjectRoot $f.stand -AiRulesSource $f.rules -AgentTarget kilocode -ArtifactBinding $f.binding
     $now | Should -Not -BeNullOrEmpty
     $records=@(Get-DevelopScenarioReusePlan $f.root $tree fresh $now $f.catalog -AllowPendingStatic)
     Test-DevelopScenarioEquivalentInput $f.root $old $now $f.base @('verification') $f.catalog | Should -BeTrue
-    @($records|Where-Object execution -eq reuse|ForEach-Object id) | Should -Be @('stale-export','close')
+    @($records|Where-Object execution -eq reuse|ForEach-Object id) | Should -Be @('stale-export','close') -Because ($records|Select-Object id,execution,reuseDiagnostics|ConvertTo-Json -Depth 6 -Compress)
     @($records|Where-Object execution -eq setup|ForEach-Object id) | Should -Be @('verification')
     @($records|Where-Object execution -eq execute|ForEach-Object id) | Should -Be @('install','branch','refresh')
     foreach($scenario in @('install','branch','refresh','future-scenario')) {
@@ -117,6 +124,16 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
     }
     Test-DevelopArtifactIdentityDifference $old $now fresh | Should -BeTrue
     Test-DevelopArtifactIdentityDifference $old $now upgrade @('update') | Should -BeTrue
+    $changedInputs=@()
+    Test-DevelopArtifactIdentityDifference $old $now upgrade @('update') -ChangedInputs ([ref]$changedInputs) | Should -BeTrue
+    $changedInputs | Should -Be @('artifact:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+    $upgrade=Get-DevelopE2EInputIdentity $f.root upgrade $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
+    $upgradeRecords=@(Get-DevelopScenarioReusePlan $f.root $tree upgrade $upgrade $f.catalog -AllowPendingStatic)
+    $expectedUpgrade=if($PositiveStand){@('update','configuration-rejection','verification-export')}else{@('update','verification-export')}
+    @($upgradeRecords|Where-Object execution -eq execute|ForEach-Object id) | Should -Be $expectedUpgrade
+    if(-not $PositiveStand) { @($upgradeRecords|Where-Object execution -eq 'not-applicable'|ForEach-Object id) | Should -Be @('configuration-rejection') }
+    @($upgradeRecords|ForEach-Object reuseDiagnostics|Where-Object code -eq 'ARTIFACT_INPUTS_CHANGED'|ForEach-Object inputs|Sort-Object -Unique) | Should -Be @('artifact:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+
     # A change to a native consumer is still bound, even for these scenarios.
     $runner=Join-Path $f.root 'scripts/invoke-develop-e2e.ps1'
     $runnerBytes=[IO.File]::ReadAllBytes($runner)
@@ -129,6 +146,10 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
         $different.inventory.external.artifacts|Add-Member -NotePropertyName $artifact -NotePropertyValue ('e'*64) -Force
         $different.fingerprint=Get-DevelopE2ECanonicalJsonSha256 $different.inventory
         Test-DevelopScenarioEquivalentInput $f.root $old $different $f.base @('verification') $f.catalog | Should -BeFalse
+        $changedInputs=@()
+        Test-DevelopArtifactIdentityDifference $old $different fresh @('verification') -ChangedInputs ([ref]$changedInputs) | Should -BeTrue
+        $changedInputs | Should -Be @('artifact:'+$artifact)
+
     }
     if($PositiveStand) {
         [IO.File]::AppendAllText((Join-Path $positive '.dev.env'),"`nUI_TESTING=false`n")

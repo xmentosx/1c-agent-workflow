@@ -225,6 +225,11 @@ runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
 The main `1c-workflow/SKILL.md` content uses the same static boundary, with
 authenticated prior/current file presence. Addition/removal remains conservative.
+The explicit content-only set also includes `advanced-actions.md`,
+`verification-change.md`, `verification-result.md` and
+`verification-suite-selection.md`: native callers print their links, while static
+tests read their content. Unknown references retain native binding. Historical
+source SHA authentication remains mandatory before every projection.
 The fast skill retains exact native content: its contract marker and SHA are read.
 The four declared product snapshot/publisher/initialization/application functions
 may retain native proof only with known disabled context across all target roots
@@ -233,6 +238,9 @@ the updater calls binding admission even when context is disabled. Enabled/unkno
 context, unknown functions and top-level execution remain bound.
 The exact new broker still requires the real ondemand-mcp Release capability for
 both backend families; Develop reuse cannot qualify its RPC behavior.
+Artifact-repeat diagnostics identify each differing consumed artifact by name.
+The broker-independent projection does not excuse a changed Vanessa archive,
+client CFE, unknown artifact, positive environment or current artifact SHA.
 Retained-launch cleanup is an internal broker RPC path. Develop lifecycle drain
 does not supply `RetainedRuntimeState`. Its source projection excludes only the
 closed `if ($retained)` block and its exclusive peer-ownership helper; registered
