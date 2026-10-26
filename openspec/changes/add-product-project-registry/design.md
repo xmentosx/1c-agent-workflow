@@ -1,5 +1,15 @@
 # Design
 
+## G5 N7 follow-up, 2026-10-26
+
+[Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует зарегистрированный watchdog/API-key
+unit7b8 и bounded fair-selection repair с owner24/0. Пользователь исправил только
+B11 context на customer при прежнем эталоне; обе arms PASS. Follow-up9/12 PASS,
+B09/B10 native Ladybug lock failures, B03 unverified harness restart. G5 открыт;
+исходный baseline, N5 остаток и разделение source/native/registration сохранены.
+Registry SHA/home/business routing прежние. Gate6, рабочая миграция и публикация
+не выполняются; новых обязательных случаев нет.
+
 ## G5: актуальный прогресс продолжения, 2026-10-26
 
 [Единый follow-up memory owner](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий

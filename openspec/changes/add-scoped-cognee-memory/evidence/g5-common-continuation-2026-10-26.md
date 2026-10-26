@@ -318,3 +318,117 @@ from Status. Owner19/0 does not replace Targeted or native G5 acceptance.
 The original B01/B02/B03/B04/B09/B12 misses and B11 fixture contradiction remain
 open. No new acceptance scenarios, Gate6, working migration, publication, push
 or PR are authorized by this repair. Native auth remains separately proved.
+
+
+## G5 bounded N7 repair and actual follow-up, 2026-10-26
+
+This section supersedes the earlier current blocker summary; original failures,
+sealed `g5-result.json`, failed snapshots and primary scores remain unchanged.
+
+### Delivered watchdog/auth boundary
+
+Normal RegisterChange confirmed unit `7b8ffbe7c6859aa00e0b16adce5510c8dd5bc4e2`
+in queue `product-project-registry-g2`. Targeted passed on combined candidate
+`043ff4ddf1ac554ea8b291d850fa685866795ce5`, 3386.189 s, per the shared ledger and
+saved `watchdog-delivery-final-status.json`. All75 parallel files completed
+1697 assertions without failure; three serial files then completed and the
+helper confirmed registration. The earlier budget exhaustion and failed status
+remain evidence. Accepted movement changed core inputs, so earlier62 green
+shards were not incorrectly reused. No increased timeout, excluded test or
+manual extra gate. Registration is distinct from G5 acceptance/publication.
+
+The native API-key proof also survived the old Bearer's natural expiry:
+`api-key-after-expiry-result.json`, observed2026-10-26T16:23:32.973495Z,
+`previousBearerExpiredBeforeRepeat=true`. Earlier text saying expiry had not
+been awaited is historical. This is the same ordinary principal and API-key-only
+credential; no password job, refresh service or Cognee fork was added.
+
+### Original retrieval defect and smallest source repair
+
+The original B01 query returned31 native CHUNKS grouped by dataset. The required
+project-error original was at row26, after24 product rows; adapter first24
+truncation discarded it. Preserved wire diagnosis separates ranking, source
+lookups and the20-second deadline. Before repair the expanded existing case
+failed expected8/got0 (4.316s); the proposed function passed1/0 (5.858s).
+
+The existing adapter now interleaves the admitted dataset groups before the
+same global24-candidate cap, retaining native order within each group. It still
+uses one union recall and at most24 exact-original lookups,8 current applicable
+cards,1600 named actual tokens and20s. Native raw response remains byte bounded.
+Original/status/applicability/retired/cycle guards are unchanged. The response
+hint permits the already allowed single reformulation after no relevant fact,
+even when unrelated cards were returned; no automatic retry or scope widening.
+No new scorer, cache, state owner, six-search fanout or Cognee modification.
+
+The existing case retains every former assertion and its same eight originals;
+it additionally exercises native grouped results with preceding inapplicable
+product rows. Existing case inventory is unchanged. Actual full source owner
+suite:24/0/0 in11.9817403s, `fair-selection-source-owner-result.json`. Initial
+private comparison miscounted the inventory as23; it stopped before writing
+the test file. The actual old/new inventory is identical24 and all24 ran.
+Always-on instructions/tool schema delta0. Conditional response hint adds7
+cl100k/o200k tokens inside the unchanged1600 total response cap; actual Grok
+mapping is still unverified. No unsupported money/token-saving claim.
+
+### Frozen whole-answer follow-up and B11 approval
+
+All37 original note payloads were recovered only after matching their original
+SHA256. Task/control data came from retained primary retrieval snapshots. The
+original whole43-payload manifest bytes/evaluator file were not recovered, so
+this is not claimed as a byte-identical reconstruction of the old entire bundle.
+The original evaluation and transcripts retain expected semantics and hashes.
+The user explicitly chose customer-project B11: only `context.project` changes
+from `qual-project-standard` to `qual-project-customer`; expected destination
+and original contradictory trial are preserved. Origin.project remains source
+provenance, not destination authority.
+
+The fixed follow-up ran all12 original Cognee tasks, plus the corrected B11
+files arm:13 terminal answers, no new case. Same benchmark root, signed-in
+Cursor profile and Grok4.7HighFast; two read-only fixture MCP tools execute the
+proposed function against real shared-account Cognee. This is native candidate
+execution, not proof that installed PM5 already carries fair selection.
+
+| Existing case | Follow-up outcome | Concrete boundary |
+|---|---|---|
+| B01/B02/B04 | PASS | Current project-error and validate-before-lookup recovered |
+| B03 | UNVERIFIED_HARNESS_RESTART | Rationale recovered, but current-original lookup failed on diagnostic path collision after reader restart |
+| B05 | PASS | Standard-project context; no customer fact generalized |
+| B06/B07/B08 | PASS | Control/pending, old-cycle history and current SILVER original respected |
+| B09/B10 | FAIL_BACKEND_UNAVAILABLE | No applicable answer; native Ladybug file lock failures, not an accepted retrieval result |
+| B11 Cognee/files | PASS/PASS | Customer-only condition stays in the current customer project |
+| B12 | PASS | Current workplace TOOL-ZETA, same-machine RDP retains identity |
+
+Result:9/12 Cognee PASS, two backend failures, one harness-unverified. No observed
+out-of-context fact declared applicable or stale runtime proof declared current.
+Original files11/11 versus Cognee5/11 is retained separately; native-only repeats
+are not a replacement paired cost comparison. No best-repeat selection or more
+B09 query tuning. Partial cards are not proof of complete knowledge.
+
+Server logs establish `RuntimeError: Could not set lock on file ...lbug (Resource
+temporarily unavailable)` during B09/B10; process evidence shows one uvicorn
+API process and native database subprocesses. Therefore merely proposing one API
+worker does not establish a fix. This is not API-key expiry or denied principal.
+No database locks/files were deleted, backend code patched, timeout increased,
+request workload serialized to hide the failure, or server restarted to claim
+acceptance. Owner diagnosis of native worker lifetime/locking remains required.
+
+After the run, the benchmark reader's original disabled preference was restored
+via native UI; original MCP bytes restored with SHA256 check and the temporary
+workspace accessibility file removed after an exact owned-value check. The other
+Cursor window and other MCP preferences were untouched. Restoration is recorded
+in `N7-followup-client-restoration.json`.
+
+Evidence root: `build/test-results/g5/common-20261026-112117/`.
+`N7-followup-evaluation.json` records all13 classifications; immutable answers,
+original diagnostics and server log are indexed by `N7-followup-evidence-manifest.json`
+(SHA256 `5f8c1d3c3bead13e7f47398ba1ecf97af9dd82cf38fc96d77a6c9be1f0dec81b`).
+The original sealed report SHA256 remains
+`119d8063aff89bc71d97984f23597df0f3e2e4d598030e43a35a8ce1d514a503`.
+
+G5 is not accepted. Remaining finite work: repair harness restart-safe artifact
+identity and repeat original B03; diagnose native locking then original B09/B10;
+qualify the existing N5 writer/installed subset with fair source. No additional
+mandatory cases, ACL or architecture expansion. Registry R6 SHA/home/routing,
+OpenCode skip, Gate6/working migration/workflow-fork-homes publication prohibition
+remain unchanged. The fair source unit needs one coherent commit and normal
+RegisterChange; its final result belongs to the helper/Status, not this document.

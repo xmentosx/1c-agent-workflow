@@ -188,6 +188,31 @@
         $payloadTokens.measurement | Should -Be 'measured-encode-ordinary'
         $payloadTokens.cl100k_base | Should -BeLessOrEqual 1600
         $payloadTokens.o200k_base | Should -BeLessOrEqual 1600
+
+        # The native multi-dataset response can contain top_k rows per dataset.
+        # Preserve the original eight authorized originals and all assertions above.
+        $product=@($b.provider.datasets|Where-Object scopeKind -EQ product)[0]
+        $script:GroupedRecallChunks=@()
+        foreach($number in 1..24){
+            $id=[guid]::NewGuid().ToString()
+            $note=$script:Originals[$r.dataId]|ConvertFrom-Json
+            $note.noteId='corp-only-'+$number
+            $note.scope=[pscustomobject]@{kind='product';id='corp'}
+            $note.applicability=[pscustomobject]@{availableIn=@('corp');knowledgeArea='planning'}
+            $script:Originals[$id]=ConvertTo-Json $note -Depth 30 -Compress
+            $script:GroupedRecallChunks+=,@{text='Untrusted grouped fragment';dataset_id=$product.datasetId;metadata=@{data_id=$id}}
+        }
+        $script:GroupedRecallChunks+=@($script:BudgetOriginalIds|ForEach-Object {@{text='Wrong stale chunk';dataset_id=$dataset.datasetId;metadata=@{data_id=$_}}})
+        Mock Invoke-ItlMemoryHttp {
+            param($Provider,$Method,$Path,$Body)
+            $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
+            @{status=200;body=@($script:GroupedRecallChunks)}
+        } -ParameterFilter {$Path -eq '/api/v1/recall'}
+        $grouped=Invoke-ItlMemoryRecall $b query
+        $grouped.cards.Count | Should -Be 8
+        $grouped.cards[0].noteId | Should -Be current
+        $grouped.sourceLookups | Should -BeLessOrEqual 24
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall').Count | Should -Be 2
     }
     It 'retires one exact note without deleting the dataset' {
         $r=Invoke-ItlMemoryRemember $b 'Retire me' 'itl_project_customer' 'old'
