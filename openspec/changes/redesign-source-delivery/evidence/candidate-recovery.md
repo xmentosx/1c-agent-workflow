@@ -113,3 +113,11 @@ Native regression проверяет Unicode Git -z paths, exact stdout/stderr, 
 создания Current-замены остаётся на следующую публикацию. Проверка выполняет
 настоящие native команды с private Git remote и fake gate/finalizer; она не
 подтверждает live 1С или публикацию рабочего репозитория.
+
+Статический Develop выявил загрязнение incremental fixture внешними artifact
+overrides: восемь отказов `SOURCE_E2E_ARTIFACT_HASH_MISMATCH` при synthetic lock.
+Группа сохраняет и временно очищает три caller override перед каждым тестом,
+а затем восстанавливает их. Canonical cache, SHA-проверки и native сценарии
+остаются прежними. Полная группа с реальными overrides исходного gate прошла
+23/0; отдельная проверка подтвердила восстановление всех трёх исходных значений.
+Это доказательство изоляции fixture, не успешный Develop или публикация.
