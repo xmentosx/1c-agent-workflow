@@ -2490,6 +2490,10 @@ try {
     It "restores the reset seed and unbinds repository-backed branch copies before initialization" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:ConfigPath = Join-Path $TestDrive 'Клиенты после сброса.json'
+            Write-Utf8Text $script:ConfigPath '{"aiRules":{"tools":["kilocode"]}}'
+            Read-ProjectConfig
+            Write-Utf8Text $script:ConfigPath '{"aiRules":{"tools":["kilocode","cursor"]}}'
             $script:DesignerCalls = 0
             $script:DesignerArgs = @()
             $seed = [pscustomobject]@{ configurationFingerprint = "master-fingerprint" }
@@ -2513,6 +2517,7 @@ try {
                 devBranch = "itldev/reset"
             }) -Updates $cleared
             [pscustomobject]@{
+                activatedClients = @(Get-AgentTargets)
                 designerCalls = $script:DesignerCalls
                 designerArgs = @($script:DesignerArgs)
                 repositoryUnbound = [bool]$restored.repositoryUnbound
@@ -2521,6 +2526,7 @@ try {
             }
         }
 
+        @($result.activatedClients) | Should -Be @("kilocode", "cursor")
         $result.designerCalls | Should -Be 1
         @($result.designerArgs) | Should -Be @("/ConfigurationRepositoryUnbindCfg", "-force")
         $result.repositoryUnbound | Should -BeTrue

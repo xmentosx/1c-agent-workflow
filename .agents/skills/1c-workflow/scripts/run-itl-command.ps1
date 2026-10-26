@@ -1153,7 +1153,8 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
             schemaVersion = 1
             action = $action
             projectRoot = $projectRoot
-            pid = 0
+            # Preserve the owned helper even if it exits before its first status.
+            pid = $(if (-not $windowed) { [int]$helperProcess.Id } else { 0 })
             launcherPid = 0
             startedAt = $startedAt.ToString("o")
             lastLogPath = ""

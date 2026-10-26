@@ -1,5 +1,25 @@
 # Proposal
 
+## G5: актуальный прогресс продолжения, 2026-10-26
+
+[Единый follow-up memory owner](evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий
+статус остановки, сохраняя исходный sealed failure report. Source repairs
+установлены штатным update на обоих isolated PM5 roots. Reset/resume/history,
+шесть областей, canonical homes/applicability, actual Kilo/Cursor tools и
+stopped backup/restore с repair до admission подтверждены в описанных границах.
+N7: все 12 frozen pairs выполнены; на 11 однозначных задачах files11/11,
+Cognee5/11; B11 противоречив и не принят. D8 byte/token repair проверен source
+suite, но повтор B01 всё ещё пропускает целевой факт. Native N5 policy proof
+получен в описанной границе; broader writer matrix не объявляется закрытой.
+**G5 не принят**: польза retrieval не доказана; source/native/registration различаются.
+Shared native API key того же ordinary account проверен на штатно обновлённой
+PM5-копии: fresh stdio/exact read, одна запись/fresh read/точный retire.
+Часовой Bearer не требуется, Cognee patch и auth-refresh service не добавлены.
+Один common ordinary connection, без employee ACL; R6 SHA и бизнес-каталог
+не менялись, три homes только в qualification snapshot. OpenCode пропущен.
+Gate6, рабочая миграция и публикация workflow/fork/homes не выполняются.
+Более ранние «не запускать G5» и прежние blocker summaries ниже исторические.
+
 ## Уточнение первого выпуска, 2026-10-26
 
 Шесть областей, одно общее подключение Cognee, без пользовательских ACL.

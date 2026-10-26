@@ -8631,8 +8631,7 @@ function Get-WorkflowUpdateRootRuntimeBusyReason {
     $runtimeRoot = Join-Path $Root '.agent-1c/mcp/ondemand'
     if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return '' }
     # VAParams is the runtime owner's launch input, not a process-state record.
-    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop |
-        Where-Object { $_.Name -notlike '*.VAParams.json' } | Select-Object -ExpandProperty FullName)) {
+    foreach ($statePath in @(Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot | Select-Object -ExpandProperty FullName)) {
         try { $runtimeState = Read-Utf8Text -Path $statePath | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "WORKFLOW_UPDATE_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether a runtime process is active; inspect it through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
         foreach ($field in @('pid', 'testClientPid')) {
@@ -19252,6 +19251,9 @@ function Restore-ExistingDevBranchRuntimeFromSeed {
         [System.IDisposable]$ExistingLease = $null
     )
 
+    # The reset may have replaced project.json without changing helper code.
+    # Activate that tracked configuration before restored-runtime consumers.
+    Read-ProjectConfig
     $seed = Restore-ExistingDevBranchFromSeed `
         -State $State `
         -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint `

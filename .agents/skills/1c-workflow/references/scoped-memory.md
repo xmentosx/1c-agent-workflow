@@ -31,9 +31,19 @@ For writer conflict/partial apply use the same catalog status/resume/restore;
 there is no memory updater or retry queue. Explicit enable may be repeated after
 recovery; stable IDs are retained.
 
-Keep the settings and ordinary-user token in the existing user-local MCP home
+Keep the settings and ordinary-account credentials in the existing user-local MCP home
 (`%LOCALAPPDATA%/ITL/MCP/vibecoding1c`), outside the project/Git/reset tree.
-The token file is `{ "accessToken": "<ordinary user token>" }`; never print it.
+Use `{ "apiKey": "<ordinary-account API key>" }` for the shared connection.
+Native Cognee API keys use `X-Api-Key` and, in the qualified 1.6.5 deployment,
+have no automatic expiry; they remain valid until revoked. An operator creates
+the key through native `/api/v1/auth/api-keys` under the same ordinary account.
+Never print it or put it in the registry, project, tool arguments or model context.
+Legacy `{ "accessToken": "<ordinary user token>" }` remains supported as Bearer
+authentication, but its login lifetime is not extended or refreshed by the adapter.
+If both fields are present, `apiKey` takes precedence; a failed key is never
+retried with Bearer. Credentials are reread for each request, so an operator can
+replace the private file atomically before revoking the old key. Rotation keeps
+the same principal and dataset IDs; it does not re-enable clients or replay writes.
 The provider settings shape is:
 
 ```json
@@ -59,8 +69,11 @@ native exact-ID REST; it does not modify a server or provision an administrator.
 
 Private task/workspace/workplace datasets are lazy under the verified principal.
 An uncertain creation is reconciled by exact name+native owner; no blind create.
-An administrator prepares shared product/project/organization IDs and grants;
-append explicit mappings to settings:
+An operator prepares shared product/project/organization IDs using the same
+ordinary technical connection and appends verified mappings to settings. The
+first release has no employee/group/outsider permission matrix. Keep the existing
+technical `permissions` field fixed at read/write and `admitted` as mapping and
+restore readiness, rather than membership:
 
 ```json
 {
@@ -70,9 +83,9 @@ append explicit mappings to settings:
 }
 ```
 
-Labels are routing metadata, not ACL. Mapping/grant admission comes from native
-evidence/operator preparation; normal calls still enforce Cognee ACL. No shared
-dataset is silently created under a developer. R6 currently assigns no product
+Labels are routing metadata. Mapping admission comes from native evidence and
+operator preparation; normal calls still authenticate the common ordinary
+account. No shared dataset is silently created under a developer. R6 currently assigns no product
 homes: product writes remain unavailable until explicitly confirmed in registry.
 
 ## Agent operations
@@ -93,6 +106,10 @@ There is no default global/task destination or automatic organizational promotio
 `recall(query, datasets?, search_type="CHUNKS", top_k<=8)` sends one query over
 the union of allowed exact IDs, at most 24 candidates, then checks authorized raw
 original/current status/applicability. Stale fragments never override the original.
+The optional public `datasets` argument accepts admitted labels, not UUIDs; the
+owner resolves those labels to pinned native IDs. Omit it to use the current
+admitted union. A lazy task destination without a created dataset is not an
+admitted reader merely because local status lists its label.
 Full output uses a conservative UTF-8 byte cap below 1600 (including provenance).
 An on-recall PS5/.NET BPE counter measures serialized cards for pinned official
 cl100k_base/o200k_base vocabularies (2.47 MB compressed assets, MIT license). Eight
@@ -139,7 +156,7 @@ MCP resume/restore; native backend restore remains the qualified Cognee procedur
 
 For a backend restore, the operator disables memory with this owner and closes
 the ordinary Cognee port before native restoration. Recheck exact originals,
-known correction/deletion and A/B/outsider grants through the qualified procedure;
+known correction/deletion through the qualified procedure;
 unknown scopes stay unadmitted. Re-enable only confirmed mappings, reload into a
 fresh context and re-read originals. Local source/independent workflow remains
 available while the port is closed; no new epoch/backup/admission service exists.

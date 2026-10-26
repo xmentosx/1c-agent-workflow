@@ -48,9 +48,14 @@ Describe 'Exact source cutover for a pinned legacy workflow recovery' {
         New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
         $paramsPath = Join-Path $runtimeRoot 'instance.VAParams.json'
         [IO.File]::WriteAllText($paramsPath, '{"Version":2,"КлиентТестирования":{}}', [Text.UTF8Encoding]::new($false))
+        $connection = Join-Path $runtimeRoot 'connections/0123456789abcdef0123456789abcdef/owner.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $connection) | Out-Null
+        $connectionText = '{"schemaVersion":1,"family":"vanessa-ui","process":{"pid":123}}'
+        [IO.File]::WriteAllText($connection, $connectionText, [Text.UTF8Encoding]::new($false))
         Get-WorkflowUpdateRootRuntimeBusyReason -Root $root | Should -Be ''
         Enable-WorkflowExecutionGuardForCurrentRoot
         [IO.File]::ReadAllText($paramsPath) | Should -Be '{"Version":2,"КлиентТестирования":{}}'
+        [IO.File]::ReadAllText($connection) | Should -BeExactly $connectionText
         $runtime = @{testClientPid=0;testClientProcessStartTime='';testClientExecutablePath='';testClientOwnershipMarkers=@();pid=$PID;processStartTime='invalid';executablePath='unknown';ownershipMarkers=@('fixture')}
         [IO.File]::WriteAllText((Join-Path $runtimeRoot 'instance.json'), ($runtime | ConvertTo-Json -Compress))
         Get-WorkflowUpdateRootRuntimeBusyReason -Root $root | Should -Be 'runtime-process-active-or-unconfirmed'

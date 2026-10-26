@@ -14,6 +14,18 @@
 - **WHEN** workflow использует один настроенный Cognee credential на разных рабочих местах
 - **THEN** общие product/project/org IDs совпадают по назначению, локальные workspace/task/workplace IDs сохраняют свою принадлежность; права людям не назначаются и не проверяются, retrieval остаётся ограниченным текущим контекстом
 
+### Requirement: Общее подключение без регулярного истечения login token
+
+Штатное подключение SHALL использовать native API key обычного технического account через `X-Api-Key`, без автоматического срока истечения в квалифицированном Cognee 1.6.5. Секрет SHALL храниться только в существующем user-local private credential file как `apiKey`, вне Git, реестра, проекта и model context. Legacy `accessToken` SHALL сохраняться как Bearer compatibility, без обещания продления его lifetime. При наличии обоих полей SHALL выбираться только `apiKey`; отказ SHALL NOT запускать fallback, login, refresh или повтор записи. Адаптер SHALL перечитывать файл при каждом запросе; ротация оператором SHALL сохранять account/dataset identity и pending. Собственный auth service, хранение пароля для автоматического входа и изменение Cognee SHALL NOT требоваться.
+
+#### Scenario: Истёк прежний Bearer, настроен API key
+- **WHEN** private credential содержит валидный `apiKey` того же ordinary account и старый `accessToken`
+- **THEN** адаптер отправляет только `X-Api-Key`, использует прежние dataset IDs и не зависит от срока Bearer; секрет не попадает в tool schema/ответ
+
+#### Scenario: Оператор заменяет или отзывает ключ
+- **WHEN** оператор атомарно заменяет private credential file либо сервер отклоняет отозванный ключ
+- **THEN** следующий запрос читает актуальный файл без перезапуска; отказ не считается durable success и не приводит к login/replay, исходные IDs/pending сохраняются для существующего status continuation
+
 ### Requirement: Шесть областей с устойчивой идентичностью
 
 Система SHALL различать `taskCycle`, `workspace`, `workplace`, `product`, `project`, `organization`. Задача, ветка и база SHALL иметь одну область текущего цикла. Область SHALL иметь стабильный ID и основной dataset; локальные task/workspace/workplace datasets создаются по необходимости, общие — по подтверждённой native привязке того же технического подключения. Имя каталога, адрес сервера или имя ветки SHALL NOT подменять идентичность. Одно знание SHALL иметь одно основное место хранения, без обязательных копий по всем областям/провайдерам.

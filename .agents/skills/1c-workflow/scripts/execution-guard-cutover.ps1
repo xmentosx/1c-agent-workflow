@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'lib/agent-1c.package-content.ps1')
+. (Join-Path $PSScriptRoot 'lib/agent-1c.runtime-values.ps1')
 
 function Get-CutoverFullPath([string]$Path) {
     if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).Path $Path }
@@ -53,8 +54,7 @@ function Assert-NoActiveCutoverRuntime([string]$Root) {
     $runtimeRoot = Join-Path (Get-CutoverFullPath $Root) '.agent-1c\mcp\ondemand'
     if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }
     # The on-demand owner also writes <instance>.VAParams.json as launch input.
-    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop |
-        Where-Object { $_.Name -notlike '*.VAParams.json' } | Select-Object -ExpandProperty FullName)) {
+    foreach ($statePath in @(Get-ItlOnDemandRuntimeRecordFiles -RuntimeRoot $runtimeRoot | Select-Object -ExpandProperty FullName)) {
         try { $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "EXECUTION_GUARD_CUTOVER_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether an owned runtime is active. Preserve it and inspect through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
         foreach ($entry in @(

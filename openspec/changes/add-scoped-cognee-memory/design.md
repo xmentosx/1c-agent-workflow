@@ -1,17 +1,40 @@
 # Design
 
-## G5 начат: нативный storage proof и блокеры, 2026-10-26
+## G5: актуальный прогресс продолжения, 2026-10-26
 
-По разрешению «делай» выполнен первый прогон конечного N1–N7.
-[Единый фактический отчёт](evidence/g5-common-qualification-2026-10-26.md):
-6/6 scopes durable и fresh exact-original reads, initial enable без изменения
-HEAD/DB; три source repairs с 23/0/0 owner tests. G5 **не принят**:
-незавершённый update ошибочно читает connection receipt как runtime;
-reset требует отсутствующего seed, IDE/restore/paired proof не завершены.
-Три homes подтверждены только в pinned qualification snapshot; R6 не менялся.
-Дальнейшие dependent native операции остановлены на сохранённом checkpoint.
-Gate 6, рабочая миграция и публикация запрещены. Запрет запуска G5 в более
-ранних датированных секциях ниже относится к прежнему плановому этапу.
+[Единый follow-up memory owner](evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий
+статус остановки, сохраняя исходный sealed failure report. Source repairs
+установлены штатным update на обоих isolated PM5 roots. Reset/resume/history,
+шесть областей, canonical homes/applicability, actual Kilo/Cursor tools и
+stopped backup/restore с repair до admission подтверждены в описанных границах.
+N7: все 12 frozen pairs выполнены; на 11 однозначных задачах files11/11,
+Cognee5/11; B11 противоречив и не принят. D8 byte/token repair проверен source
+suite, но повтор B01 всё ещё пропускает целевой факт. Native N5 policy proof
+получен в описанной границе; broader writer matrix не объявляется закрытой.
+**G5 не принят**: польза retrieval не доказана; source/native/registration различаются.
+Shared native API key того же ordinary account проверен на штатно обновлённой
+PM5-копии: fresh stdio/exact read, одна запись/fresh read/точный retire.
+Часовой Bearer не требуется, Cognee patch и auth-refresh service не добавлены.
+Один common ordinary connection, без employee ACL; R6 SHA и бизнес-каталог
+не менялись, три homes только в qualification snapshot. OpenCode пропущен.
+Gate6, рабочая миграция и публикация workflow/fork/homes не выполняются.
+Более ранние «не запускать G5» и прежние blocker summaries ниже исторические.
+
+## Устойчивое общее подключение, 2026-10-26
+
+Обычная эксплуатация использует native Cognee API key (`apiKey` в существующем
+private credential file, заголовок `X-Api-Key`). В установленном 1.6.5 нет
+expiry-поля/TTL или проверки времени ключа; ключ действителен до native revoke.
+Account остаётся тем же ordinary technical principal, все mapping/IDs прежние.
+Legacy `accessToken` поддерживается, но часовой login JWT не продлевается.
+При обоих полях используется только API key; auth failure не вызывает login,
+fallback или replay. Файл читается при каждом запросе: оператор меняет его
+атомарно, затем отзывает старый ключ. Пароль, refresh worker, новый secret store
+или backend patch не нужны. Секреты не передаются реестру, инструментам или LLM.
+Квалификация проверяет прежние IDs/current originals и свежий stdio; отсутствие
+TTL подтверждается кодом native server, а не ускоренным временем или ожиданием часа.
+Отказ/отзыв сохраняет существующие pending/точный status continuation; обычный
+workflow не зависит от доступности памяти. Подробности — в follow-up evidence.
 
 ## Актуальная модель первого выпуска, 2026-10-26
 

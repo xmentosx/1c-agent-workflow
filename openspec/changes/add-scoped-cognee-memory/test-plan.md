@@ -1,5 +1,30 @@
 # Acceptance and Evidence Plan
 
+## Фактическое продолжение G5, 2026-10-26
+
+[Единый memory follow-up](evidence/g5-common-continuation-2026-10-26.md) — текущий результат; прежний sealed
+first-run report сохранён. Update/reset blockers исправлены и повторены на
+исходной PM5 topology; шесть областей, product homes/applicability, actual
+Kilo/Cursor operations и backup/restore подтверждены в указанных границах.
+Frozen N7 завершён: files11/11, Cognee5/11 на однозначных задачах; B11
+противоречив. N5 policy continuation подтверждён; broader writer matrix
+остаётся открытой. Shared native API-key auth квалифицируется отдельно
+от качества retrieval; G5 не принят.
+Фразы о незапущенном G5 ниже относятся к прежнему плановому этапу и не являются
+текущим запретом разрешённого продолжения. R6/G3 не переоткрываются; Gate6,
+рабочая миграция и публикация workflow/fork/homes по-прежнему не выполняются.
+
+## API-key acceptance в существующем G5 connection, 2026-10-26
+
+Existing wire fixture проверяет UTF-8, Bearer compatibility и API key reread
+в том же процессе; при обоих полях отправляется только `X-Api-Key`, transport
+deadline прежний. Native key создаётся под тем же ordinary principal, exact
+original/data/dataset IDs прежние. Fresh PM5 stdio должен прочитать original,
+записать harmless auth marker, прочитать его из нового процесса и точно retire
+без login/refresh или write replay. Server model/lookup не имеют TTL: это source
+evidence, не live ожидание истечения часа. Ключ/пароль не входят в evidence.
+Эта transport-проверка не добавляет новые paired случаи и не закрывает N7.
+
 ## Актуальная приёмка: common connection, 2026-10-26
 
 [Обновлённый конечный G5](g5-qualification-plan.md) и

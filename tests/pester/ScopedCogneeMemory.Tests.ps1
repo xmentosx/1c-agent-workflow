@@ -160,18 +160,34 @@
     It 'returns current authorized originals instead of stale CHUNKS and caps scope' {
         $r=Invoke-ItlMemoryRemember $b 'Current fact' 'itl_project_customer' 'current' @{} @(@{source='proof'}) verified
         $dataset=Get-ProjectDataset $b
+        $script:BudgetOriginalIds=@($r.dataId)
+        foreach($number in 2..8){
+            $other=Invoke-ItlMemoryRemember $b ('Current fact '+$number+': validate the object identifier before the fixture operation.') 'itl_project_customer' ('current-'+$number) @{} @(@{source='proof'}) verified
+            $script:BudgetOriginalIds+=,$other.dataId
+        }
         Mock Invoke-ItlMemoryHttp {param($Provider,$Method,$Path,$Body)
             $script:Calls.Add(@{method=$Method;path=$Path;body=$Body})
-            @{status=200;body=@(@{text='Wrong stale chunk';dataset_id=$dataset.datasetId;metadata=@{data_id=$r.dataId}})}
+            @{status=200;body=@($script:BudgetOriginalIds|ForEach-Object {@{text='Wrong stale chunk';dataset_id=$dataset.datasetId;metadata=@{data_id=$_}}})}
         } -ParameterFilter {$Path -eq '/api/v1/recall'}
         $recall=Invoke-ItlMemoryRecall $b query
         $recall.cards[0].fact | Should -Be 'Current fact'
-        $recall.sourceLookups | Should -Be 1
+        $recall.cards.Count | Should -Be 8
+        $recall.sourceLookups | Should -Be 8
         $call=@($script:Calls|Where-Object path -EQ '/api/v1/recall')
         $call.Count | Should -Be 1
         $call[0].body.dataset_ids.Count | Should -Be 6
         $call[0].body.search_type | Should -Be CHUNKS
-        $recall.utf8Bytes | Should -BeLessOrEqual 1600
+        $call[0].body.top_k | Should -Be 24
+        # D8 is 1600 actual tokens, not 1600 UTF-8 bytes. Preserve the
+        # native failure: eight applicable current facts must not become two.
+        $payload=ConvertTo-Json -InputObject $recall -Depth 40 -Compress
+        $recall.utf8Bytes | Should -Be ([Text.Encoding]::UTF8.GetByteCount($payload))
+        $recall.utf8Bytes | Should -BeGreaterThan 1600
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.memory-tokens.ps1')
+        $payloadTokens=Measure-ItlMemoryTokens $payload
+        $payloadTokens.measurement | Should -Be 'measured-encode-ordinary'
+        $payloadTokens.cl100k_base | Should -BeLessOrEqual 1600
+        $payloadTokens.o200k_base | Should -BeLessOrEqual 1600
     }
     It 'retires one exact note without deleting the dataset' {
         $r=Invoke-ItlMemoryRemember $b 'Retire me' 'itl_project_customer' 'old'
@@ -251,6 +267,10 @@
         Test-ItlMemoryNoteApplicable $b $note | Should -BeFalse
         $note.applicability.Remove('requiresProducts');$note.scope.kind='taskCycle';$note.origin=@{projectId='another-project'}
         Test-ItlMemoryNoteApplicable $b $note | Should -BeFalse
+        $note.origin.projectId=$b.context.projectId;$note.scope.id='prior-cycle'
+        Test-ItlMemoryNoteApplicable $b $note | Should -BeFalse
+        $note.scope.id=$b.cycleId
+        Test-ItlMemoryNoteApplicable $b $note | Should -BeTrue
     }
     It 'contributes a qualified stdio endpoint to the existing plan and disables without deleting data' {
         foreach($leaf in @('client-adapters','client-opencode','jsonc')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
@@ -354,7 +374,7 @@
             $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
             try {
                 $listener.Start();[IO.File]::WriteAllText($Ready,[string]$listener.LocalEndpoint.Port)
-                foreach($n in 1..2){
+                foreach($n in 1..3){
                     $peer=$listener.AcceptTcpClient();$peer.ReceiveTimeout=10000
                     try {
                         $stream=$peer.GetStream();$header=''
@@ -363,8 +383,8 @@
                         if($header -match '(?i)Expect: 100-continue'){$ack=[Text.Encoding]::ASCII.GetBytes("HTTP/1.1 100 Continue`r`n`r`n");$stream.Write($ack,0,$ack.Length)}
                         $body=[byte[]]::new($length);$offset=0
                         while($offset -lt $length){$read=$stream.Read($body,$offset,$length-$offset);if(-not $read){throw 'fixture EOF'};$offset+=$read}
-                        if($n -eq 1){
-                            $json=@{echo=[Text.Encoding]::UTF8.GetString($body);bearerPresent=($header -match '(?i)Authorization: Bearer harmless-fixture-token')}|ConvertTo-Json -Compress
+                        if($n -le 2){
+                            $json=@{echo=[Text.Encoding]::UTF8.GetString($body);bearerPresent=($header -match '(?i)Authorization: Bearer harmless-fixture-token');authorizationPresent=($header -match '(?im)^Authorization:');apiKeyPresent=($header -match '(?im)^X-Api-Key: harmless-fixture-api-key\r?$')}|ConvertTo-Json -Compress
                             $bytes=[Text.Encoding]::UTF8.GetBytes($json)
                             $prefix=[Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
                             $stream.Write($prefix,0,$prefix.Length);$stream.Write($bytes,0,$bytes.Length)
@@ -383,6 +403,13 @@
             $result.status | Should -Be 200
             ($result.body.echo|ConvertFrom-Json).text | Should -Be 'Точный UTF-8 путь с пробелом'
             $result.body.bearerPresent | Should -BeTrue
+            $result.body.apiKeyPresent | Should -BeFalse
+            Write-Utf8TextAtomic $provider.credentialFile '{"apiKey":"harmless-fixture-api-key","accessToken":"harmless-fixture-token"}'
+            $keyResult=& $NativeMemoryHttp $provider POST '/api/v1/remember' @{text='Тот же путь с ключом API'} ([DateTime]::UtcNow.AddSeconds(5))
+            $keyResult.status | Should -Be 200
+            ($keyResult.body.echo|ConvertFrom-Json).text | Should -Be 'Тот же путь с ключом API'
+            $keyResult.body.apiKeyPresent | Should -BeTrue
+            $keyResult.body.authorizationPresent | Should -BeFalse
             {& $NativeMemoryHttp $provider POST '/api/v1/recall' @{query='test'} ([DateTime]::UtcNow.AddMilliseconds(250))} | Should -Throw '*MEMORY_TRANSPORT_UNCONFIRMED*'
             $null=$job|Wait-Job -Timeout 10
             $job.State | Should -Be Completed
