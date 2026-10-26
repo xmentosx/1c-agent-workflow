@@ -8,7 +8,9 @@ maintenance. It governs files whose output location the agent chooses.
 Put ad hoc diagnostics, raw tool-response captures, screenshots, investigation
 scripts, downloaded investigation dependencies, unpacked research copies and
 intermediate CF/CFE exports under ignored `build/agent-artifacts/<task-id>/` in
-the current project worktree. Use a separate task directory to avoid collisions
+the current project worktree. Use `tmp/` inside that directory for disposable
+intermediates, `evidence/` for proof and `recovery/` for recovery material.
+Use a separate task directory to avoid collisions
 with concurrent work. Do not use another branch's checkout or its main worktree.
 
 Never choose a client home directory for those project files. This includes
@@ -41,12 +43,67 @@ large outputs into both locations without a task requirement.
 
 ## Finish the task
 
-Remove only this task's disposable intermediate files after their consumers
-and owned processes finish. Preserve required verification evidence, recovery
-artifacts, final deliverables and files needed to continue unfinished work.
-Report retained large intermediates and why they remain. Keep runtime artifacts
-out of Git; do not stage them simply because they are now inside the project.
+Before the final task response, every client uses the same `clean-artifacts`
+completion protocol below. Do not replace it with client-specific hooks or
+recursive deletion. Closing a chat or switching clients does not prove that a
+task or its consumers have finished.
 
-This placement rule does not authorize a sweep, migration or deletion of old
-files, and does not extend the existing helper's cleanup ownership. Existing
-retention, reference and active-operation protections continue to apply.
+After the task reaches a terminal outcome and all its file consumers and owned
+processes finish, write an immutable `completion.json` inside its task directory,
+outside `tmp/`. List exact project-relative disposable files below this task's
+`tmp/` and all retained proof, inputs, recovery files and transitive dependencies.
+Retained paths can be elsewhere in this project, including an older task's
+`tmp/`. A directory, age or a filename alone never establishes disposability.
+Databases, DT backups, original ETL, `source-snapshots` trees and `handoffs` are
+never enrolled as disposable, even under `tmp/`. Preserve them for their owners.
+
+```json
+{
+  "status": "completed",
+  "cleanupConfirmed": true,
+  "producer": "agent-task",
+  "kind": "agent-task-temp",
+  "taskRoot": "build/agent-artifacts/my-task",
+  "disposablePaths": ["build/agent-artifacts/my-task/tmp/intermediate.cf"],
+  "retainedPaths": [
+    "build/agent-artifacts/my-task/evidence/result.json",
+    "build/agent-artifacts/my-task/recovery/original.dt"
+  ]
+}
+```
+
+Run from the current project through the existing common helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action clean-artifacts -CleanupDiagnosticsOnly -DiagnosticCompletionPath 'build/agent-artifacts/my-task/completion.json'
+```
+
+Use the existing terminal statuses (`completed`, `succeeded`, `passed`, `failed`
+or `cancelled`). A failed outcome still retains its failure evidence and inputs
+needed for continuation; it does not become accepted merely because temporary
+files can be removed. Use an empty `disposablePaths` array when only evidence
+needs protection. The helper supports up to 4096 files per completion, in
+immutable batches of 256; each stored batch must fit its existing 256 KiB bound.
+
+This class becomes eligible immediately after confirmed completion. The helper
+still checks exact file bytes, timestamps, open handles, retained dependencies
+and current workflow references. Other diagnostic classes keep their configured
+retention age. `ITL_ARTIFACT_CLEANUP_ENABLED=false` disables automatic cleanup
+and completion-driven enrollment/removal as before. Repeating an unchanged
+completion is safe after deletion; replacement bytes at an old path are not
+silently enrolled again. Changed classifications need a new completion receipt.
+
+After successful `reset`, the existing automatic `clean-artifacts` call retries
+already enrolled disposable files, for example after a reader has closed them.
+Retained proof and recovery remain at their original project paths; existing
+branch-reset archives are untouched. No sweep or automatic adoption of legacy,
+unknown or unfinished task directories occurs. Retention records and completion
+receipts remain small audit/protection records; directories are not recursively
+deleted. Explicit `clean-artifacts` also retries eligible files; `-CleanupDryRun`
+previews already enrolled files without registering a new completion.
+
+Report cleanup leftovers and retained large intermediates with their reasons;
+an unsuccessful removal must not be reported as freed space. Do not edit an
+enrolled manifest to force deletion. Preserve the file, close its owned consumer
+or repair the missing retained evidence, then retry the same command. Keep runtime
+artifacts out of Git; do not stage them merely because they are inside the project.
