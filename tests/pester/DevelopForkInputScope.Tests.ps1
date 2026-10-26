@@ -12,6 +12,7 @@ BeforeAll {
         foreach($dir in @('content/rules','tools')) {[void][IO.Directory]::CreateDirectory((Join-Path $f.rules $dir))}
         [IO.File]::WriteAllText((Join-Path $f.rules 'install.ps1'),"'audited fixture text installer'`n")
         [IO.File]::WriteAllText((Join-Path $f.rules 'content/rules/verification-policy.md'),"---`ndescription: policy`nalwaysApply: false`n---`nold body`n")
+        [IO.File]::WriteAllText((Join-Path $f.rules 'content/rules/project-memory.md'),"byte-exact memory policy`n")
         [IO.File]::WriteAllText((Join-Path $f.rules 'content/rules/dev-standards-env.md'),("---`ndescription: env`n---`n"+'| `{UI_TESTING}` | `essential` |'+"`n"))
         [IO.File]::WriteAllText((Join-Path $f.rules 'tools/validate-rules.ps1'),"'static old'`n")
         & git -C $f.rules add --all; & git -C $f.rules commit --quiet -m 'fork base'
@@ -121,7 +122,7 @@ Describe 'Native fork input scope and authenticated transition' {
     It 'keeps unknown, executable, metadata, layout and dirty fork changes exact' {
         $f=New-ForkScopeFixture
         $baseline=$f.newFork
-        foreach($path in @('install.ps1','adapters/future.json','content/rules/added.md','content/rules/verification-policy.md','tools/future.ps1')) {
+        foreach($path in @('install.ps1','adapters/future.json','content/rules/added.md','content/rules/verification-policy.md','content/rules/project-memory.md','tools/future.ps1')) {
             & git -C $f.rules reset --hard --quiet $baseline
             $full=Join-Path $f.rules $path;[void][IO.Directory]::CreateDirectory((Split-Path -Parent $full))
             if($path -eq 'content/rules/verification-policy.md') {[IO.File]::WriteAllText($full,"---`ndescription: changed metadata`n---`nbody`n")}else{[IO.File]::AppendAllText($full,"changed native input`n")}

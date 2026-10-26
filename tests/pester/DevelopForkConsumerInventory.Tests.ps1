@@ -2,8 +2,34 @@ BeforeAll {
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context=Initialize-WorkflowPesterContext;$RepoRoot=$context.RepoRoot
     . (Join-Path $RepoRoot 'scripts/develop-e2e-qualification.ps1')
+    function Get-ProjectedForkReaderLiterals($Ast,$Profile) {
+        foreach($literal in @($Ast.FindAll({param($n)($n -is [Management.Automation.Language.StringConstantExpressionAst] -or $n -is [Management.Automation.Language.ExpandableStringExpressionAst]) -and $n.Value -match 'content[\\/]rules(?:[\\/]|\b)'},$true))) {
+            $relative=$literal.Value.Replace('\','/')
+            # Fixed other rule files remain byte-exact in the complete fork
+            # inventory. Dynamic/directory reads can reach projected guidance.
+            if($literal -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                $relative -match '^content/rules/[^/]+\.md$' -and $relative -notin @($Profile.paths)) {continue}
+            $literal
+        }
+    }
 }
 Describe 'Closed native consumers of controlled-fork guidance' {
+    It 'keeps projected aliases and dynamic readers audited while other fixed rules stay byte exact' {
+        $sample=@'
+function Read-Other {'content/rules/project-memory.md'}
+function Read-Projected {'content/rules/Verification-Policy.md'}
+function Read-Dynamic {"content/rules/$Name.md"}
+function Read-Directory {'content/rules'}
+'@
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseInput($sample,[ref]$tokens,[ref]$errors)
+        $items=@(Get-ProjectedForkReaderLiterals $ast (Get-AiRulesNativeGuidanceConsumers))
+        $items.Count|Should -Be 3
+        @($items.Value)|Should -Not -Contain 'content/rules/project-memory.md'
+        @($items.Value)|Should -Contain 'content/rules/Verification-Policy.md'
+        @($items.Value)|Should -Contain 'content/rules/$Name.md'
+        @($items.Value)|Should -Contain 'content/rules'
+    }
     It 'binds the imported fork policy only to its Pester consumers and static continuation scope' {
         $catalog=Get-QualityContractCatalog $RepoRoot
         @($catalog.continuationScopes.gate)|Should -Contain 'scripts/ai-rules-native-inputs.ps1'
@@ -27,7 +53,7 @@ Describe 'Closed native consumers of controlled-fork guidance' {
         $live.inventory.external.rulesTree='c'*40
         Test-DevelopForkIdentityChanged $saved $live|Should -BeTrue
     }
-    It 'keeps every runtime rule reader under the audited input contract' {
+    It 'keeps every runtime reader of projected guidance under the audited input contract' {
         $profile=Get-AiRulesNativeGuidanceConsumers
         $profile|Should -Not -BeNullOrEmpty
         $seen=@()
@@ -35,10 +61,10 @@ Describe 'Closed native consumers of controlled-fork guidance' {
             $full=Join-Path $RepoRoot $path
             $text=[IO.File]::ReadAllText($full)
             if($text -notmatch 'content[\\/]rules(?:[\\/]|\b)') {continue}
-            $path|Should -BeExactly '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
             $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($full,[ref]$tokens,[ref]$errors)
             @($errors)|Should -BeNullOrEmpty
-            foreach($literal in @($ast.FindAll({param($n)($n -is [Management.Automation.Language.StringConstantExpressionAst] -or $n -is [Management.Automation.Language.ExpandableStringExpressionAst]) -and $n.Value -match 'content[\\/]rules(?:[\\/]|\b)'},$true))) {
+            foreach($literal in @(Get-ProjectedForkReaderLiterals $ast $profile)) {
+                $path|Should -BeExactly '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
                 $parent=$literal.Parent
                 while($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) {$parent=$parent.Parent}
                 $parent|Should -Not -BeNullOrEmpty

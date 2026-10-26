@@ -100,3 +100,14 @@ The native legacy-plan fixture's explicit module copy list now includes the new
 imported policy; its original two authority/proof invariants pass unchanged.
 All six bridge tests passed. Static-cache-only fixtures do not import this policy
 and retain their independent reuse inputs.
+
+The combined queue adds Get-ItlMemoryPolicyProof in agent-1c.memory-context.ps1.
+Its admitted source is project-memory.md, whose blob is unchanged across both
+forks: 5fe9348da25fd364fb455bad96e3e97f0e78994e. The original broad reader
+assertion incorrectly treated this byte-exact role as projected guidance.
+The inventory now audits projected, case-aliased, dynamic and directory readers;
+fixed other rule roles stay bound by the complete fork inventory. A new regression
+changes existing project-memory.md and requires bridge rejection. Projected alias,
+dynamic and directory reader regressions remain closed. All nine focused cases
+passed: scope 5 and consumer inventory 4 (scope 217.11 s). No runtime comparator,
+Full requirement or original native reproducer was relaxed by this test correction.
