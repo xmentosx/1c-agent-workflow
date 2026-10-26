@@ -1,6 +1,24 @@
 # Controlled ai_rules_1c upgrades
 
-## Current candidate: proportionate result acceptance, local r48
+## Current candidate: combined proportionate acceptance and scoped memory, local r49
+
+The local r49 candidate `df91727cc584a9b499cad1d9daa6ac22320486f9`
+continues r48 `b45e2164440b81ab0c68985da086341efa39c4da` and cherry-picks
+the four scoped-memory files from `162f2ea7a5734b65bc1de80943d057e9b7c0a525`
+with provenance in the commit. Upstream remains
+`2f640143756ecd01fed42100e412632aa9082385`. The existing overlay's exact
+r48 policy and memory result hashes are preserved; only the validator's measured
+combined-context ceiling changes from 140 to 141 KiB. The installer pin and scoped-memory
+policy now name this single combined commit. A regression prevents these two
+identities from diverging again. The policy's r47 baseline is historical provenance.
+
+The new pin remains `pending`. Fork Full and twelve-client installation
+compatibility qualify source composition, not native Cognee operation: G5 and
+publication remain pending. Changed memory rule bytes still invalidate affected
+E2E proof under the existing strict fork identity contract; combining candidates
+does not grant reuse by itself. See [r49 qualification](ai-rules-r49-qualification.md).
+
+## Earlier proportionate result acceptance candidate r48
 
 The local r48 candidate `b45e2164440b81ab0c68985da086341efa39c4da`
 continues r47 without changing upstream. Existing triage, UI confirmation and

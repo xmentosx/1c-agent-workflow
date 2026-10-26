@@ -388,6 +388,47 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         }
     }
 
+    It 'checks exact installed memory bytes and rejects a missing scoped boundary (<Remove>)' -TestCases @(
+        @{Remove='';AlterInstalled=$false},
+        @{Remove='';AlterInstalled=$true},
+        @{Remove='managed ITL project';AlterInstalled=$false},
+        @{Remove='project-root file under all four strict criteria';AlterInstalled=$false},
+        @{Remove='Do not route';AlterInstalled=$false},
+        @{Remove='scoped-cognee-memory-v1';AlterInstalled=$false},
+        @{Remove='private pending outside Git/reset';AlterInstalled=$false},
+        @{Remove='shared cross-project knowledge';AlterInstalled=$false},
+        @{Remove='Outside managed ITL projects';AlterInstalled=$false}
+    ) {
+        param([string]$Remove,[bool]$AlterInstalled)
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/test-ai-rules-compatibility.ps1'),[ref]$tokens,[ref]$errors)
+        if($errors.Count){throw 'Compatibility owner did not parse'}
+        $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-InstalledMemoryRoute'},$true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $rules=Join-Path $TestDrive rules; $project=Join-Path $TestDrive project
+        [void][IO.Directory]::CreateDirectory($rules);[void][IO.Directory]::CreateDirectory($project)
+        $memory=@'
+In a managed ITL project (`.agent-1c/project.json` exists), keep this
+project-root file under all four strict criteria below. Do not route
+project facts to Cognee or OpenViking without a separately qualified
+project-scoped integration. The optional ITL `scoped-cognee-memory-v1`
+route uses private pending outside Git/reset; global templates memory is
+shared cross-project knowledge. Outside managed ITL projects, use Cognee-first
+'@
+        $memory=$memory.Replace("`r`n","`n")
+        if($Remove){$memory=$memory.Replace($Remove,'removed')}
+        [IO.File]::WriteAllText((Join-Path $rules memory.md),$memory,[Text.UTF8Encoding]::new($false))
+        $installed=if($AlterInstalled){$memory+' altered'}else{$memory.Replace("`n","`r`n")}
+        [IO.File]::WriteAllText((Join-Path $project memory.md),$installed,[Text.UTF8Encoding]::new($false))
+        if($AlterInstalled) {
+            {Assert-InstalledMemoryRoute $rules $project codex}|Should -Throw '*differs from the exact fork source*'
+        } elseif($Remove) {
+            {Assert-InstalledMemoryRoute $rules $project codex}|Should -Throw '*does not preserve the managed ITL project boundary*'
+        } else {
+            {Assert-InstalledMemoryRoute $rules $project codex}|Should -Not -Throw
+        }
+    }
+
     It "keeps the fresh upstream compatibility check outside the offline Pester suite" {
         $scriptPath = Join-Path $RepoRoot "scripts\test-ai-rules-compatibility.ps1"
         $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding UTF8

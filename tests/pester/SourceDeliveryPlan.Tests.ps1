@@ -155,7 +155,8 @@ Describe 'Delivery v3 immutable selective plan' {
 
 
 
-    It 'uses the checker Desktop host for a Core preview and preserves the Unicode candidate path' -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
+    It 'uses the checker Desktop host, Unicode path and shared preview deadline (<Deadline>)' -TestCases @(@{Deadline=$false},@{Deadline=$true}) -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
+        param([bool]$Deadline)
         $root=Join-Path $TestDrive 'план с пробелами'
         [void][IO.Directory]::CreateDirectory((Join-Path $root scripts))
         $stub='param($RepositoryRoot,$OutputRoot,$JunitPath,$AiRulesSource,$WorkerCount,[switch]$PlanOnly,$BaseRef)'+[Environment]::NewLine+'[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);[pscustomobject]@{kind="itl-pester-reuse-plan";edition=$PSVersionTable.PSEdition;root=$RepositoryRoot;planOnly=[bool]$PlanOnly}|ConvertTo-Json'
@@ -165,12 +166,22 @@ Describe 'Delivery v3 immutable selective plan' {
         foreach($module in @('git-path-list.ps1','quality-contracts.ps1','source-delivery-process.ps1','source-delivery-plan.ps1','delivery-native-plan.ps1')) {
             $lines+=". '"+(Join-Path $RepoRoot ('scripts/'+$module)).Replace("'","''")+"'"
         }
+        if($Deadline) {
+            # Exercise the real child wait and cleanup without waiting five minutes.
+            $lines+='function Get-DeliveryPlanningBudget { [pscustomobject]@{warningMilliseconds=0;hardMilliseconds=1} }'
+        }
         $lines+="Get-DeliveryStaticWorkloadPreview -CandidateRoot '"+$root.Replace("'","''")+"' -Catalog @{} -BaseCommit $('a'*40) | ConvertTo-Json"
         [IO.File]::WriteAllText($entry,($lines -join [Environment]::NewLine),[Text.UTF8Encoding]::new($true))
         $core=(Get-Command pwsh.exe -CommandType Application|Select-Object -First 1).Source
         $wrapper=Join-Path $TestDrive invoke-core-preview.ps1
-        [IO.File]::WriteAllText($wrapper,("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(0); & '"+$core.Replace("'","''")+"' -NoLogo -NoProfile -File '"+$entry.Replace("'","''")+"'"),[Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText($wrapper,("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(0); & '"+$core.Replace("'","''")+"' -NoLogo -NoProfile -File '"+$entry.Replace("'","''")+"'; exit "+'$LASTEXITCODE'),[Text.UTF8Encoding]::new($true))
         $run=Invoke-TestPowerShellFile -FilePath $wrapper
+        if($Deadline) {
+            $run.exitCode | Should -Not -Be 0
+            $run.combinedText | Should -Match 'Static reuse preview exceeded.*planning deadline'
+            $run.combinedText | Should -Match 'Queue and checkpoint were preserved'
+            return
+        }
         $run.exitCode | Should -Be 0 -Because $run.combinedText
         $preview=($run.stdout -join [Environment]::NewLine)|ConvertFrom-Json
         $preview.edition | Should -BeExactly Desktop
@@ -237,12 +248,22 @@ Describe 'Delivery v3 immutable selective plan' {
         $known.stages[0].sampleCount | Should -Be 1
     }
 
-    It 'keeps a completed 32-second plan usable and stops only beyond the 120-second planning limit' {
+    It 'keeps completed measured plans usable and warns only beyond the 120-second target' {
         Mock Write-Warning {}
         { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 32000 } | Should -Not -Throw
-        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -like '*30s target*120s hard limit*' }
         { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 120000 } | Should -Not -Throw
-        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 120001 } | Should -Throw '*hard limit is 120s*Queue and checkpoint were preserved*'
+        Should -Invoke Write-Warning -Times 0 -Exactly
+        # Retain the actual cold-plan failures as regressions, with nine leaves.
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 126000 } | Should -Not -Throw
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 151000 } | Should -Not -Throw
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 300000 } | Should -Not -Throw
+        Should -Invoke Write-Warning -Times 3 -Exactly -ParameterFilter { $Message -like '*120s target*300s hard limit*' }
+    }
+
+    It 'preserves the queue and checkpoint when the 300-second planning limit is exceeded' {
+        Mock Write-Warning {}
+        { Assert-DeliveryPlanningBudget -ElapsedMilliseconds 300001 } | Should -Throw '*hard limit is 300s*Queue and checkpoint were preserved*'
+        Should -Invoke Write-Warning -Times 0 -Exactly
     }
 
     BeforeEach {

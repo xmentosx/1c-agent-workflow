@@ -967,7 +967,7 @@
       "path": "content/rules/memory-setup.md",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed.",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
       "upstreamSha256": "c44b767967cd1752c6ebbe52fb5c3a6c73839cdeaf83025f91385a9162ca6be0",
       "baselineSha256": "4c884205153a558f487130960d38a4620297db3d827db9a4377204bd89a6d84c",
       "resultSha256": "a4465927765ff78ca226508b9677ea9cd7bc3f86e99a88ae16aab573a5ae1b9b"
@@ -1003,7 +1003,7 @@
       "path": "content/rules/project-memory.md",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed.",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
       "upstreamSha256": "c2de6cd1206262233e470248452e32a05e049c54ab4c96f0e91fee27b3cf3e13",
       "baselineSha256": "ec41eb726d1cc9fe2b0a467f4b48dcfc120527fb4402c4c6e99cdec03a26ca97",
       "resultSha256": "9e6f7f49d698a12ff7eca135e63f81059f57b0a5a4ddc7f6f19d9f156a2e3431"
@@ -2110,7 +2110,7 @@
       "path": "memory.md",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Resolve upstream memory routing with an explicit managed ITL project boundary in the placed-once memory.md: project-scoped templates memory remains authoritative; generic Cognee/OpenViking routing applies only outside managed ITL projects. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed.",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Resolve upstream memory routing with an explicit managed ITL project boundary in the placed-once memory.md: project-scoped templates memory remains authoritative; generic Cognee/OpenViking routing applies only outside managed ITL projects. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
       "upstreamSha256": "55513eca634d59ddd736b834e6a5a8fa7fa7f432f48ac740f8b40a60e3eec3b9",
       "baselineSha256": "4ac1f1904ec7e00bb1a72a833080bda60bf95dc1e098507d0c65bb2927553688",
       "resultSha256": "1ed003f21a0c29de109ccedff0066d0b9c91ed6aeef86702229e3d9fcd06805a"
@@ -2488,7 +2488,7 @@
       "path": "tests/WorkflowHardening.Tests.ps1",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed.",
+      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "8c941cb5c787ad14b3c1d4c24ba707a3f5429ceb76655676ad66576bc85876f0",
       "resultSha256": "8276e3aa972a5278797b3f9d6d81bbef052624bbe10754957e744f16c1735253"
@@ -2704,10 +2704,10 @@
       "path": "tools/validate-rules.ps1",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
+      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R49: full-cycle set grows from 141300 to 143908 normalized UTF-8 bytes (+2608, about 652 tokens); preserve mandatory scoped-memory boundaries, raise only hot-path ceiling 140 to 141 KiB, root/start limits unchanged.",
       "upstreamSha256": "8004df5e36718b44ecf29c8c3a26d12abc155900fdd8d9d6d00216b062f4467a",
       "baselineSha256": "6394a4c1435e40360d08adff2e3ef9efc1e15f0ea17d5b4066687ca7648f1e6d",
-      "resultSha256": "a9af342765a110f5ef7798ac2b76e4bcf41d6fed04a87218024156da3e6ad01c"
+      "resultSha256": "78a8556f27da6f35ec0df6bd18935a537d1919c0c47e8dffd3e07d1c1651ae2d"
     },
     {
       "path": "USER-RULES.md",

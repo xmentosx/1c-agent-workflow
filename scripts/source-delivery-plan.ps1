@@ -2,13 +2,21 @@
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $script:DeliveryTrackedPathCache = @{}
 
+function Get-DeliveryPlanningBudget {
+    # One contract for completed planning and its nested static preview.
+    [pscustomobject]@{ warningMilliseconds = 120000; hardMilliseconds = 300000 }
+}
+
 function Assert-DeliveryPlanningBudget {
     param([Parameter(Mandatory = $true)][long]$ElapsedMilliseconds)
-    if ($ElapsedMilliseconds -gt 120000) {
-        throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]($ElapsedMilliseconds / 1000))s; hard limit is 120s. Queue and checkpoint were preserved. Diagnose planning cost, then repeat the same Plan or publication command."
+    $budget = Get-DeliveryPlanningBudget
+    $hardSeconds = $budget.hardMilliseconds / 1000
+    $warningSeconds = $budget.warningMilliseconds / 1000
+    if ($ElapsedMilliseconds -gt $budget.hardMilliseconds) {
+        throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]($ElapsedMilliseconds / 1000))s; hard limit is ${hardSeconds}s. Queue and checkpoint were preserved. Diagnose planning cost, then repeat the same Plan or publication command."
     }
-    if ($ElapsedMilliseconds -gt 30000) {
-        Write-Warning "Delivery planning exceeded its 30s target ($([int]($ElapsedMilliseconds / 1000))s); the valid plan remains usable within the 120s hard limit."
+    if ($ElapsedMilliseconds -gt $budget.warningMilliseconds) {
+        Write-Warning "Delivery planning exceeded its ${warningSeconds}s target ($([int]($ElapsedMilliseconds / 1000))s); the valid plan remains usable within the ${hardSeconds}s hard limit."
     }
 }
 

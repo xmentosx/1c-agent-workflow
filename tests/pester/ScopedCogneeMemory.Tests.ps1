@@ -66,6 +66,14 @@
     }
     AfterAll {$env:VIBECODING1C_MCP_LOCAL_HOME=$savedHome}
 
+    It 'binds the scoped memory policy to the same fork candidate as the installer pin' {
+        $contract=Read-ItlMemoryJson (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
+        $lock=Read-ItlMemoryJson (Join-Path $RepoRoot 'templates/dependency-lock.json')
+        $contract.rulesCandidateCommit | Should -BeExactly $lock.dependencies.aiRules1c.commit
+        # Combining source candidates cannot claim the outstanding native G5 gate.
+        $contract.candidateStatus | Should -Match 'G5 and publication pending'
+    }
+
     It 'resolves six areas, rejects implicit writes and does not infer a product home' {
         @(Get-ItlMemoryScopes $b read).Count | Should -Be 6
         $persisted=Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)

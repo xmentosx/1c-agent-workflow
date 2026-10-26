@@ -134,6 +134,22 @@ function Assert-CodexPromptSnapshotUnchanged {
     foreach ($path in @($Before.Keys)) { if (-not $After.Contains($path) -or $After[$path] -ne $Before[$path]) { throw "Compatibility check changed user-scope Codex prompt: $path" } }
 }
 
+function Assert-InstalledMemoryRoute {
+    param([string]$RulesRoot, [string]$ProjectRoot, [string]$Client)
+    $expected = (Get-Content -LiteralPath (Join-Path $RulesRoot 'memory.md') -Raw -Encoding UTF8).Replace("`r`n", "`n")
+    $installed = (Get-Content -LiteralPath (Join-Path $ProjectRoot 'memory.md') -Raw -Encoding UTF8).Replace("`r`n", "`n")
+    if ($installed -cne $expected) { throw "Installed memory route differs from the exact fork source for $Client" }
+    # Global templates are shared. The old project-isolated templates claim was
+    # incorrect; scoped Cognee requires explicit qualification and private pending.
+    foreach ($clause in @('managed ITL project', '\.agent-1c/project\.json',
+        'project-root file under all four strict criteria',
+        'Do not route\s+project facts to Cognee or OpenViking without a separately qualified\s+project-scoped integration',
+        'scoped-cognee-memory-v1', 'private pending outside Git/reset',
+        'global templates memory is\s+shared cross-project knowledge', 'Outside managed ITL projects')) {
+        if ($installed -notmatch $clause) { throw "Installed memory route does not preserve the managed ITL project boundary for ${Client}: $clause" }
+    }
+}
+
 function Get-ProjectFileDigest {
     param([string]$Root)
     $lines = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
@@ -203,12 +219,7 @@ try {
         $manifest = Get-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$manifest.protocol -ne "1.1") { throw "ai_rules_1c manifest protocol must be 1.1 for $client" }
         if (@($manifest.tools).Count -ne 1 -or [string]$manifest.tools[0] -ne $client) { throw "Exact-one-client manifest failed for $client" }
-        $installedMemory = Get-Content -LiteralPath (Join-Path $projectRoot 'memory.md') -Raw -Encoding UTF8
-        if ($installedMemory -notmatch 'managed ITL project' -or
-            $installedMemory -notmatch 'project-scoped `1c-templates-mcp` memory' -or
-            $installedMemory -notmatch 'Outside managed ITL projects') {
-            throw "Installed memory route does not preserve the managed ITL project boundary for $client"
-        }
+        Assert-InstalledMemoryRoute -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Client $client
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $client
         Assert-WorkflowExtensionTools -HelperPath $workflowHelper -ProjectRoot $projectRoot -Manifest $manifest -Client $client
         foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {

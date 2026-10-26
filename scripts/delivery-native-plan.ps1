@@ -41,7 +41,10 @@ function Get-DeliveryStaticWorkloadPreview {
     $job=$null
     try {
         $job=Start-DeliveryProcess -ArgumentList (($arguments | ForEach-Object {ConvertTo-GitProcessArgument $_}) -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath ($name+'.json') -StandardErrorPath ($name+'.stderr.log')
-        if(-not $job.process.WaitForExit(120000)) {throw 'Static reuse preview exceeded the unchanged 120-second planning deadline.'}
+        $budget=Get-DeliveryPlanningBudget
+        if(-not $job.process.WaitForExit([int]$budget.hardMilliseconds)) {
+            throw "Static reuse preview exceeded the $($budget.hardMilliseconds / 1000)-second planning deadline. Queue and checkpoint were preserved. Diagnose planning cost, then repeat the same Plan or publication command."
+        }
         $job.process.WaitForExit()
         if($job.process.ExitCode -ne 0) {throw ('Static reuse preview failed: '+[IO.File]::ReadAllText(($name+'.stderr.log'),[Text.Encoding]::UTF8))}
         return (Get-Content -LiteralPath ($name+'.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
