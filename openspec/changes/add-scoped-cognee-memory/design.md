@@ -1,5 +1,17 @@
 # Design
 
+## План G5, 2026-10-26
+
+[Единый конечный план](g5-qualification-plan.md) конкретизирует существующие
+6.2–6.4/6.6b и D8/D10: isolated dev-karimov, обычные principals и admin-prepared
+IDs/grants, owner-confirmed homes отдельно от deployment map, local qualification
+pairing fork/host, native PM5/client сценарии и frozen paired B01–B12.
+Три назначения home пока только предложены; qualification snapshot не равен
+опубликованным данным. Native proof на candidate mapping и published SHA перед
+выпуском называются отдельно. Никакой подготовки/запуска G5 этим не разрешено;
+Gate 6, рабочая миграция и публикация workflow исключены. Новых runtime owners,
+barriers, server patches или always-on context план не добавляет.
+
 ## G4: исходная реализация, 2026-10-26
 
 Пользователь согласовал план и разрешил G4. Реализован scoped Cognee consumer:

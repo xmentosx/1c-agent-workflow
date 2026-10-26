@@ -1,5 +1,18 @@
 # Design
 
+## Dependency G5: подготовленный план, 2026-10-26
+
+[Единый план у memory owner](../add-scoped-cognee-memory/g5-qualification-plan.md)
+сохраняет одного registry resolver/контекст и три MCP-роли. Предложены, но не
+назначены homes: `pm5-plan-model`/`pm5-project-requests` → `pm5-corp`,
+`pm5-payroll-allocation` → `erppm5`; они существуют и входят в `availableIn`.
+Owner confirmation предшествует qualification snapshot, затем перед выпуском
+памяти отдельно фиксируется published SHA подтверждённых правил и применимая
+proof. R6 опубликован без homes, остаётся принят; candidate native proof не
+выдаётся за публикацию. Registry не хранит Cognee IDs/grants, home не заменяет
+MCP source (ERP+PM5 использует `erppm5-lts`). Подготовка/запуск G5 не разрешены,
+Gate 6, рабочая миграция и публикация workflow исключены.
+
 ## G4 consumer: исходная реализация, 2026-10-26
 
 По отдельному одобрению реализован consumer памяти G4.

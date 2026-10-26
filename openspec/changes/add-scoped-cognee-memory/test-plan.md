@@ -1,5 +1,16 @@
 # Acceptance and Evidence Plan
 
+## Конечный план G5, 2026-10-26
+
+Существующие AC и задачи 6.2–6.4/6.6b сведены в
+[G5 qualification plan](g5-qualification-plan.md): подготовка стенда/homes/прав,
+N1–N7 и одна пара на каждую frozen B01–B12 (24 whole-task выполнения), actual
+client calls/reload и explicit ready/block/stop criteria. Это будущая квалификация,
+не новые результаты: G5, подготовка стенда и импорт корпуса не запускались.
+Точный контрольный корпус сохранён; synthetic/home fixtures не объявляются
+native semantic ranking или опубликованным registry mapping. Непроверенные
+platform/client клетки и выпускной остаток отделены от конечного PM5-контура.
+
 ## G4: исходная реализация, 2026-10-26
 
 Пользователь согласовал план и разрешил G4. Реализован scoped Cognee consumer:
