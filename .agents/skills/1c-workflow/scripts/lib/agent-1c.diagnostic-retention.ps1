@@ -17,10 +17,32 @@ function Resolve-ItlDiagnosticArtifactPath {
             'derived-trace' {
                 if ([IO.Path]::GetExtension($leaf) -notin @('.xml', '.etlx')) { throw 'Only derived XML/ETLX traces are disposable.' }
             }
+            'superseded-attempt' {
+                if ([IO.Path]::GetExtension($leaf) -notin @('.json', '.jsonl', '.bsl', '.xml', '.txt', '.log', '.md', '.csv', '.bytes') -or
+                    $RelativePath -match '(^|[\\/])source-snapshots([\\/]|$)') { throw 'Only superseded check artifacts are disposable; retain source snapshots, databases, traces and executable helpers.' }
+            }
             default { throw 'Unknown diagnostic artifact kind.' }
         }
     }
     return $full
+}
+
+function Get-ItlSupersededAttemptContext {
+    param([string]$ProjectRoot, [object]$Receipt)
+    $relative = [string]$Receipt.attemptRoot
+    if (-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw 'A project-relative attemptRoot is required.' }
+    $root = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $relative))
+    if (-not (Test-ItlArtifactPathInside -Root (Join-Path $ProjectRoot 'build') -Path $root) -or
+        -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root) -or
+        -not (Test-Path -LiteralPath $root -PathType Container)) { throw 'Attempt root must be an existing unlinked directory below build.' }
+    $successor = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath ([string]$Receipt.supersededBy)
+    if (Test-ItlArtifactPathInside -Root $root -Path $successor) { throw 'Successor evidence must be outside the disposable attempt.' }
+    if ((Get-Item -LiteralPath $successor).Length -gt 1048576) { throw 'Successor receipt exceeds 1 MiB.' }
+    $proof = [IO.File]::ReadAllText($successor, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
+    if ($proof.status -notin @('passed', 'succeeded', 'completed')) { throw 'A successfully completed successor receipt is required.' }
+    # Producers explicitly declare the transitive evidence/input dependencies.
+    # Numbered directories and a newer timestamp never establish supersession.
+    return [pscustomobject]@{ root = $root; successor = [string]$Receipt.supersededBy }
 }
 
 function Get-ItlDiagnosticFileRecord {
@@ -34,17 +56,21 @@ function Register-ItlDiagnosticArtifacts {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string]$Producer,
         [Parameter(Mandatory)][string]$TerminalReceipt,
-        [Parameter(Mandatory)][ValidateSet('native-temp', 'derived-trace')][string]$Kind,
+        [Parameter(Mandatory)][ValidateSet('native-temp', 'derived-trace', 'superseded-attempt')][string]$Kind,
         [Parameter(Mandatory)][string[]]$DisposablePath, [string[]]$RetainedPath = @())
     if (-not $Producer.Trim() -or $DisposablePath.Count -lt 1 -or $DisposablePath.Count -gt 256) { throw 'Diagnostic producer and 1..256 disposable files are required.' }
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
     $receiptPath = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $TerminalReceipt
     $receipt = [IO.File]::ReadAllText($receiptPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
     if ($receipt.status -notin @('passed', 'succeeded', 'failed', 'cancelled', 'completed') -or $receipt.cleanupConfirmed -ne $true) { throw 'A terminal receipt with cleanupConfirmed=true is required.' }
-    $retained = @(@($TerminalReceipt) + $RetainedPath | Select-Object -Unique | ForEach-Object { Get-ItlDiagnosticFileRecord -ProjectRoot $ProjectRoot -RelativePath $_ })
+    $attempt = if ($Kind -eq 'superseded-attempt') { Get-ItlSupersededAttemptContext -ProjectRoot $ProjectRoot -Receipt $receipt } else { $null }
+    $retainedPaths = @($TerminalReceipt) + $RetainedPath
+    if ($null -ne $attempt) { $retainedPaths += $attempt.successor }
+    $retained = @($retainedPaths | Select-Object -Unique | ForEach-Object { Get-ItlDiagnosticFileRecord -ProjectRoot $ProjectRoot -RelativePath $_ })
     if ($Kind -eq 'derived-trace' -and @($retained | Where-Object { [IO.Path]::GetExtension($_.path) -eq '.etl' }).Count -eq 0) { throw 'Derived traces require a retained original ETL.' }
     $files = @($DisposablePath | Select-Object -Unique | ForEach-Object {
         $target = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $_ -Kind $Kind
+        if ($null -ne $attempt -and -not (Test-ItlArtifactPathInside -Root $attempt.root -Path $target)) { throw 'Disposable file is outside its completed attempt.' }
         foreach ($source in $retained) {
             if ($target -ieq (Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $source.path)) { throw 'A retained original cannot also be disposable.' }
         }
@@ -55,6 +81,7 @@ function Register-ItlDiagnosticArtifacts {
     if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root | Out-Null }
     if (-not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { throw 'Unsafe diagnostic manifest root.' }
     $manifest = [ordered]@{ schemaVersion = 1; projectRoot = $ProjectRoot; producer = $Producer; status = 'completed'; cleanupConfirmed = $true; completedUtc = [datetime]::UtcNow.ToString('o'); kind = $Kind; retained = $retained; files = $files }
+    if ($null -ne $attempt) { $manifest.attemptRoot = [string]$receipt.attemptRoot; $manifest.supersededBy = $attempt.successor }
     $path = Join-Path $root (([guid]::NewGuid().ToString('N')) + '.json')
     $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 8)); $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
@@ -81,6 +108,7 @@ function Get-ItlDiagnosticArtifactPlan {
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
     $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
     if (-not (Test-Path -LiteralPath $root -PathType Container) -or -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { return @() }
+    $ProtectedPaths = @($ProtectedPaths) + @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot)
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Filter '*.json')) {
         try {
@@ -88,7 +116,8 @@ function Get-ItlDiagnosticArtifactPlan {
                 -not (Test-ItlArtifactPathWithoutReparse -Root $root -Path $file.FullName)) { continue }
             $manifest = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
             if ($manifest.schemaVersion -ne 1 -or $manifest.projectRoot -ine $ProjectRoot -or $manifest.status -ne 'completed' -or $manifest.cleanupConfirmed -ne $true -or
-                $manifest.kind -notin @('native-temp', 'derived-trace') -or @($manifest.files).Count -gt 256 -or @($manifest.retained).Count -lt 1) { continue }
+                $manifest.kind -notin @('native-temp', 'derived-trace', 'superseded-attempt') -or @($manifest.files).Count -gt 256 -or @($manifest.retained).Count -lt 1) { continue }
+            $attempt = if ($manifest.kind -eq 'superseded-attempt') { Get-ItlSupersededAttemptContext -ProjectRoot $ProjectRoot -Receipt $manifest } else { $null }
             $completed = ([datetime]$manifest.completedUtc).ToUniversalTime()
             if ($completed -gt [datetime]::UtcNow.AddDays(-$MinimumAgeDays)) { continue }
             $manifestHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
@@ -96,6 +125,7 @@ function Get-ItlDiagnosticArtifactPlan {
                 $absolute = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$item.path)))
                 if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) { continue }
                 $path = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $item.path -Kind $manifest.kind
+                if ($null -ne $attempt -and -not (Test-ItlArtifactPathInside -Root $attempt.root -Path $path)) { continue }
                 if (Test-ItlArtifactProtected -Path $path -ProtectedPaths $ProtectedPaths) { continue }
                 $current = Get-Item -LiteralPath $path -Force
                 if ($current.Length -ne $item.length -or $current.LastWriteTimeUtc.Ticks -ne ([datetime]$item.modifiedUtc).ToUniversalTime().Ticks -or $item.sha256 -notmatch '^[a-fA-F0-9]{64}$') { continue }
@@ -103,6 +133,26 @@ function Get-ItlDiagnosticArtifactPlan {
                 [pscustomobject]@{ category = 'diagnostic'; group = $manifest.producer; root = $ProjectRoot; path = $path; companion = ''; expectedSha256 = $item.sha256; modifiedAt = $current.LastWriteTimeUtc; sizeBytes = $current.Length; delete = $true; reason = 'completed-disposable'; diagnosticManifest = $file.FullName; diagnosticManifestSha256 = $manifestHash; diagnosticRecord = $item; retained = @($manifest.retained) }
             }
         } catch { Write-Warning "ITL diagnostic manifest retained: $($file.FullName): $($_.Exception.Message)" }
+    }
+}
+
+function Get-ItlDiagnosticRetainedPaths {
+    param([string]$ProjectRoot)
+    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Filter '*.json')) {
+        if ($file.BaseName -notmatch '^[a-f0-9]{32}$') { continue }
+        if ($file.Length -gt 262144 -or -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $file.FullName)) { throw 'Diagnostic dependency manifest is oversized or linked; retain diagnostics.' }
+        try { $manifest = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw 'Diagnostic dependency manifest is unreadable; retain diagnostics.' }
+        if ($manifest.schemaVersion -ne 1 -or $manifest.projectRoot -ine $ProjectRoot) { continue }
+        foreach ($source in @($manifest.retained)) {
+            $relative = [string]$source.path
+            if (-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw 'Unsafe diagnostic dependency path; retain diagnostics.' }
+            $full = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $relative))
+            if (-not (Test-ItlArtifactPathInside -Root $ProjectRoot -Path $full)) { throw 'Diagnostic dependency escaped the project; retain diagnostics.' }
+            $full
+        }
     }
 }
 
@@ -114,7 +164,12 @@ function Remove-ItlDiagnosticArtifact {
     $record = @($manifest.files | Where-Object { $_.path -ceq $Entry.diagnosticRecord.path -and $_.sha256 -ieq $Entry.expectedSha256 })
     if ($manifest.projectRoot -ine $Entry.root -or $record.Count -ne 1 -or $manifest.cleanupConfirmed -ne $true -or $manifest.status -ne 'completed') { throw 'Saved diagnostic preview is not bound to its manifest.' }
     $path = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $Entry.root -RelativePath $record[0].path -Kind $manifest.kind
+    if ($manifest.kind -eq 'superseded-attempt') {
+        $attempt = Get-ItlSupersededAttemptContext -ProjectRoot $Entry.root -Receipt $manifest
+        if (-not (Test-ItlArtifactPathInside -Root $attempt.root -Path $path)) { throw 'Disposable file is outside its completed attempt.' }
+    }
     if ($path -ine $Entry.path) { throw 'Diagnostic target differs from its manifest.' }
+    if (Test-ItlArtifactProtected -Path $path -ProtectedPaths @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $Entry.root)) { throw 'Diagnostic target is a retained dependency.' }
     foreach ($source in @($manifest.retained)) {
         $original = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $Entry.root -RelativePath $source.path
         if ($original -ieq $path) { throw 'Diagnostic target is also retained.' }

@@ -23,9 +23,89 @@
         $replacement = '"completedUtc": "' + [datetime]::UtcNow.AddDays(-$Days).ToString('o') + '"'
         [IO.File]::WriteAllText($Fixture.manifest, ([regex]::Replace($text, '"completedUtc"\s*:\s*"[^"]+"', $replacement)))
     }
+    function New-SupersededAttemptFixture {
+        param([string]$Name)
+        $root = Join-Path $TestDrive ("Старые проверки $Name")
+        foreach ($folder in '.agent-1c', 'build/checks/v58', 'build/checks/v66') {
+            New-Item -ItemType Directory -Path (Join-Path $root $folder) -Force | Out-Null
+        }
+        $relative = 'build/checks/v58/answer.raw.json'
+        [IO.File]::WriteAllText((Join-Path $root $relative), '{"findings":["old failure"]}')
+        [IO.File]::WriteAllText((Join-Path $root 'build/checks/v58/shared.bsl'), 'older dependency')
+        [IO.File]::WriteAllText((Join-Path $root 'build/checks/v66/result.json'), '{"status":"passed"}')
+        $receipt = @{status='failed';cleanupConfirmed=$true;producer='branch-check';kind='superseded-attempt';attemptRoot='build/checks/v58';supersededBy='build/checks/v66/result.json';disposablePaths=@($relative);retainedPaths=@('build/checks/v58/shared.bsl')}
+        [IO.File]::WriteAllText((Join-Path $root 'build/completion.json'), ($receipt | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $manifest = @(Complete-ItlDiagnosticArtifacts -ProjectRoot $root -CompletionPath 'build/completion.json')[0]
+        return [pscustomobject]@{root=$root;relative=$relative;path=(Join-Path $root $relative);manifest=$manifest;receipt=$receipt}
+    }
 }
 
 Describe 'Producer-owned diagnostic retention' {
+    It 'cleans an explicitly superseded attempt through the real branch command, preserving the older dependency and current proof' {
+        $f = New-SupersededAttemptFixture 'Команда ветки'
+        & git -C $f.root init --quiet
+        $LASTEXITCODE | Should -Be 0
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 0
+        Set-DiagnosticFixtureAge $f 8
+        $arguments = @('-Action', 'clean-artifacts', '-ProjectRoot', $f.root, '-CleanupDiagnosticsOnly')
+        $preview = Invoke-TestPowerShellFile -FilePath $context.HelperPath -Arguments ($arguments + '-CleanupDryRun')
+        $preview.exitCode | Should -Be 0 -Because $preview.combinedText
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+        $done = Invoke-TestPowerShellFile -FilePath $context.HelperPath -Arguments $arguments
+        $done.exitCode | Should -Be 0 -Because $done.combinedText
+        (Test-Path -LiteralPath $f.path) | Should -BeFalse
+        foreach ($kept in 'build/checks/v58/shared.bsl', 'build/checks/v66/result.json', 'build/completion.json') {
+            (Test-Path -LiteralPath (Join-Path $f.root $kept)) | Should -BeTrue
+        }
+    }
+
+    It 'preserves an attempt when its replacement fails, disappears or changes after the preview' {
+        $f = New-SupersededAttemptFixture 'Замена'
+        $entry = @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0)[0]
+        $successor = Join-Path $f.root 'build/checks/v66/result.json'
+        [IO.File]::WriteAllText($successor, '{"status":"failed"}')
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0 -WarningAction SilentlyContinue).Count | Should -Be 0
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*successor*'
+        [IO.File]::WriteAllText($successor, '{"status":"passed","changed":true}')
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*original changed*'
+        Remove-Item -LiteralPath $successor
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0 -WarningAction SilentlyContinue).Count | Should -Be 0
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
+    It 'rejects directory heuristics, outside files, raw traces, snapshots and executable helpers' {
+        $f = New-SupersededAttemptFixture 'Границы'
+        $completion = Join-Path $f.root 'build/completion.json'
+        foreach ($relative in 'build/checks/v66/outside.json', 'build/checks/v58/native.etl', 'build/checks/v58/repair.ps1', 'build/checks/v58/source-snapshots/id/Module.bsl') {
+            $full = Join-Path $f.root $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
+            [IO.File]::WriteAllText($full, 'keep')
+            { Register-ItlDiagnosticArtifacts -ProjectRoot $f.root -Producer p -TerminalReceipt 'build/completion.json' -Kind superseded-attempt -DisposablePath $relative } | Should -Throw
+            (Test-Path -LiteralPath $full) | Should -BeTrue
+        }
+        $f.receipt.Remove('supersededBy')
+        [IO.File]::WriteAllText($completion, ($f.receipt | ConvertTo-Json))
+        { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath 'build/completion.json' } | Should -Throw
+    }
+
+    It 'protects dependencies declared by other completed attempts, including after a preview' {
+        $f = New-SupersededAttemptFixture 'Связанные попытки'
+        $entry = @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0)[0]
+        $other = 'build/checks/v58/other.raw.json'
+        [IO.File]::WriteAllText((Join-Path $f.root $other), 'other old answer')
+        Register-ItlDiagnosticArtifacts -ProjectRoot $f.root -Producer another -TerminalReceipt 'build/completion.json' -Kind superseded-attempt -DisposablePath @($other) -RetainedPath @($f.relative) | Out-Null
+        $remaining = @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0)
+        @($remaining | Where-Object path -eq $f.path).Count | Should -Be 0
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*retained dependency*'
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
+    It 'retains the attempt artifacts named by current branch verification state' {
+        $f = New-SupersededAttemptFixture 'Актуальные доказательства'
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root -MinimumAgeDays 0 -ProtectedPaths @($f.path)).Count | Should -Be 0
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
     It 'runs the real completion command without Codex, honors env disablement, and removes only expired files' {
         $f = New-DiagnosticFixture 'Штатный вызов'
         & git -C $f.root init --quiet
@@ -159,9 +239,11 @@ Describe 'Producer-owned diagnostic retention' {
         { Get-ItlArtifactRetentionPolicy } | Should -Throw '*ITL_DIAGNOSTIC_ARTIFACT_RETENTION_DAYS*'
     }
 
-    It 'rejects retained path aliases and integrates diagnostic deletion into ordinary clean-artifacts' {
-        $f = New-DiagnosticFixture 'Общий владелец'
-        { Register-ItlDiagnosticArtifacts -ProjectRoot $f.root -Producer p -TerminalReceipt 'build/result.json' -Kind native-temp -DisposablePath $f.relative -RetainedPath ('./' + $f.relative) } | Should -Throw '*retained original*'
+    It 'rejects retained aliases and integrates <Kind> deletion into ordinary automatic clean-artifacts' -TestCases @(@{Kind='native-temp'}, @{Kind='superseded-attempt'}) {
+        param($Kind)
+        $f = if ($Kind -eq 'native-temp') { New-DiagnosticFixture 'Общий владелец' } else { New-SupersededAttemptFixture 'Общий владелец' }
+        $receipt = if ($Kind -eq 'native-temp') { 'build/result.json' } else { 'build/completion.json' }
+        { Register-ItlDiagnosticArtifacts -ProjectRoot $f.root -Producer p -TerminalReceipt $receipt -Kind $Kind -DisposablePath $f.relative -RetainedPath ('./' + $f.relative) } | Should -Throw '*retained original*'
         Set-DiagnosticFixtureAge $f 8
         $script:ProjectRoot = $f.root
         Mock Get-EnvValue { param($Name, $Default) return $Default }
@@ -174,6 +256,7 @@ Describe 'Producer-owned diagnostic retention' {
         Mock Get-ItlArchiveArtifactCandidates { return @() }
         (Invoke-ItlArtifactCleanup -Automatic).removedBytes | Should -BeGreaterThan 0
         (Test-Path -LiteralPath $f.path) | Should -BeFalse
-        (Test-Path -LiteralPath (Join-Path $f.root 'build/answer.raw.json')) | Should -BeTrue
+        $kept = if ($Kind -eq 'native-temp') { 'build/answer.raw.json' } else { 'build/checks/v66/result.json' }
+        (Test-Path -LiteralPath (Join-Path $f.root $kept)) | Should -BeTrue
     }
 }

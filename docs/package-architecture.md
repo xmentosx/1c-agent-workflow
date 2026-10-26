@@ -176,6 +176,20 @@ new enrollment/invocations; retained originals regenerate derived artifacts.
 Unknown legacy investigations remain untouched. See
 [diagnostic retention](../.agents/skills/1c-workflow/references/artifact-retention.md).
 
+The 2026-10-26 branch-disk review extends this same producer handoff to explicitly
+superseded check artifacts. Its owner still receives exact individual files
+after terminal process cleanup, with a successful replacement receipt and the
+producer's retained dependency list. It consumes these declarations inside the
+existing branch commands and lifecycle lock. It gains no discovery, process
+control, directory sweep, external service or authority over an active producer.
+Unknown older attempts remain until their producer or a concrete evidence
+review establishes completion and dependencies. The latest-directory heuristic
+is invalid: PM5 branch11 attempt v66 explicitly depends on files from v58.
+Acceptance covers Unicode paths, protected older dependencies, successor
+changes/failure, original-data exclusions and the real branch cleanup command.
+Rollback stops new enrollment; existing unknown kinds are retained by older
+consumers. Registration remains distinct from publication and installation.
+
 The existing database-access coordinator is the authoritative owner for exact
 infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote
 operations. Calling it with an already supported access mode, resource set, and

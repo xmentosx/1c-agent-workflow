@@ -33,17 +33,28 @@ originals. The terminal receipt must report `status` as `completed`, `succeeded`
 finish cleanly without being accepted; registering its expendable files never
 changes the diagnostic outcome or acceptance evidence.
 
-Only two producer-declared file classes are eligible:
+Three producer-declared file classes are eligible:
 
 - `native-temp`: individual `v8_<hex>_<hex>.tmp` files directly inside a
   `*-temp` directory below `build`, after their owning 1C processes finish.
 - `derived-trace`: XML/ETLX derivatives below `build`, with the original ETL
   retained and hashed. Keep the decoder command/version, successful decoding
   result and any small extracted summary in the retained evidence list.
+- `superseded-attempt`: individually named text/check artifacts of a completed
+  attempt below `build`, with a successful replacement receipt outside that
+  attempt. The producer supplies `attemptRoot`, `supersededBy` and the complete
+  `retainedPaths` dependency list. References can reach much older attempts;
+  neither a larger attempt number nor the latest three directories proves that
+  an older file is disposable. Current evidence, unique source edits, live
+  inputs, rollback material and executable helpers must remain. Databases,
+  original traces, CF/CFE/DT, archives and source-snapshot trees cannot use this
+  class. Unknown legacy directories require review, never automatic adoption.
 
 Registration hashes each disposable and retained file and records exact size,
-timestamp and completion time. It never enrolls a directory, a database, a raw
-trace, a response from an analyzer or a handoff. Do not mark an artifact that
+timestamp and enrollment time. It never enrolls a directory, a database, a raw
+trace or a handoff. An analyzer response can expire only as an explicitly
+superseded attempt; its current replacement and dependencies must remain.
+Do not mark an artifact that
 still serves as original test/validation evidence, a live input, an executable
 workaround, a rollback snapshot or unfinished work. No heuristic sweeps old
 unmarked investigations. Preserve raw inputs/outputs and cumulative counters.
@@ -53,7 +64,10 @@ hashing large files happens at registration and actual removal, not every
 routine status. Execution rechecks the immutable manifest and retained original
 hashes, then verifies and deletes the same exclusively opened Windows file
 handle. Open files, byte/timestamp changes, missing originals, references from
-the owning cleanup plan and reparse/outside paths retain the file. The next
+the owning cleanup plan or another diagnostic receipt, and reparse/outside paths
+retain the file. A missing, failed or changed replacement preserves its old
+attempt. Unreadable dependency manifests skip diagnostic cleanup with a warning;
+repair the producer's record before the next ordinary command. The next
 ordinary cleanup can continue after the owner closes a file; no process is
 stopped, guard bypassed or proof rewritten. Already removed entries are no-ops.
 
@@ -73,6 +87,32 @@ retained-file warnings explain why the original task's files were left intact.
 Fresh files survive enrollment and become eligible at a later diagnostic
 completion or ordinary automatic ITL cleanup. There is no idle-time timer or
 resident service; an inactive project does not generate new diagnostic files.
+
+When a branch command finishes a check and adopts its successful replacement,
+the producer can send this completion through that same command (paths below
+are illustrative):
+
+```json
+{
+  "status": "failed",
+  "cleanupConfirmed": true,
+  "producer": "branch-check",
+  "kind": "superseded-attempt",
+  "attemptRoot": "build/checks/attempt-1",
+  "supersededBy": "build/checks/attempt-2/result.json",
+  "disposablePaths": ["build/checks/attempt-1/answer.raw.json"],
+  "retainedPaths": ["build/checks/attempt-2/answer.raw.json"]
+}
+```
+
+The replacement receipt must have `status` equal to `passed`, `succeeded` or
+`completed`. The producer lists all transitive dependencies in `retainedPaths`,
+including files in older attempts. The helper also retains the replacement
+receipt automatically and hashes it. Enrollment waits seven days by default;
+the next relevant successful branch command performs cleanup locally. No timer,
+external service, directory-wide deletion or verification acceptance change is
+introduced. An ordinary command without a producer receipt only cleans already
+marked files; it cannot infer which arbitrary agent-generated attempts ended.
 
 Legacy investigations need a separate read-only task/evidence review before
 the producer can enroll individual regenerable files. Unknown completion,
