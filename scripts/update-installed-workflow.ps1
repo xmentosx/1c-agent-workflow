@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('update', 'status', 'restore', 'reconcile', 'legacy-status', 'legacy-copy')][string]$Recovery = 'update',
+    [string]$AgentTarget = '',
     [string]$LegacySourceRoot = '',
     [string]$SnapshotId = '',
     [string]$ReconciliationFile = '',
@@ -12,6 +13,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
 
 # The first upgrade from an installed old helper must enter the current helper
 # before any managed path is copied. This launcher delegates the entire update
@@ -56,6 +61,7 @@ try {
     $env:ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE = 'true'
     $global:LASTEXITCODE = 0
     $arguments = @{ ProjectRoot=$project; Action='update-workflow' }
+    if ($AgentTarget) { $arguments.AgentTarget = $AgentTarget }
     if ($Recovery -ne 'update') { $arguments.WorkflowUpdateRecovery = $Recovery }
     if ($SnapshotId) { $arguments.WorkflowUpdateSnapshotId = $SnapshotId }
     if ($ReconciliationFile) { $arguments.WorkflowUpdateReconciliationFile = $ReconciliationFile }

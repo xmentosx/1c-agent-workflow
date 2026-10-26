@@ -343,8 +343,12 @@ function Test-DevelopGoBuildOnlyPath {
         # Pin the audited consumers too: a future runner/builder could read
         # tests or docs as data. Such a change closes this exception until its
         # native input contract is reviewed, even after a new baseline passes.
+        # The reviewed legacy-snapshot continuation and its launcher do not
+        # consume Go tests or README; any new reader closes this exception.
         $consumers=@{
-            'scripts/invoke-develop-e2e.ps1'='ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d'
+            'scripts/update-installed-workflow.ps1'='d3ae4a8430d3f11958b8bb298607bbf57314679a15669675c1b240091b83f3b0'
+            'scripts/invoke-develop-e2e.ps1'='10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9'
+            'scripts/source-e2e-workflow-update.ps1'='82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4'
             'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'
         }
         foreach($consumer in $consumers.Keys) {

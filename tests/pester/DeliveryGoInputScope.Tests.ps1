@@ -63,6 +63,16 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     [IO.File]::AppendAllText($builder,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
     Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
     [IO.File]::WriteAllBytes($builder,$originalBuilder)
+    $continuation=Join-Path $f.root 'scripts/source-e2e-workflow-update.ps1'
+    $originalContinuation=[IO.File]::ReadAllBytes($continuation)
+    [IO.File]::AppendAllText($continuation,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    [IO.File]::WriteAllBytes($continuation,$originalContinuation)
+    $launcher=Join-Path $f.root 'scripts/update-installed-workflow.ps1'
+    $originalLauncher=[IO.File]::ReadAllBytes($launcher)
+    [IO.File]::AppendAllText($launcher,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    [IO.File]::WriteAllBytes($launcher,$originalLauncher)
     [IO.File]::AppendAllText($runtime,"//go:embed README.md`n")
     Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
     @(Resolve-DevelopE2EJourneyPlanCore $f.root $base @($paths[2]) $catalog).journeys | Should -Contain 'fresh'

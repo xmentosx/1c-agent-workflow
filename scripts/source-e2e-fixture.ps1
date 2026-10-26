@@ -20,6 +20,7 @@ param(
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'git-path-list.ps1')
 . (Join-Path $PSScriptRoot 'source-e2e-manifest-repair.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-workflow-update.ps1')
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 . (Join-Path $PSScriptRoot 'source-delivery-process.ps1')
 . (Join-Path $PSScriptRoot 'stand-env-identity.ps1')
@@ -47,7 +48,7 @@ function Invoke-SourceFixtureInstalledAction {
 }
 
 function Invoke-SourceFixtureInstalledProcess {
-    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
+    param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure, [string]$ScriptPath='', [string[]]$ScriptArguments=@())
     [void][IO.Directory]::CreateDirectory($LogRoot)
     $token = $Action+'-'+[guid]::NewGuid().ToString('N')
     $stdout = Join-Path $LogRoot ($token+'.stdout.log'); $stderr = Join-Path $LogRoot ($token+'.stderr.log')
@@ -57,6 +58,7 @@ function Invoke-SourceFixtureInstalledProcess {
     $runner = if($createFixtureBase){Join-Path $PSScriptRoot 'source-e2e-create-infobase.ps1'}else{Join-Path $Root $(if($internalAction){'.agents/skills/1c-workflow/scripts/agent-1c.ps1'}else{'.agents/skills/1c-workflow/scripts/run-itl-command.ps1'})}
     $entryArguments = if($internalAction -or $createFixtureBase){@('-ProjectRoot',$Root)}else{@('--')}
     $actionArguments = if($createFixtureBase){@()}else{@('-Action',$Action,'-AgentTarget',$client)}
+    if($ScriptPath){$runner=$ScriptPath;$entryArguments=@();$actionArguments=@();$Arguments=$ScriptArguments}
     $argv = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$runner)+$entryArguments+$actionArguments+$Arguments
     $line = (@($argv|ForEach-Object { ConvertTo-GitProcessArgument -Value $_ }) -join ' ')
     $job = Start-DeliveryProcess -ArgumentList $line -WorkingDirectory $Root -StandardOutputPath $stdout -StandardErrorPath $stderr
@@ -80,6 +82,18 @@ function Invoke-SourceFixtureInstalledProcess {
     finally {
         try { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $process -PriorErrorMessage $errorText }
         finally { $process.Dispose(); $watch.Stop() }
+    }
+}
+
+function Invoke-SourceFixtureWorkflowUpdate {
+    param([string]$Root, [string]$CandidateRoot, [string]$AgentTarget, [string]$LogRoot, [int]$TimeoutSeconds=3600)
+    $updateClient=Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
+    $null=Invoke-SourceE2EWorkflowUpdate -Root $Root -CandidateRoot $CandidateRoot -AgentTarget $updateClient -TimeoutSeconds $TimeoutSeconds -InstalledOperation {
+        param($Budget)
+        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'update-workflow' -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure
+    } -SourceOperation {
+        param($ScriptPath,$Arguments,$Budget)
+        Invoke-SourceFixtureInstalledProcess -Root $Root -Action 'update-workflow-source-continuation' -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure -ScriptPath $ScriptPath -ScriptArguments $Arguments
     }
 }
 
@@ -472,7 +486,7 @@ function New-SourceE2EFixtureProject {
         $previousSource=$env:ITL_WORKFLOW_SOURCE_PATH;$previousRules=$env:ITL_AI_RULES_SOURCE_PATH
         try{
             $env:ITL_WORKFLOW_SOURCE_PATH=[IO.Path]::GetFullPath($CandidateRoot);$env:ITL_AI_RULES_SOURCE_PATH=[IO.Path]::GetFullPath($AiRulesSource)
-            $null=Invoke-SourceFixtureInstalledAction -Root $target -Action 'update-workflow' -AgentTarget $AgentTarget -LogRoot $logs -TimeoutSeconds 3600
+            Invoke-SourceFixtureWorkflowUpdate -Root $target -CandidateRoot $CandidateRoot -AgentTarget $AgentTarget -LogRoot $logs
             $installed=Read-QualificationFixtureJson -Path (Join-Path $target '.agent-1c/dependency-lock.json')
             if([string]$installed.dependencies.workflowPackage.commit -cne $commit){throw 'FIXTURE_INSTALLED_CANDIDATE_MISMATCH'}
             $workloadChanges=@(Get-RepositoryGitPathList -RepositoryRoot $target -Arguments @('diff','--name-only','-z','HEAD','--','src/cf','src/cfe','tests/features'))

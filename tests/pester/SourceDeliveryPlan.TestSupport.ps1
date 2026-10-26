@@ -79,11 +79,11 @@ function New-IncrementalPlanFixture {
     $catalog.contracts[0] | Add-Member primaryTest 'tests/pester/Runtime.Tests.ps1'
     $catalog.contracts[0] | Add-Member budgetSeconds 30
     $catalog.contracts[0].paths += @('tests/pester/Runtime.Tests.ps1','scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1','templates/dependency-lock.json','tests/quality-contracts.json')
-    $catalog.contracts[0].paths += 'scripts/stand-env-identity.ps1'
+    $catalog.contracts[0].paths += @('scripts/stand-env-identity.ps1','scripts/source-e2e-workflow-update.ps1','scripts/update-installed-workflow.ps1')
     # Retain the original historical reproducer from before discovery moved out.
     # Ancestor receipts must still authenticate and project that exact old path.
     $catalog.developJourneys.fullPaths=@('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1')
-    foreach($relative in @('scripts/invoke-develop-e2e.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
+    foreach($relative in @('scripts/invoke-develop-e2e.ps1','scripts/source-e2e-workflow-update.ps1','scripts/update-installed-workflow.ps1','scripts/develop-configuration-rejection.ps1','scripts/stand-env-identity.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
         $path=Join-Path $root $relative
         [void][IO.Directory]::CreateDirectory((Split-Path $path))
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $path
