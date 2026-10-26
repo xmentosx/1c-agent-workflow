@@ -164,14 +164,17 @@ function Invoke-ItlMemoryHttp {
     if($base.Scheme -notin @('http','https') -or $base.UserInfo -or $Path -notmatch '^/(?:api/v1/|openapi\.json$)'){throw 'MEMORY_ENDPOINT_INVALID'}
     $credentialPath=[IO.Path]::GetFullPath([string]$Provider.credentialFile)
     $privatePrefix=[IO.Path]::GetFullPath((Get-Vibecoding1cMcpLocalHome)).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
-    if(-not $credentialPath.StartsWith($privatePrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'MEMORY_CREDENTIAL_PRIVATE: store the ordinary token inside the existing user-local MCP home, outside the project/reset tree.'}
+    if(-not $credentialPath.StartsWith($privatePrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'MEMORY_CREDENTIAL_PRIVATE: store ordinary-account credentials inside the existing user-local MCP home, outside the project/reset tree.'}
     $credential=Read-ItlMemoryJson $credentialPath
-    if(-not (Get-ItlCatalogField $credential 'accessToken')){throw 'MEMORY_CREDENTIAL_REQUIRED: configure the ordinary user token privately; no administrator key.'}
+    $apiKey=[string](Get-ItlCatalogField $credential 'apiKey' '')
+    $accessToken=[string](Get-ItlCatalogField $credential 'accessToken' '')
+    if([string]::IsNullOrWhiteSpace($apiKey) -and [string]::IsNullOrWhiteSpace($accessToken)){throw 'MEMORY_CREDENTIAL_REQUIRED: configure an ordinary-account apiKey privately (legacy accessToken is supported); no administrator credentials.'}
     Add-Type -AssemblyName System.Net.Http
     $handler=[Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false
     $client=[Net.Http.HttpClient]::new($handler);$client.Timeout=[TimeSpan]::FromMilliseconds($remaining)
     $request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method),$base.AbsoluteUri.TrimEnd('/')+$Path)
-    $request.Headers.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',[string]$credential.accessToken)
+    if(-not [string]::IsNullOrWhiteSpace($apiKey)){$request.Headers.Add('X-Api-Key',$apiKey)}
+    else{$request.Headers.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$accessToken)}
     $request.Headers.Accept.ParseAdd('application/json')
     if($null -ne $Body){
         $text=if($Body -is [string]){$Body}else{ConvertTo-Json -InputObject $Body -Depth 60 -Compress}
@@ -259,7 +262,7 @@ function Test-ItlMemoryNoteApplicable {
     if($Note.status -ne 'verified'){return $false}
     $project=Get-ItlCatalogField $Note.applicability 'projectId'
     if($project -and $project -cne $Binding.context.projectId){return $false}
-    if($Note.scope.kind -eq 'taskCycle' -and (Get-ItlCatalogField $Note.origin 'projectId') -cne $Binding.context.projectId){return $false}
+    if($Note.scope.kind -eq 'taskCycle' -and ($Note.scope.id -cne $Binding.cycleId -or (Get-ItlCatalogField $Note.origin 'projectId') -cne $Binding.context.projectId)){return $false}
     if($Note.scope.kind -eq 'product'){
         $area=Get-ItlCatalogField $Note.applicability 'knowledgeArea'
         $rule=Get-ItlCatalogField $Binding.memoryProjection.knowledgeAreas $area
@@ -412,7 +415,9 @@ function Invoke-ItlMemoryRecall {
     $result=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type='CHUNKS';top_k=24;only_context=$false} $deadline
     if($result.status -ne 200){return @{cards=@();coverage='unavailable';continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
     $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$false
-    # Pre-bound payload before the on-demand exact named-encoding counter.
+    if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
+    # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds
+    # raw originals; an exact named counter admits compact non-ASCII facts.
     foreach($chunk in @($result.body)|Select-Object -First 24){
         if([DateTime]::UtcNow -ge $deadline){$partial=$true;break}
         $dataset=@($selected|Where-Object datasetId -CEQ ([string](Get-ItlCatalogField $chunk 'dataset_id')))
@@ -423,19 +428,35 @@ function Invoke-ItlMemoryRecall {
         if(-not $note -or -not (Test-ItlMemoryNoteApplicable $Binding $note)){$partial=$true;continue}
         $card=[ordered]@{noteId=$note.noteId;fact=$note.fact;status=$note.status;source=@{dataset=$dataset[0].label;dataId=$id};evidence=$note.evidence;applicability=$note.applicability}
         $next=@($cards)+@($card);$size=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $next -Depth 30 -Compress))
-        if($size -gt 1600){$partial=$true;continue}
+        try{
+            $candidateTokens=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject $next -Depth 30 -Compress)
+            $exceeded=if($candidateTokens.measurement -eq 'measured-encode-ordinary'){
+                $candidateTokens.cl100k_base -gt 1600 -or $candidateTokens.o200k_base -gt 1600
+            }else{$size -gt 1600} # retain the labelled conservative fallback
+        }catch{$partial=$true;break}
+        if($exceeded){$partial=$true;continue}
         $cards=$next;$bytes=$size
         if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$partial=$true;break}
     }
     $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};reformulation=$(if($cards.Count){'not-needed'}else{'one permitted in the same scope'});context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
-    if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
-    # Bound the whole tool payload, including provenance/metrics, not just facts.
+    # Bound the final serialized response, including provenance and metrics,
+    # with the same actual token limit. Bytes remain a separate metric.
     while($true){
-        try{$output.tokenCounts=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject @($output.cards) -Depth 30 -Compress)}
-        catch{$output.cards=@();$output.coverage='partial';$output.tokenCounts=@{measurement='unavailable';continuation='repair the packaged tokenizer; no unmeasured cards returned'};break}
-        $size=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $output -Depth 30 -Compress))
-        $exceeded=(Get-ItlCatalogField $output.tokenCounts 'cl100k_base' 0) -gt 1600 -or (Get-ItlCatalogField $output.tokenCounts 'o200k_base' 0) -gt 1600
-        if(-not @($output.cards).Count -or ($size -le 1568 -and -not $exceeded)){break}
+        try{
+            $output.tokenCounts=Measure-ItlMemoryTokens (ConvertTo-Json -InputObject @($output.cards) -Depth 30 -Compress)
+            # Only the decimal byte count changes: converge its serialized size
+            # before measuring so the returned object is the measured object.
+            do{
+                $payload=ConvertTo-Json -InputObject $output -Depth 30 -Compress
+                $size=[Text.Encoding]::UTF8.GetByteCount($payload)
+                $stable=($output.utf8Bytes -eq $size);$output.utf8Bytes=$size
+            }while(-not $stable)
+            $responseTokens=Measure-ItlMemoryTokens $payload
+            $exceeded=if($responseTokens.measurement -eq 'measured-encode-ordinary'){
+                $responseTokens.cl100k_base -gt 1600 -or $responseTokens.o200k_base -gt 1600
+            }else{$size -gt 1600}
+        }catch{$output.cards=@();$output.coverage='partial';$output.tokenCounts=@{measurement='unavailable';continuation='repair the packaged tokenizer; no unmeasured cards returned'};break}
+        if(-not @($output.cards).Count -or -not $exceeded){break}
         $output.cards=@($output.cards|Select-Object -SkipLast 1);$output.coverage='partial'
     }
     $output.utf8Bytes=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $output -Depth 30 -Compress))

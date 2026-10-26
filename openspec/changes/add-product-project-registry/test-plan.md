@@ -1,5 +1,26 @@
 # План приёмки
 
+## Фактическое продолжение G5, 2026-10-26
+
+[Единый memory follow-up](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) — текущий результат; прежний sealed
+first-run report сохранён. Update/reset blockers исправлены и повторены на
+исходной PM5 topology; шесть областей, product homes/applicability, actual
+Kilo/Cursor operations и backup/restore подтверждены в указанных границах.
+Frozen N7 завершён: files11/11, Cognee5/11 на однозначных задачах; B11
+противоречив. N5 policy continuation подтверждён; broader writer matrix
+остаётся открытой. Shared native API-key auth квалифицируется отдельно
+от качества retrieval; G5 не принят.
+Фразы о незапущенном G5 ниже относятся к прежнему плановому этапу и не являются
+текущим запретом разрешённого продолжения. R6/G3 не переоткрываются; Gate6,
+рабочая миграция и публикация workflow/fork/homes по-прежнему не выполняются.
+
+## Registry/memory API-key alignment, 2026-10-26
+
+Native auth proof остаётся у [memory owner](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md).
+Private key отсутствует в Git-реестре, project context и tool schema. Account и
+dataset/home mapping сохраняются; login lifetime не становится обязательством
+resolver/startup. Shared key не меняет R6 или границы G3; N7/G5 остаётся отдельно.
+
 ## Common connection dependency, 2026-10-26
 
 G5 больше не требует персональных accounts/ACL/grants/outsider: шесть областей

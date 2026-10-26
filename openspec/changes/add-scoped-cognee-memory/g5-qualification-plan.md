@@ -1,8 +1,12 @@
 # G5: конечный план квалификации общего подключения
 
-Статус 2026-10-26: **разрешён пользователем, начат; BLOCKED / не принят**.
-[Фактическая матрица N1–N7](evidence/g5-common-qualification-2026-10-26.md)
-отделяет storage/current-original/native proof, source repairs и регистрацию.
+Статус 2026-10-26: **разрешён пользователем, выполняется; не принят**.
+[Текущий follow-up N1–N7](evidence/g5-common-continuation-2026-10-26.md)
+отделяет storage/current-original/native/client proof, source repairs и регистрацию.
+Исходный [sealed first-run report](evidence/g5-common-qualification-2026-10-26.md)
+сохранён; прежние update/reset blockers сняты. N7 завершён с недоказанной
+пользой retrieval; N5 policy continuation выполнен в указанной границе.
+Shared ordinary API key заменяет часовой Bearer без расширения конечных N1–N7.
 Одно ordinary technical подключение, шесть областей, без прав людей/ACL.
 Три homes подтверждены для локального qualification SHA `d705dfb78c749dd54c20f4ee99cc6bbb8b97776b`;
 published R6 остаётся прежним. Конечные случаи/пороги ниже не расширяются.

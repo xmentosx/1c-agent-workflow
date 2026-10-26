@@ -646,6 +646,10 @@ exit 0
             $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             [int]$status.exitCode | Should -Be 1
             $status.finishedAt | Should -Not -BeNullOrEmpty
+            # No status was published: the runner still owns the actual helper identity.
+            $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/locks/lifecycle-operation.json") -Raw | ConvertFrom-Json
+            [int]$status.pid | Should -BeGreaterThan 0
+            [int]$status.pid | Should -Be ([int]$lifecycle.pid)
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }

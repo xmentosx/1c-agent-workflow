@@ -22,11 +22,16 @@
         New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
         [IO.File]::WriteAllText($source, '<Configuration/>', [Text.UTF8Encoding]::new($false))
 
-        $result = & $cutover -ProjectRoot $root
-        $second = & $cutover -ProjectRoot $root
+        $connection = Join-Path $root '.agent-1c/mcp/ondemand/roctup/connections/0123456789abcdef0123456789abcdef/owner.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $connection) | Out-Null
+        $connectionText = '{"schemaVersion":1,"family":"roctup","process":{"pid":123}}'
+        [IO.File]::WriteAllText($connection, $connectionText, [Text.UTF8Encoding]::new($false))
+        $result = & { Set-StrictMode -Version Latest; & $cutover -ProjectRoot $root }
+        $second = & { Set-StrictMode -Version Latest; & $cutover -ProjectRoot $root }
 
         $result.status | Should -Be 'completed'
         $second.status | Should -Be 'completed'
+        [IO.File]::ReadAllText($connection) | Should -BeExactly $connectionText
         foreach ($relative in $oldRoots) {
             $record = Join-Path (Join-Path $root $relative) 'broken.json'
             Test-Path -LiteralPath $record -PathType Leaf | Should -BeTrue

@@ -1,4 +1,17 @@
-﻿function Get-StateValue {
+﻿function Get-ItlOnDemandRuntimeRecordFiles {
+    param([Parameter(Mandatory = $true)][string]$RuntimeRoot)
+    $root = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\','/')
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File -Recurse -ErrorAction Stop)) {
+        $relative = $file.FullName.Substring($root.Length + 1).Replace('\','/')
+        # These are native facade/launch receipts, not backend process records.
+        # Unknown JSON remains subject to the caller's strict runtime checks.
+        if ($file.Name -like '*.VAParams.json' -or
+            $relative -match '^[^/]+/connections/[^/]+/owner\.json$' -or
+            $relative -match '^[^/]+/connection-recovery/recovery-[a-f0-9]{32}\.json$') { continue }
+        $file
+    }
+}
+function Get-StateValue {
     param(
         [object]$State,
         [string]$Name,

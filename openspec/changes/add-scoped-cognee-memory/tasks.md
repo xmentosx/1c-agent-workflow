@@ -1,22 +1,38 @@
 # Tasks
 
-## G5 начат: нативный storage proof и блокеры, 2026-10-26
+## G5 registration follow-up, 2026-10-26
 
-По разрешению «делай» выполнен первый прогон конечного N1–N7.
-[Единый фактический отчёт](evidence/g5-common-qualification-2026-10-26.md):
-6/6 scopes durable и fresh exact-original reads, initial enable без изменения
-HEAD/DB; три source repairs с 23/0/0 owner tests. G5 **не принят**:
-незавершённый update ошибочно читает connection receipt как runtime;
-reset требует отсутствующего seed, IDE/restore/paired proof не завершены.
-Три homes подтверждены только в pinned qualification snapshot; R6 не менялся.
-Дальнейшие dependent native операции остановлены на сохранённом checkpoint.
-Gate 6, рабочая миграция и публикация запрещены. Запрет запуска G5 в более
-ранних датированных секциях ниже относится к прежнему плановому этапу.
+Confirmed missing-status `pid=0` receipt defect repaired in the existing runner;
+existing regression RED then watchdog19/0, unchanged seven-second assertion.
+The shared follow-up report records exact diagnosis and prior Targeted cost.
+RegisterChange/Status remains authoritative for delivery; G5 is not accepted.
 
-- [x] Развернуть отдельный common-account Cognee clone и pinned qualification homes, сохранив прежний G1/PM5 evidence.
-- [x] Подтвердить native durable write/status/fresh original для всех шести областей и initial enable без изменения DB/HEAD; source repairs и JUnit указаны в едином отчёте.
-- [ ] Завершить исходные N1/N2/N4/N5/N6/N7 после owner continuation update; не обходить connection/runtime guard и не подменять installed файлы. 6.2–6.4/6.6b остаются открытыми.
-- [ ] Подготовить совместимый seed поддерживаемым владельцем для прежней N3 reset/reserve/resume части; Gate 6 без отдельного разрешения не выполнять.
+## G5: актуальный прогресс продолжения, 2026-10-26
+
+[Единый follow-up memory owner](evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий
+статус остановки, сохраняя исходный sealed failure report. Source repairs
+установлены штатным update на обоих isolated PM5 roots. Reset/resume/history,
+шесть областей, canonical homes/applicability, actual Kilo/Cursor tools и
+stopped backup/restore с repair до admission подтверждены в описанных границах.
+N7: все 12 frozen pairs выполнены; на 11 однозначных задачах files11/11,
+Cognee5/11; B11 противоречив и не принят. D8 byte/token repair проверен source
+suite, но повтор B01 всё ещё пропускает целевой факт. Native N5 policy proof
+получен в описанной границе; broader writer matrix не объявляется закрытой.
+**G5 не принят**: польза retrieval не доказана; source/native/registration различаются.
+Shared native API key того же ordinary account проверен на штатно обновлённой
+PM5-копии: fresh stdio/exact read, одна запись/fresh read/точный retire.
+Часовой Bearer не требуется, Cognee patch и auth-refresh service не добавлены.
+Один common ordinary connection, без employee ACL; R6 SHA и бизнес-каталог
+не менялись, три homes только в qualification snapshot. OpenCode пропущен.
+Gate6, рабочая миграция и публикация workflow/fork/homes не выполняются.
+Более ранние «не запускать G5» и прежние blocker summaries ниже исторические.
+
+## Shared API-key transport, 2026-10-26
+
+- [x] Поддержать native `apiKey`/`X-Api-Key` в existing HTTP adapter; сохранить Bearer compatibility, private path, principal guard, deadlines и отсутствие fallback/replay. Усилить existing wire fixture, без нового test case; owner suite23/0/0.
+- [x] Создать native key того же ordinary account на сохранённом G5 Cognee; хранить секрет вне Git/registry/model context, проверить native user и source exact-original с прежними IDs.
+- [x] Повторить подключение на штатно обновлённой isolated PM5-копии из fresh MCP process, зафиксировать фактический результат отдельно от N7 usefulness и source registration.
+
 ## Уточнение общего подключения, 2026-10-26
 
 - [x] Упростить обе OpenSpec и G5: один technical connection/account, шесть областей; убрать обязательные multi-user ACL/grants/outsider/roles. Зафиксировать [сверку с actual G4](g4-common-connection-alignment.md), сохранив исторический source/native proof.
@@ -204,7 +220,7 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 - [ ] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
 - [x] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
 - [x] 6.6a Подтвердить единое обязательное наполнение у registry owner по 1.9–1.11/5.7 и AC-36–38; указать опубликованный SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` в memory acceptance. [R6 / registry dependency AC-44 закрыта](../add-product-project-registry/evidence/r6-publication-2026-10-25.md); seed не используется, optional homes отложены осознанно, второго каталога/ingestion нет.
-- [ ] 6.6b В G5/N4 проверить подтверждённые home/applicability и native IDs/currentness через общее подключение. Сохранённая native часть AC-44 не требует прав пользователей; optional homes не угадываются, published R6 без homes остаётся принят.
+- [x] 6.6b G5/N4: [native follow-up](evidence/g5-common-continuation-2026-10-26.md) подтверждает canonical home, exact IDs/currentness, ERP→КОРП→допустимый ПРОФ, exclusion CORP-only/ERP-dependent и pending missing-home через common connection. Только три qualification homes; optional homes не угаданы и published R6 не изменён. Это не вся приёмка G5.
 
 Изначальное уточнение разрешало только OpenSpec. Последующее прямое поручение одобрило source G3 реестра; его setup/startup/binding/recovery и fixture-only compatibility path реализуются у registry owner. G4, наполнение и миграция действующих установленных проектов не разрешены. Registry-only выпуск также требует наполнения AC-36–38, но не memory readiness; memory opt-in остаётся отдельным и off по умолчанию.
 
