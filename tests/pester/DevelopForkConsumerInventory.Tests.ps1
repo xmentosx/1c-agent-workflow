@@ -4,6 +4,29 @@ BeforeAll {
     . (Join-Path $RepoRoot 'scripts/develop-e2e-qualification.ps1')
 }
 Describe 'Closed native consumers of controlled-fork guidance' {
+    It 'binds the imported fork policy only to its Pester consumers and static continuation scope' {
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        @($catalog.continuationScopes.gate)|Should -Contain 'scripts/ai-rules-native-inputs.ps1'
+        $imports=@('scripts/develop-e2e-qualification.ps1','scripts/develop-e2e-scenarios.ps1','scripts/develop-static-qualification.ps1','tests/pester/SourceDeliveryPlan.TestSupport.ps1','tests/pester/SourceDeliveryIncremental.TestSupport.ps1')
+        foreach($owner in $catalog.contracts) {
+            $patterns=@($owner.paths)+@(Get-QualityContractReuseInputPaths $owner)
+            if(@($patterns|Where-Object {$_ -in $imports}).Count) {
+                @($patterns|Where-Object {'scripts/ai-rules-native-inputs.ps1' -like $_}).Count|Should -BeGreaterThan 0 -Because $owner.id
+            }
+        }
+    }
+    It 'compares live dictionary fork bindings with serialized proof without inventing a transition' {
+        $live=[pscustomobject]@{inventory=@{external=[ordered]@{rulesCommit='a'*40;rulesTree='b'*40}}}
+        $saved=$live|ConvertTo-Json -Depth 6|ConvertFrom-Json
+        Test-DevelopForkIdentityChanged $saved $live|Should -BeFalse
+        Test-DevelopForkIdentityChanged $live $saved|Should -BeFalse
+        $legacy=[pscustomobject]@{inventory=@{external=@{complete=$true}}}
+        Test-DevelopForkIdentityChanged $legacy ($legacy|ConvertTo-Json -Depth 6|ConvertFrom-Json)|Should -BeFalse
+        Test-DevelopForkIdentityChanged $legacy $live|Should -BeTrue
+        Test-DevelopForkIdentityChanged $saved $legacy|Should -BeTrue
+        $live.inventory.external.rulesTree='c'*40
+        Test-DevelopForkIdentityChanged $saved $live|Should -BeTrue
+    }
     It 'keeps every runtime rule reader under the audited input contract' {
         $profile=Get-AiRulesNativeGuidanceConsumers
         $profile|Should -Not -BeNullOrEmpty

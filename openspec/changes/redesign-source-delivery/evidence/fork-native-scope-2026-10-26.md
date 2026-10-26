@@ -86,3 +86,13 @@ inventory 1, legacy E2E qualification 41, Targeted selection 15, catalog 45).
 Fork scope took 204.57 s with the added selection assertions; its estimate is
 205 s, within its unchanged 240 s owner budget. Registration remains the final
 combined-candidate acceptance boundary.
+The combined checker-child regression exposed a representation bug: live ordered
+dictionaries and serialized JSON objects with the same fork were treated as a
+transition. Optional binding comparison now handles both representations and
+retains fail-closed one-sided/mismatched values. The original three composition
+assertions are unchanged and pass, including exact native launch counts. Focused
+batch: fork scope 5, representation/reader checks 2, composition 3, all green.
+A further cheap regression binds the new module into importing Pester owners and
+gate continuation scope; catalog 45 plus reader/binding checks 3 passed. No global
+Pester dependency was added. The unchanged scope suite passed in 224.22 s on the
+final implementation; parallel registration may take longer under contention.

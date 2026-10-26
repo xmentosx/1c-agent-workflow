@@ -149,9 +149,15 @@ function Test-DevelopForkIdentityChanged {
     # Legacy identities can omit fork binding entirely. They remain subject to
     # their original exact external comparison, without inventing a fork delta.
     foreach($name in @('rulesCommit','rulesTree')) {
-        $a=$Recorded.inventory.external.PSObject.Properties[$name]
-        $b=$Current.inventory.external.PSObject.Properties[$name]
-        if([bool]$a -ne [bool]$b -or ($a -and $a.Value -cne $b.Value)) {return $true}
+        $fields=@(foreach($external in @($Recorded.inventory.external,$Current.inventory.external)) {
+            if($external -is [Collections.IDictionary]) {
+                [pscustomobject]@{present=$external.Contains($name);value=$external[$name]}
+            } else {
+                $property=$external.PSObject.Properties[$name]
+                [pscustomobject]@{present=($null -ne $property);value=$(if($property){$property.Value}else{$null})}
+            }
+        })
+        if($fields[0].present -ne $fields[1].present -or $fields[0].value -cne $fields[1].value) {return $true}
     }
     return $false
 }
