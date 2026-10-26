@@ -297,8 +297,9 @@ function Get-DevelopE2EAncestorQualification {
             # Reject differing consumed artifacts before expensive projection.
             # A scoped match only continues to every source, workload, stand,
             # report SHA, static-proof and newer-failure check below.
-            if(Test-DevelopArtifactIdentityDifference $manifest.inputIdentity $InputIdentity $Journey $RequiredScenario) {
-                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_INPUTS_CHANGED' -Inputs @('external:artifacts')
+            $artifactDifferences=@()
+            if(Test-DevelopArtifactIdentityDifference $manifest.inputIdentity $InputIdentity $Journey $RequiredScenario -ChangedInputs ([ref]$artifactDifferences)) {
+                Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'ARTIFACT_INPUTS_CHANGED' -Inputs $artifactDifferences
                 continue
             }
             if($RequiredScenario.Count) {

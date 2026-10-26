@@ -47,7 +47,8 @@ function ConvertTo-DevelopScenarioArtifactIdentity {
 }
 
 function Test-DevelopArtifactIdentityDifference {
-    param([object]$Recorded,[object]$Current,[string]$Journey='', [string[]]$Scenario=@())
+    param([object]$Recorded,[object]$Current,[string]$Journey='', [string[]]$Scenario=@(),[ref]$ChangedInputs)
+    if($ChangedInputs) {$ChangedInputs.Value=@()}
     $values=[Collections.Generic.List[object]]::new()
     foreach($identity in @($Recorded,$Current)) {
         $external=$identity.inventory.external;$artifacts=$null
@@ -56,8 +57,18 @@ function Test-DevelopArtifactIdentityDifference {
         $values.Add((ConvertTo-DevelopScenarioArtifactIdentity $artifacts $Journey $Scenario))
     }
     if($null -eq $values[0] -and $null -eq $values[1]) {return $false}
-    if($null -eq $values[0] -or $null -eq $values[1]) {return $true}
-    return (Get-DevelopE2ECanonicalJsonSha256 $values[0]) -cne (Get-DevelopE2ECanonicalJsonSha256 $values[1])
+    if($null -eq $values[0] -or $null -eq $values[1]) {
+        if($ChangedInputs) {$ChangedInputs.Value=@('external:artifacts')}
+        return $true
+    }
+    $different=(Get-DevelopE2ECanonicalJsonSha256 $values[0]) -cne (Get-DevelopE2ECanonicalJsonSha256 $values[1])
+    if($different -and $ChangedInputs) {
+        $ChangedInputs.Value=@(foreach($name in @(@($values[0].PSObject.Properties.Name)+@($values[1].PSObject.Properties.Name)|Sort-Object -Unique)) {
+            $a=$values[0].PSObject.Properties[$name];$b=$values[1].PSObject.Properties[$name]
+            if(-not $a -or -not $b -or (Get-DevelopE2ECanonicalJsonSha256 $a.Value) -cne (Get-DevelopE2ECanonicalJsonSha256 $b.Value)) {'artifact:'+$name}
+        })
+    }
+    return $different
 }
 
 function Assert-DevelopScenarioCompletion {
@@ -350,7 +361,9 @@ function Test-DevelopScenarioEquivalentInput {
             } else {[Text.Encoding]::UTF8.GetBytes($a)}
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-            if($hash -cne $prior.sha256 -and $entry.path -cin @('.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow/references/mcp.md','.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json','templates/dependency-lock.json','.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json')) {
+            $scope=Get-DevelopJourneyExcludedScope $entry.path $new.inventory.journey
+            $contentOnly=$scope -and $scope.ContainsKey('contentOnly')
+            if($hash -cne $prior.sha256 -and ($contentOnly -or $entry.path -cin @('.agents/skills/1c-workflow/references/mcp.md','.agents/skills/1c-workflow/references/workflow-update-recovery.md','tests/quality-contracts.json','templates/dependency-lock.json','.agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json'))) {
                 # Git stores LF while an older Windows checkout can have CRLF.
                 # Authenticate that exact alternative before semantic projection;
                 # never normalize native artifacts or arbitrary source inputs.
