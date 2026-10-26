@@ -432,7 +432,7 @@ Describe "Release gate scripts" {
         $text | Should -Match '\$requestedJourneys = if \(\$Journey -eq "all"\) \{ @\("upgrade", "fresh"\) \} else \{ @\(\$Journey\) \}'
         $text | Should -Match 'if \(\$requestedJourneys -contains "upgrade"\)'
         $text | Should -Match 'if \(\$requestedJourneys -contains "fresh"\)'
-        $text | Should -Match '(?s)if \(\$requestedJourneys -contains "upgrade"\).*?Invoke-InstalledAction -Name "upgrade-update-workflow".*?\$journeys\.upgrade\.status = "passed"'
+        $text | Should -Match '(?s)if \(\$requestedJourneys -contains "upgrade"\).*?Invoke-DevelopWorkflowUpdate -Root \$ProjectRoot -CandidateRoot \$CandidateRoot -AgentTarget \$AgentTarget.*?\$journeys\.upgrade\.status = "passed"'
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?Invoke-DevelopProcess -Name "fresh-bootstrap-init-project".*?\$journeys\.fresh\.status = "passed"'
         $text | Should -Match 'schemaVersion = 3'
         $text | Should -Match 'coverage = @\(\$scenarioSelection\[\$requestedJourney\]\)'
