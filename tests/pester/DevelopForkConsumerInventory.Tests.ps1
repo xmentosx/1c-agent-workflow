@@ -7,7 +7,7 @@ Describe 'Closed native consumers of controlled-fork guidance' {
     It 'binds the imported fork policy only to its Pester consumers and static continuation scope' {
         $catalog=Get-QualityContractCatalog $RepoRoot
         @($catalog.continuationScopes.gate)|Should -Contain 'scripts/ai-rules-native-inputs.ps1'
-        $imports=@('scripts/develop-e2e-qualification.ps1','scripts/develop-e2e-scenarios.ps1','scripts/develop-static-qualification.ps1','tests/pester/SourceDeliveryPlan.TestSupport.ps1','tests/pester/SourceDeliveryIncremental.TestSupport.ps1')
+        $imports=@('scripts/develop-e2e-qualification.ps1','scripts/develop-e2e-scenarios.ps1','tests/pester/SourceDeliveryPlan.TestSupport.ps1','tests/pester/SourceDeliveryIncremental.TestSupport.ps1')
         foreach($owner in $catalog.contracts) {
             $patterns=@($owner.paths)+@(Get-QualityContractReuseInputPaths $owner)
             if(@($patterns|Where-Object {$_ -in $imports}).Count) {

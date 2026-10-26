@@ -96,3 +96,7 @@ A further cheap regression binds the new module into importing Pester owners and
 gate continuation scope; catalog 45 plus reader/binding checks 3 passed. No global
 Pester dependency was added. The unchanged scope suite passed in 224.22 s on the
 final implementation; parallel registration may take longer under contention.
+The native legacy-plan fixture's explicit module copy list now includes the new
+imported policy; its original two authority/proof invariants pass unchanged.
+All six bridge tests passed. Static-cache-only fixtures do not import this policy
+and retain their independent reuse inputs.

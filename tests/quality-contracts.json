@@ -805,7 +805,6 @@
       "id": "develop-static-qualification-cache-tests",
       "owner": "Exact-tree static qualification cache and check orchestration wiring",
       "gate": "targeted",
-      "reuseInputPaths": ["scripts/ai-rules-native-inputs.ps1"],
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/DevelopStaticQualificationCache.Tests.ps1",
       "paths": [
