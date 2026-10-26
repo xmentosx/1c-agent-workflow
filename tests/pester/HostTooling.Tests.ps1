@@ -4988,7 +4988,10 @@ services:
             $config=Read-HostConfig
             $image='comol/1c_code_metadata_mcp@sha256:'+('a'*64)
             $root=Join-Path $repairState ('repairs\owner\code\'+('a'*64))
+            $legacyRoot=$root
+            if($Xsd){$root=Join-Path $root 'xsd-v2'}
             $null=New-Item -ItemType Directory -Path $root -Force
+            if($Xsd){[IO.File]::WriteAllText((Join-Path $legacyRoot 'qualification.json'),'preserved schema-1 proof');$legacySha=(Get-FileHash -LiteralPath (Join-Path $legacyRoot 'qualification.json')).Hash}
             $hashes=[ordered]@{}
             foreach($n in @('driver','main') + $(if($Xsd){@('xsd_schema_generator')}else{@()})){[IO.File]::WriteAllText((Join-Path $root ($n+'.py')),('# '+$n),[Text.UTF8Encoding]::new($false));$hashes[$n]=(Get-FileHash -LiteralPath (Join-Path $root ($n+'.py'))).Hash.ToLowerInvariant()}
             $proof=@{schemaVersion=1;accepted=$true;host='fixture';image=$image;isolated=$true;network='none';liveIndexMounted=$false;negativeControlReproduced=$true;fixtureSha256=('b'*64);files=$hashes;regression=@(@{test='interrupted_incremental_resume';modules=2;new_function_found=$true;ancestor_unchanged=$true},@{test='selective_repair';preserves_vectors=$true;honors_omissions=$true})}
@@ -5037,6 +5040,20 @@ services:
             $script:OwnerMounts=@($mounts|ForEach-Object {@{Type='bind';Source=$_.host;Destination=$_.container;RW=$false}})
             function Invoke-DockerCommandCapture { return ($script:OwnerMounts|ConvertTo-Json -Compress) }
             Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
+            if($Xsd){
+                (Get-FileHash -LiteralPath (Join-Path $legacyRoot 'qualification.json')).Hash|Should -Be $legacySha
+                @($mounts|Where-Object {$_.host -notlike '*\xsd-v2\*'}).Count|Should -Be 0
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false
+                $completeMounts=@($script:OwnerMounts)
+                $script:OwnerMounts=@($completeMounts|Where-Object Destination -ne '/app/src/xsd_schema_generator.py')
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+                $script:OwnerMounts=@($completeMounts)
+                $oldGenerator=Join-Path $legacyRoot 'old-generator.py';[IO.File]::WriteAllText($oldGenerator,'original vendor generator')
+                $binding=@($script:OwnerMounts|Where-Object Destination -eq '/app/src/xsd_schema_generator.py')[0];$binding.Source=$oldGenerator
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $true
+                $binding.Source=Join-Path $root 'xsd_schema_generator.py'
+                Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false
+            }else{Test-QualifiedHostCodeRepairChange -Config $config -Server $server -OldRuntime @{containerName='old'}|Should -Be $false}
             foreach($binding in $script:OwnerMounts){$path=[string]$binding.Source;$binding.Source='/run/desktop/mnt/host/'+$path.Substring(0,1).ToLowerInvariant()+'/'+$path.Substring(3).Replace('\','/')}
             Assert-QualifiedHostOwnerRepairMounts -Config $config -Server $server -Runtime @{containerName='candidate'}
             function Get-BetaProjectVolumes { return @() }

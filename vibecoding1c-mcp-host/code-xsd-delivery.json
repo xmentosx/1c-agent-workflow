@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "f6eae9bf2d5a35cce0e94536c0e59b7b7a579486",
+  "distributionCommit": "a6212e085a9a258557fdb8d0c4f5fb0ebe46f808",
   "distributionBase": "4626e6fc7b28054589e320894ce6aa617299a566",
   "package": "hosts/dev-karimov-new/code-package.json",
   "packageId": "code-xsd-v2",
@@ -65,7 +65,7 @@
     },
     "exactSourceRebaseAndChangedSourceRefusal": "passed"
   },
-  "deliveryStatus": "current-baseline local candidate; publication permission pending; installation and reindex not performed",
+  "deliveryStatus": "standalone package qualified; publication and deployment authorized, not yet performed",
   "acceptanceLimit": "Generated nested structure only. Working MCP endpoints and their published indices remain unchanged; complete normative enum/type coverage is not claimed.",
   "currentBaselineQualification": {
     "completedUtc": "2026-10-26T06:01:01.908323+00:00",
@@ -83,5 +83,9 @@
     "installation": false,
     "reindex": false,
     "deployedAcceptance": false
-  }
+  },
+  "deliveryMode": "standalone MCP package in GitLab; no workflow publication",
+  "windowsOwnerPackage": "hosts/dev-ermakov/owner-package.json",
+  "windowsLegacyProofPreserved": true,
+  "workflowPublicationRequired": false
 }

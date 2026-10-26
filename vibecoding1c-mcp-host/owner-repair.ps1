@@ -26,6 +26,7 @@ function Get-QualifiedHostOwnerRepairMounts {
     if (-not $targets.ContainsKey($id) -or $image -cnotmatch ('^'+[regex]::Escape($repositories[$id])+'@sha256:([a-f0-9]{64})$') -or [string]$spec.image -cne $image) { throw "Host owner repair belongs to another image. $continuation" }
     $digest = $image.Split(':')[-1]
     $root = Join-Path (Join-Path (Join-Path (Join-Path (Get-StateRoot -Config $Config) 'repairs') 'owner') $id) $digest
+    if ($id -eq 'code' -and $xsdFixture) { $root = Join-Path $root 'xsd-v2' }
     $proofPath = Join-Path $root 'qualification.json'
     if (-not (Test-Path -LiteralPath $proofPath -PathType Leaf) -or (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$spec.proofSha256) { throw "Code owner qualification is missing or changed. $continuation" }
     $proof = Get-Content -LiteralPath $proofPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -82,6 +83,23 @@ function Get-QualifiedHostOwnerRepairMounts {
         if ([string]$expected[$name] -cnotmatch '^[a-f0-9]{64}$' -or $observed[$name] -cne $expected[$name] -or -not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected[$name]) { throw "Qualified Code owner file changed: $name. $continuation" }
         [pscustomobject]@{host=$path;container=$targets[$id][$name];readOnly=$true}
     }
+}
+
+function Test-QualifiedHostCodeRepairChange {
+    param([object]$Config, [object]$Server, [object]$OldRuntime)
+    $spec = Get-ObjectValue -Object $Server -Name 'ownerRepair' -Default $null
+    if ([string]$Server.id -cne 'code' -or -not [string](Get-ObjectValue -Object $spec -Name 'xsdFixtureSha256' -Default '')) { return $false }
+    $expected = @(Get-QualifiedHostOwnerRepairMounts -Config $Config -Server $Server)
+    $raw = @(Invoke-DockerCommandCapture -Arguments @('inspect','-f','{{json .Mounts}}',[string]$OldRuntime.containerName) -TimeoutSec 60 -Description 'compare qualified Code repair version') -join ''
+    $mounts = $raw | ConvertFrom-Json
+    foreach ($file in $expected) {
+        $bindings = @($mounts | Where-Object Destination -eq $file.container)
+        if ($bindings.Count -ne 1 -or $bindings[0].Type -cne 'bind' -or $bindings[0].RW -ne $false) { return $true }
+        $actual = [string]$bindings[0].Source
+        if ($actual -match '^/(?:run/desktop/mnt/host|host_mnt)/([a-z])/(.+)$') { $actual=$Matches[1]+':\'+$Matches[2].Replace('/','\') }
+        if ((Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash -ine (Get-FileHash -LiteralPath $file.host -Algorithm SHA256).Hash) { return $true }
+    }
+    return $false
 }
 
 function Assert-QualifiedHostOwnerRepairMounts {
