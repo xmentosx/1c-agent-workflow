@@ -1,5 +1,29 @@
 # Tasks
 
+## G5 N7 follow-up: конечный результат, 2026-10-26
+
+Watchdog/API-key unit `7b8ffbe7c6859aa00e0b16adce5510c8dd5bc4e2`
+зарегистрирован в `product-project-registry-g2`; Targeted прошёл на combined
+candidate `043ff4ddf1ac554ea8b291d850fa685866795ce5` (3386.189 s).
+Новый source repair чередует разрешённые native dataset groups перед прежним
+общим cap24; scope/current original/applicability/8 cards/1600 tokens/20 s прежние.
+Усилен существующий case, inventory не расширен; source owner24/0/0 (11.982 s).
+
+Отдельный native whole-answer follow-up: те же12 задач, 9 PASS,
+B09/B10 FAIL_BACKEND_UNAVAILABLE (Ladybug file lock), B03 UNVERIFIED_HARNESS_RESTART
+(коллизия имён diagnostics после перезапуска reader). B11: пользователь согласовал
+исправление только входного context.project на customer; прежний эталон сохранён,
+обе исправленные arms PASS. Исходный contradictory trial и files11/11 против
+Cognee5/11 сохранены отдельно; новая оценка не подменяет baseline/cost comparison.
+Подробности, hashes и ограниченная матрица — у общего memory owner ниже.
+
+**G5 не принят.** Fair selection native proof относится к candidate function,
+не к установленной PM5. Остаток: B03 после ремонта оснастки, B09/B10 после
+диагностики native worker locks, существующий N5 writer subset/installed proof.
+Новых обязательных случаев нет. Source repair/регистрация/нативная приёмка
+различаются; Gate6, рабочая миграция и публикация запрещены.
+
+
 ## G5 registration follow-up, 2026-10-26
 
 Confirmed missing-status `pid=0` receipt defect repaired in the existing runner;

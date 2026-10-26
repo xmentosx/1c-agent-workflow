@@ -1,5 +1,15 @@
 # Design
 
+## G5 N7 follow-up, 2026-10-26
+
+[Единый memory report](evidence/g5-common-continuation-2026-10-26.md) фиксирует зарегистрированный watchdog/API-key
+unit7b8 и bounded fair-selection repair с owner24/0. Пользователь исправил только
+B11 context на customer при прежнем эталоне; обе arms PASS. Follow-up9/12 PASS,
+B09/B10 native Ladybug lock failures, B03 unverified harness restart. G5 открыт;
+исходный baseline, N5 остаток и разделение source/native/registration сохранены.
+Registry SHA/home/business routing прежние. Gate6, рабочая миграция и публикация
+не выполняются; новых обязательных случаев нет.
+
 ## G5: актуальный прогресс продолжения, 2026-10-26
 
 [Единый follow-up memory owner](evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий
@@ -236,6 +246,16 @@ OpenViking не устанавливается, не получает зерка
 ### D8. Бюджеты и отказ без новой блокировки workflow
 
 Один task recall на выбранный eligible provider использует объединённый разрешённый dataset set. Начальный настраиваемый профиль Cognee: `CHUNKS`, до **24 backend-кандидатов**, после проверки original/current status и применимости — до **8 карточек / 1600 фактических токенов** агенту. Dataset/context scope применяется до retrieval/graph expansion. Нативный metadata filter до candidate cap применяется лишь при доказанной поддержке; выдуманных параметров нет. Иначе отбор делает чистый resolver над ограниченным набором внутри adapter до agent context. Это исходные измеряемые параметры, не доказательство полноты/оптимальности.
+
+Native `top_k=24` может возвращать отдельные группы по dataset, поэтому первые
+24 строки объединённого ответа не являются глобальным ranking. Adapter
+чередует только разрешённые dataset groups, сохраняя native порядок внутри
+каждой, и затем применяет прежний общий cap24 к кандидатам для current-original
+lookup. Большая продуктовая группа не вытесняет остальные области. Нет шести
+поисков, нового reranker, Cognee patch или увеличения read/token budget.
+Флаг reformulation означает возможность одного уточнения при отсутствии
+релевантного факта; присутствие посторонних cards само по себе её не отменяет.
+Это не автоматический retry и не разрешение заполнять восемь карточек.
 
 Не смешивать пустой relevant answer с недобором восьми карточек: одна переформулировка разрешена лишь после отсутствия применимых проверенных фактов, в прежнем dataset scope. Она не запускается ради заполнения бюджета. Standing query отдельный, один раз на unchanged session context, по первому eligible reader согласно fork. Успешная частичная выдача повторно не ищется без нового вопроса/изменения оснований. При исчерпании cap/deadline результат сообщает bounded/partial coverage, а не «знаний нет». Один batch или до 24 точных source/status lookups на поиск учитываются отдельно; тот же общий read deadline ограничивает их. Непроверенные остатки не поступают как действующие факты.
 

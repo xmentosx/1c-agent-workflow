@@ -418,7 +418,21 @@ function Invoke-ItlMemoryRecall {
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
     # D8 bounds tokens, not UTF-8 bytes. The native transport already bounds
     # raw originals; an exact named counter admits compact non-ASCII facts.
-    foreach($chunk in @($result.body)|Select-Object -First 24){
+    # Cognee returns per-dataset groups, not a globally ranked top_k union.
+    # Interleave admitted groups before applying the unchanged global cap so a
+    # large product group cannot starve project/workspace/workplace originals.
+    $groups=@();$candidates=@()
+    foreach($scope in $selected){
+        $group=@($result.body|Where-Object {([string](Get-ItlCatalogField $_ 'dataset_id')) -ceq $scope.datasetId})
+        if($group.Count){$groups+=,@($group)}
+    }
+    for($rank=0;$rank -lt 24 -and $candidates.Count -lt 24;$rank++){
+        foreach($group in $groups){
+            if($rank -lt $group.Count){$candidates+=,$group[$rank];if($candidates.Count -eq 24){break}}
+        }
+    }
+    if(@($result.body).Count -gt $candidates.Count){$partial=$true}
+    foreach($chunk in $candidates){
         if([DateTime]::UtcNow -ge $deadline){$partial=$true;break}
         $dataset=@($selected|Where-Object datasetId -CEQ ([string](Get-ItlCatalogField $chunk 'dataset_id')))
         $id=[string](Get-ItlCatalogField (Get-ItlCatalogField $chunk 'metadata') 'data_id')
@@ -438,7 +452,7 @@ function Invoke-ItlMemoryRecall {
         $cards=$next;$bytes=$size
         if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$partial=$true;break}
     }
-    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};reformulation=$(if($cards.Count){'not-needed'}else{'one permitted in the same scope'});context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};reformulation='one permitted after no relevant card, same scope';context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
     # Bound the final serialized response, including provenance and metrics,
     # with the same actual token limit. Bytes remain a separate metric.
     while($true){
