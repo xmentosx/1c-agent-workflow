@@ -373,7 +373,7 @@ function Invoke-ItlMemoryRemember {
     try{
         if($receipt.dataId){
             $boundary='itl_'+[guid]::NewGuid().ToString('N')
-            $multipart="--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"memory.txt`"`r`nContent-Type: text/plain; charset=utf-8`r`n`r`n$text`r`n--$boundary--`r`n"
+            $multipart="--$boundary`r`nContent-Disposition: form-data; name=`"data`"; filename=`"memory.txt`"`r`nContent-Type: text/plain; charset=utf-8`r`n`r`n$text`r`n--$boundary--`r`n"
             $result=Invoke-ItlMemoryHttp $Binding.provider PATCH "/api/v1/update?data_id=$($receipt.dataId)&dataset_id=$($dataset.datasetId)&chunk_level_diff=true" $multipart $deadline -ContentType ("multipart/form-data; boundary="+$boundary)
         }else{
             $form='raw_data='+[uri]::EscapeDataString($text)+'&datasetId='+[uri]::EscapeDataString($dataset.datasetId)+'&self_improvement=false&run_in_background=false'
@@ -475,7 +475,7 @@ function Get-ItlMemoryLocalContext {
     $destinations=@(Get-ItlMemoryPrivateScopes $Binding|Where-Object {
         $privateLabel=$_.label;$mapped=@($Binding.provider.datasets|Where-Object label -CEQ $privateLabel)
         -not $mapped.Count -or ($mapped.Count -eq 1 -and $mapped[0].admitted -and @($mapped[0].permissions) -ccontains 'write')
-    })+@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -notin @('taskCycle','workspace','workplace','product') -and @($_.permissions) -contains 'write'}|Select-Object label,scopeKind,scopeId)
+    })+@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -notin @('taskCycle','workspace','workplace','product') -and @($_.permissions) -contains 'write'}|ForEach-Object {@{label=$_.label;scopeKind=$_.scopeKind;scopeId=$_.scopeId}})
     foreach($area in @($Binding.context.knowledgeContext.knowledgeAreas|Where-Object {$_.status -eq 'applicable' -and $_.memoryHomeProductId})){
         $destinations+=@(Get-ItlMemoryScopes $Binding read|Where-Object {$_.scopeKind -eq 'product' -and $_.scopeId -ceq $area.memoryHomeProductId -and @($_.permissions) -contains 'write'}|ForEach-Object {@{label=$_.label;scopeKind=$_.scopeKind;scopeId=$_.scopeId;knowledgeArea=$area.areaId}})
     }

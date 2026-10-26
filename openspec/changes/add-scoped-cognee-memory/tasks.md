@@ -1,5 +1,22 @@
 # Tasks
 
+## G5 начат: нативный storage proof и блокеры, 2026-10-26
+
+По разрешению «делай» выполнен первый прогон конечного N1–N7.
+[Единый фактический отчёт](evidence/g5-common-qualification-2026-10-26.md):
+6/6 scopes durable и fresh exact-original reads, initial enable без изменения
+HEAD/DB; три source repairs с 23/0/0 owner tests. G5 **не принят**:
+незавершённый update ошибочно читает connection receipt как runtime;
+reset требует отсутствующего seed, IDE/restore/paired proof не завершены.
+Три homes подтверждены только в pinned qualification snapshot; R6 не менялся.
+Дальнейшие dependent native операции остановлены на сохранённом checkpoint.
+Gate 6, рабочая миграция и публикация запрещены. Запрет запуска G5 в более
+ранних датированных секциях ниже относится к прежнему плановому этапу.
+
+- [x] Развернуть отдельный common-account Cognee clone и pinned qualification homes, сохранив прежний G1/PM5 evidence.
+- [x] Подтвердить native durable write/status/fresh original для всех шести областей и initial enable без изменения DB/HEAD; source repairs и JUnit указаны в едином отчёте.
+- [ ] Завершить исходные N1/N2/N4/N5/N6/N7 после owner continuation update; не обходить connection/runtime guard и не подменять installed файлы. 6.2–6.4/6.6b остаются открытыми.
+- [ ] Подготовить совместимый seed поддерживаемым владельцем для прежней N3 reset/reserve/resume части; Gate 6 без отдельного разрешения не выполнять.
 ## Уточнение общего подключения, 2026-10-26
 
 - [x] Упростить обе OpenSpec и G5: один technical connection/account, шесть областей; убрать обязательные multi-user ACL/grants/outsider/roles. Зафиксировать [сверку с actual G4](g4-common-connection-alignment.md), сохранив исторический source/native proof.

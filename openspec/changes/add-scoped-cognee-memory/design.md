@@ -1,5 +1,18 @@
 # Design
 
+## G5 начат: нативный storage proof и блокеры, 2026-10-26
+
+По разрешению «делай» выполнен первый прогон конечного N1–N7.
+[Единый фактический отчёт](evidence/g5-common-qualification-2026-10-26.md):
+6/6 scopes durable и fresh exact-original reads, initial enable без изменения
+HEAD/DB; три source repairs с 23/0/0 owner tests. G5 **не принят**:
+незавершённый update ошибочно читает connection receipt как runtime;
+reset требует отсутствующего seed, IDE/restore/paired proof не завершены.
+Три homes подтверждены только в pinned qualification snapshot; R6 не менялся.
+Дальнейшие dependent native операции остановлены на сохранённом checkpoint.
+Gate 6, рабочая миграция и публикация запрещены. Запрет запуска G5 в более
+ранних датированных секциях ниже относится к прежнему плановому этапу.
+
 ## Актуальная модель первого выпуска, 2026-10-26
 
 Один общий Cognee connection/account; шесть областей определяют принадлежность,
