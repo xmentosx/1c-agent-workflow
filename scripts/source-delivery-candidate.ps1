@@ -614,7 +614,8 @@ function Publish-AccumulatedDevelop {
             } elseif (-not $frozenAttempt.PSObject.Properties['replanQueueScope'] -or [string]$frozenAttempt.replanQueueScope -cne 'Frozen') {
                 throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: replacement queue scope differs; continue the active plan shown by Status.'
             }
-        } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen') {
+        } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen' -and
+            (-not $frozenAttempt.PSObject.Properties['planId'] -or [string]$frozenAttempt.planId -cne $Replan)) {
             throw 'DELIVERY_REPLAN_SCOPE_CHANGED: repeat this replacement with -ReplanQueueScope Frozen.'
         }
         if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {

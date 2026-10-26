@@ -103,3 +103,13 @@ Native regression проверяет Unicode Git -z paths, exact stdout/stderr, 
 Последний прогон: 3/0 за 5.56 s. Owned probe ограничен 10 s и завершает только
 свои процессы. Это три самостоятельных transport-инварианта, без ещё одного
 широкого gate. Нового always-on контекста и collector нет; context delta 0.
+
+## Явная замена активного Frozen-плана
+
+`PublishDevelop -Replan <активный planId>` создаёт новую Current-замену даже
+после Frozen-плана: текущая очередь выбирается заново, а прежние plan/checkpoint
+сохраняются неизменными по SHA. Повтор Replan по id прежнего родителя продолжает
+его существующую замену и не меняет Frozen на Current. Поздняя регистрация после
+создания Current-замены остаётся на следующую публикацию. Проверка выполняет
+настоящие native команды с private Git remote и fake gate/finalizer; она не
+подтверждает live 1С или публикацию рабочего репозитория.
