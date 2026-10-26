@@ -1,5 +1,16 @@
 # Proposal
 
+## Память: общее подключение, 2026-10-26
+
+Первый выпуск памяти использует один технический Cognee connection/account,
+без членства, пользовательских ACL, outsider или grants из каталога. Шесть
+областей/канонический home определяют применимость и место записи. Business
+registry/resolver, три MCP-роли и Git write permissions остаются прежними.
+Native IDs/credential/currentness принадлежат memory owner; R6 SHA не меняется.
+[Сверка совместимости с существующим G4](../add-scoped-cognee-memory/g4-common-connection-alignment.md),
+[новый G5](../add-scoped-cognee-memory/g5-qualification-plan.md) — единые основания.
+Пока изменены документы; G5, Gate6, рабочая миграция и публикация запрещены.
+
 ## R6 выполнен — публикация данных, 2026-10-25
 
 Пользователь согласовал кандидат и разрешил публикацию данных. Опубликован

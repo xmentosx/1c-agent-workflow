@@ -16,11 +16,11 @@
 
 ### Requirement: Контекст проекта и MCP-источника потребляется из реестра
 
-Память SHALL получать из одного registry-owned effective context бизнес-проект и его базовый продукт, явно заданные доработки/ограничения, происхождение и назначение выбранных MCP-источников, название/версию их конфигураций и сведения об индексации из registry.json. Source productId/projectId SHALL NOT заменять IDs текущего проекта, dataset/home или grants. Карта функциональности и отличия проекта SHALL задаваться в реестрах, SHALL NOT извлекаться автоматически из ответов MCP; memory consumer SHALL NOT дублировать business resolver.
+Память SHALL получать из одного registry-owned effective context бизнес-проект и его базовый продукт, явно заданные доработки/ограничения, происхождение и назначение выбранных MCP-источников, название/версию их конфигураций и сведения об индексации из registry.json. Source productId/projectId SHALL NOT заменять IDs текущего проекта, dataset/home. Карта функциональности и отличия проекта SHALL задаваться в реестрах, SHALL NOT извлекаться автоматически из ответов MCP; memory consumer SHALL NOT дублировать business resolver.
 
 Отсутствие generation/hash/stamp конкретного ответа Code/Graph или исходников Graph SHALL NOT быть условием отказа G3/G4/G5 либо основанием объявлять все сведения MCP непроверенными. Доработка этих серверов и обязательный новый протокол их metadata SHALL NOT требоваться. Версия registry SHALL сохраняться как версия MCP-источника с provenance; она SHALL NOT объявляться версией клиентских доработок. Достаточность evidence SHALL определяться утверждением, применимостью и подтверждёнными отличиями проекта, без обязательного побайтного attestation каждого ответа.
 
-Remember/recall/startup памяти SHALL NOT добавлять Code/Graph probes, новый manifest/verifier/cache, fetch или обязательную доступность этих MCP для всех шести областей. Изменение endpoint/версии источника SHALL NOT само менять dataset IDs/home/grants или обобщать существующие записи. Native Cognee currentness/grants, policy и budgets SHALL сохраняться независимо; этот отказ от source stamp SHALL NOT ослаблять проверку актуальной записи в Cognee.
+Remember/recall/startup памяти SHALL NOT добавлять Code/Graph probes, новый manifest/verifier/cache, fetch или обязательную доступность этих MCP для всех шести областей. Изменение endpoint/версии источника SHALL NOT само менять dataset IDs/home или обобщать существующие записи. Native Cognee currentness, policy и budgets SHALL сохраняться независимо; этот отказ от source stamp SHALL NOT ослаблять проверку актуальной записи в Cognee.
 
 #### Scenario: Доработанный проект и типовой источник
 - **WHEN** проект на PM5 КОРП имеет собственные доработки, но явно использует типовой MCP как базовый источник
@@ -50,7 +50,7 @@ Remember/recall/startup памяти SHALL NOT добавлять Code/Graph pro
 
 #### Scenario: Интерфейс квалифицирован на synthetic каталоге
 - **WHEN** reader/resolver/publisher прошли consumer contract с условными продуктами и home
-- **THEN** это доказательство интерфейса для разработки G4, а не разрешение использовать условный home для реальных общих данных; для них нужны подтверждённая карта, grants и установленный применённый контекст
+- **THEN** это доказательство интерфейса для разработки G4, а не разрешение использовать условный home для реальных общих данных; для них нужны подтверждённая карта, native IDs и установленный применённый контекст
 
 ### Requirement: Наследуемые изменения использует существующий updater
 
@@ -74,7 +74,7 @@ Cognee SHALL использовать descriptor существующего об
 
 ### Requirement: У общего продуктового знания одно каноническое место
 
-Consumer contract SHALL использовать согласованное с `add-product-project-registry/product-knowledge-applicability` необязательное `knowledgeAreas.<area>.memoryHomeProductId`: один stable product ID из того же snapshot и `availableIn` области. Валидацией и разрешением поля SHALL владеть registry resolver; memory binding SHALL NOT дублировать policy. Документальное согласование SHALL NOT считаться реализованной/квалифицированной зависимостью. Известное правило SHALL направлять общий факт в canonical product dataset с отдельным origin. Read set SHALL включать текущий продукт и homes только подтверждённых применимых областей, с grants и фильтрацией отдельных фактов; SHALL NOT обходить всех ancestors/descendants. Отсутствующий home или неоднозначные области с разными homes SHALL оставлять исходный project/task candidate, без копирования или автоматического обобщения.
+Consumer contract SHALL использовать согласованное с `add-product-project-registry/product-knowledge-applicability` необязательное `knowledgeAreas.<area>.memoryHomeProductId`: один stable product ID из того же snapshot и `availableIn` области. Валидацией и разрешением поля SHALL владеть registry resolver; memory binding SHALL NOT дублировать policy. Документальное согласование SHALL NOT считаться реализованной/квалифицированной зависимостью. Известное правило SHALL направлять общий факт в canonical product dataset с отдельным origin. Read set SHALL включать текущий продукт и homes только подтверждённых применимых областей, с точными native IDs и фильтрацией отдельных фактов; SHALL NOT обходить всех ancestors/descendants. Отсутствующий home или неоднозначные области с разными homes SHALL оставлять исходный project/task candidate, без копирования или автоматического обобщения.
 
 #### Scenario: Общее знание PM из ERP+PM
 - **WHEN** в ERP+PM подтверждён независимый от ERP факт области PM с home PM КОРП, а карта разрешает область КОРП и ПРОФ
@@ -114,7 +114,7 @@ Consumer contract SHALL использовать согласованное с `
 
 ### Requirement: Наполненный реестр до первого выпуска
 
-До первого выпуска каталога и первого выпуска памяти процесс SHALL подтвердить наполнение у registry owner по AC-36–38: выпускной набор продуктов/проектов, resolved MCP/СППР/Mantis и карта основной функциональности с явной применимостью/ограничениями/первичными ссылками. Memory acceptance SHALL ссылаться на тот же проверенный опубликованный snapshot одного Git SHA, а не на копию или minimal seed G2. Для заявленного shared-product сценария SHALL дополнительно подтверждаться home и native dataset IDs/grants/currentness; отсутствие optional home SHALL NOT разрешать общий remember и SHALL NOT требовать Cognee для registry-only выпуска. Условие SHALL дополнять приёмку перед выпуском, SHALL NOT заменять G1/G2/G3/G4/G5, блокировать начало кода G4, создавать второй каталог/updater, автоматически импортировать полную документацию или расширять always-on context/query budgets.
+До первого выпуска каталога и первого выпуска памяти процесс SHALL подтвердить наполнение у registry owner по AC-36–38: выпускной набор продуктов/проектов, resolved MCP/СППР/Mantis и карта основной функциональности с явной применимостью/ограничениями/первичными ссылками. Memory acceptance SHALL ссылаться на тот же проверенный опубликованный snapshot одного Git SHA, а не на копию или minimal seed G2. Для заявленного shared-product сценария SHALL дополнительно подтверждаться home и native dataset IDs/currentness; отсутствие optional home SHALL NOT разрешать общий remember и SHALL NOT требовать Cognee для registry-only выпуска. Условие SHALL дополнять приёмку перед выпуском, SHALL NOT заменять G1/G2/G3/G4/G5, блокировать начало кода G4, создавать второй каталог/updater, автоматически импортировать полную документацию или расширять always-on context/query budgets.
 
 #### Scenario: Native квалификация прошла, каталог остался пилотным
 - **WHEN** G1 и synthetic G2 interface квалифицированы, но выпускной перечень/настройки/карта не подтверждены
@@ -122,7 +122,7 @@ Consumer contract SHALL использовать согласованное с `
 
 #### Scenario: Реестр наполнен, память ещё не принята
 - **WHEN** registry-only путь и наполнение прошли, а native/installed memory критерии ещё открыты
-- **THEN** реестр может выпускаться независимо, память остаётся выключенной; наполнение не выдаёт grants, не включает provider и не считается memory acceptance
+- **THEN** реестр может выпускаться независимо, память остаётся выключенной; наполнение не настраивает подключение, не включает provider и не считается memory acceptance
 
 ### Requirement: Отдельная зависимость и совместимость старых установок
 

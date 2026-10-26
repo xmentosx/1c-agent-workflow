@@ -1,8 +1,18 @@
 # Tasks
 
+## Уточнение общего подключения, 2026-10-26
+
+- [x] Упростить обе OpenSpec и G5: один technical connection/account, шесть областей; убрать обязательные multi-user ACL/grants/outsider/roles. Зафиксировать [сверку с actual G4](g4-common-connection-alignment.md), сохранив исторический source/native proof.
+
+Сверка 2.1/2.2/2.4 подтверждает совместимость существующего G4 с common account;
+переоткрывать source G4 и вводить новый gate не требуется. Задачи
+1.3/1.5/1.6 хранят фактически выполненное G1 старой модели; ACL часть не является
+новым обязательным допуском. Ни source/runtime G4, ни G5, Gate6, рабочая миграция,
+серверные настройки или публикация в этом change не выполняются.
+
 ## G5: подготовлен конечный план, 2026-10-26
 
-- [x] Подготовить [единый план квалификации G5](g5-qualification-plan.md): dev-karimov/profile и local candidate pairing; шесть scopes с A/B/C/admin, три proposed homes; конечные N1–N7 и 12 frozen paired задач, критерии допуска/приёмки и выпускной остаток.
+- [x] Пересмотреть [единый план G5](g5-qualification-plan.md): одно подключение/шесть областей, без A/B/C/admin/ACL; три proposed homes, конечные N1–N7 и 12 frozen paired задач. Прежний план superseded по уточнению пользователя.
 
 Это подготовка, не запуск/приёмка G5. Открытые 6.2–6.4/6.6b ниже выполняются
 по этому плану после отдельного разрешения; новые обязательные случаи не
@@ -135,10 +145,10 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 
 ## 2. Шесть областей и штатная привязка Cognee
 
-- [x] 2.1 Добавить минимальную модель workspace/developer/workplace/scope IDs: private lazy datasets и native admin-prepared shared IDs/grants без ITL provisioning; fixtures проверяют RDP/rename/копию, инструкция администратора — одного владельца общих областей, AC-01/05/33.
-- [x] 2.2 Реализовать чистый read/write scope resolver над effective context/grants с явным `dataset_name` и canonical home/read set; доказать subset/no-default-global, отсутствие silent task default и сохранность постоянного условия, AC-02/03/18/31/32.
+- [x] 2.1 Сверить existing G4 local workspace/workplace IDs и native mapping с общим техническим account: отдельные user-local IDs сохраняются, shared IDs могут принадлежать тому же account; нет runtime требования отдельных grants/admin setup. Exact common configuration — в сверке G4, native приёмка остаётся G5 (AC-01/05/33).
+- [x] 2.2 Согласовать existing scope resolver/provider validation с общим account: все entries имеют фиксированное permissions=[read,write] как technical capability, не права сотрудников. Сохранить context/cycle/subset/explicit dataset_name/home/currentness. Existing source contract применим; runtime не менялся, native доказательство — G5 (AC-02/03/18/31/32).
 - [x] 2.3 Подключить context-bound MCP frontend через существующего client owner с native-shaped remember/recall/status; проверить минимальную schema и отсутствие provider patches/SQL/new coordinator, AC-06/24.
-- [x] 2.4 После native допуска 1.3 подключить exact-ID shared read/write через штатный SDK/REST при недостаточном MCP name lookup; два пользователя используют один admin-prepared ID без private дублей/admin key/unscoped fallback, AC-04/33.
+- [x] 2.4 Сверить exact-ID shared read/write existing G4: один обычный технический account/два процесса/один dataset ID, без обязательного другого owner, admin или выдачи grants людям. Owner collision/reconciliation и отсутствие дублей прежние; native часть AC-04/33 остаётся 6.2/G5.
 - [x] 2.5 Добавить note envelope и qualified native original/current-status lookup, precise correction/retirement; доказать старый chunk без заголовка и без correction в semantic hits, source preservation и отсутствие своего versioning store, AC-09/19/20/34.
 - [x] 2.6 Добавить bounded native write/status, durable/indexing/rejection/unconfirmed state и scoped receipts; проверить timeout после принятия и restart без слепого duplicate save, AC-07/08.
 
@@ -172,12 +182,12 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 ## 6. Конечная приёмка и решение о rollout
 
 - [x] 6.1 Выполнить только непосредственно затронутые owner suites по local-quality-gate, сохранив tracked state; evidence с exact inputs закрывает соответствующие fixtures AC, не объявляя live успех.
-- [ ] 6.2 После полного G1/D10 выполнить native smoke всех scopes: write/status → fresh reader, два обычных пользователя/один shared ID, collision и old fragment/current status в допущенном store; AC-01–09/27/33/34 не закрываются tools/list или одной фиксацией profile 1.3.
+- [ ] 6.2 После применимого G1 выполнить N1/N2/N6 через common connection: native smoke всех scopes, write/status → fresh reader, два процесса/один shared ID, context collision, stale fragment/current original. Пользовательские ACL/outsider/grants не входят в AC-01–09/27/33/34; tools/list не native proof.
 - [ ] 6.3 В G5 пройти legacy update → explicit association → separate memory opt-in/initial cycle без reset, затем new-chat/reset постоянного условия, ERP+PM → home КОРП → допустимый ПРОФ, update/conflict/offline/reload/disable/recovery. Original task, сохранность old notes и AC-10–23/28/30–35/39–42 доказаны; неподтверждённые Windows/terminal варианты названы.
 - [ ] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
 - [x] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
 - [x] 6.6a Подтвердить единое обязательное наполнение у registry owner по 1.9–1.11/5.7 и AC-36–38; указать опубликованный SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` в memory acceptance. [R6 / registry dependency AC-44 закрыта](../add-product-project-registry/evidence/r6-publication-2026-10-25.md); seed не используется, optional homes отложены осознанно, второго каталога/ingestion нет.
-- [ ] 6.6b В G5 для объявленных shared-product сценариев проверить home/applicability и отдельные native IDs/grants/currentness. Это сохранённая native часть прежней 6.6/AC-44, не новая проверка; в registry-only выпуске shared remember не разрешён, G4/G5 не начаты.
+- [ ] 6.6b В G5/N4 проверить подтверждённые home/applicability и native IDs/currentness через общее подключение. Сохранённая native часть AC-44 не требует прав пользователей; optional homes не угадываются, published R6 без homes остаётся принят.
 
 Изначальное уточнение разрешало только OpenSpec. Последующее прямое поручение одобрило source G3 реестра; его setup/startup/binding/recovery и fixture-only compatibility path реализуются у registry owner. G4, наполнение и миграция действующих установленных проектов не разрешены. Registry-only выпуск также требует наполнения AC-36–38, но не memory readiness; memory opt-in остаётся отдельным и off по умолчанию.
 
