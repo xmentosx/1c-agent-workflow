@@ -277,6 +277,26 @@ function Get-WorkflowContinuationProof {
     }
 }
 
+function Test-WorkflowForkTransitionArtifact {
+    param([object]$Qualification,[string]$FullPath)
+    try {
+        if(-not $Qualification.PSObject.Properties['fork'] -or -not $Qualification.fork -or -not $Qualification.fork.PSObject.Properties['transitionProof']) {return $true}
+        $ref=$Qualification.fork.transitionProof
+        return $ref.sha256 -cmatch '^[a-f0-9]{64}$' -and $ref.path -ceq ('fork-transitions-'+$ref.sha256+'.json') -and
+            (Get-FileHash -LiteralPath (Join-Path (Split-Path -Parent $FullPath) $ref.path) -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $ref.sha256
+    } catch {return $false}
+}
+
+function Copy-WorkflowForkTransitionArtifact {
+    param([string]$FullPath,[string]$Destination)
+    $q=Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8|ConvertFrom-Json
+    if(-not (Test-WorkflowForkTransitionArtifact $q $FullPath)) {throw 'FORK_TRANSITION_ARTIFACT_CHANGED'}
+    if($q.PSObject.Properties['fork'] -and $q.fork -and $q.fork.PSObject.Properties['transitionProof']) {
+        $name=[string]$q.fork.transitionProof.path
+        Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $FullPath) $name) -Destination (Join-Path $Destination $name) -Force
+    }
+}
+
 function Test-WorkflowCurrentStaticProof {
     param([object]$Proof, [string]$Commit, [string]$Tree)
     try {
@@ -299,6 +319,7 @@ function Test-WorkflowCurrentStaticProof {
         foreach ($name in @('pester','git-diff-check','static-tracked-state','ai-rules-compatibility')) {
             if ($name -notin $passed) { return $false }
         }
+        if(-not (Test-WorkflowForkTransitionArtifact $q $Proof.path)) {return $false}
         # This proves a completed static gate for this candidate, not permission
         # to reuse its Pester pack. Nonreusable/unknown shards still run normally.
         return $true

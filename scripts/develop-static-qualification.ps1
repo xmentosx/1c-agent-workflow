@@ -26,6 +26,7 @@ function Test-DevelopStaticQualificationSource {
     if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $PesterPath -PathType Leaf)) { return $false }
     try {
         $qualification = Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if(-not (Test-WorkflowForkTransitionArtifact $qualification $FullPath)) {return $false}
         if ([int]$qualification.schemaVersion -notin @(1,2,3,4) -or -not (Test-WorkflowFullQualificationRecord $qualification) -or
             -not [bool]$qualification.repository.worktreeClean -or
             [string]$qualification.repository.tree -ne $Tree) { return $false }
@@ -58,6 +59,7 @@ function Save-DevelopStaticQualification {
     try {
         Copy-Item -LiteralPath $fullPath -Destination $temporaryFull -Force
         Copy-Item -LiteralPath $pesterPath -Destination $temporaryPester -Force
+        Copy-WorkflowForkTransitionArtifact -FullPath $fullPath -Destination $target
         $manifest = [ordered]@{
             schemaVersion = 1
             kind = "itl-develop-static-qualification-cache"
@@ -104,6 +106,7 @@ function Restore-DevelopStaticQualification {
         try {
             Copy-Item -LiteralPath $fullPath -Destination $temporaryFull -Force
             Copy-Item -LiteralPath $pesterPath -Destination $temporaryPester -Force
+            Copy-WorkflowForkTransitionArtifact -FullPath $fullPath -Destination $QualificationRoot
             Move-Item -LiteralPath $temporaryFull -Destination (Join-Path $QualificationRoot "full.json") -Force
             Move-Item -LiteralPath $temporaryPester -Destination (Join-Path $QualificationRoot "pester.xml") -Force
         } finally {
@@ -146,6 +149,7 @@ function Save-DevelopE2ECurrentStaticProof {
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     Copy-Item -LiteralPath $QualificationPath -Destination (Join-Path $root 'full.json') -Force
     Copy-Item -LiteralPath $junit -Destination (Join-Path $root 'pester.xml') -Force
+    Copy-WorkflowForkTransitionArtifact -FullPath $QualificationPath -Destination $root
     $proof.path = Join-Path $root 'full.json'; $proof.junitPath = Join-Path $root 'pester.xml'
     if (-not (Test-WorkflowCurrentStaticProof -Proof $proof -Commit $Commit -Tree $Tree)) { return $null }
     return $proof
@@ -178,6 +182,13 @@ function Write-WorkflowQualification {
             upstreamRef = [string]$aiRulesRelease.upstreamRef; upstreamCommit = [string]$aiRulesRelease.upstreamCommit
             qualificationPath = $forkQualificationPath; qualificationSha256 = $forkQualificationSha256
         }
+    }
+    $transitionPath=Join-Path $qualificationRoot 'fork-transitions.json'
+    if(-not $SourceQualification -and (Test-Path -LiteralPath $transitionPath -PathType Leaf)) {
+        $transitionSha=(Get-FileHash -LiteralPath $transitionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $transitionName='fork-transitions-'+$transitionSha+'.json'
+        Copy-Item -LiteralPath $transitionPath -Destination (Join-Path $qualificationRoot $transitionName) -Force
+        $forkRecord['transitionProof']=[ordered]@{path=$transitionName;sha256=$transitionSha}
     }
     $pesterInputs = if ($SourceQualification) { $SourceQualification.pesterInputs } else { $pesterShardSummary.inputIdentity }
     if (-not (Test-PesterInputIdentityRecord $pesterInputs)) { throw 'Passed Full qualification requires the actual scheduler input manifest.' }

@@ -3,10 +3,15 @@ param(
     [string]$AiRulesSource = "https://github.com/xmentosx/itl_ai_rules_1c.git",
     [string]$AiRulesRef = "",
     [string]$WorkingDirectory = "",
-    [switch]$KeepArtifacts
+    [switch]$KeepArtifacts,
+    [string]$TransitionProofPath = '',
+    [string]$E2EProjectRoot = '',
+    [string]$AgentTarget = '',
+    [string]$FreshProjectsRoot = 'C:\itlj'
 )
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'develop-e2e-qualification.ps1')
 $ErrorActionPreference = "Stop"
 $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi", "zcode", "mimocode")
 
@@ -171,6 +176,12 @@ try {
     $workflowHelper = Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     if (-not (Test-Path -LiteralPath $workflowHelper -PathType Leaf)) { throw "Workflow helper was not found: $workflowHelper" }
     $promptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
+    $transitionRows=@(foreach($request in @(Get-AiRulesTransitionRequests -WorkflowRoot (Split-Path -Parent $PSScriptRoot) -RulesRoot $rulesRoot -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget -FreshProjectsRoot $FreshProjectsRoot)) {
+        $oldRoot=Join-Path $workRoot ('from-'+$request.bridge.fromCommit)
+        [void](Invoke-RepositoryGit $rulesRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$rulesRoot,$oldRoot))
+        [void](Invoke-RepositoryGit $oldRoot @('checkout','--quiet','--detach',$request.bridge.fromCommit))
+        [pscustomobject]@{bridge=$request.bridge;requiredClients=$request.clients;oldRoot=$oldRoot;clients=@()}
+    })
 
     foreach ($client in $clients) {
         $projectRoot = Join-Path $workRoot "project-$client"
@@ -208,6 +219,10 @@ try {
             $kilo = Get-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             if ((@($kilo.instructions) -join ',') -ne 'docs/custom.md' -or [string]$kilo.permission.bash -ne 'ask') { throw "Kilo shared config preservation failed" }
         }
+        foreach($transition in @($transitionRows|Where-Object {$client -in $_.requiredClients})) {
+            $transitionProject=Join-Path $workRoot ('transition-'+$transition.bridge.fromCommit+'-'+$client)
+            $transition.clients+=Invoke-AiRulesTransitionCheck -RulesRoot $rulesRoot -OldRoot $transition.oldRoot -ProjectRoot $transitionProject -CanonicalRoot $projectRoot -Client $client -Bridge $transition.bridge
+        }
         $beforeUpdate = Get-ProjectFileDigest -Root $projectRoot
         & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript update -ProjectRoot $projectRoot -Source $rulesRoot -McpMode delegated -NonInteractive -AssumeYes
         if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c update failed for $client with exit code $LASTEXITCODE" }
@@ -217,6 +232,16 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c doctor failed for $client with exit code $LASTEXITCODE" }
     }
     Assert-CodexPromptSnapshotUnchanged -Before $promptBefore -After (Get-CodexPromptSnapshot -RulesRoot $rulesRoot)
+    if($TransitionProofPath) {
+        $receipt=[ordered]@{schemaVersion=1;kind='itl-fork-transition-proof';status='passed';commit=$actualCommit;
+            tree=(Invoke-RepositoryGit $rulesRoot @('rev-parse','HEAD^{tree}')).stdout.Trim();
+            policySha256=Get-DevelopE2EInputFileSha256 (Join-Path $PSScriptRoot 'ai-rules-native-inputs.ps1') 'scripts/ai-rules-native-inputs.ps1';
+            transitions=@($transitionRows|ForEach-Object {[ordered]@{bridge=$_.bridge;clients=@($_.clients)}})}
+        $target=[IO.Path]::GetFullPath($TransitionProofPath);[void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+        $temporary=$target+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
+        [IO.File]::WriteAllText($temporary,($receipt|ConvertTo-Json -Depth 16),[Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $target -Force
+    }
     Write-Host "ai_rules_1c compatibility passed for all twelve supported clients. Protocol 1.1; McpMode delegated."
 } finally {
     if ($createdWorkRoot -and (Test-Path -LiteralPath $workRoot -PathType Container)) {

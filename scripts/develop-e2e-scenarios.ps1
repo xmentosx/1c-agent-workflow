@@ -175,7 +175,26 @@ function Get-DevelopScenarioCoverage {
 }
 
 function Get-DevelopScenarioSourceProjection {
-    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly)
+    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
+    if($Path -ceq 'scripts/ai-rules-native-inputs.ps1') {return 'source-qualification-policy-only'}
+    if($Path -ceq 'templates/dependency-lock.json' -and $ForkBridge) {
+        if($ProbeOnly) {return $true}
+        $lock=$Text.TrimStart([char]0xfeff)|ConvertFrom-Json
+        $expected=if($Commit){$ForkBridge.fromCommit}else{$ForkBridge.toCommit}
+        $rules=$lock.dependencies.aiRules1c
+        if($rules.commit -cne $expected -or $rules.ref -cnotmatch '^itl-.+-r([0-9]+)$' -or
+            [int]$rules.downstreamRevision -ne [int]$Matches[1] -or $rules.compatibilityStatus -cnotin @('pending','passed')) {return $null}
+        $tag='refs/tags/'+[string]$rules.ref
+        if((Invoke-RepositoryGit $ForkBridge.sourceRoot @('cat-file','-t',$tag)).stdout.Trim() -cne 'tag' -or
+            (Invoke-RepositoryGit $ForkBridge.sourceRoot @('rev-parse',($tag+'^{commit}'))).stdout.Trim() -cne $expected) {return $null}
+        foreach($name in @('ref','commit','downstreamRevision','compatibilityStatus','compatibilityCheckedAt')) {
+            if($lock.dependencies.aiRules1c.PSObject.Properties[$name]) {$lock.dependencies.aiRules1c.$name='current-qualified-guidance-transition'}
+        }
+        if(Test-DevelopScenarioBrokerIndependent $Journey $Scenario) {
+            foreach($name in @('version','releaseTag','url','sha256')) {$lock.dependencies.itlOndemandMcp.PSObject.Properties.Remove($name)}
+        }
+        return Get-DevelopE2ECanonicalJsonSha256 $lock
+    }
     if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1') {
         if($ProbeOnly) {return $true}
         return Get-DevelopBrokerCleanupSourceProjection $Text
@@ -295,6 +314,12 @@ function Test-DevelopScenarioEquivalentInput {
             Get-DevelopScenarioWorkloadHash $contract
         })
         if($contracts[0] -cne $contracts[1]) {return $false}
+        $forkBridge=$null
+        if(Test-DevelopForkIdentityChanged $old $new) {
+            $cache=if($null -ne $LookupContext){$LookupContext.forkBridges}else{$null}
+            $forkBridge=Get-DevelopForkNativeBridge $Recorded $Current -Cache $cache
+            if(-not $forkBridge) {return $false}
+        }
         # Authenticate the original nested positive fingerprint before changing
         # any client or source projection. Do not drop the positive environment.
         if($old.inventory.external.PSObject.Properties['positiveStandInputIdentity']) {
@@ -302,6 +327,10 @@ function Test-DevelopScenarioEquivalentInput {
             if((Get-DevelopE2ECanonicalJsonSha256 $new.positiveInputIdentity.inventory) -cne $new.positiveInputIdentity.fingerprint -or
                 $new.positiveInputIdentity.fingerprint -cne $new.inventory.external.positiveStandInputIdentity) {return $false}
             $positive=$new.positiveInputIdentity.inventory.external | ConvertTo-Json -Depth 24 | ConvertFrom-Json
+            if($forkBridge) {
+                if($positive.rulesCommit -cne $new.inventory.external.rulesCommit -or $positive.rulesTree -cne $new.inventory.external.rulesTree) {return $false}
+                $positive.rulesCommit=$old.inventory.external.rulesCommit;$positive.rulesTree=$old.inventory.external.rulesTree
+            }
             $positive.artifacts=$old.inventory.external.artifacts
             $oldClient=$old.inventory.external.client | ConvertFrom-Json
             $positiveClient=$positive.client | ConvertFrom-Json
@@ -313,6 +342,11 @@ function Test-DevelopScenarioEquivalentInput {
             $new.inventory.external.PSObject.Properties.Remove('positiveStandInputIdentity')
         }
         foreach($value in @($old,$new)) {
+            if($forkBridge) {
+                $value.inventory.external.rulesCommit='native-contract:'+$forkBridge.nativeSha256
+                $value.inventory.external.rulesTree='native-contract:'+$forkBridge.nativeSha256
+            }
+            $value.inventory.inputs=@($value.inventory.inputs|Where-Object path -cne 'scripts/ai-rules-native-inputs.ps1')
             if($value.inventory.external.PSObject.Properties['artifacts']) {
                 $value.inventory.external.artifacts=ConvertTo-DevelopScenarioArtifactIdentity $value.inventory.external.artifacts $value.inventory.journey $Scenario
             }
@@ -346,7 +380,7 @@ function Test-DevelopScenarioEquivalentInput {
         # every eligible path still authenticates both sources below.
         foreach($entry in $new.inventory.inputs) {
             if($before.ContainsKey($entry.path) -and $before[$entry.path].sha256 -cne $entry.sha256 -and
-                -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $new.inventory.journey -Scenario $Scenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly)) {return $false}
+                -not (Get-DevelopScenarioSourceProjection -Path $entry.path -Journey $new.inventory.journey -Scenario $Scenario -Catalog $Catalog -NoProductContext ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ProbeOnly -ForkBridge $forkBridge)) {return $false}
         }
         foreach($entry in @($new.inventory.inputs | Sort-Object {if($_.path -eq 'scripts/invoke-develop-e2e.ps1'){0}else{1}})) {
             if(-not $before.ContainsKey($entry.path)) {return $false}
@@ -382,8 +416,8 @@ function Test-DevelopScenarioEquivalentInput {
                 }
                 if($null -eq $changed) {return $false}
             }
-            $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit
-            $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot
+            $x=Get-DevelopScenarioSourceProjection $entry.path $a $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit -ForkBridge $forkBridge
+            $y=Get-DevelopScenarioSourceProjection $entry.path $b $new.inventory.journey $Scenario $Catalog ([bool]$noProduct) -RepositoryRoot $RepositoryRoot -ForkBridge $forkBridge
             if($null -eq $x -or $x -cne $y) {return $false}
             $prior.sha256=$entry.sha256
         }
@@ -398,7 +432,7 @@ function Get-DevelopScenarioReusePlan {
     if($InputIdentity) {$ProjectRoot=[string]$InputIdentity.inventory.external.root}
     $descriptorPath=if($ProjectRoot) {Join-Path $ProjectRoot '.agent-1c/release-e2e.json'}else{''}
     $rejectionApplicable=$true
-    $lookupContext=@{changedFunctions=@{}}
+    $lookupContext=@{changedFunctions=@{};forkBridges=@{}}
     $cacheRoot=Join-Path (Get-RepositoryCommonGitDirectory $RepositoryRoot) 'itl/develop-e2e-qualifications'
     # Enumerate once per invocation, without descending into immutable raw
     # evidence/references. Every consumer still rechecks manifest/report SHA.

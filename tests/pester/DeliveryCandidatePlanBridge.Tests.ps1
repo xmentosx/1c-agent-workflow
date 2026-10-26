@@ -53,7 +53,7 @@ It 'delegates only remote component inspection from a clean pinned candidate (<C
 It 'uses the pinned candidate calculator through the native legacy <LegacyPart> Plan shim without changing authority or saved proof' -TestCases @(@{LegacyPart='calculator'},@{LegacyPart='component-inspection'}) {
         param($LegacyPart)
         $f=New-IncrementalPlanFixture; $script:Root=$f.root
-        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','delivery-native-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
+        $modules=@('quality-contracts.ps1','develop-e2e-qualification.ps1','ai-rules-native-inputs.ps1','develop-journey-inputs.ps1','develop-e2e-scenarios.ps1','stand-env-identity.ps1','source-delivery-plan.ps1','delivery-native-plan.ps1','source-e2e-artifact-discovery.ps1','git-path-list.ps1')
         foreach($name in $modules) {Copy-Item -LiteralPath (Join-Path $RepoRoot ('scripts/'+$name)) -Destination (Join-Path $f.root ('scripts/'+$name)) -Force}
         $f.catalog.contracts[0].paths+=@($modules|ForEach-Object{'scripts/'+$_})
         [IO.File]::WriteAllText((Join-Path $f.root 'tests/quality-contracts.json'),($f.catalog|ConvertTo-Json -Depth 16))

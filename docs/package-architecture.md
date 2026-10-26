@@ -54,6 +54,16 @@ before and after inspection. Older planners use the advisory preview boundary
 for this calculation too. This adds no coordinator,
 installed migration, runtime owner or permission to execute a delivery stage.
 
+The user approved scoped fork/native proof on 2026-10-26. The existing Develop
+qualification owner retains exact fork provenance while comparing authenticated
+native inputs separately. Its shared stateless fork contract admits only audited
+instruction-body/static-checker deltas; the current Full owner binds exact fork
+Full and old-to-new installation receipts. The same comparator serves planning,
+execution and failure matching. Existing immutable reports, static cache and
+continuation references carry the evidence; no new registry, runtime owner,
+installed migration or publication authority is introduced. Missing proof falls
+back to native qualification through the existing gate.
+
 The user approved bounded frozen-scope recovery on 2026-10-16. Explicit
 `PublishDevelop -Replan <originalPlanId> -ReplanQueueScope Frozen` transfers the
 original checkpoint to a compatible published develop supervisor only after
