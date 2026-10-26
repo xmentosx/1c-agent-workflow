@@ -4921,14 +4921,15 @@ function Read-InitWizardFileInfoBaseAnswers {
 }
 
 function Read-InitWizardAnswersOnce {
-    $agentTarget = $(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() })
+    $agentTargets = @($(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() }))
     $platformPath = Read-InitPlatformPath
     . Import-ItlProductProjectSetup
     $baseConfigurationVersion = Read-ItlProductProjectInitFamily
     $infoBaseKind = Read-InitInfoBaseKind
 
     $answers = [ordered]@{
-        agentTarget = $agentTarget
+        agentTarget = $agentTargets[0]
+        agentTargets = $agentTargets
         agentModel = $AgentModel.Trim().ToLowerInvariant()
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
@@ -4981,7 +4982,7 @@ function Write-InitWizardAnswersSummary {
     $answers = [pscustomobject]$Answers
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
-    Write-Host ("Agent client: " + $answers.agentTarget)
+    Write-Host ("Agent clients: " + (@(Get-AnswerValue -Answers $answers -Names @("agentTargets", "agentTarget")) -join ", "))
     Write-Host ("Agent model profile: " + $(if ($answers.agentModel) { $answers.agentModel } else { "auto" }))
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
     Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
@@ -5052,8 +5053,13 @@ function Normalize-InitAnswers {
         $dependencyModeValue = $(if ($useLatestDependencies) { "fresh" } else { "locked" })
     }
 
+    $initialClient = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
+    $clients = @(ConvertTo-AgentToolList -Value (Get-AnswerValue -Answers $Answers -Names @("agentTargets", "AGENT_TARGETS") -Default @($initialClient)))
+    if (-not $initialClient -and $clients.Count -gt 0) { $initialClient = $clients[0] }
+
     return [pscustomobject]@{
-        agentTarget = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
+        agentTarget = $initialClient
+        agentTargets = $clients
         agentModel = ([string](Get-AnswerValue -Answers $Answers -Names @("agentModel", "AGENT_MODEL") -Default $AgentModel)).Trim().ToLowerInvariant()
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
         baseConfigurationVersion = $baseConfigurationVersion
@@ -5086,6 +5092,10 @@ function Assert-InitAnswers {
     $agentTargetContract = "agentTarget(" + ((Get-SupportedAgentTargets) -join "|") + ")"
     if (-not $Answers.agentTarget) { $missing += $agentTargetContract }
     if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += $agentTargetContract }
+    $clients = @(Get-AnswerValue -Answers $Answers -Names @("agentTargets", "agentTarget"))
+    if ($clients.Count -eq 0 -or @($clients | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count -gt 0 -or $Answers.agentTarget -notin $clients) {
+        $missing += "agentTargets(non-empty supported client set containing agentTarget)"
+    }
     if ($Answers.agentModel -and $Answers.agentModel -notin @("opus5", "sonnet5", "fable5", "gpt56")) { $missing += "agentModel(opus5|sonnet5|fable5|gpt56|empty)" }
     if (-not $Answers.platformPath) { $missing += "platformPath" }
     if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
@@ -5130,7 +5140,10 @@ function Save-InitAnswers {
     }
 
     Set-DotEnvValues -Values $values
-    Set-ProjectAiRulesClient -Client $Answers.agentTarget
+    Set-ProjectAiRulesClients -Clients @(Get-AnswerValue -Answers $Answers -Names @("agentTargets", "agentTarget"))
+    # Keep the selected initial client for this invocation, including a manual
+    # terminal where executor detection has no client marker.
+    $script:AgentTarget = $Answers.agentTarget
     Set-ProjectBaseConfigurationVersion -Version $Answers.baseConfigurationVersion
     Set-DependencyLockMode -Mode $Answers.dependencyMode
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
@@ -5480,24 +5493,32 @@ function Read-InitAgentTarget {
     if ($DefaultClient -notin (Get-SupportedAgentTargets)) {
         $DefaultClient = "kilocode"
     }
-    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6")
+    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQsNCz0LXQvdGC0YHQutC40LUg0LrQu9C40LXQvdGC0Ysg0LTQu9GPINC/0YDQvtC10LrRgtCwOg==")
     $supported = @(Get-InitAgentTargetChoices -DefaultClient $DefaultClient)
     for ($index = 0; $index -lt $supported.Count; $index++) {
-        $label = if ($supported[$index] -eq $DefaultClient) { "$DefaultClient (recommended)" } else { $supported[$index] }
+        $label = if ($supported[$index] -eq $DefaultClient) { "[x] $DefaultClient (recommended)" } else { "[ ] $($supported[$index])" }
         Write-Host ("{0}. {1}" -f ($index + 1), $label)
     }
+    Write-Host (Get-Agent1cUtf8Text "RW50ZXIg4oCUINGC0L7Qu9GM0LrQviDQvtGC0LzQtdGH0LXQvdC90YvQuSDQutC70LjQtdC90YIuINCn0YLQvtCx0Ysg0LTQvtCx0LDQstC40YLRjCDQtNGA0YPQs9C40LUsINCy0LLQtdC00LjRgtC1INC90L7QvNC10YDQsCDQuNC70Lgg0LjQvNC10L3QsCDRh9C10YDQtdC3INC30LDQv9GP0YLRg9GOINC40LvQuCDQv9GA0L7QsdC10Lsu")
     while ($true) {
         $answer = (Read-Host ((Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==") + " [$DefaultClient]")).Trim().ToLowerInvariant()
         if (-not $answer) {
             return $DefaultClient
         }
-        $number = 0
-        if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
-            return $supported[$number - 1]
+        $selected = @($DefaultClient)
+        $invalid = $false
+        foreach ($token in @($answer -split '[,\s]+' | Where-Object { $_ })) {
+            $number = 0
+            $client = $token
+            if ([int]::TryParse($token, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
+                $client = $supported[$number - 1]
+            }
+            if ($client -eq "kilo") { $client = "kilocode" }
+            if ($client -notin $supported) { $invalid = $true; break }
+            if ($client -notin $selected) { $selected += $client }
         }
-        if ($answer -eq "kilo") { return "kilocode" }
-        if ($supported -contains $answer) { return $answer }
-        Write-Host ((Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDQuNC3Og==") + " $($supported -join ', ').")
+        if (-not $invalid -and $answer -match '[^,\s]') { return $selected }
+        Write-Host ((Get-Agent1cUtf8Text "0J3QtdCy0LXRgNC90YvQuSDQstGL0LHQvtGALiDQktCy0LXQtNC40YLQtSDQvdC+0LzQtdGA0LAg0LjQu9C4INC40LzQtdC90LAg0LjQtyDRgdC/0LjRgdC60LA6IA==") + "$($supported -join ', ').")
     }
 }
 
