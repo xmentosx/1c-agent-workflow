@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "distributionRepository": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
-  "distributionCommit": "6c88c5a93d01a9290091a84641367d55c24606f3",
-  "distributionBase": "4fae2d6",
+  "distributionCommit": "f6eae9bf2d5a35cce0e94536c0e59b7b7a579486",
+  "distributionBase": "4626e6fc7b28054589e320894ce6aa617299a566",
   "package": "hosts/dev-karimov-new/code-package.json",
   "packageId": "code-xsd-v2",
   "image": "comol/1c_code_metadata_mcp@sha256:303011dbcf8815542914fc61c5ba369c61dea4aeac2e8d4ee7e304f089a99536",
@@ -65,6 +65,23 @@
     },
     "exactSourceRebaseAndChangedSourceRefusal": "passed"
   },
-  "deliveryStatus": "local candidate; publication and installation not performed",
-  "acceptanceLimit": "Generated nested structure only. Working MCP endpoints and their published indices remain unchanged; complete normative enum/type coverage is not claimed."
+  "deliveryStatus": "current-baseline local candidate; publication permission pending; installation and reindex not performed",
+  "acceptanceLimit": "Generated nested structure only. Working MCP endpoints and their published indices remain unchanged; complete normative enum/type coverage is not claimed.",
+  "currentBaselineQualification": {
+    "completedUtc": "2026-10-26T06:01:01.908323+00:00",
+    "nativeProofSha256": "b69def04e33171d1c97c4b204bc2d5710a87c74ada65c665840621c867d1ca1a",
+    "distributionEvidence": "hosts/dev-karimov-new/evidence/20261026-xsd-native-current.json",
+    "hostOwnerTests": {
+      "run": 266,
+      "failed": 0,
+      "skipped": 35
+    },
+    "allPreviousBundleAssetsRetained": 113,
+    "sameFourActiveCodeImagesAndRuntimeHashesConfirmed": true,
+    "existingContainersUnchanged": true,
+    "publication": false,
+    "installation": false,
+    "reindex": false,
+    "deployedAcceptance": false
+  }
 }
