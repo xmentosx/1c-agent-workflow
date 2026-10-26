@@ -1,5 +1,18 @@
 # Tasks
 
+## G5: конечный контур завершён, 2026-10-27
+
+[Итоговая матрица и фактические границы](evidence/g5-codex-completion-2026-10-27.md):
+B03/B09/B10 PASS в Codex по решению пользователя; Cursor для продолжения не
+использовался. Установленная PM5 обновлена до source6828/r49, N5 required-gap
+и active cancel → pinned resume → owned restore → explicit enable → fresh
+original/recall завершены. N1–N7 закрыты в описанном контуре, новые случаи не
+добавлялись. Старые native/paired/failed evidence сохранены отдельно.
+Преимущество перед файлами и экономия не доказаны; смешанные model runs не
+образуют новый paired score. Gate6/G6, рабочая миграция и публикация не разрешены.
+Более ранние текущие статусы ниже исторические; регистрацию подтверждает
+только обычный RegisterChange/Status, не новый tracked checkbox.
+
 ## G5 B03/B09–B10: ограниченное продолжение, 2026-10-26
 
 [Единый memory report](evidence/g5-common-continuation-2026-10-26.md) фиксирует подготовленный repair оснастки B03 и
@@ -250,9 +263,9 @@ Registry checkpoint G3 и план G3.0–7 подготовлены в связ
 ## 6. Конечная приёмка и решение о rollout
 
 - [x] 6.1 Выполнить только непосредственно затронутые owner suites по local-quality-gate, сохранив tracked state; evidence с exact inputs закрывает соответствующие fixtures AC, не объявляя live успех.
-- [ ] 6.2 После применимого G1 выполнить N1/N2/N6 через common connection: native smoke всех scopes, write/status → fresh reader, два процесса/один shared ID, context collision, stale fragment/current original. Пользовательские ACL/outsider/grants не входят в AC-01–09/27/33/34; tools/list не native proof.
-- [ ] 6.3 В G5 пройти legacy update → explicit association → separate memory opt-in/initial cycle без reset, затем new-chat/reset постоянного условия, ERP+PM → home КОРП → допустимый ПРОФ, update/conflict/offline/reload/disable/recovery. Original task, сохранность old notes и AC-10–23/28/30–35/39–42 доказаны; неподтверждённые Windows/terminal варианты названы.
-- [ ] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
+- [x] 6.2 После применимого G1 выполнить N1/N2/N6 через common connection: native smoke всех scopes, write/status → fresh reader, два процесса/один shared ID, context collision, stale fragment/current original. Пользовательские ACL/outsider/grants не входят в AC-01–09/27/33/34; tools/list не native proof.
+- [x] 6.3 В G5 пройти legacy update → explicit association → separate memory opt-in/initial cycle без reset, затем new-chat/reset постоянного условия, ERP+PM → home КОРП → допустимый ПРОФ, update/conflict/offline/reload/disable/recovery. Original task, сохранность old notes и AC-10–23/28/30–35/39–42 доказаны; неподтверждённые Windows/terminal варианты названы.
+- [x] 6.4 В G5 сопоставить files-only и Cognee на одинаковых задачах: ingestion/extraction/embedding/graph, source/status calls, retrieval, agent inputs/output/cached input при метрике и удержание карточек, CPU time/peak RAM/wall time/качество/rework. Сохранить measured/estimated/unknown и источники без повторного счёта; не требовать точной внутренней детализации, не заявлять полную денежную экономию при существенных unknown. AC-24–26/29/36/37; без подтверждённой пользы расширение rollout только при явном trade-off.
 - [x] 6.5 Сверить все обязательные AC и фактические task evidence, подготовить coherent source commit/RegisterChange только в отдельно разрешённом apply; проверить Status, отделив локальную регистрацию от публикации/развёртывания.
 - [x] 6.6a Подтвердить единое обязательное наполнение у registry owner по 1.9–1.11/5.7 и AC-36–38; указать опубликованный SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73` в memory acceptance. [R6 / registry dependency AC-44 закрыта](../add-product-project-registry/evidence/r6-publication-2026-10-25.md); seed не используется, optional homes отложены осознанно, второго каталога/ingestion нет.
 - [x] 6.6b G5/N4: [native follow-up](evidence/g5-common-continuation-2026-10-26.md) подтверждает canonical home, exact IDs/currentness, ERP→КОРП→допустимый ПРОФ, exclusion CORP-only/ERP-dependent и pending missing-home через common connection. Только три qualification homes; optional homes не угаданы и published R6 не изменён. Это не вся приёмка G5.

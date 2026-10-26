@@ -1,5 +1,23 @@
 # Design
 
+## G5: конечный результат, 2026-10-27
+
+[Единый итог](evidence/g5-codex-completion-2026-10-27.md) закрывает N1–N7 в
+согласованном контуре. По решению пользователя B03/B09/B10 и оставшийся N5
+проверены native Codex CLI; прежний Cursor proof сохранён, новых Cursor действий
+нет. Текущий source6828/r49 установлен штатно; matching memory policy bytes
+не изменились, использован existing qualification-only dependency owner.
+Active cancel/resume/owned restore и fresh current-original/recall подтверждены;
+новых writer/state/recovery owners, runtime patches и случаев нет.
+
+Исходные paired результаты сохранены, преимущество над файлами не доказано.
+Смена модели не превращает три продолжения в новый парный score или экономию.
+G5 completion не разрешает Gate6/G6, рабочую миграцию, выпускную qualification
+вне описанного контура либо публикацию workflow/fork/homes. Расширение rollout
+по-прежнему требует доказанной пользы или отдельного принятого trade-off.
+R6/шесть областей/common connection/canonical home/ai_rules_1c прежние;
+более ранние текущие статусы ниже исторические. Регистрация — отдельный ledger.
+
 ## G5 B03/B09–B10: ограниченное продолжение, 2026-10-26
 
 [Единый memory report](evidence/g5-common-continuation-2026-10-26.md) фиксирует подготовленный repair оснастки B03 и
