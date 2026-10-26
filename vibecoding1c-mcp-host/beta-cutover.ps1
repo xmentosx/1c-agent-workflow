@@ -490,7 +490,8 @@ function Get-BetaCutoverContext {
         $sourceCompose = Join-Path (Get-DistributionRoot -Config $Config) ([string]$betaServer.composePath)
         [void](Set-QualifiedHostOwnerRepairComposeText -Config $Config -Server $betaServer -ComposeText (Read-Text -Path $sourceCompose))
     }
-    $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and $oldImage -cne [string]$runtime.image
+    $repairChanged = $retainedIndex -and $ServerId -eq 'code' -and (Test-QualifiedHostCodeRepairChange -Config $Config -Server $betaServer -OldRuntime $old)
+    $retainedVersionChange = $retainedIndex -and $ServerId -in @("code", "graph") -and $oldImage -match '@sha256:[a-f0-9]{64}$' -and ($oldImage -cne [string]$runtime.image -or $repairChanged)
     return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; retainedVersionChange = $retainedVersionChange; nativeEndpoint = [bool]$NativeEndpoint }
 }
 

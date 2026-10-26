@@ -756,7 +756,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 публикация/установка пакета и последующий `reindex(force=false)` остаются отдельными
 операциями владельцев. Подробности — `releases/2026-10-25-code-xsd/README.md` поставки.
 
-Файлы находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
+Файлы schema-1 находятся в `<stateRoot>/repairs/owner/<code|graph>/<image-digest>`.
+Code schema-2 использует отдельный подкаталог `xsd-v2`, сохраняя прежние proof и файлы.
+Квалифицированная смена runtime-файлов при прежнем image digest является переходом
+версии для cutover; неизменный набор сохраняет прежнюю проверку поколения.
+Поддержку можно доставить отдельным версионным MCP-пакетом рядом с установленным
+workflow, с точными SHA и существующим maintenance/cold rollback, без публикации workflow.
 Code содержит `driver.py` и `main.py`; Graph — `run.py`, `score_floor.py`,
 `common_forms.py`. Proof schema 1 закрепляет host и исходную изолированную
 квалификацию без сети и live indices. Для Code обязательны воспроизведённый
