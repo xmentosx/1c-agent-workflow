@@ -104,7 +104,7 @@ function Read-ItlProductProjectSnapshot {
     }
     if(-not (Get-ItlCatalogField $state 'catalogRefreshAttempted' $false)){
         $state['catalogRefreshAttempted']=$true;$state['catalogRefreshError']=$null;$state.attempted=$true
-        try{$null=Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(10))}catch{$state.catalogRefreshError=$_.Exception}
+        try{$null=Update-Vibecoding1cMcpRegistryCheckout -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(30))}catch{$state.catalogRefreshError=$_.Exception}
     }
     $refreshError=Get-ItlCatalogField $state 'catalogRefreshError'
     $inputsMatch=$false;$inputs=$null

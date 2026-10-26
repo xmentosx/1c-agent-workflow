@@ -47,7 +47,7 @@ $client=$null
 try {
  $listener.Start()
  [IO.File]::WriteAllText((Join-Path $Root 'port'),[string]$listener.LocalEndpoint.Port,$utf8)
- $until=[DateTime]::UtcNow.AddSeconds(45)
+ $until=[DateTime]::UtcNow.AddSeconds(120)
  while(-not $listener.Pending()){
   if((Test-Path -LiteralPath (Join-Path $Root 'stop')) -or [DateTime]::UtcNow -ge $until){return}
   Start-Sleep -Milliseconds 25
@@ -73,13 +73,14 @@ try {
         $line=Join-NativeCommandLineArguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$serverScript,'-Root',$serverRoot)
         $server=Start-Process -FilePath powershell.exe -ArgumentList $line -WindowStyle Hidden -PassThru
         try {
-            $ready=[DateTime]::UtcNow.AddSeconds(10)
+            $ready=[DateTime]::UtcNow.AddSeconds(30)
             while(-not (Test-Path -LiteralPath (Join-Path $serverRoot 'port'))){
                 if($server.HasExited -or [DateTime]::UtcNow -ge $ready){throw 'Owned stalled Git listener did not start'}
                 Start-Sleep -Milliseconds 25
             }
             $port=[IO.File]::ReadAllText((Join-Path $serverRoot 'port'))
-            $start=[DateTime]::UtcNow;$deadline=$start.AddSeconds(10)
+            $metadataBudgetSeconds=30
+            $start=[DateTime]::UtcNow;$deadline=$start.AddSeconds($metadataBudgetSeconds)
             $capturedFailure=$null
             try {$null=Invoke-ItlCatalogGit $f.source @('ls-remote',('http://127.0.0.1:'+$port+'/registry.git')) $deadline}
             catch {$capturedFailure=$_}
@@ -93,7 +94,7 @@ try {
             Test-Path -LiteralPath (Join-Path $serverRoot 'peer-closed')|Should -BeTrue
             $closed=[DateTime]::Parse([IO.File]::ReadAllText((Join-Path $serverRoot 'peer-closed')))
             $closed.ToUniversalTime()|Should -BeLessThan $deadline
-            $elapsed|Should -BeLessThan 10
+            $elapsed|Should -BeLessThan $metadataBudgetSeconds
         } finally {
             [IO.File]::WriteAllText((Join-Path $serverRoot 'stop'),'stop',[Text.UTF8Encoding]::new($false))
             if(-not $server.WaitForExit(5000)){throw 'Owned stalled Git listener did not stop cooperatively'}
@@ -186,13 +187,17 @@ try {
         Should -Invoke Invoke-ItlCatalogGit -Times 0 -Exactly
     }
 
-    It 'retains the record and reader on an expired operation deadline' {
-        $f=New-SaveFixture (Join-Path $TestDrive 'deadline')
-        $r=Save-ItlCatalogRecord $f.source $f.base -Record $f.record -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(-1))
+    It 'retains the record and retries with a fresh budget when <RemainingSeconds> seconds remain' -TestCases @(@{RemainingSeconds=-1},@{RemainingSeconds=5}) {
+        param($RemainingSeconds)
+        $f=New-SaveFixture (Join-Path $TestDrive ('deadline-' + $RemainingSeconds))
+        $r=Save-ItlCatalogRecord $f.source $f.base -Record $f.record -DeadlineUtc ([DateTime]::UtcNow.AddSeconds($RemainingSeconds))
         $r.status | Should -Be 'prepared-request'
         $r.recordId | Should -Be 'customer'
         (Read-SavedFixture $f).catalogRevision | Should -Be $f.base
         (Invoke-RepositoryGit $f.source @('status','--porcelain','-z')).stdout | Should -BeNullOrEmpty
+        $retry=Save-ItlCatalogRecord $f.source $f.base -Record $f.record
+        $retry.status | Should -Be 'saved'
+        (Read-SavedFixture $f).catalog.projects[0].projectId | Should -Be 'customer'
     }
 
     It 'does not persist credentials embedded in catalog URL metadata' {

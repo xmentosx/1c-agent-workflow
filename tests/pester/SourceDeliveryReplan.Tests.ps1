@@ -58,6 +58,66 @@ Describe 'Explicit develop plan replacement' {
             @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
         } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
     }
+    It 'replaces the explicitly named active Frozen plan with Current while preserving the previous replay scope' {
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture=New-FrozenFixture
+            $masterBefore=@(& git --git-dir=$($fixture.remote) for-each-ref '--format=%(refname) %(objectname)' refs/heads/master)
+            $alpha=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure).exitCode | Should -Not -Be 0
+            $original=Read-FrozenAttempt $fixture; $originalId=[string]$original.planId
+            $originalPath=Join-Path $fixture.root ".git/itl/plans/v1/$originalId.json"
+            $originalBytes=[IO.File]::ReadAllText($originalPath)
+            $originalSha=(Get-FileHash -LiteralPath $originalPath -Algorithm SHA256).Hash
+            & git -C $fixture.root switch --quiet -c beta $fixture.base
+            $beta=Add-FrozenTask $fixture beta
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta') | Out-Null
+            & git -C $fixture.root switch --quiet -c support $fixture.base
+            Add-Content -LiteralPath (Join-Path $fixture.root 'scripts/source-delivery-supervisor.ps1') -Value '# separately published recovery support' -Encoding UTF8
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: publish support before Frozen transfer'
+            & git -C $fixture.root push --quiet origin HEAD:develop
+            $frozenResult=Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$originalId,'-ReplanQueueScope','Frozen') -AllowFailure
+            $frozenResult.exitCode | Should -Not -Be 0
+            $frozen=Read-FrozenAttempt $fixture; $frozenId=[string]$frozen.planId
+            $frozen.replanQueueScope | Should -BeExactly 'Frozen'
+            @($frozen.queue.id) | Should -Be @('alpha')
+            $frozenPath=Join-Path $fixture.root ".git/itl/plans/v1/$frozenId.json"
+            $frozenBytes=[IO.File]::ReadAllText($frozenPath)
+            $frozenSha=(Get-FileHash -LiteralPath $frozenPath -Algorithm SHA256).Hash
+            $wrong=Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$originalId) -AllowFailure
+            $wrong.stderr | Should -Match 'DELIVERY_REPLAN_SCOPE_CHANGED'
+            $currentResult=Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$frozenId) -AllowFailure
+            $currentResult.exitCode | Should -Not -Be 0
+            $currentResult.stderr | Should -Not -Match 'DELIVERY_REPLAN_SCOPE_CHANGED'
+            $current=Read-FrozenAttempt $fixture
+            $current.replacesPlanId | Should -BeExactly $frozenId
+            # Current is the existing default; only Frozen is serialized.
+            $current.PSObject.Properties['replanQueueScope'] | Should -BeNullOrEmpty
+            @($current.queue.id) | Should -Be @('alpha','beta')
+            foreach($head in @($alpha,$beta)){& git -C $fixture.root merge-base --is-ancestor $head $current.candidate; $LASTEXITCODE | Should -Be 0}
+            & git -C $fixture.root switch --quiet -c gamma $fixture.base
+            $gamma=Add-FrozenTask $fixture gamma
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','gamma') | Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$null
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$frozenId)).stdout | ConvertFrom-Json
+            $published.planId | Should -BeExactly $current.planId
+            $published.commit | Should -BeExactly $current.candidate
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/gamma/head).Trim() | Should -BeExactly $gamma
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue/alpha refs/itl/develop-queue/beta).Count | Should -Be 0
+            [IO.File]::ReadAllText($originalPath) | Should -BeExactly $originalBytes
+            [IO.File]::ReadAllText($frozenPath) | Should -BeExactly $frozenBytes
+            (Get-FileHash -LiteralPath $originalPath -Algorithm SHA256).Hash | Should -BeExactly $originalSha
+            (Get-FileHash -LiteralPath $frozenPath -Algorithm SHA256).Hash | Should -BeExactly $frozenSha
+            foreach($id in @($originalId,$frozenId)){
+                @(Get-ChildItem -LiteralPath (Join-Path $fixture.root ".git/itl/publication-attempts/replaced/$id") -Filter '*.json').Count | Should -Be 1
+            }
+            @(& git --git-dir=$($fixture.remote) for-each-ref '--format=%(refname) %(objectname)' refs/heads/master) | Should -Be $masterBefore
+            @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
+        } finally {$env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture}
+    }
     It 'keeps an unchanged circuit and freezes a changed replacement across later registrations' {
         $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {
