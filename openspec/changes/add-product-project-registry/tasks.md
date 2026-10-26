@@ -1,5 +1,16 @@
 # Tasks
 
+## Dependency G5: план квалификации, 2026-10-26
+
+- [x] Сверить [единый план G5 у memory owner](../add-scoped-cognee-memory/g5-qualification-plan.md) с R6 и G3: предложить три existing-area homes на подтверждение; различать published R6, qualification snapshot, applicability, native IDs/grants и MCP source.
+
+Назначений/публикации homes пока нет; R6 SHA и принятый G3 прежние. После
+подтверждения mapping consumer проверяется на отдельном pinned qualification
+snapshot; перед выпуском памяти требуется опубликованный SHA тех же правил
+и сверка затронутой proof. Это dependency 6.6b/AC-44 памяти, не повтор R6,
+не четвёртая MCP-роль и не разрешение запуска G5. Gate 6, рабочая миграция
+и публикация workflow исключены; новая native матрица здесь не дублируется.
+
 ## G4 consumer: исходная реализация, 2026-10-26
 
 По отдельному одобрению реализован consumer памяти G4.

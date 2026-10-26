@@ -1,5 +1,15 @@
 # План приёмки
 
+## Dependency G5: конечная квалификация, 2026-10-26
+
+[Единый будущий прогон G5](../add-scoped-cognee-memory/g5-qualification-plan.md)
+покрывает registry-memory стык N3/N4/N5 без переоткрытия G3/R6. Подтверждённые
+home/applicability проверяются на pinned qualification snapshot; публикуемый
+перед выпуском SHA не подменяется им. Синтетический B01–B12 corpus остаётся
+неизменным отдельным доказательством; реальные dataset IDs/current grants —
+только native evidence, не поле каталога. G5 и его подготовка не запускались;
+Gate 6, рабочая миграция и публикация workflow не разрешены.
+
 ## G4 consumer: исходная реализация, 2026-10-26
 
 По отдельному одобрению реализован consumer памяти G4.
