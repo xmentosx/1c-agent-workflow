@@ -4,7 +4,10 @@ param(
     [string]$AiRulesRef = "",
     [string]$WorkingDirectory = "",
     [switch]$KeepArtifacts,
-    [string]$TransitionProofPath = ''
+    [string]$TransitionProofPath = '',
+    [string]$E2EProjectRoot = '',
+    [string]$AgentTarget = '',
+    [string]$FreshProjectsRoot = 'C:\itlj'
 )
 
 Set-StrictMode -Version Latest
@@ -173,7 +176,7 @@ try {
     $workflowHelper = Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     if (-not (Test-Path -LiteralPath $workflowHelper -PathType Leaf)) { throw "Workflow helper was not found: $workflowHelper" }
     $promptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
-    $transitionRows=@(foreach($request in @(Get-AiRulesTransitionRequests -WorkflowRoot (Split-Path -Parent $PSScriptRoot) -RulesRoot $rulesRoot)) {
+    $transitionRows=@(foreach($request in @(Get-AiRulesTransitionRequests -WorkflowRoot (Split-Path -Parent $PSScriptRoot) -RulesRoot $rulesRoot -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget -FreshProjectsRoot $FreshProjectsRoot)) {
         $oldRoot=Join-Path $workRoot ('from-'+$request.bridge.fromCommit)
         [void](Invoke-RepositoryGit $rulesRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$rulesRoot,$oldRoot))
         [void](Invoke-RepositoryGit $oldRoot @('checkout','--quiet','--detach',$request.bridge.fromCommit))

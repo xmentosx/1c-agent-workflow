@@ -314,7 +314,7 @@ function Get-DevelopE2EAncestorQualification {
                 $unprojectable=@(foreach($entry in @($manifest.inputIdentity.inventory.inputs)+@($InputIdentity.inventory.inputs)) {
                     $forkProbe=$null
                     if($entry.path -ceq 'templates/dependency-lock.json' -and $previousSource[$entry.path] -cne $currentSource[$entry.path] -and
-                        ($manifest.inputIdentity.inventory.external.rulesCommit -cne $InputIdentity.inventory.external.rulesCommit -or $manifest.inputIdentity.inventory.external.rulesTree -cne $InputIdentity.inventory.external.rulesTree)) {
+                        (Test-DevelopForkIdentityChanged $manifest.inputIdentity $InputIdentity)) {
                         $cache=if($null -ne $LookupContext -and $LookupContext.ContainsKey('forkBridges')){$LookupContext.forkBridges}else{$null}
                         $forkProbe=Get-DevelopForkNativeBridge $manifest.inputIdentity $InputIdentity -Cache $cache
                     }
@@ -372,7 +372,7 @@ function Get-DevelopE2EAncestorQualification {
             if (-not $continuation) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'LINEAGE_OR_CURRENT_STATIC_UNPROVEN' -Commit $qualifiedCommit; continue
             }
-            $forkChanged=$manifest.inputIdentity.inventory.external.rulesCommit -cne $InputIdentity.inventory.external.rulesCommit -or $manifest.inputIdentity.inventory.external.rulesTree -cne $InputIdentity.inventory.external.rulesTree
+            $forkChanged=Test-DevelopForkIdentityChanged $manifest.inputIdentity $InputIdentity
             if($forkChanged -and -not (Test-DevelopForkTransitionProof $StaticProof $manifest.inputIdentity $InputIdentity $current $Tree)) {
                 if(-not $AllowPendingStatic) {
                     Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'CURRENT_FORK_TRANSITION_UNPROVEN' -Commit $qualifiedCommit
@@ -385,7 +385,7 @@ function Get-DevelopE2EAncestorQualification {
             if (Test-DevelopE2ENewerJourneyFailure -RepositoryRoot $RepositoryRoot -Report $report -CurrentCommit $current -CurrentTree $Tree -InputIdentity $InputIdentity -RequiredScenario $RequiredScenario) {
                 Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NEWER_APPLICABLE_FAILURE' -Commit $qualifiedCommit; continue
             }
-            return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity }
+            return [pscustomobject]@{ reportPath=$reportPath; report=$report; sha256=[string]$manifest.identity.reportSha256; continuation=$continuation; inputIdentity=$InputIdentity; recordedInputIdentity=$manifest.inputIdentity }
         } catch { Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'PROOF_UNREADABLE_OR_INVALID' -Commit $qualifiedCommit; continue }
     }
     if(-not $seenJourney) { Add-DevelopReuseDiagnostic -Diagnostics $Diagnostics -Code 'NO_PRIOR_JOURNEY_PROOF' }

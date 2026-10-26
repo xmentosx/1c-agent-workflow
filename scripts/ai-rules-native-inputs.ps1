@@ -112,32 +112,48 @@ function Get-AiRulesTransitionClients {
 }
 
 function Get-AiRulesTransitionRequests {
-    param([string]$WorkflowRoot,[string]$RulesRoot)
-    $cache=Join-Path (Get-RepositoryCommonGitDirectory $WorkflowRoot) 'itl/develop-e2e-qualifications'
-    if(-not (Test-Path -LiteralPath $cache -PathType Container)) {return @()}
-    $to=(Invoke-RepositoryGit $RulesRoot @('rev-parse','HEAD')).stdout.Trim()
-    $tree=(Invoke-RepositoryGit $RulesRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+    param([string]$WorkflowRoot,[string]$RulesRoot,[string]$ProjectRoot='',
+        [string]$AgentTarget='',[string]$FreshProjectsRoot='C:\itlj',[object]$ArtifactBinding=$null)
+    if(-not $ProjectRoot -or -not (Test-Path -LiteralPath $ProjectRoot -PathType Container)) {return @()}
+    if(-not $ArtifactBinding) {
+        . (Join-Path $PSScriptRoot 'source-e2e-artifact-discovery.ps1')
+        $ArtifactBinding=Find-SourceE2EArtifactBinding -RepositoryRoot $WorkflowRoot
+    }
+    if(-not $ArtifactBinding) {return @()}
+    $tree=(Invoke-RepositoryGit $WorkflowRoot @('rev-parse','HEAD^{tree}')).stdout.Trim()
+    $catalog=Get-QualityContractCatalog -RepositoryRoot $WorkflowRoot
     $requests=@{}
-    foreach($top in @(Get-ChildItem -LiteralPath $cache -Directory|Where-Object Name -notin @('.references','.native'))) {
-        foreach($file in @(Get-ChildItem -LiteralPath $top.FullName -Recurse -File -Filter manifest.json)) {
-            try {
-                $m=Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8|ConvertFrom-Json
-                $id=$m.inputIdentity;$ext=$id.inventory.external
-                if($m.schemaVersion -ne 2 -or $m.kind -cne 'itl-develop-e2e-qualification-cache' -or
-                    (Get-DevelopE2ECanonicalJsonSha256 $id.inventory) -cne $id.fingerprint -or $ext.rulesCommit -ceq $to) {continue}
-                $report=Join-Path $file.DirectoryName 'route-report.json'
-                if((Get-FileHash -LiteralPath $report -Algorithm SHA256).Hash.ToLowerInvariant() -cne $m.identity.reportSha256) {continue}
-                $bridge=Get-AiRulesNativeBridge $RulesRoot $ext.rulesCommit $ext.rulesTree $to $tree
-                if(-not $bridge) {continue}
-                $clients=@(Get-AiRulesTransitionClients $id)
-                if(-not $clients.Count) {continue}
-                $key=$ext.rulesCommit
-                if(-not $requests.ContainsKey($key)) {$requests[$key]=[pscustomobject]@{bridge=$bridge;clients=@()}}
-                $requests[$key].clients=@(@($requests[$key].clients)+$clients|Sort-Object -Unique)
-            } catch {continue}
+    $bridges=@{}
+    # Use the executor's selected proofs, not every fork in cache history.
+    # At most one request per selected native leaf, deduplicated by fork/client.
+    foreach($journey in @('upgrade','fresh')) {
+        $current=Get-DevelopE2EInputIdentity -RepositoryRoot $WorkflowRoot -Journey $journey -Catalog $catalog -ProjectRoot $ProjectRoot -AiRulesSource $RulesRoot -AgentTarget $AgentTarget -ArtifactBinding $ArtifactBinding -FreshProjectsRoot $FreshProjectsRoot
+        if(-not $current) {continue}
+        foreach($record in @(Get-DevelopScenarioReusePlan $WorkflowRoot $tree $journey $current $catalog -AllowPendingStatic | Where-Object execution -eq reuse)) {
+            $id=$record.proof.recordedInputIdentity
+            if(-not (Test-DevelopForkIdentityChanged $id $current)) {continue}
+            $bridge=Get-DevelopForkNativeBridge $id $current -Cache $bridges
+            if(-not $bridge) {continue}
+            $clients=@(Get-AiRulesTransitionClients $current)
+            if(-not $clients.Count) {continue}
+            $key=$bridge.fromCommit
+            if(-not $requests.ContainsKey($key)) {$requests[$key]=[pscustomobject]@{bridge=$bridge;clients=@()}}
+            $requests[$key].clients=@(@($requests[$key].clients)+$clients|Sort-Object -Unique)
         }
     }
     return @($requests.Values|Sort-Object {$_.bridge.fromCommit})
+}
+
+function Test-DevelopForkIdentityChanged {
+    param([object]$Recorded,[object]$Current)
+    # Legacy identities can omit fork binding entirely. They remain subject to
+    # their original exact external comparison, without inventing a fork delta.
+    foreach($name in @('rulesCommit','rulesTree')) {
+        $a=$Recorded.inventory.external.PSObject.Properties[$name]
+        $b=$Current.inventory.external.PSObject.Properties[$name]
+        if([bool]$a -ne [bool]$b -or ($a -and $a.Value -cne $b.Value)) {return $true}
+    }
+    return $false
 }
 
 function Invoke-AiRulesTransitionCheck {

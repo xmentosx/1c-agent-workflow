@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "defaultSeconds": 1.0,
   "files": {
-    "DevelopForkInputScope.Tests.ps1": 149,
+    "DevelopForkInputScope.Tests.ps1": 205,
     "DevelopForkConsumerInventory.Tests.ps1": 4,
     "DeliveryScenarioComposition.Tests.ps1": 100,
     "DevelopInstructionContextScope.Tests.ps1": 149,

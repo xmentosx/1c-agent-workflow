@@ -944,7 +944,7 @@ try {
     if ($effectiveMode -in @("Full", "Develop", "Release") -and -not $reuseQualification -and -not ($Offline -and -not $sourceIsLocal) -and $forkReadyForParallel) {
         $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
         $compatibilitySource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-        $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -LogName "ai-rules-compatibility"
+        $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-E2EProjectRoot', $E2EProjectRoot, '-AgentTarget', $AgentTarget, '-FreshProjectsRoot', $FreshProjectsRoot, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -LogName "ai-rules-compatibility"
     }
 
     if ($reuseQualification) {
@@ -1054,7 +1054,7 @@ try {
                 $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
                 Invoke-GateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Body {
                     $compatibilitySource = $(if ($forkSourceRoot) { $forkSourceRoot } else { $resolvedAiRulesSource })
-                    Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
+                    Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource, '-E2EProjectRoot', $E2EProjectRoot, '-AgentTarget', $AgentTarget, '-FreshProjectsRoot', $FreshProjectsRoot, '-TransitionProofPath', (Join-Path (Split-Path -Parent $qualificationFullPath) 'fork-transitions.json')) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
                 } | Out-Null
             }
         }

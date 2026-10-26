@@ -315,7 +315,7 @@ function Test-DevelopScenarioEquivalentInput {
         })
         if($contracts[0] -cne $contracts[1]) {return $false}
         $forkBridge=$null
-        if($old.inventory.external.rulesCommit -cne $new.inventory.external.rulesCommit -or $old.inventory.external.rulesTree -cne $new.inventory.external.rulesTree) {
+        if(Test-DevelopForkIdentityChanged $old $new) {
             $cache=if($null -ne $LookupContext){$LookupContext.forkBridges}else{$null}
             $forkBridge=Get-DevelopForkNativeBridge $Recorded $Current -Cache $cache
             if(-not $forkBridge) {return $false}

@@ -66,3 +66,23 @@ rejected its old overlay against r48. The owning overlay update is already in th
 queue; acceptance must use the registered integrated candidate, preserving the
 original overlay assertion. Registration owns final Targeted. Publication, native
 Develop E2E and Release are not authorized by this evidence.
+
+## Final selection correction
+
+Registration exposed legacy identities without fork fields and an overly broad
+reader-test ownership pattern. The reader now compares optional fork fields
+without fabricating a delta; one-sided or changed bindings still fail closed.
+Runtime scripts are reader-test reuse inputs, not ownership claims, so an unknown
+runtime path still blocks Targeted. Existing assertions were preserved.
+
+Transition requests now use the same nine-leaf selection as the executor, retain
+the authenticated recorded identity and deduplicate old forks/clients. Historical
+forks with no selected reusable leaf add no installation work. A regression
+confirms nine leaves produce one Kilo request, and an unknown native change
+produces none. Missing stand/binding cannot grant transition reuse.
+
+Focused repair batch: 107 passed, zero failed or skipped (fork scope 5, reader
+inventory 1, legacy E2E qualification 41, Targeted selection 15, catalog 45).
+Fork scope took 204.57 s with the added selection assertions; its estimate is
+205 s, within its unchanged 240 s owner budget. Registration remains the final
+combined-candidate acceptance boundary.

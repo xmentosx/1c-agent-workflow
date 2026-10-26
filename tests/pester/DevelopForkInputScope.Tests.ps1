@@ -76,6 +76,11 @@ Describe 'Native fork input scope and authenticated transition' {
         $head=(& git -C $f.root rev-parse HEAD).Trim()
         $plan=New-DeliveryQualityPlanForCandidate -CandidateRoot $f.root -BaseCommit $f.base -CandidateCommit $head -CandidateTree $tree
         @($plan.stages|Where-Object {$_.id -in @('develop.upgrade','develop.fresh') -and $_.execution -eq 'reuse'}).Count|Should -Be 2
+        $requests=@(Get-AiRulesTransitionRequests -WorkflowRoot $f.root -RulesRoot $f.rules -ProjectRoot $f.stand -AgentTarget kilocode -ArtifactBinding $f.binding)
+        $requests.Count|Should -Be 1
+        $requests[0].bridge.fromCommit|Should -BeExactly $f.oldFork
+        @($requests[0].clients)|Should -Be @('kilocode')
+        @(Get-AiRulesTransitionRequests -WorkflowRoot $f.root -RulesRoot $f.rules).Count|Should -Be 0
         $cache=Join-Path $f.root '.git/itl/develop-e2e-qualifications'
         $before=@(Get-ChildItem $cache -Recurse -File|ForEach-Object {(Get-FileHash $_.FullName -Algorithm SHA256).Hash}|Sort-Object)
         foreach($journey in @('upgrade','fresh')) {
@@ -107,6 +112,11 @@ Describe 'Native fork input scope and authenticated transition' {
         [IO.File]::AppendAllText((Join-Path (Split-Path -Parent $proof.path) $saved.fork.transitionProof.path),'tamper')
         Test-WorkflowCurrentStaticProof $proof ((& git -C $f.root rev-parse HEAD).Trim()) $tree|Should -BeFalse
         @((Get-DevelopScenarioReusePlan $f.root $tree fresh (Get-ForkFixtureInputs $f fresh) $f.catalog -StaticProof $proof)|Where-Object execution -eq reuse).Count|Should -Be 0
+        # An unknown native change rejects all leaves. Historical fork receipts
+        # must not create old-to-new probes when none of them can be consumed.
+        [IO.File]::AppendAllText((Join-Path $f.root 'runtime.ps1'),"function Unknown-NativeInput {'new'}`n")
+        & git -C $f.root add -- runtime.ps1; & git -C $f.root commit --quiet -m 'unknown native change'
+        @(Get-AiRulesTransitionRequests -WorkflowRoot $f.root -RulesRoot $f.rules -ProjectRoot $f.stand -AgentTarget kilocode -ArtifactBinding $f.binding).Count|Should -Be 0
     }
     It 'keeps unknown, executable, metadata, layout and dirty fork changes exact' {
         $f=New-ForkScopeFixture

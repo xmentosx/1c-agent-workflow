@@ -291,6 +291,10 @@ Unknown files, layout/mode changes and changed consumers retain native execution
 Current exact fork Full and workflow static proof remain mandatory. Compatibility
 also checks qualified-old init then current update for the affected clients,
 matching changed payloads to current clean init and preserving user-owned files.
+Only proofs actually selected for scenario reuse request that transition; requests
+are deduplicated by old fork/client. Unselected historical forks add no probes.
+The reader inventory binds all installed runtime scripts as reuse inputs without
+claiming them as owners; unknown runtime paths retain the ownership failure.
 Its SHA-addressed transition receipt is bound into Full and copied with static
 cache/continuation proof. Plan may forecast pending static; execution never saves
 that forecast as a pass. Original native reports and legacy fingerprints are not
