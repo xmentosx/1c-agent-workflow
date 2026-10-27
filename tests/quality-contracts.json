@@ -1591,6 +1591,16 @@
       "tests": ["tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1"]
     },
     {
+      "id": "source-repair",
+      "owner": "failed frozen publication repair loop over existing gate owners",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceRepair.Tests.ps1",
+      "paths": ["scripts/source-repair.ps1"],
+      "reuseInputPaths": ["tests/pester/TestSupport.ps1", "scripts/git-path-list.ps1", "scripts/source-delivery-process.ps1", "scripts/source-proof-json.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/stand-env-identity.ps1", "scripts/quality-contracts.ps1"],
+      "tests": ["tests/pester/SourceRepair.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-queue",
       "owner": "delivery queue registration",
       "gate": "targeted",

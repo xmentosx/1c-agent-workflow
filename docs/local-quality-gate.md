@@ -76,6 +76,42 @@ already-reachable без новой квалификации и изменени
 функциональный rollback сохраняет совместимый queue decoder. Сценарии и пределы
 доказательств: [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
 
+### Ремонт упавшей замороженной публикации
+
+Падение Pester, journey или сценария в `Frozen` публикации чинится в отдельном
+ремонтном worktree без регистрации, Targeted и нового plan на каждую попытку.
+`scripts/source-repair.ps1` не хранит своё состояние и не берёт authority:
+он читает checkpoint и run index, отказывает при живой операции доставки и
+вызывает существующих владельцев из ремонтного worktree.
+
+```powershell
+.\scripts\source-repair.ps1 -Action Start
+# правка и обычный локальный commit в напечатанном worktree
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Test <File.Tests.ps1>
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Journey upgrade `
+  -Scenario update -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+.\scripts\source-repair.ps1 -Action Finish -RepairRoot <worktree> `
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+```
+
+`Start` создаёт `itl/repair/<candidate>` от candidate checkpoint, а после
+принятой замены fast-forward переносит ветку на новый candidate. `Run` требует
+чистое закоммиченное дерево и выполняет только названные тесты через
+`invoke-pester-shards.ps1` (selection schema 1 сохраняет шард под ключом полного
+inventory) и только названный journey/сценарий через `invoke-develop-e2e.ps1` с
+той же привязкой артефактов и capture фикстур, что и gate. Прошедший сценарий
+сохраняется существующим владельцем scenario proof; финальный gate берёт его
+только после полного текущего static и совпадения всех входов, иначе выполняет
+заново. Стенд, fork и клиент должны совпадать с публикацией.
+
+`Finish` — единственная регистрация ремонта: `RegisterChange` с `-BaseRef`
+текущего candidate (Targeted только по diff ремонта), затем `PublishDevelop
+-Replan <план> -ReplanQueueScope Frozen -FrozenRepair <id>@<head>`. Запуск
+`Finish` пользователем является разрешением этого pin. Повтор после принятой
+замены продолжает тот же pin без новой регистрации; после нового падения gate
+цикл начинается с `Start`. Проверки, условия успеха и квалификация финального
+дерева не меняются.
+
 Проверка проходит вне общей блокировки. После успеха один Git CAS принимает
 `base/head` задачи, `refs/itl/develop-candidate/head` и immutable membership blob
 `refs/itl/develop-candidate/state`. При гонке регистрация пересобирает комбинацию;
