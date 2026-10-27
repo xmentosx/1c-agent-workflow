@@ -261,6 +261,15 @@ can project out its hash, compiled root Go source and known release identity
 fields. Install, branch, refresh, upgrade, whole-journey and unknown requests
 retain the exact broker identity. Runner, builder, PowerShell consumers, transport,
 platform, compatibility minimum, other artifacts and unknown fields remain bound.
+Cold fresh bootstrap has no retained on-demand runtime directory. With the audited
+bootstrap/runner bytes in both source snapshots, only the code after the exact
+missing-directory return in `Assert-NoActiveCutoverRuntime` and its pure function
+import may be projected out. The guard prefix, generation writer, unknown nodes
+and top-level code still bind. Only `Get-ItlOnDemandRuntimeRecordFiles` is outside
+fresh in the pure runtime-values library; its update callers remain exact for
+upgrade. A closed reader-inventory regression runs under complete current static
+proof. Changed consumers, import side effects, unknown scenarios or source/SHA
+failures close the exception. No installed guard or native assertion is skipped.
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.

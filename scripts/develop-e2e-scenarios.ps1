@@ -174,8 +174,76 @@ function Get-DevelopScenarioCoverage {
     return @()
 }
 
+# A fresh recipe creates a new root and copies only project.json and .dev.env
+# before bootstrap. It cannot contain retained on-demand runtime records. Pin
+# those audited consumers even after a later native baseline passes.
+function Test-DevelopColdCutoverConsumers {
+    param([string]$RepositoryRoot,[string]$Commit='')
+    if(-not $RepositoryRoot) {return $false}
+    $consumers=@{
+        'install-agent-1c-workflow.ps1'=@('1917f4163747d6c1c55e6b9bf69184c3d9d7553a27cde549ce758ad440fbce17')
+        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9')
+    }
+    try {
+        foreach($path in $consumers.Keys) {
+            $text=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $path}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $path)))}
+            $sha=[Security.Cryptography.SHA256]::Create()
+            try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+            if($hash -cnotin $consumers[$path]) {return $false}
+        }
+        return $true
+    } catch {return $false}
+}
+
+function Get-DevelopColdCutoverProjection {
+    param([string]$Path,[string]$Text,[string]$RepositoryRoot,[string]$Commit='')
+    if(-not (Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit)) {return $null}
+    $source=$Text.Replace("`r`n","`n");$bom=[string]$source.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal);$source=$source.TrimStart([char]0xfeff)
+    $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+    if(@($errors).Count) {return $null}
+    $remove=@()
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1') {
+        # Importing function declarations has no eager side effects. Everything
+        # except this update-only leaf, including unknown nodes, remains bound.
+        if(@($ast.EndBlock.Statements|Where-Object {$_ -isnot [Management.Automation.Language.FunctionDefinitionAst]}).Count -or $ast.ParamBlock -or $ast.BeginBlock -or $ast.ProcessBlock) {return $null}
+        $remove=@($ast.EndBlock.Statements|Where-Object Name -eq 'Get-ItlOnDemandRuntimeRecordFiles')
+    } else {
+        $function=@($ast.EndBlock.Statements|Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $(if($Path -like '*lifecycle.ps1'){'Get-WorkflowUpdateRootRuntimeBusyReason'}else{'Assert-NoActiveCutoverRuntime'})})
+        if($function.Count -ne 1) {return $null}
+        $statements=@($function[0].Body.EndBlock.Statements)
+        $prefix=@('$runtimeRoot = Join-Path (Get-CutoverFullPath $Root) ''.agent-1c\mcp\ondemand''','if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }')
+        if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') {
+            $prefix=@('$runtimeRoot = Join-Path $Root ''.agent-1c/mcp/ondemand''','if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return '''' }')
+        }
+        if($statements.Count -lt 2) {return $null}
+        for($i=0;$i -lt 2;$i++) {if((ConvertTo-DevelopSourceTokens $statements[$i].Extent.Text) -cne (ConvertTo-DevelopSourceTokens $prefix[$i])) {return $null}}
+        $remove=@($statements|Select-Object -Skip 2)
+        $import=ConvertTo-DevelopSourceTokens '. (Join-Path $PSScriptRoot ''lib/agent-1c.runtime-values.ps1'')'
+        foreach($node in $ast.EndBlock.Statements) {
+            if((ConvertTo-DevelopSourceTokens $node.Extent.Text) -ceq $import) {
+                $library='.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1'
+                $libraryText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $library}else{[IO.File]::ReadAllText((Join-Path $RepositoryRoot $library))}
+                $libraryAst=[Management.Automation.Language.Parser]::ParseInput($libraryText.TrimStart([char]0xfeff),[ref]$tokens,[ref]$errors)
+                if(@($errors).Count -or $libraryAst.ParamBlock -or $libraryAst.BeginBlock -or $libraryAst.ProcessBlock -or @($libraryAst.EndBlock.Statements|Where-Object {$_ -isnot [Management.Automation.Language.FunctionDefinitionAst]}).Count) {return $null}
+                $remove+=@($node)
+            }
+        }
+    }
+    $builder=[Text.StringBuilder]::new($source)
+    foreach($node in @($remove|Sort-Object {$_.Extent.StartOffset} -Descending)) {[void]$builder.Remove($node.Extent.StartOffset,$node.Extent.EndOffset-$node.Extent.StartOffset)}
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1') {
+        return Get-DevelopJourneySourceProjection $Path ($(if($bom -ceq 'True'){[string][char]0xfeff}else{''})+$builder.ToString()) fresh
+    }
+    return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
+}
+
 function Get-DevelopScenarioSourceProjection {
-    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario,[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
+    param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario=@(),[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
+    if($Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and -not @($Scenario|Where-Object {$_ -cnotin @('install','branch','verification','stale-export','refresh','close')}).Count -and
+        $Path -cin @('.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
+        if($ProbeOnly) {return Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit}
+        return Get-DevelopColdCutoverProjection $Path $Text $RepositoryRoot $Commit
+    }
     if($Path -ceq 'scripts/ai-rules-native-inputs.ps1') {return 'source-qualification-policy-only'}
     if($Path -ceq 'templates/dependency-lock.json' -and $ForkBridge) {
         if($ProbeOnly) {return $true}
@@ -236,7 +304,7 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-QualityPesterSemanticInputBindings','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {
