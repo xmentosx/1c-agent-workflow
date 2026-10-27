@@ -15,6 +15,8 @@
         . Import-ItlProductProjectSetup
         $snapshot=New-SetupCatalogFixture
         $script:ItlMcpRegistryOperation=@{attempted=$true;snapshot=$snapshot.registry;error=$null;catalogAttempted=$true;catalogSnapshot=$snapshot;catalogError=$null}
+        . Import-ItlMemory
+        Mock Get-ItlMemoryHome {Join-Path $TestDrive 'No common Cognee configured'}
         Mock Read-InitRequired {throw 'Unexpected additional local question'}
         Mock Read-InitBaseConfigurationVersion {throw 'Unexpected PM4/PM5 question'}
     }
@@ -271,12 +273,12 @@
         $snapshot.catalog.projects[1].name='Foreign change'
         {Get-ItlProductProjectEffectiveSnapshot $snapshot $preferences}|Should -Throw '*CATALOG_PENDING_RECORD_CONFLICT*'
     }
-    It 'saves catalog bootstrap binding before unattended work and leaves memory disabled' {
+    It 'saves catalog bootstrap binding without a false memory opt-out or early memory activation' {
         $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate five
         Save-ItlProductProjectInitBinding ([pscustomobject]@{catalogMode='catalog'})
         (Get-ItlProductProjectBinding).projectId|Should -Be five
         (Read-ItlProductProjectRecord applied).configurationState|Should -Be binding-only
-        (Read-ItlProductProjectSetting selection).memoryOptIn|Should -BeFalse
+        @(Get-ItlCatalogKeys (Read-ItlProductProjectSetting selection)) | Should -Not -Contain memoryOptIn
         Mock Get-Vibecoding1cMcpSelectionCompleteness {throw 'Legacy MCP questionnaire must not run'}
         Mock Set-Vibecoding1cMcpSelection {throw 'Unexpected per-MCP question'}
         Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:$false

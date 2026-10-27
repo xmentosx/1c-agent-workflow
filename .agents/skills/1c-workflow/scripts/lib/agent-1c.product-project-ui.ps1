@@ -95,10 +95,11 @@ function Invoke-ItlProductProjectAssociation {
     $preview=New-ItlProductProjectPreview $Candidate.context $clients
     if($AllowPrompt){Show-ItlProductProjectPreview $preview|Format-List|Out-Host}
     $chosen=Resolve-ItlProductProjectPreviewDecision $preview -Decision $Decision -AllowPrompt:$AllowPrompt
-    if(-not $chosen.preferences.Contains('memoryOptIn')){$chosen.preferences['memoryOptIn']=$false}
     $result=Invoke-ItlProductProjectClientApply $chosen.context $chosen.requests -BindProject -DesiredBinding $Candidate.binding -SavePrivateSelection -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState -ProofRequests $chosen.proofRequests
     Set-ItlProductProjectOperationContext $chosen.context
-    return [pscustomobject]@{status=$result.status;projectId=$Candidate.binding.projectId;productId=$Candidate.binding.productId;publication=$Candidate.context.catalogPublication.state;activeClientContext='unverified';memorySetup='separate-opt-in'}
+    . Import-ItlMemory
+    $memory=@(foreach($memoryClient in $clients){Invoke-ItlMemorySetup auto -Client $memoryClient})
+    return [pscustomobject]@{status=$result.status;projectId=$Candidate.binding.projectId;productId=$Candidate.binding.productId;publication=$Candidate.context.catalogPublication.state;activeClientContext='unverified';memorySetup=$memory}
 }
 
 function Invoke-ItlProductProjectCommand {
@@ -168,7 +169,6 @@ function Save-ItlProductProjectInitBinding {
     if(-not $candidate){throw 'CATALOG_PROJECT_REQUIRED: resolve the selected catalog record before saving initialization settings.'}
     $candidate.context['configurationStage']='binding-only'
     $preferences=ConvertTo-ItlCatalogCanonicalValue $candidate.preferences
-    if(-not $preferences.Contains('memoryOptIn')){$preferences['memoryOptIn']=$false}
     $preferences['catalogRevision']=$candidate.context.catalogRevision
     $state=Read-ItlManagedMcpState
     $owners=ConvertTo-Vibecoding1cMcpHashtable (Get-ItlCatalogField $state 'owners' @{})

@@ -1,4 +1,4 @@
-# Optional scoped Cognee memory
+# Scoped Cognee memory
 
 This is the G4 source contract. Native/installed qualification is G5; configuration
 alone is not acceptance. Use a matching controlled-fork candidate and ITL host.
@@ -19,10 +19,16 @@ First finish the existing registry association/apply. Use the existing helper:
 & $helper -ProjectRoot $root -Action vibecoding1c-mcp-select -MemoryAction disable -Client cursor
 ```
 
-This explicit opt-in is separate from project association. Later/off/unattended
-updates keep the legacy route. Enable uses one existing pinned applied context,
-verifies the ordinary principal, allocates the initial cycle without resetting
-the base and sends the stdio contribution through the existing client writer.
+Memory defaults on after ready explicit association or completion of a new
+initialization, without another memory prompt. Common qualified settings live
+at user-local MCP home/memory/provider.json; explicit enable establishes this
+connection. Missing prerequisites mean unavailable/unconfigured and do not block
+the catalog. Explicit off/disabled persists, including before the first binding.
+Startup/package update never enrolls old working projects. The old memoryOptIn
+flag can be an automatic default: ambiguous provenance requires explicit setup.
+`-MemoryAction auto` retries this setup after prerequisites are supplied;
+explicit enable can override disable. Enable uses the applied pinned context,
+ordinary principal and initial cycle without resetting the base, then the same writer.
 Reload the client; actual tool exposure, access and durability need actual calls.
 Disable preserves datasets, source, pending and receipts. It removes only the
 managed contribution for the selected clients; retained old processes fail the
@@ -162,3 +168,14 @@ fresh context and re-read originals. Local source/independent workflow remains
 available while the port is closed; no new epoch/backup/admission service exists.
 Use explicit `admitted=false` for retained unknown mappings, including private
 ones; disable/enable preserves IDs and honours that explicit denial.
+
+
+## Search and budget
+
+Known dataset/data ID uses exact memory_status. Choose CHUNKS for meaning or
+qualified CHUNKS_LEXICAL for exact terms/errors, never both automatically.
+Standing/task/reformulation policy remains in the fork. One recall uses allowed
+datasets, dedupes 24 candidates, reads at most two originals concurrently in
+their original order and returns at most 8 cards/1600 tokens under one 20-second
+deadline. A speculative in-flight original at early stop is counted and cleaned
+up by this reader. No cross-operation original cache; partial is not absence.

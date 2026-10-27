@@ -1,12 +1,23 @@
 # Tasks
 
+## MO — разрешённая реализация, 2026-10-27
+
+Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
+в source; прежние B01–B12 и установленный N5 на r50 завершены.
+Доставка — отдельная штатная регистрация этого коммита, итог в общем queue ledger. [Единый отчёт MO](../add-scoped-cognee-memory/evidence/mo-implementation-2026-10-27.md)
+отделяет source/fixture/native/стоимость/доставку. Controlled fork r50 —
+a2cbdcef52316db426acedc852f495564189f1ca, template pin pending.
+Прежние запреты реализации ниже относятся к уже завершённому планированию.
+G3/R6 и конечный G5 не переоткрываются. Gate6/G6, рабочая миграция, публикация,
+push/PR и native OpenCode по-прежнему не запускаются.
+
 ## MO — стык с memory owner, 2026-10-27
 
 [Единый план/приёмка](../add-scoped-cognee-memory/design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27);
 MO-R1–4 — в design. G3/R6 и законченный G5 не переоткрываются.
 
 - [x] MO-RP. Закрепить default-on/explicit off/unavailable, явную association и единый план памяти в обеих OpenSpec.
-- [ ] MO-R. После отдельного разрешения apply согласовать прежний setup handoff с default-on, preview/disabled/recovery; принять MO-R1–4 внутри MO4, без новых кейсов/реестра.
+- [x] MO-R. После согласованного apply согласовать прежний setup handoff с default-on, preview/disabled/recovery; принять MO-R1–4 внутри MO4, без новых кейсов/реестра.
 
 Реализация, рабочая миграция, Gate6/G6 и публикация сейчас не запускаются.
 
