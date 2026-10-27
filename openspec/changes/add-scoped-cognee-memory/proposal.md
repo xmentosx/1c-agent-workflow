@@ -1,5 +1,19 @@
 # Proposal
 
+## Актуальное уточнение: память по умолчанию, 2026-10-27
+
+Память включена по умолчанию при готовой явной association/common connection.
+Явный TOOL_COGNEE=off/disabled/сохранённый отказ приоритетен; без prerequisites —
+unavailable/unconfigured, не ложный success. Нет recall на каждую реплику,
+автоассоциации или массовой миграции/импорта заметок.
+[План MO0–MO4, checkpoint и MO-AC1–6](design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27)
+определяет ускорение originals, один qualified маршрут поиска и экономию полного
+контекста. Текущий source6828/r49 ещё explicit enable/CHUNKS/sequential;
+новое поведение не реализовано. Конечный G5 [завершён](evidence/g5-codex-completion-2026-10-27.md),
+выгода перед файлами не доказана. Ранние memory opt-in и текущие blocker summaries
+ниже исторические. Только документы/штатная регистрация; реализация, Gate6/G6,
+рабочая миграция и публикация не начинаются.
+
 ## G5: актуальный прогресс продолжения, 2026-10-26
 
 [Единый follow-up memory owner](evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий

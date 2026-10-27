@@ -1,5 +1,22 @@
 # Proposal
 
+## Актуальное уточнение: память по умолчанию, 2026-10-27
+
+Общий Cognee следует default-on policy memory owner после готовой явной
+association/common setup, без второго memory opt-in. Явный off/disabled/отказ
+сохраняется; без prerequisites память unavailable, независимый каталог работает.
+Unbound legacy/no answer не получают guessed association или миграцию.
+G5 завершён в прежней границе; новый default-on/оптимизации ещё не реализованы.
+
+[Единый MO0–MO4/checkpoint/MO-AC1–6](../add-scoped-cognee-memory/design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27)
+принадлежит памяти: до двух original GET, exact/qualified lexical/semantic route,
+полный контекст вместо одного payload. Registry даёт applied snapshot/home/
+applicability, не получает токены, native IDs/auth/readiness, новую endpoint роль
+или coordinator. R6 SHA0274a8ffb5a03ba7b856736c2b4a637ccbe98b73 прежний.
+Memory opt-in требования ниже исторические; явная project association с preview
+сохраняется. Сейчас документы/обычная регистрация; реализация, Gate6/G6,
+рабочая миграция и публикация не разрешены.
+
 ## G5: актуальный прогресс продолжения, 2026-10-26
 
 [Единый follow-up memory owner](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) заменяет прежний текущий

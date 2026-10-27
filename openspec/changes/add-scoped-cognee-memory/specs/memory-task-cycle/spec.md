@@ -56,10 +56,10 @@ Reset SHALL NOT автоматически удалять историю, пер
 
 ### Requirement: Первое включение существующей ветки не сбрасывает базу
 
-После отдельного memory opt-in existing lifecycle/state owner SHALL сохранять workspace/developer/workplace references и выделять initial current cycle для существующей ветки без reset/init/восстановления базы. Повтор, interrupt/resume и конкурентные сеансы SHALL использовать уже выделенные IDs через прежний writer/hash ownership; отключение/повторное включение SHALL NOT создавать новый cycle вместо reset. Новый cycle SHALL обозначать scope, SHALL NOT подтверждать установку исправлений/прохождение проверок. Неперечитанный старый контекст SHALL NOT писать в новую task область до verified binding. Другие existing worktrees SHALL NOT мигрировать автоматически.
+При первом применении default-on qualified памяти либо явном повторном включении existing lifecycle/state owner SHALL сохранять workspace/developer/workplace references и выделять initial current cycle для существующей ветки без reset/init/восстановления базы. Повтор, interrupt/resume и конкурентные сеансы SHALL использовать уже выделенные IDs через прежний writer/hash ownership; отключение/повторное включение SHALL NOT создавать новый cycle вместо reset. Новый cycle SHALL обозначать scope, SHALL NOT подтверждать установку исправлений/прохождение проверок. Неперечитанный старый контекст SHALL NOT писать в новую task область до verified binding. Другие existing worktrees SHALL NOT мигрировать автоматически.
 
 #### Scenario: Включение памяти в рабочей ветке
-- **WHEN** существующий registry-bound проект явно включает qualified память впервые и затем повторяет/продолжает включение
+- **WHEN** существующий registry-bound проект в отдельно разрешённом setup впервые применяет qualified память по default-on policy и затем повторяет/продолжает включение
 - **THEN** назначены устойчивые local IDs и один initial cycle, база/HEAD не сбрасываются, другие worktrees не меняются; runtime актуальность проверяется у прежнего владельца
 
 #### Scenario: Две сессии и старый чат

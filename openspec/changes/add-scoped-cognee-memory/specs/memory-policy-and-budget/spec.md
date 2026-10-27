@@ -76,13 +76,23 @@ Selected context SHALL вычисляться программно без LLM и
 - **WHEN** память уменьшила размер выдачи, но агент пропустил нужный вывод и повторил расследование
 - **THEN** это учитывается как ухудшение результата/полной стоимости; экономия не объявляется, расширение rollout требует пересмотра или явного принятия trade-off
 
-### Requirement: Миграция включает память отдельным выбором
+### Requirement: Память включена по умолчанию при готовой привязке
 
-Package update/registry association SHALL сохранять legacy/off до отдельного явного memory opt-in. Existing setup owner SHALL предлагать включить память/позже только при passed native Q, поддерживаемых helper/fork, registry context/native mapping и подтверждённом client reload; SHALL NOT обходить TOOL policy или спрашивать по каждой области. Unattended/отсутствие ответа SHALL NOT активировать память. Failure/partial memory binding SHALL иметь отдельный статус и прежний recovery owner; SHALL NOT превращать успешное независимое обновление/каталог в memory success либо блокировать их. Disable SHALL сохранять data/IDs/pending; downgrade SHALL проверять совместимость/owned restore.
+Managed память SHALL иметь default-on policy после готовой явной project association и настройки общего Cognee. Existing setup owner SHALL автоматически подготовить binding при passed применимых native Q, совместимых helper/fork, applied registry context/native mapping и подтвердить client activation после штатного reload; отдельный memory opt-in/вопрос по каждой области SHALL NOT требоваться. Отсутствующая настройка SHALL означать default-on preference, SHALL NOT доказывать native readiness. Явные TOOL_COGNEE=off, disabled и сохранённый отказ/откладывание памяти SHALL иметь приоритет и сохраняться при update/reload; автоматическое повторное включение SHALL NOT выполняться. TOOL auto/required и eligible provider policy SHALL сохраняться у controlled fork.
 
-#### Scenario: После обновления пользователь выбрал память позже
-- **WHEN** каталог уже выбран, но memory opt-in отсутствует, отложен или provider не qualified
-- **THEN** legacy/off сохраняется, независимая работа продолжается; required memory gap остаётся зависимой операцией, OpenViking автоматически не устанавливается
+Без prerequisites память SHALL сообщать unavailable/unconfigured с continuation, SHALL NOT угадывать project/dataset IDs или посылать unscoped запрос. Failure/partial binding SHALL иметь отдельный статус и прежний pinned resume/owned restore; независимые update/каталог SHALL продолжаться, required memory operation SHALL оставаться incomplete. Unbound legacy/no answer SHALL NOT автоматически ассоциироваться или мигрировать; переход рабочих установок SHALL требовать отдельного разрешения и прежнего setup owner. Disable SHALL сохранять data/IDs/pending; downgrade SHALL использовать compatibility/owned restore. Default-on SHALL NOT означать recall на каждую реплику, импорт старых заметок или автоматическую установку OpenViking/Cognee.
+
+#### Scenario: Готовый проект без второго вопроса
+- **WHEN** пользователь подтвердил ассоциацию/настройку, prerequisites готовы, memory setting отсутствует и явного отказа нет
+- **THEN** setup включает qualified route по умолчанию, завершает штатный reload/native confirmation без второго вопроса; package success и readiness показаны раздельно
+
+#### Scenario: Отключение переживает обновление
+- **WHEN** TOOL_COGNEE=off, disabled или сохранён отказ от памяти и выполняется update/reload
+- **THEN** off сохраняется, data/IDs/pending не удаляются, новые обращения к Cognee не выполняются
+
+#### Scenario: Память по умолчанию пока недоступна
+- **WHEN** действует default-on preference, но нет common connection, mapping или project association
+- **THEN** unavailable/unconfigured с продолжением, без unscoped вызова/автоассоциации; независимая работа продолжается, required gap не скрыт
 
 ### Requirement: Старые заметки не становятся общими автоматически
 
@@ -91,3 +101,26 @@ Package update/registry association SHALL сохранять legacy/off до о�
 #### Scenario: Legacy memory.md содержит проектные факты
 - **WHEN** qualified память включается при существующих локальных заметках и прежнем memory.md
 - **THEN** исходники сохранены без bulk remember/удаления; новый маршрут не объявляет их мигрированными или проверенными, выбранный перенос выполняется отдельно в допустимую область
+
+
+### Requirement: Оптимизация сохраняет originals и один маршрут поиска
+
+Existing reader SHALL ограничивать параллельное чтение originals двумя read-only raw GET внутри recall, сохраняя dedupe, round-robin порядок и deterministic выдачу независимо от завершения. SHALL сохраняться общий deadline 20 секунд, candidate cap 24, до 8 cards и до 1600 токенов всего сериализованного recall payload, current original/status/applicability и raw byte limits. Максимум одно уже начатое speculative чтение сверх sequential раннего выхода SHALL учитываться отдельно. Ошибка/отмена SHALL сохранять partial/continuation, SHALL NOT доказывать отсутствие знаний. Reader SHALL прекращать dispatch по deadline/cancel и очищать только свои ресурсы; SHALL NOT вводить общий scheduler, межоперационный original cache или parallel semantic/writer операции.
+
+Routing SHALL выбирать один маршрут: подтверждённый dataset/data ID → exact memory_status; точный термин/ошибка → CHUNKS_LEXICAL только после native qualification pinned профиля; смысловой вопрос → CHUNKS. До lexical qualification SHALL использоваться прежний CHUNKS; OpenAPI enum SHALL NOT заменять proof. Exact read SHALL NOT заменять обязательные standing/task queries, если нужны другие знания. SHALL NOT требоваться новая LLM, обход scopes или скрытый lexical+semantic fallback; прежние TOOL/query budgets сохраняются. Narrowing SHALL опираться на подтверждённую область; иначе SHALL сохраняться весь allowed read set.
+
+#### Scenario: Originals завершаются в другом порядке
+- **WHEN** два GET завершаются в обратном порядке или один даёт ошибку
+- **THEN** прежние порядок/currentness/budgets сохранены; ошибка partial, stale fragment не становится фактом
+
+#### Scenario: Уже известен original
+- **WHEN** нужен конкретный original по подтверждённым dataset/data ID
+- **THEN** exact route не делает semantic query только ради того же original; scope/currentness обязательны
+
+### Requirement: Экономия оценивается по всей задаче
+
+Оптимизация SHALL сохранять обязательные инструкции, provenance/status/applicability/coverage и exact evidence. SHALL сокращаться только доказанная избыточность полей/повторов в неизменном контексте; blind cache SHALL NOT заменять свежие originals. Лимит одного recall SHALL NOT объявляться бюджетом всех ходов. Before/after SHALL использовать существующие затронутые N5/B01–B12, одинаковые модель/корпус/профиль/контекст и real long-lived frontend; per-call fixture overhead SHALL отделяться от production latency. Новые кейсы и полная переаттестация G5 SHALL NOT требоваться этим планом. Польза/стоимость SHALL фиксироваться по MO-AC1–6 design с фактическими wall/calls/agent context и unknown internal usage; отсутствующие counters SHALL NOT считаться нулём. Исторический G5 SHALL NOT считаться proof нового default-on/reader/lexical поведения.
+
+#### Scenario: Payload короче, полный контекст неизвестен
+- **WHEN** bytes карточек меньше, но сопоставимого полного usage нет
+- **THEN** указывается только измеренное сокращение payload; общая token/monetary экономия не объявляется

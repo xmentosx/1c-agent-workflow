@@ -178,7 +178,7 @@ Tracked настройки SHALL хранить общую привязку пр
 
 #### Scenario: Unattended или ответ отсутствует
 - **WHEN** обновляется unbound проект без интерактивного выбора или пользователь не ответил
-- **THEN** package update может завершиться, ассоциация и memory opt-in не записаны, показан способ продолжить позже; отсутствие ответа не разрешает изменение настроек
+- **THEN** package update может завершиться, ассоциация и memory binding не записаны, показан способ продолжить позже; отсутствие ответа не разрешает изменение настроек
 
 ### Requirement: Первая ассоциация имеет preview и прежнего владельца восстановления
 
@@ -192,13 +192,21 @@ Tracked настройки SHALL хранить общую привязку пр
 - **WHEN** первая ассоциация отменена до записи либо прервана после записи одного client файла
 - **THEN** отмена сохраняет прежние bytes; partial имеет status/pinned resume/owned restore и не объявляется готовой привязкой, независимо от успеха package update
 
-### Requirement: Привязка к каталогу и включение памяти независимы
+### Requirement: Каталог независим от готовности памяти по умолчанию
 
-Выбор проекта, package update или существующая MCP entry SHALL NOT сами активировать managed memory route. В existing setup path SHALL допускаться отдельный явный выбор включить память/позже только при qualified provider/registry context и совместимых helper/fork; `TOOL off/required` и personal settings SHALL сохраняться. Отсутствующая/неквалифицированная память SHALL NOT блокировать каталог или требовать OpenViking; required gap SHALL оставаться только у зависимой memory operation. Native Q1–Q7 текущей редакции memory change, local identities/cycle и старые заметки SHALL принадлежать memory owner, без обязательного запроса на каждую из шести областей. Q5 SHALL проверять проверку current originals и допуск scopes после контролируемого restore, Q7 — ограниченный профиль и достаточные измерения всего прогона; полная детализация internal usage и paired сравнение SHALL NOT становиться условиями работы каталога. Restore admission/caches/measurement state SHALL NOT переноситься в registry schema, второй updater или отдельный rights/restore реестр. Registry-only приёмка SHALL проверять этот контракт fixture, а не требовать работающий Cognee; изменение требований SHALL NOT считаться новой native квалификацией.
+Managed память SHALL быть включена по умолчанию после готовой явной project association и настройки общего Cognee через existing memory setup owner, без отдельного memory opt-in. Выбор проекта/package update/MCP entry SHALL NOT сами доказывать native readiness или мигрировать рабочие проекты. Явные TOOL_COGNEE=off/disabled и сохранённый отказ SHALL сохраняться; отсутствие настройки SHALL означать preference default-on, отсутствие prerequisites SHALL давать unavailable/unconfigured с continuation. Unbound/later/no answer SHALL NOT создавать association/unscoped memory binding. Обновление пакета SHALL NOT массово включать память в старых рабочих установках; их переход SHALL иметь отдельное разрешение.
 
-#### Scenario: Каталог выбран без включения памяти
-- **WHEN** пользователь связал legacy проект и выбрал память позже либо native квалификация ещё не выполнена
-- **THEN** каталог работает самостоятельно, память не активирована, прежние off/disabled/External MCP сохранены; результат не объявляет memory readiness
+Native Q1–Q7, common connection/mapping, IDs/cycle, activation/reload и старые заметки SHALL принадлежать memory owner. Q5 SHALL сохранять current original/restore admission, Q7 — bounded profile/whole-run accounting; internal usage/paired эксперимент SHALL NOT становиться условиями работы каталога. Недоступная/частичная память SHALL NOT блокировать независимые каталог/update; required gap SHALL оставаться у зависимой операции. OpenViking, новые schemas/rights/restore ledgers и probes в pure resolver/Startup SHALL NOT требоваться. Native IDs/key SHALL NOT переноситься в business catalog; home выбирает данные, не четвёртую MCP роль.
+
+Оптимизация SHALL следовать единому MO0–MO4 memory design: прежний applied snapshot/home/applicability и различия project/MCP-source, до двух original GET и один qualified поиск без расширения scope. MO-R1–4 registry design и MO-AC1–6 memory design SHALL быть критериями нового поведения, SHALL NOT считаться выполненными историческим G5/R6/документационной регистрацией. Registry-only приёмка SHALL оставаться независимой от работающего Cognee.
+
+#### Scenario: Готовая ассоциация без второго вопроса
+- **WHEN** проект явно выбран, common setup квалифицирован, memory setting отсутствует и нет отказа
+- **THEN** memory owner применяет default-on с прежним binding/reload/native confirmation, без вопросов по областям; каталог не владеет readiness
+
+#### Scenario: Каталог работает при недоступной или отключённой памяти
+- **WHEN** каталог выбран, но память явно off либо нет qualified connection/mapping
+- **THEN** каталог работает самостоятельно, off сохранён или память unavailable; External/custom MCP сохранены, успех каталога не считается memory readiness
 
 ### Requirement: Opt-in совместимость и наследование ветками
 

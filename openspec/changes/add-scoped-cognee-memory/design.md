@@ -1,5 +1,164 @@
 # Design
 
+## План MO: default-on и оптимизация памяти, 2026-10-27
+
+Актуальная постановка следующего ограниченного изменения: по решению пользователя
+**память включена по умолчанию**. Прежние требования отдельного memory opt-in
+ниже исторические и заменены нормативными требованиями memory-policy-and-budget,
+memory-task-cycle и registry-memory-context. Project association с preview
+остаётся отдельным явным действием.
+
+G4 реализован, конечный G5 [завершён в согласованной границе](evidence/g5-codex-completion-2026-10-27.md).
+Квалифицированный runtime source — 6828b622d8542748c4294bfd066a6c5af41a7bc2/r49:
+explicit enable, CHUNKS и последовательное чтение. Новый default-on, параллельный
+reader и lexical route **не реализованы и не квалифицированы**. Не переоткрываем
+G3/G5, не объявляем преимущество перед файлами. Сейчас разрешены только документы
+и штатная регистрация; её Targeted выполняет только RegisterChange.
+Нативные прогоны, Gate6/G6, рабочая миграция, публикация и изменения fork запрещены.
+
+### Причина и ожидаемая полезность
+
+Invoke-ItlMemoryRecall делает один CHUNKS запрос по allowed datasets, затем
+round-robin отбирает до 24 кандидатов, dedupe по dataset/data ID и последовательно
+читает raw originals с проверкой current status/applicability. Итог — до 8 cards,
+весь recall payload до 1600 токенов по двум именованным счётчикам; общий deadline
+20 секунд включает principal/recall/originals. Эти ограничения сохраняются.
+Точный memory_status уже читает original по dataset/data ID.
+
+В сохранённом Codex-продолжении B03/B09/B10 было 19/32/20 raw чтений,
+11/24/11 уникальных пар за всю задачу: повторы между recall/exact, а не отсутствие
+dedupe внутри recall. Они не доказаны лишними: currentness могла измениться.
+Резерв — последовательные независимые GET внутри recall, выбор маршрута
+и ненужное повторение контекста. Источники — текущий reader и wire/events
+named run build/test-results/g5/common-20261026-112117, без новых замеров сейчас.
+Текущий stdio MCP уже long-lived; N7 fixture запускает PowerShell на каждый call.
+Его import/tokenizer overhead не является доказанной production задержкой.
+Холодный recall B03 и три задачи не дают производственного p95/SLA.
+
+Cognee даёт поиск по смыслу и durable originals/IDs между сеансами. Шесть областей,
+cycle и продуктовую применимость обеспечивает ITL поверх datasets/реестра.
+CHUNKS не использует graph traversal: graph строится native remember/cognify,
+стоимость есть, выгода graph read пока не показана. Ingestion/index pipeline
+не меняем. Исходные пары не доказали преимущества перед файлами; поздние Codex
+PASS нельзя объединять с Grok/Cursor в новый paired score. Internal unknown
+usage не нулевой. Половина bytes выдачи не доказывает экономию всей задачи.
+
+### MO0 — default-on и checkpoint будущего apply
+
+Policy владеет controlled ai_rules_1c; setup/binding/client writes/IDs/cycle
+и recovery — прежние ITL owners. Fork меняется только в controlled source
+на upgrade/release ветке; установленная копия не патчится. После готовой явной
+association и настройки common connection setup автоматически готовит память,
+без второго вопроса «включить/позже» и шести вопросов об областях.
+
+| Состояние | Будущее поведение |
+|---|---|
+| Готовый новый/явно настраиваемый проект, настройка отсутствует | Default-on; прежний setup применяет binding, выполняет штатный reload и подтверждает native activation |
+| Явные TOOL_COGNEE=off, disabled, сохранённый отказ/откладывание памяти | Off сохраняется при update/reload; не включать повторно автоматически |
+| Нет association, connection, qualified version или mapping | Default-on preference, фактически unavailable/unconfigured; нет guessed IDs/unscoped запроса/ложного success |
+| Required memory недоступна | Только зависимая операция incomplete с continuation; независимая работа продолжается |
+| Unbound legacy, association later/no answer | Не назначать проект, package update не мигрирует память; продолжение через прежний setup |
+| Установленный рабочий проект | Переход требует отдельно разрешённой миграции; сейчас не выполняется |
+| Legacy memory.md/pending/история | Сохранить data/bytes/IDs, не импортировать и не публиковать массово |
+
+Нет нового coordinator, background recall, readiness ledger, employee ACL или
+remote provisioning. Общее подключение использует private native API key,
+без часового login/auth-refresh service. R6 SHA
+0274a8ffb5a03ba7b856736c2b4a637ccbe98b73 не меняется;
+qualification homes не становятся production homes. Mapping подтверждает
+memory owner; нет home — недопустима только зависимая shared-product запись.
+Destination записи остаётся явным; включение не расширяет read/write scope.
+
+Checkpoint: default-on policy запрошена пользователем; **реализация MO0–MO4
+ещё не разрешена**. Прежние owners и одна state machine; нет authority над чужими
+процессами/служб/lock family/очереди. Сохраняются неадминистративные Windows
+10/11/Server2019+ и терминальные сессии. Preference, binding readiness и native
+activation различаются. Partial восстанавливается через прежние pinned
+resume/owned restore без reset/init базы. Откат сохраняет data/IDs/pending/off;
+несовместимая старая версия — только через compatibility/owned restore,
+без удаления новых полей ради видимости совместимости. Расширение миграции,
+платформ, блокировок или always-on контекста возвращается на checkpoint
+package-architecture.md. Рабочая миграция отдельно, не часть текущего apply.
+
+Совместимость с ai_rules_1c: intended semantic delta — отдельный enable prompt
+заменяется default-on при тех же prerequisites; optional lexical route расширяет
+только retrieval mode после proof. Recall-first, correction-capture в том же ходе,
+rule-friction, один durable save, неопределённый write без blind retry/fallback,
+TOOL off/auto/required, Memory line и строгая роль memory.md сохраняются.
+Write priority Cognee → допустимый OpenViking → допустимый templates прежний;
+project facts не уходят в shared templates. Standing query выполняется один раз
+на неизменный session context, full-cycle/spec сохраняет всех eligible readers,
+quick-fix/standing — первого. Код fork/host должен согласованно представить этот
+semantic diff, без роста always-on policy за счёт дублирования плана.
+
+Отсутствие старой настройки не является явным отказом пользователя. При будущем
+переходе legacy нельзя выдавать технически записанный default за пользовательский
+off; происхождение ambiguous значения выясняет прежний setup owner в отдельно
+разрешённой миграции. Это не разрешение менять такие установки сейчас.
+
+### Этапы после отдельного разрешения
+
+| Этап | Владелец и конкретное действие | Зависимость и результат |
+|---|---|---|
+| MO0 | Fork policy + ITL setup: default-on, explicit off/unavailable, idempotent initial cycle/reload | Checkpoint выше; один policy contract, прежний recovery owner |
+| MO1 | Existing HTTP/original reader: до двух одновременных read-only raw GET внутри recall | Сверить pinned raw API и пригодность двух чтений, без Cognee patch; если не поддерживается, оставить sequential с честным результатом, без скрытого retry |
+| MO2 | Existing adapter + fork: confirmed ID → exact memory_status, точный термин/ошибка → qualified CHUNKS_LEXICAL, смысловой вопрос → CHUNKS | Lexical есть в pinned OpenAPI enum, это ещё не proof. До квалификации на существующем корпусе использовать CHUNKS; один маршрут |
+| MO3 | Existing renderer + fork: компактные карточки/provenance, reuse релевантного результата в неизменном контексте | Без blind cache, потери source/status/applicability/coverage и обязательных правил |
+| MO4 | Existing qualification owner: один ограниченный before/after проход затронутых существующих N5/B01–B12 | После MO0–3, real long-lived frontend, одинаковые corpus/model/profile/context; без новых кейсов/клиентов/платформ |
+
+MO1: dedupe и round-robin до dispatch; completion order не меняет final порядок.
+Максимум два GET in flight; общий 20s deadline, bounded cancel/cleanup только
+своих запросов. По deadline/cancel прекратить новые GET; ошибка чтения даёт
+partial, не отсутствие знаний. Сохранить caps, raw byte limits, UTF-8/пути
+с пробелами и кириллицей, Windows PowerShell5.1/Core. Не распараллеливать semantic
+queries/writers/lifecycle. Не добавлять общий scheduler или недоказанный batch API.
+Допустимо максимум одно уже начатое speculative чтение сверх последовательного
+раннего выхода; показать его calls/стоимость, а не скрывать как ускорение.
+
+MO2: не добавлять LLM-классификатор. Exact ID должен иметь подтверждённые dataset
+и scope, произвольный UUID не даёт доступа. Exact read не заменяет обязательный
+standing/task recall, если нужны и другие знания. Dataset narrowing только
+по подтверждённой области; иначе весь allowed set. Сохраняются standing query,
+один task query на eligible reader, одна переформулировка после пустого relevant
+answer, TOOL policy и optional OpenViking. Нет обхода шести областей, скрытого
+lexical+semantic fallback, графового completion и добора карточек новым recall.
+Ошибка lexical — честная ошибка/continuation в прежнем query budget.
+
+MO3: сокращать доказанные повторы служебных полей/контекста, сохраняя полезный
+факт, ограничения и evidence. 1600 токенов — на один recall payload, не всю задачу.
+Exact originals могут быть длиннее: стоимость учитывать, доказательство
+не обрезать ради метрики. Diagnostics остаются у existing logs/evidence owner,
+без новой telemetry/token ledger. Межоперационный cache originals, graph/hybrid/
+agentic completion, новые модели/embeddings/БД и изменения Cognee исключены.
+[Официальные search modes](https://docs.cognee.ai/core-concepts/main-operations/legacy-operations/search)
+— справка, не proof возможностей pinned1.6.5.
+
+### Конечная приёмка MO
+
+| ID | Критерий будущего apply — сейчас NOT RUN |
+|---|---|
+| MO-AC1 | Готовый проект default-on без memory prompt; explicit off/отказ сохранён; association later/no answer не даёт binding. Повтор/reload не меняет IDs/cycle, нет reset/автомиграции соседей |
+| MO-AC2 | Исходные эталоны, current original/status/scope/applicability; stale/out-of-scope применения = 0. Reader сохраняет порядок/caps/partial/cancel/deadline, ошибка не превращается в пустоту |
+| MO-AC3 | Known original не ищется semantic query только ради того же ID; lexical имеет pinned native proof; один маршрут, прежний standing/task/reformulation budget, без нового LLM |
+| MO-AC4 | Прежние 20s/24 candidates/8 cards/1600 tokens всего recall payload; нет необоснованного роста always-on rules/tool schemas. Устранены доказанные повторы, свежие originals не заменены cache |
+| MO-AC5 | Сопоставимые wall time, calls principal/recall/raw, tool duration, полный agent input/output/cached input, named tokens/UTF-8 bytes; ingestion/index/internal unknown не скрыты, parent/child не суммируются |
+| MO-AC6 | Сохранены N5/B01–B12/failed/sealed evidence; code/native proof/RegisterChange разделены. Нет новых кейсов, Gate6/G6, рабочих установок или публикации |
+
+Ожидается меньше ожидания на original-read пути без потери правильности;
+из трёх задач не назначаются hard SLA/обещанный процент. MO1 учитывает максимум
+один extra speculative GET; другие этапы не увеличивают поисковые запросы.
+Экономия контекста доказывается полными сопоставимыми input/output, а не bytes
+карточек. Cached input входит в input, reasoning — в output: не считать дважды.
+Недоступная метрика unknown, не ноль; не вызывать модель ради подсчёта.
+Стоимость graph ingestion не исчезает от ускорения raw reads.
+
+Сейчас только анализ уже сохранённого evidence. После разрешённого MO4 —
+конечная матрица: улучшение, явно принятый trade-off или конкретный остаток.
+Малые отклонения времени не создают бесконечного цикла; после двух ремонтов
+без acceptance/owner narrowing сравнить owner-local вариант и rollback по
+package-architecture.md. Завершённый G5 остаётся историческим, новый proof
+относится только к MO.
+
 ## G5: конечный результат, 2026-10-27
 
 [Единый итог](evidence/g5-codex-completion-2026-10-27.md) закрывает N1–N7 в

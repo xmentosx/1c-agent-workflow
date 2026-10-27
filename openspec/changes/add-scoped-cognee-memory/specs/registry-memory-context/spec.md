@@ -122,11 +122,11 @@ Consumer contract SHALL использовать согласованное с `
 
 #### Scenario: Реестр наполнен, память ещё не принята
 - **WHEN** registry-only путь и наполнение прошли, а native/installed memory критерии ещё открыты
-- **THEN** реестр может выпускаться независимо, память остаётся выключенной; наполнение не настраивает подключение, не включает provider и не считается memory acceptance
+- **THEN** реестр может выпускаться независимо, default-on preference не означает готовую память: до prerequisites она unavailable; наполнение не настраивает подключение, не включает provider и не считается memory acceptance
 
 ### Requirement: Отдельная зависимость и совместимость старых установок
 
-Новая привязка SHALL включаться явно только при доступном квалифицированном интерфейсе реестра, принятом optional home contract и поддерживаемом helper. Зависимый memory G4 SHALL требовать native G1 и qualified G2 interface; совместный installed G5 SHALL требовать применённый registry context G3, без ожидания всех неиспользуемых server доработок для начала G4. Registry-only разработка/приёмка/выпуск SHALL оставаться независимыми от Cognee. Старые непомеченные проекты SHALL сохранять прежнее поведение. Эта постановка SHALL NOT менять зависимую спеку вместо её владельца. Каталожная привязка SHALL NOT сама устанавливать Cognee, менять code/graph/productDocs или давать read/write доступ к памяти.
+Новая project association SHALL выбираться явно; default-on память SHALL применяться прежним setup owner только при доступном квалифицированном интерфейсе реестра, принятом optional home contract и поддерживаемом helper. Зависимый memory G4 SHALL требовать native G1 и qualified G2 interface; совместный installed G5 SHALL требовать применённый registry context G3, без ожидания всех неиспользуемых server доработок для начала G4. Registry-only разработка/приёмка/выпуск SHALL оставаться независимыми от Cognee. Старые непомеченные проекты SHALL сохранять прежнее поведение. Эта постановка SHALL NOT менять зависимую спеку вместо её владельца. Каталожная привязка SHALL NOT сама устанавливать Cognee, менять code/graph/productDocs или давать read/write доступ к памяти.
 
 #### Scenario: Реестр ещё не внедрён
 - **WHEN** контрактные fixtures готовы, но зависимый change не установлен
@@ -134,4 +134,4 @@ Consumer contract SHALL использовать согласованное с `
 
 #### Scenario: Реестр готов независимо от памяти
 - **WHEN** registry-only путь квалифицирован, но native Cognee Q ещё failed/unverified
-- **THEN** каталог может продолжать свой выпуск/работу, memory G4/opt-in остаётся недопущенным; ни fixtures, ни успех association не объявляют memory readiness
+- **THEN** каталог может продолжать свой выпуск/работу, managed memory activation остаётся недопущенной независимо от default-on preference; ни fixtures, ни успех association не объявляют memory readiness
