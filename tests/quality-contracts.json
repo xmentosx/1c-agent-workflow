@@ -1417,7 +1417,7 @@
       "budgetSeconds": 60,
       "primaryTest": "tests/pester/SourceDeliveryEvidenceRetention.Tests.ps1",
       "paths": ["scripts/source-delivery-evidence.ps1", "scripts/source-delivery-supervisor.ps1", "tests/pester/SourceDeliveryEvidenceRetention.Tests.ps1"],
-      "reuseInputPaths": ["scripts/source-delivery*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/stand-env-identity.ps1", "tests/pester/TestSupport.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "reuseInputPaths": ["scripts/ai-rules-native-inputs.ps1", "scripts/source-delivery*.ps1", "scripts/git-path-list.ps1", "scripts/source-proof-json.ps1", "scripts/release-qualification.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/stand-env-identity.ps1", "tests/pester/TestSupport.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
       "tests": ["tests/pester/SourceDeliveryEvidenceRetention.Tests.ps1"]
     },
     {
