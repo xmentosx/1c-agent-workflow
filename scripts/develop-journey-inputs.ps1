@@ -37,6 +37,8 @@ function Get-DevelopJourneyExcludedScope {
     if($Path -cin @('.agents/skills/1c-workflow/SKILL.md',
         '.agents/skills/1c-workflow/references/advanced-actions.md',
         '.agents/skills/1c-workflow/references/artifact-retention.md',
+        '.agents/skills/1c-workflow/references/init-setup.md',
+        '.agents/skills/1c-workflow/references/scoped-memory.md',
         '.agents/skills/1c-workflow/references/verification-change.md',
         '.agents/skills/1c-workflow/references/verification-result.md',
         '.agents/skills/1c-workflow/references/verification-suite-selection.md')) {

@@ -7,7 +7,7 @@
         $f.catalog.developJourneys|Add-Member scenarios $actual.developJourneys.scenarios
         $f.catalog.developJourneys|Add-Member scenarioInputs @($actual.developJourneys.scenarioInputs|Where-Object path -eq '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')
         [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}')
-        foreach($relative in @('.agents/skills/1c-workflow/references/artifact-retention.md','.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow/references/advanced-actions.md','.agents/skills/1c-workflow/references/verification-change.md','.agents/skills/1c-workflow/references/verification-result.md','.agents/skills/1c-workflow/references/verification-suite-selection.md','.agents/skills/1c-workflow-fast/SKILL.md','.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')) {
+        foreach($relative in @('.agents/skills/1c-workflow/references/init-setup.md','.agents/skills/1c-workflow/references/scoped-memory.md','.agents/skills/1c-workflow/references/artifact-retention.md','.agents/skills/1c-workflow/SKILL.md','.agents/skills/1c-workflow/references/advanced-actions.md','.agents/skills/1c-workflow/references/verification-change.md','.agents/skills/1c-workflow/references/verification-result.md','.agents/skills/1c-workflow/references/verification-suite-selection.md','.agents/skills/1c-workflow-fast/SKILL.md','.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')) {
             $target=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
             Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
             $f.catalog.contracts[0].paths+=@($relative)
@@ -86,6 +86,8 @@ Describe 'Consumed native instruction and product inputs' {
         @{Guidance='.agents/skills/1c-workflow/SKILL.md'},
         @{Guidance='.agents/skills/1c-workflow/references/advanced-actions.md'},
         @{Guidance='.agents/skills/1c-workflow/references/artifact-retention.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/init-setup.md'},
+        @{Guidance='.agents/skills/1c-workflow/references/scoped-memory.md'},
         @{Guidance='.agents/skills/1c-workflow/references/verification-change.md'},
         @{Guidance='.agents/skills/1c-workflow/references/verification-result.md'},
         @{Guidance='.agents/skills/1c-workflow/references/verification-suite-selection.md'}

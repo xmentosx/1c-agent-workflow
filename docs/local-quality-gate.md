@@ -267,7 +267,7 @@ source SHA still authenticates this projection.
 The main `1c-workflow/SKILL.md` content uses the same static boundary, with
 authenticated prior/current file presence. Addition/removal remains conservative.
 The explicit content-only set also includes `advanced-actions.md`, `artifact-retention.md`,
-`verification-change.md`, `verification-result.md` and
+`init-setup.md`, `scoped-memory.md`, `verification-change.md`, `verification-result.md` and
 `verification-suite-selection.md`: native callers print their links, while static
 tests read their content. Unknown references retain native binding. Historical
 source SHA authentication remains mandatory before every projection.
