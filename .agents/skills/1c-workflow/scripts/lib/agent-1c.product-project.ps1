@@ -11,8 +11,10 @@ function Invoke-ItlCatalogGit {
         # The native Git HTTP/SSH children own the same transport. Reserve
         # cleanup inside the caller's absolute budget instead of stopping only
         # their parent and leaving its output pipes/network active afterwards.
-        $transportDeadline=$DeadlineUtc.AddSeconds(-3)
-        if([DateTime]::UtcNow -ge $transportDeadline){throw 'CATALOG_GIT_DEADLINE: no transport cleanup budget remains; repeat the same catalog operation; prepared data is preserved.'}
+        # Include process inventory, PID identity checks and confirmed exit in
+        # the caller's budget. Three seconds was shorter than observed cleanup.
+        $transportDeadline=$DeadlineUtc.AddSeconds(-10)
+        if([DateTime]::UtcNow -ge $transportDeadline){throw 'CATALOG_GIT_DEADLINE: no transport cleanup budget remains; restart the same catalog operation with a fresh metadata budget; prepared data is preserved.'}
         $result = Invoke-ItlNativeProcessCapture -FilePath 'git.exe' -Arguments (@('-c','core.quotepath=false','--no-pager','-C',([IO.Path]::GetFullPath($Root))) + $Arguments) -WorkingDirectory $Root -DeadlineUtc $transportDeadline -OnWait { } -OnTimeout {
             param($process)
             . (Join-Path $PSScriptRoot 'agent-1c.ui-tools.ps1')

@@ -83,6 +83,7 @@ BeforeEach {
         $script:sourceE2EArtifactBindingPath = ''
     }
 
+
 It 'plans real Git changes with the exact native selection (<Change>)' -TestCases @(
         @{Change='owned-test';Expected=@('develop.static')},
         @{Change='update-only';Expected=@('develop.static','develop.upgrade')},
