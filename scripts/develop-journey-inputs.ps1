@@ -346,7 +346,9 @@ function Test-DevelopGoBuildOnlyPath {
         # The reviewed legacy-snapshot continuation and its launcher do not
         # consume Go tests or README; any new reader closes this exception.
         $consumers=@{
-            'scripts/update-installed-workflow.ps1'='d3ae4a8430d3f11958b8bb298607bbf57314679a15669675c1b240091b83f3b0'
+            # Scoped stand rollout only adds/forwards an explicit roots-file
+            # argument; it introduces no Go test or README reader.
+            'scripts/update-installed-workflow.ps1'='f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af'
             'scripts/invoke-develop-e2e.ps1'='10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9'
             'scripts/source-e2e-workflow-update.ps1'='82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4'
             'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'

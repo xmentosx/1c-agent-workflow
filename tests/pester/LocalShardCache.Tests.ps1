@@ -198,7 +198,16 @@ Get-PesterShardFileSha256 -Path `$Path
             $out3 = Join-Path $root "out3"; $implicitRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out3, "-JunitPath", (Join-Path $out3 "pester.xml"), "-SelectionPath", $selectionPath); $implicitRun.exitCode | Should -Be 0 -Because ((@($implicitRun.stdout) + @($implicitRun.stderr)) -join [Environment]::NewLine); $implicit = ($implicitRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             $implicit.pesterWorkers.requested | Should -Be 3
             $implicit.pesterWorkers.explicit | Should -BeFalse
-            $implicit.pesterWorkers.effective | Should -Be 3
+            # An implicit ceiling remains three; host admission can reduce it.
+            # This warm call must reuse the exact proof without a native worker,
+            # even if current host memory admits no new worker at all.
+            $implicit.initialMemoryLimit | Should -BeGreaterOrEqual 0
+            $implicit.initialMemoryLimit | Should -BeLessOrEqual 3
+            $implicit.pesterWorkers.effective | Should -Be ([int][math]::Max(1, $implicit.initialMemoryLimit))
+            $implicit.peakActiveWorkers | Should -Be 0
+            $implicit.executedWorkerCount | Should -Be 0
+            $implicit.reusedWorkerCount | Should -Be 1
+            [string]$implicit.workers[0].inputDigest | Should -Be ([string]$first.workers[0].inputDigest)
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

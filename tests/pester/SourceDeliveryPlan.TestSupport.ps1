@@ -1,4 +1,16 @@
 ﻿. (Join-Path $PSScriptRoot 'TestSupport.ps1')
+function Enter-DeliveryPlanFixtureEnvironment {
+    $snapshot=@{}
+    foreach($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+        $snapshot[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+        [Environment]::SetEnvironmentVariable($name,$null,'Process')
+    }
+    return $snapshot
+}
+function Exit-DeliveryPlanFixtureEnvironment {
+    param([Collections.IDictionary]$Snapshot)
+    foreach($name in $Snapshot.Keys) {[Environment]::SetEnvironmentVariable($name,$Snapshot[$name],'Process')}
+}
 $context = Initialize-WorkflowPesterContext
 $RepoRoot = $context.RepoRoot
 . (Join-Path $RepoRoot 'scripts\git-path-list.ps1')

@@ -1,15 +1,73 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1') }
 
 Describe 'Incremental delivery acceptance' {
-BeforeEach {
-        # These repositories own synthetic locks and canonical artifact caches.
-        # The outer Develop gate exports its real artifacts to Pester; retain
-        # those caller overrides outside each fixture's discovery scope.
-        $script:incrementalCallerArtifactOverrides = @{}
-        foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
-            $script:incrementalCallerArtifactOverrides[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+It 'binds every synthetic plan and scope fixture to one environment owner and restores it after failure' {
+    foreach($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {[Environment]::GetEnvironmentVariable($name,'Process')|Should -BeNullOrEmpty}
+    $files=@('SourceDeliveryPlan','SourceDeliveryIncremental','DeliveryCandidatePlanBridge','DeliveryCatalogInputScope','DeliveryGoInputScope','DeliveryScenarioAuthentication','DeliveryScenarioComposition','DeliveryScenarioSelection','DeliverySetupInputScope','DevelopForkInputScope','DevelopBrokerInputScope','DevelopInstructionContextScope')
+    foreach($name in $files) {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot ($name+'.Tests.ps1')),[ref]$tokens,[ref]$errors)
+        @($errors)|Should -BeNullOrEmpty
+        foreach($statement in $ast.EndBlock.Statements) {
+            if($statement -isnot [Management.Automation.Language.PipelineAst]){continue}
+            $command=$statement.PipelineElements[0]
+            if($command -isnot [Management.Automation.Language.CommandAst] -or $command.GetCommandName() -ne 'Describe'){continue}
+            $block=@($command.CommandElements|Where-Object {$_ -is [Management.Automation.Language.ScriptBlockExpressionAst]})[-1].ScriptBlock
+            $hooks=@(foreach($s in $block.EndBlock.Statements){if($s -is [Management.Automation.Language.PipelineAst]){$c=$s.PipelineElements[0];if($c -is [Management.Automation.Language.CommandAst]){$c}}})
+            @($hooks|Where-Object {$_.GetCommandName() -eq 'BeforeEach'}).Count|Should -Be 1
+            @($hooks|Where-Object {$_.GetCommandName() -eq 'AfterEach'}).Count|Should -Be 1
+            $body=$block.Extent.Text
+            $body|Should -Match 'BeforeEach\s*\{\s*\$script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment'
+            $body|Should -Match 'AfterEach \{ Exit-DeliveryPlanFixtureEnvironment -Snapshot \$script:deliveryPlanFixtureEnvironment \}'
         }
+    }
+    $prior=Enter-DeliveryPlanFixtureEnvironment
+    try {
+        $segment=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KLQtdGB0YIg0L/Rg9GC0Yw='))
+        foreach($name in $prior.Keys){[Environment]::SetEnvironmentVariable($name,('C:\'+$segment+'\'+$name),'Process')}
+        $snapshot=Enter-DeliveryPlanFixtureEnvironment
+        try {
+            foreach($name in $snapshot.Keys){[Environment]::GetEnvironmentVariable($name,'Process')|Should -BeNullOrEmpty}
+            throw 'original fixture failure'
+        } catch { $_.Exception.Message|Should -Be 'original fixture failure' }
+        finally { Exit-DeliveryPlanFixtureEnvironment $snapshot }
+        foreach($name in $snapshot.Keys){[Environment]::GetEnvironmentVariable($name,'Process')|Should -BeExactly $snapshot[$name]}
+    } finally { Exit-DeliveryPlanFixtureEnvironment $prior }
+}
+
+It 'isolates real candidate artifacts in the native fixture and restores their exact environment afterward' {
+    $child=Join-Path $TestDrive 'fixture environment.ps1'
+    $body=@'
+param([string]$RepositoryRoot)
+$ErrorActionPreference='Stop'
+Import-Module Pester -RequiredVersion 5.8.0
+$names=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE','VANESSA_MCP_CLIENT_CFE_PATH','ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')
+$expected=@{}
+foreach($name in $names) {
+    $expected[$name]=Join-Path $PSScriptRoot ($name+' invalid candidate artifact')
+    [IO.File]::WriteAllText($expected[$name],'foreign candidate bytes')
+    [Environment]::SetEnvironmentVariable($name,$expected[$name],'Process')
+}
+$config=New-PesterConfiguration
+$config.Run.Path=Join-Path $RepositoryRoot 'tests/pester/SourceDeliveryIncremental.Tests.ps1'
+$config.Filter.FullName='*plans real Git changes with the exact native selection*'
+$config.Run.PassThru=$true
+$config.Output.Verbosity='Normal'
+$result=Invoke-Pester -Configuration $config
+if($result.PassedCount -ne 7 -or $result.FailedCount -or $result.FailedContainersCount){throw ('Original native selection did not pass with foreign candidate artifacts. passed='+$result.PassedCount+'; failed='+$result.FailedCount)}
+foreach($name in $names) {
+    if([Environment]::GetEnvironmentVariable($name,'Process') -cne $expected[$name]){throw ('Fixture leaked environment: '+$name)}
+    if([IO.File]::ReadAllText($expected[$name]) -cne 'foreign candidate bytes'){throw 'Fixture modified a foreign artifact.'}
+}
+'@
+    [IO.File]::WriteAllText($child,$body,[Text.UTF8Encoding]::new($true))
+    $result=Invoke-TestPowerShellFile -FilePath $child -Arguments @('-RepositoryRoot',$RepoRoot)
+    $result.exitCode | Should -Be 0 -Because $result.combinedText
+}
+BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
@@ -25,11 +83,6 @@ BeforeEach {
         $script:sourceE2EArtifactBindingPath = ''
     }
 
-AfterEach {
-        foreach ($name in $script:incrementalCallerArtifactOverrides.Keys) {
-            [Environment]::SetEnvironmentVariable($name, $script:incrementalCallerArtifactOverrides[$name], 'Process')
-        }
-    }
 
 It 'plans real Git changes with the exact native selection (<Change>)' -TestCases @(
         @{Change='owned-test';Expected=@('develop.static')},

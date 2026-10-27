@@ -787,9 +787,18 @@ try {
     $worktreeCleanAtStart = @(& git status --porcelain).Count -eq 0
     $resolvedAiRulesSource = $(if ($effectiveMode -in @("Full", "Develop", "Release")) { Resolve-AiRulesSource } else { "" })
     $sourceIsLocal = $resolvedAiRulesSource -and (Test-Path -LiteralPath $resolvedAiRulesSource -PathType Container)
+    $developNeedsStand = $false
+    if ($effectiveMode -eq 'Develop') {
+        if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
+        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
+        # With a supplied stand retain the existing route-continuation proof
+        # needed by a following Release. A stand-free static support candidate
+        # cannot create or replace that live qualification.
+        $developNeedsStand = @($developPlan.journeys).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($E2EProjectRoot)
+    }
 
     if ($effectiveMode -in @("Develop", "Release")) {
-        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
+        if (($effectiveMode -eq 'Release' -or $developNeedsStand) -and [string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
         if (-not $worktreeCleanAtStart) { throw "$effectiveMode requires a clean candidate worktree." }
     }
     if ($effectiveMode -eq "Release") {
@@ -818,7 +827,7 @@ try {
 
     $releaseFixtureRoot = $E2EProjectRoot
     if ($effectiveMode -in @('Develop','Release')) {
-        $fixturePlan = if ($effectiveMode -eq 'Develop') { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog } else { $null }
+        $fixturePlan = if ($effectiveMode -eq 'Develop') { $developPlan } else { $null }
         if ($effectiveMode -eq 'Release' -or @($fixturePlan.journeys).Count -gt 0) {
             Invoke-GateStage -Name 'qualification-fixture-inputs' -Reason 'capture immutable phase baselines once through the installed snapshot owner' -Body {
                 $fixtureScript = Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1'
@@ -853,11 +862,13 @@ try {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
         Invoke-GateStage -Name "release-readiness" -Reason "aggregate dependency, candidate, encoding, and stand preflight" -Detail $releaseContextPath -Body {
-            $readinessArguments = @("-Mode", $effectiveMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            $readinessMode = if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) { 'Full' } else { $effectiveMode }
+            $readinessArguments = @("-Mode", $readinessMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            if ($BaseRef) { $readinessArguments += @('-BaseRef', $BaseRef) }
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
             if ($AgentTarget) { $readinessArguments += @('-AgentTarget', $AgentTarget) }
             if ($effectiveMode -eq "Release") { $readinessArguments += @("-ResumeMode", $ReleaseResumeMode) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
@@ -867,7 +878,7 @@ try {
             $archivePath = [string]$script:releaseContext.artifacts.vanessaAutomation.path
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
-            if ($effectiveMode -in @('Develop','Release')) {
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) {
                 $script:sourceE2EArtifactBinding = Resolve-SourceE2EArtifactBinding -RepositoryRoot $repoRoot -ArchivePath $archivePath -Offline:$Offline
                 $script:sourceE2EArtifactBindingPath = Join-Path $outputRoot 'source-e2e-artifacts.json'
                 [IO.File]::WriteAllText($script:sourceE2EArtifactBindingPath, ($script:sourceE2EArtifactBinding | ConvertTo-Json -Depth 5), $utf8NoBom)
@@ -885,7 +896,6 @@ try {
         $script:developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
         $script:developRulesSource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
         if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
-        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
         $script:developQualificationRoot = Split-Path -Parent $developQualificationFullPath
         New-Item -ItemType Directory -Force -Path $developQualificationRoot | Out-Null
         $earlyPlan = [pscustomobject][ordered]@{
@@ -1098,7 +1108,14 @@ try {
         $releaseDevelopProof = Update-DevelopQualificationFullBinding -Commit $commit -Tree $tree -PreviousFullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
     }
 
-    if ($effectiveMode -eq "Develop") {
+    if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) {
+        $developE2EReportPath = Join-Path $outputRoot 'develop-e2e-summary.json'
+        $staticCompletion = [ordered]@{ schemaVersion=1; kind='itl-develop-static-completion'; status='passed';
+            candidate=[ordered]@{commit=$commit;tree=$tree}; plan=$developPlan; journeys=[ordered]@{} }
+        [IO.File]::WriteAllText($developE2EReportPath, ($staticCompletion | ConvertTo-Json -Depth 16), $utf8NoBom)
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -JourneyRecords ([ordered]@{}) -Plan $developPlan -StaticOnly)
+    }
+    if ($effectiveMode -eq "Develop" -and $developNeedsStand) {
         $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
         $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot

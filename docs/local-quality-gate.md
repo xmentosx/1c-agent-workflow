@@ -140,7 +140,22 @@ and publication channels below remain authoritative.
 Implicit Full/Develop/Release Pester uses the catalog's
 `pesterWorkers.qualificationImplicitDefault`, capped by available processors.
 An explicit worker count remains authoritative; legacy catalogs retain their
-previous choice. Private manifest continuation fixtures run alongside independent
+previous choice. Implicit admission also accounts for physical and commit memory:
+it allows one worker per available physical GiB, with 2 GiB commit headroom per
+worker below 90% host commit usage (the remote runner's hard guard remains 92%). This
+only limits this scheduler's children, never other owners or their locks;
+an unavailable memory observation defers implicit admission. Plan uses the observed
+limit, while execution reduces admission under pressure and restores it, up to
+the configured limit, as memory becomes available again. The summary retains
+the initial limit and actual peak concurrency. Below 256 MiB available physical
+memory or without commit headroom it waits before starting parallel or serial
+workers, then resumes automatically. Existing gate deadlines still apply; on
+timeout free resources through their owner and repeat the same RegisterChange
+with the same QueueId/checkpoint. No foreign process is stopped. Plan marks an
+unknown resource wait separately; fully reused proof requires no worker admission.
+The October 27 incident exceeded the remote runner's commit guard even with free
+physical RAM; physical-only admission was insufficient. Neither guard is waived.
+Private manifest continuation fixtures run alongside independent
 files; real console/global boundaries remain serial. Ordering weights use observed
 native file times, separately from hard deadlines. Plan reads its timing samples
 from the existing bounded run index before filtering each stage; Targeted bursts
@@ -148,6 +163,32 @@ cannot displace qualification observations. Native scenario execution survives
 the check-summary/raw-record/index boundary, so partial and composed coverage
 cannot masquerade as a complete timing sample. Release estimates use executed
 component wall time, never aggregate or reused-proof duration.
+
+Cheap Release routing assertions run in the preflight cohort before expensive
+native Pester files. The assertions and their contract/capability ownership are
+preserved; real console/global tests remain serial. All synthetic plan/scope
+fixtures use one helper to snapshot, clear and restore the three external artifact overrides so
+Develop's actual archive/CFE/executable cannot replace fixture-owned bytes.
+
+A support clone reads exact Pester proofs from its local origin, or repositories
+listed by `git config --local --add itl.pesterProofSource <repository-root>`.
+Sources must have verifiable common ancestry. No network lookup, recursive
+discovery, foreign cache write or cleanup is performed. The current digest,
+owner inventory, runtime/external witnesses, selected test, passed result and
+manifest SHA checks still apply. Plan and results expose `proofSource`; a miss
+executes the original test and saves only in the current common Git directory.
+An older support baseline lacking these verifier capabilities must first acquire
+them through normal source delivery; its live checkpoint is never rewritten.
+
+Develop resolves journey ownership before requiring a stand. Without a supplied
+stand, a plan with zero live journeys keeps complete Full/static checks and writes an explicit
+`itl-workflow-develop-static-completion`, which cannot qualify Release E2E.
+Selected live journeys and Release retain their stand, capsule and route proof
+requirements. A supplied stand preserves existing route continuation for a
+following Release instead of replacing its live proof with static completion.
+Readiness receives the frozen candidate's `BaseRef` for encoding
+checks instead of requiring an unrelated `origin/master` in a support clone;
+an invalid explicit base remains a preflight failure.
 
 For changes to test suites, selection rules or production/input dependencies,
 acceptance includes selection, measured cost and reuse applicability, alongside
@@ -693,6 +734,36 @@ Ordering weights исправлены по этим наблюдениям: тя
 повторный live runtime. При отсутствии подходящих timing records, в том числе
 при недоступном hot index, прогноз остаётся неизвестным. Hard limits, approval
 долгого плана и watchdog не ослабляются ради короткой оценки.
+
+Для команды публикации `gateEstimatedSeconds` — только сумма основных gates.
+`estimatedSeconds` остаётся неизвестным при ненулевом `unmeasuredPreparation`:
+подготовка/проверка капсул, предварительный compatibility Full для pending fork,
+очистка и remote finalization не должны исчезать из прогноза. Уже завершённая
+подготовка отражается отдельно в `preparationSpentSeconds`, не как оставшееся время.
+Например, в расследовании 2026-10-26 за пределами основных gates оказались
+184794 мс позднего readiness, 1182225 мс обновления десяти веток, 367350 мс
+двух Capture и 381265 мс отклонённого ResumePlan; preliminary Full занял
+1493606 мс. Это наблюдения конкретного запуска, а не норматив будущей публикации.
+
+Будущий PublishDevelop готовит стенд через штатные recovery/update-workflow/Capture
+до финального расчёта и сохранения execution fingerprints. Rollout ограничен
+двумя зарегистрированными ветками immutable капсул Release/Develop: checker
+связывает обе с общим master до запуска любого journey. Контекстные ссылки на
+квитанции других веток не добавляют эти ветки в область записи. Список корней и
+source commit сохраняется в lifecycle receipt; retry не расширяет его. Capture
+сохраняет исходную капсулу и проверяет всю цепочку workflow-only переходов,
+backup, конфигурацию, окружение, business bytes и SHA базы. Автоматический
+Recapture и создание новой baseline запрещены. Обычный update-workflow без
+scope сохраняет rollout всех зарегистрированных development-веток.
+Read-only Plan показывает требуемую подготовку; при ожидаемом изменении стенда
+возвращает `resumable=false` и continuation для PublishDevelop без ResumePlan.
+Publisher затем фиксирует окончательный план и запрашивает его обычное long-plan
+approval. После фиксации automatic preparation повторно не запускается: дрейф
+входов по-прежнему блокирует ResumePlan, исходный план и proof сохраняются.
+Успешная best-effort pre-operation уборка переиспользуется только при ResumePlan
+того же checkpoint. Legacy/неполная уборка и новый план выполняют её заново;
+актуальные operation locks, process/lease guards, gates и post-operation уборка
+сохраняются. Текущая публикация продолжает использовать прежний supervisor.
 
 Изменение planner/checker, маршрутизации или reuse должно сохранять регрессии
 обоих направлений: изолированная recovery-доработка не запускает `fresh`, общий

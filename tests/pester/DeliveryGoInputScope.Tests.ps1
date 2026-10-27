@@ -1,7 +1,11 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1') }
 
 Describe 'Incremental delivery acceptance' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
 BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
@@ -34,6 +38,8 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     $base=(& git -C $f.root rev-parse HEAD).Trim()
     $f.base=$base
     Save-IncrementalJourneyProofs $f
+    Test-DevelopGoBuildOnlyPath $f.root $paths[1] | Should -BeTrue
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeTrue
     foreach($path in $paths[1..2]) {
         [IO.File]::AppendAllText((Join-Path $f.root $path),"// static-only change`n")
         $route=Resolve-DevelopE2EJourneyPlanCore $f.root $base @($path) $catalog

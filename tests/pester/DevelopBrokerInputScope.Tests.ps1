@@ -1,6 +1,9 @@
 BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1') }
 
 Describe 'Develop broker cleanup input scope' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+    BeforeEach { $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment }
+
     It 'reuses authenticated native proofs for retained-only cleanup changes and rejects shared-path changes' {
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
         $f=New-IncrementalPlanFixture

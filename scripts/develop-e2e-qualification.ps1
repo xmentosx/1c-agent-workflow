@@ -789,7 +789,8 @@ function Restore-DevelopE2EQualification {
 }
 
 function Write-DevelopQualification {
-    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords, [object]$Plan)
+    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords, [object]$Plan, [switch]$StaticOnly)
+    if ($StaticOnly -and @($Plan.journeys).Count -gt 0) { throw 'Static completion cannot satisfy selected live journeys.' }
     if (-not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { throw "Develop qualification requires reusable Full evidence." }
     $root = Split-Path -Parent $developQualificationFullPath
     New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -801,9 +802,9 @@ function Write-DevelopQualification {
     }
     $qualification = [ordered]@{
         schemaVersion = 4
-        kind = "itl-workflow-develop-qualification"
+        kind = $(if ($StaticOnly) { 'itl-workflow-develop-static-completion' } else { "itl-workflow-develop-qualification" })
         status = "passed"
-        reusable = $true
+        reusable = -not [bool]$StaticOnly
         repository = [ordered]@{ commit = $Commit; tree = $Tree; evidenceCommit = $Commit; worktreeClean = $true }
         fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
         e2e = [ordered]@{ path = Get-RelativeRepositoryPath -Path $canonicalReport -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $canonicalReport -Algorithm SHA256).Hash.ToLowerInvariant() }

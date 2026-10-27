@@ -42,7 +42,11 @@
 }
 
 Describe 'Consumed native instruction and product inputs' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
     BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
     }
     It 'retains binding admission while the disabled post-update offer avoids product work (interactive=<Interactive>)' -TestCases @(@{Interactive=$false},@{Interactive=$true}) {

@@ -23,6 +23,45 @@ $OutputEncoding = $utf8NoBom
 $workerCountParameterExplicit = $PSBoundParameters.ContainsKey("WorkerCount")
 $reportedRequestedWorkerCount = $(if ($RequestedWorkerCount -gt 0) { $RequestedWorkerCount } else { $WorkerCount })
 
+function Get-PesterMemoryWorkerLimit {
+    param([int]$Requested, [long]$AvailableBytes, [long]$CommitHeadroomBytes = -1)
+    if ($AvailableBytes -lt 0 -and $CommitHeadroomBytes -lt 0) { return 0 }
+    $physical = $Requested
+    if ($AvailableBytes -ge 0) {
+        if ($AvailableBytes -lt 256MB) { return 0 }
+        $physical = [int][math]::Max(1, [math]::Min($Requested, [math]::Floor($AvailableBytes / 1GB)))
+    }
+    # Admission is deliberately below the remote runner's 92% hard guard:
+    # retain 10% host commit headroom and allow 2 GiB per new native worker.
+    if ($CommitHeadroomBytes -ge 0) { return [int][math]::Min($physical, [math]::Floor($CommitHeadroomBytes / 2GB)) }
+    return $physical
+}
+
+function Get-PesterMemorySnapshot {
+    if (-not (Get-Variable pesterMemoryObservedAt -Scope Script -ErrorAction SilentlyContinue) -or
+        ([DateTime]::UtcNow - $script:pesterMemoryObservedAt).TotalSeconds -ge 2) {
+        try {
+            $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction Stop
+            $headroom = [long][math]::Max(0.0, ([double]$memory.CommitLimit * 0.90 - [double]$memory.CommittedBytes))
+            $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=[long]$memory.AvailableBytes;commitHeadroomBytes=$headroom}
+        } catch { $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=-1L;commitHeadroomBytes=-1L} }
+        $script:pesterMemoryObservedAt = [DateTime]::UtcNow
+    }
+    return $script:pesterMemorySnapshot
+}
+
+function Get-PesterCurrentMemoryWorkerLimit {
+    $snapshot = Get-PesterMemorySnapshot
+    return Get-PesterMemoryWorkerLimit -Requested $WorkerCount -AvailableBytes $snapshot.availableBytes -CommitHeadroomBytes $snapshot.commitHeadroomBytes
+}
+
+$memoryAdmissionEnabled = $WorkerCountDefaulted -or -not $workerCountParameterExplicit
+$memoryAdmissionReductions = 0
+$initialMemoryLimit = $WorkerCount
+if ($memoryAdmissionEnabled) {
+    $initialMemoryLimit = Get-PesterCurrentMemoryWorkerLimit
+    if ($PlanOnly) { $WorkerCount = [math]::Max(1, $initialMemoryLimit) }
+}
 
 function Get-PesterWorkloadEstimate {
     param([object[]]$Files, [ValidateRange(1,4)][int]$WorkerCount)
@@ -72,6 +111,38 @@ $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
 $trackedPaths = @()
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
 $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+# A support clone has a separate common Git directory. Read exact proofs from
+# its local origin or explicitly configured repositories, without copying or
+# modifying their stores. Shared ancestry prevents unrelated repositories from
+# becoming implicit proof sources; the normal digest/runtime/SHA checks remain.
+$proofCacheRoots = @($cacheRoot)
+$proofSources = @()
+$proofAncestorRoots = $null
+$configuredSources = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('config','--local','--get-all','itl.pesterProofSource') -AllowFailure
+if ($configuredSources.exitCode -eq 0) { $proofSources += @(([string]$configuredSources.stdout -split '\r?\n') | Where-Object { $_ }) }
+$originSource = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('remote','get-url','origin') -AllowFailure
+if ($originSource.exitCode -eq 0) { $proofSources += ([string]$originSource.stdout).Trim() }
+foreach ($source in @($proofSources | Select-Object -Unique)) {
+    try {
+        $sourceRoot = if ([IO.Path]::IsPathRooted($source)) { $source } else { Join-Path $RepositoryRoot $source }
+        if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) { continue }
+        if ($null -eq $proofAncestorRoots) {
+            $roots = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-list','--max-parents=0','HEAD') -AllowFailure
+            $proofAncestorRoots = @(([string]$roots.stdout -split '\r?\n') | Where-Object { $_ -match '^[a-f0-9]{40}$' })
+        }
+        $sharesHistory = $false
+        foreach ($rootCommit in $proofAncestorRoots) {
+            # Either checkout may have progressed since cloning; no fetch or
+            # knowledge of the other's newest commit is needed to prove ancestry.
+            $ancestor = Invoke-RepositoryGit -RepositoryRoot $sourceRoot -Arguments @('merge-base','--is-ancestor',$rootCommit,'HEAD') -AllowFailure
+            if ($ancestor.exitCode -eq 0) { $sharesHistory = $true; break }
+        }
+        if (-not $sharesHistory) { continue }
+        $sourceCache = Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $sourceRoot) 'itl\pester-shards\v1'
+        if (Test-Path -LiteralPath $sourceCache -PathType Container) { $proofCacheRoots += $sourceCache }
+    } catch { Write-Verbose "Pester proof source unavailable: $source" }
+}
+$proofCacheRoots = @($proofCacheRoots | Select-Object -Unique)
 $script:pesterVanessaArchiveCandidates = @()
 $script:pesterExternalIdentityCache = @{}
 $script:pesterLegacyExternalIdentityCache = @{}
@@ -552,12 +623,15 @@ function Get-ShardInputDigest {
 }
 
 function Get-ShardCacheEntryRoot {
-    param([string]$Digest, [string]$TestPath = '')
+    param([string]$Digest, [string]$TestPath = '', [switch]$LocalOnly)
     if (-not $Digest) { return $null }
-    $target = Join-Path $cacheRoot $Digest
-    $candidates = @($target)
-    if (Test-Path -LiteralPath $target -PathType Container) {
-        $candidates += @(Get-ChildItem -LiteralPath $target -Directory -Filter ".$Digest.*.tmp")
+    $candidates = @()
+    foreach ($store in $(if ($LocalOnly) { @($cacheRoot) } else { $proofCacheRoots })) {
+        $target = Join-Path $store $Digest
+        $candidates += $target
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            $candidates += @(Get-ChildItem -LiteralPath $target -Directory -Filter ".$Digest.*.tmp")
+        }
     }
     foreach ($candidate in $candidates) {
         $entryRoot = if ($candidate -is [IO.DirectoryInfo]) { $candidate.FullName } else { [string]$candidate }
@@ -572,6 +646,7 @@ function Get-ShardCacheEntryRoot {
                     $producerRoot = $manifest.PSObject.Properties['repositoryRoot']
                     if (-not $producerRoot -or -not [string]$producerRoot.Value) { continue }
                     $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ([string]$result.status -ne 'passed' -or [int]$result.failed -ne 0) { continue }
                     if (-not (Test-ShardResultTestPath -Result $result -TestPath $TestPath -SourceRoot ([string]$producerRoot.Value))) { continue }
                     if (-not (Test-PesterShardResultRuntime -Result $result -TestPath $TestPath)) { continue }
                 }
@@ -590,6 +665,7 @@ function Restore-ShardCache {
     try {
         $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0) { return $null }
+        $result | Add-Member -NotePropertyName proofSource -NotePropertyValue $entryRoot -Force
         if ($ReadOnly) { return $result }
         Copy-Item -LiteralPath $cachedJunit -Destination $JunitPath -Force
         $result | Add-Member -NotePropertyName worker -NotePropertyValue $Worker -Force
@@ -612,10 +688,10 @@ function Save-ShardCache {
     $testPath = [string]$result.paths[0]
     if (-not (Get-ShardRelativeTestPath -Path $testPath)) { return }
     $target = Join-Path $cacheRoot $Digest
-    if (Get-ShardCacheEntryRoot -Digest $Digest -TestPath $testPath) { return }
+    if (Get-ShardCacheEntryRoot -Digest $Digest -TestPath $testPath -LocalOnly) { return }
     if (Test-Path -LiteralPath $target -PathType Container) {
         if (@(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) {
-            if (-not (Get-ShardCacheEntryRoot -Digest $Digest)) { throw "Incomplete Pester shard cache is not empty: $target" }
+            if (-not (Get-ShardCacheEntryRoot -Digest $Digest -LocalOnly)) { throw "Incomplete Pester shard cache is not empty: $target" }
             # Preserve an integrity-valid entry for another test. The existing
             # concurrent-writer layout admits our completed candidate below it.
         } else { Remove-Item -LiteralPath $target -Force }
@@ -693,7 +769,7 @@ if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 
 $serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
 # These existing short owner checks finish before costly native files start.
 # Keep this scheduling policy beside serial admission; cached files stay reused.
-$preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1")
+$preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1", "ReleaseRouting.Tests.ps1")
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
@@ -834,7 +910,7 @@ foreach ($item in $items) {
     elseif (-not $digest) { 'incomplete owner inputs' }
     elseif($changedInputs.Count) {'changed owner inputs; exact passed proof unavailable'} else { 'no valid passed proof for exact owner inputs and runtime' }
     $preview.Add([pscustomobject]@{path=$relativeItemPath;execution=$(if($cached){'reuse'}else{'execute'});reason=$repeatReason;
-        inputDigest=$digest;changedInputs=$changedInputs;estimatedSeconds=$(if($cached){0.0}else{[double]$item.weight});serial=[bool]$item.serial;preflight=[bool]$item.preflight})
+        inputDigest=$digest;proofSource=$(if($cached){[string]$cached.proofSource}else{''});changedInputs=$changedInputs;estimatedSeconds=$(if($cached){0.0}else{[double]$item.weight});serial=[bool]$item.serial;preflight=[bool]$item.preflight})
     if ($PlanOnly) { continue }
     $externalProfiles=@(Get-ShardExternalProfiles @([string]$item.path))
     $payload = [ordered]@{
@@ -877,6 +953,7 @@ foreach ($item in $items) {
 $fingerprintPlanStopwatch.Stop()
 if ($PlanOnly) {
     [pscustomobject]@{schemaVersion=1;kind='itl-pester-reuse-plan';workerCount=$WorkerCount;
+        admission=[pscustomobject]@{state=$(if($initialMemoryLimit -eq 0 -and @($preview | Where-Object execution -eq execute).Count -gt 0){'waiting-for-host-memory'}else{'ready'});initialWorkerLimit=$initialMemoryLimit};
         estimatedSeconds=(Get-PesterWorkloadEstimate -Files @($preview.ToArray()) -WorkerCount $WorkerCount);
         executedCount=@($preview | Where-Object execution -eq execute).Count;reusedCount=@($preview | Where-Object execution -eq reuse).Count;
         runtimeIdentityStatus=$script:pesterRuntimeReceipt.status;files=@($preview.ToArray());
@@ -930,17 +1007,33 @@ function Complete-PesterFileEntry {
 }
 
 $active = New-Object System.Collections.Generic.List[object]
+$peakActiveWorkerCount = 0
 $stopScheduling = $false
 $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
 $workerSpanStopwatch = [Diagnostics.Stopwatch]::StartNew()
 while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count -gt 0)) {
     while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
         if ($active.Count -gt 0 -and $active[0].preflight -and -not $pendingParallel.Peek().preflight) { break }
+        if ($memoryAdmissionEnabled) {
+            $admitted = Get-PesterCurrentMemoryWorkerLimit
+            if ($active.Count -ge $admitted) { $memoryAdmissionReductions++; break }
+        }
         $next = $pendingParallel.Dequeue()
         Start-PesterFileEntry -Entry $next
         $active.Add($next) | Out-Null
+        $peakActiveWorkerCount = [math]::Max($peakActiveWorkerCount, $active.Count)
     }
-    if ($active.Count -eq 0) { break }
+    if ($active.Count -eq 0) {
+        if (-not $stopScheduling -and $pendingParallel.Count -gt 0) {
+            if ([DateTime]::UtcNow -ge $nextHeartbeat) {
+                Write-Host "Pester admission waiting for host physical/commit memory; pending=$($pendingParallel.Count). Existing gate deadline and checkpoint remain in force."
+                $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
+            }
+            Start-Sleep -Milliseconds 200
+            continue
+        }
+        break
+    }
     $completed = @($active | Where-Object { $_.process.HasExited })
     if ($completed.Count -eq 0) {
         if ([DateTime]::UtcNow -ge $nextHeartbeat) {
@@ -956,8 +1049,18 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count
     }
 }
 while (-not $stopScheduling -and $pendingSerial.Count -gt 0) {
+    if ($memoryAdmissionEnabled -and (Get-PesterCurrentMemoryWorkerLimit) -eq 0) {
+        $memoryAdmissionReductions++
+        if ([DateTime]::UtcNow -ge $nextHeartbeat) {
+            Write-Host "Pester serial admission waiting for host physical/commit memory; pending=$($pendingSerial.Count). Existing gate deadline and checkpoint remain in force."
+            $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
+        }
+        Start-Sleep -Milliseconds 200
+        continue
+    }
     $entry = $pendingSerial.Dequeue()
     Start-PesterFileEntry -Entry $entry
+    $peakActiveWorkerCount = [math]::Max($peakActiveWorkerCount, 1)
     $serialDeadline = [DateTime]::UtcNow.AddMinutes(15)
     while (-not $entry.process.WaitForExit(15000) -and [DateTime]::UtcNow -lt $serialDeadline) {
         Write-Host "Pester shard heartbeat: serial=$($entry.worker); pending=$($pendingSerial.Count)."
@@ -1009,12 +1112,15 @@ try { $document.Save($writer) } finally { $writer.Dispose() }
 
 $summary = [ordered]@{
     schemaVersion = 2
+    memoryAdmissionReductions = $memoryAdmissionReductions
+    peakActiveWorkers = $peakActiveWorkerCount
+    initialMemoryLimit = $initialMemoryLimit
     status = $(if ($failures.Count -eq 0 -and $failed -eq 0 -and $errors -eq 0) { "passed" } else { "failed" })
     workerCount = $results.Count
     pesterWorkers = [ordered]@{
         requested = [int]$reportedRequestedWorkerCount
         explicit = ([bool]$workerCountParameterExplicit -and -not [bool]$WorkerCountDefaulted)
-        effective = [int]$WorkerCount
+        effective = $(if ($memoryAdmissionEnabled) { [int][math]::Max(1, [math]::Max($initialMemoryLimit, $peakActiveWorkerCount)) } else { [int]$WorkerCount })
     }
     executedWorkerCount = @($entries | Where-Object { -not $_.reused -and $_.process }).Count
     reusedWorkerCount = @($entries | Where-Object { $_.reused }).Count
