@@ -317,6 +317,7 @@ Describe 'Source delivery post-success cleanup' {
     It 'routes publication cleanup to the matching channel before and after the exact published commit' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         $script:DeliverySupervisorCommit = 'a' * 40
+        function Read-DevelopPublicationAttempt { throw 'Fresh cleanup must not read a resume checkpoint' }
         function Publish-AccumulatedDevelop { throw 'must be mocked' }
         function Release-DevelopToMaster { throw 'must be mocked' }
         Mock Invoke-DeliveryChannelCleanupSafely {
