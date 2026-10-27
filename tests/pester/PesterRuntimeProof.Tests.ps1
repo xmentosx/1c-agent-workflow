@@ -367,6 +367,16 @@ Describe 'External Pester runtime custom configuration' {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         . (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')
     }
+    BeforeEach {
+        # Agent hosts often export GIT_* prompt/editor overrides. Each case
+        # models its own overrides and must not inherit the caller's.
+        $script:hostGitEnvironment=@(Get-ChildItem Env: | Where-Object {$_.Name -match '^GIT_'} | ForEach-Object {[pscustomobject]@{Name=$_.Name;Value=$_.Value}})
+        foreach($entry in $script:hostGitEnvironment){[Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')}
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object {$_.Name -match '^GIT_'} | ForEach-Object {[Environment]::SetEnvironmentVariable($_.Name,$null,'Process')}
+        foreach($entry in $script:hostGitEnvironment){[Environment]::SetEnvironmentVariable($entry.Name,$entry.Value,'Process')}
+    }
     It 'reuses real Git proof across equal worktree configuration and rejects a changed setting' {
         $root=New-RuntimeProofFixture 'Real Git profile'
         $other=Join-Path $TestDrive 'Real Git другой worktree'
@@ -440,6 +450,28 @@ Describe 'External Pester runtime command resolution' {
             {Get-PesterExternalExecutable itl-runtime-proof} | Should -Throw '*external wrapper*'
             $env:PATH=$later
             (Get-PesterExternalExecutable itl-runtime-proof) | Should -BeExactly (Join-Path $later 'itl-runtime-proof.exe')
+        } finally {$env:PATH=$oldPath}
+    }
+    It 'binds PowerShell Core bytes and leaves a host without pwsh unqualified' {
+        $oldPath=$env:PATH
+        $core=Join-Path $TestDrive 'PowerShell Core Проект'
+        [void][IO.Directory]::CreateDirectory($core)
+        [IO.File]::WriteAllText((Join-Path $core 'pwsh.exe'),'core host bytes')
+        [IO.File]::WriteAllText((Join-Path $core 'System.Management.Automation.dll'),'original engine')
+        $profiles=[pscustomobject]@{'powershell-core'=[pscustomobject]@{kind='powershell-core'}}
+        try {
+            $env:PATH=$core
+            $initial=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $initial.'powershell-core'.status | Should -BeExactly known
+            (Get-PesterExternalRuntimeReceipt $RepoRoot $profiles).'powershell-core'.sha256 | Should -BeExactly $initial.'powershell-core'.sha256
+            [IO.File]::WriteAllText((Join-Path $core 'System.Management.Automation.dll'),'replacement at the same path')
+            $changed=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $changed.'powershell-core'.status | Should -BeExactly known
+            $changed.'powershell-core'.sha256 | Should -Not -Be $initial.'powershell-core'.sha256
+            $env:PATH=Join-Path $TestDrive 'no core host'
+            $absent=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $absent.'powershell-core'.status | Should -BeExactly unknown
+            $absent.'powershell-core'.sha256 | Should -BeNullOrEmpty
         } finally {$env:PATH=$oldPath}
     }
 }
