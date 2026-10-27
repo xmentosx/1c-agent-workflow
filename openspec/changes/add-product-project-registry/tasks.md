@@ -1,5 +1,15 @@
 # Tasks
 
+## MO — стык с memory owner, 2026-10-27
+
+[Единый план/приёмка](../add-scoped-cognee-memory/design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27);
+MO-R1–4 — в design. G3/R6 и законченный G5 не переоткрываются.
+
+- [x] MO-RP. Закрепить default-on/explicit off/unavailable, явную association и единый план памяти в обеих OpenSpec.
+- [ ] MO-R. После отдельного разрешения apply согласовать прежний setup handoff с default-on, preview/disabled/recovery; принять MO-R1–4 внутри MO4, без новых кейсов/реестра.
+
+Реализация, рабочая миграция, Gate6/G6 и публикация сейчас не запускаются.
+
 ## G5 dependency: завершение конечного контура, 2026-10-27
 
 [Единая итоговая матрица memory owner](../add-scoped-cognee-memory/evidence/g5-codex-completion-2026-10-27.md)
