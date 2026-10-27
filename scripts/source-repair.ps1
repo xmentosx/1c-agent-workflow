@@ -185,8 +185,9 @@ function Invoke-RepairStart {
 
 function Invoke-RepairTests {
     param([string]$Root)
-    $tests = @(foreach ($name in $Test) {
-        $leaf = Split-Path -Leaf ([string]$name)
+    # powershell.exe -File passes a comma list as one string.
+    $tests = @(foreach ($name in @($Test | ForEach-Object { ([string]$_).Split(',') } | Where-Object { $_.Trim() })) {
+        $leaf = Split-Path -Leaf ([string]$name).Trim()
         $relative = 'tests/pester/' + $leaf
         if (-not (Test-Path -LiteralPath (Join-Path $Root $relative) -PathType Leaf)) { throw "REPAIR_TEST_MISSING: $relative" }
         $relative

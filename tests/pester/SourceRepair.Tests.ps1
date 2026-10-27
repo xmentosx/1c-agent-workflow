@@ -54,6 +54,7 @@ if ((Get-StubValue '-Action') -eq 'RegisterChange') {
 '@)
         Write-RepairFixtureFile $root '.gitignore' "build/`n"
         Write-RepairFixtureFile $root 'tests/pester/Example.Tests.ps1' 'Describe x {}'
+        Write-RepairFixtureFile $root 'tests/pester/Second.Tests.ps1' 'Describe y {}'
         Write-RepairFixtureFile $root 'tests/quality-contracts.json' '{"developJourneys":{"routes":{"upgrade":{"hardSeconds":120},"fresh":{"hardSeconds":120}}}}'
         $artifacts = [ordered]@{}
         foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
@@ -159,7 +160,7 @@ Describe 'Source publication repair loop' {
         $dirty.combinedText | Should -Match 'REPAIR_UNCOMMITTED'
         @(Get-RepairCalls $fixture).Count | Should -Be 0
         $head = Add-RepairCommit $fixture 'dirty'
-        $result = Invoke-Repair $fixture @('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Test', 'Example.Tests.ps1', '-Journey', 'upgrade',
+        $result = Invoke-Repair $fixture @('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Test', 'Example.Tests.ps1, Second.Tests.ps1', '-Journey', 'upgrade',
             '-Scenario', 'update', '-E2EProjectRoot', $fixture.stand, '-AiRulesSource', $fixture.base, '-AgentTarget', 'codex')
         $result.exitCode | Should -Be 0 -Because $result.combinedText
         $summary = Get-RepairJson $result
@@ -171,7 +172,8 @@ Describe 'Source publication repair loop' {
         foreach ($call in $calls) { $call.root | Should -BeExactly ([IO.Path]::GetFullPath($fixture.repair)) }
         $selection = Get-Content -LiteralPath (Get-CallValue $calls[0] '-SelectionPath') -Raw -Encoding UTF8 | ConvertFrom-Json
         $selection.schemaVersion | Should -Be 1
-        @($selection.tests) | Should -Be @('tests/pester/Example.Tests.ps1')
+        # powershell.exe -File delivers the comma list as one argument.
+        @($selection.tests) | Should -Be @('tests/pester/Example.Tests.ps1', 'tests/pester/Second.Tests.ps1')
         @($calls[1..2] | ForEach-Object { Get-CallValue $_ '-Phase' }) | Should -Be @('Release', 'Develop')
         $journey = $calls[3]
         Get-CallValue $journey '-CandidateRoot' | Should -BeExactly ([IO.Path]::GetFullPath($fixture.repair))
