@@ -8,6 +8,7 @@
     "inventory": {"kind":"inventory"},
     "node": {"kind":"node"},
     "onescript": {"kind":"onescript"},
+    "powershell-core": {"kind":"powershell-core"},
     "published-ancestor": {"kind":"published-ancestor"},
     "windows": {"kind":"windows"},
     "python-native": {"kind":"python-environment","component":"Native"},
@@ -19,6 +20,12 @@
     "python-package-dependencies": {"kind":"python-package-dependencies"}
   },
   "pesterExternalRuntimeTests": {
+    "tests/pester/CompactRunnerFreshContinuation.Tests.ps1": ["powershell-core"],
+    "tests/pester/CompactRunnerRouting.Tests.ps1": ["powershell-core"],
+    "tests/pester/PesterRuntimeProof.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceDeliveryPlan.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceProofJson.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceUpgradeHandoff.Tests.ps1": ["powershell-core"],
     "tests/pester/PesterProofSources.Tests.ps1": ["git","windows"],
     "tests/pester/DevelopForkInputScope.Tests.ps1": ["git","windows"],
     "tests/pester/DevelopForkConsumerInventory.Tests.ps1": ["git","windows"],

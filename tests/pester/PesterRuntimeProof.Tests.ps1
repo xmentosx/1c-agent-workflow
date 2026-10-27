@@ -442,4 +442,26 @@ Describe 'External Pester runtime command resolution' {
             (Get-PesterExternalExecutable itl-runtime-proof) | Should -BeExactly (Join-Path $later 'itl-runtime-proof.exe')
         } finally {$env:PATH=$oldPath}
     }
+    It 'binds PowerShell Core bytes and leaves a host without pwsh unqualified' {
+        $oldPath=$env:PATH
+        $core=Join-Path $TestDrive 'PowerShell Core Проект'
+        [void][IO.Directory]::CreateDirectory($core)
+        [IO.File]::WriteAllText((Join-Path $core 'pwsh.exe'),'core host bytes')
+        [IO.File]::WriteAllText((Join-Path $core 'System.Management.Automation.dll'),'original engine')
+        $profiles=[pscustomobject]@{'powershell-core'=[pscustomobject]@{kind='powershell-core'}}
+        try {
+            $env:PATH=$core
+            $initial=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $initial.'powershell-core'.status | Should -BeExactly known
+            (Get-PesterExternalRuntimeReceipt $RepoRoot $profiles).'powershell-core'.sha256 | Should -BeExactly $initial.'powershell-core'.sha256
+            [IO.File]::WriteAllText((Join-Path $core 'System.Management.Automation.dll'),'replacement at the same path')
+            $changed=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $changed.'powershell-core'.status | Should -BeExactly known
+            $changed.'powershell-core'.sha256 | Should -Not -Be $initial.'powershell-core'.sha256
+            $env:PATH=Join-Path $TestDrive 'no core host'
+            $absent=Get-PesterExternalRuntimeReceipt $RepoRoot $profiles
+            $absent.'powershell-core'.status | Should -BeExactly unknown
+            $absent.'powershell-core'.sha256 | Should -BeNullOrEmpty
+        } finally {$env:PATH=$oldPath}
+    }
 }

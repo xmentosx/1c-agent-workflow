@@ -590,6 +590,21 @@ Describe 'Source quality catalog contracts' {
         {Test-QualityContractCatalog $RepoRoot $invalid} | Should -Throw '*DEVELOP_SCENARIO_INPUT_INVALID*'
     }
 
+    It "binds every PowerShell Core boundary test to the Core runtime profile" {
+        $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $actualCatalog.pesterExternalRuntimeProfiles.'powershell-core'.kind | Should -BeExactly 'powershell-core'
+        $coreUsers = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tests/pester') -Filter '*.Tests.ps1' | Where-Object {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            $null -ne $ast.Find({ param($node)
+                ($node -is [Management.Automation.Language.CommandAst] -and [string]$node.GetCommandName() -match '^pwsh(\.exe)?$') -or
+                ($node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.Value -match '^pwsh(\.exe)?$') }, $true)
+        } | ForEach-Object { 'tests/pester/' + $_.Name } | Sort-Object)
+        $coreUsers | Should -Contain 'tests/pester/CompactRunnerRouting.Tests.ps1'
+        $declared = @($actualCatalog.pesterExternalRuntimeTests.PSObject.Properties | Where-Object { 'powershell-core' -in @($_.Value) } | ForEach-Object { $_.Name } | Sort-Object)
+        ($declared -join "`n") | Should -BeExactly ($coreUsers -join "`n")
+    }
+
     It "does not cache a shard whose external runtime identity is not modeled" {
         $runnerPath = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
         $tokens = $null; $errors = $null
