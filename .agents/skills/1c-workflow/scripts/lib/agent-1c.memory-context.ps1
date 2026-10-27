@@ -98,7 +98,54 @@ function Get-ItlMemoryClientEndpoint {
 }
 
 function Invoke-ItlMemorySetup {
-    param([ValidateSet('enable','disable','status','checkpoint')][string]$Mode,[string]$SettingsPath='', [string]$PolicyPath='', [string]$Client='', [object]$Checkpoint=$null)
+    param([ValidateSet('auto','enable','disable','status','checkpoint')][string]$Mode,[string]$SettingsPath='', [string]$PolicyPath='', [string]$Client='', [object]$Checkpoint=$null)
+    $bindingPath=Get-ItlMemoryPath binding $script:ProjectRoot
+    $commonSettings=Join-Path (Get-ItlMemoryHome) 'provider.json'
+    if($Mode -eq 'auto'){
+        # Called only by explicit association / completion of a new init, never Startup.
+        try{
+            $old=Read-ItlMemoryJson $bindingPath
+            if((Get-ItlMemoryToolPolicy) -eq 'off' -or ($old -and $old.mode -eq 'disabled')){
+                return @{mode='disabled';preference='off';memoryEnabled=$false}
+            }
+            . Import-ItlProductProject
+            $applied=Read-ItlProductProjectRecord applied
+            if(-not $applied -or (Get-ItlCatalogField $applied 'configurationState') -ne 'configured'){throw 'MEMORY_APPLIED_CONTEXT_REQUIRED'}
+            $selection=Read-ItlProductProjectSetting selection
+            if((Get-ItlCatalogField $selection 'memoryEnabled') -ceq $false){return @{mode='disabled';preference='off';memoryEnabled=$false}}
+            if(@(Get-ItlCatalogKeys $selection) -ccontains 'memoryOptIn' -and -not (Get-ItlCatalogField $selection 'memoryOptIn') -and -not $old){
+                throw 'MEMORY_LEGACY_PREFERENCE_UNRESOLVED: use explicit setup; an old automatic default is not a proven user refusal.'
+            }
+            if(-not $SettingsPath){$SettingsPath=$commonSettings}
+            if(-not (Test-Path -LiteralPath $SettingsPath -PathType Leaf)){throw 'MEMORY_CONNECTION_UNCONFIGURED'}
+            if(-not $Client){$Client=Get-ItlActiveClient}
+            $inputProvider=Read-ItlMemoryJson $SettingsPath
+            if((Get-ItlMemoryToolPolicy $inputProvider) -eq 'off'){
+                if($old -and $old.mode -eq 'enabled'){return Invoke-ItlMemorySetup disable -Client $Client}
+                return @{mode='disabled';preference='off';memoryEnabled=$false}
+            }
+            if(-not $PolicyPath){
+                if(-not (Test-Path -LiteralPath 'Function:\Get-ItlClientAdapter')){. (Join-Path $PSScriptRoot 'agent-1c.client-adapters.ps1')}
+                $manifest=Read-ItlMemoryJson (Join-Path $script:ProjectRoot '.ai-rules.json') -MaxBytes 4194304
+                $rules=([string](Get-ItlClientAdapter -Client $Client).rulesPath).TrimEnd('/')+'/'
+                $paths=@(Get-ItlCatalogKeys (Get-ItlCatalogField $manifest 'files')|Where-Object {
+                    $_.Replace('\','/').StartsWith($rules,[StringComparison]::OrdinalIgnoreCase) -and
+                    (Get-ItlCatalogField (Get-ItlCatalogField $manifest.files $_) 'source') -ceq 'content/rules/project-memory.md'
+                })
+                if($paths.Count -ne 1){throw 'MEMORY_POLICY_UNQUALIFIED'}
+                $PolicyPath=Join-Path $script:ProjectRoot $paths[0]
+            }
+            if($old -and $old.mode -eq 'enabled' -and $old.registryContextHash -ceq $applied.contextHash -and (Get-ItlCatalogField $old 'settingsHash') -ceq (Get-ItlCatalogHash $inputProvider) -and (Get-ItlCatalogField $old.policyProofs $Client)){
+                $null=Get-ItlMemoryPolicyProof $PolicyPath $script:ProjectRoot $Client
+                return @{mode='configured';preference='on';nativeReadiness='unverified until actual client calls'}
+            }
+            return Invoke-ItlMemorySetup enable -SettingsPath $SettingsPath -PolicyPath $PolicyPath -Client $Client
+        }catch{
+            $code=($_.Exception.Message -split ':')[0]
+            if($code -cnotmatch '^(MEMORY|CATALOG|CLIENT_MCP)_[A-Z_]+$'){$code='MEMORY_SETUP_UNAVAILABLE'}
+            return @{mode=$(if($code -eq 'MEMORY_TOOL_OFF'){'disabled'}else{'unavailable'});preference=$(if($code -eq 'MEMORY_TOOL_OFF'){'off'}else{'on'});reason=$code;memoryEnabled=$false;continuation='Use the existing memory setup/reload or pinned resume/owned restore. Independent catalog work remains available.'}
+        }
+    }
     if($Mode -eq 'enable' -and -not (Get-Variable ItlMcpRegistryOperation -Scope Script -ErrorAction SilentlyContinue)){
         . Import-ItlProductProject
         return Invoke-Vibecoding1cMcpRegistryOperation {
@@ -108,11 +155,16 @@ function Invoke-ItlMemorySetup {
     $bindingPath=Get-ItlMemoryPath binding $script:ProjectRoot
     if($Mode -eq 'status'){
         $binding=Read-ItlMemoryJson $bindingPath
-        if(-not $binding){return @{mode='legacy';memoryEnabled=$false;continuation='Optional: associate a project, then explicitly enable qualified scoped memory.'}}
+        if((Get-ItlMemoryToolPolicy (Get-ItlCatalogField $binding 'provider')) -eq 'off'){return @{mode='disabled';preference='off';memoryEnabled=$false;datasetsPreserved=$true}}
+        if(-not $binding){return @{mode='unconfigured';preference='on';memoryEnabled=$false;continuation='Associate a project and configure the common qualified connection through setup; status performs no enrollment.'}}
+        if($binding.mode -eq 'disabled'){return @{mode='disabled';preference='off';memoryEnabled=$false;datasetsPreserved=$true}}
         return @{mode=$binding.mode;context=(Get-ItlMemoryLocalContext $binding);readiness='native/tool-catalog unverified until actual scoped calls; configuration is not live acceptance'}
     }
     if($Mode -eq 'disable'){
-        if(Test-Path -LiteralPath $bindingPath){$null=Update-ItlMemoryJson $bindingPath {param($old) $old['mode']='disabled';$old['bindingId']=[guid]::NewGuid().ToString('N');return $old}}
+        $null=Update-ItlMemoryJson $bindingPath {param($old)
+            if(-not $old){$old=@{schemaVersion=1;projectRoot=$script:ProjectRoot;provider=@{instanceId=''};identity=@{developerId=''};policyProofs=@{};datasetReservations=@{}}}
+            $old['mode']='disabled';$old['bindingId']=[guid]::NewGuid().ToString('N');return $old
+        }
         Write-Vibecoding1cMcpClientConfig -Client $Client
         return @{mode='disabled';datasetsPreserved=$true;continuation='Reload the client. Private pending/receipts and External MCP remain owned and preserved.'}
     }
@@ -122,10 +174,11 @@ function Invoke-ItlMemorySetup {
         $value=[ordered]@{schemaVersion=1;projectId=$binding.context.projectId;cycleId=$binding.cycleId;goal=(Get-ItlCatalogField $Checkpoint 'goal' '');constraints=(Get-ItlCatalogField $Checkpoint 'constraints' @());nextStep=(Get-ItlCatalogField $Checkpoint 'nextStep' '');proofs=(Get-ItlCatalogField $Checkpoint 'proofs' @())}
         return (Update-ItlMemoryJson (Get-ItlMemoryPath continuation $binding.identity.workspaceId) {param($old) return $value})
     }
-    if(-not $SettingsPath -or -not $PolicyPath -or -not $Client){throw 'MEMORY_OPT_IN_INPUT: provide one private ordinary-user settings file, installed qualified policy and client; no per-scope wizard or automatic enable.'}
+    if(-not $SettingsPath -or -not $PolicyPath -or -not $Client){throw 'MEMORY_SETUP_INPUT: provide the common ordinary-user settings, qualified installed policy and client; no per-scope wizard.'}
     $provider=Read-ItlMemoryJson $SettingsPath
     Assert-ItlMemoryProvider $provider $script:ProjectRoot
-    if([Environment]::GetEnvironmentVariable('TOOL_COGNEE','Process') -eq 'off' -or (Get-ItlCatalogField $provider 'toolPolicy' 'auto') -eq 'off'){throw 'MEMORY_TOOL_OFF'}
+    $commonProvider=ConvertTo-ItlCatalogCanonicalValue $provider
+    if((Get-ItlMemoryToolPolicy $provider) -eq 'off'){throw 'MEMORY_TOOL_OFF'}
     $policy=Get-ItlMemoryPolicyProof $PolicyPath $script:ProjectRoot $Client
     . Import-ItlProductProject
     $context=Get-ItlProductProjectOperationContext
@@ -163,8 +216,11 @@ function Invoke-ItlMemorySetup {
     }
     Assert-ItlMemoryProvider $provider $script:ProjectRoot
     $proofs=if($old){ConvertTo-ItlCatalogCanonicalValue (Get-ItlCatalogField $old 'policyProofs' ([ordered]@{}))}else{[ordered]@{}};$proofs[$Client]=$policy
-    $binding=[ordered]@{schemaVersion=1;capability='scoped-cognee-memory-v1';mode='enabled';bindingId=[guid]::NewGuid().ToString('N');projectRoot=$script:ProjectRoot;identity=$identity;cycleId=$branch.memoryCycle.current;cycleStatePath=$branch.statePath;appliedPath=(Get-ItlProductProjectPath applied);registryContextHash=$applied.contextHash;context=$context;memoryProjection=$projection;provider=$provider;policyProofs=$proofs;datasetReservations=$reservations}
+    $binding=[ordered]@{schemaVersion=1;capability='scoped-cognee-memory-v1';mode='enabled';bindingId=[guid]::NewGuid().ToString('N');projectRoot=$script:ProjectRoot;identity=$identity;cycleId=$branch.memoryCycle.current;cycleStatePath=$branch.statePath;appliedPath=(Get-ItlProductProjectPath applied);registryContextHash=$applied.contextHash;context=$context;memoryProjection=$projection;provider=$provider;settingsHash=(Get-ItlCatalogHash $commonProvider);policyProofs=$proofs;datasetReservations=$reservations}
     Assert-ItlMemoryPrincipal $binding ([DateTime]::UtcNow.AddSeconds(20))
+    if([IO.Path]::GetFullPath($SettingsPath) -ine [IO.Path]::GetFullPath($commonSettings)){
+        $null=Update-ItlMemoryJson $commonSettings {param($current) return $commonProvider}
+    }
     $null=Update-ItlMemoryJson $bindingPath {param($current) if((Get-ItlCatalogHash $current) -cne (Get-ItlCatalogHash $old)){throw 'MEMORY_BINDING_CONFLICT'};return $binding}
     # The same client plan/receipts/conflict/restore owner writes this endpoint.
     Write-Vibecoding1cMcpClientConfig -Client $Client

@@ -1,12 +1,24 @@
 # Proposal
 
+## MO — разрешённая реализация, 2026-10-27
+
+Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
+в source; прежние B01–B12 и установленный N5 на r50 завершены.
+Доставка — отдельная штатная регистрация этого коммита, итог в общем queue ledger. [Единый отчёт MO](../add-scoped-cognee-memory/evidence/mo-implementation-2026-10-27.md)
+отделяет source/fixture/native/стоимость/доставку. Controlled fork r50 —
+a2cbdcef52316db426acedc852f495564189f1ca, template pin pending.
+Прежние запреты реализации ниже относятся к уже завершённому планированию.
+G3/R6 и конечный G5 не переоткрываются. Gate6/G6, рабочая миграция, публикация,
+push/PR и native OpenCode по-прежнему не запускаются.
+
 ## Актуальное уточнение: память по умолчанию, 2026-10-27
 
 Общий Cognee следует default-on policy memory owner после готовой явной
 association/common setup, без второго memory opt-in. Явный off/disabled/отказ
 сохраняется; без prerequisites память unavailable, независимый каталог работает.
 Unbound legacy/no answer не получают guessed association или миграцию.
-G5 завершён в прежней границе; новый default-on/оптимизации ещё не реализованы.
+G5 завершён в прежней границе; default-on/оптимизации реализованы текущим MO,
+его source/native/registration proof приведены в отдельном отчёте выше.
 
 [Единый MO0–MO4/checkpoint/MO-AC1–6](../add-scoped-cognee-memory/design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27)
 принадлежит памяти: до двух original GET, exact/qualified lexical/semantic route,
@@ -14,8 +26,8 @@ G5 завершён в прежней границе; новый default-on/оп
 applicability, не получает токены, native IDs/auth/readiness, новую endpoint роль
 или coordinator. R6 SHA0274a8ffb5a03ba7b856736c2b4a637ccbe98b73 прежний.
 Memory opt-in требования ниже исторические; явная project association с preview
-сохраняется. Сейчас документы/обычная регистрация; реализация, Gate6/G6,
-рабочая миграция и публикация не разрешены.
+сохраняется. MO0–MO4 разрешены текущим запросом; Gate6/G6,
+рабочая миграция и публикация по-прежнему не разрешены.
 
 ## G5: актуальный прогресс продолжения, 2026-10-26
 

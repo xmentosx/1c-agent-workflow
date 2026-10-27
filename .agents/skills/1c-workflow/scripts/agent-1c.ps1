@@ -6,7 +6,7 @@ param(
     [string]$ProjectRoot = (Get-Location).Path,
     [ValidateSet('', 'status', 'resume', 'restore', 'cancel', 'restore-compatible', 'list', 'preview', 'select', 'create', 'sync', 'context')]
     [string]$CatalogAction = '',
-    [ValidateSet('', 'enable', 'disable', 'status', 'checkpoint')]
+    [ValidateSet('', 'auto', 'enable', 'disable', 'status', 'checkpoint')]
     [string]$MemoryAction = '',
     [string]$MemorySettingsPath = '',
     [string]$MemoryPolicyPath = '',

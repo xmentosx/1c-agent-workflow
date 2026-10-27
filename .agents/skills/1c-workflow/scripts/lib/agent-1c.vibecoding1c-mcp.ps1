@@ -4071,6 +4071,7 @@ function Write-Vibecoding1cMcpClientConfig {
     if(-not $PlanOnly -and -not $ReturnRequests -and (Get-ConfigValue -Path productProject -Default $null)){
         . Import-ItlProductProject
         $null=Get-ItlProductProjectSetupContext
+        $memoryInitApplied=Read-ItlProductProjectRecord applied
         $context=ConvertTo-ItlCatalogCanonicalValue (Get-ItlProductProjectOperationContext)
         if($context.Contains('configurationStage')){$context.Remove('configurationStage')}
         $selectedClients=if($Clients.Count){@($Clients)}elseif($Client){@($Client)}else{@(Get-ItlActiveClient)}
@@ -4081,6 +4082,10 @@ function Write-Vibecoding1cMcpClientConfig {
         if(Test-ItlProductProjectPreviewAlreadyApplied $preview $chosen $decision){return}
         $null=Invoke-ItlProductProjectClientApply $chosen.context $chosen.requests -ProofRequests $chosen.proofRequests -SavePrivateSelection -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
         Set-ItlProductProjectOperationContext $chosen.context
+        if($memoryInitApplied -and (Get-ItlCatalogField $memoryInitApplied 'configurationState') -eq 'binding-only'){
+            . Import-ItlMemory
+            foreach($memoryClient in $selectedClients){$memorySetup=Invoke-ItlMemorySetup auto -Client $memoryClient;Write-Host ("Memory: "+$memorySetup.mode)}
+        }
         Write-Host 'Catalog MCP configuration saved through the pinned plan. Reload the client and verify active tools separately.'
         return
     }

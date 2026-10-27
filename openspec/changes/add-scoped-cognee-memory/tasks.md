@@ -1,19 +1,30 @@
 # Tasks
 
+## MO — разрешённая реализация, 2026-10-27
+
+Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
+в source; прежние B01–B12 и установленный N5 на r50 завершены.
+Доставка — отдельная штатная регистрация этого коммита, итог в общем queue ledger. [Единый отчёт MO](evidence/mo-implementation-2026-10-27.md)
+отделяет source/fixture/native/стоимость/доставку. Controlled fork r50 —
+a2cbdcef52316db426acedc852f495564189f1ca, template pin pending.
+Прежние запреты реализации ниже относятся к уже завершённому планированию.
+G3/R6 и конечный G5 не переоткрываются. Gate6/G6, рабочая миграция, публикация,
+push/PR и native OpenCode по-прежнему не запускаются.
+
 ## MO — план следующего изменения, 2026-10-27
 
 [Единый план/критерии](design.md#план-mo-default-on-и-оптимизация-памяти-2026-10-27).
 G5 завершён в прежней границе; его выполненные задачи не переоткрываются.
-Новые implementation задачи **не разрешены к запуску** этим запросом.
+MO0–MO4 разрешены текущим запросом; ограничения исторического плана заменены этим разрешением.
 
 - [x] MO-P. Подготовить default-on contract, checkpoint, MO0–4/MO-AC1–6 и согласовать обе постановки документами.
-- [ ] MO0. После отдельного разрешения согласовать fork/helper default-on, off/unavailable и прежний setup/recovery, без рабочей миграции.
-- [ ] MO1. Ускорить current original reads в existing owner: максимум два raw GET in flight, прежние order/caps/deadline/cancel.
-- [ ] MO2. Exact/qualified lexical/semantic routing без расширения query budget и Cognee patch.
-- [ ] MO3. Устранить доказанное повторение контекста без потери provenance/currentness/обязательных правил.
-- [ ] MO4. Одним проходом существующих затронутых N5/B01–B12 сравнить real long-lived frontend, зафиксировать MO-AC1–6/actual/unknown cost; отдельно зарегистрировать код штатным helper.
+- [x] MO0. После отдельного разрешения согласовать fork/helper default-on, off/unavailable и прежний setup/recovery, без рабочей миграции.
+- [x] MO1. Ускорить current original reads в existing owner: максимум два raw GET in flight, прежние order/caps/deadline/cancel.
+- [x] MO2. Exact/qualified lexical/semantic routing без расширения query budget и Cognee patch.
+- [x] MO3. Устранить доказанное повторение контекста без потери provenance/currentness/обязательных правил.
+- [x] MO4. Завершить ограниченный проход прежних N5/B01–B12, real long-lived frontend, MO-AC1–6/actual/unknown cost; code/native proof отделены от delivery. Обязательная регистрация этого изменения принадлежит RegisterChange и common-Git ledger.
 
-Native tests/новые случаи сейчас не запускаются; Gate6/G6, рабочая миграция,
+Используются только прежние N5/B01–B12; новые случаи, Gate6/G6, рабочая миграция,
 публикация, OpenCode и переоткрытие G3/R6 исключены.
 
 ## G5: конечный контур завершён, 2026-10-27

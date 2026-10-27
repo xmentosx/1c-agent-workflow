@@ -967,10 +967,10 @@
       "path": "content/rules/memory-setup.md",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: ready common setup defaults on, explicit off/readiness preserved.",
       "upstreamSha256": "c44b767967cd1752c6ebbe52fb5c3a6c73839cdeaf83025f91385a9162ca6be0",
       "baselineSha256": "4c884205153a558f487130960d38a4620297db3d827db9a4377204bd89a6d84c",
-      "resultSha256": "a4465927765ff78ca226508b9677ea9cd7bc3f86e99a88ae16aab573a5ae1b9b"
+      "resultSha256": "867edd15ce0ca27380dae5020b01ae7352bc888d2567a162a4af289dc0fe7aa6"
     },
     {
       "path": "content/rules/metadata-xml-workarounds.md",
@@ -1003,10 +1003,10 @@
       "path": "content/rules/project-memory.md",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-MEMORY-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: approved default-on with explicit off; exact/qualified lexical routing under existing budgets, without provider changes.",
       "upstreamSha256": "c2de6cd1206262233e470248452e32a05e049c54ab4c96f0e91fee27b3cf3e13",
       "baselineSha256": "ec41eb726d1cc9fe2b0a467f4b48dcfc120527fb4402c4c6e99cdec03a26ca97",
-      "resultSha256": "9e6f7f49d698a12ff7eca135e63f81059f57b0a5a4ddc7f6f19d9f156a2e3431"
+      "resultSha256": "4917760a8acf73b7b849e3edbacb824fcab12dda12a52c43f6b202660d2f17ef"
     },
     {
       "path": "content/rules/qa-testclient.md",
@@ -1830,11 +1830,11 @@
     {
       "path": "content/skills/mcp-1c-tools/docs/memory-providers.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: take-upstream against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. R42: take-upstream against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R50/MO: approved default-on with explicit off; exact/qualified lexical routing under existing budgets, without provider changes.",
       "upstreamSha256": "1ccfbb9d301d298230afb4a05c5a9618e77e021855b4a81b88108c7342dcf6c6",
       "baselineSha256": "1ccfbb9d301d298230afb4a05c5a9618e77e021855b4a81b88108c7342dcf6c6",
-      "resultSha256": "1ccfbb9d301d298230afb4a05c5a9618e77e021855b4a81b88108c7342dcf6c6"
+      "resultSha256": "31c936a55852ea4911ea180eeb268a9ffccd1c43829b1ad741e7b4cdcf8d9e2a"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/server-catalog.md",
@@ -2388,11 +2388,11 @@
     {
       "path": "tests/OnDemandRoutingAndErf.Tests.ps1",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Prove direct memory routing, managed preview refusal, relocated MCP distinctions and opt-in BSP report form generation with the unchanged local missing-form refusal. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Prove direct memory routing, managed preview refusal, relocated MCP distinctions and opt-in BSP report form generation with the unchanged local missing-form refusal. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "2f1625ff738b1020e1551efcab8db6dcb0ff1b4720f5292dbe05ff0b9bbbdc7f",
-      "resultSha256": "2f1625ff738b1020e1551efcab8db6dcb0ff1b4720f5292dbe05ff0b9bbbdc7f"
+      "resultSha256": "f4bf4a3dc103badd1b69b9c9cd1ca8d578325dd7a58a4d3aae85b409cf9b7f11"
     },
     {
       "path": "tests/PlacementFinalSet.Tests.ps1",
@@ -2488,10 +2488,10 @@
       "path": "tests/WorkflowHardening.Tests.ps1",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork.",
+      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "8c941cb5c787ad14b3c1d4c24ba707a3f5429ceb76655676ad66576bc85876f0",
-      "resultSha256": "8276e3aa972a5278797b3f9d6d81bbef052624bbe10754957e744f16c1735253"
+      "resultSha256": "fc0ee8005007a7274ae91ddab123e8f05610b21404a8ff8a180f66b982173c4f"
     },
     {
       "path": "tools/apply-openspec-downstream-overlay.ps1",

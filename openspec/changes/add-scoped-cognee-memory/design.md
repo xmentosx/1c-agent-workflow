@@ -1,5 +1,16 @@
 # Design
 
+## MO — разрешённая реализация, 2026-10-27
+
+Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
+в source; прежние B01–B12 и установленный N5 на r50 завершены.
+Доставка — отдельная штатная регистрация этого коммита, итог в общем queue ledger. [Единый отчёт MO](evidence/mo-implementation-2026-10-27.md)
+отделяет source/fixture/native/стоимость/доставку. Controlled fork r50 —
+a2cbdcef52316db426acedc852f495564189f1ca, template pin pending.
+Прежние запреты реализации ниже относятся к уже завершённому планированию.
+G3/R6 и конечный G5 не переоткрываются. Gate6/G6, рабочая миграция, публикация,
+push/PR и native OpenCode по-прежнему не запускаются.
+
 ## План MO: default-on и оптимизация памяти, 2026-10-27
 
 Актуальная постановка следующего ограниченного изменения: по решению пользователя
@@ -10,11 +21,11 @@ memory-task-cycle и registry-memory-context. Project association с preview
 
 G4 реализован, конечный G5 [завершён в согласованной границе](evidence/g5-codex-completion-2026-10-27.md).
 Квалифицированный runtime source — 6828b622d8542748c4294bfd066a6c5af41a7bc2/r49:
-explicit enable, CHUNKS и последовательное чтение. Новый default-on, параллельный
-reader и lexical route **не реализованы и не квалифицированы**. Не переоткрываем
-G3/G5, не объявляем преимущество перед файлами. Сейчас разрешены только документы
-и штатная регистрация; её Targeted выполняет только RegisterChange.
-Нативные прогоны, Gate6/G6, рабочая миграция, публикация и изменения fork запрещены.
+explicit enable, CHUNKS и последовательное чтение. Это исторический baseline до MO. Новый default-on, параллельный reader и lexical
+route реализованы в текущем MO; их доказательства приведены в едином отчёте выше.
+G3/G5 не переоткрываются, преимущество перед файлами не заявляется. MO4 использует
+только прежние N5/B01–B12. Targeted принадлежит RegisterChange; Gate6/G6,
+рабочая миграция и публикация запрещены.
 
 ### Причина и ожидаемая полезность
 
@@ -69,8 +80,7 @@ qualification homes не становятся production homes. Mapping подт
 memory owner; нет home — недопустима только зависимая shared-product запись.
 Destination записи остаётся явным; включение не расширяет read/write scope.
 
-Checkpoint: default-on policy запрошена пользователем; **реализация MO0–MO4
-ещё не разрешена**. Прежние owners и одна state machine; нет authority над чужими
+Checkpoint: default-on policy запрошена пользователем; **реализация MO0–MO4 разрешена последующим решением пользователя**. Прежние owners и одна state machine; нет authority над чужими
 процессами/служб/lock family/очереди. Сохраняются неадминистративные Windows
 10/11/Server2019+ и терминальные сессии. Preference, binding readiness и native
 activation различаются. Partial восстанавливается через прежние pinned
@@ -135,7 +145,7 @@ agentic completion, новые модели/embeddings/БД и изменени�
 
 ### Конечная приёмка MO
 
-| ID | Критерий будущего apply — сейчас NOT RUN |
+| ID | Критерий apply; фактический статус — в едином отчёте MO |
 |---|---|
 | MO-AC1 | Готовый проект default-on без memory prompt; explicit off/отказ сохранён; association later/no answer не даёт binding. Повтор/reload не меняет IDs/cycle, нет reset/автомиграции соседей |
 | MO-AC2 | Исходные эталоны, current original/status/scope/applicability; stale/out-of-scope применения = 0. Reader сохраняет порядок/caps/partial/cancel/deadline, ошибка не превращается в пустоту |
@@ -152,7 +162,7 @@ agentic completion, новые модели/embeddings/БД и изменени�
 Недоступная метрика unknown, не ноль; не вызывать модель ради подсчёта.
 Стоимость graph ingestion не исчезает от ускорения raw reads.
 
-Сейчас только анализ уже сохранённого evidence. После разрешённого MO4 —
+В разрешённом MO4 фиксируется
 конечная матрица: улучшение, явно принятый trade-off или конкретный остаток.
 Малые отклонения времени не создают бесконечного цикла; после двух ремонтов
 без acceptance/owner narrowing сравнить owner-local вариант и rollback по

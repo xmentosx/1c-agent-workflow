@@ -157,7 +157,7 @@ function Resolve-ItlMemoryPrivateDataset {
 }
 
 function Invoke-ItlMemoryHttp {
-    param([object]$Provider,[string]$Method,[string]$Path,[object]$Body=$null,[DateTime]$DeadlineUtc,[string]$ContentType='application/json',[switch]$Raw)
+    param([object]$Provider,[string]$Method,[string]$Path,[object]$Body=$null,[DateTime]$DeadlineUtc,[string]$ContentType='application/json',[switch]$Raw,[switch]$Defer)
     $remaining=[int][Math]::Min(60000,($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds)
     if($remaining -le 0){throw 'MEMORY_DEADLINE'}
     $base=[uri]([string]$Provider.url)
@@ -181,16 +181,40 @@ function Invoke-ItlMemoryHttp {
         $request.Content=[Net.Http.ByteArrayContent]::new([Text.Encoding]::UTF8.GetBytes($text))
         $request.Content.Headers.ContentType=[Net.Http.Headers.MediaTypeHeaderValue]::Parse($ContentType)
     }
-    $response=$null
+    $pending=[pscustomobject]@{client=$client;handler=$handler;request=$request;response=$null;task=$null;deadline=$DeadlineUtc;raw=$Raw.IsPresent;closed=$false}
+    try{$pending.task=$client.SendAsync($request,[Net.Http.HttpCompletionOption]::ResponseHeadersRead)}
+    catch{Close-ItlMemoryHttp $pending;throw 'MEMORY_TRANSPORT_UNCONFIRMED'}
+    if($Defer){return $pending}
+    return (Complete-ItlMemoryHttp $pending)
+}
+
+function Close-ItlMemoryHttp {
+    param([object]$Pending)
+    if(-not (Get-ItlCatalogField $Pending 'client') -or $Pending.closed){return}
+    $Pending.closed=$true
+    # This operation owns only these HTTP requests, never another process.
+    $Pending.client.CancelPendingRequests()
+    if(-not $Pending.response -and $Pending.task -and $Pending.task.Status -eq [Threading.Tasks.TaskStatus]::RanToCompletion){$Pending.response=$Pending.task.GetAwaiter().GetResult()}
+    if($Pending.response){$Pending.response.Dispose()}
+    $Pending.request.Dispose();$Pending.client.Dispose();$Pending.handler.Dispose()
+}
+
+function Complete-ItlMemoryHttp {
+    param([object]$Pending)
+    # A synchronous transport can supply an already completed response.
+    if(-not (Get-ItlCatalogField $Pending 'task')){return $Pending}
     try{
-        try{$response=$client.SendAsync($request,[Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()}
-        catch{throw 'MEMORY_TRANSPORT_UNCONFIRMED'}
-        $status=[int]$response.StatusCode
-        $stream=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
+        try{
+            if(-not $remaining -or -not $Pending.task.Wait($remaining)){throw 'MEMORY_DEADLINE'}
+            $Pending.response=$Pending.task.GetAwaiter().GetResult()
+        }catch{throw 'MEMORY_TRANSPORT_UNCONFIRMED'}
+        $status=[int]$Pending.response.StatusCode
+        $stream=$Pending.response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $buffer=[byte[]]::new(8192);$memory=[IO.MemoryStream]::new()
         try{
             while($true){
-                $remaining=[int][Math]::Max(0,($DeadlineUtc-[DateTime]::UtcNow).TotalMilliseconds)
+                $remaining=[int][Math]::Max(0,($Pending.deadline-[DateTime]::UtcNow).TotalMilliseconds)
                 if(-not $remaining){throw 'MEMORY_DEADLINE'}
                 $read=$stream.ReadAsync($buffer,0,$buffer.Length)
                 if(-not $read.Wait($remaining)){throw 'MEMORY_DEADLINE'}
@@ -200,14 +224,28 @@ function Invoke-ItlMemoryHttp {
             }
             $text=[Text.UTF8Encoding]::new($false,$true).GetString($memory.ToArray())
         }finally{$stream.Dispose();$memory.Dispose()}
-        $value=if($Raw){$text}elseif($text){$text|ConvertFrom-Json -ErrorAction Stop}else{$null}
+        $value=if($Pending.raw){$text}elseif($text){$text|ConvertFrom-Json -ErrorAction Stop}else{$null}
         return [pscustomobject]@{status=$status;body=$value}
-    }finally{if($response){$response.Dispose()};$request.Dispose();$client.Dispose();$handler.Dispose()}
+    }finally{Close-ItlMemoryHttp $Pending}
+}
+
+function Get-ItlMemoryToolPolicy {
+    param([object]$Provider=$null)
+    $values=@([Environment]::GetEnvironmentVariable('TOOL_COGNEE','Process'),(Get-ItlCatalogField $Provider 'toolPolicy' 'auto'))
+    $modes=@(foreach($value in $values){
+        $mode=([string]$value).Trim().ToLowerInvariant()
+        if(-not $mode){$mode='auto'}
+        if($mode -notin @('off','auto','required')){throw 'MEMORY_TOOL_POLICY_INVALID: correct TOOL_COGNEE/common toolPolicy; no provider call was made.'}
+        $mode
+    })
+    if($modes -contains 'off'){return 'off'}
+    if($modes -contains 'required'){return 'required'}
+    return 'auto'
 }
 
 function Assert-ItlMemoryPrincipal {
     param([object]$Binding,[DateTime]$DeadlineUtc)
-    if([Environment]::GetEnvironmentVariable('TOOL_COGNEE','Process') -eq 'off' -or (Get-ItlCatalogField $Binding.provider 'toolPolicy' 'auto') -eq 'off'){throw 'MEMORY_TOOL_OFF'}
+    if((Get-ItlMemoryToolPolicy $Binding.provider) -eq 'off'){throw 'MEMORY_TOOL_OFF'}
     $me=Invoke-ItlMemoryHttp $Binding.provider GET '/api/v1/users/me' -DeadlineUtc $DeadlineUtc
     $super=Get-ItlCatalogField $me.body 'is_superuser'
     if($me.status -ne 200 -or [string](Get-ItlCatalogField $me.body 'id') -cne [string]$Binding.identity.developerId -or $super -isnot [bool] -or $super){
@@ -247,9 +285,9 @@ function Complete-ItlMemoryPending {
 }
 
 function Get-ItlMemoryOriginal {
-    param([object]$Binding,[object]$Dataset,[string]$DataId,[DateTime]$DeadlineUtc)
+    param([object]$Binding,[object]$Dataset,[string]$DataId,[DateTime]$DeadlineUtc,[object]$Response=$null)
     if($DataId -cnotmatch '^[a-fA-F0-9-]{36}$'){return $null}
-    $raw=Invoke-ItlMemoryHttp $Binding.provider GET "/api/v1/datasets/$($Dataset.datasetId)/data/$DataId/raw" -DeadlineUtc $DeadlineUtc -Raw
+    $raw=if($null -ne $Response){Complete-ItlMemoryHttp $Response}else{Invoke-ItlMemoryHttp $Binding.provider GET "/api/v1/datasets/$($Dataset.datasetId)/data/$DataId/raw" -DeadlineUtc $DeadlineUtc -Raw}
     if($raw.status -eq 404){return $null}
     if($raw.status -ne 200){throw 'MEMORY_SOURCE_UNAVAILABLE: no current authorized original; do not use a cached fragment.'}
     try{$note=ConvertTo-ItlCatalogCanonicalValue ($raw.body|ConvertFrom-Json -ErrorAction Stop)}catch{return $null}
@@ -401,9 +439,14 @@ function Invoke-ItlMemoryRemember {
 }
 
 function Invoke-ItlMemoryRecall {
-    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8)
+    param([object]$Binding,[string]$Query,[string[]]$Datasets=@(),[int]$TopK=8,[ValidateSet('CHUNKS','CHUNKS_LEXICAL')][string]$SearchType='CHUNKS')
     if([string]::IsNullOrWhiteSpace($Query) -or $Query.Length -gt 4096){throw 'MEMORY_QUERY_INVALID'}
     Assert-ItlMemoryBindingCurrent $Binding
+    if($SearchType -ne 'CHUNKS'){
+        $contract=Read-ItlMemoryJson (Join-Path $PSScriptRoot '../../assets/scoped-memory-policy.json')
+        $qualifiedTypes=Get-ItlCatalogField $contract 'searchTypes' @('CHUNKS')
+        if(@($qualifiedTypes) -cnotcontains $SearchType){throw 'MEMORY_SEARCH_TYPE_UNQUALIFIED'}
+    }
     $deadline=[DateTime]::UtcNow.AddSeconds(20);Assert-ItlMemoryPrincipal $Binding $deadline
     $allowed=@(Get-ItlMemoryScopes $Binding read);$selected=@($allowed)
     if($Datasets.Count){
@@ -412,7 +455,7 @@ function Invoke-ItlMemoryRecall {
     }
     if(-not $selected.Count){return @{cards=@();coverage='unavailable';continuation='Prepare admitted dataset IDs/grants; no unscoped recall was sent.'}}
     $ids=@($selected|ForEach-Object {$_.datasetId}|Select-Object -Unique)
-    $result=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type='CHUNKS';top_k=24;only_context=$false} $deadline
+    $result=Invoke-ItlMemoryHttp $Binding.provider POST '/api/v1/recall' @{query=$Query;dataset_ids=$ids;search_type=$SearchType;top_k=24;only_context=$false} $deadline
     if($result.status -ne 200){return @{cards=@();coverage='unavailable';continuation='Preserve the scope and verify native access; required coverage remains incomplete.'}}
     $cards=@();$seen=@{};$lookups=0;$bytes=0;$partial=$false
     if(-not (Test-Path -LiteralPath 'Function:\Measure-ItlMemoryTokens')){. (Join-Path $PSScriptRoot 'agent-1c.memory-tokens.ps1')}
@@ -432,13 +475,28 @@ function Invoke-ItlMemoryRecall {
         }
     }
     if(@($result.body).Count -gt $candidates.Count){$partial=$true}
+    $queue=@()
     foreach($chunk in $candidates){
-        if([DateTime]::UtcNow -ge $deadline){$partial=$true;break}
         $dataset=@($selected|Where-Object datasetId -CEQ ([string](Get-ItlCatalogField $chunk 'dataset_id')))
         $id=[string](Get-ItlCatalogField (Get-ItlCatalogField $chunk 'metadata') 'data_id')
         if($dataset.Count -ne 1 -or $id -cnotmatch '^[a-fA-F0-9-]{36}$'){$partial=$true;continue}
         $key=$dataset[0].datasetId+':'+$id;if($seen.ContainsKey($key)){continue};$seen[$key]=$true
-        try{$lookups++;$note=Get-ItlMemoryOriginal $Binding $dataset[0] $id $deadline}catch{$partial=$true;continue}
+        $queue+=,@{dataset=$dataset[0];id=$id;pending=$null}
+    }
+    $started=0
+    try{
+    for($position=0;$position -lt $queue.Count;$position++){
+        if([DateTime]::UtcNow -ge $deadline){$partial=$true;break}
+        while($started -lt $queue.Count -and $started -le $position+1 -and [DateTime]::UtcNow -lt $deadline){
+            $item=$queue[$started];$started++;$lookups++
+            try{$item.pending=Invoke-ItlMemoryHttp $Binding.provider GET "/api/v1/datasets/$($item.dataset.datasetId)/data/$($item.id)/raw" -DeadlineUtc $deadline -Raw -Defer}
+            catch{$partial=$true}
+        }
+        $item=$queue[$position];$dataset=@($item.dataset);$id=$item.id
+        if(-not $item.pending){$partial=$true;continue}
+        try{$note=Get-ItlMemoryOriginal $Binding $item.dataset $id $deadline -Response $item.pending}
+        catch{$partial=$true;continue}
+        finally{$item.pending=$null}
         if(-not $note -or -not (Test-ItlMemoryNoteApplicable $Binding $note)){$partial=$true;continue}
         $card=[ordered]@{noteId=$note.noteId;fact=$note.fact;status=$note.status;source=@{dataset=$dataset[0].label;dataId=$id};evidence=$note.evidence;applicability=$note.applicability}
         $next=@($cards)+@($card);$size=[Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $next -Depth 30 -Compress))
@@ -452,7 +510,8 @@ function Invoke-ItlMemoryRecall {
         $cards=$next;$bytes=$size
         if($cards.Count -ge [Math]::Min(8,[Math]::Max(1,$TopK))){$partial=$true;break}
     }
-    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};reformulation='one permitted after no relevant card, same scope';context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
+    }finally{foreach($item in $queue){if($item.pending){Close-ItlMemoryHttp $item.pending}}}
+    $output=[ordered]@{cards=@($cards);coverage=$(if($partial){'partial'}else{'bounded'});rawCandidateCap=24;sourceLookups=$lookups;backendCalls=(2+$lookups);utf8Bytes=$bytes;tokenCounts=@{};context=@{projectId=$Binding.context.projectId;catalogRevision=$Binding.context.catalogRevision;cycleId=$Binding.cycleId}}
     # Bound the final serialized response, including provenance and metrics,
     # with the same actual token limit. Bytes remain a separate metric.
     while($true){

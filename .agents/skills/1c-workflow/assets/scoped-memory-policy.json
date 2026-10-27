@@ -3,12 +3,17 @@
   "capabilities": [
     "scoped-cognee-memory-v1"
   ],
-  "clauseSha256": "26efad2687684b9ec457a5deb84c385db608cb73f65674fd3418ec1931ccee7c",
+  "clauseSha256": "d6cd7ce3e81b782a7f1f7c89820110b23f8a3fc8ab820373be60aa1e3bf0ca1b",
   "profile": "cognee-1.6.5-g1-c",
   "qualificationResultSha256": "be8219d1d090343f2d7deebace513b77d5aa7a322e353f10b9f3324d7048582d",
   "imageDigest": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
   "openApiSha256": "b863f72d912c07ceb4bb914d790152659427c0ad33863d553d38b5fa64e24171",
   "rulesBaselineCommit": "c91682404a498f356810b179ce8336711a411170",
-  "candidateStatus": "local-source; G5 and publication pending",
-  "rulesCandidateCommit": "df91727cc584a9b499cad1d9daa6ac22320486f9"
+  "candidateStatus": "local-source; MO and publication pending",
+  "rulesCandidateCommit": "a2cbdcef52316db426acedc852f495564189f1ca",
+  "searchTypes": [
+    "CHUNKS",
+    "CHUNKS_LEXICAL"
+  ],
+  "searchQualification": "B01 native lexical + two current raw reads; memory-mo-20261027/native-capabilities-r2.json"
 }

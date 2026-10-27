@@ -25,11 +25,14 @@
         }
         function Install-MemoryPolicyFixture {
             param([string]$Root)
-            $policy=Join-Path $Root 'project-memory.md'
+            $relative='.cursor/rules/project-memory.mdc'
+            $policy=Join-Path $Root $relative
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $policy))
             Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/fixtures/scoped-memory/project-memory.md') -Destination $policy
             $contract=Read-ItlMemoryJson (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
             [void][IO.Directory]::CreateDirectory((Join-Path $Root '.agent-1c'))
-            $manifest=@{tools=@('cursor');files=@{'project-memory.md'=@{source='content/rules/project-memory.md';installedHash=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant();userModified=$false}}}
+            $manifest=@{tools=@('cursor');files=@{}}
+            $manifest.files[$relative]=@{source='content/rules/project-memory.md';installedHash=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant();userModified=$false}
             Write-Utf8TextAtomic (Join-Path $Root '.ai-rules.json') ($manifest|ConvertTo-Json -Depth 12)
             Write-Utf8TextAtomic (Join-Path $Root '.agent-1c/dependency-lock.json') (@{schemaVersion=1;dependencies=@{aiRules1c=@{commit=$contract.rulesCandidateCommit}}}|ConvertTo-Json -Depth 10)
             return $policy
@@ -70,8 +73,8 @@
         $contract=Read-ItlMemoryJson (Join-Path $RepoRoot '.agents/skills/1c-workflow/assets/scoped-memory-policy.json')
         $lock=Read-ItlMemoryJson (Join-Path $RepoRoot 'templates/dependency-lock.json')
         $contract.rulesCandidateCommit | Should -BeExactly $lock.dependencies.aiRules1c.commit
-        # Combining source candidates cannot claim the outstanding native G5 gate.
-        $contract.candidateStatus | Should -Match 'G5 and publication pending'
+        # The new candidate cannot inherit historical G5 proof for its MO changes.
+        $contract.candidateStatus | Should -Match 'MO and publication pending'
     }
 
     It 'resolves six areas, rejects implicit writes and does not infer a product home' {
@@ -213,6 +216,11 @@
         $grouped.cards[0].noteId | Should -Be current
         $grouped.sourceLookups | Should -BeLessOrEqual 24
         @($script:Calls|Where-Object path -EQ '/api/v1/recall').Count | Should -Be 2
+        $lexical=Invoke-ItlMemoryRecall $b 'Object.ErrorCode' -SearchType CHUNKS_LEXICAL
+        $lexical.cards.Count | Should -Be 8
+        @($script:Calls|Where-Object path -EQ '/api/v1/recall')[-1].body.search_type | Should -BeExactly CHUNKS_LEXICAL
+        $lexical.PSObject.Properties.Name | Should -Not -Contain reformulation
+
     }
     It 'retires one exact note without deleting the dataset' {
         $r=Invoke-ItlMemoryRemember $b 'Retire me' 'itl_project_customer' 'old'
@@ -261,6 +269,12 @@
         $b.provider.principalId=$b.identity.developerId;$b.provider.url='https://memory.invalid/'
         $b.provider.credentialFile=Join-Path $env:VIBECODING1C_MCP_LOCAL_HOME 'credential.json'
         {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Not -Throw
+        $b.provider.toolPolicy='INVALID'
+        {Assert-ItlMemoryPrincipal $b ([DateTime]::UtcNow.AddSeconds(2))} | Should -Throw '*MEMORY_TOOL_POLICY_INVALID*'
+        $b.provider.toolPolicy='OFF'
+        {Assert-ItlMemoryPrincipal $b ([DateTime]::UtcNow.AddSeconds(2))} | Should -Throw '*MEMORY_TOOL_OFF*'
+        $script:Calls.Count | Should -Be 0
+        $b.provider.toolPolicy='auto'
         $b.provider.datasets[0].admitted=$false
         {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Not -Throw
         @(Get-ItlMemoryScopes $b read).Count | Should -Be 5
@@ -345,7 +359,7 @@
         $b.registryContextHash=Get-ItlCatalogHash $b.context
         $script:MemoryAppliedSnapshot=@{catalogRevision=$b.context.catalogRevision;relations=@{relations=@();knowledgeAreas=@{}}}
         Mock Get-ItlProductProjectOperationContext {$b.context}
-        Mock Read-ItlProductProjectRecord {@{catalogRevision=$b.context.catalogRevision;context=$b.context;contextHash=$b.registryContextHash}}
+        Mock Read-ItlProductProjectRecord {@{configurationState='configured';catalogRevision=$b.context.catalogRevision;context=$b.context;contextHash=$b.registryContextHash}}
         Mock Get-Vibecoding1cMcpRegistryRoot {$TestDrive}
         Mock Read-ItlProductCatalogSnapshot {
             param($RepositoryRoot,$Commit)
@@ -360,9 +374,17 @@
             Write-Utf8TextAtomic $State.statePath (@{memoryCycle=$Updates.memoryCycle}|ConvertTo-Json)
         }
         Mock Write-Vibecoding1cMcpClientConfig {}
-        $first=Invoke-ItlMemorySetup enable -Client cursor -SettingsPath $settings -PolicyPath $policy
+        Write-Utf8TextAtomic (Join-Path (Get-ItlMemoryHome) 'provider.json') ($b.provider|ConvertTo-Json -Depth 30)
+        Remove-Item -LiteralPath (Get-ItlMemoryPath binding $b.projectRoot)
+        $first=Invoke-ItlMemorySetup auto -Client cursor
+        $first.mode | Should -BeExactly configured -Because ($first|ConvertTo-Json -Compress)
+        (Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)).settingsHash | Should -BeExactly (Get-ItlCatalogHash (Read-ItlMemoryJson (Join-Path (Get-ItlMemoryHome) 'provider.json')))
+        $repeat=Invoke-ItlMemorySetup auto -Client cursor -SettingsPath $settings -PolicyPath $policy
+        $repeat.mode | Should -BeExactly configured
+
         $first.mode | Should -Be configured
         $null=Invoke-ItlMemorySetup disable -Client cursor
+        (Invoke-ItlMemorySetup auto -Client cursor -SettingsPath $settings -PolicyPath $policy).mode | Should -BeExactly disabled
         $second=Invoke-ItlMemorySetup enable -Client cursor -SettingsPath $settings -PolicyPath $policy
         $second.cycleId | Should -Be $first.cycleId
         $second.workspaceId | Should -Be $first.workspaceId
@@ -399,7 +421,8 @@
             $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
             try {
                 $listener.Start();[IO.File]::WriteAllText($Ready,[string]$listener.LocalEndpoint.Port)
-                foreach($n in 1..3){
+                foreach($n in 1..5){
+                    if($n -eq 4){continue} # consumed together with request 3
                     $peer=$listener.AcceptTcpClient();$peer.ReceiveTimeout=10000
                     try {
                         $stream=$peer.GetStream();$header=''
@@ -413,6 +436,18 @@
                             $bytes=[Text.Encoding]::UTF8.GetBytes($json)
                             $prefix=[Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
                             $stream.Write($prefix,0,$prefix.Length);$stream.Write($bytes,0,$bytes.Length)
+                        }elseif($n -eq 3){
+                            # Neither deferred GET can finish until the second is in flight.
+                            $secondPeer=$listener.AcceptTcpClient();$secondPeer.ReceiveTimeout=10000
+                            try{
+                                $secondStream=$secondPeer.GetStream();$secondHeader=''
+                                while(-not $secondHeader.EndsWith("`r`n`r`n")){$v=$secondStream.ReadByte();if($v -lt 0){throw 'second fixture EOF'};$secondHeader+=[char]$v}
+                                foreach($pair in @(@{stream=$secondStream;sequence=4},@{stream=$stream;sequence=3})){
+                                    $bytes=[Text.Encoding]::UTF8.GetBytes((@{sequence=$pair.sequence}|ConvertTo-Json -Compress))
+                                    $prefix=[Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
+                                    $pair.stream.Write($prefix,0,$prefix.Length);$pair.stream.Write($bytes,0,$bytes.Length)
+                                }
+                            }finally{$secondPeer.Dispose()}
                         }else{while($stream.ReadByte() -ge 0){};return 'bounded-peer-closed'}
                     }finally{$peer.Dispose()}
                 }
@@ -435,6 +470,14 @@
             ($keyResult.body.echo|ConvertFrom-Json).text | Should -Be 'Тот же путь с ключом API'
             $keyResult.body.apiKeyPresent | Should -BeTrue
             $keyResult.body.authorizationPresent | Should -BeFalse
+            $firstPending=& $NativeMemoryHttp $provider GET '/api/v1/raw/one' -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(5)) -Raw -Defer
+            $secondPending=& $NativeMemoryHttp $provider GET '/api/v1/raw/two' -DeadlineUtc ([DateTime]::UtcNow.AddSeconds(5)) -Raw -Defer
+            try{
+                $firstCurrent=Complete-ItlMemoryHttp $firstPending
+                $secondCurrent=Complete-ItlMemoryHttp $secondPending
+                ($firstCurrent.body|ConvertFrom-Json).sequence | Should -Be 3
+                ($secondCurrent.body|ConvertFrom-Json).sequence | Should -Be 4
+            }finally{Close-ItlMemoryHttp $firstPending;Close-ItlMemoryHttp $secondPending}
             {& $NativeMemoryHttp $provider POST '/api/v1/recall' @{query='test'} ([DateTime]::UtcNow.AddMilliseconds(250))} | Should -Throw '*MEMORY_TRANSPORT_UNCONFIRMED*'
             $null=$job|Wait-Job -Timeout 10
             $job.State | Should -Be Completed
