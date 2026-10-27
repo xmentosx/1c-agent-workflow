@@ -833,7 +833,11 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
-    It 'adds owned component Release capabilities and forecasts stand changes: <StandChanges>' -ForEach @(@{StandChanges=$false},@{StandChanges=$true}) {
+    It 'adds owned component Release capabilities and forecasts stand changes: <StandChanges>, <ComponentShape>' -ForEach @(
+        @{StandChanges=$false;ComponentShape='empty'},@{StandChanges=$true;ComponentShape='empty'},
+        @{StandChanges=$false;ComponentShape='seam'},@{StandChanges=$true;ComponentShape='seam'},
+        @{StandChanges=$false;ComponentShape='pending'},@{StandChanges=$true;ComponentShape='pending'}
+    ) {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
         & {
@@ -851,13 +855,20 @@ Describe 'Delivery v3 immutable selective plan' {
                 param([string]$Root,[string[]]$Arguments)
                 return [pscustomobject]@{ exitCode=0; stdout=$(if ($Arguments -contains 'HEAD^{tree}') { ('d' * 40) } else { ('c' * 40) }) }
             }
-            function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@() } }
+            function Get-OwnedComponentPublicationPlan {
+                $components=switch($ComponentShape){
+                    'empty' {@()}
+                    'seam' {@('test-seam')}
+                    'pending' {@([pscustomobject]@{name='aiRules1c';compatibilityPromotionRequired=$true})}
+                }
+                return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@($components) }
+            }
             function Assert-ComponentPublicationFinalizerPreflight { $script:preflightCalled = $true }
             function Resolve-DeliveryPlanAiRulesSource { $script:resolverCalled = $true; return 'C:\exact-rules' }
             function Get-DeliveryStandPreparation { param($CandidateRoot,$BaseCommit,[switch]$RequireRelease) $script:preparationReleaseRequested=[bool]$RequireRelease; if($StandChanges){return [pscustomobject]@{requiresStateChange=$true}}; return $null }
             function Invoke-DeliveryCandidatePlanCalculation {
                 param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease,[string[]]$ReleaseCapability,[switch]$AllowCustomGateFixture)
-                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability) }
+                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability);timeEstimate=[pscustomobject]@{estimatedSeconds=30;note='fixture gate subtotal'} }
             }
             $script:planSaved=$false
             function Save-DeliveryQualityPlan { $script:planSaved=$true; return 'C:\plan.json' }
@@ -871,6 +882,8 @@ Describe 'Delivery v3 immutable selective plan' {
             $script:preflightCalled | Should -BeTrue
             $script:resolverCalled | Should -BeTrue
             $script:preparationReleaseRequested | Should -BeTrue
+            if($ComponentShape -eq 'pending'){$plan.timeEstimate.unmeasuredPreparation | Should -Contain 'preliminary-compatibility-Full'}
+            else{$plan.timeEstimate.unmeasuredPreparation | Should -Not -Contain 'preliminary-compatibility-Full'}
             $script:planSaved | Should -Be (-not $StandChanges)
             if($StandChanges){$plan.resumable | Should -BeFalse;$plan.continuation | Should -Match 'without ResumePlan'}
         }

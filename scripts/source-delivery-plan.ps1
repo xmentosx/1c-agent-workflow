@@ -523,7 +523,7 @@ function New-AccumulatedDeliveryPlan {
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities) -AllowCustomGateFixture:$script:DeliveryCustomGateBoundary
         $preparation = Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:([bool]($RequireRelease -or @($componentPlan.requiredReleaseCapabilities).Count))
-        Add-DeliveryPreparationEstimate -Plan $plan -Preparation $preparation -PendingCompatibility:([bool]@($componentPlan.components | Where-Object { $_.name -ceq 'aiRules1c' -and $_.compatibilityPromotionRequired }).Count)
+        Add-DeliveryPreparationEstimate -Plan $plan -Preparation $preparation -PendingCompatibility:([bool]@($componentPlan.components | Where-Object { $_ -and $_.PSObject.Properties['name'] -and $_.name -ceq 'aiRules1c' -and $_.compatibilityPromotionRequired }).Count)
         Set-DeliveryPlanQueue -Plan $plan -Entries $entries
         if ($preparation -and $preparation.requiresStateChange) {
             $plan | Add-Member -NotePropertyName resumable -NotePropertyValue $false -Force
