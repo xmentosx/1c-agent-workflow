@@ -1,5 +1,15 @@
 # Acceptance and Evidence Plan
 
+## RU-EMB: допуск не равен сравнению качества, 2026-10-27
+
+[Единый native preflight result](evidence/ru-embedding-preflight-2026-10-27.md):
+BGE имеет 50/50 одинаковых с корпусом text hashes; два Qwen profiles неполные
+(OOM / 403). Измеряемые 144 поисковых trials и 12 Codex answers не начаты.
+Quality/latency/token advantage остаются unverified; native control и один
+host embedding probe не подменяют парный эксперимент. Условия продолжения,
+failed originals, currentness, resources и cost unknown сохранены в отчёте.
+Это исследовательский остаток, не новый release gate.
+
 ## Фактическое продолжение G5, 2026-10-26
 
 [Единый memory follow-up](evidence/g5-common-continuation-2026-10-26.md) — текущий результат; прежний sealed

@@ -1,5 +1,13 @@
 # Tasks
 
+## RU-EMB: согласование с memory owner, 2026-10-27
+
+- [x] Отразить [technical stop Qwen](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md): baseline index 50/50, OOM и 403 у Qwen; измеряемые 144/12 не запускались, модель не принята.
+
+Исследовательское продолжение принадлежит memory owner; новые поля реестра,
+release gate, рабочая миграция и переоткрытие G3/R6 не требуются.
+Доставка документов — отдельный штатный RegisterChange, не качество поиска.
+
 ## MO — разрешённая реализация, 2026-10-27
 
 Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы
