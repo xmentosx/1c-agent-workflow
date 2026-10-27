@@ -51,6 +51,9 @@ function Get-VerificationChangeTarget {
     # The Vanessa runner is prepared inside the first check, so planning cannot
     # require it. The unbound identity keeps every other target field strict;
     # the first observation after runner preparation binds the exact runner.
+    # A new branch has no tooling generation until its first tooling step;
+    # establish it through that owner so the infobase identity stays strict.
+    if (-not [string](Get-StateValue -State $State -Name 'toolingInfoBaseGeneration' -Default '')) { $State=Ensure-DevBranchToolingGeneration -State $State }
     $projection=[ordered]@{}
     $names=if ($State -is [Collections.IDictionary]) { @($State.Keys) } else { @($State.PSObject.Properties.Name) }
     foreach ($name in $names) {

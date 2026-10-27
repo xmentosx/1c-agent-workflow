@@ -219,6 +219,26 @@ Describe 'Change mode recovery and reuse boundaries' {
             { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
         }
     }
+    It 'plans on a new branch before its first tooling step through the tooling generation owner' {
+        $root=Join-Path $TestDrive 'Новая ветка без tooling'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            # 2026-10-27 Develop fresh: new-dev-branch leaves neither the tooling
+            # nor the runner generation before the first check plans its change.
+            foreach ($name in @('toolingInfoBaseGeneration', 'vanessaServiceInfoBaseGeneration')) { $script:ChangeTestState.PSObject.Properties.Remove($name) }
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $generation=[string]$script:ChangeTestState.toolingInfoBaseGeneration
+            $generation | Should -Match '^[a-f0-9]{32}$'
+            [string](Read-VerificationChange).targetIdentity | Should -BeNullOrEmpty
+            # The established generation stays strict until the runner binds.
+            $script:ChangeTestState.toolingInfoBaseGeneration='recreated base'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+            $script:ChangeTestState.toolingInfoBaseGeneration=$generation
+            $script:ChangeTestState | Add-Member -NotePropertyName vanessaServiceInfoBaseGeneration -NotePropertyValue 'runner' -Force
+            (Assert-VerificationChangeReady -State $script:ChangeTestState).targetIdentity | Should -BeExactly (Get-VerificationRetainedTargetIdentity -State $script:ChangeTestState)
+        }
+    }
     It 'cannot mutate the frozen current scope or claim acceptance without its completed immutable record' {
         $root=Join-Path $TestDrive 'Защита границы и приёмки'; New-ChangeFixture $root
         Enter-ChangeFixture $root {
