@@ -200,3 +200,23 @@ Describe "Named scenario repair round" {
         Should -Invoke Complete-ItlVerificationRepairSession -Times 1 -Exactly
     }
 }
+
+Describe 'Post-run event-log evidence liveness' {
+    It 'reads every post-run event-log check under the helper status heartbeat' {
+        # 2026-10-27 Develop upgrade: a cursor fallback rescanned run-period
+        # segments during vanessa.postprocess past the 120s stale-status watchdog.
+        $calls = @(foreach ($path in @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib') -Filter '*.ps1')) {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($path.FullName, [ref]$tokens, [ref]$errors)
+            $ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Test-DevBranchEventLogAfterVanessa' }, $true)
+        })
+        $calls.Count | Should -Be 3
+        foreach ($call in $calls) {
+            $wrapped = $false
+            for ($node = $call.Parent; $null -ne $node; $node = $node.Parent) {
+                if ($node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Invoke-WithRunStatusHeartbeat') { $wrapped = $true; break }
+            }
+            $wrapped | Should -BeTrue -Because $call.Extent.Text
+        }
+    }
+}
