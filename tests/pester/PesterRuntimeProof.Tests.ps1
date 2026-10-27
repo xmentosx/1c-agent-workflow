@@ -367,6 +367,16 @@ Describe 'External Pester runtime custom configuration' {
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
         . (Join-Path $RepoRoot 'scripts/pester-external-runtime.ps1')
     }
+    BeforeEach {
+        # Agent hosts often export GIT_* prompt/editor overrides. Each case
+        # models its own overrides and must not inherit the caller's.
+        $script:hostGitEnvironment=@(Get-ChildItem Env: | Where-Object {$_.Name -match '^GIT_'} | ForEach-Object {[pscustomobject]@{Name=$_.Name;Value=$_.Value}})
+        foreach($entry in $script:hostGitEnvironment){[Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')}
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object {$_.Name -match '^GIT_'} | ForEach-Object {[Environment]::SetEnvironmentVariable($_.Name,$null,'Process')}
+        foreach($entry in $script:hostGitEnvironment){[Environment]::SetEnvironmentVariable($entry.Name,$entry.Value,'Process')}
+    }
     It 'reuses real Git proof across equal worktree configuration and rejects a changed setting' {
         $root=New-RuntimeProofFixture 'Real Git profile'
         $other=Join-Path $TestDrive 'Real Git другой worktree'

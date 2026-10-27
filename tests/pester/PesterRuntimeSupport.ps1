@@ -2,7 +2,7 @@
         $root = Join-Path $TestDrive ("Runtime Проект " + $Name)
         $testRoot = Join-Path $root 'tests/pester'
         New-Item -ItemType Directory -Force -Path $testRoot, (Join-Path $root 'scripts') | Out-Null
-        [IO.File]::WriteAllText((Join-Path $testRoot 'Runtime.Tests.ps1'), "Describe 'real runtime fixture' { It 'executes original task' { Add-Content -LiteralPath (Join-Path `$PSScriptRoot '../../counter.txt') -Value 'executed'; `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText((Join-Path $testRoot 'Runtime.Tests.ps1'), "Describe 'real runtime fixture' { It 'executes original task' { `$lock=[Threading.Mutex]::new(`$false,'Local\itl-runtime-proof-counter'); [void]`$lock.WaitOne(); try { Add-Content -LiteralPath (Join-Path `$PSScriptRoot '../../counter.txt') -Value 'executed' -ErrorAction Stop } finally { `$lock.ReleaseMutex(); `$lock.Dispose() }; `$true | Should -BeTrue } }", [Text.UTF8Encoding]::new($true))
         foreach ($file in @('run-pester-shard.ps1', 'invoke-pester-runtime.ps1')) {
             Copy-Item -LiteralPath (Join-Path $RepoRoot "scripts/$file") -Destination (Join-Path $root "scripts/$file")
         }
