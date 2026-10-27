@@ -186,7 +186,14 @@ Describe "Release gate scripts" {
             @($catalog.suites).Count | Should -Be 1
             $catalog.suites[0].purpose | Should -Be "acceptance"
             @($catalog.suites[0].featurePaths) | Should -Be @("tests/features/*.feature")
-            @($catalog.suites[0].ownerPaths) | Should -Be @("src/cf/Configuration.xml")
+            @($catalog.suites[0].ownerPaths) | Should -Be @(
+                'src/cf/**','tests/features/**','tests/verification-suites.shared.json','tests/verification-suites.branch.json',
+                '.agent-1c/dependency-lock.json',
+                '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
+                '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1',
+                '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1',
+                '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1',
+                '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1')
             (& git -C $tempRoot log -1 --pretty=%s).Trim() | Should -Be "test: seed develop E2E Vanessa fixture"
             $feature = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $tempRoot "tests\features\ITLDevelopJourney.feature")))
             $contextIndex = $feature.IndexOf("Контекст:")

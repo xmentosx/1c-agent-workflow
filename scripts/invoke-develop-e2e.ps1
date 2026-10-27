@@ -435,7 +435,7 @@ function Add-FreshVerificationCatalog {
       "id": "itl-develop-journey",
       "purpose": "acceptance",
       "featurePaths": ["tests/features/*.feature"],
-      "ownerPaths": ["src/cf/Configuration.xml"]
+      "ownerPaths": ["src/cf/**", "tests/features/**", "tests/verification-suites.shared.json", "tests/verification-suites.branch.json", ".agent-1c/dependency-lock.json", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1"]
     }
   ]
 }
@@ -579,7 +579,7 @@ try {
                 [void](Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -BranchName $developBranchName -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()))
             }
             Set-DevelopStandVanessaFeature -Root $standBranchRoot
-            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+            [void](Invoke-DevelopPlannedCheck -Name "upgrade-check" -Root $standBranchRoot)
             $exportSummary = Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600)
             if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
             Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
@@ -653,7 +653,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-golden-change" -Operation {
-            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+            [void](Invoke-DevelopPlannedCheck -Name "fresh-check" -Root $freshBranchRoot)
         })
         }
         if('stale-export' -in $scenarioSelection['fresh']) {
@@ -667,7 +667,7 @@ try {
             [void](Assert-ExportResult -ExpectedDecision "warn-unverified" -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "recovery-check" -Operation {
-            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recovery-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+            [void](Invoke-DevelopPlannedCheck -Name "fresh-recovery-check" -Root $freshBranchRoot)
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "export-result" -Operation {
             [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "fresh-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
@@ -684,7 +684,7 @@ try {
             [void](Invoke-InstalledAction -Name "fresh-refresh-lite" -Root $freshBranchRoot -Action "refresh-dev-branch-lite" -TimeoutSeconds 5400)
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-after-refresh" -Operation {
-            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+            [void](Invoke-DevelopPlannedCheck -Name "fresh-recheck" -Root $freshBranchRoot)
         })
         }
         if('close' -in $scenarioSelection['fresh']) {
