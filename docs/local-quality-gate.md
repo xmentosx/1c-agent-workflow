@@ -287,6 +287,14 @@ candidate/removal rule, unknown node and source SHA remains exact. Changed calle
 mandatory cleanup, unsafe/new block or unknown scenario closes the exception.
 A separate cheap closed-reader inventory and the native retention regressions remain
 in complete current static proof. This is not an exemption for the retention module.
+The audited diagnostic-retention transition may also retain those three fresh
+proofs: the pinned fresh recipe enrolls no diagnostic manifests; both exact
+source versions return an empty cold plan. Existing-root/upgrade work, unknown
+implementations, changed consumers and new enrollment remain outside this bridge.
+The producer/CLI inventory is separate from the slower scenario regressions.
+Shared verification planning in develop-configuration-rejection.ps1 is a fresh
+input; only its three negative-fixture functions are upgrade-only. Its actual
+shared assertions stay bound even when cleanup can reuse previous proof.
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.

@@ -671,7 +671,7 @@ function Read-Example {
             @($before.inventory.external.artifacts.Values | Where-Object {$_ -cne $sha}) | Should -HaveCount 0
             # Exercise the normal recursive positive-stand binding, not only an
             # injected ExternalBinding. Fresh consumes that stand as a seed,
-            # while configuration rejection executes only in upgrade.
+            # while only the negative-fixture functions execute in upgrade.
             $positive=Join-Path $f.root ('.git/positive ' + (Get-NonAsciiFixtureSegment))
             Write-Utf8Json -Path (Join-Path $positive '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
             Write-Utf8Json -Path (Join-Path $positive '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$positive}
@@ -680,7 +680,8 @@ function Read-Example {
             $config=@{developWorktreePath=$f.root;developConfigurationRejection=@{positiveProjectRoot=$positive};qualificationFixtures=@{Develop=@{path='unchanged capsule';sha256=('a'*64);workflowUpdateAdmission=@{master=@{head=('b'*40)}}}}}
             Write-Utf8Json -Path $configPath -Value $config
             $rejection=Join-Path $f.root 'scripts/develop-configuration-rejection.ps1'
-            [IO.File]::WriteAllText($rejection, '# original rejection', [Text.UTF8Encoding]::new($true))
+            $rejectionText='# original rejection'
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
             & git -C $f.root add scripts/develop-configuration-rejection.ps1; & git -C $f.root commit --quiet -m 'rejection fixture'
             $normal=@{RepositoryRoot=$f.root;Catalog=$f.catalog;ProjectRoot=$f.root;AiRulesSource=$f.root;AgentTarget='kilocode';ArtifactBinding=$transported}
             $normal.Catalog=Get-QualityContractCatalog -RepositoryRoot $context.RepoRoot
@@ -702,8 +703,9 @@ function Read-Example {
             [IO.File]::WriteAllBytes($positiveEnv,$positiveBytes)
             (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
             [IO.File]::AppendAllText($rejection, '# receipt fix')
-            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
             (Get-DevelopE2EInputIdentity @normal -Journey upgrade).fingerprint | Should -Not -BeExactly $upgrade.fingerprint
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
             $config.qualificationFixtures.Develop.workflowUpdateAdmission.master.head='c'*40
             Write-Utf8Json -Path $configPath -Value $config
             (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint

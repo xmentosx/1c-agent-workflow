@@ -40,7 +40,7 @@ function Get-DevelopE2EInputIdentity {
         # Conservative source inventory; this is not an installed managed-copy policy.
         $patterns += @('.agents/skills/*','templates/*','AGENT-INSTALL.md','install-agent-1c-workflow.ps1','tools/*')
         $patterns += @('scripts/invoke-develop-e2e.ps1','scripts/source-e2e-manifest-repair.ps1','scripts/develop-e2e-cleanup.ps1','scripts/stand-env-identity.ps1',
-            'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1')
+            'scripts/git-path-list.ps1','scripts/check.ps1','scripts/test-release-readiness.ps1','scripts/Build-ItlOnDemandMcp.ps1','scripts/develop-configuration-rejection.ps1')
         if($Catalog.developJourneys.PSObject.Properties['scenarios']) {$patterns+=@('scripts/develop-e2e-scenarios.ps1','scripts/quality-contracts.ps1')}
         if ($Journey -eq 'upgrade') { $patterns += 'scripts/develop-configuration-rejection.ps1' }
         # Git inventory is unique. Ordinal ordering also stays identical between

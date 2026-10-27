@@ -182,7 +182,7 @@ function Test-DevelopColdCutoverConsumers {
     if(-not $RepositoryRoot) {return $false}
     $consumers=@{
         'install-agent-1c-workflow.ps1'=@('1917f4163747d6c1c55e6b9bf69184c3d9d7553a27cde549ce758ad440fbce17')
-        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9')
+        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e')
     }
     try {
         foreach($path in $consumers.Keys) {
@@ -190,6 +190,16 @@ function Test-DevelopColdCutoverConsumers {
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
             if($hash -cnotin $consumers[$path]) {return $false}
+            if($path -ceq 'scripts/invoke-develop-e2e.ps1' -and $hash -ceq '00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e') {
+                # The modern recipe plans current-change evidence, but still
+                # registers no diagnostic batch and invokes no explicit cleanup.
+                $helper='scripts/develop-configuration-rejection.ps1'
+                $helperText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $helper}else{[IO.File]::ReadAllText((Join-Path $RepositoryRoot $helper))}
+                $helperText=Get-DevelopJourneySourceProjection $helper $helperText fresh
+                $sha=[Security.Cryptography.SHA256]::Create()
+                try {$helperHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($helperText)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+                if($helperHash -cne 'a547992821bcd7c88f44eb68a7874bcfdc4727688d9d96f147867b22dd21346e') {return $false}
+            }
         }
         return $true
     } catch {return $false}
@@ -278,6 +288,19 @@ function Get-DevelopArtifactProtectionProjection {
     return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
 }
 
+# Exact audited old/new diagnostic implementations return before all changed
+# code on a fresh root without producer-enrolled manifests. Unknown versions
+# retain native qualification; registration and existing manifests stay exact.
+function Get-DevelopColdDiagnosticProjection {
+    param([string]$Text,[string]$RepositoryRoot,[string]$Commit='',[switch]$ProbeOnly)
+    if(-not (Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit)) {return $null}
+    if($ProbeOnly) {return $true}
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+    if($hash -cnotin @('998444b79b4fcca47bc95a672f058d81e00d7af327444cc0e9c833e0a47ae349','87b42915c8a9f7b68254625adc048994add6df6fe0a6a7d664703ed61603d415')) {return $null}
+    return 'cold-root-without-diagnostic-manifests'
+}
+
 function Get-DevelopScenarioSourceProjection {
     param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario=@(),[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
     if($Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and -not @($Scenario|Where-Object {$_ -cnotin @('install','branch','verification','stale-export','refresh','close')}).Count -and
@@ -288,6 +311,10 @@ function Get-DevelopScenarioSourceProjection {
     if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1' -and $Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and
         -not @($Scenario|Where-Object {$_ -cnotin @('verification','stale-export','close')}).Count) {
         return Get-DevelopArtifactProtectionProjection $Text $RepositoryRoot $Commit -ProbeOnly:$ProbeOnly
+    }
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1' -and $Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and
+        -not @($Scenario|Where-Object {$_ -cnotin @('verification','stale-export','close')}).Count) {
+        return Get-DevelopColdDiagnosticProjection $Text $RepositoryRoot $Commit -ProbeOnly:$ProbeOnly
     }
     if($Path -ceq 'scripts/ai-rules-native-inputs.ps1') {return 'source-qualification-policy-only'}
     if($Path -ceq 'templates/dependency-lock.json' -and $ForkBridge) {
@@ -349,7 +376,7 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Get-DevelopArtifactProtectionProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Get-DevelopArtifactProtectionProjection','Get-DevelopColdDiagnosticProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-QualityPesterSemanticInputBindings','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {

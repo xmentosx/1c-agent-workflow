@@ -55,7 +55,7 @@ $config.Filter.FullName='*plans real Git changes with the exact native selection
 $config.Run.PassThru=$true
 $config.Output.Verbosity='Normal'
 $result=Invoke-Pester -Configuration $config
-if($result.PassedCount -ne 7 -or $result.FailedCount -or $result.FailedContainersCount){throw ('Original native selection did not pass with foreign candidate artifacts. passed='+$result.PassedCount+'; failed='+$result.FailedCount)}
+if($result.PassedCount -ne 8 -or $result.FailedCount -or $result.FailedContainersCount){throw ('Original native selection did not pass with foreign candidate artifacts. passed='+$result.PassedCount+'; failed='+$result.FailedCount)}
 foreach($name in $names) {
     if([Environment]::GetEnvironmentVariable($name,'Process') -cne $expected[$name]){throw ('Fixture leaked environment: '+$name)}
     if([IO.File]::ReadAllText($expected[$name]) -cne 'foreign candidate bytes'){throw 'Fixture modified a foreign artifact.'}
@@ -88,7 +88,8 @@ It 'plans real Git changes with the exact native selection (<Change>)' -TestCase
         @{Change='owned-test';Expected=@('develop.static')},
         @{Change='update-only';Expected=@('develop.static','develop.upgrade')},
         @{Change='fresh-only';Expected=@('develop.static','develop.fresh')},
-        @{Change='rejection-only';Expected=@('develop.static','develop.upgrade')},
+        @{Change='rejection-only';Expected=@('develop.static','develop.upgrade','develop.fresh')},
+        @{Change='rejection-function';Expected=@('develop.static','develop.upgrade')},
         @{Change='artifact-discovery';Expected=@('develop.static')},
         @{Change='shared-stand';Expected=@('develop.static','develop.upgrade','develop.fresh')},
         @{Change='shared';Expected=@('develop.static','develop.upgrade','develop.fresh')}
@@ -107,6 +108,7 @@ It 'plans real Git changes with the exact native selection (<Change>)' -TestCase
             'update-only' {'.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'}
             'fresh-only' {'scripts/invoke-develop-e2e.ps1'}
             'rejection-only' {'scripts/develop-configuration-rejection.ps1'}
+            'rejection-function' {'scripts/develop-configuration-rejection.ps1'}
             'artifact-discovery' {'scripts/stand-env-identity.ps1'}
             'shared-stand' {'scripts/stand-env-identity.ps1'}
             'shared' {'runtime.ps1'}
@@ -114,8 +116,8 @@ It 'plans real Git changes with the exact native selection (<Change>)' -TestCase
         $physical=Join-Path $f.root $path; $text=[IO.File]::ReadAllText($physical)
         $bytes=[IO.File]::ReadAllBytes($physical)
         $hasBom=$bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191
-        if($Change -in @('update-only','fresh-only','artifact-discovery','shared-stand')) {
-            $functionName=switch($Change){'update-only'{'Update-WorkflowPackage'}'fresh-only'{'Get-BranchWorktree'}'artifact-discovery'{'Find-SourceE2EArtifactBinding'}'shared-stand'{'Get-DevelopPositiveStandRoot'}}
+        if($Change -in @('update-only','fresh-only','artifact-discovery','shared-stand','rejection-function')) {
+            $functionName=switch($Change){'update-only'{'Update-WorkflowPackage'}'fresh-only'{'Get-BranchWorktree'}'artifact-discovery'{'Find-SourceE2EArtifactBinding'}'shared-stand'{'Get-DevelopPositiveStandRoot'}'rejection-function'{'Assert-DevelopConfigurationRejection'}}
             $tokens=$null; $errors=$null
             $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
             $node=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $functionName},$true)

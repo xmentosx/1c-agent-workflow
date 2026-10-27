@@ -997,7 +997,9 @@
       "paths": [
         "tests/pester/DevelopArtifactProtectionScope.Tests.ps1",
         "scripts/develop-e2e-scenarios.ps1",
-        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1"
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        "tests/fixtures/develop-native/diagnostic-retention-before-task-kinds.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1"
       ],
       "reuseInputPaths": [
         "scripts/source-e2e-workflow-update.ps1",
@@ -1021,7 +1023,8 @@
         "install-agent-1c-workflow.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
         "tests/pester/SourceDeliveryIncremental.TestSupport.ps1",
-        "tests/pester/TestSupport.ps1"
+        "tests/pester/TestSupport.ps1",
+        "tests/fixtures/develop-native/diagnostic-retention-before-task-kinds.ps1"
       ],
       "tests": [
         "tests/pester/DevelopArtifactProtectionScope.Tests.ps1"
@@ -1048,7 +1051,9 @@
         "scripts/invoke-develop-e2e.ps1",
         "install-agent-1c-workflow.ps1",
         "tests/pester/TestSupport.ps1",
-        ".agents/skills/1c-workflow/scripts/*"
+        ".agents/skills/1c-workflow/scripts/*",
+        "scripts/develop-configuration-rejection.ps1",
+        ".agents/skills/*"
       ],
       "tests": [
         "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1"
