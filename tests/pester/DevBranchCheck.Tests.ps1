@@ -200,3 +200,21 @@ Describe "Named scenario repair round" {
         Should -Invoke Complete-ItlVerificationRepairSession -Times 1 -Exactly
     }
 }
+
+Describe 'Git tree object lookup' {
+    It 'answers every path of an immutable tree from one listing exactly like rev-parse' {
+        # 2026-10-27 Develop upgrade: two git processes per src/cf file for a
+        # wildcard proof input outlasted the runner's stale-status watchdog.
+        $tree = (& git -C $RepoRoot rev-parse 'HEAD:tests').Trim()
+        $paths = @(& git -C $RepoRoot -c core.quotepath=false ls-tree -r --name-only $tree -- pester | Select-Object -First 25) +
+            @('pester', 'pester/', 'pester\TestSupport.ps1', 'pester/Нет такого файла.ps1')
+        Mock Get-GitPathList { @(Get-GitPathListAt -Root $RepoRoot -Arguments $Arguments) }
+        foreach ($path in $paths) {
+            $normalized = ($path -replace '\\', '/').Trim('/')
+            $expected = (& git -C $RepoRoot -c core.quotepath=false rev-parse --verify --quiet "${tree}:$normalized")
+            if ($LASTEXITCODE -ne 0) { $expected = '<missing>' }
+            Get-GitObjectIdForTreePath -Treeish $tree -RepoPath $path | Should -BeExactly ([string]$expected).Trim() -Because $path
+        }
+        Should -Invoke Get-GitPathList -Times 1 -Exactly
+    }
+}
