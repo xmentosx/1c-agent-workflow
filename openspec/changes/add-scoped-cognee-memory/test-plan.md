@@ -1,5 +1,19 @@
 # Acceptance and Evidence Plan
 
+Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
+завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
+Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
+Рабочая модель прежняя; конечное исследование закрыто, новый release gate не вводится.
+
+## RU-EMB: повтор технического допуска, 2026-10-27
+
+[Repair result](evidence/ru-embedding-repair-2026-10-27.md) — текущая сверка;
+предыдущий preflight ниже сохранён как история. Успешные component requests не
+подменяют идентичные50 native chunks,144 timed attempts и12 полных ответов.
+HTTP wait timeout и последующий native completion фиксируются как разные
+исходы одного intent. Запись не повторяется, pending не считается completed,
+gold/ranks/корпус не меняются;20s deadline и остальные frontend caps прежние.
+
 ## RU-EMB: допуск не равен сравнению качества, 2026-10-27
 
 [Единый native preflight result](evidence/ru-embedding-preflight-2026-10-27.md):

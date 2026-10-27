@@ -1,5 +1,13 @@
 # Tasks
 
+Конечное memory-сравнение144/12 завершено: BGE72/72 timed responses и6/6
+задач, Qwen32/72 и5/6. Замена модели не принята; published registry и homes
+не меняются. Native result — в едином repair report, доставка — в queue ledger.
+
+## RU-EMB: согласование repair с memory owner, 2026-10-27
+
+- [x] Отразить [сопоставление подключения и исправление оснастки](../add-scoped-cognee-memory/evidence/ru-embedding-repair-2026-10-27.md), сохранив прежние published catalog, homes, шесть областей и compatibility ai_rules_1c. Сравнение моделей и его остаток принадлежат memory owner; дополнительные поля/координаторы/гейты реестра не вводятся.
+
 ## RU-EMB: согласование с memory owner, 2026-10-27
 
 - [x] Отразить [technical stop Qwen](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md): baseline index 50/50, OOM и 403 у Qwen; измеряемые 144/12 не запускались, модель не принята.
