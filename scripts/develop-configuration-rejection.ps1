@@ -1,4 +1,4 @@
-# Source-only acceptance of an explicitly declared negative configuration fixture.
+# Source-only verification planning and negative configuration acceptance.
 # This is not an installed verification override: the public action stays failed.
 function Assert-DevelopConfigurationRejection {
     param([object]$ProcessResult, [object]$Expected, [string]$Root, [string]$BranchName,
@@ -100,6 +100,109 @@ function Assert-DevelopConfigurationRejection {
         evidenceSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant(); proof=$receipt }
 }
 
+function Get-DevelopVerificationChangeInspection {
+    param([string]$Root,[string]$Name,[object]$HelperCommand=$null)
+    if($null -eq $HelperCommand){$HelperCommand=Get-Command (Join-Path $Root '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ErrorAction Stop}
+    $action=$HelperCommand.Parameters['Action']
+    if($null -eq $action -or 'begin-verification-change' -cnotin @($action.Attributes|Where-Object{$_ -is [Management.Automation.ValidateSetAttribute]}|ForEach-Object ValidValues)){return}
+    $inspection=Invoke-InstalledAction -Name $Name -Root $Root -Action 'begin-verification-change' -TimeoutSeconds 180 -AllowFailure
+    $summary=Read-CompactSummary -ProcessResult $inspection
+    if([int]$inspection.exitCode -ne 0 -or $summary.status -cne 'succeeded'){
+        # An explicit cumulative project retains its existing model. No other
+        # inspection failure authorizes a fallback or replacement task.
+        if($summary.status -ceq 'failed' -and [string]$summary.error -ceq 'VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.'){return}
+        throw "DEVELOP_VERIFICATION_CHANGE_INSPECTION_FAILED: $([string]$summary.error)"
+    }
+    $prefix=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+    $console=[IO.Path]::GetFullPath([string]$summary.logPath)
+    if(-not $console.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'DEVELOP_VERIFICATION_CHANGE_TARGET_CHANGED'}
+    $view=[IO.File]::ReadAllText($console,[Text.UTF8Encoding]::new($false,$true))|ConvertFrom-Json -ErrorAction Stop
+    if($view.model -cne 'change' -or $view.status -cne 'planning' -or $view.baseTree -cnotmatch '^[a-f0-9]{40}$' -or $view.tree -cnotmatch '^[a-f0-9]{40}$'){
+        throw 'DEVELOP_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: inspect the current task through its owner.'
+    }
+    return $view
+}
+
+function Assert-DevelopVerificationChangePaths {
+    param([string[]]$Paths)
+    $runtime=@('.agent-1c/dependency-lock.json','tests/verification-suites.shared.json','tests/verification-suites.branch.json')
+    $runtime+=@('vanessa','yaxunit','verification-selection','verification-change','verification-modes'|ForEach-Object{".agents/skills/1c-workflow/scripts/lib/agent-1c.$_.ps1"})
+    foreach($path in $Paths){
+        if($path -cnotlike 'src/cf/*' -and $path -cnotlike 'tests/features/*' -and $path -cnotin $runtime){
+            throw "DEVELOP_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: review '$path' before planning its verification."
+        }
+    }
+}
+
+function Initialize-DevelopConfigurationRejectionPlan {
+    param([string]$Root,[object]$Expected,[object]$HelperCommand)
+    $view=Get-DevelopVerificationChangeInspection -Root $Root -Name 'upgrade-production-change-inspect' -HelperCommand $HelperCommand
+    if($null -eq $view){return}
+    # This adapter plans only the immutable, previously unplanned negative copy.
+    # It cannot replace another task or waive any inherited criterion.
+    if($view.taskId -or @($view.criteria).Count -or @($view.requirementPaths).Count){
+        throw 'DEVELOP_NEGATIVE_CHANGE_SCOPE_UNSUPPORTED: preserve the existing task and its acceptance.'
+    }
+    $prefix=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+    $source=[IO.Path]::GetFullPath((Join-Path $Root ([string]$Expected.sourcePath)))
+    if([string]$Expected.sourcePath -cnotlike 'src/cf/*' -or
+        -not $source.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or
+        (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Expected.sourceSha256){
+        throw 'DEVELOP_NEGATIVE_SOURCE_CHANGED'
+    }
+    $paths=@($view.changedPaths)
+    Assert-DevelopVerificationChangePaths -Paths $paths
+    $check='configuration-refusal'
+    $expectedResult='Production configuration load rejects the original diagnostic without applying the database configuration and restores its snapshot and cursor: '+[string]$Expected.diagnostic
+    $plan=[ordered]@{
+        taskId='develop-configuration-rejection';taskDescription=$expectedResult
+        sourceReference='PublishDevelop immutable negative configuration fixture'
+        requirementPaths=@();retainedDispositions=@()
+        checks=@(@{id=$check;expectedResult=$expectedResult;inputPaths=@(@($paths)+@([string]$Expected.sourcePath)|Select-Object -Unique);admissibleProof=@('runtime-observation')})
+        paths=@($paths|ForEach-Object{@{path=$_;checkIds=@($check);reason='The exact candidate verifier, fixture source and test inputs must retain the original production configuration refusal before any test runner or database apply.'}})
+        criteria=@(@{id='AC-configuration-refusal';expectedResult=$expectedResult;decision='check';checkIds=@($check)})
+    }
+    $directory=Join-Path $Root ('.agent-1c/runs/develop-configuration-rejection-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $planPath=Join-Path $directory 'plan.json'
+    [IO.File]::WriteAllText($planPath,($plan|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+    # Only the existing installed owner may create current-change state. This
+    # preparation does not complete acceptance or substitute for the Gate6 proof.
+    [void](Invoke-InstalledAction -Name 'upgrade-production-change-plan' -Root $Root -Action 'begin-verification-change' -AdditionalArguments @('-VerificationEvidencePath',$planPath) -TimeoutSeconds 180)
+}
+
+function Invoke-DevelopPlannedCheck {
+    param([string]$Name,[string]$Root,[int]$TimeoutSeconds=5400)
+    $view=Get-DevelopVerificationChangeInspection -Root $Root -Name ($Name+'-change-inspect')
+    if($null -ne $view){
+        $expected='The normal unfiltered ITL check passes on the current Develop fixture source and target.'
+        $criteria=@($view.criteria)
+        if(($view.taskId -and $view.taskId -cne 'develop-journey') -or @($view.requirementPaths).Count -or
+            ($criteria.Count -and ($criteria.Count -ne 1 -or $criteria[0].id -cne 'AC-journey-check' -or $criteria[0].expectedResult -cne $expected))){
+            throw 'DEVELOP_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: preserve the existing task criteria.'
+        }
+        $paths=@($view.changedPaths)
+        Assert-DevelopVerificationChangePaths -Paths $paths
+        $checkId='vanessa/itl-develop-journey'
+        $criterion=@{id='AC-journey-check';expectedResult=$expected;decision='check';checkIds=@($checkId)}
+        $plan=[ordered]@{
+            taskId='develop-journey';taskDescription='Qualify the current workflow through missing-suite recovery, real unfiltered verification and export.'
+            sourceReference='PublishDevelop owned golden Develop journey';requirementPaths=@();retainedDispositions=@()
+            checks=@(@{suiteId='itl-develop-journey'});criteria=@($criterion)
+            paths=@($paths|ForEach-Object{@{path=$_;checkIds=@($checkId);reason='The owned golden source, suite and candidate verifier inputs require the current unfiltered workflow check.'}})
+        }
+        $directory=Join-Path $Root ('.agent-1c/runs/develop-journey-'+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($directory)
+        $path=Join-Path $directory 'plan.json'
+        [IO.File]::WriteAllText($path,($plan|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+        [void](Invoke-InstalledAction -Name ($Name+'-change-plan') -Root $Root -Action 'begin-verification-change' -AdditionalArguments @('-VerificationEvidencePath',$path) -TimeoutSeconds 180)
+    }
+    $result=Invoke-InstalledAction -Name $Name -Root $Root -Action 'check-dev-branch' -TimeoutSeconds $TimeoutSeconds
+    [void](Assert-FreshVerificationResult -ProcessResult $result)
+    if($null -ne $view){[void](Invoke-InstalledAction -Name ($Name+'-change-complete') -Root $Root -Action 'complete-verification-change' -TimeoutSeconds 180)}
+    return $result
+}
+
 function Invoke-DevelopConfigurationRejectionScenario {
     param([string]$Root,[string]$BranchName,[object]$Expected)
     $helper=Join-Path $Root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
@@ -111,6 +214,7 @@ function Invoke-DevelopConfigurationRejectionScenario {
     }
     # Check the original pending fixture before development refresh can apply
     # or complete it. Production uses the existing checked-load rollback owner.
+    Initialize-DevelopConfigurationRejectionPlan -Root $Root -Expected $Expected -HelperCommand (Get-Command -Name $helper -ErrorAction Stop)
     $result=Invoke-InstalledAction -Name 'upgrade-production-check' -Root $Root -Action 'check-dev-branch' `
         -AdditionalArguments @('-ResultPurpose','production','-ConfigLoadMode','Full') -TimeoutSeconds 5400 -AllowFailure
     $proof=Assert-DevelopConfigurationRejection -ProcessResult $result -Expected $Expected -Root $Root -BranchName $BranchName -ExpectedAction 'check-dev-branch'

@@ -5,7 +5,7 @@ BeforeAll {
     . (Join-Path $repoRoot 'scripts/stand-env-identity.ps1')
     . (Join-Path $repoRoot 'scripts/develop-e2e-qualification.ps1')
     foreach ($group in @(
-        @{path='scripts/invoke-develop-e2e.ps1';names=@('Read-CompactSummary','Invoke-DevelopUpgradeRefresh')},
+        @{path='scripts/invoke-develop-e2e.ps1';names=@('Read-CompactSummary','Invoke-DevelopUpgradeRefresh','Assert-FreshVerificationResult','Add-FreshVerificationCatalog')},
         @{path='scripts/check.ps1';names=@('Get-DevelopE2EIdentitySha256')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1';names=@('Write-ConfigLoadRejectionEvidence')},
         @{path='.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1';names=@('Normalize-Agent1cFullPathText','Resolve-Agent1cFullPath','Set-RunResultArtifacts','Read-DesignerBatchStrictUtf8Text')},
@@ -320,5 +320,139 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         & git -C $branch add --all
         & git -C $branch commit --quiet -m change
         (Get-DevelopE2EStandStateSha256 -ProjectRoot $negative) | Should -Not -BeExactly $before
+    }
+}
+
+Describe 'Negative configuration fixture uses the current change owner before production check' {
+    BeforeEach {
+        $script:planFixture=New-RejectionFixture
+        $root=$script:planFixture.Root
+        $helper=Join-Path $root 'change-helper.ps1'
+        [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
+        $script:changeHelper=Get-Command $helper
+        $script:planningView=@{model='change';status='planning';baseTree=('a'*40);tree=('b'*40);taskId='';criteria=@();requirementPaths=@();changedPaths=@(
+            '.agent-1c/dependency-lock.json','.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1',
+            'src/cf/ConfigDumpInfo.xml','tests/features/ITLDevelopJourney.feature','tests/verification-suites.branch.json')}
+        $script:planningConsole=Join-Path $root 'planning-console.log'
+        $script:inspectionOutput=Join-Path $root 'planning-summary.json'
+        Write-RejectionJson $script:inspectionOutput @{action='begin-verification-change';status='succeeded';logPath=$script:planningConsole}
+        $script:submittedPlan=$null
+        $script:planningCalls=0
+        Mock Invoke-InstalledAction {
+            $Action|Should -BeExactly 'begin-verification-change'
+            $script:planningCalls++
+            if(-not $AdditionalArguments){
+                Write-RejectionJson $script:planningConsole $script:planningView
+                return [pscustomobject]@{exitCode=0;stdout=$script:inspectionOutput}
+            }
+            $AdditionalArguments[0]|Should -BeExactly '-VerificationEvidencePath'
+            $script:submittedPlan=Get-Content -LiteralPath $AdditionalArguments[1] -Raw -Encoding UTF8|ConvertFrom-Json
+            return [pscustomobject]@{exitCode=0;stdout=$script:inspectionOutput}
+        }
+    }
+    It 'plans the complete current delta through the installed owner without accepting or loading it' {
+        Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper
+        $script:planningCalls|Should -Be 2
+        @($script:submittedPlan.paths.path)|Should -Be $script:planningView.changedPaths
+        $script:submittedPlan.checks[0].inputPaths|Should -Contain $script:planFixture.Expected.sourcePath
+        $script:submittedPlan.criteria[0].expectedResult|Should -Match ([regex]::Escape($script:planFixture.Expected.diagnostic))
+        $script:submittedPlan.retainedDispositions.Count|Should -Be 0
+        Should -Invoke Invoke-InstalledAction -Times 0 -ParameterFilter {$Action -ne 'begin-verification-change'}
+    }
+    It 'preserves an inherited <field> before writing or submitting another plan' -ForEach @(
+        @{field='taskId';value='unfinished-task'},@{field='criteria';value=@(@{id='AC-old'})},@{field='requirementPaths';value=@('openspec/old.md')}
+    ) {
+        $script:planningView[$field]=$value
+        {Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper}|Should -Throw '*CHANGE_SCOPE_UNSUPPORTED*'
+        $script:planningCalls|Should -Be 1
+        $script:submittedPlan|Should -BeNullOrEmpty
+    }
+    It 'refuses an unreviewed delta instead of giving it blanket coverage' {
+        $script:planningView.changedPaths+=@('src/cfe/Foreign/Module.bsl')
+        {Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper}|Should -Throw '*CHANGE_SCOPE_UNSUPPORTED*'
+        $script:submittedPlan|Should -BeNullOrEmpty
+    }
+    It 'refuses changed reproducer bytes before submitting the plan' {
+        [IO.File]::AppendAllText($script:planFixture.Source,' changed')
+        {Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper}|Should -Throw '*SOURCE_CHANGED*'
+        $script:submittedPlan|Should -BeNullOrEmpty
+    }
+    It 'preserves an explicitly cumulative project without creating a change task' {
+        Write-RejectionJson $script:inspectionOutput @{action='begin-verification-change';status='failed';error='VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.'}
+        Mock Invoke-InstalledAction {return [pscustomobject]@{exitCode=1;stdout=$script:inspectionOutput}}
+        Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper
+        $script:submittedPlan|Should -BeNullOrEmpty
+        Should -Invoke Invoke-InstalledAction -Times 1
+    }
+    It 'retains an unrelated inspection failure rather than continuing production' {
+        Write-RejectionJson $script:inspectionOutput @{action='begin-verification-change';status='failed';error='VERIFICATION_CHANGE_BASE_UNVERIFIED: prior suite failed'}
+        Mock Invoke-InstalledAction {return [pscustomobject]@{exitCode=1;stdout=$script:inspectionOutput}}
+        {Initialize-DevelopConfigurationRejectionPlan -Root $script:planFixture.Root -Expected $script:planFixture.Expected -HelperCommand $script:changeHelper}|Should -Throw '*CHANGE_INSPECTION_FAILED*BASE_UNVERIFIED*'
+        $script:submittedPlan|Should -BeNullOrEmpty
+    }
+    It 'plans, runs the original check and accepts only after its fresh result assertion' {
+        $root=$script:planFixture.Root
+        $helper=Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper))
+        [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
+        $script:planActions=[Collections.Generic.List[string]]::new()
+        Mock Invoke-InstalledAction {
+            $Root|Should -BeExactly $script:planFixture.Root
+            $script:planActions.Add($Action)
+            if($Action -ceq 'begin-verification-change' -and -not $AdditionalArguments){Write-RejectionJson $script:planningConsole $script:planningView}
+            if($AdditionalArguments){$script:submittedPlan=Get-Content $AdditionalArguments[1] -Raw -Encoding UTF8|ConvertFrom-Json}
+            [pscustomobject]@{exitCode=0;stdout=$script:inspectionOutput}
+        }
+        Mock Assert-FreshVerificationResult {$script:planActions.Add('assert-fresh')}
+        [void](Invoke-DevelopPlannedCheck -Name fresh-check -Root $root)
+        @($script:planActions)|Should -Be @('begin-verification-change','begin-verification-change','check-dev-branch','assert-fresh','complete-verification-change')
+        $script:submittedPlan.checks[0].suiteId|Should -BeExactly 'itl-develop-journey'
+        @($script:submittedPlan.paths.path)|Should -Be $script:planningView.changedPaths
+        $script:submittedPlan.criteria[0].decision|Should -BeExactly 'check'
+        Add-FreshVerificationCatalog -Root $root
+        $catalog=Get-Content (Join-Path $root 'tests/verification-suites.branch.json') -Raw -Encoding UTF8|ConvertFrom-Json
+        $catalog.schemaVersion|Should -Be 1
+        $catalog.suites[0].id|Should -BeExactly 'itl-develop-journey'
+        $catalog.suites[0].ownerPaths|Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1'
+        $script:submittedPlan.criteria[0].checkIds|Should -Be @('vanessa/itl-develop-journey')
+    }
+    It 'does not accept a check rejected by the original freshness assertion' {
+        $root=$script:planFixture.Root
+        $helper=Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper))
+        [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
+        Mock Invoke-InstalledAction {
+            if($Action -ceq 'begin-verification-change' -and -not $AdditionalArguments){Write-RejectionJson $script:planningConsole $script:planningView}
+            [pscustomobject]@{exitCode=0;stdout=$script:inspectionOutput}
+        }
+        Mock Assert-FreshVerificationResult {throw 'Verification status lacks a fresh passed fingerprint.'}
+        {Invoke-DevelopPlannedCheck -Name fresh-check -Root $root}|Should -Throw '*fresh passed fingerprint*'
+        Should -Invoke Invoke-InstalledAction -Times 0 -ParameterFilter {$Action -eq 'complete-verification-change'}
+    }
+    It 'preserves an existing unrelated task or criterion (<task>)' -ForEach @(
+        @{task='foreign-task';priorCriteria=@()},
+        @{task='develop-journey';priorCriteria=@(@{id='AC-existing';expectedResult='Keep the original requirement';decision='pending'})}
+    ) {
+        $root=$script:planFixture.Root
+        $helper=Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper))
+        [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
+        $script:planningView.taskId=$task;$script:planningView.criteria=$priorCriteria
+        {Invoke-DevelopPlannedCheck -Name fresh-check -Root $root}|Should -Throw '*CHANGE_SCOPE_UNSUPPORTED*'
+        $script:submittedPlan|Should -BeNullOrEmpty
+        Should -Invoke Invoke-InstalledAction -Times 0 -ParameterFilter {$Action -eq 'check-dev-branch' -or $Action -eq 'complete-verification-change'}
+    }
+    It 'retains the ordinary check without change completion for an explicit cumulative project' {
+        $root=$script:planFixture.Root
+        $helper=Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path $helper))
+        [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
+        Write-RejectionJson $script:inspectionOutput @{action='begin-verification-change';status='failed';error='VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.'}
+        Mock Invoke-InstalledAction {[pscustomobject]@{exitCode=$(if($Action -eq 'begin-verification-change'){1}else{0});stdout=$script:inspectionOutput}}
+        Mock Assert-FreshVerificationResult {}
+        [void](Invoke-DevelopPlannedCheck -Name fresh-check -Root $root)
+        Should -Invoke Invoke-InstalledAction -Times 1 -ParameterFilter {$Action -eq 'check-dev-branch'}
+        Should -Invoke Invoke-InstalledAction -Times 0 -ParameterFilter {$Action -eq 'complete-verification-change'}
+        Should -Invoke Assert-FreshVerificationResult -Times 1
     }
 }
