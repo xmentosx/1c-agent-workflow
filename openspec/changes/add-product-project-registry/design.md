@@ -1,5 +1,19 @@
 # Design
 
+Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
+завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
+Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
+Рабочая модель прежняя; конечное исследование закрыто, новый release gate не вводится.
+
+## RU-EMB: согласование продолжения с memory owner, 2026-10-27
+
+[Repair result](../add-scoped-cognee-memory/evidence/ru-embedding-repair-2026-10-27.md)
+фиксирует подключение, resource profile и preparation completion. Исправленный
+fixture не является новой моделью реестра: provider settings/credentials и
+embedding dimensions не дублируются в каталоге. Published SHA, association,
+canonical homes и различия проекта/MCP-источника прежние. G3/R6/G5/MO не
+переоткрываются; новое исследование не становится release gate.
+
 ## RU-EMB: технический допуск сравнения, 2026-10-27
 
 [Единый memory result](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md)

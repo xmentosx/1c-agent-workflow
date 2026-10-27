@@ -1,5 +1,18 @@
 # План приёмки
 
+Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
+завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
+Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
+Рабочая модель прежняя; конечное исследование закрыто, новый release gate не вводится.
+
+## RU-EMB: продолжение и граница доказательств, 2026-10-27
+
+[Текущий memory repair result](../add-scoped-cognee-memory/evidence/ru-embedding-repair-2026-10-27.md)
+отделяет verified config, component controls, native preparation и ещё требующий
+полного индекса парный эксперимент. Ни HTTP200 control, ни Targeted/регистрация
+не доказывают качество модели. Каталог и его согласованные product/project
+различия не заменяются данными embedding-сервиса; новый release gate отсутствует.
+
 ## RU-EMB: граница доказательств, 2026-10-27
 
 [Memory preflight](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md)

@@ -1,5 +1,21 @@
 # Design
 
+Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
+завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
+Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
+Рабочая модель прежняя; конечное исследование закрыто, новый release gate не вводится.
+
+## RU-EMB: сопоставление подключения и восстановление подготовки, 2026-10-27
+
+[Актуальное продолжение](evidence/ru-embedding-repair-2026-10-27.md) отделяет
+вклад native buffer/cache в OOM, внешний403, подтверждённое совпадение
+ключа/model/URL с Code/Graph и ошибку оснастки при HTTP timeout до native completion.
+Исправления ограничены изолированным профилем и preparation harness; production
+Cognee, frontend, каталог и ai_rules_1c не меняются. Для прежних144/12 обязателен
+идентичный полный50-chunk index обеих моделей; partial raw originals не допуск.
+Предел timed search20s прежний, новое ожидание native completion не засчитывается
+как успешный timed call. Это исследование, без нового release gate.
+
 ## RU-EMB: технический допуск сравнения, 2026-10-27
 
 [Единый результат](evidence/ru-embedding-preflight-2026-10-27.md): BGE получил
