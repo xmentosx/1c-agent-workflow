@@ -149,7 +149,7 @@ It "parses the local gate and E2E runner" {
         $developE2eText | Should -Match 'developDevBranchName'
         $developE2eText | Should -Match 'developWorktreePath'
         $developE2eText | Should -Match 'Develop and Release worktree paths must differ'
-        $developE2eText | Should -Match '(?s)Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch".*?Set-DevelopStandVanessaFeature -Root \$standBranchRoot.*?Invoke-InstalledAction -Name "upgrade-check"'
+        $developE2eText | Should -Match '(?s)Invoke-DevelopUpgradeRefresh -Name "upgrade-refresh-branch".*?Set-DevelopStandVanessaFeature -Root \$standBranchRoot.*?Invoke-DevelopPlannedCheck -Name "upgrade-check" -Root \$standBranchRoot'
     }
 
 It "routes Develop E2E journeys independently and reports schema 3 with explicit executed coverage" {

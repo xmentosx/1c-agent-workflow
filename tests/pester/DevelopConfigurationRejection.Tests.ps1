@@ -397,6 +397,7 @@ Describe 'Negative configuration fixture uses the current change owner before pr
         [IO.File]::WriteAllText($helper,'param([ValidateSet("begin-verification-change")][string]$Action)')
         $script:planActions=[Collections.Generic.List[string]]::new()
         Mock Invoke-InstalledAction {
+            $Root|Should -BeExactly $script:planFixture.Root
             $script:planActions.Add($Action)
             if($Action -ceq 'begin-verification-change' -and -not $AdditionalArguments){Write-RejectionJson $script:planningConsole $script:planningView}
             if($AdditionalArguments){$script:submittedPlan=Get-Content $AdditionalArguments[1] -Raw -Encoding UTF8|ConvertFrom-Json}
