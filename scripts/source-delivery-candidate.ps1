@@ -1,5 +1,6 @@
 ﻿# Candidate worktrees, qualification recovery, and develop/master delivery orchestration.
 . (Join-Path $PSScriptRoot 'source-delivery-integrity.ps1')
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 
 function New-DeliveryWorktree {
     param([string]$StartPoint, [string]$Purpose)
@@ -952,14 +953,6 @@ function Publish-AccumulatedDevelop {
             Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged."
         }
     }
-}
-
-function Get-DeliveryFileSha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
-    $algorithm = [Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
-    finally { $algorithm.Dispose(); $stream.Dispose() }
 }
 
 function Publish-ReleaseVersion {

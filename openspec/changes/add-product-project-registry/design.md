@@ -1,5 +1,28 @@
 # Design
 
+## G5 dependency: конечный результат, 2026-10-27
+
+[Memory owner](../add-scoped-cognee-memory/evidence/g5-codex-completion-2026-10-27.md)
+фиксирует завершение исходного G5 контура, включая согласованную замену
+продолжения Cursor на native Codex CLI, установленную PM5 source6828/r49 и
+cancel/resume/owned restore/fresh read. Это не автоматическая квалификация
+Codex GUI attachment и не новый paired score. Старые proof/ошибки сохранены.
+Преимущество перед файлами не доказано; rollout требует прежнего отдельного
+решения о пользе/trade-off. Registry R6 SHA/данные/home/mapping не меняются,
+второй реестр/координатор не добавляется. Gate6/G6, рабочая миграция и публикация
+не выполняются. Ранние текущие G5 blocker summaries ниже исторические.
+
+## G5 B03/B09–B10: ограниченное продолжение, 2026-10-26
+
+[Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует подготовленный repair оснастки B03 и
+фактический повтор шести сохранённых backend-запросов B09/B10:82 HTTP200,
+без Ladybug locks/recall errors. Native cache4→6, прежние image/data/account,
+параллелизм2 и лимиты2CPU/5GiB; старый контейнер и stopped backup сохранены.
+Это backend subset; полные ответы агента B03/B09/B10 не приняты. Пользователь
+сейчас работает на ПК, поэтому UI-ввод остановлен до свободного окна; состояние
+и восстановление тестовых настроек сохранены в continuation. G5/N5 остаток открыт,
+исходные оценки не заменены. Новых случаев, Gate6, рабочей миграции и публикации нет.
+
 ## G5 N7 follow-up, 2026-10-26
 
 [Единый memory report](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) фиксирует зарегистрированный watchdog/API-key

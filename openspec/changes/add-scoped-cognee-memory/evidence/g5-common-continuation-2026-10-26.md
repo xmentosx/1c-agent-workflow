@@ -1,5 +1,10 @@
 # G5: продолжение common-connection qualification, 2026-10-26
 
+**Актуальный итог:** [завершение конечного контура в Codex, 2026-10-27](g5-codex-completion-2026-10-27.md).
+Исходные данные, оценки и ошибки ниже сохранены исторически. B03/B09/B10 и
+оставшийся N5 завершены без новых случаев; сравнительная выгода не доказана.
+Новые результаты не заменяют прежний paired score и не разрешают внедрение.
+
 Этот отчёт продолжает [исходный sealed proof](g5-common-qualification-2026-10-26.md),
 не заменяя failed evidence. Разрешение пользователя «исправь и продолжай» /
 «продолжай» относится к конечным N1–N7. **G5 пока не принят.**
@@ -432,3 +437,112 @@ mandatory cases, ACL or architecture expansion. Registry R6 SHA/home/routing,
 OpenCode skip, Gate6/working migration/workflow-fork-homes publication prohibition
 remain unchanged. The fair source unit needs one coherent commit and normal
 RegisterChange; its final result belongs to the helper/Status, not this document.
+
+
+## B03/B09–B10 bounded continuation; UI deferred by workstation use
+
+Current source remains registered `a17172fcbbd437a4f5465b4bb070fd36196221f7`.
+Only these three original cases were authorized in this continuation; N5, Gate6,
+working migration and publication were not started. The earlier9/12 follow-up
+and original paired results remain unchanged; the following is separate evidence.
+
+### B03 harness repair: prepared, not yet accepted by a whole-agent replay
+
+The prior reader restart reset in-memory counters and reused existing diagnostic
+paths. The qualification reader now atomically reserves bounded per-run per-tool
+intent slots before calls and records terminal errors as well as successes.
+The same3 recall attempts (standing/task/one permitted reformulation) and4 exact
+source lookups persist across process restarts; no retry or duplicate path is
+silently admitted. These are ignored qualification artifacts, not a new installed
+queue, provider, workflow state owner or production service. Tool schemas and
+scope/currentness/applicability/write policy are unchanged.
+
+A first f3 trial failed before any HTTP because the newly saved PowerShell5.1
+script lacked a UTF8 BOM. Its raw bytes/stderr and terminal answer are retained
+as INVALID_HARNESS_ENCODING, not a product or model-quality result. BOM was
+restored and parsing checked. No encoding-corrupted diagnostic is treated as
+valid surfaced evidence. There was no backend request in that trial.
+
+After benchmark-only reload, Chrome exposed focused RenderWidget HWND2825228
+inside benchmark frame926388. Native GetAncestor(GA_ROOT) confirmed926388;
+the other Cursor frame is146278368. Guarding the exact top-level benchmark root
+corrects the false child-HWND mismatch while rejecting the other window even
+within the same Cursor process. The focused-composer and exact complete
+paragraph checks remain; typing uses small native batches with the same root
+check, and all GUI steps stay within the existing75-second bound. Child UI
+processes use CREATE_NO_WINDOW. Partial input/focus mismatches stopped before
+submission; no guard or semantic assertion was waived.
+
+The B03 f4 prompt differs from its frozen f2 prompt only in run_key, proved by
+`B03-frozen-prompt-identity.json`. It has no native-enter receipt, no request
+intent and no agent answer. The user answered «Сейчас работаю на ПК» to free-PC
+coordination. Therefore no further UI actions/input are attempted. B03 stays
+PENDING_NATIVE_UI, not PASS. The test-window temporary reader/settings and
+original restoration bytes remain recorded in `client-before.json`; restoration
+is pending along with that finite UI continuation. Other Cursor window/auth
+stores and working projects were untouched.
+
+### Ladybug: operational cache sizing and original backend replay
+
+Retained native source/stack identifies engine cache re-creation and failure to
+reacquire the same `.lbug` file lock. There was one uvicorn process, so lowering
+API worker count was not a demonstrated fix. The actual native operator setting
+was DATABASE_MAX_LRU_CACHE_SIZE=4 for this six-dataset union, with dataset queue
+parallelism2 and idle keep-alive default600s. The native factory's default cache
+is6. Returning this profile to6 avoids capacity churn within this six-ID working
+set; the Cognee close/open race itself is not claimed patched or generally solved.
+Logical six areas are not a universal assertion that all projects use only six
+physical datasets. This is a qualified workload profile, not new registry policy.
+
+Only DATABASE_MAX_LRU_CACHE_SIZE changed. Frozen1.6.5 image
+`e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820`, native code,
+command, mount/data, account/API key, all other environment, dataset parallelism2,
+CPU2/RAM5GiB/MemorySwap5GiB total (no extra swap) and pids512 remain unchanged. Same ordinary principal
+confirmed by native users/me200, superuser=false; no password refresh or ACL work.
+No requests were serialized to hide the defect, locks removed or Cognee code forked.
+
+The original container864e519f… was stopped and preserved as
+`itl-cognee-g5-common-20261026-112117-lru4-preserved-20261026T195749Z`.
+Stopped-data backup is2,272,766,739 bytes, SHA256
+`50f52c72d9de52b633a159856f668697efb7126816ae43d774eac7ad7ff10b1f`,
+under private `/home/mcp/itl-g5-lru6-recovery-20261026T195749Z/`.
+Replacement container43ee1cd8… retains the original name and endpoint.
+SSH observation timed out during the large backup; the remote receipt then
+confirmed completion. The mutation was observed, not replayed. A preliminary
+attempt could not create a directory in the root-owned stand and stopped before
+any container change; private operator output was used instead. No elevation or
+working-project permission was introduced. The private backup/inspect/env were
+kept mode0600 under0700; credential values never enter Git or the report.
+
+Exactly the six retained f2 recall requests were repeated, unchanged scope/query
+strings and no tuning: standing/task/previously allowed reformulation for B09
+and B10. Same current source adapter and original harmless dataset IDs; no new
+acceptance case or model request. All6 recall and all82 native HTTP calls were200.
+Server log:0 file-lock errors and0 recall endpoint errors. Per-request elapsed
+including fixture setup:19.392/9.795/15.550s (B09),7.644/8.455/7.969s (B10);
+the adapter20-second deadline and card/token limits did not change.
+B09 standing cards include candidate-09, while its task/reformulation remain
+partial and do not return that card; B10 standing cards include product-shared.
+This is bounded current-original backend coverage, not a successful whole answer.
+Current/peak memory2,282,004,480/2,282,676,224 bytes, limit5,368,709,120;
+OOM/max events0, CPU cap remains200000/100000. These are new-container native
+run metrics, not paired agent token/money or all-workload savings.
+
+| Original scope | Current result | Remaining original path |
+|---|---|---|
+| B03 | Harness code prepared; f3 invalid before HTTP, f4 not submitted | Native Cursor original task and exact source after repair |
+| B09/B10 backend | PASS:6 exact saved recalls,82 HTTP200,no locks in this run | Native whole answers in the same Cursor/profile, original tasks/limits |
+| G5 overall | NOT ACCEPTED; previous9/12 score unchanged | These three whole answers and previously retained N5/installed subset |
+
+Evidence root: `build/test-results/g5/common-20261026-112117/B03-B09-B10-continuation/`.
+`bounded-continuation-result.json`, `lru6-profile-result.json`, native wire/answers,
+failed harness attempts and code are indexed by `continuation-evidence-manifest.json`
+SHA256 `3495fdd06d0dd16de7542dc01ef7c729fad5688b7223df3517fef6ddfd899b73`.
+Original sealed report remains SHA256
+`119d8063aff89bc71d97984f23597df0f3e2e4d598030e43a35a8ce1d514a503`.
+New whole-agent failures are not fabricated from unsubmitted input. Resume only
+the existing B03/B09/B10 f4 sequence when the PC is free, retain source bytes and
+all attempts, restore test preferences/bytes after completion. No new queries
+for ranking tuning, cases, gates, migration, workflow/fork/homes publication,
+push or PR are authorized by this continuation. Normal source registration of
+this evidence remains separate from native G5 acceptance.

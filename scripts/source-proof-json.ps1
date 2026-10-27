@@ -2,6 +2,15 @@
 # are payload data; readers must not reinterpret them as local DateTime values.
 $script:DeliveryProofJsonHasDateKind = (Get-Command Microsoft.PowerShell.Utility\ConvertFrom-Json).Parameters.ContainsKey('DateKind')
 
+# One SHA contract for proof files, also available to the bootstrap shim.
+function Get-DeliveryFileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
+    finally { $algorithm.Dispose(); $stream.Dispose() }
+}
+
 function ConvertFrom-DeliveryProofJsonToken {
     param([Parameter(Mandatory = $true)]$Token)
     # JObject's dynamic member adapter treats .Type as a JSON property lookup.

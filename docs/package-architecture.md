@@ -204,6 +204,23 @@ changes/failure, original-data exclusions and the real branch cleanup command.
 Rollback stops new enrollment; existing unknown kinds are retained by older
 consumers. Registration remains distinct from publication and installation.
 
+The user-requested project-local agent-artifact cleanup extends this same owner
+only to producer-declared `build/agent-artifacts/<task>/tmp/` files. Terminal
+completion and owned consumer cleanup authorize immediate eligibility for this
+class; the older diagnostic classes keep their age policy. All clients use the
+existing completion argument and lifecycle lock. Successful reset already calls
+the same automatic cleanup, so there is no new reset interception, client hook,
+timer, process-control authority, migration or shadow state machine. Unknown and
+unfinished tasks remain untouched. Databases, DT backups, original traces,
+source-snapshot trees and handoffs stay excluded; evidence/recovery directories,
+retained dependencies and fresh workflow references remain protected. Immutable
+batch identity makes retries safe after partial deletion without enrolling new
+bytes at an old path. Acceptance covers the real completion command, the reset
+archive/Git/automatic-cleanup sequence, Unicode paths, busy-file continuation,
+cross-task/reparse rejection and proof/rollback preservation. Older consumers
+retain the unknown kind on rollback; source registration is not installation or
+native discovery proof for every client.
+
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release
 recovery, the source-side update-workflow launcher and Capture admission before

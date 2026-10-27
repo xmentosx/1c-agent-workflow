@@ -109,6 +109,7 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-plan.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-resources.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-ref-cleanup.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-evidence.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
@@ -161,6 +162,7 @@ try {
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
                 disposition = (Get-DeliveryDispositionReport)
+                recoveryArchives = $(if ($StatusDetail -eq 'Full') { Get-DeliveryRecoveryInventory -IncludeEntries } else { $null })
                 runHistory = $history
             }
         }
@@ -173,7 +175,9 @@ try {
             $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue $channelCleanup.stateCompaction -Force
             $refCleanup = Invoke-DeliveryRefDispositionCleanup
             $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
-            if ([string]$refCleanup.status -eq 'needs-attention' -and [string]$cleanup.status -eq 'completed') {
+            $recoveryCleanup = Invoke-DeliveryRecoveryCleanup
+            $cleanup | Add-Member -NotePropertyName recoveryArchives -NotePropertyValue $recoveryCleanup
+            if (([string]$refCleanup.status -eq 'needs-attention' -or [string]$recoveryCleanup.status -eq 'completed-with-warnings') -and [string]$cleanup.status -eq 'completed') {
                 $cleanup | Add-Member -NotePropertyName status -NotePropertyValue 'completed-with-warnings' -Force
             }
             $cleanup
