@@ -349,7 +349,8 @@ function Test-DevelopGoBuildOnlyPath {
             # Scoped stand rollout only adds/forwards an explicit roots-file
             # argument; it introduces no Go test or README reader.
             'scripts/update-installed-workflow.ps1'='f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af'
-            'scripts/invoke-develop-e2e.ps1'='10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9'
+            'scripts/invoke-develop-e2e.ps1'=@('10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e')
+            'scripts/develop-configuration-rejection.ps1'=@('5104d1d4df221895d135fcab07e76dfca42178cfb74a6a14031c0cd8570c0ff8','02a82e9c5152cef9fa4a3f48fcc355fd2d04851ba042dbae31140c615cb30036','05a432a05d0662a698bf7e1cb57fa7c09c41a6f5130be5443e889feb7b54b6f6')
             'scripts/source-e2e-workflow-update.ps1'='82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4'
             'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'
         }
@@ -357,7 +358,7 @@ function Test-DevelopGoBuildOnlyPath {
             $text=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $consumer}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $consumer)))}
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-            if($hash -cne $consumers[$consumer]) {return $false}
+            if($hash -cnotin @($consumers[$consumer])) {return $false}
         }
         $arguments=if($Commit){@('ls-tree','-r','--name-only','-z',$Commit,'--')}else{@('ls-files','-z','--')}
         $sources=@(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments $arguments | Where-Object {
