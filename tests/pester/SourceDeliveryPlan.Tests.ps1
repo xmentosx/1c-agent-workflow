@@ -836,6 +836,7 @@ Describe 'Delivery v3 immutable selective plan' {
     It 'adds owned component Release capabilities and forecasts stand changes: <StandChanges>, <ComponentShape>' -ForEach @(
         @{StandChanges=$false;ComponentShape='empty'},@{StandChanges=$true;ComponentShape='empty'},
         @{StandChanges=$false;ComponentShape='seam'},@{StandChanges=$true;ComponentShape='seam'},
+        @{StandChanges=$false;ComponentShape='missing'},@{StandChanges=$true;ComponentShape='missing'},
         @{StandChanges=$false;ComponentShape='pending'},@{StandChanges=$true;ComponentShape='pending'}
     ) {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
@@ -856,6 +857,7 @@ Describe 'Delivery v3 immutable selective plan' {
                 return [pscustomobject]@{ exitCode=0; stdout=$(if ($Arguments -contains 'HEAD^{tree}') { ('d' * 40) } else { ('c' * 40) }) }
             }
             function Get-OwnedComponentPublicationPlan {
+                if($ComponentShape -eq 'missing'){return [pscustomobject]@{status='planned';requiredReleaseCapabilities=@('ondemand-mcp')}}
                 $components=switch($ComponentShape){
                     'empty' {@()}
                     'seam' {@('test-seam')}

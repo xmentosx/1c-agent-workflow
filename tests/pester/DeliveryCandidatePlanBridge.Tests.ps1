@@ -130,12 +130,16 @@ if($Action -eq 'Plan') {
         & git -C $f.root remote add origin $bare
         & git -C $f.root push --quiet origin "${published}:refs/heads/develop"
         $worker=Join-Path $f.root '.git/inspect.ps1';$output=Join-Path $f.root '.git/plan.json'
-        $scriptText="& '"+(Join-Path $RepoRoot 'scripts/source-delivery.ps1').Replace("'","''")+"' -Action Plan -RepositoryRoot '"+$f.root.Replace("'","''")+"' | Set-Content -LiteralPath '"+$output.Replace("'","''")+"' -Encoding UTF8"
+        $scriptText="`$ErrorActionPreference='Stop'; & '"+(Join-Path $RepoRoot 'scripts/source-delivery.ps1').Replace("'","''")+"' -Action Plan -RepositoryRoot '"+$f.root.Replace("'","''")+"' | Set-Content -LiteralPath '"+$output.Replace("'","''")+"' -Encoding UTF8"
         [IO.File]::WriteAllText($worker,$scriptText,[Text.UTF8Encoding]::new($true))
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $worker
         $LASTEXITCODE | Should -Be 0
         $plan=Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json
         $plan.resumable | Should -BeFalse
+        $plan.standPreparation.status | Should -BeExactly 'unavailable-from-published-owner'
+        $plan.standPreparation.requiresStateChange | Should -BeNullOrEmpty
+        $plan.timeEstimate.estimatedSeconds | Should -BeNullOrEmpty
+        $plan.timeEstimate.unmeasuredPreparation | Should -Contain 'stand-preparation-and-capture'
         $plan.invocationTiming.invocationDurationMs | Should -BeGreaterThan 0
         $plan.invocationTiming.invocationDurationMs | Should -BeGreaterThan $plan.planningDurationMs
         $plan.invocationTiming.supervisorPreparationDurationMs | Should -BeGreaterThan 0
