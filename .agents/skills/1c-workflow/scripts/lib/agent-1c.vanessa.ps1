@@ -5465,7 +5465,7 @@ function Run-DevBranchTests {
             $eventLogVerification = if ($script:ItlSkipEventLogForVerification -or $auxiliaryVerification) {
                 [pscustomobject]@{ status = "skipped"; reason = $skipEventLogReason; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
             } else {
-                Invoke-WithRunStatusHeartbeat { Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope }
+                Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
             }
             $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
             if ($EventLogCursorScope -eq "lifecycle-pending" -and $eventLogVerification.status -ne "skipped") {
@@ -5563,9 +5563,7 @@ function Run-DevBranchTests {
         $eventLogVerification = if ($script:ItlSkipEventLogForVerification -or $auxiliaryVerification) {
             [pscustomobject]@{ status = "skipped"; reason = $skipEventLogReason; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
         } else {
-            # A cursor fallback rescans run-period segments and can outlast the
-            # runner's stale-status watchdog without a helper heartbeat.
-            Invoke-WithRunStatusHeartbeat { Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope }
+            Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
         }
         $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
     } catch {

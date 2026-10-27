@@ -168,16 +168,14 @@ function Test-ItlEventLogCurrent {
     $stateProjectRoot = [string](Get-StateValue -State $stateWithBaseline -Name "stateProjectRoot" -Default $script:ProjectRoot)
     $runDirectory = Join-Path $stateProjectRoot (".agent-1c\event-log-checks\run-" + $now.ToString("yyyyMMdd-HHmmss-fff"))
     New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
-    $verification = Invoke-WithRunStatusHeartbeat {
-        Test-DevBranchEventLogAfterVanessa `
-            -State $stateWithBaseline `
-            -RunStartedAt $now `
-            -RunFinishedAt $now `
-            -RunDirectory $runDirectory `
-            -CursorPath $CursorPath `
-            -BoundaryStartedAt $BoundaryAt `
-            -CursorScope $CursorScope
-    }
+    $verification = Test-DevBranchEventLogAfterVanessa `
+        -State $stateWithBaseline `
+        -RunStartedAt $now `
+        -RunFinishedAt $now `
+        -RunDirectory $runDirectory `
+        -CursorPath $CursorPath `
+        -BoundaryStartedAt $BoundaryAt `
+        -CursorScope $CursorScope
     $fingerprint = Get-VerificationFingerprint
     $debt = Resolve-DevBranchEventLogDebt -State $stateWithBaseline -Verification $verification -Fingerprint $fingerprint -Trigger $Trigger
     $verification = $debt.verification
