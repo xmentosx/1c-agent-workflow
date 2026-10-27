@@ -189,6 +189,36 @@ Describe 'Change mode recovery and reuse boundaries' {
             ($assessment.issues -join ';') | Should -Match 'VERIFICATION_CHANGE_TARGET_CHANGED'
         }
     }
+    It 'plans on a branch without a prepared runner and binds the runner at first use after preparation' {
+        $root=Join-Path $TestDrive 'Ветка без runner'; New-ChangeFixture $root
+        Enter-ChangeFixture $root {
+            # 2026-10-27 Develop upgrade: the negative stand plans before any
+            # Vanessa preparation, so its branch has no runner generation yet.
+            $script:ChangeTestState.PSObject.Properties.Remove('vanessaServiceInfoBaseGeneration')
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan) | Out-Null
+            $planned=Read-VerificationChange
+            [string]$planned.targetIdentity | Should -BeNullOrEmpty
+            $planned.unboundTargetIdentity | Should -Match '^[a-f0-9]{64}$'
+            [string](Assert-VerificationChangeReady -State $script:ChangeTestState).targetIdentity | Should -BeNullOrEmpty
+            # Every infobase target field stays strict while the runner is unbound.
+            $script:ChangeTestState.toolingInfoBaseGeneration='different target'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+            $script:ChangeTestState.toolingInfoBaseGeneration='target'
+            $script:ChangeTestState | Add-Member -NotePropertyName vanessaServiceInfoBaseGeneration -NotePropertyValue 'runner' -Force
+            $bound=Assert-VerificationChangeReady -State $script:ChangeTestState
+            $bound.targetIdentity | Should -BeExactly (Get-VerificationRetainedTargetIdentity -State $script:ChangeTestState)
+            $stored=Read-VerificationChange
+            $stored.targetIdentity | Should -BeExactly $bound.targetIdentity
+            $stored.PSObject.Properties['unboundTargetIdentity'] | Should -BeNullOrEmpty
+            Set-CurrentObservation first; Set-CurrentEventEvidence
+            (Complete-VerificationChange).changeStatus | Should -BeExactly 'accepted'
+            # Once bound, a different runner is a different target.
+            $script:ChangeTestState.vanessaServiceInfoBaseGeneration='recreated runner'
+            { Assert-VerificationChangeReady -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_TARGET_CHANGED*'
+        }
+    }
     It 'cannot mutate the frozen current scope or claim acceptance without its completed immutable record' {
         $root=Join-Path $TestDrive 'Защита границы и приёмки'; New-ChangeFixture $root
         Enter-ChangeFixture $root {
