@@ -237,12 +237,57 @@ function Get-DevelopColdCutoverProjection {
     return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
 }
 
+# This exact delta only adds protected paths. Automatic cleanup is optional
+# and cannot grant native check/export/close success. Keep its caller, every
+# deletion/candidate rule and all other protection code bound to the proof.
+function Get-DevelopArtifactProtectionProjection {
+    param([string]$Text,[string]$RepositoryRoot,[string]$Commit='',[switch]$ProbeOnly)
+    if(-not (Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit)) {return $null}
+    $tokenHash={param([string]$Value)
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try {return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes((ConvertTo-DevelopSourceTokens $Value))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+    }
+    $consumerPath='.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+    $consumer=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $consumerPath}else{[IO.File]::ReadAllText((Join-Path $RepositoryRoot $consumerPath))}
+    $t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($consumer.TrimStart([char]0xfeff),[ref]$t,[ref]$e)
+    if(@($e).Count) {return $null}
+    $commands=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-ItlArtifactCleanup' -and $n.Extent.Text -match '\-Automatic'},$true))
+    if($commands.Count -ne 1) {return $null}
+    $node=$commands[0].Parent;while($node -and $node -isnot [Management.Automation.Language.IfStatementAst]) {$node=$node.Parent}
+    if(-not $node -or (& $tokenHash $node.Extent.Text) -cne '683a9dcfc05acd3d3f246a6e82652cb9ea062eaba46594ebe8990e86f395648d') {return $null}
+    if($ProbeOnly) {return $true}
+    $source=$Text.Replace("`r`n","`n");$bom=[string]$source.StartsWith([string][char]0xfeff,[StringComparison]::Ordinal);$source=$source.TrimStart([char]0xfeff)
+    $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$t,[ref]$e)
+    if(@($e).Count) {return $null}
+    $functions=@($ast.EndBlock.Statements|Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'Get-ItlArtifactProtectedPaths'})
+    if($functions.Count -ne 1) {return $null}
+    $statements=@($functions[0].Body.EndBlock.Statements);$matchedBlocks=@()
+    for($i=0;$i -lt $statements.Count-2;$i++) {
+        $window=@($statements[$i..($i+2)])
+        if((& $tokenHash (($window|ForEach-Object {$_.Extent.Text}) -join "`n")) -ceq 'a207fb31796e57a160b3fdb3959b3a1503cc1e259ba03751f1fc458715cae539') {$matchedBlocks+=,@($window)}
+    }
+    if($matchedBlocks.Count -gt 1) {return $null}
+    $builder=[Text.StringBuilder]::new($source)
+    if($matchedBlocks.Count -eq 1) {
+        $remove=@($matchedBlocks[0]);$start=$remove[0].Extent.StartOffset;$end=$remove[-1].Extent.EndOffset
+        # A new ambient use could make the assignment affect another path.
+        if(@($functions[0].FindAll({param($n)$n -is [Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.UserPath -ieq 'changePath'},$true)|Where-Object {$_.Extent.StartOffset -lt $start -or $_.Extent.EndOffset -gt $end}).Count) {return $null}
+        foreach($node in @($remove|Sort-Object {$_.Extent.StartOffset} -Descending)) {[void]$builder.Remove($node.Extent.StartOffset,$node.Extent.EndOffset-$node.Extent.StartOffset)}
+    }
+    # Unknown/new variants stay exact; only the audited additive block is cut.
+    return $bom+"`n"+(ConvertTo-DevelopSourceTokens $builder.ToString())
+}
+
 function Get-DevelopScenarioSourceProjection {
     param([string]$Path,[string]$Text,[string]$Journey,[string[]]$Scenario=@(),[object]$Catalog,[bool]$NoProductContext=$false,[string]$RepositoryRoot='',[string]$Commit='', [switch]$ProbeOnly,[object]$ForkBridge=$null)
     if($Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and -not @($Scenario|Where-Object {$_ -cnotin @('install','branch','verification','stale-export','refresh','close')}).Count -and
         $Path -cin @('.agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1','.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')) {
         if($ProbeOnly) {return Test-DevelopColdCutoverConsumers $RepositoryRoot $Commit}
         return Get-DevelopColdCutoverProjection $Path $Text $RepositoryRoot $Commit
+    }
+    if($Path -ceq '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1' -and $Journey -ceq 'fresh' -and $Scenario.Count -gt 0 -and
+        -not @($Scenario|Where-Object {$_ -cnotin @('verification','stale-export','close')}).Count) {
+        return Get-DevelopArtifactProtectionProjection $Text $RepositoryRoot $Commit -ProbeOnly:$ProbeOnly
     }
     if($Path -ceq 'scripts/ai-rules-native-inputs.ps1') {return 'source-qualification-policy-only'}
     if($Path -ceq 'templates/dependency-lock.json' -and $ForkBridge) {
@@ -304,7 +349,7 @@ function Get-DevelopScenarioSourceProjection {
         # Fixture preparation, space admission and native assertions stay bound.
         'scripts/source-e2e-storage.ps1' {$controller=@('Get-SourceE2EFixtureReaderInventory','Remove-SourceE2EFixtureCopy')}
         'scripts/check.ps1' {$controller=@('Ensure-DevelopE2ERoute','Get-WorkflowGateScriptPaths')}
-        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
+        'scripts/develop-e2e-scenarios.ps1' {$controller=@('Test-DevelopColdCutoverConsumers','Get-DevelopColdCutoverProjection','Get-DevelopArtifactProtectionProjection','Test-DevelopScenarioBrokerIndependent','ConvertTo-DevelopScenarioArtifactIdentity','Test-DevelopArtifactIdentityDifference','Get-DevelopScenarioWorkloadHash','Get-DevelopChangedFunctions','Resolve-DevelopScenarioSelection','Get-DevelopScenarioCoverage','Get-DevelopScenarioSourceProjection','ConvertTo-DevelopEffectiveClientIdentity','Test-DevelopScenarioEquivalentInput','Get-DevelopScenarioReusePlan','Test-DevelopScenarioEvidence','Invoke-DevelopScenarioJourney','Invoke-DevelopScenarioJourneyCore','Save-DevelopScenarioExecution')}
         'scripts/quality-contracts.ps1' {$controller=@('Get-QualityContractReuseInputPaths','Get-QualityPesterSemanticInputBindings','Get-DevelopE2EJourneyContractProjection','Get-QualityReleaseStageCatalog','Resolve-QualityReleaseCapabilities','ConvertTo-QualityBudgetSeconds','Get-ReleaseE2EBudgetProjection','Get-DevelopE2EJourneyHardBudgetSeconds','Resolve-PesterWorkerCount','Get-PublicLifecycleActions','Get-Agent1cSemanticModel','Resolve-Agent1cSemanticImpact','Get-Agent1cEntrypointProbeInventory','Test-QualityContractCatalog','Test-QualityPathPattern','Select-QualityPaths','Resolve-QualityContractsForPaths')}
     }
     if($controller.Count) {

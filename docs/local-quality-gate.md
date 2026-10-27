@@ -278,6 +278,15 @@ fresh in the pure runtime-values library; its update callers remain exact for
 upgrade. A closed reader-inventory regression runs under complete current static
 proof. Changed consumers, import side effects, unknown scenarios or source/SHA
 failures close the exception. No installed guard or native assertion is skipped.
+For fresh verification, stale-export and close, the exact additive current-change
+protection block has its own static owner. It only keeps additional paths and may
+stop cleanup before deletion. The audited native caller catches optional cleanup
+failure after the primary action; the pinned recipe never invokes explicit cleanup.
+Project only that known block, with no ambient changePath use. Every other protection,
+candidate/removal rule, unknown node and source SHA remains exact. Changed caller,
+mandatory cleanup, unsafe/new block or unknown scenario closes the exception.
+A separate cheap closed-reader inventory and the native retention regressions remain
+in complete current static proof. This is not an exemption for the retention module.
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
