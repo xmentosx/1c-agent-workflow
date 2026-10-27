@@ -6,7 +6,7 @@
 
 Describe 'Independent host component source verification' {
     It 'selects independent verification for <Component>' -ForEach @(
-        @{ Component='Registry catalog'; Path='.agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1'; Expected=@('tests/pester/ProductProjectRegistry.Tests.ps1','tests/pester/ProductProjectGitSave.Tests.ps1','tests/pester/ProductProjectApply.Tests.ps1') }
+        @{ Component='Registry catalog'; Path='.agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1'; Expected=@('tests/pester/DevelopProductCatalogScope.Tests.ps1','tests/pester/ProductProjectRegistry.Tests.ps1','tests/pester/ProductProjectGitSave.Tests.ps1','tests/pester/ProductProjectApply.Tests.ps1') }
         @{ Component='Registry schema'; Path='templates/product-project-registry/schemas/catalog.schema.json'; Expected=@('tests/pester/ProductProjectRegistry.Tests.ps1','tests/pester/ProductProjectGitSave.Tests.ps1') }
         @{ Component='Registry authoring'; Path='.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project.ps1'; Expected=@('tests/pester/ProductProjectRegistry.Tests.ps1','tests/pester/ProductProjectGitSave.Tests.ps1') }
         @{ Component='Mantis'; Path='vibecoding1c-mcp-host/mantis-ticket-mcp/mantis_index.py'; Test='HostMantis' }

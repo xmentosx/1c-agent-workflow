@@ -295,6 +295,12 @@ The producer/CLI inventory is separate from the slower scenario regressions.
 Shared verification planning in develop-configuration-rejection.ps1 is a fresh
 input; only its three negative-fixture functions are upgrade-only. Its actual
 shared assertions stay bound even when cleanup can reuse previous proof.
+With authenticated disabled product context on every project/Develop/positive
+target and no pending context operation, `Assert-ItlProductCatalog` is outside
+native scenarios. Only that function is projected: shared catalog helpers,
+unknown functions, top-level execution and binding admission stay exact. A
+closed caller inventory and disabled-startup regression accompany current static
+proof. Enabled, pending or unknown context retains native catalog qualification.
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
