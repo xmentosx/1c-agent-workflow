@@ -37,12 +37,24 @@ function Get-StubValue([string]$Name) { $index = [Array]::IndexOf($stubArgs, $Na
 '@
         Write-RepairFixtureFile $root 'scripts/invoke-pester-shards.ps1' ($record + @'
 $output = Get-StubValue '-OutputRoot'
+if ($stubArgs -contains '-PlanOnly') {
+    '{"files":[{"path":"tests/pester/Example.Tests.ps1","execution":"reuse"},{"path":"tests/pester/Second.Tests.ps1","execution":"execute"}]}'
+    exit 0
+}
 [void][IO.Directory]::CreateDirectory((Join-Path $output 'pester-shards'))
 [IO.File]::WriteAllText((Join-Path $output 'pester-shards\summary.json'), '{"status":"passed"}')
 '@)
         Write-RepairFixtureFile $root 'scripts/invoke-develop-e2e.ps1' ($record + @'
 $raw = Get-StubValue '-OutputPath'; $journey = Get-StubValue '-Journey'
-[IO.File]::WriteAllText($raw, '{"status":"passed"}')
+$all = @{ upgrade = @('update', 'configuration-rejection', 'verification-export'); fresh = @('install', 'branch') }
+$coverage = if (Get-StubValue '-Scenario') { @((Get-StubValue '-Scenario').Split(',')) } else { $all[$journey] }
+$failed = $env:ITL_TEST_REPAIR_JOURNEY_FAIL -eq $journey
+$result = [ordered]@{ name = $journey; coverage = $coverage; status = $(if ($failed) { 'failed' } else { 'passed' }) }
+if ($journey -eq 'upgrade' -and 'configuration-rejection' -in $coverage) { $result.configurationRejection = @{ status = 'passed' } }
+$tree = (& git -C (Get-StubValue '-CandidateRoot') rev-parse 'HEAD^{tree}').Trim()
+$report = [ordered]@{ status = $result.status; candidate = @{ tree = $tree }; journeys = @($result) }
+[IO.File]::WriteAllText($raw, ($report | ConvertTo-Json -Depth 5))
+if ($failed) { exit 1 }
 [IO.File]::WriteAllText("$raw.$journey.qualification.json", '{}')
 '@)
         Write-RepairFixtureFile $root 'scripts/source-e2e-fixture.ps1' $record
@@ -55,7 +67,7 @@ if ((Get-StubValue '-Action') -eq 'RegisterChange') {
         Write-RepairFixtureFile $root '.gitignore' "build/`n"
         Write-RepairFixtureFile $root 'tests/pester/Example.Tests.ps1' 'Describe x {}'
         Write-RepairFixtureFile $root 'tests/pester/Second.Tests.ps1' 'Describe y {}'
-        Write-RepairFixtureFile $root 'tests/quality-contracts.json' '{"developJourneys":{"routes":{"upgrade":{"hardSeconds":120},"fresh":{"hardSeconds":120}}}}'
+        Write-RepairFixtureFile $root 'tests/quality-contracts.json' '{"developJourneys":{"routes":{"upgrade":{"hardSeconds":120},"fresh":{"hardSeconds":120}},"scenarios":{"upgrade":[{"id":"update"},{"id":"configuration-rejection"},{"id":"verification-export"}],"fresh":[{"id":"install"},{"id":"branch"}]}}}'
         $artifacts = [ordered]@{}
         foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
             $path = Join-Path $base "артефакт $name.bin"
@@ -182,6 +194,38 @@ Describe 'Source publication repair loop' {
         Get-CallValue $journey '-AgentTarget' | Should -BeExactly 'codex'
         $binding = Get-Content -LiteralPath (Get-CallValue $journey '-ArtifactBindingPath') -Raw -Encoding UTF8 | ConvertFrom-Json
         $binding.paths.VANESSA_MCP_CLIENT_CFE_PATH | Should -BeExactly $fixture.artifacts.VANESSA_MCP_CLIENT_CFE_PATH.path
+    }
+
+    It 'narrows a repeated journey to its failed scenarios and proves the rest through -Unproven' {
+        $fixture = New-RepairFixture
+        $positive = Join-Path $fixture.base 'положительный стенд'
+        Write-RepairFixtureFile $positive '.agent-1c/release-e2e.json' '{}'
+        Write-RepairFixtureFile $fixture.stand '.agent-1c/release-e2e.json' (@{ developConfigurationRejection = @{ positiveProjectRoot = $positive } } | ConvertTo-Json)
+        (Invoke-Repair $fixture @('-Action', 'Start', '-RepairRoot', $fixture.repair)).exitCode | Should -Be 0
+        Add-RepairCommit $fixture 'fix' | Out-Null
+        $stand = @('-E2EProjectRoot', $fixture.stand, '-AiRulesSource', $fixture.base, '-AgentTarget', 'kilocode')
+        $journeyCalls = { @(Get-RepairCalls $fixture | Where-Object script -eq 'invoke-develop-e2e.ps1') }
+        # 2026-10-27: the negative scenario passed, then the positive check failed.
+        $env:ITL_TEST_REPAIR_JOURNEY_FAIL = 'upgrade'
+        try { (Invoke-Repair $fixture (@('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Journey', 'upgrade') + $stand)).exitCode | Should -Be 1 }
+        finally { $env:ITL_TEST_REPAIR_JOURNEY_FAIL = $null }
+        Get-CallValue (& $journeyCalls)[0] '-Scenario' | Should -BeNullOrEmpty
+        $repeat = Invoke-Repair $fixture (@('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Journey', 'upgrade') + $stand)
+        $repeat.exitCode | Should -Be 0 -Because $repeat.combinedText
+        Get-CallValue (& $journeyCalls)[0] '-Scenario' | Should -BeExactly 'update,verification-export'
+        $unproven = Invoke-Repair $fixture (@('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Unproven') + $stand)
+        $unproven.exitCode | Should -Be 0 -Because $unproven.combinedText
+        $calls = @(Get-RepairCalls $fixture)
+        @($calls | Where-Object { $_.args -contains '-PlanOnly' }).Count | Should -Be 1
+        $selectionCall = @($calls | Where-Object { $_.script -eq 'invoke-pester-shards.ps1' -and $_.args -notcontains '-PlanOnly' })[0]
+        @((Get-Content -LiteralPath (Get-CallValue $selectionCall '-SelectionPath') -Raw -Encoding UTF8 | ConvertFrom-Json).tests) | Should -Be @('tests/pester/Second.Tests.ps1')
+        $journeys = & $journeyCalls
+        @($journeys | ForEach-Object { Get-CallValue $_ '-Journey' }) | Should -Be @('upgrade', 'fresh')
+        Get-CallValue $journeys[0] '-Scenario' | Should -BeExactly 'configuration-rejection'
+        Get-CallValue $journeys[1] '-Scenario' | Should -BeNullOrEmpty
+        $again = Invoke-Repair $fixture (@('-Action', 'Run', '-RepairRoot', $fixture.repair, '-Unproven') + $stand)
+        $again.exitCode | Should -Be 0 -Because $again.combinedText
+        @(& $journeyCalls).Count | Should -Be 0
     }
 
     It 'registers once against the candidate and continues the same frozen pin after acceptance' {

@@ -89,7 +89,9 @@ already-reachable без новой квалификации и изменени
 # правка и обычный локальный commit в напечатанном worktree
 .\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Test <File.Tests.ps1>
 .\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Journey upgrade `
-  -Scenario update -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Unproven `
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
 .\scripts\source-repair.ps1 -Action Finish -RepairRoot <worktree> `
   -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
 ```
@@ -103,6 +105,14 @@ inventory) и только названный journey/сценарий чере�
 сохраняется существующим владельцем scenario proof; финальный gate берёт его
 только после полного текущего static и совпадения всех входов, иначе выполняет
 заново. Стенд, fork и клиент должны совпадать с публикацией.
+
+Journey без `-Scenario` повторяет только сценарии без сохранённого proof для
+текущего дерева; отрицательный сценарий, прошедший в последнем упавшем прогоне,
+откладывается. Продолжить с середины сценария нельзя: каждый стартует с
+неизменяемого снимка стенда. Перед `Finish` `Run -Unproven` выполняет то, что
+финальный gate ещё не может переиспользовать: Pester-файлы, которые владелец
+шардов выбрал бы через `-PlanOnly`, и сценарии upgrade/fresh без proof, до
+первого сбоя. Финальный gate остаётся полным и решает reuse сам.
 
 `Finish` — единственная регистрация ремонта: `RegisterChange` с `-BaseRef`
 текущего candidate (Targeted только по diff ремонта), затем `PublishDevelop

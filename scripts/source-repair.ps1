@@ -9,6 +9,7 @@ param(
     [ValidateSet('', 'upgrade', 'fresh')][string]$Journey = '',
     [string]$Scenario = '',
     [string[]]$Test = @(),
+    [switch]$Unproven,
     [ValidateRange(1, 4)][int]$PesterWorkers = 3,
     [string]$QueueId = '',
     [string[]]$CoverageContract = @(),
@@ -179,14 +180,15 @@ function Invoke-RepairStart {
     Show-RepairFailure -Attempt $attempt
     Write-Host 'Fix and commit locally there, then repeat only the failed check:'
     Write-Host "  source-repair.ps1 -Action Run -RepairRoot `"$root`" -Test <File.Tests.ps1>"
-    Write-Host "  source-repair.ps1 -Action Run -RepairRoot `"$root`" -Journey <upgrade|fresh> [-Scenario <ids>] -E2EProjectRoot <stand> -AiRulesSource <fork> -AgentTarget <client>"
+    Write-Host "  source-repair.ps1 -Action Run -RepairRoot `"$root`" -Journey <upgrade|fresh> -E2EProjectRoot <stand> -AiRulesSource <fork> -AgentTarget <client>"
+    Write-Host 'A repeated journey run narrows itself to scenarios without proof for the current tree. Before Finish, run -Unproven with the same stand options.'
     return [pscustomobject]@{ status = 'ready'; repairRoot = $root; candidate = $candidate; planId = [string]$attempt.planId }
 }
 
 function Invoke-RepairTests {
-    param([string]$Root)
+    param([string]$Root, [string[]]$Names)
     # powershell.exe -File passes a comma list as one string.
-    $tests = @(foreach ($name in @($Test | ForEach-Object { ([string]$_).Split(',') } | Where-Object { $_.Trim() })) {
+    $tests = @(foreach ($name in @($Names | ForEach-Object { ([string]$_).Split(',') } | Where-Object { $_.Trim() })) {
         $leaf = Split-Path -Leaf ([string]$name).Trim()
         $relative = 'tests/pester/' + $leaf
         if (-not (Test-Path -LiteralPath (Join-Path $Root $relative) -PathType Leaf)) { throw "REPAIR_TEST_MISSING: $relative" }
@@ -208,11 +210,73 @@ function Invoke-RepairTests {
     return [pscustomobject]@{ status = $(if ($passed) { 'passed' } else { 'failed' }); tests = @($selection.tests); summary = $summaryPath }
 }
 
-function Invoke-RepairJourney {
+function Get-RepairUnprovenTests {
     param([string]$Root)
+    # The shard owner decides reuse; repeat only the files it would execute.
+    $arguments = @('-RepositoryRoot', $Root, '-OutputRoot', (Join-Path $script:OutputRoot 'plan'), '-JunitPath', (Join-Path $script:OutputRoot 'plan\junit.xml'), '-PlanOnly')
+    if ($AiRulesSource) { $arguments += @('-AiRulesSource', [IO.Path]::GetFullPath($AiRulesSource)) }
+    $result = Invoke-RepairChild -Root $Root -ScriptPath (Join-Path $Root 'scripts\invoke-pester-shards.ps1') -Arguments $arguments -LogName 'pester-plan'
+    $text = [IO.File]::ReadAllText($result.stdout, [Text.Encoding]::UTF8)
+    $start = $text.IndexOf('{')
+    if ($result.exitCode -ne 0 -or $start -lt 0) { Write-RepairChildFailure -Result $result -Label 'Pester plan'; throw 'REPAIR_PESTER_PLAN_FAILED: the shard owner could not plan the static inventory.' }
+    $plan = $text.Substring($start) | ConvertFrom-Json
+    return @($plan.files | Where-Object { [string]$_.execution -eq 'execute' } | ForEach-Object { Split-Path -Leaf ([string]$_.path) })
+}
+
+function Get-RepairJourneyScenarios {
+    param([string]$Root, [string]$Name, [string]$Stand)
+    $catalog = Get-Content -LiteralPath (Join-Path $Root 'tests\quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $ids = @($catalog.developJourneys.scenarios.$Name | ForEach-Object { [string]$_.id })
+    $descriptor = Get-Content -LiteralPath (Join-Path $Stand '.agent-1c\release-e2e.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    # The journey owner omits the negative scenario when the stand declares none.
+    if (-not $descriptor.PSObject.Properties['developConfigurationRejection']) { $ids = @($ids | Where-Object { $_ -ne 'configuration-rejection' }) }
+    return $ids
+}
+
+function Get-RepairJourneyEvidence {
+    param([string]$Root, [string]$Name)
+    # Read only this repair worktree's own journey reports, oldest first.
+    $tree = Get-RepairGitValue $Root @('rev-parse', 'HEAD^{tree}')
+    $proven = @(); $latest = $null
+    $reports = Join-Path $Root 'build\test-results\repair'
+    $paths = if (Test-Path -LiteralPath $reports -PathType Container) { @(Get-ChildItem -LiteralPath $reports -Directory | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "develop-e2e-$Name-raw.json" } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) } else { @() }
+    foreach ($path in $paths) {
+        $report = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $journey = @($report.journeys | Where-Object { [string]$_.name -eq $Name })
+        if ($journey.Count -ne 1) { continue }
+        $latest = [pscustomobject]@{ report = $report; journey = $journey[0] }
+        # The journey owner stored reusable proof only for a clean passed tree.
+        if ([string]$report.status -eq 'passed' -and [string]$report.candidate.tree -ceq $tree -and (Test-Path -LiteralPath "$path.$Name.qualification.json" -PathType Leaf)) {
+            $proven += @($journey[0].coverage)
+        }
+    }
+    # A negative scenario that already passed in the latest failed run waits for
+    # -Unproven, so the next repair repeats only the part that failed.
+    $deferred = @()
+    if ($latest -and [string]$latest.report.status -ne 'passed' -and $latest.journey.PSObject.Properties['configurationRejection'] -and
+        [string]$latest.journey.configurationRejection.status -eq 'passed') { $deferred = @('configuration-rejection') }
+    return [pscustomobject]@{ proven = @($proven | Sort-Object -Unique); deferred = $deferred }
+}
+
+function Invoke-RepairJourney {
+    param([string]$Root, [string]$Name, [string]$Selection = '', [switch]$Unproven)
     if (-not $E2EProjectRoot -or -not $AiRulesSource) { throw 'REPAIR_STAND_REQUIRED: pass the same -E2EProjectRoot, -AiRulesSource and -AgentTarget as the publication.' }
     $stand = [IO.Path]::GetFullPath($E2EProjectRoot)
     $fork = [IO.Path]::GetFullPath($AiRulesSource)
+    if (-not $Selection) {
+        $all = @(Get-RepairJourneyScenarios -Root $Root -Name $Name -Stand $stand)
+        $evidence = Get-RepairJourneyEvidence -Root $Root -Name $Name
+        $open = @($all | Where-Object { $_ -notin $evidence.proven })
+        if (-not $open.Count) {
+            Write-Host "Develop ${Name}: every scenario already has reusable proof for this tree."
+            return [pscustomobject]@{ status = 'passed'; journey = $Name; scenario = ''; raw = ''; reusableProof = $true; skipped = $true }
+        }
+        $narrowed = @(if ($Unproven) { $open } else { $open | Where-Object { $_ -notin $evidence.deferred } })
+        if ($narrowed.Count) { $open = $narrowed }
+        # Dependencies are expanded by the journey owner.
+        if ($open.Count -lt $all.Count) { $Selection = $open -join ',' }
+        Write-Host "Develop ${Name}: scenarios $($open -join ', ')."
+    }
     $missing = ''
     $binding = Find-SourceE2EArtifactBinding -RepositoryRoot $Root -MissingInput ([ref]$missing)
     if (-not $binding) { throw "REPAIR_ARTIFACT_MISSING: locked artifact '$missing' was not found by SHA. Set that environment variable to the exact locked file, or let one gate run prepare it, then repeat." }
@@ -226,39 +290,51 @@ function Invoke-RepairJourney {
     foreach ($capture in $captures) {
         $arguments = @('-Action', 'Capture', '-Phase', $capture[0], '-ProjectRoot', $capture[1], '-AgentTarget', $AgentTarget, '-OutputPath', (Join-Path $script:OutputRoot ($capture[2] + '-capsule.json')))
         $result = Invoke-RepairChild -Root $Root -ScriptPath $fixture -Arguments $arguments -LogName $capture[2] -TimeoutSeconds 7800
-        if ($result.exitCode -ne 0) { Write-RepairChildFailure -Result $result -Label $capture[2]; return [pscustomobject]@{ status = 'failed'; journey = $Journey; stage = $capture[2] } }
+        if ($result.exitCode -ne 0) { Write-RepairChildFailure -Result $result -Label $capture[2]; return [pscustomobject]@{ status = 'failed'; journey = $Name; stage = $capture[2] } }
     }
     $catalog = Get-Content -LiteralPath (Join-Path $Root 'tests\quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $rawPath = Join-Path $script:OutputRoot "develop-e2e-$Journey-raw.json"
-    $arguments = @('-CandidateRoot', $Root, '-ProjectRoot', $stand, '-AiRulesSource', $fork, '-OutputPath', $rawPath, '-Journey', $Journey,
+    $rawPath = Join-Path $script:OutputRoot "develop-e2e-$Name-raw.json"
+    $arguments = @('-CandidateRoot', $Root, '-ProjectRoot', $stand, '-AiRulesSource', $fork, '-OutputPath', $rawPath, '-Journey', $Name,
         '-FreshProjectsRoot', $FreshProjectsRoot, '-ArtifactBindingPath', $bindingPath)
-    if ($Scenario) { $arguments += @('-Scenario', $Scenario) }
+    if ($Selection) { $arguments += @('-Scenario', $Selection) }
     if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
-    $result = Invoke-RepairChild -Root $Root -ScriptPath (Join-Path $Root 'scripts\invoke-develop-e2e.ps1') -Arguments $arguments -LogName "develop-e2e-$Journey" `
-        -TimeoutSeconds (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $Journey)
+    $result = Invoke-RepairChild -Root $Root -ScriptPath (Join-Path $Root 'scripts\invoke-develop-e2e.ps1') -Arguments $arguments -LogName "develop-e2e-$Name" `
+        -TimeoutSeconds (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $catalog -Journey $Name)
     $raw = if (Test-Path -LiteralPath $rawPath -PathType Leaf) { Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
     $passed = $result.exitCode -eq 0 -and $raw -and [string]$raw.status -eq 'passed'
-    if (-not $passed) { Write-RepairChildFailure -Result $result -Label "Develop $Journey" }
+    if (-not $passed) { Write-RepairChildFailure -Result $result -Label "Develop $Name" }
     # invoke-develop-e2e stores reusable scenario proof only for a clean tree
     # with complete unchanged inputs; otherwise the final gate executes it.
-    $proof = "$rawPath.$Journey.qualification.json"
+    $proof = "$rawPath.$Name.qualification.json"
     $reusable = $passed -and (Test-Path -LiteralPath $proof -PathType Leaf)
     if ($passed -and -not $reusable) { Write-Host 'Journey passed, but no reusable proof was stored; the final gate will execute it again.' }
-    return [pscustomobject]@{ status = $(if ($passed) { 'passed' } else { 'failed' }); journey = $Journey; scenario = $Scenario; raw = $rawPath; reusableProof = $reusable }
+    return [pscustomobject]@{ status = $(if ($passed) { 'passed' } else { 'failed' }); journey = $Name; scenario = $Selection; raw = $rawPath; reusableProof = $reusable }
 }
 
 function Invoke-RepairRun {
-    if (-not $Test.Count -and -not $Journey) { throw 'REPAIR_TARGET_REQUIRED: name the failed -Test files and/or the failed -Journey.' }
+    if (-not $Test.Count -and -not $Journey -and -not $Unproven) { throw 'REPAIR_TARGET_REQUIRED: name the failed -Test files and/or -Journey, or use -Unproven before Finish.' }
     if ($Scenario -and -not $Journey) { throw 'REPAIR_SCENARIO_REQUIRES_JOURNEY' }
     Assert-RepairNoActiveDelivery
     $attempt = Get-RepairAttempt
     $repair = Resolve-RepairRoot -Attempt $attempt
     $script:OutputRoot = New-RepairOutputRoot -Root $repair.root
+    $tests = @($Test)
+    $journeys = @(if ($Journey) { $Journey })
+    if ($Unproven) {
+        if (-not $E2EProjectRoot -or -not $AiRulesSource) { throw 'REPAIR_STAND_REQUIRED: -Unproven also runs journeys; pass the publication -E2EProjectRoot, -AiRulesSource and -AgentTarget.' }
+        $tests += @(Get-RepairUnprovenTests -Root $repair.root)
+        if (-not $Journey) { $journeys = @('upgrade', 'fresh') }
+        Write-Host "Unproven: $(@($tests | Where-Object { $_ }).Count) Pester file(s); journeys $($journeys -join ', ')."
+    }
     $results = @()
-    if ($Test.Count) { $results += Invoke-RepairTests -Root $repair.root }
-    if ($Journey -and @($results | Where-Object status -ne 'passed').Count -eq 0) { $results += Invoke-RepairJourney -Root $repair.root }
+    if (@($tests | Where-Object { $_ }).Count) { $results += Invoke-RepairTests -Root $repair.root -Names $tests }
+    foreach ($name in $journeys) {
+        # Stop at the first failure: later checks may depend on its repair.
+        if (@($results | Where-Object status -ne 'passed').Count) { break }
+        $results += Invoke-RepairJourney -Root $repair.root -Name $name -Selection $Scenario -Unproven:$Unproven
+    }
     $status = if (@($results | Where-Object status -ne 'passed').Count) { 'failed' } else { 'passed' }
-    if ($status -eq 'passed') { Write-Host "Passed at $($repair.head). When every failed check is green, run -Action Finish once." }
+    if ($status -eq 'passed') { Write-Host "Passed at $($repair.head). Run -Unproven before -Action Finish so the final gate only confirms." }
     return [pscustomobject]@{ status = $status; head = $repair.head; output = $script:OutputRoot; results = $results }
 }
 
