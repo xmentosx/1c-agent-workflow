@@ -989,6 +989,72 @@
       "tests": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1"]
     },
     {
+      "id": "develop-artifact-protection-scope",
+      "owner": "Additive protection proof and native scenario reuse",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/DevelopArtifactProtectionScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DevelopArtifactProtectionScope.Tests.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1"
+      ],
+      "reuseInputPaths": [
+        "scripts/source-e2e-workflow-update.ps1",
+        "scripts/ai-rules-native-inputs.ps1",
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/release-qualification.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/stand-env-identity.ps1",
+        "scripts/check.ps1",
+        "scripts/source-delivery-plan.ps1",
+        "scripts/delivery-native-plan.ps1",
+        "scripts/source-e2e-artifact-discovery.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "scripts/develop-configuration-rejection.ps1",
+        "scripts/source-e2e-fixture.ps1",
+        "scripts/update-installed-workflow.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        "templates/dependency-lock.json",
+        "install-agent-1c-workflow.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "tests/pester/SourceDeliveryIncremental.TestSupport.ps1",
+        "tests/pester/TestSupport.ps1"
+      ],
+      "tests": [
+        "tests/pester/DevelopArtifactProtectionScope.Tests.ps1"
+      ]
+    },
+    {
+      "id": "develop-protection-consumer-inventory",
+      "owner": "Closed optional artifact cleanup call sites",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1",
+      "paths": [
+        "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1",
+        "scripts/develop-e2e-scenarios.ps1"
+      ],
+      "reuseInputPaths": [
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "install-agent-1c-workflow.ps1",
+        "tests/pester/TestSupport.ps1",
+        ".agents/skills/1c-workflow/scripts/*"
+      ],
+      "tests": [
+        "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1"
+      ]
+    },
+    {
       "id": "develop-broker-input-scope",
       "owner": "retained broker cleanup selection and native ancestor reuse",
       "gate": "targeted",
