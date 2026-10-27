@@ -1,5 +1,12 @@
 # План приёмки
 
+## RU-EMB: граница доказательств, 2026-10-27
+
+[Memory preflight](../add-scoped-cognee-memory/evidence/ru-embedding-preflight-2026-10-27.md)
+остановлен до качества: BGE 50/50, Qwen OOM / 403. Каталог, homes, проектные
+различия и принятая G3/R6/G5/MO граница не меняются; новый release gate не
+вводится. 144/12 остаются невыполненными, преимущество модели не заявляется.
+
 ## Фактическое продолжение G5, 2026-10-26
 
 [Единый memory follow-up](../add-scoped-cognee-memory/evidence/g5-common-continuation-2026-10-26.md) — текущий результат; прежний sealed
