@@ -33,7 +33,7 @@ originals. The terminal receipt must report `status` as `completed`, `succeeded`
 finish cleanly without being accepted; registering its expendable files never
 changes the diagnostic outcome or acceptance evidence.
 
-Three producer-declared file classes are eligible:
+Four producer-declared file classes are eligible:
 
 - `native-temp`: individual `v8_<hex>_<hex>.tmp` files directly inside a
   `*-temp` directory below `build`, after their owning 1C processes finish.
@@ -49,9 +49,18 @@ Three producer-declared file classes are eligible:
   inputs, rollback material and executable helpers must remain. Databases,
   original traces, CF/CFE/DT, archives and source-snapshot trees cannot use this
   class. Unknown legacy directories require review, never automatic adoption.
+- `agent-task-temp`: individually declared temporary files inside
+  `build/agent-artifacts/<task>/tmp/`, after terminal task/consumer completion.
+  This class is eligible immediately through the same owner; the other classes
+  retain their age policy. Databases, DT backups, original ETL, source-snapshot
+  trees and handoffs remain excluded. A temporary CF/CFE or investigation helper
+  is eligible only in this task's `tmp/` and only when explicitly declared
+  disposable. Proof, recovery and all transitive dependencies must be retained.
+  The common completion protocol for every client is in
+  [project artifact placement](../../../../docs/itl-workflow/ARTIFACTS.md).
 
 Registration hashes each disposable and retained file and records exact size,
-timestamp and enrollment time. It never enrolls a directory, a database, a raw
+timestamp and enrollment time. It never enrolls a directory, a database, a DT backup, a raw
 trace or a handoff. An analyzer response can expire only as an explicitly
 superseded attempt; its current replacement and dependencies must remain.
 Do not mark an artifact that
@@ -87,6 +96,18 @@ retained-file warnings explain why the original task's files were left intact.
 Fresh files survive enrollment and become eligible at a later diagnostic
 completion or ordinary automatic ITL cleanup. There is no idle-time timer or
 resident service; an inactive project does not generate new diagnostic files.
+
+Agent-task completions additionally bind `taskRoot` and keep their completion
+receipt outside `tmp/`. Batches use identity derived from the unchanged receipt,
+canonical exact file list and retained paths, so a repeated completion reuses
+its original records even after deletion. It cannot adopt replacement bytes at
+an old path. An empty disposable list can register evidence protection alone.
+Deletion rechecks current workflow proof/recovery references as well as the
+retained file hashes. The existing successful-reset cleanup retries registered
+leftovers; it does not enroll unknown or unfinished tasks, move ignored proof
+into the reset archive, or recursively remove the task directory. Small audit
+and protection receipts remain. Disabling automatic cleanup also disables
+completion-driven enrollment/removal; a dry-run does not enroll a new receipt.
 
 When a branch command finishes a check and adopts its successful replacement,
 the producer can send this completion through that same command (paths below

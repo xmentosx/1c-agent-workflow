@@ -597,7 +597,12 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
                 }
                 default{throw "Unexpected action $Action"}
             }
-            return [pscustomobject]@{stdout='mock';stderr='mock';durationMs=12}
+            $stdout='mock'
+            if($Action -eq 'update-workflow'){
+                $stdout=Join-Path $LogRoot 'update-workflow.mock.stdout.log'
+                Write-Utf8Text -Path $stdout -Value '{"action":"update-workflow","status":"succeeded"}'
+            }
+            return [pscustomobject]@{exitCode=0;stdout=$stdout;stderr='mock';durationMs=12}
         }
         $receipt=Join-Path $TestDrive 'release-fixture.json'
         $options=@{ProjectRoot=$seed.project;Phase='Release';CandidateRoot=$RepoRoot;ProjectsRoot=(Join-Path $TestDrive 'release owned projects');AiRulesSource=$RepoRoot;ReceiptPath=$receipt}

@@ -223,3 +223,55 @@ promotion остаются у установленного fork/release проц
 свежим Status; этот текст не заменяет ledger и не требует self-referential
 коммита после регистрации. Gate6/G6, working migration, push/PR/publication
 в текущей задаче не выполняются.
+
+### Регистрация: разрешение параллельного изменения
+
+Первый RegisterChange остановился до Targeted при интеграции с принятым
+779ae33d (r49 compatibility promotion). Исходный failed candidate и ledger
+сохранены, queue head остался5f7620e2. В source task интегрированы published
+develop f9785223 и принятая очередь через779ae33d, их изменения сохранены.
+Единственный конфликт — версия/status в dependency lock: r49/passed относится
+к прежнему r49 proof и не переносится автоматически на r50. Итог r50/a2cbdce
+остаётся pending с пустой датой до штатного workflow qualification/promotion;
+r49 promotion сохранён в ancestry и собственном evidence. Full/Gate6 ради
+разрешения конфликта не запускались.
+
+Собственные frozen MO runtime inputs остаются byte-identical. В ancestry также
+сохранены чужие shared-core/init/artifact-retention исправления; их объединённое
+native installed acceptance не приписывается N5 aa825615. Интегрированную source
+границу проверяет следующий штатный RegisterChange/Targeted, выпускной installed
+candidate остаётся отдельным Gate6. Полные старые native/failed proof сохранены.
+
+Вторая регистрация выполнила Targeted, но не прошла: inherited PSModulePath
+содержал Modules bundled PowerShell Core у вызывающего процесса. Windows
+PowerShell5.1 не смог загрузить Get-FileHash (36 failures), ещё один test упал
+на TypeData ObjectSecurity и один — downstream от отсутствующей fixture;
+оставшиеся files не объявлены passed. Это ошибка среды моего запуска, а не
+принятый source proof. Native/PS5 owner tests ранее запускались с исправленным
+окружением. Исходные candidate/log/XML сохранены, accepted queue не заменена.
+
+Парный диагностический запуск той же команды Get-Command Get-FileHash/Get-Acl
+на том же PS5 host воспроизвёл CommandNotFound в inherited env и PASS после
+существующего Get-ItlWindowsPowerShellModulePath owner. Owner удалил только
+Modules текущего Core PSHOME. Русский текст exception сохранён в UTF-8;
+714 stderr bytes исправленного запуска — native progress CLIXML, не ошибки.
+registration-environment.json/module-probe-* фиксируют причину и результат.
+Тесты, их inventory, assertions и deadlines не изменялись. Продолжение — тот же
+RegisterChange с нормализованным окружением caller; ни отдельного Targeted,
+ни дополнительного gate или native сценария ради этой ошибки не запускается.
+
+После нормализации окружения третий Targeted завершил84 прежних shards:
+1965 passed/1 failed. Единственный failure — DependencyLocks.Tests.ps1 ожидал
+r49 вместо разрешённого r50; проверка выявила также оставшийся r49 default
+в templates/project.json. Это моя неполная синхронизация версии при MO:
+project.json приведён к r50, в том же существующем test обновлены точные
+ref/commit/revision на r50/a2cbdce/50. Строгие repo/upstream/status/date,
+все остальные assertions, inventory и deadlines сохранены. Новых cases нет.
+Остальные1965 результатов не выдаются за полный gate pass; старый failed
+candidate и XML сохранены. Сами reader/adapter/policy inputs native AA/N7
+не изменились; новый project-template default проверяет штатная регистрация,
+не объявляется новым полным native init. Продолжение — RegisterChange в том же
+исправленном окружении, без повторного N5/корпуса/отдельного Targeted.
+Повтор ровно упавшего existing test на исправленном source:1 passed,0 failed,
+остальные36 в этом focused запуске не выполнялись (dependency-lock-r50.xml/log).
+Это не результат всей suite/Targeted; общую границу устанавливает helper.

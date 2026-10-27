@@ -1,8 +1,9 @@
 ﻿Describe 'Catalog runtime context is pinned by the existing registry operation' {
     BeforeAll {
         $RepoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot (Join-Path $TestDrive 'helper-root') -Action help *> $null
         . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
-        foreach($leaf in @('core','vanessa','vibecoding1c-mcp','product-catalog','product-project-context','product-source-evidence')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
+        foreach($leaf in @('product-catalog','product-project-context','product-source-evidence')){. (Join-Path $RepoRoot ".agents/skills/1c-workflow/scripts/lib/agent-1c.$leaf.ps1")}
         function New-ContextFixture {
             $code=@{id='code';family='vibecoding1c';scope='project';configId='corp';url='http://source-a.invalid:22100/mcp'}
             $graph=@{id='graph';family='vibecoding1c';scope='project';configId='other';url='http://source-b.invalid:22101/mcp/'}
@@ -382,6 +383,11 @@
     It 'reuses the ordinary endpoint/request producers with canonical role names and shared MCPs' {
         $context=Resolve-ItlProductProjectRuntimeContext $snapshot $binding
         $script:ProjectRoot=Join-Path $TestDrive 'Project'
+        # Keep the optional binding directory present, as on an initialized host,
+        # while resolving MCP ownership through the real client adapter owner.
+        $localHome=Join-Path $TestDrive 'Local MCP home'
+        New-Item -ItemType Directory -Path (Join-Path $localHome 'memory/binding') -Force|Out-Null
+        Mock Get-Vibecoding1cMcpLocalHome {return $localHome}
         Mock Read-Vibecoding1cMcpRegistry {return $snapshot.registry}
         Mock Read-Vibecoding1cMcpSelection {return @{servers=@()}}
         Mock Select-Vibecoding1cMcpManifestServers {return @()}

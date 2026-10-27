@@ -533,6 +533,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\develop-journey-inputs.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
         (Join-Path $repoRoot "scripts\source-e2e-manifest-repair.ps1"),
+        (Join-Path $repoRoot "scripts\source-e2e-workflow-update.ps1"),
         (Join-Path $repoRoot "scripts\test-powershell-encoding.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),

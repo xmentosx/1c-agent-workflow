@@ -32,6 +32,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Route workflow-owned 1C launches through the per-infobase guard; direct `Start-Process` bypasses `ONEC_MAX_CONCURRENT_SESSIONS`.
 - Run monitored bootstrap in the foreground with `timeout_ms >= 14700000` for the default four-hour init budget; for an overridden budget use at least the configured seconds plus 300 seconds. On interruption repeat the same bootstrap command; never delete `index.lock`, finish lifecycle manually, or edit `status.json`.
 - Keep secrets/runtime out of Git: `.dev.env`, infobases, tools, state, logs, and client MCP config stay ignored.
+- Keep agent-created project artifacts inside this worktree; follow [artifact placement](docs/itl-workflow/ARTIFACTS.md).
 - Keep entrypoints compact and route detail to one relevant reference; do not load or duplicate the full lifecycle.
 - Normal installed operation runs without elevation in local and terminal sessions on Windows 10, Windows 11, and Windows Server 2019+. Admin provisioning is optional; never auto-elevate or weaken isolation. Keep always-on instructions, tool schemas, and routine output bounded and on demand; minimize tokens without weakening goals, safety, diagnostics, or evidence.
 

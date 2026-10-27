@@ -23,6 +23,23 @@
         $replacement = '"completedUtc": "' + [datetime]::UtcNow.AddDays(-$Days).ToString('o') + '"'
         [IO.File]::WriteAllText($Fixture.manifest, ([regex]::Replace($text, '"completedUtc"\s*:\s*"[^"]+"', $replacement)))
     }
+    function New-AgentTaskFixture {
+        param([string]$Name)
+        $root = Join-Path $TestDrive ("Задача агента с пробелами $Name")
+        $taskRoot = 'build/agent-artifacts/task-1'
+        foreach ($folder in '.agent-1c', "$taskRoot/tmp", "$taskRoot/evidence", "$taskRoot/recovery") {
+            New-Item -ItemType Directory -Path (Join-Path $root $folder) -Force | Out-Null
+        }
+        $relative = "$taskRoot/tmp/Промежуточная выгрузка.cf"
+        [IO.File]::WriteAllBytes((Join-Path $root $relative), [byte[]](0, 255, 13, 10, 1, 2))
+        [IO.File]::WriteAllText((Join-Path $root "$taskRoot/evidence/result.json"), '{"status":"passed"}')
+        [IO.File]::WriteAllBytes((Join-Path $root "$taskRoot/recovery/original.dt"), [byte[]](4, 3, 2, 1))
+        [IO.File]::WriteAllText((Join-Path $root "$taskRoot/tmp/unknown.txt"), 'unclassified input')
+        $completion = "$taskRoot/completion.json"
+        $receipt = @{status='completed';cleanupConfirmed=$true;producer='agent-task';kind='agent-task-temp';taskRoot=$taskRoot;disposablePaths=@($relative);retainedPaths=@("$taskRoot/evidence/result.json", "$taskRoot/recovery/original.dt")}
+        [IO.File]::WriteAllText((Join-Path $root $completion), ($receipt | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        return [pscustomobject]@{root=$root;taskRoot=$taskRoot;relative=$relative;path=(Join-Path $root $relative);completion=$completion;receipt=$receipt}
+    }
     function New-SupersededAttemptFixture {
         param([string]$Name)
         $root = Join-Path $TestDrive ("Старые проверки $Name")
@@ -37,6 +54,217 @@
         [IO.File]::WriteAllText((Join-Path $root 'build/completion.json'), ($receipt | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
         $manifest = @(Complete-ItlDiagnosticArtifacts -ProjectRoot $root -CompletionPath 'build/completion.json')[0]
         return [pscustomobject]@{root=$root;relative=$relative;path=(Join-Path $root $relative);manifest=$manifest;receipt=$receipt}
+    }
+}
+
+Describe 'Completed agent task artifact cleanup' {
+    BeforeEach {
+        Mock Get-ItlArtifactProtectedPaths { return @() }
+    }
+
+    It 'completes and retries a task through clean-artifacts without deleting its proof, recovery or unknown files' {
+        $f = New-AgentTaskFixture 'Общий helper'
+        & git -C $f.root init --quiet
+        $LASTEXITCODE | Should -Be 0
+        $kept = @($f.receipt.retainedPaths) + @("$($f.taskRoot)/tmp/unknown.txt", $f.completion)
+        $hashes = @{}
+        foreach ($relative in $kept) { $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $f.root $relative)).Hash }
+        $clientRunner = Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'
+        $arguments = @('-Action', 'clean-artifacts', '-CleanupDiagnosticsOnly', '-DiagnosticCompletionPath', $f.completion)
+        Push-Location $f.root
+        try {
+            $preview = Invoke-TestPowerShellFile -FilePath $clientRunner -Arguments (@('--') + $arguments + '-CleanupDryRun')
+            $preview.exitCode | Should -Be 0 -Because $preview.combinedText
+            (Test-Path -LiteralPath $f.path) | Should -BeTrue
+            (Test-Path -LiteralPath (Join-Path $f.root '.agent-1c/diagnostic-artifacts')) | Should -BeFalse
+            foreach ($attempt in 1..2) {
+                $done = Invoke-TestPowerShellFile -FilePath $clientRunner -Arguments (@('--') + $arguments)
+                $done.exitCode | Should -Be 0 -Because $done.combinedText
+                (Test-Path -LiteralPath $f.path) | Should -BeFalse
+            }
+        } finally { Pop-Location }
+        @(Get-ChildItem -LiteralPath (Join-Path $f.root '.agent-1c/diagnostic-artifacts') -Filter '*.json').Count | Should -Be 1
+        foreach ($relative in $kept) {
+            (Get-FileHash -LiteralPath (Join-Path $f.root $relative)).Hash | Should -Be $hashes[$relative]
+        }
+    }
+
+    It 'retries an opened disposable through automatic cleanup after the real reset archive and Git tree replacement' {
+        $f = New-AgentTaskFixture 'Сброс ветки'
+        [IO.File]::WriteAllText((Join-Path $f.root '.gitignore'), "build/`n.agent-1c/`n")
+        [IO.File]::WriteAllText((Join-Path $f.root 'master.txt'), 'master source')
+        & git -C $f.root init --quiet
+        & git -C $f.root config user.name 'ITL test'
+        & git -C $f.root config user.email 'test@example.invalid'
+        & git -C $f.root add -- .gitignore master.txt
+        & git -C $f.root commit --quiet -m master
+        $master = (& git -C $f.root rev-parse HEAD).Trim()
+        & git -C $f.root checkout --quiet -b itldev/task
+        [IO.File]::WriteAllText((Join-Path $f.root 'branch.txt'), 'branch work')
+        & git -C $f.root add -- branch.txt
+        & git -C $f.root commit --quiet -m branch
+        $oldHead = (& git -C $f.root rev-parse HEAD).Trim()
+        $active = 'build/agent-artifacts/unfinished/tmp/input.txt'
+        New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $f.root $active)) -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $f.root $active), 'unfinished input')
+        [IO.File]::SetLastWriteTimeUtc((Join-Path $f.root $active), [datetime]::UtcNow.AddYears(-1))
+        $result = & {
+            . $context.HelperPath -ProjectRoot $f.root -Action help *> $null
+            function Get-MainWorktreePath { return $f.root }
+            function Invoke-Designer {
+                param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
+                [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]](9, 8, 7, 6))
+            }
+            function Set-RunStage {}
+            Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion | Out-Null
+            $reader = [IO.File]::Open($f.path, 'Open', 'Read', 'Read')
+            try { $blocked = Invoke-ItlArtifactCleanup -Automatic -WarningAction SilentlyContinue }
+            finally { $reader.Dispose() }
+            $state = [pscustomobject]@{devBranch='itldev/task';safeDevBranchName='task';devBranchInfoBasePath='fixture';infoBaseKind='file'}
+            $archivePath = Join-Path (Get-DevBranchArchiveRoot) 'task/fixture'
+            $archive = New-DevBranchResetArchive -State $state -MasterCommit $master -OldHead $oldHead -ArchivePath $archivePath
+            $archiveHash = (Get-FileHash -LiteralPath $archive.dtPath).Hash
+            Set-DevBranchTreeToMasterCommit -MasterCommit $master | Out-Null
+            $beforeCleanup = Test-Path -LiteralPath $f.path
+            $cleaned = Invoke-ItlArtifactCleanup -Automatic
+            [pscustomobject]@{blocked=$blocked;beforeCleanup=$beforeCleanup;cleaned=$cleaned;archive=$archive;archiveHash=$archiveHash;tree=(Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim();masterTree=(Get-GitOutput @('rev-parse', "$master`^{tree}")).Trim()}
+        }
+        $result.blocked.failed.Count | Should -Be 1
+        $result.beforeCleanup | Should -BeTrue
+        $result.cleaned.failed.Count | Should -Be 0
+        $result.cleaned.removedBytes | Should -Be 6
+        $result.tree | Should -Be $result.masterTree
+        (Test-Path -LiteralPath $f.path) | Should -BeFalse
+        (Get-FileHash -LiteralPath $result.archive.dtPath).Hash | Should -Be $result.archiveHash
+        foreach ($relative in @($f.receipt.retainedPaths) + @($active, "$($f.taskRoot)/tmp/unknown.txt", $f.completion)) {
+            (Test-Path -LiteralPath (Join-Path $f.root $relative)) | Should -BeTrue
+        }
+    }
+
+    It 'rejects cross-task paths and retained aliases before enrolling any batch' {
+        $f = New-AgentTaskFixture 'Границы задачи'
+        foreach ($relative in @("$($f.taskRoot)/evidence/result.json", "$($f.taskRoot)/recovery/original.dt", 'build/agent-artifacts/other/tmp/file.txt', 'build/unowned.txt', '../outside.txt')) {
+            $f.receipt.disposablePaths = @($f.relative, $relative)
+            [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+            { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*own task tmp*'
+            (Test-Path -LiteralPath (Join-Path $f.root '.agent-1c/diagnostic-artifacts')) | Should -BeFalse
+        }
+        $f.receipt.disposablePaths = @($f.relative)
+        $f.receipt.retainedPaths += './' + $f.relative
+        [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+        { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*retained originals*'
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
+    It 'preserves running and unconfirmed tasks and honors automatic cleanup disablement' {
+        $f = New-AgentTaskFixture 'Незавершённая'
+        foreach ($values in @(@{status='running';cleanupConfirmed=$true}, @{status='completed';cleanupConfirmed=$false})) {
+            $f.receipt.status=$values.status; $f.receipt.cleanupConfirmed=$values.cleanupConfirmed
+            [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+            { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*cleanup*'
+        }
+        $f.receipt.status='completed';$f.receipt.cleanupConfirmed=$true
+        [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+        Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion | Out-Null
+        $script:ProjectRoot=$f.root
+        Mock Get-MainWorktreePath { return $script:ProjectRoot }
+        Mock Get-ItlResultArtifactCandidates { return @() }
+        Mock Get-ItlRunArtifactCandidates { return @() }
+        Mock Get-ItlArchiveArtifactCandidates { return @() }
+        Mock Get-ItlAuxiliaryArchiveArtifactCandidates { return @() }
+        Mock Get-ItlWorkflowIncidentArchiveCandidates { return @() }
+        Mock Get-EnvValue { param($Name,$Default) if($Name -eq 'ITL_ARTIFACT_CLEANUP_ENABLED'){return 'false'};return $Default }
+        Invoke-ItlArtifactCleanup -Automatic | Out-Null
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 1
+    }
+
+    It 'keeps databases, DT backups, original traces and source snapshots outside automatic task disposal' {
+        $f = New-AgentTaskFixture 'Оригиналы'
+        foreach ($suffix in @('base.1CD', 'before.dt', 'original.etl', 'state.sqlite-wal', 'source-snapshots/id/Module.bsl', 'handoffs/resume.md')) {
+            $relative = "$($f.taskRoot)/tmp/$suffix"
+            $path = Join-Path $f.root $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+            [IO.File]::WriteAllText($path, 'required original')
+            $f.receipt.disposablePaths=@($relative)
+            [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+            { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*Retain databases*'
+            (Test-Path -LiteralPath $path) | Should -BeTrue
+        }
+    }
+
+    It 'replays bounded completion batches and rejects an outside final entry before any enrollment' {
+        $f = New-AgentTaskFixture 'Пакеты'
+        $files = @(1..257 | ForEach-Object {
+            $relative="$($f.taskRoot)/tmp/part-$_.txt"
+            [IO.File]::WriteAllText((Join-Path $f.root $relative), 'disposable')
+            $relative
+        })
+        $f.receipt.disposablePaths=$files + @('build/foreign.txt')
+        [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+        { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*own task tmp*'
+        (Test-Path -LiteralPath (Join-Path $f.root '.agent-1c/diagnostic-artifacts')) | Should -BeFalse
+        $f.receipt.disposablePaths=$files
+        [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+        $first=@(Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion)
+        $second=@(Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion)
+        $first.Count | Should -Be 2
+        $second | Should -Be $first
+        @(Get-ChildItem -LiteralPath (Join-Path $f.root '.agent-1c/diagnostic-artifacts') -Filter '*.json').Count | Should -Be 2
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 257
+    }
+
+    It 'rechecks workflow references, retained dependencies and exact file bytes after preview' {
+        $f = New-AgentTaskFixture 'Доказательства'
+        $manifest = Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion
+        $entry = @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root)[0]
+        $script:AgentTaskProtectedPath = $f.path
+        Mock Get-ItlArtifactProtectedPaths { return @($script:AgentTaskProtectedPath) }
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*current workflow evidence*'
+        Mock Get-ItlArtifactProtectedPaths { return @() }
+        $proof = Join-Path $f.root $f.receipt.retainedPaths[0]
+        $originalProof = [IO.File]::ReadAllBytes($proof)
+        [IO.File]::WriteAllText($proof, 'changed proof')
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*original changed*'
+        [IO.File]::WriteAllBytes($proof, $originalProof)
+        [IO.File]::WriteAllBytes($f.path, [byte[]](0, 254, 13, 10, 1, 2))
+        [IO.File]::SetLastWriteTimeUtc($f.path, ([datetime]$entry.diagnosticRecord.modifiedUtc).ToUniversalTime())
+        # Repeating completion must not re-enroll replacement bytes at an old path.
+        (Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion) | Should -Be $manifest
+        { Remove-ItlDiagnosticArtifact -Entry $entry } | Should -Throw '*hash changed*'
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
+    It 'protects evidence-only completions from another completed task' {
+        $f = New-AgentTaskFixture 'Только доказательства'
+        $f.receipt.disposablePaths = @()
+        $f.receipt.retainedPaths += $f.relative
+        [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+        $retainedManifest = Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion
+        (Test-Path -LiteralPath $retainedManifest) | Should -BeTrue
+        $otherCompletion = "$($f.taskRoot)/other-completion.json"
+        $f.receipt.disposablePaths=@($f.relative)
+        $f.receipt.retainedPaths=@("$($f.taskRoot)/evidence/result.json")
+        [IO.File]::WriteAllText((Join-Path $f.root $otherCompletion), ($f.receipt | ConvertTo-Json))
+        Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $otherCompletion | Out-Null
+        @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $f.root).Count | Should -Be 0
+        (Invoke-ItlDiagnosticArtifactCleanup -ProjectRoot $f.root).removedBytes | Should -Be 0
+        (Test-Path -LiteralPath $f.path) | Should -BeTrue
+    }
+
+    It 'rejects linked task roots and linked temporary directories' {
+        $f = New-AgentTaskFixture 'Junction'
+        $foreign = Join-Path $TestDrive 'Чужая папка с пробелами'
+        New-Item -ItemType Directory -Path $foreign -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $foreign 'foreign.txt'), 'foreign input')
+        $link = Join-Path $f.root "$($f.taskRoot)/tmp/linked"
+        New-Item -ItemType Junction -Path $link -Target $foreign | Out-Null
+        try {
+            $f.receipt.disposablePaths=@("$($f.taskRoot)/tmp/linked/foreign.txt")
+            [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+            { Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion } | Should -Throw '*linked*'
+        } finally { [IO.Directory]::Delete($link) }
+        (Test-Path -LiteralPath (Join-Path $foreign 'foreign.txt')) | Should -BeTrue
     }
 }
 

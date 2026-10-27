@@ -1,5 +1,6 @@
 ﻿# Candidate worktrees, qualification recovery, and develop/master delivery orchestration.
 . (Join-Path $PSScriptRoot 'source-delivery-integrity.ps1')
+. (Join-Path $PSScriptRoot 'source-proof-json.ps1')
 
 function New-DeliveryWorktree {
     param([string]$StartPoint, [string]$Purpose)
@@ -614,7 +615,8 @@ function Publish-AccumulatedDevelop {
             } elseif (-not $frozenAttempt.PSObject.Properties['replanQueueScope'] -or [string]$frozenAttempt.replanQueueScope -cne 'Frozen') {
                 throw 'DELIVERY_REPLAN_CHECKPOINT_CHANGED: replacement queue scope differs; continue the active plan shown by Status.'
             }
-        } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen') {
+        } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen' -and
+            (-not $frozenAttempt.PSObject.Properties['planId'] -or [string]$frozenAttempt.planId -cne $Replan)) {
             throw 'DELIVERY_REPLAN_SCOPE_CHANGED: repeat this replacement with -ReplanQueueScope Frozen.'
         }
         if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {
@@ -936,14 +938,6 @@ function Publish-AccumulatedDevelop {
             Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged."
         }
     }
-}
-
-function Get-DeliveryFileSha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
-    $algorithm = [Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
-    finally { $algorithm.Dispose(); $stream.Dispose() }
 }
 
 function Publish-ReleaseVersion {

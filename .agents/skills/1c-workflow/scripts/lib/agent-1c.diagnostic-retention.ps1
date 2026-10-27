@@ -21,10 +21,42 @@ function Resolve-ItlDiagnosticArtifactPath {
                 if ([IO.Path]::GetExtension($leaf) -notin @('.json', '.jsonl', '.bsl', '.xml', '.txt', '.log', '.md', '.csv', '.bytes') -or
                     $RelativePath -match '(^|[\\/])source-snapshots([\\/]|$)') { throw 'Only superseded check artifacts are disposable; retain source snapshots, databases, traces and executable helpers.' }
             }
+            'agent-task-temp' {
+                if (-not (Test-ItlArtifactPathInside -Root (Join-Path $ProjectRoot 'build/agent-artifacts') -Path $full)) { throw 'Agent task files must stay below build/agent-artifacts.' }
+                if ([IO.Path]::GetExtension($leaf) -in @('.1cd', '.dt', '.etl', '.db', '.sqlite', '.sqlite3', '.mdf', '.ndf', '.ldf') -or
+                    $leaf -match '\.(?:db|sqlite|sqlite3)-(?:wal|shm|journal)$' -or
+                    $RelativePath -match '(^|[\\/])(?:source-snapshots|handoffs)([\\/]|$)') { throw "Retain databases, DT backups, original traces, source snapshots and handoffs: $RelativePath" }
+            }
             default { throw 'Unknown diagnostic artifact kind.' }
         }
     }
     return $full
+}
+
+function Get-ItlAgentTaskArtifactContext {
+    param([string]$ProjectRoot, [object]$Receipt, [string]$CompletionPath)
+    $relative = [string]$Receipt.taskRoot
+    if (-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw 'A project-relative agent taskRoot is required.' }
+    $artifactHome = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'build/agent-artifacts'))
+    $root = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $relative)).TrimEnd('\', '/')
+    if (-not [string]::Equals((Split-Path -Parent $root), $artifactHome, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $root -PathType Container) -or
+        -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { throw 'Agent taskRoot must be one unlinked task directory below build/agent-artifacts.' }
+    $temporary = Join-Path $root 'tmp'
+    if ((Test-Path -LiteralPath $temporary) -and (-not (Test-Path -LiteralPath $temporary -PathType Container) -or
+        -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $temporary))) { throw 'Agent task tmp directory is linked or invalid.' }
+    $completion = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $CompletionPath
+    if (-not (Test-ItlArtifactPathInside -Root $root -Path $completion) -or
+        (Test-ItlArtifactPathInside -Root $temporary -Path $completion)) { throw 'Agent completion receipt must stay in its task directory outside tmp.' }
+    return [pscustomobject]@{ root = $root; temporary = $temporary }
+}
+
+function Assert-ItlAgentTaskDisposablePath {
+    param([string]$ProjectRoot, [object]$Context, [string]$RelativePath)
+    if (-not $RelativePath -or [IO.Path]::IsPathRooted($RelativePath) -or $RelativePath.Contains(':')) { throw 'Agent disposable path must be project-relative.' }
+    $path = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $RelativePath))
+    if (-not (Test-ItlArtifactPathInside -Root $Context.temporary -Path $path)) { throw "Agent disposable file must stay inside its own task tmp directory: $RelativePath" }
+    return $path
 }
 
 function Get-ItlSupersededAttemptContext {
@@ -56,35 +88,64 @@ function Register-ItlDiagnosticArtifacts {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string]$Producer,
         [Parameter(Mandatory)][string]$TerminalReceipt,
-        [Parameter(Mandatory)][ValidateSet('native-temp', 'derived-trace', 'superseded-attempt')][string]$Kind,
-        [Parameter(Mandatory)][string[]]$DisposablePath, [string[]]$RetainedPath = @())
-    if (-not $Producer.Trim() -or $DisposablePath.Count -lt 1 -or $DisposablePath.Count -gt 256) { throw 'Diagnostic producer and 1..256 disposable files are required.' }
+        [Parameter(Mandatory)][ValidateSet('native-temp', 'derived-trace', 'superseded-attempt', 'agent-task-temp')][string]$Kind,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$DisposablePath, [string[]]$RetainedPath = @())
+    if (-not $Producer.Trim() -or ($DisposablePath.Count -lt 1 -and $Kind -ne 'agent-task-temp') -or $DisposablePath.Count -gt 256) { throw 'Diagnostic producer and 1..256 disposable files are required; an agent task may retain evidence without disposable files.' }
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
     $receiptPath = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $TerminalReceipt
     $receipt = [IO.File]::ReadAllText($receiptPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
     if ($receipt.status -notin @('passed', 'succeeded', 'failed', 'cancelled', 'completed') -or $receipt.cleanupConfirmed -ne $true) { throw 'A terminal receipt with cleanupConfirmed=true is required.' }
     $attempt = if ($Kind -eq 'superseded-attempt') { Get-ItlSupersededAttemptContext -ProjectRoot $ProjectRoot -Receipt $receipt } else { $null }
+    $task = if ($Kind -eq 'agent-task-temp') { Get-ItlAgentTaskArtifactContext -ProjectRoot $ProjectRoot -Receipt $receipt -CompletionPath $TerminalReceipt } else { $null }
     $retainedPaths = @($TerminalReceipt) + $RetainedPath
     if ($null -ne $attempt) { $retainedPaths += $attempt.successor }
+    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
+    $path = ''
+    $completionHash = ''
+    if ($null -ne $task) {
+        # A repeated completion reuses its immutable batch even after deletion.
+        # Identity includes the receipt bytes and exact canonical batch/dependencies.
+        $disposableKeys = @($DisposablePath | ForEach-Object { (Assert-ItlAgentTaskDisposablePath -ProjectRoot $ProjectRoot -Context $task -RelativePath $_).ToUpperInvariant() } | Sort-Object -Unique)
+        $retainedKeys = @($retainedPaths | ForEach-Object { (Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $_).ToUpperInvariant() } | Sort-Object -Unique)
+        if (@($disposableKeys | Where-Object { $_ -in $retainedKeys }).Count) { throw 'A retained original cannot also be disposable.' }
+        $completionHash = (Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash
+        $identity = [ordered]@{ root = $ProjectRoot.ToUpperInvariant(); producer = $Producer; receipt = $receiptPath.ToUpperInvariant(); hash = $completionHash; files = $disposableKeys; retained = $retainedKeys }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $id = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($identity | ConvertTo-Json -Compress -Depth 4))))).Replace('-', '').ToLowerInvariant().Substring(0, 32) } finally { $sha.Dispose() }
+        $path = Join-Path $root ($id + '.json')
+        if (Test-Path -LiteralPath $path) {
+            if (-not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $path) -or (Get-Item -LiteralPath $path).Length -gt 262144) { throw 'Saved agent task manifest is linked or oversized.' }
+            $saved = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $savedFiles = @($saved.files | ForEach-Object { ([IO.Path]::GetFullPath((Join-Path $ProjectRoot $_.path))).ToUpperInvariant() } | Sort-Object -Unique)
+            $savedRetained = @($saved.retained | ForEach-Object { ([IO.Path]::GetFullPath((Join-Path $ProjectRoot $_.path))).ToUpperInvariant() } | Sort-Object -Unique)
+            if ($saved.schemaVersion -ne 1 -or $saved.projectRoot -ine $ProjectRoot -or $saved.kind -ne $Kind -or $saved.status -ne 'completed' -or
+                $saved.cleanupConfirmed -ne $true -or $saved.completionSha256 -ine $completionHash -or $saved.taskRoot -cne $receipt.taskRoot -or
+                ($savedFiles -join "`n") -cne ($disposableKeys -join "`n") -or ($savedRetained -join "`n") -cne ($retainedKeys -join "`n")) { throw 'Saved agent task manifest does not match its immutable completion.' }
+            return $path
+        }
+    }
     $retained = @($retainedPaths | Select-Object -Unique | ForEach-Object { Get-ItlDiagnosticFileRecord -ProjectRoot $ProjectRoot -RelativePath $_ })
     if ($Kind -eq 'derived-trace' -and @($retained | Where-Object { [IO.Path]::GetExtension($_.path) -eq '.etl' }).Count -eq 0) { throw 'Derived traces require a retained original ETL.' }
     $files = @($DisposablePath | Select-Object -Unique | ForEach-Object {
         $target = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $_ -Kind $Kind
+        if ($null -ne $task) { Assert-ItlAgentTaskDisposablePath -ProjectRoot $ProjectRoot -Context $task -RelativePath $_ | Out-Null }
         if ($null -ne $attempt -and -not (Test-ItlArtifactPathInside -Root $attempt.root -Path $target)) { throw 'Disposable file is outside its completed attempt.' }
         foreach ($source in $retained) {
             if ($target -ieq (Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $source.path)) { throw 'A retained original cannot also be disposable.' }
         }
         Get-ItlDiagnosticFileRecord -ProjectRoot $ProjectRoot -RelativePath $_ -Kind $Kind
     })
-    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
     if (-not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path (Split-Path -Parent $root))) { throw 'Unsafe diagnostic manifest parent.' }
     if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root | Out-Null }
     if (-not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { throw 'Unsafe diagnostic manifest root.' }
     $manifest = [ordered]@{ schemaVersion = 1; projectRoot = $ProjectRoot; producer = $Producer; status = 'completed'; cleanupConfirmed = $true; completedUtc = [datetime]::UtcNow.ToString('o'); kind = $Kind; retained = $retained; files = $files }
     if ($null -ne $attempt) { $manifest.attemptRoot = [string]$receipt.attemptRoot; $manifest.supersededBy = $attempt.successor }
-    $path = Join-Path $root (([guid]::NewGuid().ToString('N')) + '.json')
+    if ($null -ne $task) { $manifest.taskRoot = [string]$receipt.taskRoot; $manifest.completionPath = $TerminalReceipt; $manifest.completionSha256 = $completionHash }
+    if (-not $path) { $path = Join-Path $root (([guid]::NewGuid().ToString('N')) + '.json') }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 8))
+    if ($null -ne $task -and $bytes.Length -gt 262144) { throw 'Agent task manifest exceeds 256 KiB; split the task evidence into bounded completion receipts.' }
     $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    try { $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 8)); $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
     return $path
 }
 
@@ -97,6 +158,19 @@ function Complete-ItlDiagnosticArtifacts {
     if ($receipt.cleanupConfirmed -ne $true -or $receipt.status -notin @('completed', 'succeeded', 'passed', 'failed', 'cancelled')) { throw 'Terminal owned-process cleanup must finish before retention.' }
     $files = @($receipt.disposablePaths)
     if ($files.Count -gt 4096) { throw 'Diagnostic completion exceeds 4096 individual files.' }
+    if ($receipt.kind -eq 'agent-task-temp') {
+        $task = Get-ItlAgentTaskArtifactContext -ProjectRoot $ProjectRoot -Receipt $receipt -CompletionPath $CompletionPath
+        $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $retained = @(@($CompletionPath) + @($receipt.retainedPaths) | ForEach-Object { Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $_ })
+        foreach ($relative in $files) {
+            $target = Assert-ItlAgentTaskDisposablePath -ProjectRoot $ProjectRoot -Context $task -RelativePath $relative
+            if (-not $seen.Add($target) -or $target -in $retained) { throw 'Agent task files must be unique and cannot also be retained originals.' }
+        }
+        if ($files.Count -eq 0) {
+            Register-ItlDiagnosticArtifacts -ProjectRoot $ProjectRoot -Producer $receipt.producer -TerminalReceipt $CompletionPath -Kind $receipt.kind -DisposablePath @() -RetainedPath @($receipt.retainedPaths)
+            return
+        }
+    }
     for ($offset = 0; $offset -lt $files.Count; $offset += 256) {
         $batch = @($files[$offset..([Math]::Min($offset + 255, $files.Count - 1))])
         Register-ItlDiagnosticArtifacts -ProjectRoot $ProjectRoot -Producer $receipt.producer -TerminalReceipt $CompletionPath -Kind $receipt.kind -DisposablePath $batch -RetainedPath @($receipt.retainedPaths)
@@ -116,15 +190,18 @@ function Get-ItlDiagnosticArtifactPlan {
                 -not (Test-ItlArtifactPathWithoutReparse -Root $root -Path $file.FullName)) { continue }
             $manifest = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
             if ($manifest.schemaVersion -ne 1 -or $manifest.projectRoot -ine $ProjectRoot -or $manifest.status -ne 'completed' -or $manifest.cleanupConfirmed -ne $true -or
-                $manifest.kind -notin @('native-temp', 'derived-trace', 'superseded-attempt') -or @($manifest.files).Count -gt 256 -or @($manifest.retained).Count -lt 1) { continue }
+                $manifest.kind -notin @('native-temp', 'derived-trace', 'superseded-attempt', 'agent-task-temp') -or @($manifest.files).Count -gt 256 -or @($manifest.retained).Count -lt 1) { continue }
             $attempt = if ($manifest.kind -eq 'superseded-attempt') { Get-ItlSupersededAttemptContext -ProjectRoot $ProjectRoot -Receipt $manifest } else { $null }
+            $task = if ($manifest.kind -eq 'agent-task-temp') { Get-ItlAgentTaskArtifactContext -ProjectRoot $ProjectRoot -Receipt $manifest -CompletionPath $manifest.completionPath } else { $null }
             $completed = ([datetime]$manifest.completedUtc).ToUniversalTime()
-            if ($completed -gt [datetime]::UtcNow.AddDays(-$MinimumAgeDays)) { continue }
+            $age = if ($null -ne $task) { 0 } else { $MinimumAgeDays }
+            if ($completed -gt [datetime]::UtcNow.AddDays(-$age)) { continue }
             $manifestHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
             foreach ($item in @($manifest.files)) {
                 $absolute = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$item.path)))
                 if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) { continue }
                 $path = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $ProjectRoot -RelativePath $item.path -Kind $manifest.kind
+                if ($null -ne $task) { Assert-ItlAgentTaskDisposablePath -ProjectRoot $ProjectRoot -Context $task -RelativePath $item.path | Out-Null }
                 if ($null -ne $attempt -and -not (Test-ItlArtifactPathInside -Root $attempt.root -Path $path)) { continue }
                 if (Test-ItlArtifactProtected -Path $path -ProtectedPaths $ProtectedPaths) { continue }
                 $current = Get-Item -LiteralPath $path -Force
@@ -167,6 +244,11 @@ function Remove-ItlDiagnosticArtifact {
     if ($manifest.kind -eq 'superseded-attempt') {
         $attempt = Get-ItlSupersededAttemptContext -ProjectRoot $Entry.root -Receipt $manifest
         if (-not (Test-ItlArtifactPathInside -Root $attempt.root -Path $path)) { throw 'Disposable file is outside its completed attempt.' }
+    }
+    if ($manifest.kind -eq 'agent-task-temp') {
+        $task = Get-ItlAgentTaskArtifactContext -ProjectRoot $Entry.root -Receipt $manifest -CompletionPath $manifest.completionPath
+        Assert-ItlAgentTaskDisposablePath -ProjectRoot $Entry.root -Context $task -RelativePath $record[0].path | Out-Null
+        if (Test-ItlArtifactProtected -Path $path -ProtectedPaths @(Get-ItlArtifactProtectedPaths -ProjectRoot $Entry.root)) { throw 'Agent task target is current workflow evidence or recovery data.' }
     }
     if ($path -ine $Entry.path) { throw 'Diagnostic target differs from its manifest.' }
     if (Test-ItlArtifactProtected -Path $path -ProtectedPaths @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $Entry.root)) { throw 'Diagnostic target is a retained dependency.' }

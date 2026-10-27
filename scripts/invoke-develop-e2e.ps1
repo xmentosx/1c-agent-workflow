@@ -20,6 +20,7 @@ $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot 'develop-e2e-scenarios.ps1')
 . (Join-Path $PSScriptRoot 'develop-e2e-qualification.ps1')
 . (Join-Path $PSScriptRoot 'source-e2e-manifest-repair.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-workflow-update.ps1')
 . (Join-Path $PSScriptRoot "develop-configuration-rejection.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
 . (Join-Path $PSScriptRoot 'source-proof-json.ps1')
@@ -252,6 +253,20 @@ function Invoke-InstalledAction {
     if ([string]$summary.action -ne $Action) { throw "$Name returned a summary for another action: $([string]$summary.action)" }
     if (-not $AllowFailure -and [string]$summary.status -ne "succeeded") { throw "$Name did not complete successfully: $([string]$summary.error)" }
     return $result
+}
+
+function Invoke-DevelopWorkflowUpdate {
+    param([string]$Root, [string]$CandidateRoot, [string]$AgentTarget, [int]$TimeoutSeconds=3600)
+    $updateStarted = [datetime]::UtcNow
+    $updateClient = Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
+    $update = Invoke-SourceE2EWorkflowUpdate -Root $Root -CandidateRoot $CandidateRoot -AgentTarget $updateClient -TimeoutSeconds $TimeoutSeconds -InstalledOperation {
+        param($Budget)
+        Invoke-InstalledAction -Name 'upgrade-update-workflow-initial' -Root $Root -Action 'update-workflow' -TimeoutSeconds $Budget -AllowFailure
+    } -SourceOperation {
+        param($ScriptPath,$Arguments,$Budget)
+        Invoke-DevelopProcess -Name 'upgrade-update-workflow-source-continuation' -WorkingRoot $Root -ScriptPath $ScriptPath -Arguments $Arguments -TimeoutSeconds $Budget -AllowFailure
+    }
+    $steps.Add([ordered]@{ name='upgrade-update-workflow'; status='passed'; startedAt=$updateStarted.ToString('o'); durationMs=$update.durationMs; attempts=@($update.initial,$update.continuation | Where-Object { $null -ne $_ }) }) | Out-Null
 }
 
 function Read-CompactSummary {
@@ -535,7 +550,7 @@ try {
         if ($LASTEXITCODE -ne 0 -or $standBranchHeadAtStart -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E branch HEAD is unavailable." }
         $standBranchCleanAtStart = $true
 
-        [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
+        Invoke-DevelopWorkflowUpdate -Root $ProjectRoot -CandidateRoot $CandidateRoot -AgentTarget $AgentTarget
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
         if ($positiveStandRoot) {

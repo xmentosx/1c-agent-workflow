@@ -2,6 +2,14 @@
 
 Describe 'Incremental delivery acceptance' {
 BeforeEach {
+        # These repositories own synthetic locks and canonical artifact caches.
+        # The outer Develop gate exports its real artifacts to Pester; retain
+        # those caller overrides outside each fixture's discovery scope.
+        $script:incrementalCallerArtifactOverrides = @{}
+        foreach ($name in @('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE')) {
+            $script:incrementalCallerArtifactOverrides[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+        }
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
@@ -15,6 +23,12 @@ BeforeEach {
         $script:developCurrentStaticProof = $null
         $script:sourceE2EArtifactBinding = $null
         $script:sourceE2EArtifactBindingPath = ''
+    }
+
+AfterEach {
+        foreach ($name in $script:incrementalCallerArtifactOverrides.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $script:incrementalCallerArtifactOverrides[$name], 'Process')
+        }
     }
 
 It 'plans real Git changes with the exact native selection (<Change>)' -TestCases @(

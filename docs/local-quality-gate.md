@@ -1086,6 +1086,18 @@ artifacts, включая reexec; console marker остаётся диагнос
 `release-e2e.json`. Владелец E2E-очистки сохраняет эти worktrees, их ветки,
 pending state и файлы; остальные stale-фикстуры проверяются и очищаются как прежде.
 
+Develop upgrade и подготовка Release-копии сначала вызывают установленный
+`update-workflow`. Только свежий terminal status того же compact run с
+`UI_TESTING_POLICY_LEGACY_SNAPSHOT` или `VERIFICATION_MODEL_POLICY_LEGACY_SNAPSHOT`,
+тем же project root и exact candidate допускает одно продолжение через
+`scripts/update-installed-workflow.ps1 -Recovery update -AgentTarget <тот же клиент>`.
+Оно использует оставшийся исходный бюджет. Исходный отказ и оба native журнала
+сохраняются; обычный source-side updater остаётся единственным владельцем
+snapshot/receipt, resume, rollback и rollout. Постороннее, неоднозначное или
+устаревшее свидетельство, отказ продолжения и исчерпанный бюджет сохраняют отказ
+E2E. Exact installed commit, неизменность workload и все последующие lifecycle
+проверки остаются обязательными; исходный N-1 путь не заменяется pre-update.
+
 После негативного исхода E2E обязательно выполняет обычный успешный `upgrade`
 на `positiveProjectRoot`: update, refresh, fresh passed check, экспорт и чистый
 tracked state. Этот стенд имеет собственный `release-e2e.json` с отдельными
@@ -1204,8 +1216,8 @@ checkpoint остаётся диагностируемым отказом. Уд�
 проверяет manifest SHA/identity, active/retained записи и отсутствие reparse points.
 `Status` показывает count, bytes,
 возраст, последнюю ошибку и следующую попытку. Failed plans сохраняют ресурсы
-только для двух новейших plan и не дольше семи дней; evidence после уборки не
-удаляется.
+только для двух новейших plan и не дольше семи дней. Proof и stage evidence
+после уборки сохраняются; срок хранения крупных recovery payloads описан ниже.
 
 `Cleanup` также вызывает владельца qualification-копий в `FreshProjectsRoot/q Проект`.
 Современная Develop-копия удаляется только после terminal proof и утилизации базы.
@@ -1280,6 +1292,10 @@ seed DT, вынесенный по точному SHA, восстанавлив�
 включаются. Никаких passed-отметок или публикации этот режим не создаёт.
 Если данные изменились после первого архива, сохраняются обе версии: исходный
 архив не перезаписывается, новый вызов получает другой DiagnosticRoot.
+
+Срок хранения крупных recovery payloads и read-only предпросмотр ручной уборки:
+[source recovery retention](source-recovery-retention.md). Proofs, indexes и
+stage evidence сохраняются; publication sweeps не удаляют recovery payloads.
 
 Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
 `Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
