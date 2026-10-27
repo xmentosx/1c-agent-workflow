@@ -110,6 +110,8 @@ Describe 'Memory admission remains inside the Pester scheduler' {
         $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'),[ref]$tokens,[ref]$errors)
         $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-PesterMemoryWorkerLimit'},$true)
         . ([scriptblock]::Create($definition.Extent.Text))
+        $snapshotDefinition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-PesterMemorySnapshot'},$true)
+        . ([scriptblock]::Create($snapshotDefinition.Extent.Text))
     }
     It 'limits only owned admission until memory permits progress: <Free>' -ForEach @(
         @{Free=0L;Expected=0},@{Free=1300MB;Expected=1},@{Free=2500MB;Expected=2},@{Free=8GB;Expected=3},@{Free=-1L;Expected=0}
@@ -120,6 +122,16 @@ Describe 'Memory admission remains inside the Pester scheduler' {
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 0 | Should -Be 0
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 3GB | Should -Be 1
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 8GB | Should -Be 3
+    }
+    It 'reads commit headroom above Int32 without treating healthy metrics as unavailable' {
+        Mock Get-CimInstance { [pscustomobject]@{AvailableBytes=8GB;CommitLimit=80GB;CommittedBytes=60GB} }
+        Remove-Variable pesterMemoryObservedAt -Scope Script -ErrorAction SilentlyContinue
+        $snapshot=Get-PesterMemorySnapshot
+        $snapshot.availableBytes | Should -Be 8GB
+        $snapshot.commitHeadroomBytes | Should -Be 12GB
+        Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes $snapshot.availableBytes -CommitHeadroomBytes $snapshot.commitHeadroomBytes | Should -Be 3
+        Remove-Variable pesterMemoryObservedAt -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable pesterMemorySnapshot -Scope Script -ErrorAction SilentlyContinue
     }
     It 'rejects a cheap routing defect before native work and resumes the original task after correction' {
         $root=New-PreflightFixture 'Routing failure' -Fail

@@ -42,7 +42,7 @@ function Get-PesterMemorySnapshot {
         ([DateTime]::UtcNow - $script:pesterMemoryObservedAt).TotalSeconds -ge 2) {
         try {
             $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction Stop
-            $headroom = [long][math]::Max(0, ([double]$memory.CommitLimit * 0.90 - [double]$memory.CommittedBytes))
+            $headroom = [long][math]::Max(0.0, ([double]$memory.CommitLimit * 0.90 - [double]$memory.CommittedBytes))
             $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=[long]$memory.AvailableBytes;commitHeadroomBytes=$headroom}
         } catch { $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=-1L;commitHeadroomBytes=-1L} }
         $script:pesterMemoryObservedAt = [DateTime]::UtcNow
