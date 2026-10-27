@@ -1,5 +1,111 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryFrozen.TestSupport.ps1') }
+Describe 'Pinned frozen repair admission' {
+    BeforeAll {
+        foreach($definition in @(Get-DeliveryFunctionDefinitions @('Resolve-DeliveryFrozenRepairs'))){. ([scriptblock]::Create($definition.Extent.Text))}
+        function Get-SourceRegistrationSnapshot { [pscustomobject]@{entries=$script:repairSnapshot} }
+        function Invoke-DeliveryGit {param([string[]]$Arguments,[switch]$AllowFailure) [pscustomobject]@{exitCode=1}}
+    }
+    BeforeEach {
+        $script:repairAttempt=[pscustomobject]@{candidate=('a'*40);queue=@([pscustomobject]@{id='alpha';base=('e'*40);head=('a'*40)})}
+        $script:repairSnapshot=@(
+            [pscustomobject]@{id='alpha';base=('e'*40);head=('d'*40)},
+            [pscustomobject]@{id='repair';base=('a'*40);head=('b'*40)},
+            [pscustomobject]@{id='beta';base=('e'*40);head=('c'*40)})
+        Mock Invoke-DeliveryGit {
+            [pscustomobject]@{exitCode=$(if($Arguments[2] -ceq ('a'*40) -and $Arguments[3] -ceq ('b'*40)){0}else{1})}
+        }
+    }
+    It 'selects only the exact registered repair while retaining original pairs' {
+        $selected=@(Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('b'*40)))
+        @($selected.id)|Should -Be @('repair')
+        $selected[0].base|Should -BeExactly $script:repairAttempt.candidate
+        $script:repairAttempt.queue[0].head|Should -BeExactly ('a'*40)
+    }
+    It 'refuses an invalid <selector> before admitting a repair' -ForEach @(
+        @{selector='repair';code='INVALID'},@{selector=('repair@'+('f'*40));code='NOT_REGISTERED'},@{selector=('alpha@'+('d'*40));code='REPLACES_MEMBER'}
+    ) {
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @($selector)}|Should -Throw ("*DELIVERY_FROZEN_REPAIR_$code*")
+    }
+    It 'refuses duplicate ids and a foreign registration base' {
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @(('repair@'+('b'*40)),('repair@'+('b'*40)))}|Should -Throw '*REPAIR_DUPLICATE*'
+        $script:repairSnapshot[1].base=('c'*40)
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('b'*40))}|Should -Throw '*REPAIR_NOT_REGISTERED*'
+    }
+    It 'refuses a repair carrying an unselected later head' {
+        Mock Invoke-DeliveryGit {
+            [pscustomobject]@{exitCode=$(if($Arguments[3] -ceq ('b'*40) -and $Arguments[2] -cin @(('a'*40),('c'*40))){0}else{1})}
+        }
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('b'*40))}|Should -Throw '*REPAIR_CONTAINS_LATER_QUEUE*'
+    }
+    It 'requires actual ancestry even when the registration names the expected base' {
+        Mock Invoke-DeliveryGit {[pscustomobject]@{exitCode=1}}
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('b'*40))}|Should -Throw '*REPAIR_BASE_CHANGED*'
+    }
+    It 'continues the accepted pin without consulting a later queue' {
+        $script:repairAttempt.queue+=@($script:repairSnapshot[1])
+        Mock Get-SourceRegistrationSnapshot {throw 'The live queue must not replace accepted membership'}
+        @(Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('b'*40)) -Continuation).Count|Should -Be 0
+        {Resolve-DeliveryFrozenRepairs -Attempt $script:repairAttempt -Selectors @('repair@'+('c'*40)) -Continuation}|Should -Throw '*REPAIR_SCOPE_CHANGED*'
+    }
+}
+
 Describe 'Explicit develop plan replacement' {
+    It 'appends only a pinned registered repair and retains advanced records through publication' {
+        $fixture=$null;$prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture=New-FrozenFixture
+            $master=@(& git --git-dir=$($fixture.remote) for-each-ref '--format=%(refname) %(objectname)' refs/heads/master)
+            $alpha=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha')|Out-Null
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER='true'
+            [void](Invoke-FrozenDelivery $fixture PublishDevelop -AllowFailure)
+            $original=Read-FrozenAttempt $fixture;$id=[string]$original.planId
+            $checkpoint=Join-Path $fixture.root '.git/itl/publication-attempts/develop.json'
+            $before=[IO.File]::ReadAllText($checkpoint)
+            $plan=Join-Path $fixture.root ".git/itl/plans/v1/$id.json";$planBytes=[IO.File]::ReadAllText($plan)
+            $advanced=Add-FrozenTask $fixture advanced
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha')|Out-Null
+            & git -C $fixture.root switch --quiet -c beta $fixture.base
+            $beta=Add-FrozenTask $fixture beta
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','beta')|Out-Null
+            & git -C $fixture.root switch --quiet -c repair $alpha
+            $repair=Add-FrozenTask $fixture repair
+            $base=$fixture.base
+            try{$fixture.base=$alpha;Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','repair')|Out-Null}finally{$fixture.base=$base}
+            $options=@('-Replan',$id,'-ReplanQueueScope','Frozen')
+            $bad=Invoke-FrozenDelivery $fixture PublishDevelop ($options+@('-FrozenRepair',('repair@'+('a'*40)))) -AllowFailure
+            $bad.stderr|Should -Match 'DELIVERY_FROZEN_REPAIR_NOT_REGISTERED'
+            [IO.File]::ReadAllText($checkpoint)|Should -BeExactly $before
+            $bad=Invoke-FrozenDelivery $fixture PublishDevelop ($options+@('-FrozenRepair',("alpha@$advanced"))) -AllowFailure
+            $bad.stderr|Should -Match 'DELIVERY_FROZEN_REPAIR_REPLACES_MEMBER'
+            [IO.File]::ReadAllText($checkpoint)|Should -BeExactly $before
+            $options+=@('-FrozenRepair',("repair@$repair"))
+            [void](Invoke-FrozenDelivery $fixture PublishDevelop $options -AllowFailure)
+            $replacement=Read-FrozenAttempt $fixture
+            $replacement.planId|Should -Not -BeExactly $id
+            @($replacement.queue.id)|Should -Be @('alpha','repair')
+            @($replacement.queue|Where-Object id -eq alpha)[0].head|Should -BeExactly $alpha
+            @($replacement.queue|Where-Object id -eq repair)[0].base|Should -BeExactly $alpha
+            @($replacement.queue|Where-Object id -eq repair)[0].head|Should -BeExactly $repair
+            foreach($head in @($alpha,$repair)){& git -C $fixture.root merge-base --is-ancestor $head $replacement.candidate;$LASTEXITCODE|Should -Be 0}
+            foreach($head in @($advanced,$beta)){& git -C $fixture.root merge-base --is-ancestor $head $replacement.candidate;$LASTEXITCODE|Should -Be 1}
+            & git -C $fixture.root switch --quiet -c repair-later $repair
+            $later=Add-FrozenTask $fixture repair-later
+            try{$fixture.base=$alpha;Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','repair')|Out-Null}finally{$fixture.base=$base}
+            $bad=Invoke-FrozenDelivery $fixture PublishDevelop @('-Replan',$id,'-ReplanQueueScope','Frozen','-FrozenRepair',("repair@$later")) -AllowFailure
+            $bad.stderr|Should -Match 'DELIVERY_FROZEN_REPAIR_SCOPE_CHANGED'
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$null
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop $options).stdout|ConvertFrom-Json
+            $published.commit|Should -BeExactly $replacement.candidate
+            $published.planId|Should -BeExactly $replacement.planId
+            foreach($pair in @(@('alpha',$advanced),@('beta',$beta),@('repair',$later))){
+                (& git -C $fixture.root rev-parse ("refs/itl/develop-queue/"+$pair[0]+'/head')).Trim()|Should -BeExactly $pair[1]
+            }
+            [IO.File]::ReadAllText($plan)|Should -BeExactly $planBytes
+            @(& git --git-dir=$($fixture.remote) for-each-ref '--format=%(refname) %(objectname)' refs/heads/master)|Should -Be $master
+            @(& git -C $fixture.root status --porcelain)|Should -BeNullOrEmpty
+        }finally{$env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior;Remove-DeliveryFixture $fixture}
+    }
     It 'transfers frozen recovery to published develop and preserves late and advanced registrations' {
         $fixture=$null; $prior=$env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {

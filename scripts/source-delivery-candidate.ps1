@@ -566,6 +566,38 @@ function Complete-InterruptedDevelopPublication {
     }
 }
 
+function Resolve-DeliveryFrozenRepairs {
+    param([object]$Attempt,[string[]]$Selectors,[switch]$Continuation)
+    $selected=@();$ids=@()
+    $snapshot=if(-not $Continuation){Get-SourceRegistrationSnapshot}else{$null}
+    foreach($selector in $Selectors){
+        if($selector -cnotmatch '^([a-z0-9][a-z0-9._-]*)@([a-f0-9]{40})$'){throw 'DELIVERY_FROZEN_REPAIR_INVALID: pin each registered repair as queue-id@40-character-head.'}
+        $id=$Matches[1];$head=$Matches[2]
+        if($id -cin $ids){throw 'DELIVERY_FROZEN_REPAIR_DUPLICATE'}
+        $ids+=@($id)
+        if($Continuation){
+            if(@($Attempt.queue|Where-Object{[string]$_.id -ceq $id -and [string]$_.head -ceq $head}).Count -ne 1){throw 'DELIVERY_FROZEN_REPAIR_SCOPE_CHANGED: continue the exact accepted replacement plan.'}
+            continue
+        }
+        if($id -cin @($Attempt.queue.id)){throw 'DELIVERY_FROZEN_REPAIR_REPLACES_MEMBER: original frozen base/head pairs cannot be replaced.'}
+        $entry=@($snapshot.entries|Where-Object{[string]$_.id -ceq $id -and [string]$_.head -ceq $head})
+        if($entry.Count -ne 1 -or [string]$entry[0].base -cne [string]$Attempt.candidate){throw 'DELIVERY_FROZEN_REPAIR_NOT_REGISTERED: the exact repair must be registered against the original frozen candidate.'}
+        $selected+=@($entry[0])
+    }
+    if(-not $Continuation){
+        foreach($entry in $selected){
+            if((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$Attempt.candidate,[string]$entry.head) -AllowFailure).exitCode -ne 0){throw 'DELIVERY_FROZEN_REPAIR_BASE_CHANGED'}
+            foreach($other in @($snapshot.entries|Where-Object{[string]$_.id -cnotin $ids})){
+                if((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$other.head,[string]$entry.head) -AllowFailure).exitCode -eq 0 -and
+                    (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$other.head,[string]$Attempt.candidate) -AllowFailure).exitCode -ne 0){
+                    throw 'DELIVERY_FROZEN_REPAIR_CONTAINS_LATER_QUEUE: the repair carries an unselected later registration.'
+                }
+            }
+        }
+    }
+    return $selected
+}
+
 function Publish-AccumulatedDevelop {
     $operationStartedAt = [DateTime]::UtcNow
     $fullReleaseRequested = [bool]$RequireRelease
@@ -580,6 +612,7 @@ function Publish-AccumulatedDevelop {
     $replacementOriginal = $null
     $replacementArchive = ''
     $replacementAccepted = $false
+    $repairEntries=@()
     $originalAttemptBytes = if ($frozenAttempt) { [IO.File]::ReadAllBytes((Get-DevelopPublicationAttemptPath)) } else { $null }
     if ($Replan) {
         if ($Replan -notmatch '^[a-f0-9]{64}$' -or -not $frozenAttempt) { throw 'DELIVERY_REPLAN_INVALID: name the active plan shown by Status; its checkpoint and queue were preserved.' }
@@ -617,6 +650,9 @@ function Publish-AccumulatedDevelop {
         } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen' -and
             (-not $frozenAttempt.PSObject.Properties['planId'] -or [string]$frozenAttempt.planId -cne $Replan)) {
             throw 'DELIVERY_REPLAN_SCOPE_CHANGED: repeat this replacement with -ReplanQueueScope Frozen.'
+        }
+        if($FrozenRepair.Count){
+            $repairEntries=@(Resolve-DeliveryFrozenRepairs -Attempt $frozenAttempt -Selectors $FrozenRepair -Continuation:([string]$frozenAttempt.planId -cne $Replan))
         }
         if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {
             $replacementOriginal = $frozenAttempt
@@ -662,7 +698,7 @@ function Publish-AccumulatedDevelop {
             $startPoint = if ($frozenAttempt.PSObject.Properties['queuedCandidate']) { [string]$frozenAttempt.queuedCandidate } elseif ($frozenAttempt.PSObject.Properties['promotionSourceCandidate']) { [string]$frozenAttempt.promotionSourceCandidate } else { [string]$frozenAttempt.candidate }
         } elseif ($frozenPlan) { $startPoint = [string]$frozenPlan.candidate.commit }
         elseif ($replacementOriginal -and $ReplanQueueScope -eq 'Frozen') {
-            $entries = @($replacementOriginal.queue)
+            $entries = @($replacementOriginal.queue)+@($repairEntries)
             # The exact validated original candidate also retains its owned
             # compatibility promotion; later accepted candidates are excluded.
             $startPoint = [string]$replacementOriginal.candidate

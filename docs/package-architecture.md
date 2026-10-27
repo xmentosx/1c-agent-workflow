@@ -39,6 +39,12 @@ Explicit PublishDevelop Replan archives the original checkpoint and rejected
 proof through this same owner; unchanged inputs cannot reset its circuit breaker.
 This adds no state owner, lock family or master-channel authority.
 
+The user approved pinned Frozen repairs on 2026-10-27. This same Replan owner
+may append explicitly named registered id/head pairs based on the original
+candidate; it cannot replace frozen members or carry unselected later heads.
+The ordinary immutable replacement plan, qualification and queue CAS remain
+authoritative, including when the live repair registration advances afterward.
+
 Delivery calculation is a stateless candidate contract, distinct from publication
 authority. The existing supervisor calls the exact clean candidate's calculator
 in a child scope, validates its envelope and input identity, and binds calculator
