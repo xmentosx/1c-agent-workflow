@@ -988,7 +988,10 @@ Describe 'Catalog selection and qualified consumer inputs' {
             New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot 'tests/pester') -Force | Out-Null
             $catalogPath=Join-Path $RepositoryRoot 'tests/quality-contracts.json'
             Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination $catalogPath
-            $catalog=$actualCatalog
+            # External runtime keys have their own regression; isolate the
+            # catalog-byte consumption of these consumers from host runtimes.
+            $catalog=$actualCatalog.PSObject.Copy()
+            $catalog.PSObject.Properties.Remove('pesterExternalRuntimeTests')
             $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{powerShellVersion=[string]$PSVersionTable.PSVersion;pesterVersion='fixture';identitySha256=('a'*64)}}
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
