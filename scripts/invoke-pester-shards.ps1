@@ -554,7 +554,9 @@ function Get-ShardInputDigest {
                 $script:pesterContractsByTest[$test].Add($contract)
             }
         }
+        $script:pesterSemanticBindings=Get-QualityPesterSemanticInputBindings -Catalog $catalog
     }
+    if(-not $script:pesterSemanticBindings.complete){return ''}
     # One local reference per item holds only paths resolved from the same
     # immutable catalog/tracked inventory snapshot. Runtime/environment variants
     # below still obtain their own identity lines and verify protected results.
@@ -582,7 +584,11 @@ function Get-ShardInputDigest {
         }
         $resolved = $script:pesterContractInputCache[$patternKey]
         if (-not $resolved.complete) { return '' }
-        $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($resolved.paths) | Sort-Object -Unique)
+        $semanticInputs=@($relativeTests|ForEach-Object {$script:pesterSemanticBindings.byTest[[string]$_]}|Where-Object {$_})
+        # Unknown supplemental inputs remain mandatory. Known semantic inputs
+        # use their authoritative test owners, including in a Full inventory.
+        $supplemental=@($AdditionalInputs|Where-Object {$_ -notin $script:pesterSemanticBindings.paths -or $_ -in $semanticInputs})
+        $inputs = @($relativeTests + $sharedInputs + $supplemental + $semanticInputs + @($resolved.paths) | Sort-Object -Unique)
         if ($PreparedInputs) { $PreparedInputs.Value = [pscustomobject]@{ selectionKey=$selectionKey; paths=$inputs } }
     }
     $lines = New-Object System.Collections.Generic.List[string]

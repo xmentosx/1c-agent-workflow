@@ -266,7 +266,7 @@ runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
 The main `1c-workflow/SKILL.md` content uses the same static boundary, with
 authenticated prior/current file presence. Addition/removal remains conservative.
-The explicit content-only set also includes `advanced-actions.md`,
+The explicit content-only set also includes `advanced-actions.md`, `artifact-retention.md`,
 `verification-change.md`, `verification-result.md` and
 `verification-suite-selection.md`: native callers print their links, while static
 tests read their content. Unknown references retain native binding. Historical
@@ -415,8 +415,9 @@ probe. Новый/удалённый callee, динамический вызов
 При rename проверяется и владелец нового пути. Только точный `R100` внутри того же
 каталога `agent-1c.*.ps1` наследует прежние полные path contracts; неизвестное
 внешнее назначение или изменённый новый модуль требуют обычного назначения owner.
-Полные текущие module и entrypoint входят в `additionalInputs` каждого
-выбранного шарда. Неполный план отвергается; агент повторно создаёт его через
+Полные текущие module и entrypoint сохраняются в `additionalInputs` selection.
+Их semantic-владельцы получают одинаковые полные входы в Targeted и Full;
+независимые владельцы не наследуют чужой fallback. Неполный план отвергается; агент повторно создаёт его через
 `resolve-targeted-tests.ps1` и продолжает исходную проверку.
 `DevBranchCheck` содержит перенесённые без изменения случаев проверки cursor и
 repair sequencing; прежние широкие выборки сохраняют их. Пилот подготовки
@@ -450,9 +451,12 @@ Release учитывает native-журналы основной ветки и 
 PowerShell/Pester. Внешняя identity входит только для test-файлов, явно
 перечисленных в `pesterExternalInputs`; смена controlled fork или Vanessa build
 не сбрасывает не связанные с ними шарды. Неизвестный владелец теста отключает
-кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
-выбранного шарда; поэтому semantic routing не может переиспользовать proof от
-другой версии полного entrypoint. Провальные результаты не кэшируются.
+кэш для шарда. Общий catalog-derived semantic binding включает полный entrypoint
+и libraries для всех тестов их fallback/function/common владельцев независимо
+от режима проверки. Неизвестные supplemental inputs остаются обязательными;
+неполная или неизвестная semantic-схема отключает reuse. Поэтому semantic routing
+не принимает proof другой версии полного входа, а независимый тест сохраняет
+одинаковый digest в смешанном Targeted и Full. Провальные результаты не кэшируются.
 Из этих двух переменных дочерний процесс получает только объявленные входы;
 scheduler восстанавливает собственное окружение после каждого запуска.
 Proof до изоляции окружения не соответствует `external-input-scope=declared-v1`

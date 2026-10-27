@@ -36,6 +36,7 @@ function Get-DevelopJourneyExcludedScope {
     param([string]$Path,[ValidateSet('fresh','upgrade')][string]$Journey='fresh')
     if($Path -cin @('.agents/skills/1c-workflow/SKILL.md',
         '.agents/skills/1c-workflow/references/advanced-actions.md',
+        '.agents/skills/1c-workflow/references/artifact-retention.md',
         '.agents/skills/1c-workflow/references/verification-change.md',
         '.agents/skills/1c-workflow/references/verification-result.md',
         '.agents/skills/1c-workflow/references/verification-suite-selection.md')) {

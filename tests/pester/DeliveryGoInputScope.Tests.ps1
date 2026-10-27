@@ -101,7 +101,7 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
         [IO.File]::WriteAllText((Join-Path $positive '.agent-1c/release-e2e.json'),(@{developWorktreePath=$positiveDevelop}|ConvertTo-Json))
         [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/release-e2e.json'),(@{developConfigurationRejection=@{positiveProjectRoot=$positive}}|ConvertTo-Json -Depth 6))
     }
-    $guidance=@('advanced-actions','verification-change','verification-result','verification-suite-selection'|ForEach-Object {'.agents/skills/1c-workflow/references/'+$_+'.md'})
+    $guidance=@('advanced-actions','artifact-retention','verification-change','verification-result','verification-suite-selection'|ForEach-Object {'.agents/skills/1c-workflow/references/'+$_+'.md'})
     foreach($relative in $guidance) {
         $target=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target
