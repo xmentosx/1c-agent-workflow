@@ -274,6 +274,20 @@ cross-task/reparse rejection and proof/rollback preservation. Older consumers
 retain the unknown kind on rollback; source registration is not installation or
 native discovery proof for every client.
 
+On 2026-10-29 the user approved a Pester warmup during the automatic stand
+preparation described below. Measured preparation took about 7 minutes (update
+222 s, Capture 168 + 18 s) before a 10-35 minute static Pester stage on the
+critical path. The stand-preparation owner starts the candidate's own
+`invoke-pester-shards.ps1` with the same candidate and fork as an owned job child
+and stops it when preparation ends, successfully or not, so Develop scenarios
+are not delayed. It only fills the existing shared shard cache; Develop reuses
+exact passed shards through its unchanged digest/runtime checks and executes
+the rest. The warmup never decides a gate, and a start or stop failure is only a
+warning. Its duration and stop result are recorded in the same publication
+checkpoint; no new state, lock, service or migration. Rollback removes the
+warmup. The same change records one registered stand per publishing clone and
+adds a publisher-to-real-Capture regression after a native lifecycle update.
+
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release
 recovery, the source-side update-workflow launcher and Capture admission before

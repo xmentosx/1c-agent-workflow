@@ -119,9 +119,77 @@ function Invoke-DeliveryStandOwner {
     }
 }
 
+function Start-DeliveryStandPrewarm {
+    # Pester needs no stand. While the stand owners run, the gate's own shard
+    # runner warms the shared shard cache with the same candidate and fork.
+    # Develop reuses only exact passed shards through its normal digest checks;
+    # this warmup never decides a gate. Worker count does not enter the digest.
+    param([string]$CandidateRoot)
+    $runner = Join-Path $CandidateRoot 'scripts/invoke-pester-shards.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { return $null }
+    try {
+        $output = Join-Path $CandidateRoot 'build/test-results/delivery/stand-prewarm'
+        [void][IO.Directory]::CreateDirectory($output)
+        $workers = 3
+        $catalogPath = Join-Path $CandidateRoot 'tests/quality-contracts.json'
+        if (Test-Path -LiteralPath $catalogPath -PathType Leaf) {
+            $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($catalog.PSObject.Properties['pesterWorkers'] -and $catalog.pesterWorkers.PSObject.Properties['qualificationImplicitDefault']) { $workers = [int]$catalog.pesterWorkers.qualificationImplicitDefault }
+        }
+        $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$runner,'-RepositoryRoot',$CandidateRoot,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),'-WorkerCount',[string]$workers,'-RequestedWorkerCount','3','-WorkerCountDefaulted')
+        $rules = Get-Variable AiRulesSource -ValueOnly -ErrorAction SilentlyContinue
+        if ($rules) { $arguments += @('-AiRulesSource',[IO.Path]::GetFullPath([string]$rules)) }
+        $stdout = Join-Path $output 'stand-prewarm.stdout.log'; $stderr = Join-Path $output 'stand-prewarm.stderr.log'
+        $started = Start-DeliveryProcess -ArgumentList (@($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) }) -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        return [pscustomobject]@{process=$started.process;jobHandle=[IntPtr]$started.jobHandle;watch=[Diagnostics.Stopwatch]::StartNew();stdout=$stdout;stderr=$stderr}
+    } catch {
+        Write-Warning "Stand preparation continues without Pester prewarm: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Stop-DeliveryStandPrewarm {
+    # Preparation ends the warmup so Develop scenarios start on time; shards it
+    # finished are already in the cache, unfinished ones run in the gate.
+    param([object]$Prewarm)
+    if ($null -eq $Prewarm) { return $null }
+    $process = $Prewarm.process
+    $completed = $process.HasExited
+    $stopError = ''
+    try {
+        try {
+            if (-not $completed) {
+                if ($Prewarm.jobHandle -ne [IntPtr]::Zero -and $env:OS -eq 'Windows_NT') { [void](Stop-DeliveryProcessJobAndWait -JobHandle $Prewarm.jobHandle -Process $process -TimeoutMilliseconds 30000) }
+                else { Stop-DeliveryProcessTree -Process $process }
+            }
+        } finally {
+            try { Close-DeliveryProcessJob -JobHandle $Prewarm.jobHandle -Process $process }
+            finally { Stop-DeliveryProcessTree -Process $process }
+        }
+    } catch {
+        # A warmup never decides preparation; its tree was stopped best-effort.
+        $stopError = $_.Exception.Message
+        Write-Warning "Stand prewarm stop: $stopError"
+    }
+    return [pscustomobject]@{name='stand-prewarm';durationMs=[int64]$Prewarm.watch.ElapsedMilliseconds;completed=[bool]$completed;stopError=$stopError;stdout=$Prewarm.stdout;stderr=$Prewarm.stderr}
+}
+
 function Invoke-DeliveryStandPreparation {
     param([string]$CandidateRoot, [object]$Preparation, [object]$Attempt, [switch]$RequireRelease)
     if ($null -eq $Preparation) { return }
+    $prewarm = Start-DeliveryStandPrewarm -CandidateRoot $CandidateRoot
+    try { Invoke-DeliveryStandPreparationOwners -CandidateRoot $CandidateRoot -Preparation $Preparation -Attempt $Attempt -RequireRelease:$RequireRelease }
+    finally {
+        $warm = Stop-DeliveryStandPrewarm -Prewarm $prewarm
+        if ($warm -and $Attempt.PSObject.Properties['standPreparation']) {
+            $Attempt.standPreparation | Add-Member -NotePropertyName prewarm -NotePropertyValue $warm -Force
+            Write-DevelopPublicationAttempt -Attempt $Attempt
+        }
+    }
+}
+
+function Invoke-DeliveryStandPreparationOwners {
+    param([string]$CandidateRoot, [object]$Preparation, [object]$Attempt, [switch]$RequireRelease)
     $prior = if ($Attempt.PSObject.Properties['standPreparation']) { $Attempt.standPreparation } else { $null }
     # The original capsule identities and scope survive partial preparation.
     $identity = [ordered]@{projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots);capsules=@($Preparation.capsules | Select-Object phase,path,sha256,root)}

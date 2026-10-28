@@ -271,6 +271,73 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         Test-Path -LiteralPath $seed.project|Should -BeTrue
     }
 
+    It 'prepares a stand through the publisher with a native lifecycle update and the real Capture owner, then resumes without new admission' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Сквозная подготовка стенда')
+        $descriptor=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $configPath=Join-Path $seed.project '.agent-1c/release-e2e.json'
+        $candidate=Join-Path $TestDrive 'кандидат публикации'
+        Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('worktree','add','--detach',$candidate,'HEAD')|Out-Null
+        try {
+            # Only the stand update is a test double; it still writes real
+            # lifecycle transactions in a separate process. Capture is the
+            # candidate's own owner script invoked with the publisher's argv.
+            $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile)
+$ErrorActionPreference='Stop'
+. (Join-Path $SourceRoot 'scripts/git-path-list.ps1')
+$lib=Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib'
+. (Join-Path $lib 'agent-1c.core.ps1'); . (Join-Path $lib 'agent-1c.lifecycle.ps1')
+$scope=[IO.File]::ReadAllText($WorkflowUpdateBranchRootsFile,[Text.UTF8Encoding]::new($false))|ConvertFrom-Json
+foreach($root in @($ProjectRoot)+@($scope.roots)){
+    $script:ProjectRoot=$root
+    $source=[pscustomobject]@{root=$SourceRoot;commit=('c'*40);ref='develop';repo='fixture';source='path'}
+    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.dev.env') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+    [IO.File]::WriteAllText((Join-Path $root 'AGENT-INSTALL.md'),'candidate package',[Text.UTF8Encoding]::new($false))
+    [IO.File]::AppendAllText((Join-Path $root '.dev.env'),"WORKFLOW_FIXTURE_VALUE=candidate`n",[Text.UTF8Encoding]::new($false))
+    Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('add','--','AGENT-INSTALL.md')|Out-Null
+    Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('commit','-m','candidate workflow update')|Out-Null
+    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
+    $null=Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+}
+'@
+            [IO.File]::WriteAllText((Join-Path $candidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+            & {
+                . (Join-Path $RepoRoot 'scripts/source-delivery-release-recovery.ps1')
+                $tokens=$null;$errors=$null
+                $component=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-component.ps1'),[ref]$tokens,[ref]$errors)
+                . ([scriptblock]::Create(@($component.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'ConvertTo-DeliveryNativeArgument'},$true))[0].Extent.Text))
+                # Checkpoint persistence and the Pester warmup have their own owners and tests.
+                function Write-DevelopPublicationAttempt { param($Attempt) }
+                function Start-DeliveryStandPrewarm { param($CandidateRoot) $null }
+                function Get-DeliveryCanonicalJsonSha256 { param($Value) $Value|ConvertTo-Json -Depth 24 -Compress }
+                $preparation=[pscustomobject]@{projectRoot=$seed.project;sourceCommit='candidate';roots=@($seed.branch);requiresWorkflowUpdate=$true
+                    capsules=@([pscustomobject]@{phase='Develop';path=$descriptor.path;sha256=$descriptor.sha256;root=$seed.branch;needsAdmission=$false})}
+                $attempt=[pscustomobject]@{phase='candidate-built'}
+                Invoke-DeliveryStandPreparation $candidate $preparation $attempt
+                $attempt.standPreparation.status|Should -Be 'passed'
+                @($attempt.standPreparation.steps.name)|Should -Be @('stand-workflow-update','stand-capture-Develop')
+                $admission=(Read-QualificationFixtureJson -Path $configPath).qualificationFixtures.Develop.workflowUpdateAdmission
+                # The publisher's next plan treats these exact heads as admitted.
+                $admission.master.head|Should -Be (Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('rev-parse','HEAD')).stdout.Trim()
+                $admission.branch.head|Should -Be (Invoke-RepositoryGit -RepositoryRoot $seed.branch -Arguments @('rev-parse','HEAD')).stdout.Trim()
+                @($admission.master.receipts).Count|Should -Be 1
+                @($admission.branch.receipts).Count|Should -Be 1
+                (Get-FileHash -LiteralPath $descriptor.path -Algorithm SHA256).Hash|Should -Be $descriptor.sha256
+                $configSha=(Get-FileHash -LiteralPath $configPath).Hash
+                # A later preparation finds nothing to update or admit; Capture
+                # then verifies the stored admission instead of rewriting it.
+                $preparation.requiresWorkflowUpdate=$false
+                $resumed=[pscustomobject]@{phase='candidate-built'}
+                Invoke-DeliveryStandPreparation $candidate $preparation $resumed
+                @($resumed.standPreparation.steps.name)|Should -Be @('stand-capture-Develop')
+                (Get-FileHash -LiteralPath $configPath).Hash|Should -Be $configSha
+            }
+        } finally {
+            Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('worktree','remove','--force',$candidate) -AllowFailure|Out-Null
+        }
+    }
+
     It 'admits only exact owner receipts and keeps capsule, DT, baseline and semantic workload unchanged' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Продолжение Capture with spaces')
         $first=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
