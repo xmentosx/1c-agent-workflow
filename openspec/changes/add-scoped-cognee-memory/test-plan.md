@@ -1,5 +1,21 @@
 # Acceptance and Evidence Plan
 
+## Qwen native profile6: actual acceptance boundary, 2026-10-28
+
+[Native repeat](evidence/qwen-lru6-recheck-2026-10-28.md) подтверждает exact50chunk hash sets, RU21 и72/72
+responses при прежнем whole20s; каждый query и список dataset IDs равен
+прежнему case/replicate.2cold/1warm blocks и3отдельных warmups сохранены;
+scope/hash violations, lock иOOM=0. Read peak1.584GiB при5GiB.
+Native shutdown warnings не скрыты. Ingestion и12Codexanswers не повторялись,
+BGE с новым config не измерялся. Рабочий provider/registry/ai_rules_1c не менялись.
+Исторические40failures и5/6Qwenfull answers остаются historical proof, а
+не подменяются результатами этого read-only по назначению native набора.
+Source validation/registration учитываются отдельно; нового release gate нет.
+
+
+
+## Исторический итог профиля cache4/pacing1s
+
 Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
 завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
 Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.

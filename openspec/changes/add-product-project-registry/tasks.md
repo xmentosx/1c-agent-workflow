@@ -1,5 +1,18 @@
 # Tasks
 
+## Qwen native profile6: разрешённый повтор, 2026-10-28
+
+[Единый actual result](../add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md).
+
+- [x] Применить только cache6/pacing off на отдельной побайтной test copy; сохранить pool256MiB/5GiB/2CPU/image/model/key и прежние failed stands.
+- [x] Подтвердить50native chunks с прежними text hashes и повторить RU21 при20s:12.705s.
+- [x] Повторить исходные24questions×3=72requests без новых cases/скрытых retries:72/72responses, median3.137s/p956.647s/max13.698s; native lock/OOM нет.
+- [x] Сохранить warmup/resource/shutdown warnings и границы proof: новый read profile принят на этом corpus; ingestion/full answers не повторялись, рабочая модель и registry не переключены.
+
+
+
+## Исторический итог профиля cache4/pacing1s
+
 Конечное memory-сравнение144/12 завершено: BGE72/72 timed responses и6/6
 задач, Qwen32/72 и5/6. Замена модели не принята; published registry и homes
 не меняются. Native result — в едином repair report, доставка — в queue ledger.
