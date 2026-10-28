@@ -9,11 +9,16 @@
 - [x] Воспроизвести и исправить причины исходного N1: owner applied envelope
   271093bytes и inherited PS7 module path; сохранить общий memory limit,
   hashes, proof, Unicode path и прежние10/20s. Focused2/0, source diagnostic отдельно.
-- [ ] Завершить установленный повтор N1/remember/read/reload, регистрацию и
-  доставку ремонта; configured не закрывает QP5.
+- [x] Зарегистрировать754d4d24 и штатно обновить test master+Develop;
+  завершить установленный N1/write/exact/recall/Codex restart/precise retire.
+  Unconfirmed сверены без blind replay; final0originals/current/pending[].
+- [ ] Согласовать и выполнить отдельную доставку ремонта: новая общая очередь
+  и reviewed published Develop baseline после намеренной привязки пилота.
+  Старые capsule/данные сохраняются, автоматическая Recapture не допускается.
 
 [Единый фактический отчёт и границы](evidence/pilot-qp5-2026-10-29.md).
-QP5/QP-R2 открыты; рабочая миграция/master и остальной UNVERIFIED не расширены.
+Нативный pilot завершён на зарегистрированном ремонте; QP5/QP-R2 открыты до
+его доставки. Рабочая миграция/master и остальной UNVERIFIED не расширены.
 
 ## Первый пилот, согласован 2026-10-28
 

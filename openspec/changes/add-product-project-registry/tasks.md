@@ -9,8 +9,13 @@
 - [x] Согласовать ограниченный memory reader repair для реального applied
   envelope271093bytes: owner record/хэши/compatibility baseline не обрезаются,
   большой envelope не становится always-on контекстом или новой моделью реестра.
-- [ ] QP-R2: после штатного обновления закончить native memory read/write/reload;
-  configured и source diagnostic не являются установленной приёмкой QP5.
+- [x] После штатного обновления754d4d24 выполнить native memory write/read и
+  Codex fresh session на реальном applied snapshot; cycle/база1С сохранены,
+  старые pending не replayed; marker retired, final0originals.
+- [ ] QP-R2 delivery: отдельно согласовать новую общую публикацию ремонта и
+  reviewed published Develop baseline с намеренно сохранённой привязкой проекта.
+  Existing owner обнаружил неподтверждённый workflow-only Git hop; capsule
+  не переписываются автоматически. Native proof не заменяет выпускной допуск.
 
 Полные source/target cold snapshots сохранены; старый qualification writer
 отключён. Рабочие проекты, master и прежний UNVERIFIED остаются вне допуска.

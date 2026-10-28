@@ -3,10 +3,13 @@
 Текущий результат 2026-10-29: согласованный frozen plan штатно опубликовал
 develop `1e5b4acff1c26c2a47eb3cc22cb92fb72bcd7ed6`, static4129/0/0,
 native upgrade/fresh и совместимость12clients passed. Master прежний.
-QP5 настроен на одном тестовом PM5/Windows11, но его первый native status
-выявил bounded applied-reader и PS module dependency defects. Ремонт
-подготовлен с сохранением прежних guards; установленный повтор, его регистрация
-и доставка учитываются отдельно. [Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
+QP5 настроен на одном тестовом PM5/Windows11; его первый native status
+выявил bounded applied-reader и PS module dependency defects. Ремонт754d4d24
+зарегистрирован/установлен, native write/read/recall/Codex restart/retire прошли;
+final0originals/current/pending[]. Unconfirmed writes подтверждены отдельным
+чтением, прежние guards сохранены. Доставка ремонта и reviewed published
+Develop baseline с намеренной привязкой проекта остаются отдельным допуском.
+[Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
 имеют приоритет над историческим «публикация не начата» ниже; рабочая миграция
 и master не разрешены, QP5 пока не закрыт.
 
