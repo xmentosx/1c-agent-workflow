@@ -1,5 +1,16 @@
 # Design
 
+## Общее подключение и мониторинг, 2026-10-28
+
+Пользователь разрешил подготовку общего подключения и наблюдение за сервером.
+[Runbook и LAN checkpoint](../../../vibecoding1c-mcp-host/linux-native-host/COGNEE.ru.md)
+определяют Docker как единственного владельца recovery процесса и container-local
+read-only healthcheck как диагностику. Нет отдельного supervisor/таймера/очереди,
+новых всегда загружаемых правил или расширения Code/Graph watchdog. Проверки не
+используют модель и не блокируют независимый workflow. [Actual proof](evidence/common-ops-2026-10-28.md)
+отделяет работающий VM API от ещё не согласованного Windows NAT/firewall и QP5.
+Данные, шесть типов областей и общий ordinary principal сохраняются.
+
 ## Подготовка совместного выпуска, 2026-10-28
 
 [Единая записка](../../../docs/ai-rules-r50-release-readiness.md) фиксирует

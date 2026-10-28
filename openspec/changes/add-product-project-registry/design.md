@@ -1,5 +1,14 @@
 # Design
 
+## Общее подключение Cognee, 2026-10-28
+
+[Memory owner](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
+подготовил общий Qwen и Docker healthcheck/Portainer без изменения business registry.
+Native API не становится ещё одной Code/Graph MCP-ролью. Прежний adapter получает
+общий provider; per-project запись endpoint/key не нужна. Local IDs/pending,
+привязки и explicit off не менялись. LAN firewall checkpoint ожидает согласования;
+доступность native API внутри VM не считается QP5 или переключением клиентов.
+
 ## Подготовка совместного выпуска, 2026-10-28
 
 [Единая записка](../../../docs/ai-rules-r50-release-readiness.md) согласована
