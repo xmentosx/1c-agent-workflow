@@ -5337,7 +5337,14 @@ function Get-SupportedAgentTargets {
     return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "zcode", "mimocode", "pi")
 }
 
+function Test-InitAgentHostIsolated {
+    # A Pester worker (run-pester-shard.ps1) is not the agent that launched the
+    # gate; its fixtures must not inherit that agent's identity.
+    return [Environment]::GetEnvironmentVariable('ITL_TEST_AGENT_HOST_ISOLATED', 'Process') -eq '1'
+}
+
 function Get-InitAgentExecutionEnvironment {
+    if (Test-InitAgentHostIsolated) { return @{} }
     $names = @(
         "CODEX_THREAD_ID",
         "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
@@ -5361,6 +5368,7 @@ function Get-InitAgentExecutionEnvironment {
 function Get-InitAgentExecutionProcessChain {
     param([int]$StartProcessId = $PID)
 
+    if (Test-InitAgentHostIsolated) { return @() }
     $result = [System.Collections.Generic.List[object]]::new()
     $visited = @{}
     $currentProcessId = $StartProcessId

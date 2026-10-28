@@ -1458,7 +1458,8 @@
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master
             $before = (Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { "$($_.FullName.Substring($tempRoot.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
-            $output = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli'; version = '1.13.1' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; try { Show-ItlDoctor } catch { Write-Output "doctor-error: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { $_.ToString() } | Out-String
+            # The executing client (codex) is deliberately not the attached one.
+            $output = & { . $HelperPath -ProjectRoot $tempRoot -Action help -AgentTarget codex *> $null; function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli'; version = '1.13.1' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; try { Show-ItlDoctor } catch { Write-Output "doctor-error: $($_.Exception.Message)" } } 6>&1 | ForEach-Object { $_.ToString() } | Out-String
             $after = (Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { "$($_.FullName.Substring($tempRoot.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
             $output | Should -Match '\[WARN\] active-client: ITL_CLIENT_NOT_ATTACHED'
             $output | Should -Match '\[OK\] diagnostic-client: inspecting configured ''kilocode'' read-only'
