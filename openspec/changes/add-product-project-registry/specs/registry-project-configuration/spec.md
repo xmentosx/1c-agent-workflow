@@ -6,6 +6,19 @@
 
 ## ADDED Requirements
 
+### Requirement: Новый индекс общей памяти не мигрирует проект автоматически
+
+Обновление общего Cognee profile/index SHALL оставлять product/project association, applied business snapshot, canonical homes и code/graph/productDocs настройки прежними. Секреты и old/new native instance/dataset/data IDs SHALL оставаться у deployment/local memory owner, SHALL NOT становиться полями бизнес-проекта или четвёртой проектной MCP-ролью. Только separately authorized existing owner setup/reload SHALL переводить bindings на квалифицированный комплект, сохраняя task/workspace/workplace identity, explicit off и старые pinned pending. Проблема memory readiness SHALL NOT блокировать независимый registry-only/workflow путь. Возврат с поздними corrections/deletions SHALL использовать current original proof memory owner, а не откат каталога.
+
+#### Scenario: Выбрана Qwen, MCP-источник проекта прежний
+- **WHEN** пользователь выбрал Qwen для общего Cognee, а проект использует свой Code/Graph или типовой источник с зафиксированными отличиями
+- **THEN** проектные источники и association не меняются; отдельно готовятся qualified deployment/native mappings, без публикации секретов или миграции установленных проектов
+
+#### Scenario: Возврат памяти после новых записей
+- **WHEN** оператор разрешённо возвращает BGE после Qwen writes
+- **THEN** business snapshot остаётся прежним; новые current records и precise retirement подтверждает memory owner, а отсутствие такого proof не маскируется успешным catalog restore
+
+
 ### Requirement: Отдельный checkpoint G3 и совместимый переход
 
 Приёмка G3 SHALL отделять согласованный проверенный PM5/Windows 11/Kilo/Cursor контур (Codex только core/API) от расширенной выпускной квалификации. По решению пользователя 2026-10-25 этот контур SHALL считаться принятым согласно [итоговой матрице](../../g3-acceptance.md); R1–R6 SHALL оставаться отдельным остатком до выпуска, без объявления непроверенного PASS или сокращения поддержки. Эта приёмка SHALL NOT разрешать G4, Gate 6, рабочую миграцию или публикацию.

@@ -6,6 +6,15 @@
 
 ## ADDED Requirements
 
+### Requirement: Выбор embedding не меняет бизнес-контекст
+
+Смена выбранного embedding/deployment SHALL сохранять опубликованные business product/project/source IDs, canonical homes/applicability, три проектные MCP-роли и effective applied context. Новый exact provider mapping SHALL принадлежать существующему memory/MCP owner, SHALL NOT публиковаться в business registry. Existing owner setup/reload SHALL применять только квалифицированный комплект без reset task cycle, подмены workspace/workplace, guessed home, replay старого pending или включения explicit off. При отсутствии нужных native mappings memory SHALL оставаться unavailable/pending, а независимый каталог/workflow SHALL продолжаться.
+
+#### Scenario: Qwen выбран при неизменённом published registry
+- **WHEN** подготовлен новый4096 deployment с другими native IDs и прежним applied business snapshot
+- **THEN** меняется только проверенный provider mapping/binding у его owner; опубликованный registry SHA, home продукта, MCP source differences и explicit off сохраняются
+
+
 ### Requirement: Контекст берётся из одного применённого снимка
 
 Память SHALL получать project/product/profile IDs, источники и правила knowledge applicability из разрешённого контекста `add-product-project-registry`. Она SHALL дополнить его workspace/developer/workplace/taskCycle identity, но SHALL NOT создавать второй продуктовый каталог. Одна операция SHALL использовать один effective локальный контекст с pinned catalog snapshot/hash и overrides. Ни названия, ни endpoint, ни native ID внешней системы SHALL NOT заменять business IDs.

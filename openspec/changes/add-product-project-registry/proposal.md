@@ -1,5 +1,16 @@
 # Proposal
 
+## Qwen выбран: связь с рабочим профилем памяти, 2026-10-28
+
+User choice Qwen3-Embedding-8B согласован. [План/checkpoint QP0–QP6](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28)
+принадлежит memory owner. Бизнес-реестр остаётся на опубликованном SHA
+`0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`: stable product/project/home IDs,
+СППР/Mantis и code/graph/productDocs роли не меняются из-за embedding.
+Production connection/secret/native dataset mapping и old→new data IDs остаются
+в deployment/local owner; четвертая проектная MCP-роль не появляется.
+Разрешено только уточнение OpenSpec, не QP execution, Gate6, рабочая миграция
+или публикация. G3/R6 и memory G4/G5/MO приняты в прежних границах.
+
 ## MO — разрешённая реализация, 2026-10-27
 
 Пользователь согласовал checkpoint и разрешил MO0–MO4. MO0–MO3 реализованы

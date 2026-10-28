@@ -1,5 +1,28 @@
 # Acceptance and Evidence Plan
 
+## QP: планируемая приёмка рабочего профиля, 2026-10-28
+
+Выбор Qwen согласован, [план/checkpoint](design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) подготовлен. Следующая
+таблица — критерии будущей реализации, **не выполненный native прогон**.
+Source validation/registration документов не ставят PASS ни одному QP-AC.
+
+| Критерий | Доказательство готовности в существующем контуре |
+|---|---|
+| QP-AC1 / профиль | Exact image/schema/SDK route, model4096/cache6/rate off/pool256MiB,2CPU/5GiB, native ordinary principal, реальные private credential/endpoint; admission qualified hash получен из фактического результата, BGE return admission сохранён. |
+| QP-AC2 / восстановимость | Согласованный полный T, manifests/hashes и отдельный restore с exact raw originals; relational/auth/graph/vector/original/mapping комплект и Q5 currentness, без правки SQL. |
+| QP-AC3 / данные | По каждой из6логических областей current scope+noteId+payload/status/provenance/applicability множества равны source; late corrections/deletions учтены; native dataId/UUID изменения имеют exact map. Old source/failed proof сохранены. |
+| QP-AC4 / новый индекс | Новые datasets/4096 namespaces, native completed и actual scoped CHUNKS/raw; old384 не переиспользованы, dedup/старый completed не принят как reindex proof. Учебный корпус не выдан за рабочие данные. |
+| QP-AC5 / совместимость | Native principal и task/workspace/workplace/cycle сохраняются; новые instance/dataset/data IDs приняты existing owner, pinned old pending не переназначены, old cache не используется как proof. Default-on и explicit off/reload/unavailable проверяются existing N5/N6. |
+| QP-AC6 / эффективность | Query20s/write60s и прежние caps/assertions, максимум2original reads in flight; existing RU21/72/6 evidence reuse только при совпавших влияющих inputs, без новых вопросов. Ingestion peak/disk/whole cost измерены либо честно unknown; прежние read peaks не заменяют ingestion. |
+| QP-AC7 / cutover | Отдельное разрешение, выпускной admission exact candidate, финальный Tf/diff, current original equality и fresh reader, один normal target; никакого dual write/automatic fallback. Все допущенные enabled bindings обновлены, off/независимый workflow сохранены. |
+| QP-AC8 / возврат | Existing Q5/N6 continuation: отдельно подтверждены комплект до новых writes и сохранение поздних confirmed originals/corrections/deletions через Tr→BGE. Старый snapshot один не объявляется current; unsafely stale scopes unavailable, source/pending сохранены. |
+
+Это ограниченное продолжение существующих Q1–Q7/N1–N7/N5/N6/MO scenarios,
+не новая клиентская/платформенная матрица и не повод переоткрывать G3/R6/G5.
+Gate6, рабочая миграция и публикация остаются отдельными неразрешёнными этапами.
+Текущие известные gaps: ingestion cache6, новые physical IDs, native dedup на
+целевом наборе и admission нового профиля ещё не квалифицированы.
+
 ## Qwen cache6: граница полной CLI/MCP квалификации, 2026-10-28
 
 [Native evidence](evidence/qwen-lru6-codex-answers-2026-10-28.md):6/6 прежних полных Codex-ответов соответствуют

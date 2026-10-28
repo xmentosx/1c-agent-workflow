@@ -1,5 +1,15 @@
 # План приёмки
 
+## QP: будущая проверка реестра при смене индекса, 2026-10-28
+
+Выбор Qwen согласован, [единый план](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) подготовлен, native execution нет.
+Registry приёмка потребляет QP-AC1–8 memory owner, не повторяет его наборы.
+
+- QP-RAC1: тот же published SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`, product/project/home/applicability, три MCP-роли и СППР/Mantis links до/после; native deployment IDs/credentials остаются вне каталога.
+- QP-RAC2: новые datasets4096 имеют exact связь со stable scopes/notes; principal/workplace/workspace/cycle и original/source/status сохраняются, native ID/label не подменяет business identity.
+- QP-RAC3: будущие cutover и возврат выполняются existing MCP owner поверх того же applied context; old pinned pending не replay на новом backend, explicit off сохранён, новая сессия читает current originals, independent registry/workflow не блокируется memory readiness.
+- QP-RAC4: QP-RAC1–3 получают фактическое evidence только из отдельно разрешённого QP; plan/source validation не являются PASS. Gate6/G6, r50 release, R1–R5, рабочая миграция и публикация сохраняют свои границы.
+
 ## Qwen cache6: граница полной CLI/MCP квалификации, 2026-10-28
 
 [Native evidence](../add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md):6/6 прежних полных Codex-ответов соответствуют

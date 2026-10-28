@@ -1,5 +1,18 @@
 # Tasks
 
+## QP: dependency рабочего профиля Qwen, 2026-10-28
+
+[Один memory plan/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28); Qwen выбран, выполнение не начато.
+
+- [x] QP-RP. Согласовать proposal/design/specs/tasks/acceptance с выбором Qwen, сохранением данных и управляемым возвратом; подтвердить независимость опубликованного R6.
+- [ ] QP-R1. В будущем QP0/2/3 сверить те же stable business IDs/homes/applicability и exact old→new physical mappings; не менять опубликованный SHA ради embedding и не переносить private IDs/ключи в business registry.
+- [ ] QP-R2. В будущем QP4/5 подтвердить existing owner setup/reload/default-on/off и current applied snapshot при смене qualified deployment; старые pending, cycle/workplace IDs и registry-only путь сохраняются.
+- [ ] QP-R3. В будущем QP6 проверить неизменность registry context и current originals после возврата с поздними corrections/deletions; не считать восстановление старого snapshot доказательством текущего состояния.
+
+Эти dependency criteria используют QP-AC1–8 memory owner, не создают второй
+проход qualification. Gate6, рабочая миграция, публикация и execution QP пока
+не разрешены; конечный выпускной остаток R1–R5 не расширяется.
+
 ## Qwen cache6: разрешённый повтор полных ответов, 2026-10-28
 
 [Результаты и полные ответы](../add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md).
