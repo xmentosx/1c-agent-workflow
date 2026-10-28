@@ -286,7 +286,8 @@ $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $OutputEncoding=[Console]::OutputEncoding
 $caseMode=$Mode
-. $Helper -ProjectRoot $Project -Action help *> $null
+# Two clients are attached; name the executing one, independent of the test host.
+. $Helper -ProjectRoot $Project -Action help -AgentTarget codex *> $null
 function Get-Vibecoding1cMcpRegistryRoot { $Registry }
 function Test-Vibecoding1cMcpRegistryPathOverride { $false }
 function Get-Vibecoding1cMcpRegistryRepo { $Publisher }
