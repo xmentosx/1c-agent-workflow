@@ -37,9 +37,9 @@
             [IO.File]::WriteAllText((Join-Path $fork 'content/rules/copy-fixture.md'),'Pinned local candidate inventory fixture',$utf8)
             [IO.File]::WriteAllText((Join-Path $fork 'openspec/config.yaml'),'schema: spec-driven',$utf8)
             $installer = @'
-        param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[switch]$NonInteractive,[switch]$AssumeYes)
+        param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[string]$McpMode,[switch]$NonInteractive,[switch]$AssumeYes)
         $ErrorActionPreference = 'Stop'
-        if ($Command -ne 'init' -or $Tools -ne 'codex' -or -not $NonInteractive -or -not $AssumeYes) { throw 'Unexpected bounded fixture installer invocation.' }
+        if ($Command -ne 'init' -or $Tools -ne 'codex' -or $McpMode -ne 'delegated' -or -not $NonInteractive -or -not $AssumeYes) { throw 'Unexpected bounded fixture installer invocation.' }
         $ruleRelative = '.codex/rules/copy-fixture.md'
         $sourceRelative = 'content/rules/copy-fixture.md'
         $rulePath = Join-Path $ProjectRoot $ruleRelative

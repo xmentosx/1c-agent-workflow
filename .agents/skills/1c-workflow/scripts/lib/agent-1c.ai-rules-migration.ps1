@@ -791,8 +791,11 @@ function Get-AiRulesCandidateInstallInventory {
     try {
         New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
         $installScript = Join-Path $Checkout.root "install.ps1"
+        # Plan with the same delegated MCP mode as the real install: the fork
+        # omits its MCP/update commands there, and post-copy requires every
+        # planned path to exist.
         $installerOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installScript init `
-            -ProjectRoot $preflightRoot -Source $Checkout.root -Tools ($Tools -join ",") -NonInteractive -AssumeYes 2>&1)
+            -ProjectRoot $preflightRoot -Source $Checkout.root -Tools ($Tools -join ",") -McpMode delegated -NonInteractive -AssumeYes 2>&1)
         $installerExitCode = $LASTEXITCODE
         if ($installerExitCode -ne 0) {
             throw "AI_RULES_CANDIDATE_PREFLIGHT_FAILED: exact fork installer exited $installerExitCode before any project file was copied. Repair or qualify the pinned fork candidate, then repeat update-workflow.`n$($installerOutput -join [Environment]::NewLine)"
