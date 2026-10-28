@@ -1046,7 +1046,8 @@ function New-VerificationCumulativeSelectionPlan {
         }
     }
 
-    if (-not $catalog.available) { return (& $newClassificationRequiredPlan $catalog.fallbackReason) }
+    # The catalog reader owns classification: absent catalogs are complete only
+    # when no application features exist. Availability alone is not a blocker.
     if (-not $catalog.valid) { return (& $newClassificationRequiredPlan "Catalog is invalid: $($catalog.fallbackReason)") }
     if (-not $catalog.classificationComplete) { return (& $newClassificationRequiredPlan (@($catalog.issues) -join "; ")) }
 
@@ -1056,14 +1057,14 @@ function New-VerificationCumulativeSelectionPlan {
     if ($acceptanceAssignments.Count -eq 0) {
         return [pscustomobject]@{
             mode = "reuse"
-            reason = "The complete catalog has no retained acceptance suite; ordinary Vanessa execution is not applicable. One-off obligations remain subject to readiness assessment."
+            reason = "The classified inventory has no retained acceptance suite; ordinary Vanessa execution is not applicable. One-off obligations remain subject to readiness assessment."
             selectedFeatureFiles = @()
             selectedSuiteIds = @()
             acceptanceSuiteIds = @()
             acceptanceSuites = @()
             catalogFingerprint = [string]$catalog.fingerprint
             currentTree = $currentTree
-            catalogAvailable = $true
+            catalogAvailable = [bool]$catalog.available
         }
     }
     if (-not $currentTree) { return (& $newFullPlan "Effective Git tree could not be created.") }

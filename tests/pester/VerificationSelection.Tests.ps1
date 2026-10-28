@@ -38,6 +38,33 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It 'classifies an empty inventory with <CatalogKind> catalog' -TestCases @(
+        @{CatalogKind='absent'; ExpectedMode='reuse'; Available=$false},
+        @{CatalogKind='valid'; ExpectedMode='reuse'; Available=$true},
+        @{CatalogKind='invalid'; ExpectedMode='classification-required'; Available=$false}
+    ) {
+        param($CatalogKind, $ExpectedMode, $Available)
+        $tempRoot=Join-Path $TestDrive ('Пустой каталог ' + $CatalogKind)
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'tests') -Force | Out-Null
+        if ($CatalogKind -ne 'absent') {
+            $text=if ($CatalogKind -eq 'valid') { '{"schemaVersion":2,"suites":[],"obligations":[]}' } else { '{broken' }
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'tests/verification-suites.branch.json'), $text, [Text.UTF8Encoding]::new($false))
+        }
+        $result = & {
+            $script:ProjectRoot=$tempRoot
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Resolve-ProjectPath { param([string]$Path) Join-Path $script:ProjectRoot $Path }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            . $ModulePath
+            function Get-VerificationModel { 'cumulative' }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            New-VerificationSelectionPlan -ApplicationFeatureFiles @() -RequireObservedReceipts
+        }
+        $result.mode | Should -BeExactly $ExpectedMode
+        $result.catalogAvailable | Should -Be $Available
+        @($result.selectedFeatureFiles).Count | Should -Be 0
+    }
+
     It "classifies schema-2 one-off obligations without blocking retained runners on pending proof" {
         $tempRoot = Join-Path $TestDrive 'schema-two'
         New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests\features') | Out-Null
@@ -727,7 +754,7 @@ Describe "Branch-first verification suite selection" {
             function Get-VanessaFeaturesPath { 'tests/features' }
             function Get-VanessaApplicationFeatureFiles { @() }
             function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'observed' }) }
-            function Read-VerificationSuiteCatalog { [pscustomobject]@{ available = $false } }
+            function Get-VerificationSuiteCatalogPaths { @() }
             function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
             function Assert-VerificationClassificationReady {}
             function Invoke-YAxUnitVerification { param($State) }
