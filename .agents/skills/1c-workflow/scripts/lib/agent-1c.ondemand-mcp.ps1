@@ -869,6 +869,59 @@ function Test-ItlOnDemandPeerSessionOwnership {
     return $provenPeers.Count -eq 1
 }
 
+function Test-ItlOnDemandRetainedCleanupComplete {
+    param([object]$RuntimeState)
+    # A lifecycle owner can finish cleanup before this facade receives its receipt.
+    # Classify retired resources only; never stop or release a replacement peer.
+    try {
+        if ([int](Get-StateValue $RuntimeState 'schemaVersion' 0) -ne 4 -or
+            [int]$RuntimeState.pid -le 0 -or [int]$RuntimeState.port -le 0 -or
+            $null -ne (Read-ItlOnDemandRuntimeState -Family $RuntimeState.family -InstanceId $RuntimeState.instanceId)) { return $false }
+        $specs=@([pscustomobject]@{pid=[int]$RuntimeState.pid;port=[int]$RuntimeState.port;family=$RuntimeState.portFamily;key=$RuntimeState.portKey;token=$RuntimeState.portLeaseToken})
+        if ([string]$RuntimeState.family -ceq 'vanessa-ui') {
+            $specs += [pscustomobject]@{pid=[int](Get-StateValue $RuntimeState 'testClientPid' 0);port=[int]$RuntimeState.testClientPort;family=$RuntimeState.testClientPortFamily;key=$RuntimeState.testClientPortKey;token=$RuntimeState.testClientPortLeaseToken}
+        }
+        $peers=@(Get-ItlOnDemandRuntimeInstances -Strict)
+        foreach ($spec in $specs) {
+            if (-not $spec.family -or -not $spec.key -or -not $spec.token -or $spec.port -le 0) { return $false }
+            if ($spec.pid -gt 0 -and $null -ne (Get-Process -Id $spec.pid -ErrorAction SilentlyContinue)) { return $false }
+            if (@(Get-ItlOnDemandManagedPortLeaseMatches -Family $spec.family -Key $spec.key -LeaseToken $spec.token).Count -ne 0) { return $false }
+            if (-not (Test-TcpPortOpen -Port $spec.port)) { continue }
+            $owners=@()
+            foreach ($peer in $peers) {
+                if ([string]$peer.family -ceq [string]$RuntimeState.family -and [string]$peer.instanceId -ceq [string]$RuntimeState.instanceId) { continue }
+                $peerSpecs=@([pscustomobject]@{pid=[int]$peer.pid;port=[int]$peer.port;family=$peer.portFamily;key=$peer.portKey;token=$peer.portLeaseToken;kind=$peer.managerInfoBaseKind;path=$peer.managerInfoBasePath})
+                if ([string]$peer.family -ceq 'vanessa-ui') {
+                    $peerSpecs += [pscustomobject]@{pid=[int](Get-StateValue $peer 'testClientPid' 0);port=[int]$peer.testClientPort;family=$peer.testClientPortFamily;key=$peer.testClientPortKey;token=$peer.testClientPortLeaseToken;kind=$peer.infoBaseKind;path=$peer.infoBasePath}
+                }
+                foreach ($candidate in $peerSpecs) {
+                    if ($candidate.port -ne $spec.port -or $candidate.pid -le 0 -or -not $candidate.token) { continue }
+                    if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $candidate.port -ProcessId $candidate.pid)) { continue }
+                    $base=[pscustomobject]@{kind=$candidate.kind;path=$candidate.path}
+                    if (-not (Test-ItlOnDemandPeerSessionOwnership -ProcessId $candidate.pid -Base $base -StoppingRuntime $RuntimeState)) { continue }
+                    $leases=@(Get-ItlOnDemandManagedPortLeaseMatches -Family $candidate.family -Key $candidate.key -LeaseToken $candidate.token)
+                    if ($leases.Count -ne 1 -or [int](Get-ItlPortObjectValue $leases[0] 'port' 0) -ne $candidate.port -or
+                        [int](Get-ItlPortObjectValue $leases[0] 'pid' 0) -ne $candidate.pid) { continue }
+                    $owners += $candidate
+                }
+            }
+            if ($owners.Count -ne 1) { return $false }
+        }
+        foreach ($base in @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $RuntimeState -Family $RuntimeState.family -FallbackTarget ([pscustomobject]@{kind=$RuntimeState.infoBaseKind;path=$RuntimeState.infoBasePath}))) {
+            foreach ($session in @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $base.kind -InfoBasePath $base.path)) {
+                if (-not (Test-ItlOnDemandPeerSessionOwnership -ProcessId ([int]$session.pid) -Base $base -StoppingRuntime $RuntimeState)) { return $false }
+            }
+        }
+        # Recheck original resources after inspecting peers; uncertain state stays blocked.
+        if ($null -ne (Read-ItlOnDemandRuntimeState -Family $RuntimeState.family -InstanceId $RuntimeState.instanceId)) { return $false }
+        foreach ($spec in $specs) {
+            if ($spec.pid -gt 0 -and $null -ne (Get-Process -Id $spec.pid -ErrorAction SilentlyContinue)) { return $false }
+            if (@(Get-ItlOnDemandManagedPortLeaseMatches -Family $spec.family -Key $spec.key -LeaseToken $spec.token).Count -ne 0) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
 function Stop-ItlOnDemandBackendInstanceCore {
     param(
         [string]$Family,
@@ -896,6 +949,9 @@ function Stop-ItlOnDemandBackendInstanceCore {
             throw "ITL_ONDEMAND_RUNTIME_STATE_INVALID path='$path': $($_.Exception.Message)"
         } }
         if ($null -ne $ExpectedRuntimeState) { Assert-ItlOnDemandCleanupIdentity -Actual $runtimeState -Expected $ExpectedRuntimeState }
+        if ($retained -and (Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $runtimeState)) {
+            return [pscustomobject]@{ schemaVersion=2;status='stopped';family=$Family;instanceId=$InstanceId;pid=0;port=0;testClientPort=0;url='';cleanupEvidence='original-resources-absent;registered-peers-preserved' }
+        }
         if ($ManagerOnly) { Assert-ItlOnDemandIdleChildAbsent -RuntimeState $runtimeState }
         $ownedChildren = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState -ExactStart -RegisteredOnly)
         $managerPid = ConvertTo-IntOrDefault -Value $runtimeState.pid -Default 0
@@ -1096,6 +1152,7 @@ function Get-ItlOnDemandRetainedLaunchState {
         }
         $leaseSpecs += [pscustomobject]@{family=$proof.testClientPortFamily;key=$proof.testClientPortKey;token=$proof.testClientPortLeaseToken;port=$proof.testClientPort;pid=[int](Get-StateValue $proof 'testClientPid' 0)}
     }
+    if (Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $proof) { return $proof }
     foreach ($spec in $leaseSpecs) {
         $matches=@(Get-ItlOnDemandManagedPortLeaseMatches -Family ([string]$spec.family) -Key ([string]$spec.key) -LeaseToken ([string]$spec.token))
         if ($matches.Count -eq 0) {

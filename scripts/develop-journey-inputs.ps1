@@ -227,12 +227,31 @@ function Get-DevelopBrokerCleanupSourceProjection {
         -not $n.ElseClause -and $n.Clauses[0].Item1.Extent.Text.Trim() -ieq '$retained'
     },$true))
     if($blocks.Count -ne 1) {throw 'DEVELOP_BROKER_SCOPE_UNKNOWN'}
-    $spans=@($blocks[0])+@($functions | Where-Object Name -eq 'Test-ItlOnDemandPeerSessionOwnership')
+    $cleanup=@($functions | Where-Object Name -eq 'Test-ItlOnDemandRetainedCleanupComplete')
+    $cleanupBlocks=@($stop[0].Body.FindAll({param($n)
+        $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses.Count -eq 1 -and -not $n.ElseClause -and
+        (ConvertTo-DevelopSourceTokens $n.Clauses[0].Item1.Extent.Text) -ceq
+            (ConvertTo-DevelopSourceTokens '$retained -and (Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $runtimeState)')
+    },$true))
+    if($cleanup.Count -gt 1 -or $cleanupBlocks.Count -ne $cleanup.Count) {throw 'DEVELOP_BROKER_SCOPE_UNKNOWN'}
+    $peerScopes=@($blocks[0])+@($cleanup)
+    $spans=@($peerScopes)+@($cleanupBlocks)+@($functions | Where-Object Name -eq 'Test-ItlOnDemandPeerSessionOwnership')
     foreach($command in @($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst]},$true))) {
         # A helper promoted to a shared path immediately closes this exception.
-        if($command.GetCommandName() -eq 'Test-ItlOnDemandPeerSessionOwnership' -and
-            ($command.Extent.StartOffset -lt $blocks[0].Extent.StartOffset -or $command.Extent.EndOffset -gt $blocks[0].Extent.EndOffset)) {
+        if($command.GetCommandName() -eq 'Test-ItlOnDemandPeerSessionOwnership' -and -not @($peerScopes | Where-Object {
+            $command.Extent.StartOffset -ge $_.Extent.StartOffset -and $command.Extent.EndOffset -le $_.Extent.EndOffset
+        }).Count) {
             throw 'DEVELOP_BROKER_SCOPE_SHARED_CALLER'
+        }
+        if($command.GetCommandName() -eq 'Test-ItlOnDemandRetainedCleanupComplete') {
+            $parent=$command.Parent
+            while($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) {$parent=$parent.Parent}
+            $inRetainedStop=@($cleanupBlocks | Where-Object {
+                $command.Extent.StartOffset -ge $_.Extent.StartOffset -and $command.Extent.EndOffset -le $_.Extent.EndOffset
+            }).Count -eq 1
+            if(-not $inRetainedStop -and (-not $parent -or $parent.Name -ne 'Get-ItlOnDemandRetainedLaunchState')) {
+                throw 'DEVELOP_BROKER_SCOPE_SHARED_CALLER'
+            }
         }
         if(@($command.CommandElements | Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'RetainedRuntimeState'}).Count) {
             $parent=$command.Parent

@@ -19,7 +19,8 @@ Describe 'Develop broker cleanup input scope' {
         $tokens=$null;$errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseInput($current,[ref]$tokens,[ref]$errors)
         $peer=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-ItlOnDemandPeerSessionOwnership'},$true)
-        $loop=$ast.Find({param($n)$n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Variable.Extent.Text -eq '$session' -and $n.Extent.Text.Contains('Test-ItlOnDemandPeerSessionOwnership')},$true)
+        $stop=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Stop-ItlOnDemandBackendInstanceCore'},$true)
+        $loop=$stop.Find({param($n)$n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Variable.Extent.Text -eq '$session' -and $n.Extent.Text.Contains('Test-ItlOnDemandPeerSessionOwnership')},$true)
         $peer | Should -Not -BeNullOrEmpty
         $loop | Should -Not -BeNullOrEmpty
         # Preserve the observed pre-fix retained-launch rejection, including the
@@ -52,10 +53,12 @@ Describe 'Develop broker cleanup input scope' {
             @($records | Where-Object execution -ne reuse) | Should -BeNullOrEmpty -Because ($records|ConvertTo-Json -Depth 8 -Compress)
             @($records).Count | Should -Be @($catalog.developJourneys.scenarios.$journey).Count
         }
-        foreach($case in @('registered-path','shared-helper','shared-retained','default','unknown-function','top-level')) {
+        foreach($case in @('registered-path','shared-helper','shared-completion','unguarded-completion','shared-retained','default','unknown-function','top-level')) {
             $changed=switch($case) {
                 'registered-path' {$current.Replace('Assert-ItlOnDemandRuntimeMutation -Family $Family -InstanceId $InstanceId',"Write-Output 'changed registered drain'; Assert-ItlOnDemandRuntimeMutation -Family `$Family -InstanceId `$InstanceId")}
                 'shared-helper' {$current+"`nfunction New-SharedCaller { Test-ItlOnDemandPeerSessionOwnership }`n"}
+                'shared-completion' {$current+"`nfunction New-SharedCaller { Test-ItlOnDemandRetainedCleanupComplete }`n"}
+                'unguarded-completion' {$current.Replace('$retained -and (Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $runtimeState)','(Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $runtimeState)')}
                 'shared-retained' {$current+"`nfunction New-SharedCaller { Stop-ItlOnDemandBackendInstance -RetainedRuntimeState @{} }`n"}
                 'default' {$current.Replace('[AllowNull()][object]$RetainedRuntimeState = $null','[AllowNull()][object]$RetainedRuntimeState = @{}')}
                 'unknown-function' {$current+"`nfunction New-UnmappedBrokerPath { throw 'new path' }`n"}
@@ -70,6 +73,18 @@ Describe 'Develop broker cleanup input scope' {
             @(Resolve-DevelopE2EJourneyPlanCore $f.root $f.base @($relative) $catalog).journeys | Should -Be @('fresh') -Because $case
             foreach($journey in @('fresh','upgrade')) {Test-DevelopJourneyUnaffectedPath $f.root $relative $f.base $journey | Should -BeFalse -Because $case}
         }
+    }
+
+    It 'keeps cold admission bound while projecting only the completed-retained classifier' {
+        $relative='.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1'
+        $current=[IO.File]::ReadAllText((Join-Path $RepoRoot $relative))
+        $projection=Get-DevelopBrokerCleanupSourceProjection $current
+        $changed=$current.Replace('if ($owners.Count -ne 1) { return $false }','if ($owners.Count -ne 2) { return $false }')
+        $changed|Should -Not -BeExactly $current
+        Get-DevelopBrokerCleanupSourceProjection $changed|Should -BeExactly $projection
+        $changed=$current.Replace('Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $proof','Test-ItlOnDemandRetainedCleanupComplete -RuntimeState $null')
+        $changed|Should -Not -BeExactly $current
+        Get-DevelopBrokerCleanupSourceProjection $changed|Should -Not -BeExactly $projection
     }
 
     It 'keeps retained launch admission exclusive to the internal RPC path' {
