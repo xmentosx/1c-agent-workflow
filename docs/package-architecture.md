@@ -196,6 +196,24 @@ new enrollment/invocations; retained originals regenerate derived artifacts.
 Unknown legacy investigations remain untouched. See
 [diagnostic retention](../.agents/skills/1c-workflow/references/artifact-retention.md).
 
+The user approved concurrent gate stand stages on 2026-10-28. The invariant
+stays one state machine: the existing gate owner starts upgrade/fresh scenario
+executions before static and, for a Release-requiring PublishDevelop, the
+selected Release stages on their prepared fixture. Each child is the existing
+journey/Release runner and saves proof through its existing owner. After the
+complete current static proof the sequential journeys consume that proof or
+execute as before; the later Release gate still requires Develop and reuses a
+stage only through its own checkpoint admission. A stage starts only if
+measured available memory and commit headroom below 90% cover 2 GiB and 4 GiB
+per running stage; otherwise it stays sequential. Every started child finishes
+within the original hard budget and keeps its proof; a failed journey fails
+Develop after its siblings finish, a failed speculative Release stage never
+decides Develop. Fixtures, per-infobase 1C guards, ports and locks keep stages
+isolated; no new lock, queue, persistent state, elevation or installed
+migration is added. The canary is the first parallel Develop, whose summary
+records minimum available memory and peak commit for threshold tuning.
+Rollback is the previous sequential gate; stand proofs remain valid.
+
 The 2026-10-26 branch-disk review extends this same producer handoff to explicitly
 superseded check artifacts. Its owner still receives exact individual files
 after terminal process cleanup, with a successful replacement receipt and the

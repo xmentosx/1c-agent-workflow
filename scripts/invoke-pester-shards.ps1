@@ -5,8 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$JunitPath,
     [string]$AiRulesSource = "",
     [string]$SelectionPath = "",
-    [ValidateRange(1, 4)][int]$WorkerCount = 3,
-    [ValidateRange(0, 4)][int]$RequestedWorkerCount = 0,
+    [ValidateRange(1, 8)][int]$WorkerCount = 3,
+    [ValidateRange(0, 8)][int]$RequestedWorkerCount = 0,
     [switch]$WorkerCountDefaulted,
     [switch]$InputIdentityOnly,
     [switch]$PlanOnly,
@@ -64,7 +64,7 @@ if ($memoryAdmissionEnabled) {
 }
 
 function Get-PesterWorkloadEstimate {
-    param([object[]]$Files, [ValidateRange(1,4)][int]$WorkerCount)
+    param([object[]]$Files, [ValidateRange(1,8)][int]$WorkerCount)
     $pending = @($Files | Where-Object {$_.execution -eq 'execute'})
     $total = 0.0
     # Match admission barriers: preflight, LPT parallel files, then serial files.
@@ -858,6 +858,9 @@ foreach ($item in $items) {
             $priorWorkerDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -LegacyWorkerCount $legacyWorkerCount -PreparedInputs ([ref]$preparedInputs)
             if ($priorWorkerDigest) { $legacyDigests.Add($priorWorkerDigest) | Out-Null }
         }
+        # Legacy global receipts were written only under the former 1..4
+        # worker ceiling; a larger run has no such key to look up.
+        if ($WorkerCount -le 4) {
         $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
         if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
         $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
@@ -885,6 +888,7 @@ foreach ($item in $items) {
                 $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
                 if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
             }
+        }
         }
         $script:pesterLegacyDigestCount += $legacyDigests.Count
         foreach ($legacyDigest in $legacyDigests) {

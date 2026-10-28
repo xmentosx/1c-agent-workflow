@@ -225,7 +225,7 @@ function Get-DevelopE2EJourneyHardBudgetSeconds {
 function Resolve-PesterWorkerCount {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Targeted", "Smoke", "Full", "Develop", "Release")][string]$Mode,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 4)][int]$RequestedWorkerCount,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 8)][int]$RequestedWorkerCount,
         [Parameter(Mandatory = $true)][bool]$Explicit,
         [Parameter(Mandatory = $true)][object]$Catalog,
         [int]$ProcessorCount = [Environment]::ProcessorCount
@@ -236,7 +236,7 @@ function Resolve-PesterWorkerCount {
     $hasDefault = if ($Catalog.pesterWorkers -is [Collections.IDictionary]) { $Catalog.pesterWorkers.Contains($property) } else { $null -ne $Catalog.pesterWorkers.PSObject.Properties[$property] }
     if (-not $hasDefault) { return $RequestedWorkerCount }
     $implicitDefault = [int]$Catalog.pesterWorkers.$property
-    if ($implicitDefault -lt 1 -or $implicitDefault -gt 4) { throw "Quality contract pesterWorkers.$property must be between 1 and 4." }
+    if ($implicitDefault -lt 1 -or $implicitDefault -gt 8) { throw "Quality contract pesterWorkers.$property must be between 1 and 8." }
     $availableProcessors = [Math]::Max(1, $ProcessorCount)
     return [Math]::Max(1, [Math]::Min($implicitDefault, $availableProcessors))
 }
@@ -523,10 +523,10 @@ function Test-QualityContractCatalog {
         }
     }
     $targetedImplicitDefault = [int]$Catalog.pesterWorkers.targetedImplicitDefault
-    if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 4) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 4." }
+    if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 8) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 8." }
     $qualificationDefault = $Catalog.pesterWorkers.PSObject.Properties['qualificationImplicitDefault']
-    if ($qualificationDefault -and ([int]$qualificationDefault.Value -lt 1 -or [int]$qualificationDefault.Value -gt 4)) {
-        throw 'Quality contract pesterWorkers.qualificationImplicitDefault must be between 1 and 4.'
+    if ($qualificationDefault -and ([int]$qualificationDefault.Value -lt 1 -or [int]$qualificationDefault.Value -gt 8)) {
+        throw 'Quality contract pesterWorkers.qualificationImplicitDefault must be between 1 and 8.'
     }
 
     $expectedContinuationScopes = @("deliveryPostGate", "develop", "gate", "release", "static") | Sort-Object

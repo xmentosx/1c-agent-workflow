@@ -448,10 +448,12 @@ policy; this section adds no runtime barrier or automatic performance threshold.
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
-Публичный `PesterWorkers` по умолчанию остаётся равен `3`. Только неявный
-`Targeted` использует объявленное каталогом значение `4`, ограниченное числом
-логических процессоров; явно переданное значение и все остальные режимы не
-изменяются. Оба summary сохраняют requested/explicit/effective worker count;
+Публичный `PesterWorkers` по умолчанию остаётся равен `3`, предел — `8`.
+Неявные `Targeted` и квалификационные режимы используют объявленное каталогом
+значение `8`, ограниченное числом логических процессоров; каждый новый worker
+дополнительно допускается только при 1 GiB свободной памяти и 2 GiB запаса
+commit. Явно переданное значение не изменяется. Оба summary сохраняют
+requested/explicit/effective worker count;
 `effective` означает разрешённый предел sharded runner, а не число фактически
 запущенных процессов. `Smoke` остаётся однопроцессным.
 Hard limits учитывают наблюдения 2026-10-09: Targeted исчерпал 2100 секунд
@@ -464,6 +466,20 @@ timing weights, последовательность Compact или no-progress 
 
 Tracked timings задают порядок запуска и округляются вверх от сохранённых
 наблюдений; это не обещание длительности и не отдельный timeout.
+
+`Develop` запускает сценарии upgrade и fresh без proof параллельно со static,
+начиная с самого длинного journey. Если PublishDevelop требует Release, он
+передаёт `-PrerunReleaseCapabilities`, и gate заранее готовит Release fixture и
+выполняет эти стадии `invoke-release-e2e.ps1` на ней. Каждый дочерний этап
+стартует только при свободной памяти и запасе commit (ниже 90%) по 2/4 GiB на
+работающий этап; иначе он остаётся в прежнем последовательном пути. После
+полного текущего static последовательные journey берут сохранённый сценарный
+proof или выполняют сценарий как раньше; Release gate по-прежнему идёт после
+Develop и переиспользует стадию только через собственный checkpoint. Упавший
+journey завершает Develop ошибкой после окончания соседних этапов, их proof
+остаётся для `source-repair.ps1`; упавшая заранее Release стадия помечается
+`speculative` и выполняется Release gate. `check-summary.json.memory` хранит
+минимум свободной памяти и пик commit для настройки порогов.
 
 В sharded runner выбранный `SourceDeliveryAdmission.Tests.ps1` завершается до
 запуска дорогих parallel files. Его ошибка сохраняется в обычном summary/JUnit
