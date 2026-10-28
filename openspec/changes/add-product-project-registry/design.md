@@ -1,5 +1,13 @@
 # Design
 
+## Регистрация QP: согласование бюджета контекста, 2026-10-28
+
+[Memory validation evidence](../add-scoped-cognee-memory/test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28)
+фиксирует stale ceiling общей комбинации и owner-local учёт+452байт только
+для присутствующего rollout command contract. Чужой template/runtime сохранены,
+запас прежний; registry/provider/QP поведение не меняется. Source registration
+не означает запуск cutover, Gate6, рабочей миграции или публикации.
+
 ## QP: стык реестра с выбранным рабочим Cognee, 2026-10-28
 
 Канонический [план QP0–QP6/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) хранится у memory owner;

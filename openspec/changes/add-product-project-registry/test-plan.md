@@ -1,5 +1,15 @@
 # План приёмки
 
+## Регистрация QP: сохранность client rollout, 2026-10-28
+
+[Одна сверка и actual measurements](../add-scoped-cognee-memory/test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28)
+показывают24surface deltas+452bytes, unchanged files/counts и named-token delta.
+Required update/pending/preservation instructions сохранены; existing test
+учитывает ровно эту дельту при наличии rollout, cap самого template и прежний
+aggregate запас остаются. Original failed candidate сохранён; принятую queue
+меняет только успешный RegisterChange. R6/G3/QP и отдельный выпускной остаток
+не переоткрываются; Gate6/рабочая миграция/публикация не выполнялись.
+
 ## QP: будущая проверка реестра при смене индекса, 2026-10-28
 
 Выбор Qwen согласован, [единый план](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) подготовлен, native execution нет.

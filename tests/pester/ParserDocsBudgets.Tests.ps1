@@ -291,6 +291,35 @@
             $expectedRendered[$key].maxBytes += $(if ($key -eq 'master/opencode') { 496 } else { 518 })
         }
 
+        # Additive client-membership rollout changes only itl-update-workflow:
+        # 1478 -> 1930 LF UTF-8 bytes, +452 on all 24 rendered surfaces.
+        # The command is loaded on demand; root instructions and file counts
+        # are unchanged. Named encodings: cl100k_base 341 -> 405 (+64),
+        # o200k_base 333 -> 400 (+67), not a claim about a model tokenizer.
+        # The new master/codex ceiling is 34394 for 34174 measured bytes:
+        # the old 220-byte headroom is retained, not increased. Grant this
+        # fixed delta only when that rollout contract is actually present.
+        $updateTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents/skills/1c-workflow/kilo-command-templates/common/itl-update-workflow.md.template')
+        if ($updateTemplate.Contains("It adds master's attached clients")) {
+            foreach ($instruction in @(
+                'the helper then rolls out the package to registered development worktrees under their existing locks',
+                "It adds master's attached clients to each branch's configured set, preserving additional branch clients, their settings, and unrelated staged/unstaged/untracked work",
+                'Rules, skills, agents, commands and MCP are installed for the resulting set with branch-local paths',
+                'Only updater-owned tracked changes are committed; it does not push or refresh a database',
+                'follow its named branch continuation',
+                'A pending branch transaction finishes its recorded client set before a new transaction adds missing master clients',
+                'do not edit receipts or expand snapshots manually',
+                'Detach is not propagated',
+                'refresh is a separate operation'
+            )) {
+                $updateTemplate | Should -Match ([regex]::Escape($instruction))
+            }
+            [System.Text.Encoding]::UTF8.GetByteCount($updateTemplate.Replace("`r`n", "`n")) | Should -BeLessOrEqual 1930
+            foreach ($key in $expectedRendered.Keys) {
+                $expectedRendered[$key].maxBytes += 452
+            }
+        }
+
         $rendered = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             foreach ($surface in @("master", "dev")) {

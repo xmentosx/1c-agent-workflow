@@ -1,5 +1,32 @@
 # Acceptance and Evidence Plan
 
+## Блокер регистрации QP: клиентский контекст, 2026-10-28
+
+Failed candidate1691fbe7491290ff0ec10f3f2af7563b82a4fc63 и прежний39pass/1fail
+сохранены. Original failure: master/Codex34174bytes при ceiling33942.
+Чужой client-membership-rollout7d707cef добавил452байта в единственный
+itl-update-workflow template1478→1930; старый source33722 имел220байт запаса.
+Измерены все24 master/dev surfaces через настоящий existing renderer:
+каждая+452, file counts/остальные файлы неизменны. Это on-demand command footprint,
+не новый всегда загружаемый root context. Native tokenizers: cl100k341→405,
+o200k333→400; привязка к tokenizer модели не заявляется.
+
+Семантическая сверка сохранила trigger master/dev update, package rollout с
+additive branch clients/locks/local paths, чужие settings/dirty files, только
+owned commits, no-push/no-refresh, named failure continuation, frozen pending
+client set/no manual receipts/snapshots, no detach propagation и отдельный refresh.
+Runtime/template не редактировались. Existing budget test проверяет эти required
+clauses и cap1930 при наличии rollout, затем добавляет ровно452 к прежним ceilings.
+До появления rollout старые ceilings неизменны; aggregate assertions, file counts
+и все прочие budgets сохранены. Для original combined case ceiling34394,
+фактический34174, запас остаётся220 — blanket slack не добавлен.
+
+Только штатный RegisterChange/Targeted повторяет исходную проверку общей
+комбинации; новые сценарии/Gate6/native memory calls не добавляются. Источник
+доставки — общий queue ledger; этот текст не объявляет регистрацию passed.
+Measured proof: build/agent-artifacts/memory-registration-context-budget-20261028/.
+QP0–QP6, смена Cognee, рабочая миграция и публикация не запускались.
+
 ## QP: планируемая приёмка рабочего профиля, 2026-10-28
 
 Выбор Qwen согласован, [план/checkpoint](design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) подготовлен. Следующая
