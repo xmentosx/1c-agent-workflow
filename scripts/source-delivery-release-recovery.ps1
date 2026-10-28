@@ -1,4 +1,27 @@
 # Mutating publication composition; lifecycle and fixture owners retain their locks and receipts.
+function Get-DeliveryWorkflowPackageBase {
+    # A compatibility promotion is one commit over the queued candidate that only
+    # records ai_rules compatibility in templates/dependency-lock.json. It installs
+    # the same workflow package, so a stand on either commit is current for both;
+    # Plan (unpromoted) and every retry's new promotion then agree with it.
+    param([string]$CandidateRoot, [string]$Commit)
+    if ($Commit -notmatch '^[0-9a-f]{40}$') { return $Commit }
+    $parents = @(((Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-list', '--parents', '-n', '1', $Commit) -AllowFailure).stdout.Trim()) -split ' ')
+    if ($parents.Count -ne 2) { return $Commit }
+    $parent = [string]$parents[1]
+    $other = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('diff', '--quiet', $parent, $Commit, '--', '.', ':(exclude)templates/dependency-lock.json') -AllowFailure
+    if ($other.exitCode -ne 0) { return $Commit }
+    try {
+        $locks = foreach ($revision in @($parent, $Commit)) {
+            $lock = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('show', "${revision}:templates/dependency-lock.json")).stdout | ConvertFrom-Json
+            foreach ($field in @('compatibilityStatus', 'compatibilityCheckedAt')) { $lock.dependencies.aiRules1c.PSObject.Properties.Remove($field) }
+            $lock | ConvertTo-Json -Depth 32 -Compress
+        }
+        if ($locks[0] -cne $locks[1]) { return $Commit }
+    } catch { return $Commit }
+    return $parent
+}
+
 function Get-DeliveryStandPreparation {
     param([string]$CandidateRoot, [string]$BaseCommit, [switch]$RequireRelease)
     if ($script:DeliveryCustomGateBoundary) { return $null }
@@ -41,10 +64,11 @@ function Get-DeliveryStandPreparation {
         [pscustomobject]@{phase=$phase;path=[string]$descriptor.path;sha256=[string]$descriptor.sha256;root=$branch;needsAdmission=($masterHead -cne $admittedMaster -or $branchHead -cne $admittedBranch)}
     })
     $candidate = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
+    $candidatePackage = Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit $candidate
     $roots = @($capsules.root | Sort-Object -Unique)
     $updates = @(foreach ($target in @($root) + $roots) {
         $lock = Get-Content -LiteralPath (Join-Path $target '.agent-1c/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string]$lock.dependencies.workflowPackage.commit -cne $candidate -or
+        if ((Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$lock.dependencies.workflowPackage.commit)) -cne $candidatePackage -or
             @(Get-ChildItem -LiteralPath (Join-Path $target '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count) { $target }
     })
     return [pscustomobject]@{schemaVersion=1;projectRoot=$root;sourceCommit=$candidate;roots=$roots;capsules=$capsules;updateRoots=$updates;

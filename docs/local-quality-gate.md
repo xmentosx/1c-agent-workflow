@@ -788,6 +788,12 @@ approval. После фиксации automatic preparation повторно н�
 того же checkpoint. Legacy/неполная уборка и новый план выполняют её заново;
 актуальные operation locks, process/lease guards, gates и post-operation уборка
 сохраняются. Текущая публикация продолжает использовать прежний supervisor.
+Промоушен совместимости ai_rules — один коммит над кандидатом, меняющий только
+`compatibilityStatus`/`compatibilityCheckedAt` в `templates/dependency-lock.json`;
+стенд, установленный из него или из самого кандидата, считается актуальным для
+обоих. Поэтому Plan без промоушена и повтор с новым промоушеном того же
+кандидата не требуют повторного update-workflow. Automatic Capture передаёт
+владельцу фикстуры обязательный `-OutputPath`.
 
 Изменение planner/checker, маршрутизации или reuse должно сохранять регрессии
 обоих направлений: изолированная recovery-доработка не запускает `fresh`, общий
