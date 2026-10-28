@@ -32,6 +32,7 @@
     "SourceQualityCatalog.Tests.ps1": 240,
     "SourceQualificationFixture.Tests.ps1": 290,
     "SourceDeliveryReplan.Tests.ps1": 339.0,
+    "SourceRepair.Tests.ps1": 75.0,
     "SourceDeliveryEvidenceRepair.Tests.ps1": 30.0,
     "SourceDeliveryHistoricalTransition.Tests.ps1": 241.0,
     "SourceDeliveryControllerRollback.Tests.ps1": 45.0,
