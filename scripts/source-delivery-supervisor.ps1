@@ -26,6 +26,7 @@ param(
     [string]$Replan = "",
     [ValidateSet('Current', 'Frozen')]
     [string]$ReplanQueueScope = 'Current',
+    [string[]]$FrozenRepair = @(),
     [string]$ReplanCheckpointSha256 = '',
     [string]$ApproveLongPlan = "",
     [string]$SupervisorCommit = "",
@@ -133,6 +134,7 @@ if ($RetryBlockedStage -and $Action -ne "PublishDevelop") { throw "-RetryBlocked
 if ($ResumePlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ResumePlan is valid only for a publication action." }
 if ($Replan -and ($Action -ne 'PublishDevelop' -or $ResumePlan)) { throw '-Replan is valid only for PublishDevelop and cannot be combined with -ResumePlan.' }
 if (($ReplanQueueScope -ne 'Current' -or $ReplanCheckpointSha256) -and -not $Replan) { throw 'Frozen recovery parameters require -Replan.' }
+if($FrozenRepair.Count -and ($Action -ne 'PublishDevelop' -or -not $Replan -or $ReplanQueueScope -cne 'Frozen')){throw '-FrozenRepair requires PublishDevelop -Replan with -ReplanQueueScope Frozen.'}
 if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
 if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }
@@ -157,6 +159,7 @@ try {
                 masterAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/master") } catch { "" }); role="master-lock-queue-push-owner" }
                 cleanupPolicy = [pscustomobject]@{ manualDefault="develop"; publishDevelop="develop"; releaseMaster="master"; promoteRelease=@("develop", "master") }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
+                deferredQueue = @((Get-QueueDeferrals).Values | Sort-Object id | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; head=[string]$_.head; stage=[string]$_.stage; reason=[string]$_.reason; deferredAt=[string]$_.deferredAt; continuation=[string]$_.continuation } })
                 sourceCandidate = (Get-SourceCandidateStatus)
                 activeOperation = (Get-DeliveryOperationStatus)
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
@@ -183,7 +186,7 @@ try {
             $cleanup
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
-        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-AccumulatedDevelop } else { Invoke-PublishDevelopWithCleanup } }
+        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup } }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
         "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
     }

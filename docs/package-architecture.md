@@ -39,6 +39,25 @@ Explicit PublishDevelop Replan archives the original checkpoint and rejected
 proof through this same owner; unchanged inputs cannot reset its circuit breaker.
 This adds no state owner, lock family or master-channel authority.
 
+The user approved pinned Frozen repairs on 2026-10-27. This same Replan owner
+may append explicitly named registered id/head pairs based on the original
+candidate; it cannot replace frozen members or carry unselected later heads.
+The ordinary immutable replacement plan, qualification and queue CAS remain
+authoritative, including when the live repair registration advances afterward.
+
+The user approved failing-range deferral on 2026-10-28. The queue owner adds one
+record per entry, `refs/itl/develop-queue/<id>/deferred`, bound to the exact
+failed head and written by the same compare-and-swap ref transaction; the next
+registration of that id removes it. Publication and Plan exclude a deferred head
+and rebuild from published develop. The publication supervisor attributes only a
+product Pester failure: its files pass on published develop and fail with
+exactly one range merged alone; integration, environment, stand and E2E
+failures keep the existing stop. Before plan pinning the same operation and
+deadline continue with the rest (at most two deferrals); a pinned plan keeps its
+membership and names `-Replan`. No new lock, coordinator, installed state or
+client surface is added. Rollback is the previous supervisor, which ignores the
+record and integrates every head.
+
 Delivery calculation is a stateless candidate contract, distinct from publication
 authority. The existing supervisor calls the exact clean candidate's calculator
 in a child scope, validates its envelope and input identity, and binds calculator
@@ -190,6 +209,24 @@ new enrollment/invocations; retained originals regenerate derived artifacts.
 Unknown legacy investigations remain untouched. See
 [diagnostic retention](../.agents/skills/1c-workflow/references/artifact-retention.md).
 
+The user approved concurrent gate stand stages on 2026-10-28. The invariant
+stays one state machine: the existing gate owner starts upgrade/fresh scenario
+executions before static and, for a Release-requiring PublishDevelop, the
+selected Release stages on their prepared fixture. Each child is the existing
+journey/Release runner and saves proof through its existing owner. After the
+complete current static proof the sequential journeys consume that proof or
+execute as before; the later Release gate still requires Develop and reuses a
+stage only through its own checkpoint admission. A stage starts only if
+measured available memory and commit headroom below 90% cover 2 GiB and 4 GiB
+per running stage; otherwise it stays sequential. Every started child finishes
+within the original hard budget and keeps its proof; a failed journey fails
+Develop after its siblings finish, a failed speculative Release stage never
+decides Develop. Fixtures, per-infobase 1C guards, ports and locks keep stages
+isolated; no new lock, queue, persistent state, elevation or installed
+migration is added. The canary is the first parallel Develop, whose summary
+records minimum available memory and peak commit for threshold tuning.
+Rollback is the previous sequential gate; stand proofs remain valid.
+
 The 2026-10-26 branch-disk review extends this same producer handoff to explicitly
 superseded check artifacts. Its owner still receives exact individual files
 after terminal process cleanup, with a successful replacement receipt and the
@@ -220,6 +257,30 @@ archive/Git/automatic-cleanup sequence, Unicode paths, busy-file continuation,
 cross-task/reparse rejection and proof/rollback preservation. Older consumers
 retain the unknown kind on rollback; source registration is not installation or
 native discovery proof for every client.
+
+On 2026-10-26 the user approved automatic E2E stand preparation in future
+PublishDevelop operations. The existing publisher composes interrupted Release
+recovery, the source-side update-workflow launcher and Capture admission before
+freezing execution fingerprints. The reproducer was an expected 44-path package
+update after plan freeze, followed by a ResumePlan mismatch despite an unchanged
+candidate and scenario selection. Only the two capsule roots selected by the
+checker's shared-master fixture closure are admitted for rollout; arbitrary
+registered branches and read-only receipt references are not mutation roots.
+The lifecycle transaction retains the exact root/source scope across post-copy
+and recovery. Normal update-workflow still rolls out all development roots.
+The same publication checkpoint records preparation and its owner logs; no new
+coordinator, registry, lock family, service or machine prerequisite is added.
+Update waits at most 3600 seconds, each Capture 900 seconds; interrupted Release
+recovery retains its existing 7800-second allowance. Cancellation uses the
+existing owned child/job cleanup. Retry continues the unplanned checkpoint and
+the original lifecycle receipt; once a plan exists, unexpected drift still
+requires the existing explicit Replan. Original capsules, databases and SHA,
+business bytes, rollback snapshots, Windows/client/server support and all gates
+remain with their owners. Native Unicode-path composition, durable scope retry,
+ordinary full rollout and unexpected-drift regressions are the local canary;
+live publication acceptance remains outstanding. Rollback stops the new
+composition and retains all existing owner receipts for manual continuation.
+The publication already running at approval time is outside this change.
 
 The existing database-access coordinator is the authoritative owner for exact
 infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote

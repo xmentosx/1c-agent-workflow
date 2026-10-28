@@ -26,6 +26,7 @@ param(
     [string]$Replan = "",
     [ValidateSet('Current', 'Frozen')]
     [string]$ReplanQueueScope = 'Current',
+    [string[]]$FrozenRepair = @(),
     [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
@@ -311,7 +312,9 @@ try {
     }
     Assert-DeliveryBootstrapAgentTargetSupport -SupervisorAst $supervisorAst -SupervisorCommit $supervisorCommit -BoundParameters $arguments
     if ($ReplanQueueScope -eq 'Frozen') {
-        foreach ($requiredParameter in @('ReplanQueueScope','ReplanCheckpointSha256')) {
+        $frozenParameters=@('ReplanQueueScope','ReplanCheckpointSha256')
+        if($FrozenRepair.Count){$frozenParameters+='FrozenRepair'}
+        foreach ($requiredParameter in $frozenParameters) {
             if (@($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq $requiredParameter }).Count -eq 0) {
                 throw "DELIVERY_FROZEN_REPLAN_UNSUPPORTED: published supervisor '$supervisorCommit' lacks frozen recovery support. Publish support separately, then repeat this command; the original checkpoint and queue were preserved."
             }

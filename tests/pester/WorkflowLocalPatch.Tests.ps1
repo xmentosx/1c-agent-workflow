@@ -37,9 +37,9 @@
             [IO.File]::WriteAllText((Join-Path $fork 'content/rules/copy-fixture.md'),'Pinned local candidate inventory fixture',$utf8)
             [IO.File]::WriteAllText((Join-Path $fork 'openspec/config.yaml'),'schema: spec-driven',$utf8)
             $installer = @'
-        param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[switch]$NonInteractive,[switch]$AssumeYes)
+        param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[string]$McpMode,[switch]$NonInteractive,[switch]$AssumeYes)
         $ErrorActionPreference = 'Stop'
-        if ($Command -ne 'init' -or $Tools -ne 'codex' -or -not $NonInteractive -or -not $AssumeYes) { throw 'Unexpected bounded fixture installer invocation.' }
+        if ($Command -ne 'init' -or $Tools -ne 'codex' -or $McpMode -ne 'delegated' -or -not $NonInteractive -or -not $AssumeYes) { throw 'Unexpected bounded fixture installer invocation.' }
         $ruleRelative = '.codex/rules/copy-fixture.md'
         $sourceRelative = 'content/rules/copy-fixture.md'
         $rulePath = Join-Path $ProjectRoot $ruleRelative
@@ -274,6 +274,20 @@
         Invoke-Git @('commit','-qm','configure fixture client')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $script:ProjectRoot -Action help -SkipAiRules *> $null
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+        # This recovery fixture stubs installation below. Its already attached
+        # Codex must therefore have the complete initial client file set: a
+        # package-only retirement cannot manufacture proof of missing clients.
+        $rule = 'fixture-codex-rule.md'
+        Set-FixtureText (Join-Path $script:ProjectRoot $rule) 'installed Codex rules'
+        $files = @{}
+        $files[$rule] = @{installedHash=(Get-FileHash -LiteralPath (Join-Path $script:ProjectRoot $rule)).Hash.ToLowerInvariant();userModified=$false}
+        Set-FixtureText (Join-Path $script:ProjectRoot '.ai-rules.json') (@{tools=@('codex');files=$files} | ConvertTo-Json -Depth 6)
+        $surface = Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
+        foreach ($relative in $surface.Keys) { Set-FixtureText (Join-Path $script:ProjectRoot $relative) ([string]$surface[$relative]) }
+        Set-FixtureText (Join-Path $script:ProjectRoot '.codex/config.toml') "# fixture MCP configuration`n"
+        $initialClientPaths = @('.ai-rules.json',$rule,'.codex/config.toml') + @($surface.Keys)
+        Invoke-Git (@('add','--') + $initialClientPaths)
+        Invoke-Git @('commit','-qm','install initial fixture client surfaces')
         $receipt = New-SealedFixturePatch
         $candidate = Join-Path $TestDrive ('Точный исходник ' + [guid]::NewGuid().ToString('N'))
         foreach ($relative in @('install-agent-1c-workflow.ps1','AGENT-INSTALL.md',

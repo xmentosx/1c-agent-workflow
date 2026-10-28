@@ -1,6 +1,21 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'WorkflowUpdateRollback.TestSupport.ps1') }
 
 Describe 'Workflow update receipt detail recovery' {
+    It 'retains selected rollout scope across receipt phases and resumes it without the original file' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'scope receipt') -PendingInterruption
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $branch=Join-Path $TestDrive 'selected branch'
+        & git -C $fixture.root worktree add -q -b itldev/scoped $branch
+        $LASTEXITCODE | Should -Be 0
+        $pending=Get-WorkflowUpdatePendingSnapshot
+        $scope=[pscustomobject]@{schemaVersion=1;projectRoot=$fixture.root;sourceCommit=[string]$pending.receipt.sourceCommit;roots=@($branch)}
+        $source=[pscustomobject]@{root=[string]$pending.receipt.sourceRoot;commit=[string]$pending.receipt.sourceCommit}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase post-copy-running -Details @{rolloutScope=$scope}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $pending.snapshot -Source $source -Phase post-copy-failed
+        $continued=Get-WorkflowUpdatePendingSnapshot
+        $continued.receipt.rolloutScope.sourceCommit | Should -Be $source.commit
+        (Resolve-WorkflowUpdateRolloutScope -SourceCommit $source.commit -RecordedScope $continued.receipt.rolloutScope).roots | Should -Be @($branch)
+    }
     BeforeAll {
         function New-ReceiptCommitFixture {
             param([string]$Root,[string]$Change='')

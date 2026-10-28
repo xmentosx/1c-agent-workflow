@@ -671,7 +671,7 @@ function Read-Example {
             @($before.inventory.external.artifacts.Values | Where-Object {$_ -cne $sha}) | Should -HaveCount 0
             # Exercise the normal recursive positive-stand binding, not only an
             # injected ExternalBinding. Fresh consumes that stand as a seed,
-            # while configuration rejection executes only in upgrade.
+            # while only the negative-fixture functions execute in upgrade.
             $positive=Join-Path $f.root ('.git/positive ' + (Get-NonAsciiFixtureSegment))
             Write-Utf8Json -Path (Join-Path $positive '.agent-1c/project.json') -Value @{aiRules=@{tools=@('kilocode')}}
             Write-Utf8Json -Path (Join-Path $positive '.agent-1c/release-e2e.json') -Value @{developWorktreePath=$positive}
@@ -680,7 +680,8 @@ function Read-Example {
             $config=@{developWorktreePath=$f.root;developConfigurationRejection=@{positiveProjectRoot=$positive};qualificationFixtures=@{Develop=@{path='unchanged capsule';sha256=('a'*64);workflowUpdateAdmission=@{master=@{head=('b'*40)}}}}}
             Write-Utf8Json -Path $configPath -Value $config
             $rejection=Join-Path $f.root 'scripts/develop-configuration-rejection.ps1'
-            [IO.File]::WriteAllText($rejection, '# original rejection', [Text.UTF8Encoding]::new($true))
+            $rejectionText='# original rejection'
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
             & git -C $f.root add scripts/develop-configuration-rejection.ps1; & git -C $f.root commit --quiet -m 'rejection fixture'
             $normal=@{RepositoryRoot=$f.root;Catalog=$f.catalog;ProjectRoot=$f.root;AiRulesSource=$f.root;AgentTarget='kilocode';ArtifactBinding=$transported}
             $normal.Catalog=Get-QualityContractCatalog -RepositoryRoot $context.RepoRoot
@@ -702,8 +703,9 @@ function Read-Example {
             [IO.File]::WriteAllBytes($positiveEnv,$positiveBytes)
             (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
             [IO.File]::AppendAllText($rejection, '# receipt fix')
-            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
+            (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -Not -BeExactly $fresh.fingerprint
             (Get-DevelopE2EInputIdentity @normal -Journey upgrade).fingerprint | Should -Not -BeExactly $upgrade.fingerprint
+            [IO.File]::WriteAllText($rejection, $rejectionText, [Text.UTF8Encoding]::new($true))
             $config.qualificationFixtures.Develop.workflowUpdateAdmission.master.head='c'*40
             Write-Utf8Json -Path $configPath -Value $config
             (Get-DevelopE2EInputIdentity @normal -Journey fresh).fingerprint | Should -BeExactly $fresh.fingerprint
@@ -1319,5 +1321,56 @@ function Read-Example {
         @($records.Values | ForEach-Object { (Get-FileHash -LiteralPath $_.path).Hash }) | Should -Be $originalRouteHashes
         Add-Content -LiteralPath $records.fresh.path -Value 'tampered'
         Test-DevelopQualification @arguments | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Static-only Develop completion' {
+    It 'writes only static completion and cannot satisfy a subsequent Release live proof' {
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'),[ref]$tokens,[ref]$errors)
+        foreach ($name in @('Get-RelativeRepositoryPath','Test-DevelopQualification')) {
+            $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $repoRoot=Join-Path $TestDrive 'static completion'
+        $qualificationFullPath=Join-Path $repoRoot 'build/full.json'
+        $developQualificationFullPath=Join-Path $repoRoot 'build/develop.json'
+        Write-Utf8Json $qualificationFullPath @{status='passed'}
+        $reportPath=Join-Path $repoRoot 'static.json'
+        Write-Utf8Json $reportPath @{kind='itl-develop-static-completion';status='passed';journeys=@{}}
+        $before=(Get-FileHash $qualificationFullPath).Hash
+        $plan=[pscustomobject]@{journeys=@()}
+        $record=Write-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ReportPath $reportPath -JourneyRecords ([ordered]@{}) -Plan $plan -StaticOnly
+        $record.kind | Should -Be 'itl-workflow-develop-static-completion'
+        $record.reusable | Should -BeFalse
+        $record.journeys.Count | Should -Be 0
+        $record.fullQualificationSha256 | Should -Be $before.ToLowerInvariant()
+        Test-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ExpectedIdentitySha256 ('c'*64) -ExpectedStandStateSha256 ('d'*64) | Should -BeNullOrEmpty
+        $plan.journeys=@('upgrade')
+        { Write-DevelopQualification -Commit ('a'*40) -Tree ('b'*40) -ReportPath $reportPath -JourneyRecords ([ordered]@{}) -Plan $plan -StaticOnly } | Should -Throw '*cannot satisfy selected live journeys*'
+        (Get-FileHash $qualificationFullPath).Hash | Should -Be $before
+    }
+    It 'requires a stand only for the actual live routing, before any expensive stage' {
+        $text=[IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/check.ps1'))
+        $start=$text.IndexOf('    $commit = (& git rev-parse HEAD).Trim()')
+        $end=$text.IndexOf('    $trackedBefore =', $start)
+        $admission=[scriptblock]::Create($text.Substring($start,$end-$start))
+        function Resolve-AiRulesSource { return '' }
+        $repoRoot=Join-Path $TestDrive 'stand admission'
+        [void](New-RouterFixture $repoRoot)
+        $qualityCatalog=Get-QualityContractCatalog $repoRoot
+        $effectiveMode='Develop';$BaseRef='HEAD';$E2EProjectRoot='';$aiRulesRelease=$null
+        Push-Location $repoRoot
+        try {
+            Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@()}}
+            { . $admission } | Should -Not -Throw
+            $E2EProjectRoot=Join-Path $TestDrive 'supplied route continuation stand'
+            (& { . $admission; $developNeedsStand }) | Should -BeTrue
+            $E2EProjectRoot=''
+            Mock Resolve-DevelopE2EJourneyPlan {[pscustomobject]@{journeys=@('upgrade')}}
+            { . $admission } | Should -Throw '*requires -E2EProjectRoot*'
+            $effectiveMode='Release'
+            { . $admission } | Should -Throw '*requires -E2EProjectRoot*'
+        } finally { Pop-Location }
     }
 }

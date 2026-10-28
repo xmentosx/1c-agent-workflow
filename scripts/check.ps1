@@ -13,11 +13,12 @@ param(
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
     [string]$DevelopQualificationPath = "build\test-results\qualification\develop.json",
-    [ValidateRange(1, 4)]
+    [ValidateRange(1, 8)]
     [int]$PesterWorkers = 3,
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
-    [string]$ReleaseCapabilities = ""
+    [string]$ReleaseCapabilities = "",
+    [string]$PrerunReleaseCapabilities = ""
 )
 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
@@ -376,6 +377,7 @@ function Wait-PowerShellChildProcess {
         }
         if (($now - $lastHeartbeat).TotalSeconds -ge 30) {
             Write-Host "ITL gate stage '$($Child.logName)': elapsed=${elapsedSeconds}s; noProgress=${idleSeconds}s; hardRemaining=$($effectiveTimeoutSeconds - $elapsedSeconds)s."
+            Update-GateMemoryTelemetry
             $lastHeartbeat = $now
         }
     }
@@ -397,9 +399,9 @@ function Invoke-PowerShellChild {
 }
 
 function Complete-ParallelGateStage {
-    param([string]$Name, [string]$Reason, [string]$Detail, [object]$Child, [int]$TimeoutSeconds)
+    param([string]$Name, [string]$Reason, [string]$Detail, [object]$Child, [int]$TimeoutSeconds, [int]$NoProgressSeconds = 600, [string[]]$ProgressPaths = @())
     try {
-        Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds
+        Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds -NoProgressSeconds $NoProgressSeconds -ProgressPaths $ProgressPaths
         Add-StageResult -Name $Name -Status "passed" -Execution "executed" -Reason $Reason -Detail $Detail -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
         # Collection can occur long after this parallel child exits. Retain the
         # enclosing interval and record actual execution separately for ETA.
@@ -417,6 +419,133 @@ function Complete-ParallelGateStage {
         Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason $Reason -Detail $_.Exception.Message -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
         throw
     }
+}
+
+# A concurrent stand stage starts only with this reservation per running
+# stage: available memory plus host commit headroom below the same 90% line
+# the Pester runner keeps. Otherwise the stage stays in the sequential path.
+$script:parallelStageAvailableBytes = 2GB
+$script:parallelStageCommitBytes = 4GB
+$script:gateMemoryTelemetry = [ordered]@{ samples = 0; minAvailableBytes = -1L; maxCommittedBytes = 0L; commitLimitBytes = 0L }
+$script:stagePreruns = [ordered]@{}
+
+function Get-GateMemorySnapshot {
+    try {
+        $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction Stop
+        return [pscustomobject]@{ availableBytes = [long]$memory.AvailableBytes; committedBytes = [long]$memory.CommittedBytes; commitLimitBytes = [long]$memory.CommitLimit }
+    } catch { return $null }
+}
+
+function Update-GateMemoryTelemetry {
+    $telemetry = Get-Variable -Name gateMemoryTelemetry -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $telemetry) { return }
+    $snapshot = Get-GateMemorySnapshot
+    if (-not $snapshot) { return } # Unavailable telemetry cannot reject a check.
+    $telemetry.samples++
+    if ($telemetry.minAvailableBytes -lt 0 -or $snapshot.availableBytes -lt $telemetry.minAvailableBytes) { $telemetry.minAvailableBytes = $snapshot.availableBytes }
+    if ($snapshot.committedBytes -gt $telemetry.maxCommittedBytes) { $telemetry.maxCommittedBytes = $snapshot.committedBytes }
+    $telemetry.commitLimitBytes = $snapshot.commitLimitBytes
+}
+
+function Test-GateParallelStageAdmission {
+    param([int]$Running, [AllowNull()][object]$Snapshot)
+    if (-not $Snapshot) { return $false }
+    $headroom = [long][Math]::Max(0.0, [double]$Snapshot.commitLimitBytes * 0.90 - [double]$Snapshot.committedBytes)
+    $stages = $Running + 1
+    return $Snapshot.availableBytes -ge ($stages * $script:parallelStageAvailableBytes) -and $headroom -ge ($stages * $script:parallelStageCommitBytes)
+}
+
+function Start-DevelopJourneyPreruns {
+    param([string[]]$Journeys)
+    # Longest journey first, so memory pressure defers the shorter one. Each
+    # child saves its own scenario proof; the sequential owner later consumes
+    # it only after the complete current static proof, or executes as before.
+    foreach ($journey in @($Journeys | Sort-Object { Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $_ } -Descending)) {
+        $journeyInput = Get-DevelopE2EInputIdentity -RepositoryRoot $repoRoot -Journey $journey -Catalog $qualityCatalog -ProjectRoot $E2EProjectRoot -AiRulesSource $script:developRulesSource -AgentTarget $AgentTarget -ArtifactBinding $script:sourceE2EArtifactBinding -FreshProjectsRoot $FreshProjectsRoot
+        if (-not $journeyInput) { continue } # Without a complete binding no reusable proof can result.
+        $records = @(Get-DevelopScenarioReusePlan $repoRoot $tree $journey $journeyInput $qualityCatalog -AllowPendingStatic -ProjectRoot $E2EProjectRoot)
+        $execute = @($records | Where-Object { $_.execution -in @('execute', 'setup') } | ForEach-Object { $_.id })
+        if ($execute.Count -eq 0) { continue }
+        Update-GateMemoryTelemetry
+        if (-not (Test-GateParallelStageAdmission -Running $script:stagePreruns.Count -Snapshot (Get-GateMemorySnapshot))) {
+            Write-Host "Develop E2E ${journey}: memory admission defers concurrent execution to the sequential journey path."
+            continue
+        }
+        $rawPath = Join-Path $outputRoot "develop-e2e-$journey-prerun-raw.json"
+        $arguments = @('-CandidateRoot', $repoRoot, '-ProjectRoot', $E2EProjectRoot, '-AiRulesSource', $script:developRulesSource,
+            '-OutputPath', $rawPath, '-Journey', $journey, '-Scenario', ($execute -join ','), '-FreshProjectsRoot', $FreshProjectsRoot)
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        if ($script:sourceE2EArtifactBindingPath) { $arguments += @('-ArtifactBindingPath', $script:sourceE2EArtifactBindingPath) }
+        $child = Start-PowerShellChildProcess -ScriptPath $script:developScript -Arguments $arguments -LogName "develop-e2e-$journey-prerun"
+        $script:stagePreruns["develop-e2e-$journey-prerun"] = [pscustomobject]@{ child = $child; blocking = $true; progressPaths = @()
+            timeoutSeconds = (Get-DevelopE2EJourneyHardBudgetSeconds -Catalog $qualityCatalog -Journey $journey)
+            reason = "concurrent scenario execution before static: $($execute -join ', ')"; detail = $rawPath }
+    }
+}
+
+function Invoke-ReleaseFixtureCandidatePreparation {
+    $fixtureRules = if ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+    $fixturePath = Join-Path $outputRoot 'release-fixture.json'
+    Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1') `
+        -Arguments @('-Action','Prepare','-Phase','Release','-ProjectRoot',$E2EProjectRoot,'-CandidateRoot',$repoRoot,
+            '-AiRulesSource',$fixtureRules,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-OutputPath',$fixturePath) -TimeoutSeconds 16800 -NoProgressSeconds 900 -LogName 'fixture-prepare-release'
+    $script:releaseFixtureRoot = [string](Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json).projectRoot
+}
+
+function Get-ReleaseE2EProgressPaths {
+    param([string]$ProjectRoot)
+    return @(
+        $outputRoot,
+        (Join-Path ([IO.Path]::GetFullPath($ProjectRoot)) ".agent-1c\locks"),
+        (Get-SourceE2ENativeLogsPath -ProjectRoot $ProjectRoot),
+        (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $ProjectRoot).worktreePath)
+    )
+}
+
+function Start-ReleaseStagePrerun {
+    param([string[]]$Capabilities)
+    # The Release gate still runs after Develop. Its own checkpoint admission
+    # reuses a passed stage of this exact fixture identity or executes again.
+    Update-GateMemoryTelemetry
+    if (-not (Test-GateParallelStageAdmission -Running $script:stagePreruns.Count -Snapshot (Get-GateMemorySnapshot))) {
+        Write-Host "Release E2E $($Capabilities -join ','): memory admission leaves the stage to the Release gate."
+        return
+    }
+    $startedAt = [DateTime]::UtcNow
+    try {
+        Invoke-ReleaseFixtureCandidatePreparation
+        $budget = Get-ReleaseE2EBudgetProjection -StageCatalog (Get-QualityReleaseStageCatalog -RepositoryRoot $repoRoot) -QualityCatalog $qualityCatalog -ReleaseCapability $Capabilities
+        $rulesSource = if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
+        $reportPath = Join-Path $outputRoot 'release-e2e-prerun-summary.json'
+        $arguments = @('-ProjectRoot', ([IO.Path]::GetFullPath($releaseFixtureRoot)), '-AiRulesSource', $rulesSource,
+            '-HelperPath', (Join-Path $repoRoot '.agents\skills\1c-workflow\scripts\agent-1c.ps1'), '-OutputPath', $reportPath,
+            '-ResumeMode', 'Auto', '-Capabilities', ($Capabilities -join ','))
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        $child = Start-PowerShellChildProcess -ScriptPath (Join-Path $repoRoot 'scripts\invoke-release-e2e.ps1') -Arguments $arguments -LogName 'release-e2e-prerun'
+        $script:stagePreruns['release-e2e-prerun'] = [pscustomobject]@{ child = $child; blocking = $false; timeoutSeconds = [int]$budget.e2eHardSeconds
+            progressPaths = @(Get-ReleaseE2EProgressPaths -ProjectRoot $releaseFixtureRoot)
+            reason = "speculative Release stages for the Release gate checkpoint: $($Capabilities -join ', ')"; detail = $reportPath }
+    } catch {
+        # Speculation never decides Develop; the Release gate prepares again.
+        Add-StageResult -Name 'release-e2e-prerun' -Status 'failed' -Execution 'speculative' -Reason 'Release gate executes these stages itself' -Detail $_.Exception.Message -StartedAt $startedAt -DurationMs ([int64]([DateTime]::UtcNow - $startedAt).TotalMilliseconds)
+    }
+}
+
+function Complete-StagePreruns {
+    $blockingFailure = $null
+    foreach ($name in @($script:stagePreruns.Keys)) {
+        $prerun = $script:stagePreruns[$name]
+        $script:stagePreruns.Remove($name)
+        $remaining = [int][Math]::Max(1, $prerun.timeoutSeconds - ([DateTime]::UtcNow - $prerun.child.startedAt).TotalSeconds)
+        try {
+            Complete-ParallelGateStage -Name $name -Reason $prerun.reason -Detail $prerun.detail -Child $prerun.child -TimeoutSeconds $remaining -NoProgressSeconds 900 -ProgressPaths $prerun.progressPaths
+        } catch {
+            # Every sibling still finishes and saves its own proof for repair.
+            if ($prerun.blocking) { if (-not $blockingFailure) { $blockingFailure = $_ } }
+            else { $stage = @($script:stages | Where-Object { [string]$_['name'] -eq $name } | Select-Object -Last 1); if ($stage.Count) { $stage[0]['execution'] = 'speculative' } }
+        }
+    }
+    if ($blockingFailure) { throw $blockingFailure }
 }
 
 function Resolve-AiRulesSource {
@@ -787,9 +916,18 @@ try {
     $worktreeCleanAtStart = @(& git status --porcelain).Count -eq 0
     $resolvedAiRulesSource = $(if ($effectiveMode -in @("Full", "Develop", "Release")) { Resolve-AiRulesSource } else { "" })
     $sourceIsLocal = $resolvedAiRulesSource -and (Test-Path -LiteralPath $resolvedAiRulesSource -PathType Container)
+    $developNeedsStand = $false
+    if ($effectiveMode -eq 'Develop') {
+        if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
+        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
+        # With a supplied stand retain the existing route-continuation proof
+        # needed by a following Release. A stand-free static support candidate
+        # cannot create or replace that live qualification.
+        $developNeedsStand = @($developPlan.journeys).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($E2EProjectRoot)
+    }
 
     if ($effectiveMode -in @("Develop", "Release")) {
-        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
+        if (($effectiveMode -eq 'Release' -or $developNeedsStand) -and [string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
         if (-not $worktreeCleanAtStart) { throw "$effectiveMode requires a clean candidate worktree." }
     }
     if ($effectiveMode -eq "Release") {
@@ -818,7 +956,7 @@ try {
 
     $releaseFixtureRoot = $E2EProjectRoot
     if ($effectiveMode -in @('Develop','Release')) {
-        $fixturePlan = if ($effectiveMode -eq 'Develop') { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog } else { $null }
+        $fixturePlan = if ($effectiveMode -eq 'Develop') { $developPlan } else { $null }
         if ($effectiveMode -eq 'Release' -or @($fixturePlan.journeys).Count -gt 0) {
             Invoke-GateStage -Name 'qualification-fixture-inputs' -Reason 'capture immutable phase baselines once through the installed snapshot owner' -Body {
                 $fixtureScript = Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1'
@@ -839,12 +977,7 @@ try {
         }
         if ($effectiveMode -eq 'Release') {
             Invoke-GateStage -Name 'qualification-fixture-candidate' -Reason 'prepare the exact installed candidate before Release readiness' -Body {
-                $fixtureRules = if ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource }
-                $fixturePath = Join-Path $outputRoot 'release-fixture.json'
-                Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot 'scripts/source-e2e-fixture.ps1') `
-                    -Arguments @('-Action','Prepare','-Phase','Release','-ProjectRoot',$E2EProjectRoot,'-CandidateRoot',$repoRoot,
-                        '-AiRulesSource',$fixtureRules,'-AgentTarget',$AgentTarget,'-FreshProjectsRoot',$FreshProjectsRoot,'-OutputPath',$fixturePath) -TimeoutSeconds 16800 -NoProgressSeconds 900 -LogName 'fixture-prepare-release'
-                $script:releaseFixtureRoot = [string](Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json).projectRoot
+                Invoke-ReleaseFixtureCandidatePreparation
             } | Out-Null
         }
     }
@@ -853,11 +986,13 @@ try {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
         Invoke-GateStage -Name "release-readiness" -Reason "aggregate dependency, candidate, encoding, and stand preflight" -Detail $releaseContextPath -Body {
-            $readinessArguments = @("-Mode", $effectiveMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            $readinessMode = if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) { 'Full' } else { $effectiveMode }
+            $readinessArguments = @("-Mode", $readinessMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            if ($BaseRef) { $readinessArguments += @('-BaseRef', $BaseRef) }
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot))) }
             if ($AgentTarget) { $readinessArguments += @('-AgentTarget', $AgentTarget) }
             if ($effectiveMode -eq "Release") { $readinessArguments += @("-ResumeMode", $ReleaseResumeMode) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
@@ -867,7 +1002,7 @@ try {
             $archivePath = [string]$script:releaseContext.artifacts.vanessaAutomation.path
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
-            if ($effectiveMode -in @('Develop','Release')) {
+            if ($effectiveMode -eq 'Release' -or $developNeedsStand) {
                 $script:sourceE2EArtifactBinding = Resolve-SourceE2EArtifactBinding -RepositoryRoot $repoRoot -ArchivePath $archivePath -Offline:$Offline
                 $script:sourceE2EArtifactBindingPath = Join-Path $outputRoot 'source-e2e-artifacts.json'
                 [IO.File]::WriteAllText($script:sourceE2EArtifactBindingPath, ($script:sourceE2EArtifactBinding | ConvertTo-Json -Depth 5), $utf8NoBom)
@@ -885,7 +1020,6 @@ try {
         $script:developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
         $script:developRulesSource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
         if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
-        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
         $script:developQualificationRoot = Split-Path -Parent $developQualificationFullPath
         New-Item -ItemType Directory -Force -Path $developQualificationRoot | Out-Null
         $earlyPlan = [pscustomobject][ordered]@{
@@ -901,6 +1035,11 @@ try {
             if (-not $canRunFailFast) { continue }
             if ($journey -notin @($developPlan.journeys | ForEach-Object { [string]$_ })) { continue }
             [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester" -DeferForStatic)
+        }
+        if ($developNeedsStand -and $qualityCatalog.developJourneys.PSObject.Properties['scenarios']) {
+            Start-DevelopJourneyPreruns -Journeys $plannedEarlyJourneys
+            $prerunCapabilities = @($PrerunReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($prerunCapabilities.Count -gt 0) { Start-ReleaseStagePrerun -Capabilities $prerunCapabilities }
         }
     }
 
@@ -1086,6 +1225,7 @@ try {
             $script:developCurrentStaticProof = Save-DevelopE2ECurrentStaticProof -QualificationPath $qualificationFullPath -Commit $commit -Tree $tree
         }
     }
+    if ($script:stagePreruns.Count -gt 0) { Complete-StagePreruns }
 
     if ($effectiveMode -eq "Release" -and [string]$releaseDevelopProof.reuseKind -eq "targeted-continuation") {
         [void](Write-DevelopContinuationQualification -Commit $commit -Tree $tree -SourceProof $releaseDevelopProof -ContinuationProof $releaseDevelopProof.continuation)
@@ -1098,7 +1238,14 @@ try {
         $releaseDevelopProof = Update-DevelopQualificationFullBinding -Commit $commit -Tree $tree -PreviousFullProof $releaseFullProof -ExpectedIdentitySha256 $releaseDevelopIdentitySha256 -ExpectedStandStateSha256 $releaseDevelopStandStateSha256
     }
 
-    if ($effectiveMode -eq "Develop") {
+    if ($effectiveMode -eq 'Develop' -and -not $developNeedsStand) {
+        $developE2EReportPath = Join-Path $outputRoot 'develop-e2e-summary.json'
+        $staticCompletion = [ordered]@{ schemaVersion=1; kind='itl-develop-static-completion'; status='passed';
+            candidate=[ordered]@{commit=$commit;tree=$tree}; plan=$developPlan; journeys=[ordered]@{} }
+        [IO.File]::WriteAllText($developE2EReportPath, ($staticCompletion | ConvertTo-Json -Depth 16), $utf8NoBom)
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -JourneyRecords ([ordered]@{}) -Plan $developPlan -StaticOnly)
+    }
+    if ($effectiveMode -eq "Develop" -and $developNeedsStand) {
         $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
         $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot -AgentTarget $AgentTarget
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
@@ -1225,12 +1372,7 @@ try {
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-            $releaseProgressPaths = @(
-                $outputRoot,
-                (Join-Path ([IO.Path]::GetFullPath($releaseFixtureRoot)) ".agent-1c\locks"),
-                (Get-SourceE2ENativeLogsPath -ProjectRoot $releaseFixtureRoot),
-                (Get-SourceE2ENativeLogsPath -ProjectRoot (Get-SourceE2EReleaseStand -ProjectRoot $releaseFixtureRoot).worktreePath)
-            )
+            $releaseProgressPaths = @(Get-ReleaseE2EProgressPaths -ProjectRoot $releaseFixtureRoot)
             $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($releaseFixtureRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
             if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { $releaseE2EArguments += @("-AgentTarget", $AgentTarget) }
             if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
@@ -1295,6 +1437,9 @@ try {
         Stop-GateChildProcessTree -Process $parallelCompatibility.process
     }
     $failure = $_.Exception.Message
+    # Running stand stages finish within the remaining budget and keep their
+    # own scenario/stage proof for repair; their outcome cannot mask $failure.
+    if ($script:stagePreruns.Count -gt 0) { try { Complete-StagePreruns } catch { Write-Warning "Concurrent stage also failed: $($_.Exception.Message)" } }
 } finally {
     $overallStopwatch.Stop()
     $commit = [string](& git rev-parse HEAD 2>$null)
@@ -1327,6 +1472,7 @@ try {
             explicit = [bool]$pesterWorkersExplicit
             effective = [int]$effectivePesterWorkers
         }
+        memory = $script:gateMemoryTelemetry
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
         developQualificationPath = $developQualificationFullPath

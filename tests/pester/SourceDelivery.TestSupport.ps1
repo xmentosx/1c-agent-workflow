@@ -67,6 +67,15 @@ Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-capabilities.log') -Encoding UTF8 -Value $ReleaseCapabilities }
+if ($Mode -eq 'Full' -and $env:ITL_TEST_FAIL_DELIVERY_FULL -eq 'true') { exit 15 }
+if ($Mode -eq 'Full' -and (Test-Path -LiteralPath 'broken.marker')) {
+    # A registered range carries a defect: report its failing Pester file as the real worker would.
+    $shards = Join-Path (Get-Location) 'build\test-results\local\pester-shards'
+    New-Item -ItemType Directory -Force -Path $shards | Out-Null
+    $suite = [Security.SecurityElement]::Escape((Join-Path (Get-Location) (Get-Content -LiteralPath 'broken.marker' -Raw).Trim()))
+    Set-Content -LiteralPath (Join-Path $shards 'worker-1.xml') -Encoding UTF8 -Value ('<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="' + $suite + '" tests="1" failures="1" errors="0"><testcase name="fixture" status="Failed"><failure message="broken"/></testcase></testsuite></testsuites>')
+    exit 16
+}
 if ($Mode -eq 'Full') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null

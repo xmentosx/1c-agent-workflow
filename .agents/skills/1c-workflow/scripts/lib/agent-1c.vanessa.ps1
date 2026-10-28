@@ -4770,6 +4770,32 @@ function Get-GitObjectIdForTreePath {
         return ""
     }
 
+    # An object id names immutable content. List it once per process instead of
+    # two git processes per path: a wildcard proof input over a large src/cf
+    # otherwise outlasted the runner's stale-status watchdog (2026-10-27).
+    if ($Treeish -match '^[0-9a-fA-F]{40}$') {
+        if (-not (Get-Variable -Name GitTreePathObjectIds -Scope Script -ErrorAction SilentlyContinue)) { $script:GitTreePathObjectIds = @{} }
+        $key = "$script:ProjectRoot|$($Treeish.ToLowerInvariant())"
+        if (-not $script:GitTreePathObjectIds.ContainsKey($key)) {
+            $objectIds = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+            try {
+                foreach ($record in @(Get-GitPathList -Arguments @('ls-tree', '-r', '-t', '-z', '--full-tree', $Treeish))) {
+                    $tab = $record.IndexOf("`t")
+                    if ($tab -gt 0) { $objectIds[$record.Substring($tab + 1)] = $record.Substring(0, $tab).Split(' ')[2] }
+                }
+                $script:GitTreePathObjectIds[$key] = $objectIds
+            } catch {
+                # An unknown object keeps the per-path answer below.
+                $objectIds = $null
+            }
+        }
+        if ($script:GitTreePathObjectIds.ContainsKey($key)) {
+            $objectIds = $script:GitTreePathObjectIds[$key]
+            if ($objectIds.ContainsKey($normalized)) { return $objectIds[$normalized] }
+            return "<missing>"
+        }
+    }
+
     $treePath = "{0}:{1}" -f $Treeish, $normalized
     & git -C $script:ProjectRoot rev-parse --verify --quiet $treePath *> $null
     if ($LASTEXITCODE -ne 0) {

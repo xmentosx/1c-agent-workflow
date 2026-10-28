@@ -205,7 +205,7 @@ exit 7
         @($result.clientSurfacePathsBefore) | Should -Be @('.agents/skills/itl-check/SKILL.md')
     }
 
-    It 'fingerprints the same Cyrillic managed directory in both PowerShell hosts' {
+    It 'fingerprints the same Cyrillic managed directory in both PowerShell hosts' -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
         $project = Join-Path $TestDrive 'каталог с пробелом'
         $managed = Join-Path $project 'managed'
         New-Item -ItemType Directory -Force -Path $managed | Out-Null
@@ -955,9 +955,11 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         New-Item -ItemType Directory -Force -Path $project, (Split-Path -Parent $scaffoldFile) | Out-Null
         [IO.File]::WriteAllText($scaffoldFile, 'scaffold', [Text.UTF8Encoding]::new($false))
         $installer = @'
-param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[switch]$NonInteractive,[switch]$AssumeYes)
+param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[string]$McpMode,[switch]$NonInteractive,[switch]$AssumeYes)
 [IO.Directory]::CreateDirectory($ProjectRoot) | Out-Null
-[IO.File]::WriteAllText((Join-Path $ProjectRoot '.ai-rules.json'), '{"files":{".codex/rules/mcp-policy.md":{"source":"content/rules/mcp-policy.md"},".codex/skills/openspec-update-change/SKILL.md":{"source":"content/openspec-bundle/codex"}}}', [Text.UTF8Encoding]::new($false))
+# Like the real fork, only a non-delegated install places its MCP command.
+$mcpCommand = if ($McpMode -ne 'delegated') { ',".codex/prompts/checkmcp.md":{"source":"content/commands/checkmcp.md"}' } else { '' }
+[IO.File]::WriteAllText((Join-Path $ProjectRoot '.ai-rules.json'), ('{"files":{".codex/rules/mcp-policy.md":{"source":"content/rules/mcp-policy.md"},".codex/skills/openspec-update-change/SKILL.md":{"source":"content/openspec-bundle/codex"}' + $mcpCommand + '}}'), [Text.UTF8Encoding]::new($false))
 '@
         [IO.File]::WriteAllText((Join-Path $fork 'install.ps1'), $installer, [Text.UTF8Encoding]::new($false))
         $paths = & {
@@ -969,6 +971,9 @@ param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[swit
         $paths | Should -Contain '.codex/rules/mcp-policy.md'
         $paths | Should -Contain '.codex/skills/openspec-update-change/SKILL.md'
         $paths | Should -Contain 'openspec/config.yaml'
+        # Post-copy requires every planned path, so the plan must not name a
+        # command the delegated real install omits.
+        $paths | Should -Not -Contain '.codex/prompts/checkmcp.md'
         @(Get-ChildItem -LiteralPath $TestDrive -Directory -Filter 'itl-ai-rules-preflight-*') | Should -HaveCount 0
         @(Get-ChildItem -LiteralPath $project -Force) | Should -HaveCount 0
     }
@@ -1376,7 +1381,13 @@ if ($Action -ne 'update-workflow') { throw 'unexpected action' }
         & git -C $source add .
         & git -C $source commit --quiet -m source
         $LASTEXITCODE | Should -Be 0
-        & pwsh -NoProfile -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
+        # Windows PowerShell is the supported baseline host; Core is checked
+        # in addition where it is installed.
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
         $LASTEXITCODE | Should -Be 7
+        if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
+            & pwsh -NoProfile -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
+            $LASTEXITCODE | Should -Be 7
+        }
     }
 }

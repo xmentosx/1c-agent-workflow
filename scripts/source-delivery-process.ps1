@@ -693,7 +693,7 @@ function Close-DeliveryProcessJob {
 }
 
 function Invoke-SourceGate {
-    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
+    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0, [string[]]$ReleaseCapability = @(), [string[]]$PrerunReleaseCapability = @(), [datetime]$DeadlineUtc = [DateTime]::MaxValue, [switch]$PassThru)
     if ([DateTime]::UtcNow -ge $DeadlineUtc) { throw "$Mode source gate has no remaining operation budget; continue the original operation from its preserved checkpoint." }
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
     if (-not (Test-Path -LiteralPath $gate -PathType Leaf)) { throw "Source gate was not found: $gate" }
@@ -712,6 +712,12 @@ function Invoke-SourceGate {
     if ($Mode -eq "Release") {
         $arguments += @("-ReleaseResumeMode", $ReleaseResumeMode)
         if (@($ReleaseCapability).Count -gt 0) { $arguments += @("-ReleaseCapabilities", (@($ReleaseCapability) -join ',')) }
+    }
+    # Only the authoritative gate speculates Release stages for its checkpoint.
+    # A Windows PowerShell null-bound [string[]] has no Count; normalize first.
+    $prerunCapabilities = @($PrerunReleaseCapability | Where-Object { $_ })
+    if ($Mode -eq "Develop" -and $prerunCapabilities.Count -gt 0 -and $gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
+        $arguments += @("-PrerunReleaseCapabilities", ($prerunCapabilities -join ','))
     }
     $quoted = @($arguments | ForEach-Object {
         $value = [string]$_

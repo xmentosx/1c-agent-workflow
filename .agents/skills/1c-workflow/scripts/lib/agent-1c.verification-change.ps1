@@ -41,7 +41,27 @@ function Get-VerificationChangeScopeIdentity {
         [ordered]@{id=$_.id;expectedResult=$_.expectedResult;decision=$_.decision;reason=(Get-VerificationCatalogValue -Value $_ -Name reason -Default '');checkIds=@(Get-VerificationCatalogValue -Value $_ -Name checkIds -Default @())}
     })
     $value=[ordered]@{taskId=$Change.taskId;baseTree=$Change.baseTree;tree=$Change.tree;targetIdentity=$Change.targetIdentity;checkerIdentity=$Change.checkerIdentity;checks=@($Change.checks);paths=@($Change.paths);criteria=$criteria;requirements=@($Change.requirements);planArtifact=$Change.planArtifact;retainedDispositions=@($Change.retainedDispositions);inheritedEvidence=@(Get-VerificationCatalogValue -Value $Change -Name inheritedEvidence -Default @());priorAcceptedArtifact=(Get-VerificationCatalogValue -Value $Change -Name priorAcceptedArtifact -Default $null)}
+    $unbound=[string](Get-VerificationCatalogValue -Value $Change -Name unboundTargetIdentity -Default '')
+    if ($unbound) { $value.unboundTargetIdentity=$unbound }
     return (Get-VerificationSelectionSha256 -Text ($value|ConvertTo-Json -Depth 16 -Compress))
+}
+
+function Get-VerificationChangeTarget {
+    param([Parameter(Mandatory=$true)][object]$State)
+    # The Vanessa runner is prepared inside the first check, so planning cannot
+    # require it. The unbound identity keeps every other target field strict;
+    # the first observation after runner preparation binds the exact runner.
+    # A new branch has no tooling generation until its first tooling step;
+    # establish it through that owner so the infobase identity stays strict.
+    if (-not [string](Get-StateValue -State $State -Name 'toolingInfoBaseGeneration' -Default '')) { $State=Ensure-DevBranchToolingGeneration -State $State }
+    $projection=[ordered]@{}
+    $names=if ($State -is [Collections.IDictionary]) { @($State.Keys) } else { @($State.PSObject.Properties.Name) }
+    foreach ($name in $names) {
+        $projection[[string]$name]=if ([string]$name -like 'vanessaServiceInfoBase*') { '' } else { Get-StateValue -State $State -Name ([string]$name) -Default $null }
+    }
+    $projection['vanessaServiceInfoBaseGeneration']='runner-unbound'
+    $bound=if ([string](Get-StateValue -State $State -Name 'vanessaServiceInfoBaseGeneration' -Default '')) { Get-VerificationRetainedTargetIdentity -State $State } else { '' }
+    return [pscustomobject]@{identity=$bound;unbound=(Get-VerificationRetainedTargetIdentity -State ([pscustomobject]$projection))}
 }
 
 function Get-VerificationChangeCheckerIdentity {
@@ -90,7 +110,19 @@ function Assert-VerificationChangeReady {
         throw 'VERIFICATION_CHANGE_REQUIRED: use begin-verification-change to inspect the full unaccepted delta, prepare its impact plan, then repeat with -VerificationEvidencePath <plan.json>; no history or criteria will be discarded.'
     }
     Assert-VerificationChangeCurrent -Change $change
-    if ([string]$change.targetIdentity -cne (Get-VerificationRetainedTargetIdentity -State $State)) { throw 'VERIFICATION_CHANGE_TARGET_CHANGED: prepare and observe the current plan on the exact authorized target.' }
+    $target=Get-VerificationChangeTarget -State $State
+    $changed='VERIFICATION_CHANGE_TARGET_CHANGED: prepare and observe the current plan on the exact authorized target.'
+    if ([string]$change.targetIdentity) {
+        if ([string]$change.targetIdentity -cne $target.identity) { throw $changed }
+    } elseif ([string](Get-VerificationCatalogValue -Value $change -Name unboundTargetIdentity -Default '') -cne $target.unbound) {
+        throw $changed
+    } elseif ($target.identity) {
+        # First use after runner preparation binds it for the rest of the change.
+        $change.targetIdentity=$target.identity
+        $change.PSObject.Properties.Remove('unboundTargetIdentity')
+        $change.scopeIdentity=Get-VerificationChangeScopeIdentity -Change $change
+        Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($change | ConvertTo-Json -Depth 16) + "`n")
+    }
     return $change
 }
 
@@ -185,6 +217,7 @@ function Start-VerificationChange {
     $base = Get-VerificationChangeBaseTree -State $state -Previous $previous
     $tree = Get-VerificationSelectionEffectiveTree
     $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+    $target = Get-VerificationChangeTarget -State $state
     $checks = @(Get-VerificationChangeChecks -Plan $plan)
     foreach ($known in @(Get-VerificationCatalogOneOffObligations)) {
         $current = @($checks | Where-Object id -eq $known.id)
@@ -261,7 +294,7 @@ function Start-VerificationChange {
             }
         }
         if ($sameTask -and $null -eq $acceptedPrevious -and $criterion.decision -eq 'unaffected' -and $known.Count -eq 1 -and
-            [string]$previous.targetIdentity -ceq (Get-VerificationRetainedTargetIdentity -State $state) -and [string]$previous.checkerIdentity -ceq (Get-VerificationChangeCheckerIdentity) -and
+            $target.identity -and [string]$previous.targetIdentity -ceq $target.identity -and [string]$previous.checkerIdentity -ceq (Get-VerificationChangeCheckerIdentity) -and
             @($previousCriteria | Where-Object { $_.id -ceq $criterion.id -and $_.decision -ceq 'unaffected' }).Count -eq 1) {
             $priorEvidence=@(Get-VerificationCatalogValue -Value $previous -Name inheritedEvidence -Default @())
             $oldPath=Get-VerificationRepoRelativePath -Path (Get-VerificationOneOffProofPath -ObligationId $criterion.id)
@@ -272,7 +305,7 @@ function Start-VerificationChange {
                 $inherited=$true
             }
         }
-        if ($criterion.decision -eq 'unaffected' -and ([string]::IsNullOrWhiteSpace([string]$criterion.reason) -or (-not $inherited -and ($null -eq $acceptedPrevious -or [string]$acceptedPrevious.targetIdentity -cne (Get-VerificationRetainedTargetIdentity -State $state) -or $acceptedCriterion.Count -ne 1)))) {
+        if ($criterion.decision -eq 'unaffected' -and ([string]::IsNullOrWhiteSpace([string]$criterion.reason) -or (-not $inherited -and ($null -eq $acceptedPrevious -or -not $target.identity -or [string]$acceptedPrevious.targetIdentity -cne $target.identity -or $acceptedCriterion.Count -ne 1)))) {
             throw 'VERIFICATION_CHANGE_REUSE_UNPROVED: unaffected needs an accepted prior criterion and an explicit impact rationale.'
         }
     }
@@ -283,7 +316,7 @@ function Start-VerificationChange {
     $acceptedArtifact = Get-VerificationCatalogValue -Value $previous -Name 'acceptedArtifact' -Default $null
     $value = [pscustomobject][ordered]@{
         schemaVersion=1; model='change'; taskId=[string]$plan.taskId; status='pending'; runToken=[guid]::NewGuid().ToString('N')
-        baseTree=$base; tree=$tree; targetIdentity=(Get-VerificationRetainedTargetIdentity -State $state)
+        baseTree=$base; tree=$tree; targetIdentity=$target.identity
         checkerIdentity=(Get-VerificationChangeCheckerIdentity); checks=$checks; paths=$coverage; criteria=$criteria
         requirements=$requirements; planArtifact=@(New-VerificationArtifactReferences -Paths @($full))[0]
         inheritedEvidence=$inheritedEvidence
@@ -293,6 +326,7 @@ function Start-VerificationChange {
     if ($null -ne $previous -and $previous.status -eq 'pending' -and @($previous.checks.id | Where-Object { $_ -notin @($checks.id) }).Count -gt 0) {
         throw 'VERIFICATION_CHANGE_CHECK_PENDING: preserve pending checks and failures when updating the impact plan.'
     }
+    if (-not $target.identity) { $value | Add-Member -NotePropertyName unboundTargetIdentity -NotePropertyValue $target.unbound }
     $value | Add-Member -NotePropertyName scopeIdentity -NotePropertyValue (Get-VerificationChangeScopeIdentity -Change $value)
     Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($value | ConvertTo-Json -Depth 16) + "`n")
     return $value

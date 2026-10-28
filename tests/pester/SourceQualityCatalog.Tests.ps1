@@ -250,15 +250,16 @@ Describe 'Source quality catalog contracts' {
     It "uses bounded catalog workers for implicit Targeted and qualification while preserving explicit and legacy choices" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 4
-        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 8
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 24 | Should -Be 8
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 0 | Should -Be 1
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
         Resolve-PesterWorkerCount -Mode Smoke -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
         foreach ($mode in @("Full", "Develop", "Release")) {
-            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 24 | Should -Be 8
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 8 -Explicit $true -Catalog $catalog -ProcessorCount 24 | Should -Be 8
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog ([pscustomobject]@{pesterWorkers=[ordered]@{targetedImplicitDefault=4}}) -ProcessorCount 8 | Should -Be 3
         }
@@ -286,7 +287,7 @@ Describe 'Source quality catalog contracts' {
         $expectedTests = @(
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ForkQualificationInventory.Tests.ps1", "tests/pester/FullInputProof.Tests.ps1", "tests/pester/HostTestSelection.Tests.ps1", "tests/pester/LocalGateTransport.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/LocalShardCache.Tests.ps1", "tests/pester/LocalTargetedSelection.Tests.ps1",
-            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1",
+            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1", "tests/pester/ReleaseProgressObservation.Tests.ps1", "tests/pester/RepositoryGitTransport.Tests.ps1",
             "tests/pester/SourceDeliveryAdmission.Tests.ps1", "tests/pester/SourceDeliveryAuthority.Tests.ps1", "tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryControllerRollback.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryEvidenceRetention.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFrozenPlan.Tests.ps1", "tests/pester/SourceDeliveryFrozenPublication.Tests.ps1", "tests/pester/SourceDeliveryHistoricalTransition.Tests.ps1", "tests/pester/SourceDeliveryIncremental.Tests.ps1", "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1", "tests/pester/SourceDeliveryOperationRecovery.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
             "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
@@ -425,6 +426,8 @@ Describe 'Source quality catalog contracts' {
         # Retain the original observed 57-file cohort. Gate 6, Mantis and
         # three extracted Release groups extend its explicit dependency set.
         $splitHostConsumers = @('tests/pester/HostMantis.Tests.ps1')
+        $routingConsumer = 'tests/pester/ReleaseRouting.Tests.ps1'
+        $standPreparationConsumer = 'tests/pester/SourceDeliveryStandPreparation.Tests.ps1'
         $splitReleaseConsumers = @('DevelopManifestContinuation','ReleaseAdmission','ReleaseOrchestration' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
         $readinessConsumers = @('tests/pester/ReleaseReadiness.Tests.ps1','tests/pester/DevelopE2EQualification.Tests.ps1')
         $compactConsumers = @('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog' | ForEach-Object { 'tests/pester/'+$_+'.Tests.ps1' })
@@ -443,10 +446,14 @@ Describe 'Source quality catalog contracts' {
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 5 + $splitWorkflowConsumers.Count)
+        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count)
         @($selection.tests) | Should -Contain $changeModelConsumer
+        @($selection.tests) | Should -Contain $standPreparationConsumer
+        foreach ($owner in @($catalog.contracts | Where-Object { $_.tests -contains 'tests/pester/ReleaseGate.Tests.ps1' })) {
+            @($owner.tests) | Should -Contain $routingConsumer
+        }
         $changeModelOwner=@($catalog.contracts|Where-Object id -eq 'vanessa-verification')[0]
         @($changeModelOwner.tests) | Should -Contain $changeModelConsumer
         @($changeModelOwner.paths) | Should -Contain '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1'
@@ -538,8 +545,8 @@ Describe 'Source quality catalog contracts' {
             "tests/quality-contracts.json"))
         # One additional real catalog consumer; historical observed timings above
         # remain unchanged, and the exact added selection is checked below.
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 5 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count)
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
@@ -582,6 +589,21 @@ Describe 'Source quality catalog contracts' {
         $rule=@($invalid.developJourneys.scenarioInputs|Where-Object {$_.PSObject.Properties['outsideWhenNoProductContext'] -and $_.outsideWhenNoProductContext})[0]
         $rule.PSObject.Properties.Remove('requiresNoProductContext')
         {Test-QualityContractCatalog $RepoRoot $invalid} | Should -Throw '*DEVELOP_SCENARIO_INPUT_INVALID*'
+    }
+
+    It "binds every PowerShell Core boundary test to the Core runtime profile" {
+        $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $actualCatalog.pesterExternalRuntimeProfiles.'powershell-core'.kind | Should -BeExactly 'powershell-core'
+        $coreUsers = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tests/pester') -Filter '*.Tests.ps1' | Where-Object {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            $null -ne $ast.Find({ param($node)
+                ($node -is [Management.Automation.Language.CommandAst] -and [string]$node.GetCommandName() -match '^pwsh(\.exe)?$') -or
+                ($node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.Value -match '^pwsh(\.exe)?$') }, $true)
+        } | ForEach-Object { 'tests/pester/' + $_.Name } | Sort-Object)
+        $coreUsers | Should -Contain 'tests/pester/CompactRunnerRouting.Tests.ps1'
+        $declared = @($actualCatalog.pesterExternalRuntimeTests.PSObject.Properties | Where-Object { 'powershell-core' -in @($_.Value) } | ForEach-Object { $_.Name } | Sort-Object)
+        ($declared -join "`n") | Should -BeExactly ($coreUsers -join "`n")
     }
 
     It "does not cache a shard whose external runtime identity is not modeled" {
@@ -967,7 +989,10 @@ Describe 'Catalog selection and qualified consumer inputs' {
             New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot 'tests/pester') -Force | Out-Null
             $catalogPath=Join-Path $RepositoryRoot 'tests/quality-contracts.json'
             Copy-Item -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Destination $catalogPath
-            $catalog=$actualCatalog
+            # External runtime keys have their own regression; isolate the
+            # catalog-byte consumption of these consumers from host runtimes.
+            $catalog=$actualCatalog.PSObject.Copy()
+            $catalog.PSObject.Properties.Remove('pesterExternalRuntimeTests')
             $script:pesterRuntimeReceipt=[pscustomobject]@{status='known';identity=[pscustomobject]@{powerShellVersion=[string]$PSVersionTable.PSVersion;pesterVersion='fixture';identitySha256=('a'*64)}}
             $sharedInputs=@()
             $pesterExternalInputsByTest=@{}
@@ -1161,7 +1186,7 @@ Describe 'Source catalog Develop journey selection' {
         $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
         @($entrypoint.contracts) | Should -Be @('source-candidate-registration','source-delivery-entrypoint','source-delivery-incremental-inputs'); @($entrypoint.journeys) | Should -BeNullOrEmpty
         $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
-        @($candidate.contracts) | Should -Be @('pester-full-input-proof','source-candidate-registration','source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
+        @($candidate.contracts) | Should -Be @('pester-full-input-proof','source-candidate-registration','source-delivery-candidate','source-delivery-stand-preparation'); @($candidate.journeys) | Should -BeNullOrEmpty
         $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
         @($cleanup.contracts) | Should -Be @('e2e-artifact-cleanup-tests','source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }

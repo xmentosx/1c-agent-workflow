@@ -3,7 +3,7 @@ param(
     [switch]$CI,
     [string]$OutputFile = "",
     [string[]]$Path = @(),
-    [ValidateRange(1, 4)][int]$PesterWorkers = 3
+    [ValidateRange(1, 8)][int]$PesterWorkers = 3
 )
 
 $pesterWorkersExplicit = $PSBoundParameters.ContainsKey("PesterWorkers")

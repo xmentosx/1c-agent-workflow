@@ -261,7 +261,12 @@ Describe "Local quality gate contract" {
         $summary = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $summary.pesterWorkers.requested | Should -Be 3
         $summary.pesterWorkers.explicit | Should -BeFalse
-        $summary.pesterWorkers.effective | Should -Be 3
+        # Implicit workers are admitted by host memory. The 2026-10-27 Develop
+        # gate observed initialMemoryLimit=1 and effective=1, so the report
+        # follows that admission and reaches 3 whenever memory admits three.
+        $admitted = [int][math]::Max(1, [math]::Max([int]$summary.initialMemoryLimit, [int]$summary.peakActiveWorkers))
+        $summary.pesterWorkers.effective | Should -Be ([math]::Min(3, $admitted))
+        if ([int]$summary.initialMemoryLimit -ge 3) { $summary.pesterWorkers.effective | Should -Be 3 }
     }
 
     It "routes only exact named entrypoint AST changes and falls back for shared or unknown impact" {

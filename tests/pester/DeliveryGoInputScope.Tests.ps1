@@ -1,7 +1,11 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryIncremental.TestSupport.ps1') }
 
 Describe 'Incremental delivery acceptance' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
 BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
@@ -34,6 +38,8 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     $base=(& git -C $f.root rev-parse HEAD).Trim()
     $f.base=$base
     Save-IncrementalJourneyProofs $f
+    Test-DevelopGoBuildOnlyPath $f.root $paths[1] | Should -BeTrue
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeTrue
     foreach($path in $paths[1..2]) {
         [IO.File]::AppendAllText((Join-Path $f.root $path),"// static-only change`n")
         $route=Resolve-DevelopE2EJourneyPlanCore $f.root $base @($path) $catalog
@@ -73,6 +79,16 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     [IO.File]::AppendAllText($launcher,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
     Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
     [IO.File]::WriteAllBytes($launcher,$originalLauncher)
+    $runner=Join-Path $f.root 'scripts/invoke-develop-e2e.ps1'
+    $originalRunner=[IO.File]::ReadAllBytes($runner)
+    [IO.File]::AppendAllText($runner,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    [IO.File]::WriteAllBytes($runner,$originalRunner)
+    $planner=Join-Path $f.root 'scripts/develop-configuration-rejection.ps1'
+    $originalPlanner=[IO.File]::ReadAllBytes($planner)
+    [IO.File]::AppendAllText($planner,"`nGet-Content 'tools/itl-ondemand-mcp/README.md'`n")
+    Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
+    [IO.File]::WriteAllBytes($planner,$originalPlanner)
     [IO.File]::AppendAllText($runtime,"//go:embed README.md`n")
     Test-DevelopGoBuildOnlyPath $f.root $paths[2] | Should -BeFalse
     @(Resolve-DevelopE2EJourneyPlanCore $f.root $base @($paths[2]) $catalog).journeys | Should -Contain 'fresh'
@@ -95,7 +111,7 @@ It 'reuses only broker-independent scenarios after an actual locked broker and G
         [IO.File]::WriteAllText((Join-Path $positive '.agent-1c/release-e2e.json'),(@{developWorktreePath=$positiveDevelop}|ConvertTo-Json))
         [IO.File]::WriteAllText((Join-Path $f.stand '.agent-1c/release-e2e.json'),(@{developConfigurationRejection=@{positiveProjectRoot=$positive}}|ConvertTo-Json -Depth 6))
     }
-    $guidance=@('advanced-actions','verification-change','verification-result','verification-suite-selection'|ForEach-Object {'.agents/skills/1c-workflow/references/'+$_+'.md'})
+    $guidance=@('advanced-actions','artifact-retention','init-setup','scoped-memory','verification-change','verification-result','verification-suite-selection'|ForEach-Object {'.agents/skills/1c-workflow/references/'+$_+'.md'})
     foreach($relative in $guidance) {
         $target=Join-Path $f.root $relative;[void][IO.Directory]::CreateDirectory((Split-Path $target))
         Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination $target

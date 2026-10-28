@@ -43,6 +43,22 @@ component selection и preflight остаются у опубликованно�
 его, не включая поздние регистрации. `-ResumePlan` использует сохранённый
 кандидат и прежнюю authority. Старые планы без поля queue сохраняют свою
 идентичность. Новые регистрации относятся к следующему выпуску.
+Checkpoint, упавший до закрепления plan (например, на предварительном Full),
+состав не фиксирует: повтор собирает кандидат из текущих регистраций, поэтому
+перерегистрированное исправление входит в него; прежние байты checkpoint
+архивируются в `publication-attempts/replaced/unplanned`. Неизменная очередь
+продолжает тот же checkpoint и его circuit breaker.
+
+Сломанная запись не блокирует выпуск остальных. После product-сбоя Pester
+`PublishDevelop` повторяет только упавшие файлы: на опубликованном develop и на
+develop плюс каждую запись отдельно. Если файлы проходят без записей и падают
+ровно с одной, её точная пара base/head получает
+`refs/itl/develop-queue/<id>/deferred` с причиной; Status показывает её в
+`deferredQueue`. До закрепления plan та же операция в пределах исходного срока
+продолжает с остальными записями (не более двух откладываний); после
+закрепления сбой называет `-Replan <planId>`. Сбои интеграции, окружения,
+стенда и E2E без однозначной записи останавливают выпуск как раньше.
+Повторная `RegisterChange` того же QueueId снимает отметку в своей транзакции.
 После push очистка сравнивает только замороженные base/head: продвинутые и
 новые записи сохраняются. Гонка CAS повторяет только очистку. Отказ после
 push сохраняет checkpoint; тот же вызов завершает очистку без новой квалификации
@@ -59,7 +75,15 @@ develop; поздние и продвинутые регистрации ост�
 supervisor после проверок SHA, ancestry и immutable identity; повтор использует
 supervisor замены. Поддержка этого режима сначала публикуется отдельно от
 опубликованного baseline в clone/common Git со своей очередью, как support-only
-поставка. Обычный Replan включает текущую очередь. Неизменённые входы не сбрасывают
+поставка. При явно разрешённом исправлении `-FrozenRepair id@head` добавляет
+только эту зарегистрированную запись, чья base равна исходному candidate.
+Исходные пары не заменяются; незаявленные поздние записи не могут входить
+в ancestry исправления. Новый immutable plan закрепляет полный состав и
+проходит обычную квалификацию. Повтор проверяет pin по принятому плану,
+поэтому позднее продвижение этой записи остаётся следующей публикации.
+Расширение существующего Replan одобрено пользователем 2026-10-27 для
+`e2e-negative-change-plan@b1f9f6b482df741051924a1fc85e02d438e0f4ea`.
+Обычный Replan включает текущую очередь. Неизменённые входы не сбрасывают
 circuit breaker. Повреждённый выбранный proof сообщает путь/SHA/причину;
 Replan архивирует только повторно подтверждённый повреждённый record. Валидные
 этапы остаются применимыми по прежним правилам. Закрытый ResumePlan возвращает
@@ -67,6 +91,52 @@ already-reachable без новой квалификации и изменени
 Исторический активный план завершается прежним owner перед новым RegisterChange;
 функциональный rollback сохраняет совместимый queue decoder. Сценарии и пределы
 доказательств: [candidate recovery](../openspec/changes/redesign-source-delivery/evidence/candidate-recovery.md).
+
+### Ремонт упавшей замороженной публикации
+
+Падение Pester, journey или сценария в `Frozen` публикации чинится в отдельном
+ремонтном worktree без регистрации, Targeted и нового plan на каждую попытку.
+`scripts/source-repair.ps1` не хранит своё состояние и не берёт authority:
+он читает checkpoint и run index, отказывает при живой операции доставки и
+вызывает существующих владельцев из ремонтного worktree.
+
+```powershell
+.\scripts\source-repair.ps1 -Action Start
+# правка и обычный локальный commit в напечатанном worktree
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Test <File.Tests.ps1>
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Journey upgrade `
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+.\scripts\source-repair.ps1 -Action Run -RepairRoot <worktree> -Unproven `
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+.\scripts\source-repair.ps1 -Action Finish -RepairRoot <worktree> `
+  -E2EProjectRoot <стенд> -AiRulesSource <fork> -AgentTarget <клиент>
+```
+
+`Start` создаёт `itl/repair/<candidate>` от candidate checkpoint, а после
+принятой замены fast-forward переносит ветку на новый candidate. `Run` требует
+чистое закоммиченное дерево и выполняет только названные тесты через
+`invoke-pester-shards.ps1` (selection schema 1 сохраняет шард под ключом полного
+inventory) и только названный journey/сценарий через `invoke-develop-e2e.ps1` с
+той же привязкой артефактов и capture фикстур, что и gate. Прошедший сценарий
+сохраняется существующим владельцем scenario proof; финальный gate берёт его
+только после полного текущего static и совпадения всех входов, иначе выполняет
+заново. Стенд, fork и клиент должны совпадать с публикацией.
+
+Journey без `-Scenario` повторяет только сценарии без сохранённого proof для
+текущего дерева; отрицательный сценарий, прошедший в последнем упавшем прогоне,
+откладывается. Продолжить с середины сценария нельзя: каждый стартует с
+неизменяемого снимка стенда. Перед `Finish` `Run -Unproven` выполняет то, что
+финальный gate ещё не может переиспользовать: Pester-файлы, которые владелец
+шардов выбрал бы через `-PlanOnly`, и сценарии upgrade/fresh без proof, до
+первого сбоя. Финальный gate остаётся полным и решает reuse сам.
+
+`Finish` — единственная регистрация ремонта: `RegisterChange` с `-BaseRef`
+текущего candidate (Targeted только по diff ремонта), затем `PublishDevelop
+-Replan <план> -ReplanQueueScope Frozen -FrozenRepair <id>@<head>`. Запуск
+`Finish` пользователем является разрешением этого pin. Повтор после принятой
+замены продолжает тот же pin без новой регистрации; после нового падения gate
+цикл начинается с `Start`. Проверки, условия успеха и квалификация финального
+дерева не меняются.
 
 Проверка проходит вне общей блокировки. После успеха один Git CAS принимает
 `base/head` задачи, `refs/itl/develop-candidate/head` и immutable membership blob
@@ -140,7 +210,22 @@ and publication channels below remain authoritative.
 Implicit Full/Develop/Release Pester uses the catalog's
 `pesterWorkers.qualificationImplicitDefault`, capped by available processors.
 An explicit worker count remains authoritative; legacy catalogs retain their
-previous choice. Private manifest continuation fixtures run alongside independent
+previous choice. Implicit admission also accounts for physical and commit memory:
+it allows one worker per available physical GiB, with 2 GiB commit headroom per
+worker below 90% host commit usage (the remote runner's hard guard remains 92%). This
+only limits this scheduler's children, never other owners or their locks;
+an unavailable memory observation defers implicit admission. Plan uses the observed
+limit, while execution reduces admission under pressure and restores it, up to
+the configured limit, as memory becomes available again. The summary retains
+the initial limit and actual peak concurrency. Below 256 MiB available physical
+memory or without commit headroom it waits before starting parallel or serial
+workers, then resumes automatically. Existing gate deadlines still apply; on
+timeout free resources through their owner and repeat the same RegisterChange
+with the same QueueId/checkpoint. No foreign process is stopped. Plan marks an
+unknown resource wait separately; fully reused proof requires no worker admission.
+The October 27 incident exceeded the remote runner's commit guard even with free
+physical RAM; physical-only admission was insufficient. Neither guard is waived.
+Private manifest continuation fixtures run alongside independent
 files; real console/global boundaries remain serial. Ordering weights use observed
 native file times, separately from hard deadlines. Plan reads its timing samples
 from the existing bounded run index before filtering each stage; Targeted bursts
@@ -148,6 +233,32 @@ cannot displace qualification observations. Native scenario execution survives
 the check-summary/raw-record/index boundary, so partial and composed coverage
 cannot masquerade as a complete timing sample. Release estimates use executed
 component wall time, never aggregate or reused-proof duration.
+
+Cheap Release routing assertions run in the preflight cohort before expensive
+native Pester files. The assertions and their contract/capability ownership are
+preserved; real console/global tests remain serial. All synthetic plan/scope
+fixtures use one helper to snapshot, clear and restore the three external artifact overrides so
+Develop's actual archive/CFE/executable cannot replace fixture-owned bytes.
+
+A support clone reads exact Pester proofs from its local origin, or repositories
+listed by `git config --local --add itl.pesterProofSource <repository-root>`.
+Sources must have verifiable common ancestry. No network lookup, recursive
+discovery, foreign cache write or cleanup is performed. The current digest,
+owner inventory, runtime/external witnesses, selected test, passed result and
+manifest SHA checks still apply. Plan and results expose `proofSource`; a miss
+executes the original test and saves only in the current common Git directory.
+An older support baseline lacking these verifier capabilities must first acquire
+them through normal source delivery; its live checkpoint is never rewritten.
+
+Develop resolves journey ownership before requiring a stand. Without a supplied
+stand, a plan with zero live journeys keeps complete Full/static checks and writes an explicit
+`itl-workflow-develop-static-completion`, which cannot qualify Release E2E.
+Selected live journeys and Release retain their stand, capsule and route proof
+requirements. A supplied stand preserves existing route continuation for a
+following Release instead of replacing its live proof with static completion.
+Readiness receives the frozen candidate's `BaseRef` for encoding
+checks instead of requiring an unrelated `origin/master` in a support clone;
+an invalid explicit base remains a preflight failure.
 
 For changes to test suites, selection rules or production/input dependencies,
 acceptance includes selection, measured cost and reuse applicability, alongside
@@ -220,13 +331,45 @@ can project out its hash, compiled root Go source and known release identity
 fields. Install, branch, refresh, upgrade, whole-journey and unknown requests
 retain the exact broker identity. Runner, builder, PowerShell consumers, transport,
 platform, compatibility minimum, other artifacts and unknown fields remain bound.
+Cold fresh bootstrap has no retained on-demand runtime directory. With the audited
+bootstrap/runner bytes in both source snapshots, only the code after the exact
+missing-directory return in `Assert-NoActiveCutoverRuntime` and its pure function
+import may be projected out. The guard prefix, generation writer, unknown nodes
+and top-level code still bind. Only `Get-ItlOnDemandRuntimeRecordFiles` is outside
+fresh in the pure runtime-values library; its update callers remain exact for
+upgrade. A closed reader-inventory regression runs under complete current static
+proof. Changed consumers, import side effects, unknown scenarios or source/SHA
+failures close the exception. No installed guard or native assertion is skipped.
+For fresh verification, stale-export and close, the exact additive current-change
+protection block has its own static owner. It only keeps additional paths and may
+stop cleanup before deletion. The audited native caller catches optional cleanup
+failure after the primary action; the pinned recipe never invokes explicit cleanup.
+Project only that known block, with no ambient changePath use. Every other protection,
+candidate/removal rule, unknown node and source SHA remains exact. Changed caller,
+mandatory cleanup, unsafe/new block or unknown scenario closes the exception.
+A separate cheap closed-reader inventory and the native retention regressions remain
+in complete current static proof. This is not an exemption for the retention module.
+The audited diagnostic-retention transition may also retain those three fresh
+proofs: the pinned fresh recipe enrolls no diagnostic manifests; both exact
+source versions return an empty cold plan. Existing-root/upgrade work, unknown
+implementations, changed consumers and new enrollment remain outside this bridge.
+The producer/CLI inventory is separate from the slower scenario regressions.
+Shared verification planning in develop-configuration-rejection.ps1 is a fresh
+input; only its three negative-fixture functions are upgrade-only. Its actual
+shared assertions stay bound even when cleanup can reuse previous proof.
+With authenticated disabled product context on every project/Develop/positive
+target and no pending context operation, `Assert-ItlProductCatalog` is outside
+native scenarios. Only that function is projected: shared catalog helpers,
+unknown functions, top-level execution and binding admission stay exact. A
+closed caller inventory and disabled-startup regression accompany current static
+proof. Enabled, pending or unknown context retains native catalog qualification.
 The linked `references/mcp.md` agent instruction is a static input; neither native
 runner reads it. Unknown references keep conservative binding and historical
 source SHA still authenticates this projection.
 The main `1c-workflow/SKILL.md` content uses the same static boundary, with
 authenticated prior/current file presence. Addition/removal remains conservative.
-The explicit content-only set also includes `advanced-actions.md`,
-`verification-change.md`, `verification-result.md` and
+The explicit content-only set also includes `advanced-actions.md`, `artifact-retention.md`,
+`init-setup.md`, `scoped-memory.md`, `verification-change.md`, `verification-result.md` and
 `verification-suite-selection.md`: native callers print their links, while static
 tests read their content. Unknown references retain native binding. Historical
 source SHA authentication remains mandatory before every projection.
@@ -321,10 +464,12 @@ policy; this section adds no runtime barrier or automatic performance threshold.
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
-Публичный `PesterWorkers` по умолчанию остаётся равен `3`. Только неявный
-`Targeted` использует объявленное каталогом значение `4`, ограниченное числом
-логических процессоров; явно переданное значение и все остальные режимы не
-изменяются. Оба summary сохраняют requested/explicit/effective worker count;
+Публичный `PesterWorkers` по умолчанию остаётся равен `3`, предел — `8`.
+Неявные `Targeted` и квалификационные режимы используют объявленное каталогом
+значение `8`, ограниченное числом логических процессоров; каждый новый worker
+дополнительно допускается только при 1 GiB свободной памяти и 2 GiB запаса
+commit. Явно переданное значение не изменяется. Оба summary сохраняют
+requested/explicit/effective worker count;
 `effective` означает разрешённый предел sharded runner, а не число фактически
 запущенных процессов. `Smoke` остаётся однопроцессным.
 Hard limits учитывают наблюдения 2026-10-09: Targeted исчерпал 2100 секунд
@@ -337,6 +482,20 @@ timing weights, последовательность Compact или no-progress 
 
 Tracked timings задают порядок запуска и округляются вверх от сохранённых
 наблюдений; это не обещание длительности и не отдельный timeout.
+
+`Develop` запускает сценарии upgrade и fresh без proof параллельно со static,
+начиная с самого длинного journey. Если PublishDevelop требует Release, он
+передаёт `-PrerunReleaseCapabilities`, и gate заранее готовит Release fixture и
+выполняет эти стадии `invoke-release-e2e.ps1` на ней. Каждый дочерний этап
+стартует только при свободной памяти и запасе commit (ниже 90%) по 2/4 GiB на
+работающий этап; иначе он остаётся в прежнем последовательном пути. После
+полного текущего static последовательные journey берут сохранённый сценарный
+proof или выполняют сценарий как раньше; Release gate по-прежнему идёт после
+Develop и переиспользует стадию только через собственный checkpoint. Упавший
+journey завершает Develop ошибкой после окончания соседних этапов, их proof
+остаётся для `source-repair.ps1`; упавшая заранее Release стадия помечается
+`speculative` и выполняется Release gate. `check-summary.json.memory` хранит
+минимум свободной памяти и пик commit для настройки порогов.
 
 В sharded runner выбранный `SourceDeliveryAdmission.Tests.ps1` завершается до
 запуска дорогих parallel files. Его ошибка сохраняется в обычном summary/JUnit
@@ -374,8 +533,9 @@ probe. Новый/удалённый callee, динамический вызов
 При rename проверяется и владелец нового пути. Только точный `R100` внутри того же
 каталога `agent-1c.*.ps1` наследует прежние полные path contracts; неизвестное
 внешнее назначение или изменённый новый модуль требуют обычного назначения owner.
-Полные текущие module и entrypoint входят в `additionalInputs` каждого
-выбранного шарда. Неполный план отвергается; агент повторно создаёт его через
+Полные текущие module и entrypoint сохраняются в `additionalInputs` selection.
+Их semantic-владельцы получают одинаковые полные входы в Targeted и Full;
+независимые владельцы не наследуют чужой fallback. Неполный план отвергается; агент повторно создаёт его через
 `resolve-targeted-tests.ps1` и продолжает исходную проверку.
 `DevBranchCheck` содержит перенесённые без изменения случаев проверки cursor и
 repair sequencing; прежние широкие выборки сохраняют их. Пилот подготовки
@@ -409,11 +569,19 @@ Release учитывает native-журналы основной ветки и 
 PowerShell/Pester. Внешняя identity входит только для test-файлов, явно
 перечисленных в `pesterExternalInputs`; смена controlled fork или Vanessa build
 не сбрасывает не связанные с ними шарды. Неизвестный владелец теста отключает
-кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
-выбранного шарда; поэтому semantic routing не может переиспользовать proof от
-другой версии полного entrypoint. Провальные результаты не кэшируются.
+кэш для шарда. Общий catalog-derived semantic binding включает полный entrypoint
+и libraries для всех тестов их fallback/function/common владельцев независимо
+от режима проверки. Неизвестные supplemental inputs остаются обязательными;
+неполная или неизвестная semantic-схема отключает reuse. Поэтому semantic routing
+не принимает proof другой версии полного входа, а независимый тест сохраняет
+одинаковый digest в смешанном Targeted и Full. Провальные результаты не кэшируются.
 Из этих двух переменных дочерний процесс получает только объявленные входы;
 scheduler восстанавливает собственное окружение после каждого запуска.
+Worker также выставляет `ITL_TEST_AGENT_HOST_ISOLATED=1`: определение
+исполняющего клиента не читает маркеры и цепочку процессов агента, запустившего
+gate, поэтому результат одинаков из Codex, Claude Code и терминала. Fixture,
+которой нужен конкретный исполнитель, передаёт `-AgentTarget` или подменяет
+определение явно.
 Proof до изоляции окружения не соответствует `external-input-scope=declared-v1`
 и не переиспользуется, в том числе через старые lookup keys.
 Предел параллельных worker принадлежит scheduler и не входит в fingerprint:
@@ -693,6 +861,42 @@ Ordering weights исправлены по этим наблюдениям: тя
 повторный live runtime. При отсутствии подходящих timing records, в том числе
 при недоступном hot index, прогноз остаётся неизвестным. Hard limits, approval
 долгого плана и watchdog не ослабляются ради короткой оценки.
+
+Для команды публикации `gateEstimatedSeconds` — только сумма основных gates.
+`estimatedSeconds` остаётся неизвестным при ненулевом `unmeasuredPreparation`:
+подготовка/проверка капсул, предварительный compatibility Full для pending fork,
+очистка и remote finalization не должны исчезать из прогноза. Уже завершённая
+подготовка отражается отдельно в `preparationSpentSeconds`, не как оставшееся время.
+Например, в расследовании 2026-10-26 за пределами основных gates оказались
+184794 мс позднего readiness, 1182225 мс обновления десяти веток, 367350 мс
+двух Capture и 381265 мс отклонённого ResumePlan; preliminary Full занял
+1493606 мс. Это наблюдения конкретного запуска, а не норматив будущей публикации.
+
+Будущий PublishDevelop готовит стенд через штатные recovery/update-workflow/Capture
+до финального расчёта и сохранения execution fingerprints. Rollout ограничен
+двумя зарегистрированными ветками immutable капсул Release/Develop: checker
+связывает обе с общим master до запуска любого journey. Контекстные ссылки на
+квитанции других веток не добавляют эти ветки в область записи. Список корней и
+source commit сохраняется в lifecycle receipt; retry не расширяет его. Capture
+сохраняет исходную капсулу и проверяет всю цепочку workflow-only переходов,
+backup, конфигурацию, окружение, business bytes и SHA базы. Автоматический
+Recapture и создание новой baseline запрещены. Обычный update-workflow без
+scope сохраняет rollout всех зарегистрированных development-веток.
+Read-only Plan показывает требуемую подготовку; при ожидаемом изменении стенда
+возвращает `resumable=false` и continuation для PublishDevelop без ResumePlan.
+Publisher затем фиксирует окончательный план и запрашивает его обычное long-plan
+approval. После фиксации automatic preparation повторно не запускается: дрейф
+входов по-прежнему блокирует ResumePlan, исходный план и proof сохраняются.
+Успешная best-effort pre-operation уборка переиспользуется только при ResumePlan
+того же checkpoint. Legacy/неполная уборка и новый план выполняют её заново;
+актуальные operation locks, process/lease guards, gates и post-operation уборка
+сохраняются. Текущая публикация продолжает использовать прежний supervisor.
+Промоушен совместимости ai_rules — один коммит над кандидатом, меняющий только
+`compatibilityStatus`/`compatibilityCheckedAt` в `templates/dependency-lock.json`;
+стенд, установленный из него или из самого кандидата, считается актуальным для
+обоих. Поэтому Plan без промоушена и повтор с новым промоушеном того же
+кандидата не требуют повторного update-workflow. Automatic Capture передаёт
+владельцу фикстуры обязательный `-OutputPath`.
 
 Изменение planner/checker, маршрутизации или reuse должно сохранять регрессии
 обоих направлений: изолированная recovery-доработка не запускает `fresh`, общий

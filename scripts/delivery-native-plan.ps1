@@ -82,7 +82,8 @@ function Get-DeliveryStaticReuseEstimate {
         $middle=[int][math]::Floor($samples.Count/2)
         $seconds=[int][math]::Ceiling($(if($samples.Count%2){$samples[$middle]}else{($samples[$middle-1]+$samples[$middle])/2}))
     }
-    return [pscustomobject]@{estimatedSeconds=$seconds;sampleCount=$samples.Count;basis='current-shard-reuse-and-historical-overhead';
+    $admissionBlocked = $Preview.PSObject.Properties['admission'] -and $Preview.admission.state -eq 'waiting-for-host-memory'
+    return [pscustomobject]@{estimatedSeconds=$(if($admissionBlocked){$null}else{$seconds});sampleCount=$samples.Count;basis=$(if($admissionBlocked){'waiting-for-host-memory; gate-work-estimate-excludes-unknown-wait'}else{'current-shard-reuse-and-historical-overhead'});
         compatibilityTimingBasis=$(if($measured.Count){'process-exit'}else{'legacy-envelope-upper-bound'});
         pesterSeconds=$Preview.estimatedSeconds;executedFiles=$Preview.executedCount;reusedFiles=$Preview.reusedCount;
         fixtureInputsRequired=$needsFixture;planningOverheadSeconds=[int][math]::Ceiling($Preview.durationMs/1000);

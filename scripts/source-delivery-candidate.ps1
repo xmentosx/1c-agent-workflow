@@ -567,8 +567,44 @@ function Complete-InterruptedDevelopPublication {
     }
 }
 
+function Resolve-DeliveryFrozenRepairs {
+    param([object]$Attempt,[string[]]$Selectors,[switch]$Continuation)
+    $selected=@();$ids=@()
+    $snapshot=if(-not $Continuation){Get-SourceRegistrationSnapshot}else{$null}
+    foreach($selector in $Selectors){
+        if($selector -cnotmatch '^([a-z0-9][a-z0-9._-]*)@([a-f0-9]{40})$'){throw 'DELIVERY_FROZEN_REPAIR_INVALID: pin each registered repair as queue-id@40-character-head.'}
+        $id=$Matches[1];$head=$Matches[2]
+        if($id -cin $ids){throw 'DELIVERY_FROZEN_REPAIR_DUPLICATE'}
+        $ids+=@($id)
+        if($Continuation){
+            if(@($Attempt.queue|Where-Object{[string]$_.id -ceq $id -and [string]$_.head -ceq $head}).Count -ne 1){throw 'DELIVERY_FROZEN_REPAIR_SCOPE_CHANGED: continue the exact accepted replacement plan.'}
+            continue
+        }
+        if($id -cin @($Attempt.queue.id)){throw 'DELIVERY_FROZEN_REPAIR_REPLACES_MEMBER: original frozen base/head pairs cannot be replaced.'}
+        $entry=@($snapshot.entries|Where-Object{[string]$_.id -ceq $id -and [string]$_.head -ceq $head})
+        if($entry.Count -ne 1 -or [string]$entry[0].base -cne [string]$Attempt.candidate){throw 'DELIVERY_FROZEN_REPAIR_NOT_REGISTERED: the exact repair must be registered against the original frozen candidate.'}
+        $selected+=@($entry[0])
+    }
+    if(-not $Continuation){
+        foreach($entry in $selected){
+            if((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$Attempt.candidate,[string]$entry.head) -AllowFailure).exitCode -ne 0){throw 'DELIVERY_FROZEN_REPAIR_BASE_CHANGED'}
+            foreach($other in @($snapshot.entries|Where-Object{[string]$_.id -cnotin $ids})){
+                if((Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$other.head,[string]$entry.head) -AllowFailure).exitCode -eq 0 -and
+                    (Invoke-DeliveryGit -Arguments @('merge-base','--is-ancestor',[string]$other.head,[string]$Attempt.candidate) -AllowFailure).exitCode -ne 0){
+                    throw 'DELIVERY_FROZEN_REPAIR_CONTAINS_LATER_QUEUE: the repair carries an unselected later registration.'
+                }
+            }
+        }
+    }
+    return $selected
+}
+
 function Publish-AccumulatedDevelop {
-    $operationStartedAt = [DateTime]::UtcNow
+    # A deferral round continues the original operation and its budget.
+    $continuedFrom = Get-Variable -Name DeliveryOperationStartedAt -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $operationStartedAt = if ($continuedFrom) { [DateTime]$continuedFrom } else { [DateTime]::UtcNow }
+    $script:DeliveryPreservedCandidate = $null
+    $script:DeliveryFailedPesterFiles = @()
     $fullReleaseRequested = [bool]$RequireRelease
     Assert-CleanDeliveryWorktree
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
@@ -577,10 +613,24 @@ function Publish-AccumulatedDevelop {
     $interrupted = Complete-InterruptedDevelopPublication -RemoteBefore $remoteBefore -Entries $entries
     if ($interrupted) { return $interrupted }
     $frozenAttempt = Read-DevelopPublicationAttempt
+    # Only a pinned plan freezes queue membership. A checkpoint that failed
+    # before pinning one holds no qualification, so a re-registered fix must
+    # reach the next candidate; an unchanged queue still resumes its circuit.
+    if ($frozenAttempt -and -not $Replan -and -not $ResumePlan -and
+        -not ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId) -and
+        (Get-DevelopPublicationPhaseRank -Phase ([string]$frozenAttempt.phase)) -eq 0) {
+        $unplannedPath = Get-DevelopPublicationAttemptPath
+        $unplannedArchive = Join-Path (Split-Path -Parent $unplannedPath) 'replaced/unplanned'
+        New-Item -ItemType Directory -Force -Path $unplannedArchive | Out-Null
+        $unplannedArchive = Join-Path $unplannedArchive ((Get-DeliveryFileSha256 -Path $unplannedPath)+'.json')
+        if (-not (Test-Path -LiteralPath $unplannedArchive)) { Copy-Item -LiteralPath $unplannedPath -Destination $unplannedArchive }
+        $frozenAttempt = $null
+    }
     $frozenPlan = $null
     $replacementOriginal = $null
     $replacementArchive = ''
     $replacementAccepted = $false
+    $repairEntries=@()
     $originalAttemptBytes = if ($frozenAttempt) { [IO.File]::ReadAllBytes((Get-DevelopPublicationAttemptPath)) } else { $null }
     if ($Replan) {
         if ($Replan -notmatch '^[a-f0-9]{64}$' -or -not $frozenAttempt) { throw 'DELIVERY_REPLAN_INVALID: name the active plan shown by Status; its checkpoint and queue were preserved.' }
@@ -618,6 +668,9 @@ function Publish-AccumulatedDevelop {
         } elseif ($frozenAttempt.PSObject.Properties['replanQueueScope'] -and [string]$frozenAttempt.replanQueueScope -ceq 'Frozen' -and
             (-not $frozenAttempt.PSObject.Properties['planId'] -or [string]$frozenAttempt.planId -cne $Replan)) {
             throw 'DELIVERY_REPLAN_SCOPE_CHANGED: repeat this replacement with -ReplanQueueScope Frozen.'
+        }
+        if($FrozenRepair.Count){
+            $repairEntries=@(Resolve-DeliveryFrozenRepairs -Attempt $frozenAttempt -Selectors $FrozenRepair -Continuation:([string]$frozenAttempt.planId -cne $Replan))
         }
         if ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId -ceq $Replan) {
             $replacementOriginal = $frozenAttempt
@@ -663,14 +716,17 @@ function Publish-AccumulatedDevelop {
             $startPoint = if ($frozenAttempt.PSObject.Properties['queuedCandidate']) { [string]$frozenAttempt.queuedCandidate } elseif ($frozenAttempt.PSObject.Properties['promotionSourceCandidate']) { [string]$frozenAttempt.promotionSourceCandidate } else { [string]$frozenAttempt.candidate }
         } elseif ($frozenPlan) { $startPoint = [string]$frozenPlan.candidate.commit }
         elseif ($replacementOriginal -and $ReplanQueueScope -eq 'Frozen') {
-            $entries = @($replacementOriginal.queue)
+            $entries = @($replacementOriginal.queue)+@($repairEntries)
             # The exact validated original candidate also retains its owned
             # compatibility promotion; later accepted candidates are excluded.
             $startPoint = [string]$replacementOriginal.candidate
         } elseif (-not $frozenAttempt) {
             $snapshot = Get-SourceRegistrationSnapshot
-            $entries = @($snapshot.entries)
-            $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
+            $entries = @(Get-PublishableQueueEntries -Entries @($snapshot.entries))
+            # The accumulated registration candidate contains deferred ranges;
+            # without them the candidate is rebuilt from published develop.
+            $startPoint = if ($entries.Count -lt @($snapshot.entries).Count) { [string]$snapshot.remoteBefore } else { Get-SourceRegistrationStartPoint -Snapshot $snapshot }
+            if ($entries.Count -eq 0) { throw "DELIVERY_QUEUE_ALL_DEFERRED: every registered change is deferred; Status names each reason and its re-registration continuation." }
         }
         $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries -PublishedDevelop $remoteBefore
@@ -709,6 +765,10 @@ function Publish-AccumulatedDevelop {
         if ($ReplanQueueScope -eq 'Frozen') { $attempt | Add-Member -NotePropertyName replanQueueScope -NotePropertyValue 'Frozen' -Force }
         $attempt.candidate = $candidate
         $attempt.tree = $candidateTree
+        $preCleanup = Get-Variable -Name DeliveryPreOperationCleanup -ValueOnly -ErrorAction SilentlyContinue
+        if ($preCleanup -and [string]$preCleanup.status -ceq 'completed') {
+            $attempt | Add-Member -NotePropertyName preOperationCleanup -NotePropertyValue $preCleanup -Force
+        }
         Write-DevelopPublicationAttempt -Attempt $attempt
 
         $prePromotionInstallability = Get-DevelopCandidateInstallability -CandidateRoot $worktree.path
@@ -726,8 +786,20 @@ function Publish-AccumulatedDevelop {
             Write-DevelopPublicationAttempt -Attempt $attempt
         }
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
+        $standReadyBeforePlan = $false
+        # Once a plan is frozen, do not repair drift before comparing its inputs.
+        # Preparation belongs to the existing unplanned publication checkpoint.
+        if (-not $frozenPlan -and (-not $priorAttempt -or -not $priorAttempt.PSObject.Properties['planId'] -or -not [string]$priorAttempt.planId)) {
+            $preparation = Get-DeliveryStandPreparation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -RequireRelease:$RequireRelease
+            if (-not $Replan) { $replacementAccepted = $true }
+            Invoke-DeliveryStandPreparation -CandidateRoot $worktree.path -Preparation $preparation -Attempt $attempt -RequireRelease:$RequireRelease
+            if ($RequireRelease) { Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path }
+            $standReadyBeforePlan = $true
+        }
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = Invoke-DeliveryCandidatePlanCalculation -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
+        $completedPreparation = if ($attempt.PSObject.Properties['standPreparation']) { $attempt.standPreparation } else { $null }
+        Add-DeliveryPreparationEstimate -Plan $deliveryPlan -CompletedPreparation $completedPreparation
         if (-not $frozenPlan -or $frozenPlan.PSObject.Properties['queue']) { Set-DeliveryPlanQueue -Plan $deliveryPlan -Entries $entries }
         $invalidEvidence = @(if ($Action -eq 'PublishDevelop') { Get-DeliveryPlanInvalidEvidence -Plan $deliveryPlan })
         if ($replacementOriginal -and $invalidEvidence.Count -eq 0) {
@@ -811,7 +883,7 @@ function Publish-AccumulatedDevelop {
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
-        if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
+        if ($RequireRelease -and -not $standReadyBeforePlan -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
             Invoke-DeliveryReleaseStandRecovery -CandidateRoot $worktree.path
             Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
         }
@@ -819,7 +891,8 @@ function Publish-AccumulatedDevelop {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
             try {
-                Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop")
+                $prerunCapability = @(if ($RequireRelease) { $deliveryPlan.releaseCapabilities })
+                Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop") -PrerunReleaseCapability $prerunCapability
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
                 Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop")
@@ -930,14 +1003,112 @@ function Publish-AccumulatedDevelop {
             }
         }
         $customGate = [bool]$script:DeliveryCustomGateBoundary
+        if (-not $deliverySucceeded -and $worktree) {
+            try { $script:DeliveryFailedPesterFiles = @(Get-DeliveryFailedPesterFiles -CandidateRoot $worktree.path) } catch { $script:DeliveryFailedPesterFiles = @() }
+        }
         if ($deliverySucceeded -or $customGate) {
             Remove-DeliveryWorktree -Worktree $worktree
             if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "removed") }
         } elseif ($worktree) {
             if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "retained") }
-            Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged."
+            $script:DeliveryPreservedCandidate = $worktree
+            # stderr keeps stdout a single JSON result when a deferral round follows.
+            [Console]::Error.WriteLine("WARNING: Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged.")
         }
     }
+}
+
+function Get-DeliveryFailedPesterFiles {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+    $root = [IO.Path]::GetFullPath($CandidateRoot).TrimEnd('\') + '\'
+    $files = foreach ($report in @(Get-ChildItem -LiteralPath (Join-Path $CandidateRoot 'build/test-results') -Recurse -File -Filter 'worker-*.xml' -ErrorAction SilentlyContinue)) {
+        try { $xml = [xml][IO.File]::ReadAllText($report.FullName) } catch { continue }
+        foreach ($suite in @($xml.SelectNodes('//testsuite'))) {
+            if (([int]$suite.GetAttribute('failures') + [int]$suite.GetAttribute('errors')) -le 0) { continue }
+            $full = [IO.Path]::GetFullPath([string]$suite.GetAttribute('name'))
+            if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $full.Substring($root.Length).Replace('\', '/') }
+        }
+    }
+    return @($files | Sort-Object -Unique)
+}
+
+function Test-DeliveryPesterFilesAt {
+    # Returns passed, failed or inconclusive for the failing files on
+    # published develop plus the given ranges; the probe worktree is disposable.
+    param([string]$StartPoint, [object[]]$Entries, [string[]]$Files, [string]$LogRoot, [string]$Name)
+    $probe = New-DeliveryWorktree -StartPoint $StartPoint -Purpose 'attribute'
+    try {
+        try { Add-QueuedRangesToCandidate -CandidateRoot $probe.path -Entries @($Entries) } catch { return 'inconclusive' }
+        $present = @($Files | Where-Object { Test-Path -LiteralPath (Join-Path $probe.path $_) -PathType Leaf })
+        if ($present.Count -eq 0) { return 'passed' }
+        $quoted = @($present | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ','
+        $command = "& '" + (Join-Path $probe.path 'scripts\test.ps1').Replace("'", "''") + "' -Path @($quoted); exit `$LASTEXITCODE"
+        try { [void](Invoke-DeliveryStandOwner -CandidateRoot $LogRoot -Name $Name -BudgetSeconds 900 -Arguments @('-Command', $command)) }
+        catch { if ($_.Exception.Message -match 'TIMEOUT') { return 'inconclusive' }; return 'failed' }
+        return 'passed'
+    } finally { Remove-DeliveryWorktree -Worktree $probe }
+}
+
+function Resolve-DevelopFailingEntryDeferral {
+    # A product Pester failure is attributed only when its files pass on
+    # published develop and fail with exactly one queued range merged alone.
+    # Integration-only, environment, stand or E2E failures stay a normal stop.
+    $attempt = Read-DevelopPublicationAttempt
+    $files = @(Get-Variable -Name DeliveryFailedPesterFiles -Scope Script -ValueOnly -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    if (-not $attempt -or $files.Count -eq 0) { return $null }
+    $latest = @($attempt.failures | Sort-Object { [string]$_.lastFailedAt } -Descending | Select-Object -First 1)
+    if ($latest.Count -eq 0 -or [string]$latest[0].failureClass -cne 'product') { return $null }
+    $entries = @($attempt.queue)
+    if ($entries.Count -lt 2) { return $null }
+    $preserved = Get-Variable -Name DeliveryPreservedCandidate -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $logRoot = if ($preserved) { [string]$preserved.path } else { Join-Path ([IO.Path]::GetTempPath()) ('itl-source-attribution-' + [guid]::NewGuid().ToString('N')) }
+    $remoteBefore = [string]$attempt.remoteBefore
+    if ((Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @() -Files $files -LogRoot $logRoot -Name 'attribution-baseline') -cne 'passed') { return $null }
+    $failing = @()
+    foreach ($entry in $entries) {
+        $name = 'attribution-' + ([string]$entry.id -replace '[^A-Za-z0-9._-]', '-')
+        $outcome = Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @($entry) -Files $files -LogRoot $logRoot -Name $name
+        if ($outcome -ceq 'inconclusive') { return $null }
+        if ($outcome -ceq 'failed') { $failing += $entry }
+    }
+    if ($failing.Count -ne 1) { return $null }
+    $planId = if ($attempt.PSObject.Properties['planId']) { [string]$attempt.planId } else { '' }
+    return [pscustomobject]@{ entry=$failing[0]; stage=[string]$latest[0].stage; files=$files; planId=$planId
+        reason="Pester files fail with only this range merged on published develop $remoteBefore and pass without it: $($files -join ', ')" }
+}
+
+function Publish-DevelopDeferringFailingEntries {
+    # One operation and deadline: an attributed failure before plan pinning
+    # defers its range and continues with the rest, at most twice. A pinned plan
+    # keeps its immutable membership, so the deferral only names the Replan.
+    $script:DeliveryOperationStartedAt = [DateTime]::UtcNow
+    $deferred = @()
+    try {
+        for (;;) {
+            try { $published = Publish-AccumulatedDevelop; break }
+            catch {
+                $failure = $_
+                $deferral = $null
+                try { $deferral = Resolve-DevelopFailingEntryDeferral }
+                catch { [Console]::Error.WriteLine("WARNING: Failing-entry attribution was inconclusive: $($_.Exception.Message)") }
+                if (-not $deferral -or -not (Add-QueueDeferral -Entry $deferral.entry -Stage $deferral.stage -Reason $deferral.reason -Evidence $deferral.files)) { throw $failure }
+                $deferred += $deferral
+                $id = [string]$deferral.entry.id
+                if ($deferral.planId) {
+                    throw "DELIVERY_ENTRY_DEFERRED: '$id' alone fails $($deferral.files -join ', ') and was deferred. Repeat the same PublishDevelop with -Replan '$($deferral.planId)' to qualify the remaining queue; re-registering '$id' removes its deferral."
+                }
+                if ($deferred.Count -ge 2) {
+                    throw "DELIVERY_ENTRY_DEFERRED: deferred $(@($deferred | ForEach-Object { "'$($_.entry.id)'" }) -join ', '). Repeat the same PublishDevelop to continue with the remaining queue."
+                }
+                [Console]::Error.WriteLine("WARNING: Deferred '$id': $($deferral.reason). Continuing this publication with the remaining registered changes.")
+            }
+        }
+    } finally { Remove-Variable -Name DeliveryOperationStartedAt -Scope Script -ErrorAction SilentlyContinue }
+    if ($deferred.Count) {
+        $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue @($deferred | ForEach-Object {
+            [ordered]@{ id=[string]$_.entry.id; head=[string]$_.entry.head; reason=[string]$_.reason } }) -Force
+    }
+    return $published
 }
 
 function Publish-ReleaseVersion {

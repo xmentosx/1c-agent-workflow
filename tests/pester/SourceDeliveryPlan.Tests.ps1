@@ -1,6 +1,34 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'SourceDeliveryPlan.TestSupport.ps1') }
 
 Describe 'Delivery v3 immutable selective plan' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+
+    It 'does not turn an unknown resource wait into a static ETA and retains a ready work estimate' {
+        $preview=[pscustomobject]@{estimatedSeconds=8;durationMs=1000;executedCount=1;reusedCount=0;
+            admission=[pscustomobject]@{state='waiting-for-host-memory'};
+            files=@([pscustomobject]@{path='owned.Tests.ps1';execution='execute';estimatedSeconds=8;reason='changed owner inputs';changedInputs=@()})}
+        $plan=[pscustomobject]@{stages=@([pscustomobject]@{id='develop.static'});requireRelease=$false}
+        $runs=@([pscustomobject]@{mode='Develop';status='passed';stages=@([pscustomobject]@{name='other-static';durationMs=1000})})
+        $blocked=Get-DeliveryStaticReuseEstimate -Preview $preview -Plan $plan -Runs $runs
+        $blocked.estimatedSeconds | Should -BeNullOrEmpty
+        $blocked.basis | Should -Match 'waiting-for-host-memory'
+        $blocked.pesterSeconds | Should -Be 8
+        $preview.admission.state='ready'
+        (Get-DeliveryStaticReuseEstimate -Preview $preview -Plan $plan -Runs $runs).estimatedSeconds | Should -Be 10
+    }
+    It 'does not present the gate subtotal as a command ETA when preparation and preliminary Full are unmeasured' {
+        $plan=[pscustomobject]@{timeEstimate=[pscustomobject]@{estimatedSeconds=8048;note='gate estimate'}}
+        Add-DeliveryPreparationEstimate -Plan $plan -Preparation ([pscustomobject]@{requiresStateChange=$true}) -PendingCompatibility
+        $plan.timeEstimate.estimatedSeconds | Should -BeNullOrEmpty
+        $plan.timeEstimate.gateEstimatedSeconds | Should -Be 8048
+        $plan.timeEstimate.unmeasuredPreparation | Should -Contain 'stand-preparation-and-capture'
+        $plan.timeEstimate.unmeasuredPreparation | Should -Contain 'preliminary-compatibility-Full'
+        $plan.timeEstimate.preparationSpentSeconds | Should -Be 0
+        $next=[pscustomobject]@{timeEstimate=[pscustomobject]@{estimatedSeconds=8048;note='gate estimate'}}
+        Add-DeliveryPreparationEstimate -Plan $next -CompletedPreparation ([pscustomobject]@{durationMs=123001})
+        $next.timeEstimate.preparationSpentSeconds | Should -Be 124
+        $next.timeEstimate.unmeasuredPreparation | Should -Not -Contain 'stand-preparation-and-capture'
+    }
     It 'retains passed qualification timing after a burst of Targeted runs without reading raw records' {
         function Get-DeliveryRunHistory {
             param([int]$Limit,[switch]$IncludeDetails)
@@ -267,6 +295,8 @@ Describe 'Delivery v3 immutable selective plan' {
     }
 
     BeforeEach {
+        $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment
+
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
         $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
@@ -803,7 +833,12 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
-    It 'adds owned component Release capabilities to the accumulated Plan' {
+    It 'adds owned component Release capabilities and forecasts stand changes: <StandChanges>, <ComponentShape>' -ForEach @(
+        @{StandChanges=$false;ComponentShape='empty'},@{StandChanges=$true;ComponentShape='empty'},
+        @{StandChanges=$false;ComponentShape='seam'},@{StandChanges=$true;ComponentShape='seam'},
+        @{StandChanges=$false;ComponentShape='missing'},@{StandChanges=$true;ComponentShape='missing'},
+        @{StandChanges=$false;ComponentShape='pending'},@{StandChanges=$true;ComponentShape='pending'}
+    ) {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
         & {
@@ -815,20 +850,31 @@ Describe 'Delivery v3 immutable selective plan' {
             function Get-QueueEntries { return @([pscustomobject]@{ id='develop'; base=('a' * 40); head=('c' * 40) }) }
             function Get-SourceRegistrationSnapshot { return [pscustomobject]@{ entries=@(Get-QueueEntries); remoteBefore=('b' * 40) } }
             function Get-SourceRegistrationStartPoint { param($Snapshot); return $Snapshot.remoteBefore }
+            function Get-PublishableQueueEntries { param($Entries); return @($Entries) }
             function New-DeliveryWorktree { return [pscustomobject]@{ path='C:\candidate'; branch='itl/plan' } }
             function Add-QueuedRangesToCandidate {}
             function Invoke-WorktreeGit {
                 param([string]$Root,[string[]]$Arguments)
                 return [pscustomobject]@{ exitCode=0; stdout=$(if ($Arguments -contains 'HEAD^{tree}') { ('d' * 40) } else { ('c' * 40) }) }
             }
-            function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@() } }
+            function Get-OwnedComponentPublicationPlan {
+                if($ComponentShape -eq 'missing'){return [pscustomobject]@{status='planned';requiredReleaseCapabilities=@('ondemand-mcp')}}
+                $components=switch($ComponentShape){
+                    'empty' {@()}
+                    'seam' {@('test-seam')}
+                    'pending' {@([pscustomobject]@{name='aiRules1c';compatibilityPromotionRequired=$true})}
+                }
+                return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@($components) }
+            }
             function Assert-ComponentPublicationFinalizerPreflight { $script:preflightCalled = $true }
             function Resolve-DeliveryPlanAiRulesSource { $script:resolverCalled = $true; return 'C:\exact-rules' }
+            function Get-DeliveryStandPreparation { param($CandidateRoot,$BaseCommit,[switch]$RequireRelease) $script:preparationReleaseRequested=[bool]$RequireRelease; if($StandChanges){return [pscustomobject]@{requiresStateChange=$true}}; return $null }
             function Invoke-DeliveryCandidatePlanCalculation {
                 param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease,[string[]]$ReleaseCapability,[switch]$AllowCustomGateFixture)
-                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability) }
+                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability);timeEstimate=[pscustomobject]@{estimatedSeconds=30;note='fixture gate subtotal'} }
             }
-            function Save-DeliveryQualityPlan { return 'C:\plan.json' }
+            $script:planSaved=$false
+            function Save-DeliveryQualityPlan { $script:planSaved=$true; return 'C:\plan.json' }
             function Set-DeliveryPlanQueue { param($Plan, $Entries); $Plan | Add-Member -NotePropertyName queue -NotePropertyValue @($Entries) }
             function Remove-DeliveryWorktree {}
 
@@ -838,6 +884,11 @@ Describe 'Delivery v3 immutable selective plan' {
             @($plan.queue.id) | Should -Be @('develop')
             $script:preflightCalled | Should -BeTrue
             $script:resolverCalled | Should -BeTrue
+            $script:preparationReleaseRequested | Should -BeTrue
+            if($ComponentShape -eq 'pending'){$plan.timeEstimate.unmeasuredPreparation | Should -Contain 'preliminary-compatibility-Full'}
+            else{$plan.timeEstimate.unmeasuredPreparation | Should -Not -Contain 'preliminary-compatibility-Full'}
+            $script:planSaved | Should -Be (-not $StandChanges)
+            if($StandChanges){$plan.resumable | Should -BeFalse;$plan.continuation | Should -Match 'without ResumePlan'}
         }
     }
 
@@ -868,6 +919,9 @@ Describe 'Delivery v3 immutable selective plan' {
 }
 
 Describe 'E2E client delivery inputs' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+    BeforeEach { $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment }
+
     It 'binds the plan and publication identity to explicit client selection' {
         & {
             $stand=Join-Path $TestDrive 'client plan путь'
@@ -926,6 +980,9 @@ Describe 'E2E client delivery inputs' {
     }
 }
 Describe 'Pinned supervisor client option compatibility' {
+    AfterEach { Exit-DeliveryPlanFixtureEnvironment -Snapshot $script:deliveryPlanFixtureEnvironment }
+    BeforeEach { $script:deliveryPlanFixtureEnvironment=Enter-DeliveryPlanFixtureEnvironment }
+
     It 'preserves explicit intent on old authority and delegates it once after support is present' {
         & {
             $tokens=$null;$errors=$null

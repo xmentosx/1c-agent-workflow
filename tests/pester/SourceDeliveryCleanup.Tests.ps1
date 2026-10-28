@@ -317,13 +317,14 @@ Describe 'Source delivery post-success cleanup' {
     It 'routes publication cleanup to the matching channel before and after the exact published commit' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         $script:DeliverySupervisorCommit = 'a' * 40
-        function Publish-AccumulatedDevelop { throw 'must be mocked' }
+        function Read-DevelopPublicationAttempt { throw 'Fresh cleanup must not read a resume checkpoint' }
+        function Publish-DevelopDeferringFailingEntries { throw 'must be mocked' }
         function Release-DevelopToMaster { throw 'must be mocked' }
         Mock Invoke-DeliveryChannelCleanupSafely {
             param($Channel, $Phase, $ExpectedCommit, [switch]$CompactState)
             [pscustomobject]@{ status='completed'; executor=[pscustomobject]@{ channel=$Channel.ToLowerInvariant(); commit=$ExpectedCommit; phase=$Phase } }
         }
-        Mock Publish-AccumulatedDevelop { [pscustomobject]@{ status='published'; commit=('d' * 40) } }
+        Mock Publish-DevelopDeferringFailingEntries { [pscustomobject]@{ status='published'; commit=('d' * 40) } }
         Mock Release-DevelopToMaster { [pscustomobject]@{ status='released'; masterCommit=('e' * 40) } }
 
         $published = Invoke-PublishDevelopWithCleanup

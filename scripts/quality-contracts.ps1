@@ -17,6 +17,40 @@ function Get-DevelopScenarioCatalog {
     return $items
 }
 
+function Get-QualityPesterSemanticInputBindings {
+    param([object]$Catalog)
+    $map=@{}; $known=@()
+    $property=$Catalog.PSObject.Properties['semanticTargeting']
+    if(-not $property){return [pscustomobject]@{complete=$true;paths=@();byTest=$map}}
+    $semantic=$property.Value
+    if(@('path','fallbackContract'|Where-Object {-not $semantic.PSObject.Properties[$_]}).Count){return [pscustomobject]@{complete=$false;paths=@();byTest=$map}}
+    $unknown=@($semantic.PSObject.Properties.Name|Where-Object {$_ -notin @('path','fallbackContract','commonTests','owners','actionOwners','parameterOwners','functionOwners','libraries','selectiveNodes')})
+    if($unknown.Count){return [pscustomobject]@{complete=$false;paths=@();byTest=$map}}
+    $entry=([string]$semantic.path).Replace('\','/')
+    $fallback=@($Catalog.contracts|Where-Object id -eq $semantic.fallbackContract)
+    if(-not $entry -or [IO.Path]::IsPathRooted($entry) -or $entry -match '(^|/)\.\.(/|$)' -or $fallback.Count -ne 1){return [pscustomobject]@{complete=$false;paths=@();byTest=$map}}
+    $known+=,$entry
+    # Historical catalogs may declare only path/fallbackContract. They have no
+    # selective consumers: retain the complete fallback, including rename data.
+    $entryTests=@($fallback[0].tests)
+    if($semantic.PSObject.Properties['commonTests']){$entryTests+=@($semantic.commonTests)}
+    if($semantic.PSObject.Properties['owners']){foreach($owner in $semantic.owners.PSObject.Properties){$entryTests+=@($owner.Value.tests)}}
+    $libraries=$semantic.PSObject.Properties['libraries']
+    if($libraries){foreach($library in $libraries.Value.PSObject.Properties){
+        $path=([string]$library.Name).Replace('\','/');$known+=,$path
+        if([IO.Path]::IsPathRooted($path) -or $path -match '(^|/)\.\.(/|$)' -or -not $library.Value.PSObject.Properties['functions'] -or @($library.Value.PSObject.Properties.Name|Where-Object {$_ -ne 'functions'}).Count){return [pscustomobject]@{complete=$false;paths=@();byTest=$map}}
+        $selection=Resolve-QualityContractsForPaths -Catalog $Catalog -Paths @($path)
+        if(@($selection.unknownPaths).Count){return [pscustomobject]@{complete=$false;paths=@();byTest=$map}}
+        $tests=@($selection.tests)
+        foreach($function in $library.Value.functions.PSObject.Properties){$tests+=@($function.Value.tests)}
+        foreach($test in $tests){$map[[string]$test]=@(@($map[[string]$test])+@($entry,$path)|Where-Object {$_}|Sort-Object -Unique)}
+    }}
+    foreach($test in $entryTests){$map[[string]$test]=@(@($map[[string]$test])+@($entry)|Where-Object {$_}|Sort-Object -Unique)}
+    # The same complete semantic inputs bind Targeted, Full and preview. A
+    # selection-wide fallback must not contaminate unrelated owners' proofs.
+    return [pscustomobject]@{complete=$true;paths=@($known|Sort-Object -Unique);byTest=$map}
+}
+
 function Get-QualityContractReuseInputPaths {
     param([Parameter(Mandatory = $true)][object]$Contract)
     $property = $Contract.PSObject.Properties['reuseInputPaths']
@@ -191,7 +225,7 @@ function Get-DevelopE2EJourneyHardBudgetSeconds {
 function Resolve-PesterWorkerCount {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Targeted", "Smoke", "Full", "Develop", "Release")][string]$Mode,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 4)][int]$RequestedWorkerCount,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 8)][int]$RequestedWorkerCount,
         [Parameter(Mandatory = $true)][bool]$Explicit,
         [Parameter(Mandatory = $true)][object]$Catalog,
         [int]$ProcessorCount = [Environment]::ProcessorCount
@@ -202,7 +236,7 @@ function Resolve-PesterWorkerCount {
     $hasDefault = if ($Catalog.pesterWorkers -is [Collections.IDictionary]) { $Catalog.pesterWorkers.Contains($property) } else { $null -ne $Catalog.pesterWorkers.PSObject.Properties[$property] }
     if (-not $hasDefault) { return $RequestedWorkerCount }
     $implicitDefault = [int]$Catalog.pesterWorkers.$property
-    if ($implicitDefault -lt 1 -or $implicitDefault -gt 4) { throw "Quality contract pesterWorkers.$property must be between 1 and 4." }
+    if ($implicitDefault -lt 1 -or $implicitDefault -gt 8) { throw "Quality contract pesterWorkers.$property must be between 1 and 8." }
     $availableProcessors = [Math]::Max(1, $ProcessorCount)
     return [Math]::Max(1, [Math]::Min($implicitDefault, $availableProcessors))
 }
@@ -489,10 +523,10 @@ function Test-QualityContractCatalog {
         }
     }
     $targetedImplicitDefault = [int]$Catalog.pesterWorkers.targetedImplicitDefault
-    if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 4) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 4." }
+    if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 8) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 8." }
     $qualificationDefault = $Catalog.pesterWorkers.PSObject.Properties['qualificationImplicitDefault']
-    if ($qualificationDefault -and ([int]$qualificationDefault.Value -lt 1 -or [int]$qualificationDefault.Value -gt 4)) {
-        throw 'Quality contract pesterWorkers.qualificationImplicitDefault must be between 1 and 4.'
+    if ($qualificationDefault -and ([int]$qualificationDefault.Value -lt 1 -or [int]$qualificationDefault.Value -gt 8)) {
+        throw 'Quality contract pesterWorkers.qualificationImplicitDefault must be between 1 and 8.'
     }
 
     $expectedContinuationScopes = @("deliveryPostGate", "develop", "gate", "release", "static") | Sort-Object

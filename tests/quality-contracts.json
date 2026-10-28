@@ -8,6 +8,7 @@
     "inventory": {"kind":"inventory"},
     "node": {"kind":"node"},
     "onescript": {"kind":"onescript"},
+    "powershell-core": {"kind":"powershell-core"},
     "published-ancestor": {"kind":"published-ancestor"},
     "windows": {"kind":"windows"},
     "python-native": {"kind":"python-environment","component":"Native"},
@@ -19,6 +20,13 @@
     "python-package-dependencies": {"kind":"python-package-dependencies"}
   },
   "pesterExternalRuntimeTests": {
+    "tests/pester/CompactRunnerFreshContinuation.Tests.ps1": ["powershell-core"],
+    "tests/pester/CompactRunnerRouting.Tests.ps1": ["powershell-core"],
+    "tests/pester/PesterRuntimeProof.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceDeliveryPlan.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceProofJson.Tests.ps1": ["powershell-core"],
+    "tests/pester/SourceUpgradeHandoff.Tests.ps1": ["powershell-core"],
+    "tests/pester/PesterProofSources.Tests.ps1": ["git","windows"],
     "tests/pester/DevelopForkInputScope.Tests.ps1": ["git","windows"],
     "tests/pester/DevelopForkConsumerInventory.Tests.ps1": ["git","windows"],
     "tests/pester/SourceE2EStorage.Tests.ps1": ["windows","git"],
@@ -56,8 +64,8 @@
     "releaseHardSeconds": 17040
   },
   "pesterWorkers": {
-    "targetedImplicitDefault": 4,
-    "qualificationImplicitDefault": 4
+    "targetedImplicitDefault": 8,
+    "qualificationImplicitDefault": 8
   },
   "continuationScopes": {
     "static": [
@@ -220,6 +228,14 @@
       ]
     },
     "scenarioInputs": [
+      {
+        "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1",
+        "requiresNoProductContext": true,
+        "outsideWhenNoProductContext": true,
+        "functions": {
+          "Assert-ItlProductCatalog": ["upgrade.update", "upgrade.configuration-rejection", "upgrade.verification-export", "fresh.install", "fresh.branch", "fresh.verification", "fresh.stale-export", "fresh.refresh", "fresh.close"]
+        }
+      },
       {
         "path": ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1",
         "requiresNoProductContext": true,
@@ -674,7 +690,7 @@
       "primaryTest": "tests/pester/PesterRuntimeProof.Tests.ps1",
       "paths": ["scripts/invoke-pester-runtime.ps1", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1", "scripts/run-pester-external-shard.ps1", "scripts/pester-external-runtime.ps1", "tests/pester/PesterRuntimeSupport.ps1"],
       "reuseInputPaths": ["tests/quality-contracts.json", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
-      "tests": ["tests/pester/PesterRuntimeProof.Tests.ps1", "tests/pester/PesterPreflight.Tests.ps1"]
+      "tests": ["tests/pester/PesterRuntimeProof.Tests.ps1", "tests/pester/PesterPreflight.Tests.ps1", "tests/pester/PesterProofSources.Tests.ps1"]
     },
     {
       "id": "pester-full-input-proof",
@@ -786,7 +802,7 @@
       ],
       "tests": [
         "tests/pester/LocalQualityGate.Tests.ps1",
-        "tests/pester/ReleaseGate.Tests.ps1",
+        "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1",
         "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1",
         "tests/pester/SourceQualityCatalog.Tests.ps1",
         "tests/pester/LocalGateTransport.Tests.ps1",
@@ -926,7 +942,7 @@
         "tests/pester/SourceDeliveryLegacyPlan.Tests.ps1",
         "tests/pester/SourceDeliveryPublicationCleanup.Tests.ps1",
         "tests/pester/SourceDeliveryPlan.Tests.ps1",
-        "tests/pester/ReleaseGate.Tests.ps1",
+        "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1",
         "tests/pester/SourceDeliveryReplan.Tests.ps1",
         "tests/pester/SourceDeliveryEvidenceRepair.Tests.ps1",
         "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1",
@@ -987,6 +1003,98 @@
       "paths": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1", "scripts/ai-rules-native-inputs.ps1"],
       "reuseInputPaths": [".agents/skills/1c-workflow/scripts/*", "scripts/develop-e2e-qualification.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1"],
       "tests": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1"]
+    },
+    {
+      "id": "develop-artifact-protection-scope",
+      "owner": "Additive protection proof and native scenario reuse",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/DevelopArtifactProtectionScope.Tests.ps1",
+      "paths": [
+        "tests/pester/DevelopArtifactProtectionScope.Tests.ps1",
+        "scripts/develop-e2e-scenarios.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        "tests/fixtures/develop-native/diagnostic-retention-before-task-kinds.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1"
+      ],
+      "reuseInputPaths": [
+        "scripts/source-e2e-workflow-update.ps1",
+        "scripts/ai-rules-native-inputs.ps1",
+        "tests/pester/SourceDeliveryPlan.TestSupport.ps1",
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/release-qualification.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/stand-env-identity.ps1",
+        "scripts/check.ps1",
+        "scripts/source-delivery-plan.ps1",
+        "scripts/delivery-native-plan.ps1",
+        "scripts/source-e2e-artifact-discovery.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "scripts/develop-configuration-rejection.ps1",
+        "scripts/source-e2e-fixture.ps1",
+        "scripts/update-installed-workflow.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        "templates/dependency-lock.json",
+        "install-agent-1c-workflow.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "tests/pester/SourceDeliveryIncremental.TestSupport.ps1",
+        "tests/pester/TestSupport.ps1",
+        "tests/fixtures/develop-native/diagnostic-retention-before-task-kinds.ps1"
+      ],
+      "tests": [
+        "tests/pester/DevelopArtifactProtectionScope.Tests.ps1"
+      ]
+    },
+    {
+      "id": "develop-protection-consumer-inventory",
+      "owner": "Closed optional artifact cleanup call sites",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1",
+      "paths": [
+        "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1",
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1",
+        "scripts/develop-e2e-scenarios.ps1"
+      ],
+      "reuseInputPaths": [
+        "scripts/git-path-list.ps1",
+        "scripts/quality-contracts.ps1",
+        "scripts/develop-e2e-qualification.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/ai-rules-native-inputs.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "install-agent-1c-workflow.ps1",
+        "tests/pester/TestSupport.ps1",
+        ".agents/skills/1c-workflow/scripts/*",
+        "scripts/develop-configuration-rejection.ps1",
+        ".agents/skills/*"
+      ],
+      "tests": [
+        "tests/pester/DevelopProtectionConsumerInventory.Tests.ps1"
+      ]
+    },
+    {
+      "id": "develop-product-catalog-scope",
+      "owner": "Catalog validation reuse with authenticated disabled product context",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/DevelopProductCatalogScope.Tests.ps1",
+      "paths": ["tests/pester/DevelopProductCatalogScope.Tests.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-catalog.ps1"],
+      "reuseInputPaths": ["scripts/git-path-list.ps1", "scripts/quality-contracts.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/release-qualification.ps1", "scripts/stand-env-identity.ps1", "scripts/source-e2e-workflow-update.ps1", "scripts/ai-rules-native-inputs.ps1", "scripts/check.ps1", "scripts/source-delivery-plan.ps1", "scripts/delivery-native-plan.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/source-e2e-fixture.ps1", "scripts/update-installed-workflow.ps1", "scripts/invoke-develop-e2e.ps1", "scripts/develop-configuration-rejection.ps1", ".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1", "templates/dependency-lock.json", "install-agent-1c-workflow.ps1", "tests/pester/TestSupport.ps1", "tests/pester/SourceDeliveryPlan.TestSupport.ps1"],
+      "tests": ["tests/pester/DevelopProductCatalogScope.Tests.ps1"]
+    },
+    {
+      "id": "develop-product-catalog-consumer-inventory",
+      "owner": "Closed product catalog validation call sites",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/DevelopProductCatalogConsumerInventory.Tests.ps1",
+      "paths": ["tests/pester/DevelopProductCatalogConsumerInventory.Tests.ps1"],
+      "reuseInputPaths": [".agents/skills/*", "scripts/*", "install-agent-1c-workflow.ps1", "tests/pester/TestSupport.ps1"],
+      "tests": ["tests/pester/DevelopProductCatalogConsumerInventory.Tests.ps1"]
     },
     {
       "id": "develop-broker-input-scope",
@@ -1441,6 +1549,16 @@
       "tests": ["tests/pester/SourceDeliveryCandidateIntegrity.Tests.ps1", "tests/pester/SourceDeliveryFinalizerIntegrity.Tests.ps1", "tests/pester/SourceDeliveryAdmission.Tests.ps1"]
     },
     {
+      "id": "source-delivery-stand-preparation",
+      "owner": "publisher composition with existing lifecycle and capsule owners",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceDeliveryStandPreparation.Tests.ps1",
+      "paths": ["tests/pester/SourceDeliveryStandPreparation.Tests.ps1", "scripts/source-delivery-candidate.ps1", "scripts/source-delivery-release-recovery.ps1", "scripts/source-delivery-cleanup.ps1", "scripts/update-installed-workflow.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
+      "reuseInputPaths": ["scripts/source-delivery-plan.ps1", "scripts/source-delivery-process.ps1", "scripts/source-delivery-component.ps1", "scripts/quality-contracts.ps1", "scripts/git-path-list.ps1", "scripts/release-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/develop-journey-inputs.ps1", "scripts/develop-e2e-scenarios.ps1", "scripts/stand-env-identity.ps1", "scripts/ai-rules-native-inputs.ps1", "scripts/delivery-native-plan.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/check.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", "tests/pester/SourceDeliveryPlan.TestSupport.ps1", "tests/pester/TestSupport.ps1"],
+      "tests": ["tests/pester/SourceDeliveryStandPreparation.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-candidate",
       "owner": "develop and master candidate publication",
       "gate": "targeted",
@@ -1574,6 +1692,16 @@
       "tests": ["tests/pester/SourceDeliveryCandidateRegistration.Tests.ps1"]
     },
     {
+      "id": "source-repair",
+      "owner": "failed frozen publication repair loop over existing gate owners",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/SourceRepair.Tests.ps1",
+      "paths": ["scripts/source-repair.ps1"],
+      "reuseInputPaths": ["tests/pester/TestSupport.ps1", "scripts/git-path-list.ps1", "scripts/source-delivery-process.ps1", "scripts/source-proof-json.ps1", "scripts/source-e2e-artifact-discovery.ps1", "scripts/stand-env-identity.ps1", "scripts/quality-contracts.ps1"],
+      "tests": ["tests/pester/SourceRepair.Tests.ps1"]
+    },
+    {
       "id": "source-delivery-queue",
       "owner": "delivery queue registration",
       "gate": "targeted",
@@ -1644,7 +1772,7 @@
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
       "paths": ["scripts/develop-configuration-rejection.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-artifact-paths.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
+      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseExtensionRecovery.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
       "id": "develop-runtime",
@@ -1653,7 +1781,7 @@
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
       "paths": ["scripts/source-e2e-workflow-update.ps1", "scripts/invoke-develop-e2e.ps1", "scripts/source-e2e-manifest-repair.ps1"],
-      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+      "tests": ["tests/pester/DevelopConfigurationRejection.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
     },
     {
       "id": "dependency-lock",
@@ -2102,7 +2230,7 @@
       "verification": { "tests": ["tests/pester/VerificationSelection.Tests.ps1"] },
       "repair-session": { "tests": ["tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1"] },
       "ui": { "tests": ["tests/pester/UiTools.Tests.ps1"] },
-      "release": { "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseOrchestration.Tests.ps1", "tests/pester/DevelopManifestContinuation.Tests.ps1", "tests/pester/E2EClientSelection.Tests.ps1", "tests/pester/ReleaseSnapshotContinuation.Tests.ps1", "tests/pester/ReleaseAdmission.Tests.ps1"] },
+      "release": { "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseRouting.Tests.ps1", "tests/pester/ReleaseOrchestration.Tests.ps1", "tests/pester/DevelopManifestContinuation.Tests.ps1", "tests/pester/E2EClientSelection.Tests.ps1", "tests/pester/ReleaseSnapshotContinuation.Tests.ps1", "tests/pester/ReleaseAdmission.Tests.ps1"] },
       "source-mode": { "tests": ["tests/pester/SourceRepositoryUpdateMode.Tests.ps1"] }
     },
     "actionOwners": {

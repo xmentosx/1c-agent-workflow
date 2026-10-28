@@ -157,6 +157,13 @@ function Get-PesterExternalProfile {
             Add-PesterExternalFile $node $lines
             foreach($file in [IO.Directory]::GetFiles([IO.Path]::GetDirectoryName($node),'*.dll')){Add-PesterExternalFile $file $lines}
         }
+        'powershell-core' {
+            # Core boundary tests skip on a host without pwsh; neither outcome
+            # may qualify the other host. Absence stays unknown and executes.
+            $core=Get-PesterExternalExecutable pwsh
+            Add-PesterExternalFile $core $lines
+            foreach($file in [IO.Directory]::GetFiles([IO.Path]::GetDirectoryName($core),'*.dll')){Add-PesterExternalFile $file $lines}
+        }
         'onescript' {
             if(@(Get-ChildItem Env:|Where-Object {$_.Name -match '^(OSCRIPT|ONESCRIPT)' -and $_.Value}).Count){throw 'OneScript external configuration is not qualified.'}
             $engine=Get-PesterExternalExecutable oscript
@@ -256,6 +263,7 @@ function Get-PesterExternalProfile {
         'inventory' {'^GIT_'}
         'go' {'^(GO[A-Z_]|ITL_SOURCE_TEST_GO$)'}
         'node' {'^NODE_'}
+        'powershell-core' {'^POWERSHELL_'}
         'onescript' {'^(OSCRIPT|ONESCRIPT)'}
         'python-environment' {'^(PYTHON|ITL_SOURCE_TEST_PYTHON$|VIBECODING1C_MCP_PYTHON_PATH$)'}
         'windows' {'^(COMPLUS|COR_|CLR_)'}
