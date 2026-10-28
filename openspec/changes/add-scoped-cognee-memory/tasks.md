@@ -1,5 +1,16 @@
 # Tasks
 
+## Qwen native profile6: разрешённый повтор, 2026-10-28
+
+[Единый actual result](evidence/qwen-lru6-recheck-2026-10-28.md).
+
+- [x] Применить только cache6/pacing off на отдельной побайтной test copy; сохранить pool256MiB/5GiB/2CPU/image/model/key и прежние failed stands.
+- [x] Подтвердить50native chunks с прежними text hashes и повторить RU21 при20s:12.705s.
+- [x] Повторить исходные24questions×3=72requests без новых cases/скрытых retries:72/72responses, median3.137s/p956.647s/max13.698s; native lock/OOM нет.
+- [x] Сохранить warmup/resource/shutdown warnings и границы proof: новый read profile принят на этом corpus; ingestion/full answers не повторялись, рабочая модель и registry не переключены.
+
+
+
 ## RU-EMB: продолжение после технического stop, 2026-10-27
 
 [Единый repair result](evidence/ru-embedding-repair-2026-10-27.md).

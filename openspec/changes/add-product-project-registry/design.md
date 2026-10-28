@@ -1,5 +1,19 @@
 # Design
 
+## Qwen native profile6: итог согласованной настройки, 2026-10-28
+
+[Единый actual result](../add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md): cache6/pacing off на изолированном Cognee без
+изменения его кода; pool256MiB/5GiB/2CPU и прежний20s budget сохранены.
+RU21 пройден, все72исходных requests получили ответ, p956.647s/max13.698s.
+Согласованная пара native settings пригодна для измеренного чтения; отдельные
+вклады не изолированы. Это не production model switch или новая роль registry.
+Canonical homes, шесть областей/common connection, ai_rules_1c и принятые
+G3/R6/G5/MO границы прежние; G6/рабочая миграция/публикация не запускались.
+
+
+
+## Исторический итог профиля cache4/pacing1s
+
 Итог28октября: полный identical index допущен;144/144 attempts и12/12 answers
 завершены. BGE72/72 и6/6 выполненных задач; Qwen32/72 и5/6. Нужные знания
 Qwen ранжирует лучше на успешных ответах, но20s availability недостаточна.
