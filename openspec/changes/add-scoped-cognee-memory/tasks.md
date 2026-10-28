@@ -1,5 +1,15 @@
 # Tasks
 
+## Qwen cache6: разрешённый повтор полных ответов, 2026-10-28
+
+[Результаты и полные ответы](evidence/qwen-lru6-codex-answers-2026-10-28.md).
+
+- [x] Повторить только прежние RU01/RU10/RU16/RU20/RU22/RU24 с Qwen cache6, теми же prompts, Codex binary/model и private gold; не раскрывать эталон клиенту.
+- [x] Проверить целиком6ответов и tool traces:6/6 выполнены, RU20 получил применимый оригинал, RU24 не выдумал сертификат/дату; scope/status/revision сохранены.
+- [x] Зафиксировать13recall/10exact/6local status, median полного ответа44.552s, usage/ресурсы и первый partial recall у20s; лимиты не увеличены, новых сценариев нет.
+- [x] Сохранить pre-model CRLF/LF stop и8недекодируемых debug-фрагментов; продолжить только подготовку/сбор доказательств, без повторения model turns.
+- [x] Остановить тестовый container/свой tunnel; подтвердить сохранность рабочего Cognee и registry. Не запускать Gate6/G6, миграцию или публикацию.
+
 ## Qwen native profile6: разрешённый повтор, 2026-10-28
 
 [Единый actual result](evidence/qwen-lru6-recheck-2026-10-28.md).
