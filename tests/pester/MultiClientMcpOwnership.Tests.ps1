@@ -609,6 +609,69 @@ Describe 'Shared client MCP ownership' {
         @($config.mcpServers.PSObject.Properties | ForEach-Object { $_.Name }) | Should -Not -Contain 'itl-shared'
     }
 
+    It 'approves Claude project MCP servers per checkout and withdraws only ITL approvals' {
+        $root = Join-Path $TestDrive ('Одобрение Claude MCP ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.claude') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["claude-code","command-code"]}}', [Text.UTF8Encoding]::new($false))
+        $settingsPath = Join-Path $root '.claude/settings.local.json'
+        [IO.File]::WriteAllText($settingsPath, '{"permissions":{"allow":["Bash(git status)"]},"enabledMcpjsonServers":["user-server"],"disabledMcpjsonServers":["itl-denied"]}', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $remote = @('itl-remote','itl-denied' | ForEach-Object { [pscustomobject]@{ name=$_; url='https://itl.invalid/mcp'; transport='remote' } })
+            $stdio = @([pscustomobject]@{ name='itl-local'; command='itl.exe'; transport='stdio' })
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner vibecoding1c -Endpoints $remote | Out-Null
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner ondemand-facade -Endpoints $stdio | Out-Null
+            Write-ItlClientMcpEndpoints -Client command-code -Owner other -Endpoints @([pscustomobject]@{ name='command-only'; url='https://itl.invalid/c'; transport='remote' }) | Out-Null
+            $approved = Read-Utf8Text -Path $settingsPath | ConvertFrom-Json
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner ondemand-facade -Endpoints @() | Out-Null
+            $narrowed = Read-Utf8Text -Path $settingsPath | ConvertFrom-Json
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner vibecoding1c -Endpoints @() | Out-Null
+            [pscustomobject]@{ approved = $approved; narrowed = $narrowed; final = (Read-Utf8Text -Path $settingsPath | ConvertFrom-Json); state = (Read-ItlManagedMcpState) }
+        }
+        @($result.approved.enabledMcpjsonServers) | Should -Be @('user-server','itl-remote','itl-local')
+        @($result.narrowed.enabledMcpjsonServers) | Should -Be @('user-server','itl-remote')
+        @($result.final.enabledMcpjsonServers) | Should -Be @('user-server')
+        @($result.final.disabledMcpjsonServers) | Should -Be @('itl-denied')
+        @($result.final.permissions.allow) | Should -Be @('Bash(git status)')
+        $result.final.PSObject.Properties.Name | Should -Not -Contain 'enableAllProjectMcpServers'
+        $result.state.Contains('approvals') | Should -BeFalse
+
+        $fresh = Join-Path $TestDrive ('Ветка Claude MCP ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $fresh '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $fresh '.agent-1c/project.json'), '{"aiRules":{"tools":["claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        & {
+            . $helperPath -ProjectRoot $fresh -Action help *> $null
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner vibecoding1c -Endpoints @([pscustomobject]@{ name='itl-remote'; url='https://itl.invalid/mcp'; transport='remote' }) | Out-Null
+        }
+        @((Get-Content -LiteralPath (Join-Path $fresh '.claude/settings.local.json') -Raw -Encoding UTF8 | ConvertFrom-Json).enabledMcpjsonServers) | Should -Be @('itl-remote')
+        & {
+            . $helperPath -ProjectRoot $fresh -Action help *> $null
+            Write-ItlClientMcpEndpoints -Client claude-code -Owner vibecoding1c -Endpoints @() | Out-Null
+        }
+        Test-Path -LiteralPath (Join-Path $fresh '.claude/settings.local.json') | Should -BeFalse
+    }
+
+    It 'syncs and approves an explicit Claude client when the executor cannot be identified' {
+        $root = Join-Path $TestDrive ('Неизвестный исполнитель ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        $messages = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Resolve-InitAgentTargetFromExecutionContext { '' }
+            function Refresh-Vibecoding1cMcpRegistry { throw 'fixture registry offline' }
+            function Write-ItlOnDemandMcpClientConfig {
+                param($Client,[switch]$PlanOnly)
+                [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@([pscustomobject]@{name='itl-local';transport='stdio';command='fixture.exe'})}
+            }
+            function Sync-ItlUiToolsMcp { return $null }
+            { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_AMBIGUOUS*'
+            (@(Sync-ItlClientMcpConfig -Client claude-code *>&1) | ForEach-Object { [string]$_ }) -join "`n"
+        }
+        $messages | Should -Not -Match 'ITL_CLIENT_AMBIGUOUS'
+        (Get-Content -LiteralPath (Join-Path $root '.mcp.json') -Raw -Encoding UTF8 | ConvertFrom-Json).mcpServers.'itl-local'.command | Should -Be 'fixture.exe'
+        @((Get-Content -LiteralPath (Join-Path $root '.claude/settings.local.json') -Raw -Encoding UTF8 | ConvertFrom-Json).enabledMcpjsonServers) | Should -Be @('itl-local')
+    }
+
     It 'rejects a different second-owner transport and a user-owned key before replacement' {
         $root = Join-Path $TestDrive ('MCP collision ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null

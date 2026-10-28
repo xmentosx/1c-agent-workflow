@@ -205,7 +205,7 @@ exit 7
         @($result.clientSurfacePathsBefore) | Should -Be @('.agents/skills/itl-check/SKILL.md')
     }
 
-    It 'fingerprints the same Cyrillic managed directory in both PowerShell hosts' {
+    It 'fingerprints the same Cyrillic managed directory in both PowerShell hosts' -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
         $project = Join-Path $TestDrive 'каталог с пробелом'
         $managed = Join-Path $project 'managed'
         New-Item -ItemType Directory -Force -Path $managed | Out-Null
@@ -1381,7 +1381,13 @@ if ($Action -ne 'update-workflow') { throw 'unexpected action' }
         & git -C $source add .
         & git -C $source commit --quiet -m source
         $LASTEXITCODE | Should -Be 0
-        & pwsh -NoProfile -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
+        # Windows PowerShell is the supported baseline host; Core is checked
+        # in addition where it is installed.
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
         $LASTEXITCODE | Should -Be 7
+        if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
+            & pwsh -NoProfile -File $launcher -ProjectRoot $project -SourceRoot $source *> $null
+            $LASTEXITCODE | Should -Be 7
+        }
     }
 }

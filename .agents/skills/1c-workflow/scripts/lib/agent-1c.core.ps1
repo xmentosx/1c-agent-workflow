@@ -3007,6 +3007,7 @@ function Ensure-GitIgnore {
         ".kilo/kilo.jsonc",
         ".kilo/agents/itl-routine.md",
         ".claude/commands/itl*.md",
+        ".claude/settings.local.json",
         ".cursor/commands/itl*.md",
         ".opencode/command/itl*.md",
         ".opencode/agent/itl-routine.md",
