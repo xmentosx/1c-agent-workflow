@@ -25,7 +25,7 @@ Describe 'Release native progress observation' {
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess', 'Get-GateMemorySnapshot', 'Update-GateMemoryTelemetry', 'Get-ReleaseE2EProgressPaths')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
             $definition | Should -Not -BeNullOrEmpty
             $definition.Extent.Text

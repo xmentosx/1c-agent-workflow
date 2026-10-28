@@ -24,6 +24,76 @@ Describe "Local quality gate contract" {
         $script:observedProcessTiming.collectionDelayMs | Should -BeGreaterThan 500000
     }
 
+    It 'admits concurrent stand stages by measured memory and leaves the rest to the sequential path' {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot scripts/check.ps1),[ref]$tokens,[ref]$errors)
+        @($errors)|Should -BeNullOrEmpty
+        foreach($name in @('Test-GateParallelStageAdmission','Start-DevelopJourneyPreruns','Update-GateMemoryTelemetry')) {
+            . ([scriptblock]::Create($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true).Extent.Text))
+        }
+        $script:parallelStageAvailableBytes=2GB;$script:parallelStageCommitBytes=4GB
+        $host8=[pscustomobject]@{availableBytes=8GB;committedBytes=32GB;commitLimitBytes=63GB}
+        Test-GateParallelStageAdmission -Running 0 -Snapshot $host8 | Should -BeTrue
+        Test-GateParallelStageAdmission -Running 3 -Snapshot $host8 | Should -BeTrue
+        Test-GateParallelStageAdmission -Running 4 -Snapshot $host8 | Should -BeFalse
+        Test-GateParallelStageAdmission -Running 1 -Snapshot ([pscustomobject]@{availableBytes=16GB;committedBytes=54GB;commitLimitBytes=63GB}) | Should -BeFalse
+        Test-GateParallelStageAdmission -Running 0 -Snapshot $null | Should -BeFalse
+
+        $repoRoot=Join-Path $TestDrive 'Кандидат с пробелом';$tree='a'*40;$outputRoot=Join-Path $TestDrive 'out';$E2EProjectRoot='stand';$AgentTarget='kilocode'
+        $FreshProjectsRoot=Join-Path $TestDrive 'fresh п';$qualityCatalog=[pscustomobject]@{};$script:developRulesSource='fork';$script:sourceE2EArtifactBinding=$null;$script:sourceE2EArtifactBindingPath='binding.json';$script:developScript='invoke-develop-e2e.ps1'
+        function Get-DevelopE2EJourneyHardBudgetSeconds {param($Catalog,$Journey) if($Journey -eq 'upgrade'){7200}else{5400}}
+        function Get-DevelopE2EInputIdentity {param($RepositoryRoot,$Journey,$Catalog,$ProjectRoot,$AiRulesSource,$AgentTarget,$ArtifactBinding,$FreshProjectsRoot) [pscustomobject]@{journey=$Journey}}
+        function Get-DevelopScenarioReusePlan {param($RepositoryRoot,$Tree,$Journey,$InputIdentity,$Catalog,[switch]$AllowPendingStatic,$ProjectRoot)
+            $script:pendingStaticPlanned+=,$AllowPendingStatic.IsPresent
+            if($Journey -eq 'upgrade'){@([pscustomobject]@{id='update';execution='execute'},[pscustomobject]@{id='verification-export';execution='setup'},[pscustomobject]@{id='configuration-rejection';execution='reuse'})}
+            else{@([pscustomobject]@{id='install';execution='execute'})}}
+        function Start-PowerShellChildProcess {param($ScriptPath,$Arguments,$LogName) $script:startedChildren+=,[pscustomobject]@{log=$LogName;arguments=@($Arguments)}; [pscustomobject]@{logName=$LogName;startedAt=[DateTime]::UtcNow}}
+
+        $script:startedChildren=@();$script:pendingStaticPlanned=@();$script:stagePreruns=[ordered]@{}
+        function Get-GateMemorySnapshot {$host8}
+        Start-DevelopJourneyPreruns -Journeys @('fresh','upgrade')
+        @($script:startedChildren.log) | Should -Be @('develop-e2e-upgrade-prerun','develop-e2e-fresh-prerun')
+        $upgrade=$script:startedChildren[0].arguments
+        $upgrade[[array]::IndexOf($upgrade,'-Scenario')+1] | Should -BeExactly 'update,verification-export'
+        $upgrade[[array]::IndexOf($upgrade,'-FreshProjectsRoot')+1] | Should -BeExactly $FreshProjectsRoot
+        $upgrade | Should -Contain '-ArtifactBindingPath'
+        @($script:pendingStaticPlanned) | Should -Be @($true,$true)
+        @($script:stagePreruns.Values | ForEach-Object { $_.blocking }) | Should -Be @($true,$true)
+
+        # Pressure after the first reservation defers only the shorter journey.
+        $script:startedChildren=@();$script:stagePreruns=[ordered]@{}
+        function Get-GateMemorySnapshot {[pscustomobject]@{availableBytes=3GB;committedBytes=32GB;commitLimitBytes=63GB}}
+        Start-DevelopJourneyPreruns -Journeys @('fresh','upgrade')
+        @($script:startedChildren.log) | Should -Be @('develop-e2e-upgrade-prerun')
+        @($script:stagePreruns.Keys) | Should -Be @('develop-e2e-upgrade-prerun')
+    }
+
+    It 'collects every concurrent stage before failing and keeps a speculative failure non-blocking' {
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot scripts/check.ps1),[ref]$tokens,[ref]$errors)
+        @($errors)|Should -BeNullOrEmpty
+        . ([scriptblock]::Create($ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Complete-StagePreruns'},$true).Extent.Text))
+        $script:stages=[Collections.Generic.List[object]]::new();$script:completed=@()
+        function Complete-ParallelGateStage {param($Name,$Reason,$Detail,$Child,$TimeoutSeconds,$NoProgressSeconds,$ProgressPaths)
+            $script:completed+=,$Name;$script:stages.Add([ordered]@{name=$Name;status=$(if($Child.fails){'failed'}else{'passed'});execution='executed'})
+            if($Child.fails){throw "$Name failed"}}
+        $now=[DateTime]::UtcNow
+        $script:stagePreruns=[ordered]@{
+            'develop-e2e-upgrade-prerun'=[pscustomobject]@{child=[pscustomobject]@{startedAt=$now;fails=$true};blocking=$true;timeoutSeconds=60;progressPaths=@();reason='r';detail='d'}
+            'release-e2e-prerun'=[pscustomobject]@{child=[pscustomobject]@{startedAt=$now;fails=$true};blocking=$false;timeoutSeconds=60;progressPaths=@();reason='r';detail='d'}
+            'develop-e2e-fresh-prerun'=[pscustomobject]@{child=[pscustomobject]@{startedAt=$now;fails=$false};blocking=$true;timeoutSeconds=60;progressPaths=@();reason='r';detail='d'}
+        }
+        { Complete-StagePreruns } | Should -Throw 'develop-e2e-upgrade-prerun failed'
+        @($script:completed) | Should -Be @('develop-e2e-upgrade-prerun','release-e2e-prerun','develop-e2e-fresh-prerun')
+        $script:stagePreruns.Count | Should -Be 0
+        @($script:stages | Where-Object { $_['name'] -eq 'release-e2e-prerun' })[0]['execution'] | Should -BeExactly 'speculative'
+
+        $script:completed=@();$script:stagePreruns=[ordered]@{
+            'release-e2e-prerun'=[pscustomobject]@{child=[pscustomobject]@{startedAt=$now;fails=$true};blocking=$false;timeoutSeconds=60;progressPaths=@();reason='r';detail='d'}
+        }
+        { Complete-StagePreruns } | Should -Not -Throw
+    }
+
 
         It "preserves exact Unicode stdout and stderr from a redirected Windows PowerShell Pester shard" {
         $fixtureRoot = Join-Path $TestDrive "Путь с пробелом"
@@ -93,7 +163,7 @@ Describe 'real failing shard' {
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
-        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess', 'Get-GateMemorySnapshot', 'Update-GateMemoryTelemetry')) {
             $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
             $definition | Should -Not -BeNullOrEmpty
             $definition.Extent.Text

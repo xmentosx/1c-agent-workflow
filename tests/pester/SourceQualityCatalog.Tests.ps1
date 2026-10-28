@@ -250,15 +250,16 @@ Describe 'Source quality catalog contracts' {
     It "uses bounded catalog workers for implicit Targeted and qualification while preserving explicit and legacy choices" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
-        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 4
-        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 8
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 24 | Should -Be 8
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 0 | Should -Be 1
         Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
         Resolve-PesterWorkerCount -Mode Smoke -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
         foreach ($mode in @("Full", "Develop", "Release")) {
-            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 24 | Should -Be 8
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 8 -Explicit $true -Catalog $catalog -ProcessorCount 24 | Should -Be 8
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
             Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog ([pscustomobject]@{pesterWorkers=[ordered]@{targetedImplicitDefault=4}}) -ProcessorCount 8 | Should -Be 3
         }

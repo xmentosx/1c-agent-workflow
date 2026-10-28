@@ -64,8 +64,8 @@
     "releaseHardSeconds": 17040
   },
   "pesterWorkers": {
-    "targetedImplicitDefault": 4,
-    "qualificationImplicitDefault": 4
+    "targetedImplicitDefault": 8,
+    "qualificationImplicitDefault": 8
   },
   "continuationScopes": {
     "static": [

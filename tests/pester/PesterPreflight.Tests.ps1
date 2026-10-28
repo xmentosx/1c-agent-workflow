@@ -122,6 +122,9 @@ Describe 'Memory admission remains inside the Pester scheduler' {
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 0 | Should -Be 0
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 3GB | Should -Be 1
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 8GB | Should -Be 3
+        # The raised ceiling is still admitted per worker by both measurements.
+        Get-PesterMemoryWorkerLimit -Requested 8 -AvailableBytes 7.5GB -CommitHeadroomBytes 24GB | Should -Be 7
+        Get-PesterMemoryWorkerLimit -Requested 8 -AvailableBytes 16GB -CommitHeadroomBytes 9GB | Should -Be 4
     }
     It 'reads commit headroom above Int32 without treating healthy metrics as unavailable' {
         Mock Get-CimInstance { [pscustomobject]@{AvailableBytes=8GB;CommitLimit=80GB;CommittedBytes=60GB} }

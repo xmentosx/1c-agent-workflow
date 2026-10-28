@@ -5,8 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$JunitPath,
     [string]$AiRulesSource = "",
     [string]$SelectionPath = "",
-    [ValidateRange(1, 4)][int]$WorkerCount = 3,
-    [ValidateRange(0, 4)][int]$RequestedWorkerCount = 0,
+    [ValidateRange(1, 8)][int]$WorkerCount = 3,
+    [ValidateRange(0, 8)][int]$RequestedWorkerCount = 0,
     [switch]$WorkerCountDefaulted,
     [switch]$InputIdentityOnly,
     [switch]$PlanOnly,
@@ -64,7 +64,7 @@ if ($memoryAdmissionEnabled) {
 }
 
 function Get-PesterWorkloadEstimate {
-    param([object[]]$Files, [ValidateRange(1,4)][int]$WorkerCount)
+    param([object[]]$Files, [ValidateRange(1,8)][int]$WorkerCount)
     $pending = @($Files | Where-Object {$_.execution -eq 'execute'})
     $total = 0.0
     # Match admission barriers: preflight, LPT parallel files, then serial files.
