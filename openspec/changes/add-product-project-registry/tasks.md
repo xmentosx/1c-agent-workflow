@@ -1,5 +1,13 @@
 # Tasks
 
+## Ограниченный ремонт отказов Full, 2026-10-28
+
+- [x] Согласовать с memory [единый разбор двух отказов и ремонт fixture](../add-scoped-cognee-memory/evidence/full-owner-repair-2026-10-28.md):
+  endpoint executor уже исправлен отдельной очередью; PID identity закрепляется
+  внутри прежнего Go-теста без изменения runtime witness, порогов и assertions.
+  Факт регистрации/проверки нового head — в общем ledger; исходный 9bdd не
+  объявляется прошедшим. Реестр и принятая граница G3/R6 не меняются.
+
 ## Подготовка общего Cognee, 2026-10-28
 
 - [x] Согласовать [общее подключение/мониторинг](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)

@@ -269,9 +269,11 @@ func TestRecoveryExitWitnessObservesRealWindowsProcessWithoutStoppingIt(t *testi
 	if err := proveRecoveryProcessesExited(context.Background(), []int{os.Getpid(), os.Getpid()}); err == nil {
 		t.Fatal("live process was accepted as absent")
 	}
-	if _, err := os.FindProcess(os.Getpid()); err != nil {
+	current, err := os.FindProcess(os.Getpid())
+	if err != nil {
 		t.Fatal("witness changed current process")
 	}
+	t.Cleanup(func() { _ = current.Release() })
 	pids := []int{}
 	for i := 0; i < 2; i++ {
 		cmd := exec.Command("cmd.exe", "/c", "exit", "0")
@@ -279,6 +281,14 @@ func TestRecoveryExitWitnessObservesRealWindowsProcessWithoutStoppingIt(t *testi
 			t.Fatal(err)
 		}
 		pids = append(pids, cmd.Process.Pid)
+		// cmd.Wait releases Go's process handle. Retain an observer handle
+		// through the witness so Windows cannot recycle this fixture's PID
+		// into the witness itself or another parallel test's live process.
+		observer, err := os.FindProcess(cmd.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = observer.Release() })
 		if err := cmd.Wait(); err != nil {
 			t.Fatal(err)
 		}
