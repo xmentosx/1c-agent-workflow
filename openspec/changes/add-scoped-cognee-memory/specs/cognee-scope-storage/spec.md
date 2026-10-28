@@ -164,3 +164,24 @@ Retirement SHALL адресовать точную заметку, SHALL NOT у�
 #### Scenario: Предварительная квалификация успешна
 - **WHEN** на разрешённом harmless stand сохранены passed native Q1–Q7 и допустимый измеримый profile
 - **THEN** можно переходить к отдельно разрешённой зависимой реализации; это не доказательство установленной памяти, миграции или экономии всей задачи
+
+### Requirement: Наблюдение общего сервера без нового workflow gate
+
+Общий Cognee SHALL иметь container-local read-only проверку native API,
+обычного общего principal и свободного места; расход памяти SHALL быть виден
+оператору. Проверка SHALL NOT обращаться к поиску, originals, embedding/LLM,
+login/refresh или изменять знания. Её статус SHALL NOT расширять контекст агента
+или становиться новым блокером независимого workflow. Восстановление вышедшего
+процесса SHALL оставаться у Docker; один unhealthy/timeout или индексация SHALL
+NOT вызывать автоматический restart неизвестной записи или расширение recovery
+authority watchdog других MCP. Параметры и границы SHALL фиксироваться в host runbook.
+
+#### Scenario: API временно медленный при обработке записи
+- **WHEN** container-local probe не подтвердил ответ в своём бюджете
+- **THEN** Docker сохраняет диагностический health result без повторного remember,
+  переключения provider, потери pending или автоматического restart по API timeout
+
+#### Scenario: Общее сетевое подключение ещё не допущено
+- **WHEN** native API внутри VM работает, но Windows NAT/firewall checkpoint не согласован
+- **THEN** VM health не объявляет LAN готовым, active client provider не меняется;
+  после согласования проверяется только оговорённая сетевая граница, без QP5 по умолчанию

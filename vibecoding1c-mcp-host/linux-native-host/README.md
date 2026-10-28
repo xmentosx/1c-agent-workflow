@@ -5,6 +5,10 @@ VM. Windows remains the owner of 1C Designer exports. Docker Engine and the
 systemd timer run without a logged-in session. The Windows host installer and
 its existing watchdog remain separate and unchanged.
 
+For the shared native Cognee service, its container-local healthcheck, Portainer
+status and the separately approved LAN setup, see [Cognee operations](COGNEE.ru.md).
+Its diagnostic status does not widen Code/Graph watchdog recovery authority.
+
 Runtime Compose files, credentials, sources, indexes and `host.config.json`
 are local deployment data and must remain outside Git. Use this configuration:
 

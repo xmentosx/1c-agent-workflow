@@ -1,5 +1,15 @@
 # Tasks
 
+## Подготовка общего Cognee, 2026-10-28
+
+- [x] Согласовать [общее подключение/мониторинг](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
+  с registry-only: business IDs/homes/СППР/Mantis/MCP роли не меняются, общий
+  provider и ключ не записываются в каждый проект.
+- [ ] Получить от memory owner actual LAN result после отдельного firewall
+  checkpoint; не подменять им QP5 setup/reload и не включать explicit off.
+
+Код и VM native proof завершены, LAN пока не настроен; G3/R6 не переоткрываются.
+
 ## Подготовленный комплект выпуска, 2026-10-28
 
 - [x] Согласовать с memory owner выбранный r50, границу release admission и

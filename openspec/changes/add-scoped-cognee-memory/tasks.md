@@ -1,5 +1,20 @@
 # Tasks
 
+## Общее подключение и мониторинг, 2026-10-28
+
+- [x] Подготовить отдельные постоянные data/cache, общий Qwen-контейнер и Docker
+  restart policy, сохранив старые QP/BGE стенды и настройки клиентов.
+- [x] Подготовить container-local read-only healthcheck и покрыть его отказные
+  границы; подтвердить native healthy tick и неизменность прежнего host contract.
+- [x] Подготовить приватный LAN descriptor, инструкцию выдачи общей настройки и
+  [точный checkpoint NAT/firewall](../../../vibecoding1c-mcp-host/linux-native-host/COGNEE.ru.md).
+- [ ] После согласования только LAN checkpoint применить exact NAT/firewall и
+  подтвердить native read через общий адрес; не выполнять QP5 этой операцией.
+
+[Actual proof и пределы](evidence/common-ops-2026-10-28.md): Docker policy
+настроена, реальный reboot не провоцировался; healthy не квалифицирует поиск
+или embedding provider. Ни новый workflow gate, ни employee ACL не добавлены.
+
 ## Подготовленный комплект выпуска, 2026-10-28
 
 - [x] Сверить выбранный r50 в dependency lock, project template и memory policy;

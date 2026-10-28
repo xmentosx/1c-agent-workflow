@@ -1,5 +1,16 @@
 # Acceptance and Evidence Plan
 
+## Общее подключение и мониторинг, 2026-10-28
+
+Приёмка этой разрешённой подготовки ограничена source monitor regressions,
+native authenticated read-only health tick, сохранностью прежних host inputs и
+подготовленным descriptor. [Результат](evidence/common-ops-2026-10-28.md):
+5/5 Python, native healthy, прежние50 containers/protected SHA неизменны.
+Отдельная LAN приёмка выполняется только после firewall checkpoint из runbook:
+один native GET через общий адрес и очередной health tick. Reboot/crash не
+провоцировались. Это не новая корпусная матрица G5, gate или переоткрытие G3;
+QP5, Gate6, рабочая миграция и публикация не запускаются.
+
 ## Блокер регистрации QP: клиентский контекст, 2026-10-28
 
 Failed candidate1691fbe7491290ff0ec10f3f2af7563b82a4fc63 и прежний39pass/1fail

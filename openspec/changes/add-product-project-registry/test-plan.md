@@ -1,5 +1,13 @@
 # План приёмки
 
+## Подготовка общего Cognee, 2026-10-28
+
+[Единый native/source result](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
+подтверждает отдельный общий контейнер/monitor без изменения business registry,
+local bindings или клиентов. Новый per-project provider/health gate не нужен.
+LAN result ожидает отдельного firewall checkpoint; QP5 setup/reload остаётся
+прежним незавершённым шагом, не выводится из успешного VM healthcheck.
+
 ## QP0–QP4: actual dependency proof, 2026-10-28
 
 [Единый native отчёт memory owner](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
