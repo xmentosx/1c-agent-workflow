@@ -148,7 +148,8 @@
         & git -C $publisher commit --quiet -m old
         & git clone --quiet $publisher $registryRoot
         & {
-            . $HelperPath -ProjectRoot $root -Action help *> $null
+            # Two clients are attached; the executing one must be named.
+            . $HelperPath -ProjectRoot $root -Action help -AgentTarget codex *> $null
             function Get-Vibecoding1cMcpRegistryRoot { $registryRoot }
             function Test-Vibecoding1cMcpRegistryPathOverride { $false }
             function Get-Vibecoding1cMcpRegistryRepo { $publisher }
