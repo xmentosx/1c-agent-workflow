@@ -2493,7 +2493,11 @@ function Sync-ItlClientMcpConfigCore {
     }
     $target = [string]$normalized[0]
     Assert-ItlClientConfigWritable -Client $target
-    $active = Get-ItlActiveClient
+    # The explicit -Client owns this write; the executor is only reported.
+    $active = try { Get-ItlActiveClient } catch {
+        if ($_.Exception.Message -notmatch '^ITL_CLIENT_AMBIGUOUS:') { throw }
+        '<not identified>'
+    }
     $adapter = Get-ItlClientAdapter -Client $target
 
     Write-Section "Sync ITL MCP config for $target"

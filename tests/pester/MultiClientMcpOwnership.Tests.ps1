@@ -651,6 +651,27 @@ Describe 'Shared client MCP ownership' {
         Test-Path -LiteralPath (Join-Path $fresh '.claude/settings.local.json') | Should -BeFalse
     }
 
+    It 'syncs and approves an explicit Claude client when the executor cannot be identified' {
+        $root = Join-Path $TestDrive ('Неизвестный исполнитель ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex","claude-code"]}}', [Text.UTF8Encoding]::new($false))
+        $messages = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Resolve-InitAgentTargetFromExecutionContext { '' }
+            function Refresh-Vibecoding1cMcpRegistry { throw 'fixture registry offline' }
+            function Write-ItlOnDemandMcpClientConfig {
+                param($Client,[switch]$PlanOnly)
+                [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@([pscustomobject]@{name='itl-local';transport='stdio';command='fixture.exe'})}
+            }
+            function Sync-ItlUiToolsMcp { return $null }
+            { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_AMBIGUOUS*'
+            (@(Sync-ItlClientMcpConfig -Client claude-code *>&1) | ForEach-Object { [string]$_ }) -join "`n"
+        }
+        $messages | Should -Not -Match 'ITL_CLIENT_AMBIGUOUS'
+        (Get-Content -LiteralPath (Join-Path $root '.mcp.json') -Raw -Encoding UTF8 | ConvertFrom-Json).mcpServers.'itl-local'.command | Should -Be 'fixture.exe'
+        @((Get-Content -LiteralPath (Join-Path $root '.claude/settings.local.json') -Raw -Encoding UTF8 | ConvertFrom-Json).enabledMcpjsonServers) | Should -Be @('itl-local')
+    }
+
     It 'rejects a different second-owner transport and a user-owned key before replacement' {
         $root = Join-Path $TestDrive ('MCP collision ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
