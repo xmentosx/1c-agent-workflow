@@ -131,6 +131,16 @@ checkouts must remain clean and exact. Business staging, a pending merge and its
 original lifecycle record stay with their existing owner; repeat that original
 business command separately after the package update.
 
+When that branch post-copy failed because the candidate itself is defective,
+`-Recovery abandon -SnapshotId <pending-id>` against the branch root returns the
+uncommitted update instead of resuming it. It accepts only a development-branch
+`post-copy-running`/`post-copy-failed` transaction at its recorded HEAD, without
+owned staged paths, an unresolved merge or a bound local patch. Every owned path
+must still be the recorded failed state or its saved before bytes; anything else
+stops with reconciliation required. The candidate checkout is not needed. The
+snapshot is renamed to `itl-workflow-update-abandoned-<id>` as evidence; repeating
+the command is a no-op. Master and committed updates keep `restore`.
+
 A sealed temporary branch patch is retired through the existing patch owner
 only for a confirmed package replacement. Its paths must cover every workflow
 write conflict; the branch lease revalidates the plan before any write. Foreign

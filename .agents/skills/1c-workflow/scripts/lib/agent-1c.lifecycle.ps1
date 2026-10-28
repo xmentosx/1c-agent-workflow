@@ -7960,14 +7960,16 @@ function Get-WorkflowUpdateRecoveryStatus {
 }
 
 function Assert-WorkflowUpdateReconciliationScope {
-    param([Parameter(Mandatory = $true)][object]$Pending, [Parameter(Mandatory = $true)][string]$SnapshotId)
+    param([Parameter(Mandatory = $true)][object]$Pending, [Parameter(Mandatory = $true)][string]$SnapshotId,
+        # Abandon writes only saved before bytes; the candidate may be gone.
+        [switch]$BeforeOnly)
 
     if ($SnapshotId -notmatch '^[a-f0-9]{32}$' -or
         (Split-Path -Leaf $Pending.snapshot.root) -cne ('itl-workflow-update-rollback-' + $SnapshotId) -or
         [string]$Pending.receipt.phase -notin @('post-copy-running', 'post-copy-failed')) {
         throw 'WORKFLOW_UPDATE_RECONCILIATION_SCOPE_INVALID: select this root pending post-copy snapshot; copy, commit and rollback phases retain their own continuation.'
     }
-    Assert-WorkflowUpdateRecordedSource -Receipt $Pending.receipt
+    if (-not $BeforeOnly) { Assert-WorkflowUpdateRecordedSource -Receipt $Pending.receipt }
     if ([string]$Pending.receipt.preUpdateHead -notmatch '^[a-f0-9]{40}$' -or
         (Get-CurrentCommit) -cne [string]$Pending.receipt.preUpdateHead -or
         (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -cne [string]$Pending.receipt.branchRef) {
@@ -8118,6 +8120,50 @@ function Complete-WorkflowUpdateReconciliation {
     Write-Host 'Confirmed interrupted helper outputs recorded; project files, HEAD and business index did not change. Repeat the original update with its recorded exact source.'
 }
 
+function Abandon-PendingWorkflowBranchUpdate {
+    param([Parameter(Mandatory = $true)][string]$SnapshotId)
+
+    $source = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$source.root)
+    if ((Get-FullPathNormalized $script:Agent1cScriptRoot) -cne (Get-FullPathNormalized (Join-Path $source.root '.agents/skills/1c-workflow/scripts'))) {
+        throw 'WORKFLOW_UPDATE_ABANDON_SOURCE_HELPER_REQUIRED: use scripts/update-installed-workflow.ps1 from a clean compatible source checkout with -Recovery abandon -SnapshotId; abandon restores the installed helper itself.'
+    }
+    $abandoned = Join-Path $script:ProjectRoot ('.agent-1c/snapshots/workflow-update/itl-workflow-update-abandoned-' + $SnapshotId)
+    $pending = Get-WorkflowUpdatePendingSnapshot
+    if ($null -eq $pending -and $SnapshotId -match '^[a-f0-9]{32}$' -and (Test-Path -LiteralPath (Join-Path $abandoned 'abandon-result.json') -PathType Leaf)) {
+        Write-Host "Workflow update $SnapshotId was already abandoned; no files changed."
+        return
+    }
+    if ($null -eq $pending) { throw 'WORKFLOW_UPDATE_RECONCILIATION_PENDING_MISSING: this root has no pending update.' }
+    # Same scope as reconciliation, but only saved before bytes are written, so
+    # a defective or removed candidate checkout cannot keep the branch locked.
+    Assert-WorkflowUpdateReconciliationScope -Pending $pending -SnapshotId $SnapshotId -BeforeOnly
+    if ([string]$pending.receipt.branchRef -ceq ('refs/heads/' + (Get-MasterBranch))) {
+        throw 'WORKFLOW_UPDATE_ABANDON_SCOPE_INVALID: master post-copy keeps its recorded continuation; abandon only returns a development branch whose rollout did not commit.'
+    }
+    if ($null -ne (Get-ConfigValueFromObject $pending.receipt 'localPatchRetirement' $null)) {
+        throw 'WORKFLOW_UPDATE_ABANDON_LOCAL_PATCH: the retired local patch is bound to this candidate; repeat update-workflow from master so its owner finishes the exact transaction.'
+    }
+    if (@(Get-GitPathList -Arguments @('ls-files', '--unmerged', '-z')).Count -gt 0) {
+        throw 'WORKFLOW_UPDATE_ABANDON_PENDING_MERGE: preserve the business merge and use its original lifecycle recovery before abandoning the package update.'
+    }
+    $matcher = New-WorkflowUpdateCommitPathMatcher -ManagedPathSpecs @($pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
+    $ownedStaged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z') | Where-Object {
+        Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher
+    })
+    if ($ownedStaged.Count -gt 0) { throw "WORKFLOW_UPDATE_ABANDON_INDEX_CHANGED: owned index paths are staged: $($ownedStaged -join ', '). Preserve them for reconciliation." }
+    # Every path must still be the recorded failed state or already its saved
+    # before bytes; a repeated abandon after interruption therefore converges.
+    Restore-WorkflowUpdateOwnedPaths -Target $pending -AllowedCurrentState (ConvertTo-Agent1cHashtable -Object $pending.receipt.pathState)
+    Write-Utf8TextAtomic -Path (Join-Path $pending.snapshot.root 'abandon-result.json') -Value (([ordered]@{
+        schemaVersion=1; snapshotId=$SnapshotId; sourceCommit=[string]$pending.receipt.sourceCommit; phase=[string]$pending.receipt.phase
+        head=Get-CurrentCommit; executorCommit=[string]$source.commit; abandonedAt=(Get-Date).ToString('o')
+    } | ConvertTo-Json) + [Environment]::NewLine)
+    # Renaming keeps the failed transaction as evidence outside the pending set.
+    Move-Item -LiteralPath $pending.snapshot.root -Destination $abandoned -ErrorAction Stop
+    Write-Host "Abandoned the uncommitted branch update to '$($pending.receipt.sourceCommit)'; owned paths are back at their saved before bytes and HEAD did not change. Evidence: $abandoned. Repeat update-workflow from master with the intended source."
+}
+
 function Assert-WorkflowUpdateRollbackTarget {
     param([Parameter(Mandatory = $true)][object]$Completed, [string]$ExpectedHead = '')
 
@@ -8139,10 +8185,10 @@ function Assert-WorkflowUpdateRollbackTarget {
 }
 
 function Restore-WorkflowUpdateOwnedPaths {
-    param([Parameter(Mandatory = $true)][object]$Target, [Parameter(Mandatory = $true)][object]$Pending)
+    param([Parameter(Mandatory = $true)][object]$Target, [Parameter(Mandatory = $true)][Collections.IDictionary]$AllowedCurrentState)
 
     $desired = ConvertTo-Agent1cHashtable -Object $Target.receipt.beforePathState
-    $original = ConvertTo-Agent1cHashtable -Object $Pending.receipt.beforePathState
+    $original = $AllowedCurrentState
     if ($desired.Count -ne $original.Count) { throw 'WORKFLOW_UPDATE_ROLLBACK_INVENTORY_CHANGED: retained and restoring snapshots have different write sets.' }
     # Validate the whole set before the first write, then each path again at its
     # mutation boundary. Atomic path replacement exposes only exact before,
@@ -8232,7 +8278,7 @@ function Restore-CompletedWorkflowUpdate {
     }
     if ([string]$pending.receipt.phase -eq 'rollback-restoring') {
         Assert-WorkflowUpdateRollbackTarget -Completed $target
-        try { Restore-WorkflowUpdateOwnedPaths -Target $target -Pending $pending }
+        try { Restore-WorkflowUpdateOwnedPaths -Target $target -AllowedCurrentState (ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState) }
         catch { throw "WORKFLOW_UPDATE_ROLLBACK_INCOMPLETE: $($_.Exception.Message) Repeat the same source-side command with -Recovery restore -SnapshotId $SnapshotId; the recovery snapshot is preserved." }
         $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs @($target.snapshot.records | ForEach-Object { [string]$_.relativePath }) `
             -Message ("chore: restore ITL workflow before snapshot " + $SnapshotId.Substring(0, 7)) -AllowMaster `
@@ -9801,7 +9847,7 @@ function Get-WorkflowUpdateBranchContinuation {
     if ($Status -eq 'completed') { return 'Repeat the original pending lifecycle command separately if one was stopped.' }
     if ($Status -eq 'deferred') { return 'Let the active owner finish or restore the unavailable worktree, then repeat update-workflow from master.' }
     if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE|WORKFLOW_UPDATE_BRANCH_COMMIT_RECEIPT_MISSING') {
-        return 'Preserve the branch snapshot and repeat update-workflow from master to resume this exact candidate.'
+        return 'Preserve the branch snapshot and repeat update-workflow from master to resume this exact candidate. If that candidate itself is defective, first run scripts/update-installed-workflow.ps1 -ProjectRoot <branch root> -Recovery abandon -SnapshotId <pending id> from a clean compatible source.'
     }
     if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_SOURCE_CHANGED|WORKFLOW_UPDATE_COPY_SOURCE_CHANGED|WORKFLOW_UPDATE_SOURCE_(?:MISSING|CHANGED)') {
         return 'Restore the exact recorded source checkout, then repeat update-workflow from master.'
@@ -10303,6 +10349,10 @@ function Update-WorkflowPackage {
     }
     if ($WorkflowUpdateRecovery -eq 'reconcile') {
         Complete-WorkflowUpdateReconciliation -SnapshotId $WorkflowUpdateSnapshotId -DecisionFile $WorkflowUpdateReconciliationFile
+        return
+    }
+    if ($WorkflowUpdateRecovery -eq 'abandon') {
+        Abandon-PendingWorkflowBranchUpdate -SnapshotId $WorkflowUpdateSnapshotId
         return
     }
     if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {

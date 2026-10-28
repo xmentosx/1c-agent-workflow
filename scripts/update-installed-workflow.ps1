@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
-    [ValidateSet('update', 'status', 'restore', 'reconcile', 'legacy-status', 'legacy-copy')][string]$Recovery = 'update',
+    [ValidateSet('update', 'status', 'restore', 'reconcile', 'abandon', 'legacy-status', 'legacy-copy')][string]$Recovery = 'update',
     [string]$AgentTarget = '',
     [string]$LegacySourceRoot = '',
     [string]$SnapshotId = '',
