@@ -296,9 +296,9 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryReleaseEvidenceRepair.Tests.ps1", "tests/pester/SourceDeliveryRemoteMovement.Tests.ps1", "tests/pester/SourceDeliveryReplan.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
             "tests/pester/SourceQualityCatalog.Tests.ps1"
         )
-        $expectedTests = @($expectedTests + @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1') | Sort-Object)
+        $expectedTests = @($expectedTests + @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1') | Sort-Object)
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
-        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
+        @($selection.contracts.id | Sort-Object) | Should -Be @("develop-e2e-qualification-tests", "develop-fork-consumer-inventory", "develop-static-qualification-cache-tests", "documentation", "fork-qualification-inventory", "pester-full-input-proof", "release-progress-observation", "source-candidate-registration", "source-delivery-entrypoint", "source-delivery-evidence-retention", "source-delivery-fixtures", "source-delivery-incremental-inputs", "source-delivery-plan-checker", "source-delivery-ref-cleanup", "source-quality-catalog", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
 
         $observedSeconds = [ordered]@{
@@ -544,10 +544,13 @@ Describe 'Source quality catalog contracts' {
             "tests/pester/WorkflowUpdateRollback.Tests.ps1",
             "tests/quality-contracts.json"))
         # One additional real catalog consumer; historical observed timings above
-        # remain unchanged, and the exact added selection is checked below.
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count)
+        # remain unchanged, and the exact added selection is checked below. The
+        # fork binding asserts over catalog entries, so it is a catalog consumer.
+        $catalogInvariantConsumer = 'tests/pester/DevelopForkConsumerInventory.Tests.ps1'
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
+            $catalogInvariantConsumer,
             "tests/pester/HostTestSelection.Tests.ps1",
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/SourceDeliveryIncremental.Tests.ps1",
@@ -966,7 +969,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $selected=Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')
         @($selected.unknownPaths) | Should -BeNullOrEmpty
-        @($selected.tests) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
+        @($selected.tests) | Should -Be @('tests/pester/DeliveryCandidatePlanBridge.Tests.ps1','tests/pester/DeliveryCatalogInputScope.Tests.ps1','tests/pester/DeliveryGoInputScope.Tests.ps1','tests/pester/DeliveryScenarioAuthentication.Tests.ps1','tests/pester/DeliveryScenarioComposition.Tests.ps1','tests/pester/DeliveryScenarioSelection.Tests.ps1','tests/pester/DeliverySetupInputScope.Tests.ps1','tests/pester/DevelopForkConsumerInventory.Tests.ps1','tests/pester/HostTestSelection.Tests.ps1','tests/pester/SourceDeliveryIncremental.Tests.ps1','tests/pester/SourceQualityCatalog.Tests.ps1')
     }
 
     It 'invalidates every existing qualification consumer when the catalog bytes change' {
