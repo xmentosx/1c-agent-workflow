@@ -1,7 +1,7 @@
 ﻿BeforeAll {
     $helperPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
     function New-ChangeFixture {
-        param([string]$Root, [switch]$Retained, [switch]$LegacyOneOff, [switch]$NamedProfiles)
+        param([string]$Root, [switch]$Retained, [switch]$LegacyOneOff, [switch]$NamedProfiles, [switch]$WithoutCatalog)
         foreach($part in @('.agent-1c','src/cf','tests/features','evidence')) { New-Item -ItemType Directory -Force -Path (Join-Path $Root $part) | Out-Null }
         [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'),'{}',[Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.gitignore'),".agent-1c/verification-selection/`nevidence/`n.dev.env`n",[Text.UTF8Encoding]::new($false))
@@ -9,7 +9,9 @@
         [IO.File]::WriteAllText((Join-Path $Root 'requirements.md'),'AC-01: Current result. AC-02: Web acceptance.',[Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root 'src/cf/current.bsl'),'Procedure Current() EndProcedure',[Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root 'src/cf/other.bsl'),'Procedure Other() EndProcedure',[Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),'{"schemaVersion":2,"suites":[],"obligations":[]}',[Text.UTF8Encoding]::new($false))
+        if (-not $WithoutCatalog) {
+            [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),'{"schemaVersion":2,"suites":[],"obligations":[]}',[Text.UTF8Encoding]::new($false))
+        }
         if($LegacyOneOff) {
             $catalog=@{schemaVersion=2;suites=@();obligations=@(@{id='legacy';expectedResult='Legacy result';inputPaths=@('src/cf/other.bsl');admissibleProof=@('runtime-observation');retention='one-off';retentionReason='Previously observed behavior';cadence='explicit'})}
             [IO.File]::WriteAllText((Join-Path $Root 'tests/verification-suites.branch.json'),($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
@@ -74,6 +76,55 @@
 }
 
 Describe 'Change mode recovery and reuse boundaries' {
+    It 'assesses a catalog-free change through real selection and completion: <Fault>' -TestCases @(
+        @{Fault='none'; ErrorPattern=''},
+        @{Fault='missing-one-off'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_PENDING*'},
+        @{Fault='failed-one-off'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_INVALID*'},
+        @{Fault='changed-artifact'; ErrorPattern='*VERIFICATION_ONE_OFF_PROOF_INVALID*'},
+        @{Fault='stale-load'; ErrorPattern='*VERIFICATION_LOADED_INPUT_STALE*'},
+        @{Fault='unready-load'; ErrorPattern='*VERIFICATION_LOADED_INPUT_UNVERIFIED*'},
+        @{Fault='missing-event-log'; ErrorPattern='*VERIFICATION_COMPONENT_PROOF_PENDING*'}
+    ) {
+        param($Fault, $ErrorPattern)
+        $root=Join-Path $TestDrive ('Без каталога ' + $Fault)
+        New-ChangeFixture $root -WithoutCatalog
+        Enter-ChangeFixture $root {
+            Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Current fix'
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            Start-VerificationChange -EvidencePath (Write-CurrentPlan -Finish) | Out-Null
+            if ($Fault -ne 'missing-one-off') { Set-CurrentObservation first }
+            if ($Fault -ne 'missing-event-log') { Set-CurrentEventEvidence }
+            switch ($Fault) {
+                'failed-one-off' {
+                    $path=Get-VerificationOneOffProofPath first
+                    $receipt=Read-Utf8Text -Path $path | ConvertFrom-Json
+                    $receipt.status='failed'
+                    Write-Utf8TextAtomic -Path $path -Value ($receipt | ConvertTo-Json -Depth 16)
+                }
+                'changed-artifact' { Write-Utf8TextAtomic -Path (Join-Path $root 'evidence/first.txt') -Value 'Different observation' }
+                'stale-load' { $script:ChangeTestState.lastConfigDesignerFingerprint='outdated' }
+                'unready-load' { $script:ChangeTestState.configLoadStatus='failed' }
+            }
+            # Both entry points must use the actual catalog reader and selector.
+            $runnerPlan=Get-ItlVanessaVerificationSelectionPlan
+            $directPlan=New-VerificationSelectionPlan -ApplicationFeatureFiles @() -RequireObservedReceipts
+            $runnerPlan.mode | Should -BeExactly 'reuse'
+            $directPlan.mode | Should -BeExactly $runnerPlan.mode
+            $runnerPlan.catalogAvailable | Should -BeFalse
+            $directPlan.catalogAvailable | Should -BeFalse
+            if ($Fault -eq 'none') {
+                $result=Complete-VerificationChange
+                $result.changeStatus | Should -BeExactly 'accepted'
+                $result.taskAccepted | Should -BeTrue
+            } else {
+                { Complete-VerificationChange } | Should -Throw $ErrorPattern
+                (Read-VerificationChange).status | Should -BeExactly 'pending'
+            }
+            Test-Path -LiteralPath (Join-Path $root 'tests/verification-suites.branch.json') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $root '.agent-1c/verification-selection/proof.json') | Should -BeFalse
+        }
+    }
+
     It 'checks selected Vanessa profiles with a valid change plan before reaching the infobase loader' {
         $root=Join-Path $TestDrive 'План и профиль до загрузки'; New-ChangeFixture $root -Retained -NamedProfiles
         Enter-ChangeFixture $root {
@@ -350,13 +401,23 @@ Describe 'Verification models and migration' {
 }
 
 Describe 'Current change proof and whole task acceptance' {
-    It 'accepts observed current behavior without a feature file and preserves remaining whole task criteria' {
-        $root=Join-Path $TestDrive 'Изменение без feature'; New-ChangeFixture $root
+    It 'accepts observed current behavior without a feature file and preserves task remainder (absent catalog: <WithoutCatalog>)' -TestCases @(@{WithoutCatalog=$false}, @{WithoutCatalog=$true}) {
+        param($WithoutCatalog)
+        $root=Join-Path $TestDrive ('Изменение без feature ' + $WithoutCatalog); New-ChangeFixture $root -WithoutCatalog:$WithoutCatalog
         Enter-ChangeFixture $root {
             Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Procedure Current() Message(42); EndProcedure'
             $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
             $plan=Write-CurrentPlan
             Start-VerificationChange -EvidencePath $plan | Out-Null
+            $selection = Get-ItlVanessaVerificationSelectionPlan
+            $selection.mode | Should -BeExactly 'reuse'
+            $selection.catalogAvailable | Should -Be (-not $WithoutCatalog)
+            $selection.reason | Should -Match 'One-off obligations'
+            if ($WithoutCatalog) {
+                Complete-VerificationSelectionProof -Plan $selection
+                Test-Path -LiteralPath (Join-Path $root '.agent-1c/verification-selection/proof.json') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $root 'tests/verification-suites.branch.json') | Should -BeFalse
+            }
             { Complete-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_PENDING*'
             Set-CurrentObservation first
             Set-CurrentEventEvidence

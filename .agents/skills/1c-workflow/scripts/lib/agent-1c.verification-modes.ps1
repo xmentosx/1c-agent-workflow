@@ -533,14 +533,6 @@ function Get-ItlVanessaVerificationSelectionPlan {
     $oneOffObligations = @(Get-VerificationOneOffObligations)
     $currentChange = if ((Get-VerificationModel) -eq 'change') { Read-VerificationChange } else { $null }
     if ($applicationFeatureFiles.Count -eq 0 -and $oneOffObligations.Count -eq 0 -and ($null -eq $currentChange -or @($currentChange.checks).Count -eq 0)) { return $null }
-    $vanessaCatalog = if ($applicationFeatureFiles.Count -eq 0) { Read-VerificationSuiteCatalog -ApplicationFeatureFiles @() } else { $null }
-    if ($applicationFeatureFiles.Count -eq 0 -and -not $vanessaCatalog.available -and $oneOffObligations.Count -gt 0) {
-        return [pscustomobject]@{
-            mode = 'reuse'; reason = 'No retained Vanessa acceptance suite exists; one-off proof is assessed separately.'
-            selectedFeatureFiles = @(); selectedSuiteIds = @(); acceptanceSuiteIds = @(); acceptanceSuites = @()
-            catalogFingerprint = ''; currentTree = Get-VerificationSelectionEffectiveTree; catalogAvailable = $false
-        }
-    }
     $plan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$YAxUnitVerificationPlanned -RequireObservedReceipts
     if ($plan.mode -eq 'classification-required') {
         Set-RunFailureContext -Category 'missing-suite' -RequiredAction 'classify-tests-and-repeat-original-itl-command'
