@@ -58,6 +58,9 @@
             mcpStdioFormat = "standard"
             mcpRemoteFormat = "http"
             trackedMcpConfig = $false
+            mcpApprovalPath = ".claude/settings.local.json"
+            mcpApprovalKey = "enabledMcpjsonServers"
+            mcpApprovalDenyKey = "disabledMcpjsonServers"
             reload = "Restart Claude Code."
             reloadUserReport = "Перезапустите Claude Code."
         }
@@ -1033,6 +1036,51 @@ function ConvertTo-ItlClientMcpEntry {
     return $entry
 }
 
+function Sync-ItlClientMcpApproval {
+    param([string]$Client, [System.Collections.IDictionary]$State)
+
+    # Claude Code starts project .mcp.json servers only after a per-checkout
+    # approval. Approve exactly this client's ITL-owned keys in this checkout,
+    # never globally; user entries and explicit denials stay authoritative.
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $relativePath = [string](Get-StateValue -State $adapter -Name "mcpApprovalPath" -Default "")
+    if (-not $relativePath) { return }
+    $approvals = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $State -Name "approvals" -Default ([ordered]@{}))
+    $previous = @($approvals[$Client] | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $State -Name "owners" -Default ([ordered]@{}))
+    $desired = @($owners.Keys | Where-Object { ([string]$_).StartsWith("$Client/", [StringComparison]::Ordinal) } |
+        ForEach-Object { @($owners[$_]) } | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($desired.Count -eq 0 -and $previous.Count -eq 0) { return }
+    if (Test-ItlGitPathTracked -RelativePath $relativePath) {
+        Write-Warning "CLIENT_MCP_APPROVAL_TRACKED: '$relativePath' is tracked, so ITL did not approve its MCP servers there. Untrack it or approve the ITL servers in the client (Claude Code: /mcp), then restart the client."
+        return
+    }
+    $path = Join-Path $script:ProjectRoot $relativePath
+    $settings = [ordered]@{}
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        try { $settings = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) }
+        catch { throw "CLIENT_MCP_APPROVAL_INVALID: '$path' is not valid JSON; preserve it, fix the JSON, and repeat the MCP config sync. $($_.Exception.Message)" }
+    }
+    $key = [string]$adapter.mcpApprovalKey
+    $denyKey = [string]$adapter.mcpApprovalDenyKey
+    $denied = @($(if ($settings.Contains($denyKey)) { @($settings[$denyKey]) }) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $current = @($(if ($settings.Contains($key)) { @($settings[$key]) }) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $granted = @($desired | Where-Object { $_ -cnotin $denied })
+    # Withdraw only what ITL granted before; keep the user's order and entries.
+    $next = @($current | Where-Object { $_ -cnotin $previous -or $_ -cin $granted })
+    $next += @($granted | Where-Object { $_ -cnotin $next })
+    if (($next -join "`n") -cne ($current -join "`n")) {
+        if ($next.Count -gt 0) { $settings[$key] = @($next) } else { $settings.Remove($key) }
+        if ($settings.Count -gt 0) {
+            Write-Vibecoding1cMcpJsonFile -Path $path -Value $settings
+        } elseif (Test-Path -LiteralPath $path -PathType Leaf) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+    if ($granted.Count -gt 0) { $approvals[$Client] = @($granted) } else { $approvals.Remove($Client) }
+    if ($approvals.Count -gt 0) { $State["approvals"] = $approvals } elseif ($State.Contains("approvals")) { $State.Remove("approvals") }
+}
+
 function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
@@ -1356,6 +1404,7 @@ function Write-ItlClientMcpEndpoints {
     }
     $owners[$stateKey] = @($written + @($PreserveOwnedKeys) | Select-Object -Unique)
     $state["owners"] = $owners
+    Sync-ItlClientMcpApproval -Client $Client -State $state
     Write-ItlManagedMcpState -State $state
     if ($ReturnReceipt) { return [pscustomobject]@{ path=$path; fileState=$expectedFileState; ownerState=(Get-ItlMcpTextState -Text (($state | ConvertTo-Json -Depth 12) + [Environment]::NewLine)) } }
     return $path
