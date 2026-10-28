@@ -183,8 +183,10 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'update' -E
 [Console]::WriteLine($ProjectRoot)
 '@
         $capture=@'
-param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdate)
+param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdate,$OutputPath)
 $ErrorActionPreference='Stop'
+# Mirrors the real fixture owner's operation contract.
+if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
 if($Action -cne 'Capture' -or -not $AcknowledgeWorkflowUpdate){throw 'wrong owner invocation'}
 Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'capture' -Encoding UTF8
 if(Test-Path -LiteralPath (Join-Path $ProjectRoot 'business-drift.txt')){throw 'FIXTURE_SEED_CHANGED'}
@@ -204,6 +206,8 @@ if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 
         & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
         @(Get-Content $script:order) | Should -Be @('recovery','update','capture','readiness')
         $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        # The fixture double above is only as strict as the real owner it mirrors.
+        [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')) | Should -Match ([regex]::Escape('Fixture operation requires -ProjectRoot and -OutputPath'))
         $stdout=Join-Path $script:standCandidate 'build/test-results/delivery/stand-workflow-update.stdout.log'
         ([Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($stdout))).TrimEnd("`r","`n") | Should -BeExactly $script:standRoot
         (Get-FileHash $script:standPreparation.capsules[0].path).Hash | Should -Be $script:standPreparation.capsules[0].sha256

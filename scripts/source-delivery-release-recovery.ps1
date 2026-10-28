@@ -99,7 +99,8 @@ function Invoke-DeliveryStandPreparation {
     foreach ($capsule in $Preparation.capsules) {
         # Capture owns full chain/backup, environment, business bytes and original
         # DB SHA validation. Admission cannot bless an arbitrary stand change.
-        $arguments = @('-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','Capture','-ProjectRoot',$Preparation.projectRoot,'-Phase',$capsule.phase)
+        $captureReport = Join-Path $CandidateRoot ('build/test-results/delivery/stand-capture-'+$capsule.phase+'.json')
+        $arguments = @('-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','Capture','-ProjectRoot',$Preparation.projectRoot,'-Phase',$capsule.phase,'-OutputPath',$captureReport)
         if ($Preparation.requiresWorkflowUpdate -or $capsule.needsAdmission) { $arguments += '-AcknowledgeWorkflowUpdate' }
         $client = Get-Variable AgentTarget -ValueOnly -ErrorAction SilentlyContinue
         if ($client) { $arguments += @('-AgentTarget',[string]$client) }
