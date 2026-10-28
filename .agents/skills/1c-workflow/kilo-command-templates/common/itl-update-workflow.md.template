@@ -3,7 +3,7 @@ description: Обновить установленный пакет ITL workflow
 agent: code
 ---
 
-Use this command from either the `master` worktree or an active `itldev/*` worktree. From `itldev/*`, the compact runner updates and commits only in the checked-out `master` worktree without switching or modifying the current development branch. It updates ITL workflow and AI rules files, regenerates the active client's master commands, and commits only updater-owned tracked changes. It does not push.
+Use this command from either the `master` worktree or an active `itldev/*` worktree. The compact runner routes the operation through the checked-out `master`; the helper then rolls out the package to registered development worktrees under their existing locks. It adds master's attached clients to each branch's configured set, preserving additional branch clients, their settings, and unrelated staged/unstaged/untracked work. Rules, skills, agents, commands and MCP are installed for the resulting set with branch-local paths. Only updater-owned tracked changes are committed; it does not push or refresh a database.
 
 Run the helper from the current project directory:
 
@@ -13,4 +13,4 @@ If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so th
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action update-workflow
 ```
 
-If the helper reports a dirty tracked Git worktree, the message refers to `master`: stop and ask the developer to commit or remove those changes, then retry. On success with a non-empty `userReport`, return exactly that Russian Markdown report with no introduction, paraphrase, or `console.log` read. On failure, read only the last 80 lines of `logPath`. After an update invoked from `itldev/*`, keep that worktree open and update the branch itself through `/itl-refresh` or `/itl-refresh-lite` as directed by the report.
+If the helper reports a dirty tracked Git worktree, the message refers to `master`: stop and ask the developer to commit or remove those changes, then retry. On success with a non-empty `userReport`, return exactly that Russian Markdown report with no introduction, paraphrase, or `console.log` read. On failure, read only the last 80 lines of `logPath` and follow its named branch continuation. Repeat the same command after a deferred owner finishes or a reported conflict is reconciled. A pending branch transaction finishes its recorded client set before a new transaction adds missing master clients; do not edit receipts or expand snapshots manually. Detach is not propagated. Keep the current development worktree open; refresh is a separate operation.

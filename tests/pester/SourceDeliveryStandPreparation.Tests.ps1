@@ -13,8 +13,8 @@
         }
         return $ast
     }
-    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' @('Get-ConfigValueFromObject','Get-Utf8Encoding','Read-Utf8Text','Write-Utf8TextAtomic')
-    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete')
+    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' @('Get-ConfigValueFromObject','Get-Utf8Encoding','Read-Utf8Text','Write-Utf8TextAtomic','ConvertTo-AgentToolList')
+    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete','Get-WorkflowRolloutClients','Test-WorkflowRolloutClients')
     $null=Import-StandTestOwner 'scripts/source-delivery-component.ps1' @('ConvertTo-DeliveryNativeArgument')
     $null=Import-StandTestOwner 'scripts/source-delivery-cleanup.ps1' @('Invoke-PublishDevelopWithCleanup','Add-DeliveryCleanupResults')
     $script:publisherAst=Import-StandTestOwner 'scripts/source-delivery-candidate.ps1' @()
@@ -57,6 +57,13 @@ Describe 'Selected workflow rollout remains with the lifecycle owner' {
         $script:selectedRoot=Join-Path $TestDrive 'selected'
         $script:otherRoot=Join-Path $TestDrive 'other'
         @($script:ProjectRoot,$script:selectedRoot,$script:otherRoot) | ForEach-Object { [void][IO.Directory]::CreateDirectory($_) }
+        # Scope-only fixtures have no attached clients. Exercise the real empty
+        # client proof without introducing a second installation into this test.
+        foreach ($root in @($script:ProjectRoot,$script:selectedRoot,$script:otherRoot)) {
+            [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":[]}}', [Text.UTF8Encoding]::new($false))
+        }
+        function Get-AgentTargets { @() }
         $script:selectionScope=[pscustomobject]@{schemaVersion=1;projectRoot=$script:ProjectRoot;sourceCommit='exact';roots=@($script:selectedRoot)}
         function Get-GitWorktrees { @(@{path=$script:ProjectRoot;branch='master'},@{path=$script:selectedRoot;branch='itldev/selected'},@{path=$script:otherRoot;branch='itldev/other'}) }
         function Get-WorkflowUpdateWorktreeInventory {

@@ -274,6 +274,20 @@
         Invoke-Git @('commit','-qm','configure fixture client')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $script:ProjectRoot -Action help -SkipAiRules *> $null
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+        # This recovery fixture stubs installation below. Its already attached
+        # Codex must therefore have the complete initial client file set: a
+        # package-only retirement cannot manufacture proof of missing clients.
+        $rule = 'fixture-codex-rule.md'
+        Set-FixtureText (Join-Path $script:ProjectRoot $rule) 'installed Codex rules'
+        $files = @{}
+        $files[$rule] = @{installedHash=(Get-FileHash -LiteralPath (Join-Path $script:ProjectRoot $rule)).Hash.ToLowerInvariant();userModified=$false}
+        Set-FixtureText (Join-Path $script:ProjectRoot '.ai-rules.json') (@{tools=@('codex');files=$files} | ConvertTo-Json -Depth 6)
+        $surface = Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
+        foreach ($relative in $surface.Keys) { Set-FixtureText (Join-Path $script:ProjectRoot $relative) ([string]$surface[$relative]) }
+        Set-FixtureText (Join-Path $script:ProjectRoot '.codex/config.toml') "# fixture MCP configuration`n"
+        $initialClientPaths = @('.ai-rules.json',$rule,'.codex/config.toml') + @($surface.Keys)
+        Invoke-Git (@('add','--') + $initialClientPaths)
+        Invoke-Git @('commit','-qm','install initial fixture client surfaces')
         $receipt = New-SealedFixturePatch
         $candidate = Join-Path $TestDrive ('Точный исходник ' + [guid]::NewGuid().ToString('N'))
         foreach ($relative in @('install-agent-1c-workflow.ps1','AGENT-INSTALL.md',
