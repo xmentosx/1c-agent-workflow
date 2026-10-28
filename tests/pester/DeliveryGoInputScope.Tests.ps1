@@ -94,6 +94,20 @@ It 'keeps Go test and README changes native-free while preserving runtime and em
     @(Resolve-DevelopE2EJourneyPlanCore $f.root $base @($paths[2]) $catalog).journeys | Should -Contain 'fresh'
 }
 
+It 'is selected in Targeted by every consumer whose reviewed SHA it pins' {
+    # A pinned consumer edit otherwise surfaces only in a later candidate.
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/develop-journey-inputs.ps1'),[ref]$tokens,[ref]$errors)
+    $function=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Test-DevelopGoBuildOnlyPath'},$true))[0]
+    $table=@($function.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$consumers'},$true))[0].Right.Expression
+    $consumers=@($table.KeyValuePairs|ForEach-Object {$_.Item1.Value})
+    $consumers.Count | Should -BeGreaterThan 0
+    $catalog=Get-QualityContractCatalog $RepoRoot
+    foreach($path in @($consumers)+@('scripts/develop-journey-inputs.ps1')) {
+        @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($path)).contracts.id) | Should -Contain 'incremental-scenario-deliverygoinputscope' -Because $path
+    }
+}
+
 It 'reuses only broker-independent scenarios after an actual locked broker and Go source change (positive=<PositiveStand>)' -TestCases @(@{PositiveStand=$false},@{PositiveStand=$true}) {
     param($PositiveStand)
     Mock Get-DevelopE2EStandStateSha256 {'c'*64}
