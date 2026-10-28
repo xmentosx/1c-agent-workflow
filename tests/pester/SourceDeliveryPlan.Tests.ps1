@@ -850,6 +850,7 @@ Describe 'Delivery v3 immutable selective plan' {
             function Get-QueueEntries { return @([pscustomobject]@{ id='develop'; base=('a' * 40); head=('c' * 40) }) }
             function Get-SourceRegistrationSnapshot { return [pscustomobject]@{ entries=@(Get-QueueEntries); remoteBefore=('b' * 40) } }
             function Get-SourceRegistrationStartPoint { param($Snapshot); return $Snapshot.remoteBefore }
+            function Get-PublishableQueueEntries { param($Entries); return @($Entries) }
             function New-DeliveryWorktree { return [pscustomobject]@{ path='C:\candidate'; branch='itl/plan' } }
             function Add-QueuedRangesToCandidate {}
             function Invoke-WorktreeGit {

@@ -152,6 +152,8 @@ function Try-AcceptSourceRegistration {
         $expected = if ($Snapshot.refs.ContainsKey([string]$update[0])) { [string]$Snapshot.refs[[string]$update[0]] } else { $zero }
         $commands.Add("update $($update[0]) $($update[1]) $expected") | Out-Null
     }
+    $deferredRef = "$script:QueueRoot/$Id/deferred"
+    if ($Snapshot.refs.ContainsKey($deferredRef)) { $commands.Add("delete $deferredRef $($Snapshot.refs[$deferredRef])") | Out-Null }
     $commands.Add("prepare") | Out-Null
     $commands.Add("commit") | Out-Null
     $result = Invoke-QueueRefTransaction -Commands @($commands) -AllowFailure
@@ -178,6 +180,50 @@ function Get-QueueEntries {
     }
     $entries = @($records.Values | Where-Object { $_.base -and $_.head } | ForEach-Object { [pscustomobject]$_ })
     return @($entries | Sort-Object -Property id)
+}
+
+function Get-QueueDeferrals {
+    # A deferral binds one registered head; a later registration of the same id
+    # removes it in its own queue transaction (Try-AcceptSourceRegistration).
+    $result = @{}
+    $listed = Invoke-DeliveryGit -Arguments @("for-each-ref", "--format=%(refname) %(objectname)", "$script:QueueRoot/")
+    foreach ($line in @($listed.stdout -split "`r?`n" | Where-Object { $_ })) {
+        $parts = $line.Split(' ', 2)
+        if ([string]$parts[0] -notmatch ('^' + [regex]::Escape($script:QueueRoot) + '/(.+)/deferred$')) { continue }
+        $id = $Matches[1]
+        try {
+            $record = (Invoke-DeliveryGit -Arguments @("cat-file", "blob", [string]$parts[1])).stdout | ConvertFrom-Json
+            $record | Add-Member -NotePropertyName object -NotePropertyValue ([string]$parts[1]) -Force
+            $result[$id] = $record
+        } catch { $result[$id] = [pscustomobject]@{ id=$id; head=''; reason='unreadable deferral record'; object=[string]$parts[1] } }
+    }
+    return $result
+}
+
+function Get-PublishableQueueEntries {
+    param([AllowEmptyCollection()][object[]]$Entries, [hashtable]$Deferrals = $null)
+    if ($null -eq $Deferrals) { $Deferrals = Get-QueueDeferrals }
+    return @($Entries | Where-Object {
+        -not ($Deferrals.ContainsKey([string]$_.id) -and [string]$Deferrals[[string]$_.id].head -ceq [string]$_.head)
+    })
+}
+
+function Add-QueueDeferral {
+    param([Parameter(Mandatory = $true)][object]$Entry, [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$Reason, [string[]]$Evidence = @())
+    $record = [ordered]@{ schemaVersion=1; id=[string]$Entry.id; base=[string]$Entry.base; head=[string]$Entry.head
+        stage=$Stage; reason=$Reason; evidence=@($Evidence); deferredAt=[DateTime]::UtcNow.ToString('o')
+        continuation="Fix '$([string]$Entry.id)' in its source task and repeat RegisterChange with the same QueueId; that registration removes this deferral." }
+    $object = (Invoke-DeliveryGit -Arguments @("hash-object", "-w", "--stdin") -StandardInput ($record | ConvertTo-Json -Depth 6 -Compress)).stdout.Trim()
+    $zero = '0' * 40
+    # Defer only the exact pair that failed; a concurrent re-registration wins.
+    $result = Invoke-QueueRefTransaction -AllowFailure -Commands @(
+        "start",
+        "verify $script:QueueRoot/$($Entry.id)/base $($Entry.base)",
+        "verify $script:QueueRoot/$($Entry.id)/head $($Entry.head)",
+        "update $script:QueueRoot/$($Entry.id)/deferred $object $zero",
+        "prepare", "commit")
+    return $result.exitCode -eq 0
 }
 
 function Clear-PublishedQueueEntries {

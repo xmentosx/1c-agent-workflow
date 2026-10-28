@@ -30,7 +30,7 @@ Describe 'Frozen resume does not repeat completed best-effort garbage collection
         $script:cleanupCheckpoint=[pscustomobject]@{planId='frozen';preOperationCleanup=[pscustomobject]@{status='completed'}}
         function Read-DevelopPublicationAttempt { $script:cleanupCheckpoint }
         function Invoke-DeliveryChannelCleanupSafely { param($Channel,$Phase,$ExpectedCommit) $script:cleanupCalls+=@($Phase);[pscustomobject]@{status='completed';phase=$Phase} }
-        function Publish-AccumulatedDevelop { [pscustomobject]@{commit='candidate'} }
+        function Publish-DevelopDeferringFailingEntries { [pscustomobject]@{commit='candidate'} }
     }
     It 'reuses only garbage collection while retaining publication and final cleanup' {
         $result=Invoke-PublishDevelopWithCleanup
@@ -146,7 +146,7 @@ Describe 'Read-only stand requirements use the checker fixture closure' {
         }
         $script:E2EProjectRoot=$seed
         $before=(Get-FileHash $configPath).Hash
-        function Invoke-WorktreeGit { param($Root,$Arguments) Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments }
+        function Invoke-WorktreeGit { param($Root,$Arguments,[switch]$AllowFailure) Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure }
         $requirements=Get-DeliveryStandPreparation -CandidateRoot $RepoRoot -BaseCommit HEAD
         $requirements.roots | Should -Be (@($branches[0],$branches[1]) | Sort-Object)
         $requirements.roots | Should -Not -Contain $branches[2]
@@ -165,6 +165,38 @@ Describe 'Read-only stand requirements use the checker fixture closure' {
         $requirements.requiresWorkflowUpdate | Should -BeFalse
         (Get-FileHash $configPath).Hash | Should -Be $before
         $script:E2EProjectRoot=$null
+    }
+}
+
+Describe 'A compatibility promotion does not make the stand stale' {
+    It 'maps only a compatibility-only promotion to its unpromoted candidate' {
+        $repo=Join-Path $TestDrive ('promotion путь '+[guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $repo 'templates'))
+        & git -C $repo init -q
+        $lockPath=Join-Path $repo 'templates/dependency-lock.json'
+        function Write-FixtureLock { param($Status,$CheckedAt,$Ref) [IO.File]::WriteAllText($lockPath,(@{dependencies=@{aiRules1c=@{ref=$Ref;compatibilityStatus=$Status;compatibilityCheckedAt=$CheckedAt}}}|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false)) }
+        function New-FixtureCommit { param($Message) & git -C $repo add --all; & git -C $repo -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm $Message; (& git -C $repo rev-parse HEAD).Trim() }
+        Write-FixtureLock 'pending' '' 'r1'; Set-Content -LiteralPath (Join-Path $repo 'workflow.ps1') -Value 'one'
+        $candidate=New-FixtureCommit 'candidate'
+        Write-FixtureLock 'passed' '2026-10-28T00:00:00Z' 'r1'
+        $promotion=New-FixtureCommit 'promote'
+        & git -C $repo switch -q --detach $candidate
+        Write-FixtureLock 'passed' '2026-10-28T01:00:00Z' 'r1'
+        $retryPromotion=New-FixtureCommit 'promote again'
+        & git -C $repo switch -q --detach $candidate
+        Write-FixtureLock 'passed' '2026-10-28T00:00:00Z' 'r2'
+        $otherDependency=New-FixtureCommit 'different fork'
+        & git -C $repo switch -q --detach $promotion
+        Set-Content -LiteralPath (Join-Path $repo 'workflow.ps1') -Value 'two'
+        $packageChange=New-FixtureCommit 'package change'
+        function Invoke-WorktreeGit { param($Root,$Arguments,[switch]$AllowFailure) Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $promotion | Should -Be $candidate
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $retryPromotion | Should -Be $candidate
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $candidate | Should -Be (Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $promotion)
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $otherDependency | Should -Be $otherDependency
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit $packageChange | Should -Be $packageChange
+        Get-DeliveryWorkflowPackageBase -CandidateRoot $repo -Commit ('f'*40) | Should -Be ('f'*40)
     }
 }
 
@@ -190,8 +222,10 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'update' -E
 [Console]::WriteLine($ProjectRoot)
 '@
         $capture=@'
-param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdate)
+param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdate,$OutputPath)
 $ErrorActionPreference='Stop'
+# Mirrors the real fixture owner's operation contract.
+if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
 if($Action -cne 'Capture' -or -not $AcknowledgeWorkflowUpdate){throw 'wrong owner invocation'}
 Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'capture' -Encoding UTF8
 if(Test-Path -LiteralPath (Join-Path $ProjectRoot 'business-drift.txt')){throw 'FIXTURE_SEED_CHANGED'}
@@ -211,6 +245,8 @@ if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 
         & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
         @(Get-Content $script:order) | Should -Be @('recovery','update','capture','readiness')
         $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        # The fixture double above is only as strict as the real owner it mirrors.
+        [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')) | Should -Match ([regex]::Escape('Fixture operation requires -ProjectRoot and -OutputPath'))
         $stdout=Join-Path $script:standCandidate 'build/test-results/delivery/stand-workflow-update.stdout.log'
         ([Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($stdout))).TrimEnd("`r","`n") | Should -BeExactly $script:standRoot
         (Get-FileHash $script:standPreparation.capsules[0].path).Hash | Should -Be $script:standPreparation.capsules[0].sha256

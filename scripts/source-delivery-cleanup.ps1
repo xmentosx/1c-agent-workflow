@@ -614,7 +614,7 @@ function Invoke-PublishDevelopWithCleanup {
         $pre = [pscustomobject]@{status='reused';phase='pre-operation';planId=$cleanupResumePlanId;reason='completed-for-this-frozen-checkpoint'}
     } else { $pre = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase pre-operation }
     $script:DeliveryPreOperationCleanup = $pre
-    try { $published = Publish-AccumulatedDevelop }
+    try { $published = Publish-DevelopDeferringFailingEntries }
     finally { Remove-Variable -Name DeliveryPreOperationCleanup -Scope Script -ErrorAction SilentlyContinue }
     $post = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase post-operation -ExpectedCommit ([string]$published.commit)
     return Add-DeliveryCleanupResults -Result $published -Runs @($pre, $post)

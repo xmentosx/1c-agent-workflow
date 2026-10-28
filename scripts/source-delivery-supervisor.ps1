@@ -159,6 +159,7 @@ try {
                 masterAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/master") } catch { "" }); role="master-lock-queue-push-owner" }
                 cleanupPolicy = [pscustomobject]@{ manualDefault="develop"; publishDevelop="develop"; releaseMaster="master"; promoteRelease=@("develop", "master") }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
+                deferredQueue = @((Get-QueueDeferrals).Values | Sort-Object id | ForEach-Object { [pscustomobject]@{ id=[string]$_.id; head=[string]$_.head; stage=[string]$_.stage; reason=[string]$_.reason; deferredAt=[string]$_.deferredAt; continuation=[string]$_.continuation } })
                 sourceCandidate = (Get-SourceCandidateStatus)
                 activeOperation = (Get-DeliveryOperationStatus)
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
@@ -185,7 +186,7 @@ try {
             $cleanup
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
-        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-AccumulatedDevelop } else { Invoke-PublishDevelopWithCleanup } }
+        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-DevelopDeferringFailingEntries } else { Invoke-PublishDevelopWithCleanup } }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
         "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
     }

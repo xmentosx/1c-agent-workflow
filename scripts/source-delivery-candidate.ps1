@@ -600,7 +600,11 @@ function Resolve-DeliveryFrozenRepairs {
 }
 
 function Publish-AccumulatedDevelop {
-    $operationStartedAt = [DateTime]::UtcNow
+    # A deferral round continues the original operation and its budget.
+    $continuedFrom = Get-Variable -Name DeliveryOperationStartedAt -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $operationStartedAt = if ($continuedFrom) { [DateTime]$continuedFrom } else { [DateTime]::UtcNow }
+    $script:DeliveryPreservedCandidate = $null
+    $script:DeliveryFailedPesterFiles = @()
     $fullReleaseRequested = [bool]$RequireRelease
     Assert-CleanDeliveryWorktree
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
@@ -718,8 +722,11 @@ function Publish-AccumulatedDevelop {
             $startPoint = [string]$replacementOriginal.candidate
         } elseif (-not $frozenAttempt) {
             $snapshot = Get-SourceRegistrationSnapshot
-            $entries = @($snapshot.entries)
-            $startPoint = Get-SourceRegistrationStartPoint -Snapshot $snapshot
+            $entries = @(Get-PublishableQueueEntries -Entries @($snapshot.entries))
+            # The accumulated registration candidate contains deferred ranges;
+            # without them the candidate is rebuilt from published develop.
+            $startPoint = if ($entries.Count -lt @($snapshot.entries).Count) { [string]$snapshot.remoteBefore } else { Get-SourceRegistrationStartPoint -Snapshot $snapshot }
+            if ($entries.Count -eq 0) { throw "DELIVERY_QUEUE_ALL_DEFERRED: every registered change is deferred; Status names each reason and its re-registration continuation." }
         }
         $worktree = New-DeliveryWorktree -StartPoint $startPoint -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries -PublishedDevelop $remoteBefore
@@ -996,14 +1003,112 @@ function Publish-AccumulatedDevelop {
             }
         }
         $customGate = [bool]$script:DeliveryCustomGateBoundary
+        if (-not $deliverySucceeded -and $worktree) {
+            try { $script:DeliveryFailedPesterFiles = @(Get-DeliveryFailedPesterFiles -CandidateRoot $worktree.path) } catch { $script:DeliveryFailedPesterFiles = @() }
+        }
         if ($deliverySucceeded -or $customGate) {
             Remove-DeliveryWorktree -Worktree $worktree
             if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "removed") }
         } elseif ($worktree) {
             if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "retained") }
-            Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged."
+            $script:DeliveryPreservedCandidate = $worktree
+            # stderr keeps stdout a single JSON result when a deferral round follows.
+            [Console]::Error.WriteLine("WARNING: Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged.")
         }
     }
+}
+
+function Get-DeliveryFailedPesterFiles {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+    $root = [IO.Path]::GetFullPath($CandidateRoot).TrimEnd('\') + '\'
+    $files = foreach ($report in @(Get-ChildItem -LiteralPath (Join-Path $CandidateRoot 'build/test-results') -Recurse -File -Filter 'worker-*.xml' -ErrorAction SilentlyContinue)) {
+        try { $xml = [xml][IO.File]::ReadAllText($report.FullName) } catch { continue }
+        foreach ($suite in @($xml.SelectNodes('//testsuite'))) {
+            if (([int]$suite.GetAttribute('failures') + [int]$suite.GetAttribute('errors')) -le 0) { continue }
+            $full = [IO.Path]::GetFullPath([string]$suite.GetAttribute('name'))
+            if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $full.Substring($root.Length).Replace('\', '/') }
+        }
+    }
+    return @($files | Sort-Object -Unique)
+}
+
+function Test-DeliveryPesterFilesAt {
+    # Returns passed, failed or inconclusive for the failing files on
+    # published develop plus the given ranges; the probe worktree is disposable.
+    param([string]$StartPoint, [object[]]$Entries, [string[]]$Files, [string]$LogRoot, [string]$Name)
+    $probe = New-DeliveryWorktree -StartPoint $StartPoint -Purpose 'attribute'
+    try {
+        try { Add-QueuedRangesToCandidate -CandidateRoot $probe.path -Entries @($Entries) } catch { return 'inconclusive' }
+        $present = @($Files | Where-Object { Test-Path -LiteralPath (Join-Path $probe.path $_) -PathType Leaf })
+        if ($present.Count -eq 0) { return 'passed' }
+        $quoted = @($present | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ','
+        $command = "& '" + (Join-Path $probe.path 'scripts\test.ps1').Replace("'", "''") + "' -Path @($quoted); exit `$LASTEXITCODE"
+        try { [void](Invoke-DeliveryStandOwner -CandidateRoot $LogRoot -Name $Name -BudgetSeconds 900 -Arguments @('-Command', $command)) }
+        catch { if ($_.Exception.Message -match 'TIMEOUT') { return 'inconclusive' }; return 'failed' }
+        return 'passed'
+    } finally { Remove-DeliveryWorktree -Worktree $probe }
+}
+
+function Resolve-DevelopFailingEntryDeferral {
+    # A product Pester failure is attributed only when its files pass on
+    # published develop and fail with exactly one queued range merged alone.
+    # Integration-only, environment, stand or E2E failures stay a normal stop.
+    $attempt = Read-DevelopPublicationAttempt
+    $files = @(Get-Variable -Name DeliveryFailedPesterFiles -Scope Script -ValueOnly -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    if (-not $attempt -or $files.Count -eq 0) { return $null }
+    $latest = @($attempt.failures | Sort-Object { [string]$_.lastFailedAt } -Descending | Select-Object -First 1)
+    if ($latest.Count -eq 0 -or [string]$latest[0].failureClass -cne 'product') { return $null }
+    $entries = @($attempt.queue)
+    if ($entries.Count -lt 2) { return $null }
+    $preserved = Get-Variable -Name DeliveryPreservedCandidate -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    $logRoot = if ($preserved) { [string]$preserved.path } else { Join-Path ([IO.Path]::GetTempPath()) ('itl-source-attribution-' + [guid]::NewGuid().ToString('N')) }
+    $remoteBefore = [string]$attempt.remoteBefore
+    if ((Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @() -Files $files -LogRoot $logRoot -Name 'attribution-baseline') -cne 'passed') { return $null }
+    $failing = @()
+    foreach ($entry in $entries) {
+        $name = 'attribution-' + ([string]$entry.id -replace '[^A-Za-z0-9._-]', '-')
+        $outcome = Test-DeliveryPesterFilesAt -StartPoint $remoteBefore -Entries @($entry) -Files $files -LogRoot $logRoot -Name $name
+        if ($outcome -ceq 'inconclusive') { return $null }
+        if ($outcome -ceq 'failed') { $failing += $entry }
+    }
+    if ($failing.Count -ne 1) { return $null }
+    $planId = if ($attempt.PSObject.Properties['planId']) { [string]$attempt.planId } else { '' }
+    return [pscustomobject]@{ entry=$failing[0]; stage=[string]$latest[0].stage; files=$files; planId=$planId
+        reason="Pester files fail with only this range merged on published develop $remoteBefore and pass without it: $($files -join ', ')" }
+}
+
+function Publish-DevelopDeferringFailingEntries {
+    # One operation and deadline: an attributed failure before plan pinning
+    # defers its range and continues with the rest, at most twice. A pinned plan
+    # keeps its immutable membership, so the deferral only names the Replan.
+    $script:DeliveryOperationStartedAt = [DateTime]::UtcNow
+    $deferred = @()
+    try {
+        for (;;) {
+            try { $published = Publish-AccumulatedDevelop; break }
+            catch {
+                $failure = $_
+                $deferral = $null
+                try { $deferral = Resolve-DevelopFailingEntryDeferral }
+                catch { [Console]::Error.WriteLine("WARNING: Failing-entry attribution was inconclusive: $($_.Exception.Message)") }
+                if (-not $deferral -or -not (Add-QueueDeferral -Entry $deferral.entry -Stage $deferral.stage -Reason $deferral.reason -Evidence $deferral.files)) { throw $failure }
+                $deferred += $deferral
+                $id = [string]$deferral.entry.id
+                if ($deferral.planId) {
+                    throw "DELIVERY_ENTRY_DEFERRED: '$id' alone fails $($deferral.files -join ', ') and was deferred. Repeat the same PublishDevelop with -Replan '$($deferral.planId)' to qualify the remaining queue; re-registering '$id' removes its deferral."
+                }
+                if ($deferred.Count -ge 2) {
+                    throw "DELIVERY_ENTRY_DEFERRED: deferred $(@($deferred | ForEach-Object { "'$($_.entry.id)'" }) -join ', '). Repeat the same PublishDevelop to continue with the remaining queue."
+                }
+                [Console]::Error.WriteLine("WARNING: Deferred '$id': $($deferral.reason). Continuing this publication with the remaining registered changes.")
+            }
+        }
+    } finally { Remove-Variable -Name DeliveryOperationStartedAt -Scope Script -ErrorAction SilentlyContinue }
+    if ($deferred.Count) {
+        $published | Add-Member -NotePropertyName deferredEntries -NotePropertyValue @($deferred | ForEach-Object {
+            [ordered]@{ id=[string]$_.entry.id; head=[string]$_.entry.head; reason=[string]$_.reason } }) -Force
+    }
+    return $published
 }
 
 function Publish-ReleaseVersion {
