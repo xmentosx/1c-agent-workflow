@@ -3239,7 +3239,8 @@ url = "http://localhost:9999/mcp"
                 -HelperPath $HelperPath `
                 -ProjectRoot $projectRoot `
                 -Action 'sync-client-mcp' `
-                -Arguments @{ 'Client' = 'cursor' }
+                -Arguments @{ 'Client' = 'cursor'; 'AgentTarget' = 'codex' }
+            # The child would otherwise detect whichever agent hosts this run.
             $probe.exitCode | Should -Be 0
             $probe.combinedText | Should -Match "Active client is unchanged: codex"
             $probe.combinedText | Should -Match "ai_rules_1c, skills, and generated command surfaces were not modified"
@@ -3265,7 +3266,7 @@ url = "http://localhost:9999/mcp"
                 -HelperPath $HelperPath `
                 -ProjectRoot $projectRoot `
                 -Action 'sync-client-mcp' `
-                -Arguments @{ 'Client' = 'cursor' }
+                -Arguments @{ 'Client' = 'cursor'; 'AgentTarget' = 'codex' }
             $second.exitCode | Should -Be 0
             (Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8) | Should -BeExactly $firstJson
         } finally {
