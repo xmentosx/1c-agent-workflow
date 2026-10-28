@@ -511,7 +511,8 @@ function New-AccumulatedDeliveryPlan {
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
     $snapshot = Get-SourceRegistrationSnapshot
     # Plan the same membership publication will use: deferred heads are excluded.
-    $entries = @(Get-PublishableQueueEntries -Entries @($snapshot.entries))
+    # A legacy owner's readers (advisory Plan bridge) have no deferral records.
+    $entries = @(if (Get-Command Get-PublishableQueueEntries -ErrorAction SilentlyContinue) { Get-PublishableQueueEntries -Entries @($snapshot.entries) } else { $snapshot.entries })
     if ($entries.Count -eq 0) { throw "There are no registered develop changes to plan." }
     $startPoint = if ($entries.Count -lt @($snapshot.entries).Count) { [string]$snapshot.remoteBefore } else { Get-SourceRegistrationStartPoint -Snapshot $snapshot }
     $worktree = $null
