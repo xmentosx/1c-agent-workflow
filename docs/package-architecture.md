@@ -227,6 +227,22 @@ migration is added. The canary is the first parallel Develop, whose summary
 records minimum available memory and peak commit for threshold tuning.
 Rollback is the previous sequential gate; stand proofs remain valid.
 
+On 2026-10-28 the user approved serializing fixture Capture with stand updates.
+Reproducer: a support publication from a separate clone (its own queue and
+lock) ran Capture while another publisher's update had committed master
+(13:38:17Z) but had not retained its completed receipt (13:40:32Z); the chain
+proof failed `FIXTURE_WORKFLOW_UPDATE_CHAIN_UNPROVEN` at 13:40:11Z. The existing
+per-worktree lifecycle lock is the owner: update-workflow holds it on master
+through branch rollout and receipt retention. Capture's existing-capsule
+proof/admission takes the same exclusive locks on the master and capsule branch
+roots through `Wait-Agent1cLockSet`, waits at most 600 seconds (below the
+900-second preparation budget) and otherwise fails `FIXTURE_STAND_BUSY` with
+the holder's conflict record and a repeat-the-same-Capture continuation. Export
+of a new capsule stays outside the lease because its installed child enters the
+branch lock itself. No new lock family, state or migration; gates, capsules and
+receipts are unchanged. Rollback removes the lease and restores the unguarded
+read.
+
 The 2026-10-26 branch-disk review extends this same producer handoff to explicitly
 superseded check artifacts. Its owner still receives exact individual files
 after terminal process cleanup, with a successful replacement receipt and the

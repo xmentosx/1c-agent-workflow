@@ -300,6 +300,39 @@ Describe 'Owned qualification fixture capsule and lifecycle context' {
         {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Not -Throw
     }
 
+    It 'waits for an in-flight stand update under its lifecycle locks instead of proving a half-retained chain' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'Стенд занят обновлением')
+        $null=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $null=Add-SeedWorkflowUpdate -Root $seed.project -Value one
+        $configPath=Join-Path $seed.project '.agent-1c/release-e2e.json'
+        $configSha=(Get-FileHash -LiteralPath $configPath).Hash
+        # update-workflow holds the branch lock during rollout, after master committed.
+        $branchLock=Join-Path $seed.branch '.agent-1c/locks/lifecycle.lock'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $branchLock))
+        $holder=[IO.File]::Open($branchLock,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+        $previousSeconds=$script:SourceFixtureStandLeaseSeconds
+        try {
+            $script:SourceFixtureStandLeaseSeconds=1
+            {Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate}|Should -Throw '*FIXTURE_STAND_BUSY*LIFECYCLE_OPERATION_CONFLICT*'
+        } finally {$holder.Dispose();$script:SourceFixtureStandLeaseSeconds=$previousSeconds}
+        (Get-FileHash -LiteralPath $configPath).Hash|Should -BeExactly $configSha
+        # A separate process finishes its update while Capture waits on master.
+        $masterLock=Join-Path $seed.project '.agent-1c/locks/lifecycle.lock'
+        $ready=Join-Path $TestDrive 'holder ready.txt'
+        $command="`$s=[IO.File]::Open('$($masterLock.Replace("'","''"))','OpenOrCreate','ReadWrite','Read');[IO.File]::WriteAllText('$($ready.Replace("'","''"))','held');Start-Sleep -Seconds 3;`$s.Dispose()"
+        $process=Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))) -WindowStyle Hidden -PassThru
+        try {
+            $deadline=[DateTime]::UtcNow.AddSeconds(30)
+            while(-not (Test-Path -LiteralPath $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 100}
+            Test-Path -LiteralPath $ready|Should -BeTrue
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            $continued=Get-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop -AcknowledgeWorkflowUpdate
+            $watch.Elapsed.TotalSeconds|Should -BeGreaterThan 1
+            @($continued.workflowUpdateAdmission.master.receipts).Count|Should -Be 1
+        } finally {if(-not $process.HasExited){$process.Kill()};$process.Dispose()}
+        Get-ChildItem -LiteralPath (Join-Path $seed.project '.agent-1c/locks') -Recurse -Filter '*.json' -ErrorAction SilentlyContinue|Should -BeNullOrEmpty
+    }
+
     It 'rejects acknowledgement after <damage> and preserves the old capsule/config' -ForEach @(
         @{damage='foreign-commit'},@{damage='business-in-receipt'},@{damage='backup'},@{damage='receipt'},
         @{damage='environment'},@{damage='database'},@{damage='semantic-state'},@{damage='config'}

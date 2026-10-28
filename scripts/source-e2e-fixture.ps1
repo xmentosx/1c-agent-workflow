@@ -31,6 +31,38 @@ $fixtureLib = Join-Path (Split-Path -Parent $PSScriptRoot) '.agents/skills/1c-wo
 . (Join-Path $fixtureLib 'agent-1c.ai-rules-migration.ps1')
 . (Join-Path $PSScriptRoot 'lifecycle-qualification-fixture.ps1')
 . (Join-Path $PSScriptRoot 'source-e2e-storage.ps1')
+# Bounded below the 900-second stand-preparation budget for each Capture.
+$script:SourceFixtureStandLeaseSeconds=600
+
+function Enter-SourceFixtureStandLease {
+    # update-workflow holds these lifecycle locks from its master copy until the
+    # completed receipts are retained. Proof and admission take the same locks,
+    # so another publisher's in-flight update is awaited instead of read half done.
+    param([string[]]$Roots)
+    # This standalone host has no helper run status; waiting publishes none.
+    foreach($name in @('RunStatusPath','RunStage','RunStageDetail','RunLiveness')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value ''}}
+    foreach($name in @('LifecycleOperationIsContinuation','LifecycleWaitCancelled')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value $false}}
+    foreach($name in @('RunNoProgressSeconds','RunTimeoutRemainingSeconds')){if(-not (Get-Variable -Name $name -Scope Script -ErrorAction SilentlyContinue)){Set-Variable -Name $name -Scope Script -Value 0}}
+    if(-not (Get-Variable -Name LifecycleOperationRecord -Scope Script -ErrorAction SilentlyContinue)){$script:LifecycleOperationRecord=$null}
+    $requests=@(foreach($root in $Roots){
+        $full=[IO.Path]::GetFullPath($root).TrimEnd('\','/')
+        $lockPath=Get-Agent1cLifecycleLockPath -WorktreePath $full
+        Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $full
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $lockPath))
+        [pscustomobject]@{worktreePath=$full;lockPath=$lockPath;share=[IO.FileShare]::Read;kind='lifecycle'}
+    })
+    $previousRoot=Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+    $hadRoot=$null -ne $previousRoot;$previousRootValue=if($hadRoot){$previousRoot.Value}else{$null}
+    try {
+        $script:ProjectRoot=$requests[0].worktreePath
+        return Wait-Agent1cLockSet -RequestedAction 'qualification-fixture-capture' -TimeoutSeconds $script:SourceFixtureStandLeaseSeconds -GetRequests {$requests}.GetNewClosure()
+    } catch {
+        if($_.Exception.Message -match '^LIFECYCLE_LOCK_WAIT_TIMEOUT'){throw "FIXTURE_STAND_BUSY: another lifecycle operation still owns the stand; no capsule or admission changed. Repeat the same Capture after it finishes. $($_.Exception.Message)"}
+        throw
+    } finally {
+        if($hadRoot){$script:ProjectRoot=$previousRootValue}else{Remove-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue}
+    }
+}
 
 function Invoke-SourceFixtureInstalledAction {
     param([string]$Root, [string]$Action, [string[]]$Arguments=@(), [string]$AgentTarget='', [string]$LogRoot, [int]$TimeoutSeconds=7200, [switch]$AllowFailure)
@@ -306,6 +338,8 @@ function Get-SourceE2EFixtureCapsule {
         $descriptor=$property.Value.$Phase
         $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
         $capsule=Split-Path -Parent ([string]$descriptor.path)
+        $standLease=Enter-SourceFixtureStandLease -Roots @($ProjectRoot,[string]$manifest.sourceBranchRoot)
+        try {
         $admission=$descriptor.PSObject.Properties['workflowUpdateAdmission']
         $workflowContinued=$AcknowledgeWorkflowUpdate -or $null -ne $admission
         $proof=$null
@@ -342,6 +376,7 @@ function Get-SourceE2EFixtureCapsule {
             Write-QualificationFixtureJson -Path $configPath -Value $saved
         }
         return $descriptor
+        } finally {foreach($handle in @($standLease.handles)){$handle.stream.Dispose()}}
     }
     if($AcknowledgeWorkflowUpdate){throw 'FIXTURE_EXISTING_CAPSULE_REQUIRED: capture a published baseline first'}
     $descriptor=Export-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget
