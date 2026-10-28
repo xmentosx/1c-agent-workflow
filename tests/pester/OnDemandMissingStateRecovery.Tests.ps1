@@ -91,6 +91,147 @@ with socket.socket() as listener:
     }
 }
 
+Describe 'Lifecycle stop followed by same-port native peer and retained recovery' {
+    BeforeEach {
+        $script:reusedSavedRoot=$script:ProjectRoot
+        $script:ProjectRoot=Join-Path $TestDrive ('Повторное использование портов '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
+        $script:reusedProcesses=[Collections.Generic.List[object]]::new()
+        $script:reusedSessions=@()
+        $script:reusedBase=Join-Path $script:ProjectRoot 'Копия базы'
+        $script:reusedManagerBase=Join-Path $script:ProjectRoot 'База менеджера'
+        $script:reusedRegistry=Join-Path $script:ProjectRoot 'Реестр портов'
+        Mock Get-ItlPortRegistryHome { $script:reusedRegistry }
+        Mock Get-OneCExecutionGuardSettings { [pscustomobject]@{root=(Join-Path $script:ProjectRoot 'guards');python=(Get-Command python -CommandType Application|Select-Object -First 1).Source;waitTimeoutSeconds=15} }
+        # Only 1C session discovery and native 1C launch are substituted. Registry,
+        # process/start/EXE/markers, listeners, stop and signed guard are real.
+        Mock Get-OneCInfoBaseSessionProcesses {
+            param($InfoBaseKind,$InfoBasePath)
+            @($script:reusedSessions | Where-Object { $_.path -eq $InfoBasePath })
+        }
+        $script:reusedListener=Join-Path $script:ProjectRoot 'Владелец порта.py'
+        Write-Utf8Text $script:reusedListener @'
+import json, socket, sys
+with socket.socket() as listener:
+    listener.bind(('127.0.0.1', int(sys.argv[2])))
+    listener.listen()
+    with open(sys.argv[1], 'w', encoding='utf-8') as ready:
+        json.dump({'port': listener.getsockname()[1]}, ready)
+    while True:
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(2)
+            try:
+                if connection.recv(4) == b'ping':
+                    connection.sendall(b'pong')
+            except (OSError, TimeoutError):
+                pass
+'@
+        function New-ReusedPortListener {
+            param([string]$Name,[int]$Port,[string]$Base)
+            $ready=Join-Path $script:ProjectRoot ($Name+'.ready.json')
+            $process=Start-NativeProcessBackground -FilePath (Get-Command python -CommandType Application|Select-Object -First 1).Source -Arguments @('-u',$script:reusedListener,$ready,[string]$Port,$Base,$Name)
+            $script:reusedProcesses.Add($process)
+            $deadline=[DateTime]::UtcNow.AddSeconds(15)
+            while(-not (Test-Path -LiteralPath $ready)) {
+                if($process.HasExited -or [DateTime]::UtcNow -gt $deadline){throw 'native same-port listener did not start'}
+                Start-Sleep -Milliseconds 50
+            }
+            $script:reusedSessions+= [pscustomobject]@{pid=$process.Id;path=$Base}
+            return $process
+        }
+        function New-ReusedPortRuntime {
+            param([string]$Family,[string]$InstanceId,[string]$Name,[int]$Port=0,[int]$ClientPort=0)
+            $token=[guid]::NewGuid().ToString('N')
+            $lease=Resolve-ItlManagedPortLease -Family native-manager -Key $InstanceId -LeaseToken $token -Start 49152 -End 65500 -ExplicitPort $Port
+            $managerBase=$(if($Family -eq 'vanessa-ui'){$script:reusedManagerBase}else{$script:reusedBase})
+            $manager=New-ReusedPortListener -Name ($Name+'-manager') -Port $lease.port -Base $managerBase
+            Set-ItlManagedPortAllocationStatus -Family native-manager -Key $InstanceId -LeaseToken $token -Status running -ProcessId $manager.Id
+            $record=[pscustomobject]@{
+                schemaVersion=4;status='running';family=$Family;instanceId=$InstanceId;pid=$manager.Id;port=$lease.port;catalogSha256=('c'*64)
+                processStartTime=$manager.StartTime.ToUniversalTime().ToString('o');executablePath=$manager.Path;ownershipMarkers=@($script:reusedListener,$managerBase)
+                infoBaseKind='file';infoBasePath=$script:reusedBase;managerInfoBaseKind='file';managerInfoBasePath=$managerBase
+                portFamily='native-manager';portKey=$InstanceId;portLeaseToken=$token;testClientPid=0;testClientPort=0;vanessaParamsPath=''
+            }
+            if($Family -eq 'vanessa-ui') {
+                $clientToken=[guid]::NewGuid().ToString('N')
+                $clientLease=Resolve-ItlManagedPortLease -Family native-client -Key $InstanceId -LeaseToken $clientToken -Start 49152 -End 65500 -ExplicitPort $ClientPort
+                $clientName=$Name+'-client'
+                $client=New-ReusedPortListener -Name $clientName -Port $clientLease.port -Base $script:reusedBase
+                Set-ItlManagedPortAllocationStatus -Family native-client -Key $InstanceId -LeaseToken $clientToken -Status running -ProcessId $client.Id
+                foreach($entry in @{testClientPid=$client.Id;testClientPort=$clientLease.port;testClientProcessStartTime=$client.StartTime.ToUniversalTime().ToString('o');testClientExecutablePath=$client.Path;testClientOwnershipMarkers=@($script:reusedListener,$script:reusedBase,$clientName);testClientPortFamily='native-client';testClientPortKey=$InstanceId;testClientPortLeaseToken=$clientToken}.GetEnumerator()) {
+                    $record|Add-Member -Force -NotePropertyName $entry.Key -NotePropertyValue $entry.Value
+                }
+            }
+            Invoke-WithItlOnDemandRuntimeMutation -Family $Family -InstanceIds @($InstanceId) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$record}|Out-Null
+            return $record
+        }
+        function Test-ReusedPortResponse {
+            param([int]$Port)
+            $client=[Net.Sockets.TcpClient]::new()
+            try {
+                $client.Connect('127.0.0.1',$Port)
+                $stream=$client.GetStream();$stream.ReadTimeout=3000;$stream.WriteTimeout=3000
+                $request=[Text.Encoding]::ASCII.GetBytes('ping');$stream.Write($request,0,$request.Length)
+                $reply=New-Object byte[] 4
+                $read=$stream.Read($reply,0,4)
+                return $read -eq 4 -and [Text.Encoding]::ASCII.GetString($reply) -ceq 'pong'
+            } finally { $client.Dispose() }
+        }
+        Mock Start-ItlOnDemandBackendInstance {
+            param($Family,$InstanceId)
+            New-ReusedPortRuntime -Family $Family -InstanceId $InstanceId -Name replacement
+        }
+    }
+    AfterEach {
+        foreach($process in $script:reusedProcesses) {
+            if(-not $process.HasExited){$null=$process.Handle;(Stop-NativeProcessForSafety -Process $process -UseOpenedProcess).confirmed|Should -BeTrue}
+            $process.Dispose()
+        }
+        $script:ProjectRoot=$script:reusedSavedRoot
+    }
+    It 'recovers retired <Family> beside a same-family peer on its exact old ports and resumes guarded work' -ForEach @(@{Family='vanessa-ui'},@{Family='roctup'}) {
+        param($Family)
+        $old=New-ReusedPortRuntime -Family $Family -InstanceId ('a'*32) -Name original
+        $admissions=@(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $old -Family $Family | ForEach-Object {[pscustomobject]@{infoBaseKind=$_.kind;infoBasePath=$_.path}})
+        Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose config-load -ScriptBlock {
+            Stop-ItlOnDemandBackends -Family $Family -InfoBasePath $script:reusedBase
+        }
+        $script:reusedSessions=@()
+        $oldPath=Get-ItlOnDemandRuntimePath $Family ('a'*32)
+        Test-Path -LiteralPath $oldPath|Should -BeFalse
+        @(Get-ItlOnDemandManagedPortLeaseMatches -Family $old.portFamily -Key $old.portKey -AnyLeaseToken).Count|Should -Be 0
+        foreach($process in $script:reusedProcesses){$process.HasExited|Should -BeTrue}
+        $peer=New-ReusedPortRuntime -Family $Family -InstanceId ('b'*32) -Name peer -Port $old.port -ClientPort $old.testClientPort
+        $peer.port|Should -Be $old.port
+        $peer.testClientPort|Should -Be $old.testClientPort
+        $peerPath=Get-ItlOnDemandRuntimePath $Family ('b'*32)
+        $peerHash=(Get-FileHash -LiteralPath $peerPath).Hash
+        $peerLeases=@((Read-ItlPortRegistry).allocations|Where-Object {$_.key -eq ('b'*32)})|ConvertTo-Json -Compress -Depth 8
+        $expected=[pscustomobject]@{instanceId=$old.instanceId;processStartTime=$old.processStartTime;nativeLaunchProof=$old}
+        $invocation=[pscustomobject]@{plan=[pscustomobject]@{family=$Family;projectRoot=$script:ProjectRoot;targetBase=[pscustomobject]@{kind='file';path=$script:reusedBase}}}
+        $recovered=Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$Family-call" -ScriptBlock {
+            Recover-ItlOnDemandBackendInstance -Family $Family -InstanceId $old.instanceId -ReplacementInstanceId ('c'*32) -ExpectedPid $old.pid -ExpectedPort $old.port -CatalogSha256 $old.catalogSha256 -Invocation $invocation -ExpectedBackend $expected
+        }
+        $recovered.instanceId|Should -Be ('c'*32)
+        $recovered.pid|Should -Not -Be $old.pid
+        Test-Path -LiteralPath $oldPath|Should -BeFalse
+        (Get-FileHash -LiteralPath $peerPath).Hash|Should -Be $peerHash
+        (@((Read-ItlPortRegistry).allocations|Where-Object {$_.key -eq ('b'*32)})|ConvertTo-Json -Compress -Depth 8)|Should -Be $peerLeases
+        # Both original task continuation and the preserved peer still work
+        # after the recovery's real execution-guard owner releases its handles.
+        Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose "ondemand-$Family-call" -ScriptBlock {
+            Test-ReusedPortResponse $recovered.port|Should -BeTrue
+            Test-ReusedPortResponse $peer.port|Should -BeTrue
+            if($Family -eq 'vanessa-ui') {
+                Test-ReusedPortResponse $peer.testClientPort|Should -BeTrue
+                Test-ReusedPortResponse $recovered.testClientPort|Should -BeTrue
+            }
+        }
+        Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
+    }
+}
+
 Describe 'Private TestClient close and runtime mutation owner' {
     BeforeEach {
         $script:savedRoot=$script:ProjectRoot
@@ -363,6 +504,98 @@ Describe 'Retained on-demand launch evidence recovery' {
         Should -Invoke Stop-Process -Times 0 -Exactly
         Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
         Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
+    }
+
+    It 'requires exact same-port peer proof through recovery and stop (<Defect>)' -ForEach @(
+        @{Defect='none'},@{Defect='original-live'},@{Defect='original-lease'},
+        @{Defect='peer-pid-reused'},@{Defect='peer-executable'},@{Defect='peer-markers'},
+        @{Defect='peer-lease-missing'},@{Defect='peer-lease-pid'},@{Defect='foreign-listener'},
+        @{Defect='unregistered'},@{Defect='ambiguous'},@{Defect='unknown-session'},
+        @{Defect='peer-changed'},@{Defect='registration-before-stop'}
+    ) {
+        param($Defect)
+        $script:retiredDefect=$Defect
+        $script:originalReads=0
+        $script:retiredPeer=$script:launch|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $script:retiredPeer.instanceId=('d'*32);$script:retiredPeer.pid=201;$script:retiredPeer.testClientPid=202
+        $script:retiredPeer.portKey='peer-manager';$script:retiredPeer.portLeaseToken='peer-manager-token'
+        $script:retiredPeer.testClientPortKey='peer-child';$script:retiredPeer.testClientPortLeaseToken='peer-child-token'
+        $script:retiredPeer|Add-Member status running
+        Mock Get-ItlOnDemandRuntimeInstances {
+            if($script:retiredDefect -eq 'unregistered'){return @()}
+            if($script:retiredDefect -eq 'ambiguous'){return @($script:retiredPeer,$script:retiredPeer)}
+            $script:retiredPeer
+        }
+        Mock Read-ItlOnDemandRuntimeState {
+            param($Family,$InstanceId)
+            if($InstanceId -ceq ('a'*32)) {
+                $script:originalReads++
+                # Initial read, retained proof and its final reread pass; Stop
+                # must independently notice the original registration returning.
+                if($script:retiredDefect -eq 'registration-before-stop' -and $script:originalReads -ge 4){return $script:launch}
+                return $null
+            }
+            $current=$script:retiredPeer|ConvertTo-Json -Depth 8|ConvertFrom-Json
+            if($script:retiredDefect -eq 'peer-changed'){$current.processStartTime=$script:started.AddSeconds(1).ToString('o')}
+            $current
+        }
+        Mock Get-Process {
+            param($Id)
+            $processId=[int](@($Id)[0])
+            if($processId -in @(101,102)) {
+                if($script:retiredDefect -eq 'original-live' -and $processId -eq 101){return [pscustomobject]@{Id=101;StartTime=$script:started}}
+                return $null
+            }
+            $start=$script:started
+            if($script:retiredDefect -eq 'peer-pid-reused'){$start=$start.AddMilliseconds(1)}
+            [pscustomobject]@{Id=$processId;StartTime=$start;HasExited=$false}
+        }
+        Mock Get-CimInstance {
+            $exe=$script:retiredPeer.executablePath
+            if($script:retiredDefect -eq 'peer-executable'){$exe='C:\Чужая платформа\1cv8.exe'}
+            $markers=($script:retiredPeer.ownershipMarkers+$script:retiredPeer.testClientOwnershipMarkers)-join ' '
+            if($script:retiredDefect -eq 'peer-markers'){$markers='unrelated command'}
+            [pscustomobject]@{ExecutablePath=$exe;CommandLine=$markers}
+        }
+        Mock Get-ItlOnDemandProcessOwnershipProof {param($RuntimeState,$ExactStart) & $actualOwnershipProof -RuntimeState $RuntimeState -ExactStart:$ExactStart}
+        Mock Get-ItlOnDemandOwnedTestClientProcesses {param($RuntimeState,$ExactStart,$RegisteredOnly) & $actualChildProof -RuntimeState $RuntimeState -ExactStart:$ExactStart -RegisteredOnly:$RegisteredOnly}
+        Mock Get-ItlOnDemandManagedPortLeaseMatches {
+            param($Family,$Key,$LeaseToken)
+            if($Key -in @('backend-key','client-key')) {
+                if($script:retiredDefect -eq 'original-lease' -and $Key -eq 'backend-key'){return [pscustomobject]@{port=9874;pid=101}}
+                return @()
+            }
+            if($script:retiredDefect -eq 'peer-lease-missing'){return @()}
+            $leasePid=$(if($Key -eq 'peer-manager'){201}else{202})
+            $port=$(if($Key -eq 'peer-manager'){9874}else{48151})
+            if($script:retiredDefect -eq 'peer-lease-pid'){$leasePid=999}
+            [pscustomobject]@{port=$port;pid=$leasePid}
+        }
+        Mock Test-TcpPortOpen { $true }
+        Mock Test-ItlOnDemandPortOwnedByProcess {
+            param($Port,$ProcessId)
+            if($script:retiredDefect -eq 'foreign-listener'){return $false}
+            ($Port -eq 9874 -and $ProcessId -eq 201) -or ($Port -eq 48151 -and $ProcessId -eq 202)
+        }
+        Mock Get-OneCInfoBaseSessionProcesses {
+            param($InfoBaseKind,$InfoBasePath)
+            if($script:retiredDefect -eq 'unknown-session'){return [pscustomobject]@{pid=999}}
+            if($InfoBasePath -eq 'C:\База менеджера'){return [pscustomobject]@{pid=201}}
+            [pscustomobject]@{pid=202}
+        }
+        $recover={ Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected }
+        if($Defect -eq 'none') {
+            (& $recover).instanceId|Should -Be ('b'*32)
+            $script:sequence.ToArray()|Should -Be @('guard','start')
+            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
+        } else {
+            $recover|Should -Throw '*ITL_ONDEMAND_*'
+            Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
+            if($Defect -eq 'registration-before-stop'){$script:originalReads|Should -BeGreaterOrEqual 4}
+        }
+        Should -Invoke Stop-Process -Times 0 -Exactly
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+        Should -Invoke Write-ItlOnDemandRuntimeState -Times 0 -Exactly
     }
 
     It 'finishes retained <Family> cleanup beside a proven live peer, preserving it (<Defect>)' -ForEach @(
