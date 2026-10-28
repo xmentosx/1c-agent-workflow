@@ -871,7 +871,7 @@ function Publish-AccumulatedDevelop {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
             try {
-                $prerunCapability = if ($RequireRelease) { @($deliveryPlan.releaseCapabilities) } else { @() }
+                $prerunCapability = @(if ($RequireRelease) { $deliveryPlan.releaseCapabilities })
                 Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop") -PrerunReleaseCapability $prerunCapability
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
                 Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"

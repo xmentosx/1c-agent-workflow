@@ -714,8 +714,10 @@ function Invoke-SourceGate {
         if (@($ReleaseCapability).Count -gt 0) { $arguments += @("-ReleaseCapabilities", (@($ReleaseCapability) -join ',')) }
     }
     # Only the authoritative gate speculates Release stages for its checkpoint.
-    if ($Mode -eq "Develop" -and @($PrerunReleaseCapability).Count -gt 0 -and $gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
-        $arguments += @("-PrerunReleaseCapabilities", (@($PrerunReleaseCapability) -join ','))
+    # A Windows PowerShell null-bound [string[]] has no Count; normalize first.
+    $prerunCapabilities = @($PrerunReleaseCapability | Where-Object { $_ })
+    if ($Mode -eq "Develop" -and $prerunCapabilities.Count -gt 0 -and $gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
+        $arguments += @("-PrerunReleaseCapabilities", ($prerunCapabilities -join ','))
     }
     $quoted = @($arguments | ForEach-Object {
         $value = [string]$_
