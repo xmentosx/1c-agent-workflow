@@ -1,5 +1,23 @@
 # План приёмки
 
+## Qwen cache6: граница полной CLI/MCP квалификации, 2026-10-28
+
+[Native evidence](../add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md):6/6 прежних полных Codex-ответов соответствуют
+неизменённому эталону;5положительных заданий получили применимые verified/durable
+оригиналы, RU24 корректно отказался от неподтверждённого сертификата/даты.
+Проверены точные prompts и source parity, same binary/model, returned opaque IDs,
+лимиты3recall/4exact/1status,8карточек/1600токенов и отсутствие записи/других tools.
+Frontend20s и CLI watchdog600s сохранены; max recall RPC20.114s включает overhead,
+первый cold recall partial не исключён. Median полного ответа44.552s/max51.443s.
+Все MCP/answers декодированы строго;8повреждённых Docker debug-фрагментов
+сохранены побайтно, не используются как текстовое доказательство. Native code,
+корпус и задания ради результата не менялись. Рабочий Cognee не затронут.
+Результат72/72 относится к предыдущему фиксированному search-набору; в этом
+продолжении повторены ровно6Qwenответов. BGE и ingestion с cache6 не повторялись.
+Сохраняются шесть областей/общая связь, published registry и ai_rules_1c;
+production switch, Desktop/installed proof и release acceptance не следуют
+из этой квалификации. Source validation и регистрация учитываются отдельно.
+
 ## Qwen native profile6: actual acceptance boundary, 2026-10-28
 
 [Native repeat](../add-scoped-cognee-memory/evidence/qwen-lru6-recheck-2026-10-28.md) подтверждает exact50chunk hash sets, RU21 и72/72

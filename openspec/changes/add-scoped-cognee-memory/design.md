@@ -1,5 +1,19 @@
 # Design
 
+## Qwen cache6: полные ответы Codex, 2026-10-28
+
+[Native квалификация](evidence/qwen-lru6-codex-answers-2026-10-28.md) дополняет прежний RU21/72: те же шесть
+полных заданий теперь выполнены6/6, включая получение факта RU20 и корректный
+отказ RU24. Сохранены корпус/gold, точные prompts, бинарник/модель Codex,
+controlled policy и native frontend. Общий Cognee, шесть областей, canonical
+homes и различия проекта/MCP-источника прежние; ACL не добавляется.
+Профиль cache6/rate off/pool256MiB действует только на тестовой копии.
+20s бюджет frontend и исходные лимиты сохранены. Первый cold recall вернул
+частичные карточки у границы бюджета; это не заявление о полном покрытии.
+Median полного ответа44.552s — отдельная метрика от задержки embedding/search.
+Рабочая модель/registry не переключены; ingestion, installed/Desktop acceptance
+и выпуск этим не квалифицируются. Новый gate или runtime-слой не вводится.
+
 ## Qwen native profile6: итог согласованной настройки, 2026-10-28
 
 [Единый actual result](evidence/qwen-lru6-recheck-2026-10-28.md): cache6/pacing off на изолированном Cognee без
