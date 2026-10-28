@@ -237,6 +237,49 @@ if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 
         function Assert-DeliveryReleaseStandReady { Add-Content -LiteralPath $script:order -Value 'readiness' -Encoding UTF8 }
         $script:AgentTarget='codex';$script:ResumePlan='';$script:ApproveLongPlan='';$script:Action='PublishDevelop'
     }
+    It 'warms the gate shard cache with the same candidate and fork only while stand owners run, on success and failure' {
+        $runner=@'
+param($RepositoryRoot,$OutputRoot,$JunitPath,$WorkerCount,$RequestedWorkerCount,[switch]$WorkerCountDefaulted,$AiRulesSource)
+$ErrorActionPreference='Stop'
+$record=[ordered]@{pid=$PID;repositoryRoot=$RepositoryRoot;aiRulesSource=$AiRulesSource;workers=$WorkerCount;defaulted=[bool]$WorkerCountDefaulted}
+[IO.File]::WriteAllText((Join-Path $RepositoryRoot 'prewarm.json'),($record|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+Add-Content -LiteralPath (Join-Path $RepositoryRoot 'prewarm-starts.txt') -Value 'start' -Encoding UTF8
+Start-Sleep -Seconds 300
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/invoke-pester-shards.ps1'),$runner,[Text.UTF8Encoding]::new($true))
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:standCandidate 'tests'))
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'tests/quality-contracts.json'),'{"pesterWorkers":{"qualificationImplicitDefault":8}}',[Text.UTF8Encoding]::new($false))
+        $rules=Join-Path $TestDrive 'fork путь с пробелом'
+        [void][IO.Directory]::CreateDirectory($rules)
+        $script:AiRulesSource=$rules
+        try {
+            # The updater sees the warmup already running before it mutates the stand.
+            $updater=Get-Content -LiteralPath (Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1') -Raw -Encoding UTF8
+            $updater=$updater.Replace("Add-Content -LiteralPath (Join-Path `$ProjectRoot 'order.txt') -Value 'update'","`$d=[DateTime]::UtcNow.AddSeconds(30);while(-not(Test-Path -LiteralPath (Join-Path `$SourceRoot 'prewarm.json')) -and [DateTime]::UtcNow -lt `$d){Start-Sleep -Milliseconds 100};if(-not(Test-Path -LiteralPath (Join-Path `$SourceRoot 'prewarm.json'))){throw 'prewarm did not start first'};Add-Content -LiteralPath (Join-Path `$ProjectRoot 'order.txt') -Value 'update'")
+            [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+            $attempt=[pscustomobject]@{phase='candidate-built'}
+            Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt
+            @(Get-Content $script:order) | Should -Be @('update','capture')
+            $started=Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $started.repositoryRoot | Should -Be $script:standCandidate
+            $started.aiRulesSource | Should -Be $rules
+            $started.workers | Should -Be '8'
+            $started.defaulted | Should -BeTrue
+            Get-Process -Id ([int]$started.pid) -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+            $script:savedAttempt.standPreparation.prewarm.completed | Should -BeFalse
+            $script:savedAttempt.standPreparation.prewarm.stopError | Should -BeNullOrEmpty
+            # A failed owner also stops the warmup and keeps the failure.
+            Remove-Item -LiteralPath (Join-Path $script:standCandidate 'prewarm.json')
+            [IO.File]::WriteAllText((Join-Path $script:standRoot 'business-drift.txt'),'unexpected')
+            { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Throw '*PREPARATION_FAILED*'
+            $failed=Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Get-Process -Id ([int]$failed.pid) -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            $script:savedAttempt.standPreparation.status | Should -Be 'running'
+            $script:savedAttempt.standPreparation.prewarm.name | Should -Be 'stand-prewarm'
+            @(Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm-starts.txt')).Count | Should -Be 2
+        } finally { Remove-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue }
+    }
     It 'prepares through native owners before freezing, then resumes without replan and blocks unexpected drift' {
         $RequireRelease=$true;$frozenPlan=$null;$priorAttempt=$null;$Replan='';$remoteBefore='base'
         $worktree=[pscustomobject]@{path=$script:standCandidate};$attempt=[pscustomobject]@{phase='candidate-built'}
