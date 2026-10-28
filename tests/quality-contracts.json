@@ -1407,7 +1407,13 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/DeliveryGoInputScope.Tests.ps1",
       "paths": [
-        "tests/pester/DeliveryGoInputScope.Tests.ps1"
+        "tests/pester/DeliveryGoInputScope.Tests.ps1",
+        "scripts/develop-journey-inputs.ps1",
+        "scripts/update-installed-workflow.ps1",
+        "scripts/invoke-develop-e2e.ps1",
+        "scripts/develop-configuration-rejection.ps1",
+        "scripts/source-e2e-workflow-update.ps1",
+        "scripts/Build-ItlOnDemandMcp.ps1"
       ],
       "tests": [
         "tests/pester/DeliveryGoInputScope.Tests.ps1"
