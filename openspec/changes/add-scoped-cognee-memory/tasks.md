@@ -1,5 +1,20 @@
 # Tasks
 
+## Develop и QP5 пилота, 2026-10-29
+
+- [x] Выполнить согласованный frozen PublishDevelop: `1e5b4acf`, static4129/0/0,
+  native upgrade/fresh passed, ai_rules_1c12 clients; master прежний.
+- [x] Сверить Tf:84 прежних originals без изменений/pending, 0working import;
+  сохранить полные cold snapshots и private return комплект; штатно настроить пилот.
+- [x] Воспроизвести и исправить причины исходного N1: owner applied envelope
+  271093bytes и inherited PS7 module path; сохранить общий memory limit,
+  hashes, proof, Unicode path и прежние10/20s. Focused2/0, source diagnostic отдельно.
+- [ ] Завершить установленный повтор N1/remember/read/reload, регистрацию и
+  доставку ремонта; configured не закрывает QP5.
+
+[Единый фактический отчёт и границы](evidence/pilot-qp5-2026-10-29.md).
+QP5/QP-R2 открыты; рабочая миграция/master и остальной UNVERIFIED не расширены.
+
 ## Первый пилот, согласован 2026-10-28
 
 - [x] Зафиксировать выбранный пользователем PM5 / Windows 11 пилот и явный

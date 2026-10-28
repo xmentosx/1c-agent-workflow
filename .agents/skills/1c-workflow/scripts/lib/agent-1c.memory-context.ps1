@@ -79,7 +79,7 @@ function Sync-ItlMemoryContext {
     $state=Read-ItlMemoryJson $old.cycleStatePath
     $cycle=Get-ItlCatalogField $state 'memoryCycle'
     if(-not $cycle -or $cycle.reserved -or (Get-ItlCatalogField $state 'resetStatus') -eq 'resetting'){return}
-    if(-not $Context){$applied=Read-ItlMemoryJson $old.appliedPath;if($applied){$Context=$applied.context}}
+    if(-not $Context){$applied=Read-ItlMemoryAppliedContext $old.appliedPath;if($applied){$Context=$applied.context}}
     if(-not $Context){return}
     $hash=Get-ItlCatalogHash $Context
     if($hash -ceq $old.registryContextHash -and $cycle.current -ceq $old.cycleId){return}

@@ -1,5 +1,20 @@
 # Tasks
 
+## Develop и QP5 пилота, 2026-10-29
+
+- [x] Согласовать [единый результат публикации и N1](../add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md):
+  develop1e5b4acf, static4129/0/0 и native upgrade/fresh passed; R6/G3 прежние.
+- [x] Применить `pm5-core-development` только на тестовом PM5/Win11;
+  business catalog/relations совпали с R6, endpoint registry обновлён отдельно.
+- [x] Согласовать ограниченный memory reader repair для реального applied
+  envelope271093bytes: owner record/хэши/compatibility baseline не обрезаются,
+  большой envelope не становится always-on контекстом или новой моделью реестра.
+- [ ] QP-R2: после штатного обновления закончить native memory read/write/reload;
+  configured и source diagnostic не являются установленной приёмкой QP5.
+
+Полные source/target cold snapshots сохранены; старый qualification writer
+отключён. Рабочие проекты, master и прежний UNVERIFIED остаются вне допуска.
+
 ## Первый пилот, согласован 2026-10-28
 
 - [x] Согласовать с memory выбранный пользователем PM5 / Windows 11 пилот:
