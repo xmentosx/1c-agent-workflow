@@ -1,6 +1,18 @@
 # Controlled ai_rules_1c upgrades
 
-## Current candidate: combined proportionate acceptance and scoped memory, local r49
+## Current candidate: memory optimization, local r50
+
+The selected candidate is `itl-main-2f640143-r50`, exact commit
+`a2cbdcef52316db426acedc852f495564189f1ca`, upstream unchanged at
+`2f640143756ecd01fed42100e412632aa9082385`. The dependency lock, project
+template and scoped-memory policy already agree. Version selection is complete;
+`compatibilityStatus: pending` remains the separate release-admission state.
+Retained fork, twelve-client installation and installed PM5 evidence, the existing
+promotion owner and the remaining release steps are described in
+[r50 release readiness](ai-rules-r50-release-readiness.md). No publication,
+working migration or Cognee switch is implied.
+
+## Earlier combined proportionate acceptance and scoped memory, local r49
 
 The local r49 candidate `df91727cc584a9b499cad1d9daa6ac22320486f9`
 continues r48 `b45e2164440b81ab0c68985da086341efa39c4da` and cherry-picks
