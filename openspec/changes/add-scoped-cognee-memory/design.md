@@ -1,5 +1,169 @@
 # Design
 
+## Регистрация QP: бюджет команды обновления, 2026-10-28
+
+План QP и запрет выполнения сохраняются. Блокер общей регистрации относится
+к добавленным в другой очереди обязательным инструкциям itl-update-workflow,
+а не к memory profile. Existing renderer показал ровно+452байта на каждой из24
+поверхностей, без новых файлов или роста root instructions. Требуемые rollout,
+locks/preservation, frozen pending set, no-push/no-refresh и named continuation
+сохранены. ParserDocsBudgets учитывает фиксированную дельту только при наличии
+этого rollout contract и ограничивает сам template1930LF UTF-8 bytes.
+Исходный запас220байт master/Codex сохраняется, произвольного увеличения нет.
+Доказательства и граница — [test-plan](test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28).
+
+## QP: рабочий профиль Qwen и новый индекс, 2026-10-28
+
+### Решение и разрешённая граница
+
+Пользователь выбрал **Qwen3-Embedding-8B** для рабочего Cognee. Это заменяет
+прежний статус «модель не выбрана/замена не принята»: BGE остаётся сохранённым
+комплектом возврата. Выбор модели не означает, что рабочее подключение уже
+переключено или новый профиль допущен. Сейчас разрешена только подготовка
+этого плана и согласование двух OpenSpec. QP0–QP6 ниже не выполнялись.
+Gate6/G6, рабочая миграция, публикация workflow/fork, push и PR не разрешены.
+
+Основание: [RU21/72](evidence/qwen-lru6-recheck-2026-10-28.md) и
+[6полных ответов](evidence/qwen-lru6-codex-answers-2026-10-28.md). Они подтверждают
+чтение квалификационного корпуса, не production ingestion с cache6 и не перенос
+рабочих данных. Прежние failures, G1/Q1–Q7, G3/R6/G4/G5/MO сохраняют свои границы.
+
+### Архитектурный checkpoint QP
+
+Инвариант: у знания сохраняются логическая область, noteId, текст, источник,
+применимость и подтверждённый текущий статус; смена embedding не разрешает
+потерю записей, восстановление отозванных фактов или смену task/workspace/workplace.
+Cognee остаётся без форка, с одним общим техническим подключением и шестью
+логическими областями; персональные ACL, OpenViking и второй memory pipeline
+не добавляются. Два экземпляра существуют временно для подготовки/возврата,
+нормальные клиенты в каждый момент используют только один принятый комплект.
+
+Host/backup owner создаёт согласованные копии и выполняет операторское окно;
+существующий memory/MCP owner ведёт профиль, exact mappings и setup/reload;
+существующий policy owner допускает проверенный профиль. Registry owner
+продолжает владеть business IDs/home/applicability и тремя проектными MCP-ролями.
+Нового координатора, постоянной репликации, очереди миграции, shadow ledger,
+автоматического fallback или runtime-барьера для независимого workflow нет.
+Одноразовые inventory/delta/hash records — доказательства операторской операции,
+не новый постоянно работающий сервис. Always-on rules/tool schemas не растут. Controlled ai_rules_1c r50 и его
+model-agnostic remember/recall policy сохраняются; смена embedding не меняет
+семантику tools, upstream/fork правила или route OpenViking.
+
+Текущий `Assert-ItlMemoryProvider` допускает закреплённую пару profile/qualification
+hash. Будущий QP4 меняет этот контракт у его существующего владельца: явно
+допускаются проверенный Qwen и прежний BGE для управляемого возврата; нового
+реестра профилей/динамического выбора нет. Запись выдуманного hash в settings
+или снятие проверки не являются допуском. Нужные owner-local изменения,
+совместимость и canary входят в будущую реализацию QP, не в этот planning commit.
+
+### Целевой профиль
+
+| Параметр | Планируемое значение / источник |
+|---|---|
+| Engine | `qwen/qwen3-embedding-8b`, `EMBEDDING_DIMENSIONS=4096` |
+| Cognee |1.6.5, проверенный image `sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820`; без одновременного upgrade |
+| Клиент embedding | Тот же штатный async OpenAI-compatible SDK путь, endpoint/provider/model и wire settings из квалифицированного Qwen manifest; не возврат к прежнему LiteLLM пути |
+| Native cache | `DATABASE_MAX_LRU_CACHE_SIZE=6` |
+| Native pacing | `EMBEDDING_RATE_LIMIT_ENABLED=false`; queue/concurrency2, batch32 и input cap512 прежние |
+| Graph buffer | `KUZU_BUFFER_POOL_SIZE=268435456` |
+| Ресурсы |2CPU/5GiB RAM; Docker memory-swap field5GiB, то есть вместе RAM+swap5GiB; постоянное хранилище отдельно от контейнера |
+| HTTP budgets | recall20s, remember60s у существующего frontend; объёмный rebuild — операторская подготовка с отдельным общим budget/status, не увеличение этих лимитов |
+| Auth Cognee | Один обычный технический account, native `X-Api-Key` без регулярного login/refresh; секрет в existing user-local private credential file |
+| Auth embedding | Серверный секрет прежнего разрешённого endpoint, отдельно от Cognee key; ни один секрет не входит в Git/бизнес-реестр/model context |
+| Identity | Новый deployment `instanceId`, новый набор exact dataset IDs; сохранённый technical principal UUID и прежние local identities/cycle |
+| Deployment | dev-karimov-mcp — подготовленный кандидат хоста; предлагаемые имена `itl-cognee-qwen-prod-v1` / `cognee-qwen4096-v1` ещё не созданы/не допущены. Реальные URL/port/paths/owner подтвердить в QP0 |
+| Defaults | Память default-on при готовых prerequisites; существующие explicit off/disabled сохраняются. Без готового mapping — unavailable/pending, независимый workflow работает |
+
+Полезная конфигурация SDK сохраняется отдельно от тестового DEBUG/logging wrapper.
+Удаление инструментария не должно менять provider route; этот факт проверяет QP4.
+Расход embeddings, диск и ingestion peak6 измеряются в подготовке; прежние
+read peaks1.538–1.584GiB не объявляются доказательством памяти при загрузке.
+Стоимость unknown не равна нулю и не требует нового бесконечного benchmark.
+
+### QP0–QP5: конкретный порядок подготовки и будущего допуска
+
+| Этап | Действия существующих владельцев после отдельного разрешения | Готовность / сохранённое продолжение |
+|---|---|---|
+| QP0. Инвентаризация | Подтвердить настоящий source, host/volumes, image/schema, principal, все6scope mappings, счётчики/bytes, current originals/status, pending/native jobs, private client settings и published registry SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`. Назначить пути source/backup/candidate, свободный отдельный port, владельца и численные бюджеты rebuild/окна по существующему runner. Учебные G5/RU records исключаются из рабочего набора только по подтверждённому списку, не по догадке/имени. | Scope/source list и preview согласованы, место под full backup+clone+новый4096 index есть. Unknown originals сохраняются. Если настоящего рабочего хранилища ещё нет, QP0 фиксирует пустой рабочий старт; тестовый стенд не переименовывается в production. |
+| QP1. Снимок T | Оператор приостанавливает общее memory подключение, сверяет pending/активные native jobs штатным status без replay, останавливает только свой Cognee и согласованно копирует relational/auth/original/graph/vector/config/mappings. Сохраняет hashes, source identity и закрытую credential recovery. Проверяет restore на отдельной копии тем же image и exact raw reads, затем возвращает прежний BGE source к работе. | Согласованный полный восстановимый комплект T и экспорт оригиналов. Live copy одной vector папки не считается backup. Неопределённый write не переносится и не объявляется отменённым; его продолжение остаётся на source. |
+| QP2. Отдельный target | Из T создаётся изолированная копия полного хранилища: auth/native principal UUID сохраняется. В ней штатным Cognee API создаются новые пустые datasets для нового4096 индекса; они имеют новые native UUID и отдельные graph/vector namespaces. Старые BGE datasets в копии остаются архивными и никогда не выбираются Qwen binding. Выдаётся новый instanceId; обычные клиенты к candidate не подключаются. | Source T/BGE неизменён. Principal совпал, exact old→new dataset map известен; workspace/workplace/taskCycle не пересозданы. Копирование полного хранилища сохраняет account; ручной SQL/import таблиц auth не требуется. |
+| QP3. Перестроение | Для каждого current original из экспорта T сохранить exact payload/noteId/status/provenance/applicability и выполнить штатный remember в подтверждённый новый dataset, затем native processing status и raw read. Подготовка по одному подтверждённому write с прежним concurrency cap; native dataId может измениться и фиксируется old→new. Не переносить384-векторы в4096 namespaces. | Текущие payload/hash множества по каждой логической области равны T; количество, current revision и precise retirement сохранены. Native status и actual CHUNKS доказывают построение нового индекса; HTTP200, старый completed или dedup reuse сами по себе не proof. При пропуске rebuild из-за native dedup — остановить эту подготовку с evidence, вернуться к поддерживаемому пути на checkpoint, без патча Cognee/изменения текста для обхода dedup. |
+| QP4. Квалификация профиля | Переиспользовать неизменившиеся Q1–Q7/G5/MO и RU21/72/6 evidence с точным fingerprint. На candidate закрыть затронутые existing write/status/fresh-reader, exact/correction/retirement/restore и default-on/off continuation сценарии, включая new IDs и отсутствие diagnostic wrapper. Подтвердить4096 на новом индексе, per-scope hashes, native completed, ingestion resources/cost actual/unknown. Затем подготовить admission reference у существующего policy owner, сохраняющий управляемый возврат BGE. | Квалификационный результат и exact profile hash существуют; не ручная подстановка G1/RU hash. Existing budgets/assertions сохранены. Новые RU вопросы/72 до удачного числа не назначаются. Source registration/Targeted отдельно, Gate6 здесь не запускается и не считается пройденным. |
+| QP5. Финальная сверка и переключение | Только после отдельного разрешения на cutover и требуемой выпускной квалификации exact candidate: снова приостановить общее подключение, завершить/разобрать source pending, получить согласованный Tf. Сравнить inventory T↔Tf по scope+noteId+raw hash; native API применить additions/corrections/precise deletions только к candidate. Сверить current original множества. Existing MCP owner готовит provider/settings/mappings комплект и через existing setup/reload последовательно переводит допущенные bindings; старый source останавливается до открытия normal writes в Qwen. | Ни один normal writer не пишет одновременно в BGE и Qwen; source/Tf сохранён. Все включённые клиенты подтвердили новый instance/dataset/data IDs и свежий context; старые endpoints/bindings недоступны для записи. Явный off сохранён. Не завершённый/неподтверждённый этап не даёт success; оператор возвращает прежний комплект или оставляет memory unavailable, основной workflow продолжается. |
+
+Для подтверждённого пустого рабочего старта QP1 фиксирует отсутствие старых
+рабочих записей/настроек; QP2 штатно создаёт ordinary account и пустые datasets,
+не переносит fixture UUID/identity. Вариант полного клона применяется только
+к существующему реальному source. Возврат до первых writes восстанавливает
+прежнее unconfigured состояние; после writes Tr сохраняется и возврат к BGE
+требует подготовленного квалифицированного BGE комплекта с сохранением данных.
+Если его ещё нет, память остаётся unavailable, данные не удаляются ради отката.
+
+QP1/T и QP5/Tf — два коротких операторских окна, а не остановка старой памяти на
+всё время rebuild. Финальный diff получается повторным полным inventory, без
+нового журнала событий/постоянного change-data-capture/dual write. Pending,
+привязанный к прежнему instance/principal/exact dataset, не перепривязывается
+к новому destination; сначала его штатное source reconciliation. Неиспользованные
+локальные unsent intents остаются сохранёнными и не отправляются автоматически.
+Если source только тестовый или отсутствует, old data/state всё равно сохраняются;
+новый рабочий набор и начальные homes берутся из подтверждённых назначений QP0.
+
+Сам rebuild не меняет registry SHA, canonical home или task generation.
+Осознанно отсутствующие optional homes опубликованного R6 не заполняются
+догадками ради индекса. Создаются только утверждённые shared scopes; частные
+scopes — по существующему on-demand owner. Шесть областей — шесть типов,
+а не шесть общих физических datasets на всю организацию.
+Deployment mapping включает stable logical key, old/new native dataset/owner,
+old/new dataId для каждого noteId и raw hash; это operator proof/native mapping,
+не новая сущность бизнес-реестра. Общие scopes настраиваются один раз;
+частные task/workspace/workplace mappings остаются у existing local owner.
+Новые bindings не получают прежние кэши/receipts как доказательство новых IDs.
+
+### QP6: возврат без скрытой потери текущих данных
+
+До первого Qwen write достаточно остановить candidate и восстановить прежний
+BGE provider/mappings/binding комплект через existing owner с новым context.
+Секреты и native principal проверяются, а не меняются для обхода admission.
+
+После хотя бы одного Qwen write возврат одним старым snapshot запрещён:
+
+1. Приостановить только общее memory подключение и сохранить полный Qwen snapshot
+   Tr, exact current inventory и pending; не удалять candidate/исходные записи.
+2. На отдельной BGE restore-копии Tf штатным API384 применить разницу Tf→Tr:
+   новые записи, текущие corrections и precise deletions. Для каждого confirmed
+   original сравнить scope+noteId+payload hash и current status; native data IDs
+   разрешено изменить только с точным новым mapping. Старые отозванные факты
+   не должны снова стать current. Не переигрывать unconfirmed writes.
+3. После native fresh original/status/recall подтверждения existing owner переводит
+   настройки/допущенные bindings на согласованный BGE комплект и делает reload.
+   Qwen normal writers остаются остановленными. Прежний admitted BGE profile
+   и совместимый owner сохранены; automatic model fallback не используется.
+4. Если текущие изменения/retirement подтвердить невозможно, не открывать старую
+   память как будто она актуальна: сохранить обе стороны/экспорт/pending,
+   оставить affected scopes unavailable и выполнить existing Q5 continuation.
+   Любой ненулевой интервал потери данных требует отдельного решения пользователя.
+
+Цель для подтверждённых current originals — нулевая потеря при согласованном
+cutover/rollback inventory. Это не обещание native immutable истории всех
+ревизий или несуществующей транзакции сразу на двух серверах. Вся сохранённая
+история остаётся в полных снимках; поздние изменения учитываются явно по Q5.
+Backups/BGE/Qwen/failed artifacts не удаляются автоматически по успеху/возрасту.
+Срок и удаление старого комплекта — отдельное операторское решение после приёмки.
+
+### Риски и выпускная граница
+
+Native IDs могут меняться → exact mapping и current raw proof; principal/local
+identity сохраняются. Вектор4096 больше384 → проверка диска/ingestion на candidate,
+без пересчёта RAM из числа параметров удалённой8B модели. Внешний endpoint может
+быть недоступен → штатное unavailable/pending, source preserved, без смены модели.
+Недоступная native операция → retained evidence/checkpoint, без SQL/Cognee patch.
+
+Предвыпускные R1–R5, fork r50 compatibility и Gate6 остаются отдельным существующим
+контуром; QP их не заменяет и не добавляет новую бесконечную матрицу. Рабочая
+миграция установленных проектов не входит в разрешение на подготовку candidate;
+она и публикация потребуют своих отдельных поручений. Критерии QP-AC1–8 —
+[test-plan.md](test-plan.md#qp-планируемая-приёмка-рабочего-профиля-2026-10-28).
+
 ## Qwen cache6: полные ответы Codex, 2026-10-28
 
 [Native квалификация](evidence/qwen-lru6-codex-answers-2026-10-28.md) дополняет прежний RU21/72: те же шесть

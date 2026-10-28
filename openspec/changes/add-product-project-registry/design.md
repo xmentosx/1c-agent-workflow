@@ -1,5 +1,44 @@
 # Design
 
+## Регистрация QP: согласование бюджета контекста, 2026-10-28
+
+[Memory validation evidence](../add-scoped-cognee-memory/test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28)
+фиксирует stale ceiling общей комбинации и owner-local учёт+452байт только
+для присутствующего rollout command contract. Чужой template/runtime сохранены,
+запас прежний; registry/provider/QP поведение не меняется. Source registration
+не означает запуск cutover, Gate6, рабочей миграции или публикации.
+
+## QP: стык реестра с выбранным рабочим Cognee, 2026-10-28
+
+Канонический [план QP0–QP6/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) хранится у memory owner;
+второй план, индекс, migration manager или provider registry не создаётся.
+Qwen3-Embedding-8B/4096 выбран пользователем, но deployment/admission/switch
+не выполнены. BGE — сохранённый управляемый return path, не автоматический fallback.
+
+Не меняются published R6 SHA `0274a8ffb5a03ba7b856736c2b4a637ccbe98b73`,
+productId/projectId/sourceId, optional canonical memoryHomeProductId/availableIn,
+различия типового MCP-источника и проекта, три роли и СППР/Mantis links.
+Например ERP+PM5 продолжает использовать свой erppm5-lts; Qwen не повод менять
+его Code/Graph или добавлять Cognee endpoint к каждому бизнес-проекту.
+
+Изменения native instance/dataset/data IDs разрешаются только existing memory
+MCP owner поверх того же validated/applied snapshot. Его deployment mapping
+связывает stable logical scope со старым/новым native ID и current raw hash;
+оно не публикуется в бизнес-реестр. Local workspace/workplace/taskCycle и
+источники pending сохраняются; один label не доказывает переноса. Native
+principal UUID сохраняется через полный restore, чтобы не изменить workplace.
+
+Нормальные клиенты допускаются к одному проверенному комплекту, с preserved
+explicit off и existing setup/reload. QP4 profile admission/backup/reindex и
+поздние corrections/deletions при возврате — memory/host обязанности; reader,
+resolver, Startup, catalog sync и registry-only путь их не выполняют.
+Default-on требует готовых association/qualified provider/mapping; при нехватке
+данных memory unavailable не превращается в ошибку независимой работы.
+
+Это документальный checkpoint будущего QP, без смены модели/серверов/клиентов.
+R1–R5, r50 compatibility и Gate6 не считаются закрытыми этим планом. R6/G3/G5
+не переоткрываются, рабочая миграция и публикация отдельно не разрешены.
+
 ## Qwen cache6: полные ответы Codex, 2026-10-28
 
 [Native квалификация](../add-scoped-cognee-memory/evidence/qwen-lru6-codex-answers-2026-10-28.md) дополняет прежний RU21/72: те же шесть

@@ -1,5 +1,23 @@
 # Tasks
 
+## QP: план рабочего профиля и нового индекса, 2026-10-28
+
+[Один план, checkpoint и порядок возврата](design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28); критерии QP-AC1–8 в test-plan.
+User choice Qwen согласован; реализация QP пока не разрешена. Native6/6 и72/72
+сохраняются как отдельные выполненные проверки, не production migration proof.
+
+- [x] QP-P. Закрепить выбор Qwen, конкретный профиль, владельцев/границы QP0–QP6, data preservation/late-write rollback и согласовать обе OpenSpec документами.
+- [ ] QP0. После отдельного разрешения подтвердить production source либо пустой старт, inventory/pending/identity, реальные endpoints/volumes/mappings и бюджеты/место; отделить учебные данные по согласованному списку.
+- [ ] QP1. Получить согласованный полный snapshot/export T и проверить restore; сохранить BGE/секреты/старые настройки, вернуть BGE source к обычной работе на время rebuild.
+- [ ] QP2. Подготовить isolated target с сохранённым account UUID и новыми native dataset namespaces; scope/noteId/local cycle identities неизменны, normal clients не подключать.
+- [ ] QP3. Штатно построить4096 индекс из exact current originals, подтвердить native completed/raw/CHUNKS и old→new mappings; не подмешивать384-векторы и не replay unknown writes.
+- [ ] QP4. Квалифицировать затронутые existing write/status/fresh-reader/correction/retirement/restore/default-on сценарии и ресурсы на новом профиле, переиспользовать остальное evidence; обновить existing policy admission с сохранённым BGE return path. Source/Targeted отдельно от Gate6.
+- [ ] QP5. Только после отдельного разрешения и требуемой выпускной квалификации: финальное окно/Tf, diff текущих originals, native additions/corrections/deletions, existing owner setup/reload и один normal writer target; explicit off сохранить.
+- [ ] QP6. При отдельно разрешённом возврате: до новых writes — прежний комплект; после writes — полный Tr, перенос поздних текущих изменений и удалений в BGE, fresh proof и только затем допуск. При невозможности сверки — сохранить обе стороны и unavailable, без молчаливой потери.
+
+Gate6/G6, рабочая миграция, публикация/push/PR, удаление старых стендов и native
+OpenCode не входят в текущее поручение. R1–R5 и r50 release admission прежние.
+
 ## Qwen cache6: разрешённый повтор полных ответов, 2026-10-28
 
 [Результаты и полные ответы](evidence/qwen-lru6-codex-answers-2026-10-28.md).

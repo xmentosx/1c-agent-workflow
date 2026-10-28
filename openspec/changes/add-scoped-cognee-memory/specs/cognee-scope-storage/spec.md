@@ -6,6 +6,47 @@
 
 ## ADDED Requirements
 
+### Requirement: Выбранный Qwen и отдельный квалифицированный индекс
+
+Рабочий профиль SHALL использовать выбранный пользователем Qwen3-Embedding-8B/4096 с квалифицированными native settings. Сам выбор модели SHALL NOT означать допуск deployment. Индекс4096 SHALL строиться штатным Cognee в отдельных новых native datasets/namespaces, SHALL NOT смешиваться с BGE384 или объявляться готовым по старому completed/HTTP200. Должны быть подтверждены native status, current originals и scoped retrieval. Допуск нового профиля SHALL принадлежать существующему policy owner с фактическим qualification reference; старый BGE admission/комплект SHALL сохраняться для управляемого возврата. ITL SHALL NOT обходить existing qualification, автоматически переключать модели, менять Cognee или переносить provider IDs/секреты в бизнес-реестр.
+
+#### Scenario: Выбран Qwen, развёртывание ещё не квалифицировано
+- **WHEN** пользователь выбрал Qwen, но новый4096 deployment/admission ещё не подтверждены
+- **THEN** выбор фиксируется в плане, прежнее рабочее подключение остаётся прежним; новые settings не считаются native success и не запускают переключение
+
+#### Scenario: Native дедупликация не построила новый индекс
+- **WHEN** импорт original вернул успех либо прежний completed, но нет подтверждённого4096 индекса в новом dataset
+- **THEN** candidate остаётся недопущенным, source/export сохранены; используется supported status continuation/checkpoint без изменения текста, SQL или повторов неизвестной записи
+
+### Requirement: Перестроение сохраняет знания и устойчивую идентичность
+
+При разрешённом перестроении SHALL сохраняться логические шесть scope keys, noteId, current original payload/status/provenance/applicability и согласованный полный backup relational/auth/original/graph/vector/config/mapping. Native principal и local taskCycle/workspace/workplace identity SHALL сохраняться. Новые instance/dataset/data IDs SHALL иметь подтверждённое exact mapping, SHALL NOT получаться по догадке из label или приниматься за прежние IDs. Неизвестные записи и исходные pending SHALL сохраняться; ранее отправленный unconfirmed write SHALL оставаться pinned к прежнему instance/principal/dataset без replay на candidate. Учебные данные SHALL NOT автоматически становиться рабочим набором. Прямое редактирование backend БД и пересоздание локального цикла ради reindex SHALL NOT допускаться.
+
+#### Scenario: Dataset и data ID изменились при переносе
+- **WHEN** тот же current noteId перенесён в новый4096 dataset с другим native dataId
+- **THEN** точные old/new IDs и raw hashes проверены, scope/account/local identity сохранены; старые кэши и receipts не являются proof нового original
+
+#### Scenario: Отсутствует настоящий рабочий source
+- **WHEN** первый рабочий deployment создаётся с пустым подтверждённым набором, а имеются только G5/RU fixture stands
+- **THEN** source absence фиксируется, тестовые записи/UUID не переносятся автоматически, новая рабочая identity создаётся штатно; прежнее unconfigured состояние сохраняется как граница возврата до записи
+
+### Requirement: Переключение и возврат учитывают поздние изменения
+
+Разрешённые cutover/rollback SHALL выполнять existing host/memory владельцы в согласованном операторском окне с одним normal writer target и свежими bindings. Перед cutover SHALL быть подтверждены профиль и требуемый выпускной admission; additions/corrections/precise deletions после начального T SHALL учитываться по финальному current inventory Tf. После новых Qwen writes возврат SHALL сохранять полный current snapshot/export Tr и переносить подтверждённые поздние current originals/corrections/deletions перед допуском BGE. Простой старый snapshot SHALL NOT считаться current состоянием. Неопределённый результат SHALL сохранять обе стороны/pending и оставлять affected scopes unavailable с Q5 continuation; независимый workflow SHALL продолжаться. Ненулевой интервал потери SHALL требовать отдельного решения, не скрываться успешным restore. Полная native immutable история всех ревизий SHALL NOT обещаться; предыдущие комплекты SHALL NOT удаляться автоматически.
+
+#### Scenario: Возврат до первого нового write
+- **WHEN** candidate подготовлен, но новые writes в Qwen ещё не разрешены и не выполнялись
+- **THEN** оператор может вернуть сохранённое предыдущее подключение через existing owner/reload, сохраняя off и identity, без потери current записей
+
+#### Scenario: После cutover знание исправили или отозвали
+- **WHEN** после Tf в Qwen появились подтверждённые изменения, а оператор выполняет возврат
+- **THEN** Tr и изменения сохранены; BGE допускается только после native проверки актуальных originals и precise retirement, старые отозванные сведения не возвращаются как действующие
+
+#### Scenario: Не удалось подтвердить поздние изменения
+- **WHEN** безопасная сверка при возврате не завершена или late write остался unconfirmed
+- **THEN** обе стороны/источники/pending сохранены, affected scopes не объявляются актуальными, оператор продолжает Q5; автоматический fallback/допуск старого snapshot не выполняется
+
+
 ### Requirement: Одно общее подключение без пользовательских ACL
 
 Первый выпуск SHALL использовать один Cognee instance и одно техническое подключение/account для workflow. Шесть областей SHALL обозначать принадлежность и применимость, SHALL NOT заявлять backend конфиденциальность между разработчиками. Аутентификация/secret storage SHALL сохраняться как транспорт подключения; ITL SHALL NOT требовать личные Cognee accounts, роли, membership, permissions matrix или outsider проверки. User-local IDs рабочего места SHALL оставаться независимыми от backend principal; смена сессии SHALL NOT менять workplace. При проверке pending/unknown native write SHALL сохраняться pin исходного instance/connection identity/exact dataset, без blind replay.
