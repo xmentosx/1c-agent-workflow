@@ -229,6 +229,29 @@
         $result.unknown | Should -Be ""
     }
 
+    It "does not let a Pester worker inherit the identity of the agent hosting the gate" {
+        $saved = @{}
+        foreach ($name in @('ITL_TEST_AGENT_HOST_ISOLATED', 'CLAUDECODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $env:CLAUDECODE = '1'
+                $env:ITL_TEST_AGENT_HOST_ISOLATED = $null
+                $hosted = [pscustomobject]@{ environment = Get-InitAgentExecutionEnvironment; chain = @(Get-InitAgentExecutionProcessChain) }
+                $env:ITL_TEST_AGENT_HOST_ISOLATED = '1'
+                [pscustomobject]@{ hosted = $hosted; environment = Get-InitAgentExecutionEnvironment; chain = @(Get-InitAgentExecutionProcessChain) }
+            }
+            $result.hosted.environment['CLAUDECODE'] | Should -Be '1'
+            @($result.hosted.chain).Count | Should -BeGreaterThan 0
+            $result.environment.Count | Should -Be 0
+            @($result.chain).Count | Should -Be 0
+            # The worker is the boundary that grants this isolation to every fixture.
+            [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/run-pester-shard.ps1')) | Should -Match ([regex]::Escape('$env:ITL_TEST_AGENT_HOST_ISOLATED = "1"'))
+        } finally {
+            foreach ($name in @($saved.Keys)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+    }
+
     It "preserves the configured client set while selecting a session client" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-targets-" + [guid]::NewGuid().ToString("N"))
         $savedAgentTools = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")
