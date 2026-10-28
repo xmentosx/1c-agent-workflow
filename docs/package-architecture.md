@@ -45,6 +45,19 @@ candidate; it cannot replace frozen members or carry unselected later heads.
 The ordinary immutable replacement plan, qualification and queue CAS remain
 authoritative, including when the live repair registration advances afterward.
 
+The user approved failing-range deferral on 2026-10-28. The queue owner adds one
+record per entry, `refs/itl/develop-queue/<id>/deferred`, bound to the exact
+failed head and written by the same compare-and-swap ref transaction; the next
+registration of that id removes it. Publication and Plan exclude a deferred head
+and rebuild from published develop. The publication supervisor attributes only a
+product Pester failure: its files pass on published develop and fail with
+exactly one range merged alone; integration, environment, stand and E2E
+failures keep the existing stop. Before plan pinning the same operation and
+deadline continue with the rest (at most two deferrals); a pinned plan keeps its
+membership and names `-Replan`. No new lock, coordinator, installed state or
+client surface is added. Rollback is the previous supervisor, which ignores the
+record and integrates every head.
+
 Delivery calculation is a stateless candidate contract, distinct from publication
 authority. The existing supervisor calls the exact clean candidate's calculator
 in a child scope, validates its envelope and input identity, and binds calculator
