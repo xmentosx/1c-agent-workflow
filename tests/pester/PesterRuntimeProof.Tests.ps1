@@ -95,6 +95,17 @@ Describe 'Actual Pester worker runtime qualification' {
         @(Get-Content (Join-Path $root counter.txt)).Count | Should -Be 1
     }
 
+    It 'executes and then reuses a cache miss at the raised worker ceiling' {
+        # Targeted resolves the catalog default 8; the legacy lookup must not
+        # reject a count that the former 1..4 ceiling never recorded.
+        $root = New-RuntimeProofFixture 'Eight workers'
+        $first = Invoke-RuntimeProofFixture $root 'out-first' -WorkerCount 8
+        $warm = Invoke-RuntimeProofFixture $root 'out-warm' -WorkerCount 8
+        @($first,$warm | ForEach-Object { $_.passed }) | Should -Be @(1,1)
+        @($first,$warm | ForEach-Object { $_.executedWorkerCount }) | Should -Be @(1,0)
+        @(Get-Content -LiteralPath (Join-Path $root 'counter.txt')).Count | Should -Be 1
+    }
+
     It 'invalidates proof when actual Pester module bytes change at the same path and version' {
         $root = New-RuntimeProofFixture 'Module replacement'
         $moduleVersion = New-RuntimeModuleCopy 'Replacement'

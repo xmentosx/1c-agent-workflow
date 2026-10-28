@@ -18,7 +18,7 @@
         return $root
     }
 
-function Invoke-RuntimeProofFixture([string]$Root, [string]$OutputName, [string]$Runner = '', [string]$Core = '', [switch]$InputIdentityOnly) {
+function Invoke-RuntimeProofFixture([string]$Root, [string]$OutputName, [string]$Runner = '', [string]$Core = '', [switch]$InputIdentityOnly, [int]$WorkerCount = 1) {
         if (-not $Runner) { $Runner = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1' }
         if ($Core) {
             $wrapper = Join-Path $TestDrive 'invoke-core-parent.ps1'
@@ -27,7 +27,7 @@ function Invoke-RuntimeProofFixture([string]$Root, [string]$OutputName, [string]
             $Runner = $wrapper
         }
         $output = Join-Path $Root $OutputName
-        $arguments = @('-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', '1')
+        $arguments = @('-RepositoryRoot', $Root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', [string]$WorkerCount)
         if ($InputIdentityOnly) { $arguments += '-InputIdentityOnly' }
         $run = Invoke-TestPowerShellFile -FilePath $Runner -Arguments $arguments
         $run.exitCode | Should -Be 0 -Because $run.combinedText

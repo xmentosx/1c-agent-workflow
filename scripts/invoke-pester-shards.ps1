@@ -852,6 +852,9 @@ foreach ($item in $items) {
             $priorWorkerDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -LegacyWorkerCount $legacyWorkerCount -PreparedInputs ([ref]$preparedInputs)
             if ($priorWorkerDigest) { $legacyDigests.Add($priorWorkerDigest) | Out-Null }
         }
+        # Legacy global receipts were written only under the former 1..4
+        # worker ceiling; a larger run has no such key to look up.
+        if ($WorkerCount -le 4) {
         $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
         if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
         $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
@@ -879,6 +882,7 @@ foreach ($item in $items) {
                 $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs -LegacyWorkerCount $WorkerCount -PreparedInputs ([ref]$preparedInputs)
                 if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
             }
+        }
         }
         $script:pesterLegacyDigestCount += $legacyDigests.Count
         foreach ($legacyDigest in $legacyDigests) {
