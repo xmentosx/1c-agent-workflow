@@ -1,5 +1,25 @@
 # План приёмки
 
+## QP0–QP4: actual dependency proof, 2026-10-28
+
+[Единый native отчёт memory owner](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+разделяет подготовку, квалификацию и source-регистрацию. QP0–QP2: обнаружен
+только G5 source, выбран пустой рабочий старт;84старых originals/2unsent pending
+сохранены, BGE restore84/84 exact.17новых shared scopes получены из8active
+product IDs/8project IDs и organization `itland`. Публикация business registry
+не выполнялась, текущий main содержит те же catalog/product-relations bytes,
+что pinned R6 SHA. Ни optional home, ни СППР/Mantis/MCP-роль не добавлялись.
+Private mappings/credentials остаются у existing memory owner. QP3/QP4 выполнены:
+50/50 exact/4096, RU21 13.312s, original RU01 lexical3.873s, correction/retirement/
+old-restore/repair/fresh/off прошли. Legacy BGE admission и все5source files/2pending
+прежние; на source разрешена вторая явная profile/hash пара. Stored failures и
+semantic timeout сохранены в общем отчёте, общего SLA не заявлено.
+QP-R1 закрыт; QP-R2 выполнен только в части QP4 source/native fixture, normal-client
+setup/reload остаётся QP5, QP-R3 не начат. Business/applied migrations не было.
+QP5/QP6, Gate6, миграция и публикация не запускались. Source registration/Targeted
+принадлежат одному RegisterChange и common ledger, не второму native gate.
+
+
 ## Регистрация QP: сохранность client rollout, 2026-10-28
 
 [Одна сверка и actual measurements](../add-scoped-cognee-memory/test-plan.md#блокер-регистрации-qp-клиентский-контекст-2026-10-28)

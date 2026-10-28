@@ -2,15 +2,21 @@
 
 ## QP: dependency рабочего профиля Qwen, 2026-10-28
 
-[Один memory plan/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28); Qwen выбран, выполнение не начато.
+[Один memory plan/checkpoint](../add-scoped-cognee-memory/design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28); Qwen выбран, QP0–QP4 разрешены; [исполнение](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md).
 
 - [x] QP-RP. Согласовать proposal/design/specs/tasks/acceptance с выбором Qwen, сохранением данных и управляемым возвратом; подтвердить независимость опубликованного R6.
-- [ ] QP-R1. В будущем QP0/2/3 сверить те же stable business IDs/homes/applicability и exact old→new physical mappings; не менять опубликованный SHA ради embedding и не переносить private IDs/ключи в business registry.
-- [ ] QP-R2. В будущем QP4/5 подтвердить existing owner setup/reload/default-on/off и current applied snapshot при смене qualified deployment; старые pending, cycle/workplace IDs и registry-only путь сохраняются.
+- [x] QP-R1. В QP0/2/3 сверить те же stable business IDs/homes/applicability и exact old→new physical mappings; не менять опубликованный SHA ради embedding и не переносить private IDs/ключи в business registry.
+- [ ] QP-R2. В QP4/5 подтвердить existing owner setup/reload/default-on/off и current applied snapshot при смене qualified deployment; старые pending, cycle/workplace IDs и registry-only путь сохраняются.
 - [ ] QP-R3. В будущем QP6 проверить неизменность registry context и current originals после возврата с поздними corrections/deletions; не считать восстановление старого snapshot доказательством текущего состояния.
 
+QP-R1: business SHA/bytes/homes прежние,17новых shared native mappings
+получены от ordinary account для пустого старта; old production IDs отсутствуют.
+QP-R2: часть QP4 выполнена source/native fixture AUTO/off/fresh process,
+5старых local files/2unsent pending byte-preserved. Реальный setup/reload
+обычных клиентов относится к QP5, поэтому общий пункт не закрыт. QP-R3 не начат.
+
 Эти dependency criteria используют QP-AC1–8 memory owner, не создают второй
-проход qualification. Gate6, рабочая миграция, публикация и execution QP пока
+проход qualification. QP5/QP6, Gate6, рабочая миграция и публикация пока
 не разрешены; конечный выпускной остаток R1–R5 не расширяется.
 
 ## Qwen cache6: разрешённый повтор полных ответов, 2026-10-28

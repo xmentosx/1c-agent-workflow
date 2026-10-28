@@ -2,7 +2,8 @@
 
 ## Регистрация QP: бюджет команды обновления, 2026-10-28
 
-План QP и запрет выполнения сохраняются. Блокер общей регистрации относится
+Этот раздел фиксирует прежнюю регистрацию плана; текущее разрешение QP0–QP4
+и actual proof описаны ниже. Блокер той общей регистрации относится
 к добавленным в другой очереди обязательным инструкциям itl-update-workflow,
 а не к memory profile. Existing renderer показал ровно+452байта на каждой из24
 поверхностей, без новых файлов или роста root instructions. Требуемые rollout,
@@ -19,8 +20,9 @@ locks/preservation, frozen pending set, no-push/no-refresh и named continuation
 Пользователь выбрал **Qwen3-Embedding-8B** для рабочего Cognee. Это заменяет
 прежний статус «модель не выбрана/замена не принята»: BGE остаётся сохранённым
 комплектом возврата. Выбор модели не означает, что рабочее подключение уже
-переключено или новый профиль допущен. Сейчас разрешена только подготовка
-этого плана и согласование двух OpenSpec. QP0–QP6 ниже не выполнялись.
+переключено или новый профиль допущен. Пользователь разрешил выполнение QP0–QP4. Подготовка идёт по этому плану;
+фактическая граница и proof — в [отчёте](evidence/qp-preparation-2026-10-28.md).
+QP5/QP6 и переключение не разрешены.
 Gate6/G6, рабочая миграция, публикация workflow/fork, push и PR не разрешены.
 
 Основание: [RU21/72](evidence/qwen-lru6-recheck-2026-10-28.md) и
@@ -49,12 +51,29 @@ Host/backup owner создаёт согласованные копии и вып
 model-agnostic remember/recall policy сохраняются; смена embedding не меняет
 семантику tools, upstream/fork правила или route OpenViking.
 
-Текущий `Assert-ItlMemoryProvider` допускает закреплённую пару profile/qualification
-hash. Будущий QP4 меняет этот контракт у его существующего владельца: явно
-допускаются проверенный Qwen и прежний BGE для управляемого возврата; нового
+`Assert-ItlMemoryProvider` у существующего владельца теперь допускает две
+явно закреплённые пары profile/qualification hash: проверенный Qwen и прежний
+BGE для управляемого возврата; нового
 реестра профилей/динамического выбора нет. Запись выдуманного hash в settings
 или снятие проверки не являются допуском. Нужные owner-local изменения,
-совместимость и canary входят в будущую реализацию QP, не в этот planning commit.
+совместимость и canary входят в разрешённые QP0–QP4; допуск фиксируется только
+по фактическому квалификационному результату.
+
+### Выполненная подготовка QP0–QP4
+
+[Единый отчёт](evidence/qp-preparation-2026-10-28.md) и
+[actual JSON](evidence/qp-preparation-2026-10-28.json) отделяют source, native,
+стоимость и будущую регистрацию. Выбран предусмотренный empty-start: старые
+84qualification originals/2unsent intents сохранены, BGE restore84/84 проверен;
+новый ordinary account без fixture identity,17пустых production scopes.
+На отдельной копии50/50exact originals,4096native schemas, RU21 13.312s и
+original RU01 lexical3.873s; controlled old restore не допущен до repair.
+Все working/client settings прежние, main candidate остановлен и byte-equal
+empty snapshot. Статический Qwen qualification SHA0a5c01ecbcbddbf37f21b517618812d6e632ca6958982b0fca457608df7df8bc
+добавлен рядом с BGE, не вместо него. Credentials/private prepared descriptor
+не попали в business registry или Git. Native semantic probe timeout и долгие
+bulk writes сохранены в отчёте; универсальная SLA не заявлена. QP5/QP6 и release
+admission не выполнены; source-регистрация имеет отдельный queue ledger.
 
 ### Целевой профиль
 
@@ -71,7 +90,7 @@ hash. Будущий QP4 меняет этот контракт у его сущ
 | Auth Cognee | Один обычный технический account, native `X-Api-Key` без регулярного login/refresh; секрет в existing user-local private credential file |
 | Auth embedding | Серверный секрет прежнего разрешённого endpoint, отдельно от Cognee key; ни один секрет не входит в Git/бизнес-реестр/model context |
 | Identity | Новый deployment `instanceId`, новый набор exact dataset IDs; сохранённый technical principal UUID и прежние local identities/cycle |
-| Deployment | dev-karimov-mcp — подготовленный кандидат хоста; предлагаемые имена `itl-cognee-qwen-prod-v1` / `cognee-qwen4096-v1` ещё не созданы/не допущены. Реальные URL/port/paths/owner подтвердить в QP0 |
+| Deployment | dev-karimov-mcp — подготовленный кандидат хоста; предлагаемые имена `itl-cognee-qwen-prod-v1` / `cognee-qwen4096-v1` созданы изолированно; фактические URL/port/paths/owner и статус допуска — в отчёте QP |
 | Defaults | Память default-on при готовых prerequisites; существующие explicit off/disabled сохраняются. Без готового mapping — unavailable/pending, независимый workflow работает |
 
 Полезная конфигурация SDK сохраняется отдельно от тестового DEBUG/logging wrapper.
