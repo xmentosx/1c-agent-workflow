@@ -204,7 +204,7 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native
-            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $status.mode | Should -Be "native"
             $status.isAvailable | Should -BeTrue
             $status.invocations.propose | Should -Be '$opsx-propose'
@@ -222,13 +222,13 @@
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 10) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".fixture-rules/sdd-integrations.md") -Encoding UTF8 -Value "OpenSpec integration fixture`r`nUser clarification`r`n"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-propose/SKILL.md") -Encoding UTF8 -Value "# explicit propose`r`nUser clarification`r`n"
-            $modified = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
+            $modified = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $modified.mode | Should -Be "native"
             $modified.invocations.propose | Should -Be '$opsx-propose'
 
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/openspec-apply-change/SKILL.md") -Force
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-apply/SKILL.md") -Force
-            $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
+            $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $broken.mode | Should -Be "unavailable"
             $broken.reason | Should -Match "required native OpenSpec phase"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -238,7 +238,7 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-legacy-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native -IncludeOpsxAliases $false
-            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-InitAgentExecutionEnvironment { @{} }; function Get-InitAgentExecutionProcessChain { @() }; function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $true; path = 'fixture-cli' } }; function Resolve-ItlOpenSpecStore { [pscustomobject]@{ rootPath = $script:ProjectRoot; source = 'nearest'; storeId = '' } }; Get-AiRules1cOpenSpecStatus }
             $status.mode | Should -Be "native"
             $status.invocations.propose | Should -Be '$openspec-propose'
             $status.invocations.apply | Should -Be '$openspec-apply-change'
@@ -1544,6 +1544,9 @@
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                # Isolate active-client detection from the agent hosting this run.
+                function Get-InitAgentExecutionEnvironment { @{} }
+                function Get-InitAgentExecutionProcessChain { @() }
                 $script:aiRulesClient = $null
                 $script:surfaceSynced = $false
                 $script:vibeClient = $null

@@ -955,9 +955,11 @@ Get-WorkflowUpdatePathState -RelativePath 'managed'
         New-Item -ItemType Directory -Force -Path $project, (Split-Path -Parent $scaffoldFile) | Out-Null
         [IO.File]::WriteAllText($scaffoldFile, 'scaffold', [Text.UTF8Encoding]::new($false))
         $installer = @'
-param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[switch]$NonInteractive,[switch]$AssumeYes)
+param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[string]$McpMode,[switch]$NonInteractive,[switch]$AssumeYes)
 [IO.Directory]::CreateDirectory($ProjectRoot) | Out-Null
-[IO.File]::WriteAllText((Join-Path $ProjectRoot '.ai-rules.json'), '{"files":{".codex/rules/mcp-policy.md":{"source":"content/rules/mcp-policy.md"},".codex/skills/openspec-update-change/SKILL.md":{"source":"content/openspec-bundle/codex"}}}', [Text.UTF8Encoding]::new($false))
+# Like the real fork, only a non-delegated install places its MCP command.
+$mcpCommand = if ($McpMode -ne 'delegated') { ',".codex/prompts/checkmcp.md":{"source":"content/commands/checkmcp.md"}' } else { '' }
+[IO.File]::WriteAllText((Join-Path $ProjectRoot '.ai-rules.json'), ('{"files":{".codex/rules/mcp-policy.md":{"source":"content/rules/mcp-policy.md"},".codex/skills/openspec-update-change/SKILL.md":{"source":"content/openspec-bundle/codex"}' + $mcpCommand + '}}'), [Text.UTF8Encoding]::new($false))
 '@
         [IO.File]::WriteAllText((Join-Path $fork 'install.ps1'), $installer, [Text.UTF8Encoding]::new($false))
         $paths = & {
@@ -969,6 +971,9 @@ param([string]$Command,[string]$ProjectRoot,[string]$Source,[string]$Tools,[swit
         $paths | Should -Contain '.codex/rules/mcp-policy.md'
         $paths | Should -Contain '.codex/skills/openspec-update-change/SKILL.md'
         $paths | Should -Contain 'openspec/config.yaml'
+        # Post-copy requires every planned path, so the plan must not name a
+        # command the delegated real install omits.
+        $paths | Should -Not -Contain '.codex/prompts/checkmcp.md'
         @(Get-ChildItem -LiteralPath $TestDrive -Directory -Filter 'itl-ai-rules-preflight-*') | Should -HaveCount 0
         @(Get-ChildItem -LiteralPath $project -Force) | Should -HaveCount 0
     }
