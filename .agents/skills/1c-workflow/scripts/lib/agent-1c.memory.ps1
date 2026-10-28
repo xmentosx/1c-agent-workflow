@@ -26,6 +26,14 @@ function Read-ItlMemoryJson {
     finally{if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}}
 }
 
+function Read-ItlMemoryAppliedContext {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    # The registry owner retains compatibility/proof bytes in this envelope.
+    # They are not a memory note or tool context; keep the ordinary 256 KiB
+    # record limit and bound only this owner-produced input at 4 MiB.
+    return Read-ItlMemoryJson $Path -MaxBytes 4194304
+}
+
 function Update-ItlMemoryJson {
     param([string]$Path,[scriptblock]$Update,[switch]$RemoveWhenEmpty)
     # Stable companion of this one private record: never lock the replaceable
@@ -76,7 +84,7 @@ function Assert-ItlMemoryBindingCurrent {
     if(-not $cycle -or $cycle.current -cne $Binding.cycleId -or (Get-ItlCatalogField $cycle 'workspaceId') -cne $Binding.identity.workspaceId -or (Get-ItlCatalogField $cycle 'reserved') -or (Get-ItlCatalogField $state 'resetStatus') -eq 'resetting'){
         throw 'MEMORY_STALE_CONTEXT: reload the scoped binding after the existing lifecycle operation completes; old task history is not the new cycle.'
     }
-    $applied=Read-ItlMemoryJson $Binding.appliedPath
+    $applied=Read-ItlMemoryAppliedContext $Binding.appliedPath
     if(-not $applied -or $applied.contextHash -cne $Binding.registryContextHash -or (Get-ItlCatalogHash $applied.context) -cne $applied.contextHash){
         throw 'MEMORY_STALE_CONTEXT: run the existing catalog apply/resume, then explicit memory setup/reload; no new catalog fetch is performed here.'
     }
@@ -541,7 +549,7 @@ function Get-ItlMemoryLocalContext {
     $directory=Join-Path (Join-Path (Get-ItlMemoryHome) 'pending') $Binding.identity.workspaceId
     $pending=@();$cycle=Read-ItlMemoryJson $Binding.cycleStatePath
     $currentCycle=[string](Get-ItlCatalogField (Get-ItlCatalogField $cycle 'memoryCycle') 'current' '')
-    $applied=Read-ItlMemoryJson $Binding.appliedPath
+    $applied=Read-ItlMemoryAppliedContext $Binding.appliedPath
     $project=if($applied){[string]$applied.context.projectId}else{[string]$Binding.context.projectId}
     if(Test-Path -LiteralPath $directory -PathType Container){
         $files=if($NoteId){Get-Item -LiteralPath (Join-Path $directory ((Get-ItlCatalogHash $NoteId)+'.json')) -ErrorAction SilentlyContinue}else{Get-ChildItem -LiteralPath $directory -File -Filter '*.json'|Sort-Object LastWriteTimeUtc -Descending|Select-Object -First 24}

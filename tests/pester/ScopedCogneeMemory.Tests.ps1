@@ -78,9 +78,22 @@
     }
 
     It 'resolves six areas, rejects implicit writes and does not infer a product home' {
+        # A real applied G3 record retains client compatibility/proof bytes;
+        # it is larger than a memory note without enlarging the tool context.
+        $applied=Read-ItlMemoryJson $b.appliedPath
+        $applied.compatibilityBaseline=@{clientSettings=('ж' * 135600)}
+        Write-Utf8TextAtomic $b.appliedPath ($applied|ConvertTo-Json -Depth 20)
+        (Get-Item -LiteralPath $b.appliedPath).Length | Should -BeGreaterThan 262144
+        $appliedHash=(Get-FileHash -LiteralPath $b.appliedPath -Algorithm SHA256).Hash
+        {Read-ItlMemoryJson $b.appliedPath} | Should -Throw '*MEMORY_RECORD_INVALID*'
+        {Assert-ItlMemoryBindingCurrent $b} | Should -Not -Throw
+        {Sync-ItlMemoryContext} | Should -Not -Throw
         @(Get-ItlMemoryScopes $b read).Count | Should -Be 6
         $persisted=Read-ItlMemoryJson (Get-ItlMemoryPath binding $b.projectRoot)
-        $destinations=@((Invoke-ItlMemoryStatus $persisted -LocalOnly).destinations)
+        $local=Invoke-ItlMemoryStatus $persisted -LocalOnly
+        [Text.Encoding]::UTF8.GetByteCount(($local|ConvertTo-Json -Depth 20 -Compress)) | Should -BeLessThan 8192
+        (Get-FileHash -LiteralPath $b.appliedPath -Algorithm SHA256).Hash | Should -BeExactly $appliedHash
+        $destinations=@($local.destinations)
         @($destinations|Where-Object {-not $_.label -or -not $_.scopeKind -or -not $_.scopeId}).Count | Should -Be 0
         @($destinations|Where-Object scopeKind -EQ project)[0].label | Should -BeExactly 'itl_project_customer'
         @($destinations|Where-Object scopeKind -EQ organization)[0].label | Should -BeExactly 'itl_org_org'
@@ -516,7 +529,7 @@
         $wrapper=Join-Path $b.projectRoot 'Проверка stdio.ps1'
         $frontend=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/cognee-memory-mcp.ps1'
         $body=@'
-param($InputJson,$Frontend,$Binding)
+param($InputJson,$Frontend,$Binding,$InheritedPSModulePath)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 . (Join-Path (Split-Path $Frontend) 'lib/agent-1c.core.ps1')
@@ -524,21 +537,35 @@ $ErrorActionPreference='Stop'
 $psi=[Diagnostics.ProcessStartInfo]::new()
 $psi.FileName='powershell.exe';$psi.Arguments=Join-NativeCommandLineArguments @('-NoProfile','-NonInteractive','-File',$Frontend,'-BindingPath',$Binding,'-Client','cursor')
 $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+$psi.EnvironmentVariables['PSModulePath']=$InheritedPSModulePath
 $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
 $psi.StandardOutputEncoding=[Text.UTF8Encoding]::new($false);$psi.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
 $p=[Diagnostics.Process]::new();$p.StartInfo=$psi
 try {
-    [void]$p.Start();$out=$p.StandardOutput.ReadToEndAsync();$err=$p.StandardError.ReadToEndAsync()
+    [void]$p.Start();$err=$p.StandardError.ReadToEndAsync();$clock=[Diagnostics.Stopwatch]::StartNew()
     $bytes=[Convert]::FromBase64String($InputJson)
-    $p.StandardInput.BaseStream.Write($bytes,0,$bytes.Length);$p.StandardInput.Close()
-    if(-not $p.WaitForExit(10000)){throw 'fixture child timeout'}
-    [Console]::Write($out.GetAwaiter().GetResult());[Console]::Error.Write($err.GetAwaiter().GetResult())
+    # Keep stdio open between requests, as the native client does. Retain the
+    # same three messages, Unicode path and ten-second child budget.
+    $lines=([Text.UTF8Encoding]::new($false,$true)).GetString($bytes).TrimEnd("`r","`n") -split "`r?`n"
+    $answers=[Collections.Generic.List[string]]::new()
+    foreach($line in $lines){
+        $wire=[Text.Encoding]::UTF8.GetBytes($line+"`n")
+        $p.StandardInput.BaseStream.Write($wire,0,$wire.Length);$p.StandardInput.BaseStream.Flush()
+        $read=$p.StandardOutput.ReadLineAsync()
+        $remaining=[Math]::Max(1,10000-[int]$clock.ElapsedMilliseconds)
+        if(-not $read.Wait($remaining)){throw 'fixture child timeout'}
+        $answer=$read.GetAwaiter().GetResult();if($null -eq $answer){throw 'fixture child closed stdio'}
+        $answers.Add($answer)
+    }
+    $p.StandardInput.Close()
+    if(-not $p.WaitForExit([Math]::Max(1,10000-[int]$clock.ElapsedMilliseconds))){throw 'fixture child timeout'}
+    [Console]::Write(($answers -join "`n")+"`n");[Console]::Error.Write($err.GetAwaiter().GetResult())
     exit $p.ExitCode
 }finally{if(-not $p.HasExited){$null=Stop-NativeProcessForSafety -Process $p};$p.Dispose()}
 '@
         [IO.File]::WriteAllText($wrapper,$body,[Text.UTF8Encoding]::new($true))
         $script:Agent1cCoreRoot=Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib'
-        $native=Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-NonInteractive','-File',$wrapper,'-InputJson',[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($inputLines -join "`n")+"`n")),'-Frontend',$frontend,'-Binding',(Get-ItlMemoryPath binding $b.projectRoot)) -WorkingDirectory $b.projectRoot -TimeoutSeconds 20
+        $native=Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-NonInteractive','-File',$wrapper,'-InputJson',[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($inputLines -join "`n")+"`n")),'-Frontend',$frontend,'-Binding',(Get-ItlMemoryPath binding $b.projectRoot),'-InheritedPSModulePath',$env:PSModulePath) -WorkingDirectory $b.projectRoot -TimeoutSeconds 20
         $native.exitCode | Should -Be 0 -Because $native.stderr
         Write-Utf8TextAtomic (Join-Path $RepoRoot 'build/test-results/g4/stdio-windows.jsonl') $native.stdout
         $lines=@($native.stdout.Trim() -split "`r?`n"|ForEach-Object {$_|ConvertFrom-Json})

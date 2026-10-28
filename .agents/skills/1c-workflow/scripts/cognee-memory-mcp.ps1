@@ -5,6 +5,9 @@ $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 [Console]::InputEncoding=[Text.UTF8Encoding]::new($false,$true)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $OutputEncoding=[Console]::OutputEncoding
+# Native clients can inherit a PowerShell 7 module path. Policy hash checks
+# require the utility functions from this process's own PowerShell runtime.
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 foreach($leaf in @('agent-1c.core.ps1','agent-1c.vibecoding1c-mcp.ps1','agent-1c.product-catalog.ps1','agent-1c.memory.ps1','agent-1c.memory-context.ps1')){. (Join-Path $PSScriptRoot ('lib/'+$leaf))}
 $binding=Read-ItlMemoryJson $BindingPath
 if(-not $binding -or [IO.Path]::GetFullPath($BindingPath) -ine [IO.Path]::GetFullPath((Get-ItlMemoryPath binding $binding.projectRoot))){throw 'MEMORY_BINDING_PATH: use the existing owner-provided private locator.'}
