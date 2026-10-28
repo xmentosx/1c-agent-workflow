@@ -26,7 +26,10 @@ MCP owner поверх того же validated/applied snapshot. Его deployme
 связывает stable logical scope со старым/новым native ID и current raw hash;
 оно не публикуется в бизнес-реестр. Local workspace/workplace/taskCycle и
 источники pending сохраняются; один label не доказывает переноса. Native
-principal UUID сохраняется через полный restore, чтобы не изменить workplace.
+principal UUID существующего рабочего source сохраняется через полный restore,
+чтобы не изменить workplace. Для подтверждённого пустого рабочего старта новый
+ordinary account не наследует fixture identity; старые local state/pending остаются
+прежними. Это предусмотренная ветвь QP0, не миграция установленных проектов.
 
 Нормальные клиенты допускаются к одному проверенному комплекту, с preserved
 explicit off и existing setup/reload. QP4 profile admission/backup/reindex и
@@ -35,9 +38,23 @@ resolver, Startup, catalog sync и registry-only путь их не выполн
 Default-on требует готовых association/qualified provider/mapping; при нехватке
 данных memory unavailable не превращается в ошибку независимой работы.
 
-Это документальный checkpoint будущего QP, без смены модели/серверов/клиентов.
+Пользователь разрешил QP0–QP4; [фактическая подготовка](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+создаёт только isolated memory candidate, без смены обычных клиентов.
 R1–R5, r50 compatibility и Gate6 не считаются закрытыми этим планом. R6/G3/G5
 не переоткрываются, рабочая миграция и публикация отдельно не разрешены.
+
+### Actual QP0–QP4 и неизменность реестра
+
+[Единый отчёт memory owner](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+фиксирует17новых native scopes по8product/8project IDs и organization itland,
+пустой main target и отдельные synthetic qualification datasets. Текущий main
+registry fc2f9f92daa05be117c7fc26e2621d8acb97e7be имеет byte-identical business
+inputs закреплённого0274a8ff. Published homes/availableIn/source roles не менялись;
+optional homes и base component scopes не угадывались. Source-qualified Qwen
+принимается existing memory policy owner наряду с BGE; обычные binding/applied
+settings и2старых unsent pending сохранены. QP4 fixture AUTO/off/fresh process
+подтверждены, normal-client setup/reload и registry current-applied proof при
+реальном cutover остаются QP5. Никакого второго registry qualification прохода.
 
 ## Qwen cache6: полные ответы Codex, 2026-10-28
 

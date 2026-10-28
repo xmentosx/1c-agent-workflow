@@ -269,6 +269,25 @@
         $b.provider.principalId=$b.identity.developerId;$b.provider.url='https://memory.invalid/'
         $b.provider.credentialFile=Join-Path $env:VIBECODING1C_MCP_LOCAL_HOME 'credential.json'
         {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Not -Throw
+        $qwen=Get-ItlCatalogField $contract 'additionalQualifiedProfiles' @()
+        @($qwen).Count | Should -Be 1
+        $qwen[0].embeddingModel | Should -Be 'qwen/qwen3-embedding-8b'
+        $qwen[0].embeddingDimensions | Should -Be 4096
+        $nativeProofPath=Join-Path $RepoRoot $qwen[0].qualificationResultPath
+        (Get-FileHash -LiteralPath $nativeProofPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $qwen[0].qualificationResultSha256
+        $nativeProof=Read-ItlMemoryJson $nativeProofPath
+        $nativeProof.nativeCompletedOriginals | Should -Be 50
+        $nativeProof.embeddingDimensions | Should -Be 4096
+        $nativeProof.releaseAdmission | Should -BeFalse
+        $b.provider.profile=$qwen[0].profile;$b.provider.qualificationResultSha256=$qwen[0].qualificationResultSha256
+        {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Not -Throw
+        $b.provider.profile=$contract.profile
+        {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Throw '*MEMORY_PROFILE_UNQUALIFIED*'
+        $b.provider.profile=$qwen[0].profile;$b.provider.qualificationResultSha256=$contract.qualificationResultSha256
+        {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Throw '*MEMORY_PROFILE_UNQUALIFIED*'
+        $b.provider.profile='unqualified-provider';$b.provider.qualificationResultSha256=$qwen[0].qualificationResultSha256
+        {Assert-ItlMemoryProvider $b.provider $b.projectRoot} | Should -Throw '*MEMORY_PROFILE_UNQUALIFIED*'
+        $b.provider.profile=$contract.profile;$b.provider.qualificationResultSha256=$contract.qualificationResultSha256
         $b.provider.toolPolicy='INVALID'
         {Assert-ItlMemoryPrincipal $b ([DateTime]::UtcNow.AddSeconds(2))} | Should -Throw '*MEMORY_TOOL_POLICY_INVALID*'
         $b.provider.toolPolicy='OFF'

@@ -8,8 +8,9 @@ User choice Qwen3-Embedding-8B согласован. [План/checkpoint QP0–
 СППР/Mantis и code/graph/productDocs роли не меняются из-за embedding.
 Production connection/secret/native dataset mapping и old→new data IDs остаются
 в deployment/local owner; четвертая проектная MCP-роль не появляется.
-Разрешено только уточнение OpenSpec, не QP execution, Gate6, рабочая миграция
-или публикация. G3/R6 и memory G4/G5/MO приняты в прежних границах.
+Разрешено выполнение QP0–QP4 memory owner, без переключения, Gate6, рабочей
+миграции или публикации. [Фактическая подготовка](../add-scoped-cognee-memory/evidence/qp-preparation-2026-10-28.md)
+не меняет business registry или три проектные MCP-роли. G3/R6 и memory G4/G5/MO приняты в прежних границах.
 
 ## MO — разрешённая реализация, 2026-10-27
 

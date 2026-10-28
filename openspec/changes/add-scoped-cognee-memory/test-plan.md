@@ -25,13 +25,15 @@ clauses и cap1930 при наличии rollout, затем добавляет 
 комбинации; новые сценарии/Gate6/native memory calls не добавляются. Источник
 доставки — общий queue ledger; этот текст не объявляет регистрацию passed.
 Measured proof: build/agent-artifacts/memory-registration-context-budget-20261028/.
-QP0–QP6, смена Cognee, рабочая миграция и публикация не запускались.
+На момент той регистрации planning commit QP0–QP6, смена Cognee, рабочая
+миграция и публикация не запускались; actual QP0–QP4 ниже.
 
-## QP: планируемая приёмка рабочего профиля, 2026-10-28
+## QP: приёмка подготовки рабочего профиля, 2026-10-28
 
+Выполнение QP0–QP4 согласовано; [фактические результаты](evidence/qp-preparation-2026-10-28.md).
 Выбор Qwen согласован, [план/checkpoint](design.md#qp-рабочий-профиль-qwen-и-новый-индекс-2026-10-28) подготовлен. Следующая
-таблица — критерии будущей реализации, **не выполненный native прогон**.
-Source validation/registration документов не ставят PASS ни одному QP-AC.
+таблица определяет полный контур QP0–QP6. Native QP0–QP4 proof и его
+ограничения перечислены ниже; source registration не заменяет native или release.
 
 | Критерий | Доказательство готовности в существующем контуре |
 |---|---|
@@ -47,8 +49,38 @@ Source validation/registration документов не ставят PASS ни 
 Это ограниченное продолжение существующих Q1–Q7/N1–N7/N5/N6/MO scenarios,
 не новая клиентская/платформенная матрица и не повод переоткрывать G3/R6/G5.
 Gate6, рабочая миграция и публикация остаются отдельными неразрешёнными этапами.
-Текущие известные gaps: ingestion cache6, новые physical IDs, native dedup на
-целевом наборе и admission нового профиля ещё не квалифицированы.
+Текущая выполненная граница — QP0–QP4 на пустом рабочем старте и его отдельной
+qualification-копии; реальные working records не переносились. QP5/QP6 не начаты.
+
+## QP0–QP4: actual acceptance boundary
+
+[Отчёт и retained failures](evidence/qp-preparation-2026-10-28.md),
+[actual result](evidence/qp-preparation-2026-10-28.json),
+[native profile/index hash input](evidence/qp-qwen-profile-2026-10-28.json).
+
+| Критерий | Фактическая граница |
+|---|---|
+| QP-AC1 | Native image/SDK route/settings/common ordinary account подтверждены; статическая Qwen пара допущена в source, BGE admission прежний. Main target stopped, normal-client endpoint не активирован; releaseAdmission=false |
+| QP-AC2 | Full BGE snapshot3196entries/2.622GB; separate native restore84/84 exact. Qwen empty/N6 snapshots сохранены, old currentness не объявлен по одному snapshot |
+| QP-AC3 | Empty production0originals/17shared scopes; qualification50payloads равны до/после restore по тем же IDs, correction/precise retirement reapplied. Все84source originals и5local files/2pending byte-preserved |
+| QP-AC4 | Native completed50/50, full CHUNKS50exact hashes, read-only native Lance72tables/895rows с только4096; старые384 datasets не подмешаны |
+| QP-AC5 | На source fixture actual AUTO/off/fresh process, same ordinary UUID и stable six scopes. Existing setup/default-on source contract переиспользован; normal-client setup/reload/applied admission остаётся QP5 |
+| QP-AC6 | RU21 13.312s и original RU01 lexical3.873s. Native frontend writes25/19/43/32s, limits20/60 и context caps прежние. Bulk median26.403s/max271.259s/13из49>60, unknown monetary cost; extra semantic probe20.122s timeout сохранён, всеобщая SLA не заявлена |
+| QP-AC7 | NOT RUN: QP5/cutover/normal writers не разрешены |
+| QP-AC8 | Qwen old-restore/current repair подтверждён в qualification; actual late-write Tr→BGE и production rollback NOT RUN, относятся к QP6 |
+
+Это не повтор72запросов/6полных ответов и не native UI/install proof. Source
+профиль/hash/private-path/unknown-mixed-pair assertions расширены в прежнем
+It, без новой тестовой матрицы. Точные ошибки nested-array/Python PSMODULEPATH/
+read-only SDK helper сохранены и разобраны у владельца. Лимиты, assertions и
+исходные inputs не ослаблены; дополнительный semantic query не воспроизводил
+исходный lexical tool call, но остался валидным отрицательным наблюдением;
+original lexical tool call восстановлен
+по прежней sealed trace. Ошибка ingestion ru-n26 продолжена штатным cognify
+только после terminal failed, без remember replay или модификации данных.
+
+Штатный RegisterChange после коммита владеет Targeted; результат — в common
+queue ledger exact candidate. Gate6/G6/working migration/publication не запускались.
 
 ## Qwen cache6: граница полной CLI/MCP квалификации, 2026-10-28
 

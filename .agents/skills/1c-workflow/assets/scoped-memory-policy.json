@@ -15,5 +15,16 @@
     "CHUNKS",
     "CHUNKS_LEXICAL"
   ],
-  "searchQualification": "B01 native lexical + two current raw reads; memory-mo-20261027/native-capabilities-r2.json"
+  "searchQualification": "B01 native lexical + two current raw reads; memory-mo-20261027/native-capabilities-r2.json",
+  "additionalQualifiedProfiles": [
+    {
+      "profile": "cognee-qwen4096-v1",
+      "qualificationResultSha256": "0a5c01ecbcbddbf37f21b517618812d6e632ca6958982b0fca457608df7df8bc",
+      "qualificationResultPath": "openspec/changes/add-scoped-cognee-memory/evidence/qp-qwen-profile-2026-10-28.json",
+      "embeddingModel": "qwen/qwen3-embedding-8b",
+      "embeddingDimensions": 4096,
+      "imageDigest": "sha256:e5de80619fd8d0c53cdaca2aea6020b046f57f8800e62120faa50807fa4f3820",
+      "openApiSha256": "41584822e9403d6fd96966f285714c004e5c77fff72c26514d72d99268bbbe8a"
+    }
+  ]
 }

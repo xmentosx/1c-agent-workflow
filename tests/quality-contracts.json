@@ -507,6 +507,7 @@
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.memory*.ps1",
         ".agents/skills/1c-workflow/scripts/cognee-memory-mcp.ps1",
         ".agents/skills/1c-workflow/assets/scoped-memory-policy.json",
+        "openspec/changes/add-scoped-cognee-memory/evidence/qp-qwen-profile-2026-10-28.json",
         ".agents/skills/1c-workflow/assets/memory-tokenizer/*",
         ".agents/skills/1c-workflow/references/scoped-memory.md",
         "tests/fixtures/scoped-memory/*"

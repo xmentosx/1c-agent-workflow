@@ -2,11 +2,16 @@
 function Assert-ItlMemoryProvider {
     param([object]$Provider,[string]$ProjectRoot)
     $contract=Read-ItlMemoryJson (Join-Path $PSScriptRoot '../../assets/scoped-memory-policy.json')
-    if(-not $Provider -or (Get-ItlCatalogField $Provider 'profile') -cne $contract.profile -or
-       (Get-ItlCatalogField $Provider 'qualificationResultSha256') -cne $contract.qualificationResultSha256 -or
+    $additionalProfiles=Get-ItlCatalogField $contract 'additionalQualifiedProfiles' @()
+    $profiles=@(@{profile=$contract.profile;qualificationResultSha256=$contract.qualificationResultSha256})+@($additionalProfiles)
+    $matchingProfiles=@($profiles|Where-Object {
+        (Get-ItlCatalogField $_ 'profile') -ceq (Get-ItlCatalogField $Provider 'profile') -and
+        (Get-ItlCatalogField $_ 'qualificationResultSha256') -ceq (Get-ItlCatalogField $Provider 'qualificationResultSha256')
+    })
+    if(-not $Provider -or $matchingProfiles.Count -ne 1 -or
        -not (Get-ItlCatalogField $Provider 'instanceId') -or -not (Get-ItlCatalogField $Provider 'principalId') -or
        -not (Get-ItlCatalogField $Provider 'organizationId') -or @((Get-ItlCatalogKeys $Provider)) -cnotcontains 'datasets'){
-        throw 'MEMORY_PROFILE_UNQUALIFIED: select the frozen G1 profile and exact ordinary principal; a changed deployment needs capability qualification before enable.'
+        throw 'MEMORY_PROFILE_UNQUALIFIED: select an explicitly qualified common profile and exact ordinary principal; a changed deployment needs capability qualification before enable.'
     }
     $url=$null
     if(-not [uri]::TryCreate([string]$Provider.url,[UriKind]::Absolute,[ref]$url) -or $url.Scheme -notin @('http','https') -or $url.UserInfo -or $url.Query -or $url.Fragment -or $url.AbsolutePath -ne '/') {throw 'MEMORY_ENDPOINT_INVALID'}
