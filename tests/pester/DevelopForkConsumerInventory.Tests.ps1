@@ -32,6 +32,9 @@ function Read-Directory {'content/rules'}
     }
     It 'binds the imported fork policy only to its Pester consumers and static continuation scope' {
         $catalog=Get-QualityContractCatalog $RepoRoot
+        # The binding is asserted over catalog entries, so a catalog-only edit
+        # must select it in Targeted instead of surfacing first in Full.
+        @((Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('tests/quality-contracts.json')).contracts.id)|Should -Contain 'develop-fork-consumer-inventory'
         @($catalog.continuationScopes.gate)|Should -Contain 'scripts/ai-rules-native-inputs.ps1'
         $imports=@('scripts/develop-e2e-qualification.ps1','scripts/develop-e2e-scenarios.ps1','tests/pester/SourceDeliveryPlan.TestSupport.ps1','tests/pester/SourceDeliveryIncremental.TestSupport.ps1')
         foreach($owner in $catalog.contracts) {

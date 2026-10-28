@@ -1000,7 +1000,7 @@
       "gate": "targeted",
       "budgetSeconds": 30,
       "primaryTest": "tests/pester/DevelopForkConsumerInventory.Tests.ps1",
-      "paths": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1", "scripts/ai-rules-native-inputs.ps1"],
+      "paths": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1", "scripts/ai-rules-native-inputs.ps1", "tests/quality-contracts.json"],
       "reuseInputPaths": [".agents/skills/1c-workflow/scripts/*", "scripts/develop-e2e-qualification.ps1", "scripts/git-path-list.ps1", "scripts/quality-contracts.ps1"],
       "tests": ["tests/pester/DevelopForkConsumerInventory.Tests.ps1"]
     },
