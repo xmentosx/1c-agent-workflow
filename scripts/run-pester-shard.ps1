@@ -31,6 +31,8 @@ $plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8 | ConvertFrom-Jso
 $fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-worker-{0}-{1}" -f [int]$plan.worker, [guid]::NewGuid().ToString("N"))
 $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = Join-Path $fixtureRuntimeRoot "ondemand"
 $env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT = Join-Path $fixtureRuntimeRoot "execution-guards-v2"
+# Fixtures declare their own client; never the agent hosting this gate.
+$env:ITL_TEST_AGENT_HOST_ISOLATED = "1"
 $startedAt = [DateTime]::UtcNow
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $result = $null
@@ -76,6 +78,7 @@ try {
     }
     [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $null, "Process")
     [Environment]::SetEnvironmentVariable("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", $null, "Process")
+    [Environment]::SetEnvironmentVariable("ITL_TEST_AGENT_HOST_ISOLATED", $null, "Process")
     if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
         Remove-Item -LiteralPath $fixtureRuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
