@@ -6239,10 +6239,10 @@ function Get-WorkflowUpdateClientConfigRelativePaths {
 }
 
 function Get-WorkflowUpdateExpectedClientWritePaths {
-    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+    param([Parameter(Mandatory = $true)][string]$SourceRoot, [AllowEmptyCollection()][string[]]$Clients = @(Get-AgentTargets))
 
     $paths = [System.Collections.Generic.List[string]]::new()
-    foreach ($client in @(Get-AgentTargets)) {
+    foreach ($client in $Clients) {
         foreach ($mcpPath in @(Get-WorkflowUpdateClientConfigRelativePaths -Client $client)) {
             if (-not $paths.Contains($mcpPath)) { $paths.Add($mcpPath) }
         }
@@ -7525,7 +7525,8 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
         [string]$SourceRoot = '',
         [string[]]$AiRulesPathsBefore = @(),
         [string[]]$AiRulesPathsAfter = @(),
-        [string[]]$ClientSurfacePathsBefore = @()
+        [string[]]$ClientSurfacePathsBefore = @(),
+        [AllowEmptyCollection()][string[]]$Clients
     )
 
     $directoryPaths = @(
@@ -7537,7 +7538,10 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
         @(Get-WorkflowUpdateEligibleLegacyPaths) +
         @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
         @($AiRulesPathsAfter) +
-        $(if ($SourceRoot) { @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot) }) +
+        $(if ($SourceRoot) {
+            $clientInput = if ($PSBoundParameters.ContainsKey('Clients')) { @{Clients=@($Clients)} } else { @{} }
+            @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot @clientInput)
+        }) +
         @('.dev.env', '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
           '.agent-1c/migrations/caveman-auto-v1.json', '.agent-1c/migrations/ui-testing-essential-v1.json', '.agent-1c/migrations/verification-model-change-v1.json')
     ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ } | Select-Object -Unique
@@ -7755,6 +7759,10 @@ function Save-WorkflowUpdateSnapshotReceipt {
             Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $Snapshot -BeforeCommit $preUpdateHead -CapturedPathState $pathState
         }
         if ($Phase -eq 'prepared') {
+            $clientConfigState = [string](Get-ConfigValueFromObject $Details 'clientMembership.beforeConfigState' '')
+            if ($clientConfigState -and [string]$beforeState['.agent-1c/project.json'] -cne $clientConfigState) {
+                throw 'WORKFLOW_UPDATE_PREPARE_DRIFT: client membership changed after planning. Preserve project.json and repeat update-workflow to plan its current additive set.'
+            }
             foreach ($relative in @($beforeState.Keys)) {
                 if ([string]$pathState[$relative] -cne [string]$beforeState[$relative]) {
                     throw "WORKFLOW_UPDATE_PREPARE_DRIFT: '$relative' changed between the before snapshot and receipt. Preserve the project file and retry after resolving its owner."
@@ -9494,14 +9502,65 @@ function Assert-WorkflowUpdateDevelopmentBranchRoot {
 }
 
 function Invoke-WorkflowDevelopmentBranchUpdate {
-    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null)
+    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null,
+        [AllowEmptyCollection()][string[]]$MasterClients)
+
+    if (-not $PSBoundParameters.ContainsKey('MasterClients')) {
+        return Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan
+    }
+    # A pending receipt owns its original files and client set. Finish it before
+    # planning additions; never expand a live snapshot from the latest master.
+    $recovered = $null
+    if ($null -ne (Get-WorkflowUpdatePendingSnapshot)) {
+        $recovered = Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan
+        # Retirement belongs to the recovered transaction, not its successor.
+        $LocalPatchPlan = $null
+    }
+    Read-ProjectConfig
+    $current = @(Get-AgentTargets)
+    $target = @(ConvertTo-AgentToolList -Value @($current + $MasterClients))
+    if ($null -ne $recovered -and @($target | Where-Object { $_ -notin $current }).Count -eq 0) { return $recovered }
+    if ($SkipAiRules -and @($target | Where-Object { $_ -notin $current }).Count) {
+        throw 'WORKFLOW_UPDATE_CLIENTS_REQUIRE_RULES: preserve the completed package and repeat update-workflow without -SkipAiRules to install the added clients completely.'
+    }
+    if (@($target | Where-Object { $_ -notin $current }).Count) {
+        foreach ($client in @($target | Where-Object { $_ -notin $current })) { Assert-ItlClientConfigWritable -Client $client }
+        $modified = @(Get-AiRulesManifestUserModifiedPaths)
+        if ($modified.Count) {
+            throw "WORKFLOW_UPDATE_CLIENT_RULES_USER_MODIFIED: preserve or reconcile the named rules files, then repeat update-workflow from master: $($modified -join ', ')."
+        }
+    }
+    return Invoke-WorkflowDevelopmentBranchUpdateCore -Source $Source -LocalPatchPlan $LocalPatchPlan -TargetClients $target
+}
+
+function Get-WorkflowUpdateRecordedClientTarget {
+    param([Parameter(Mandatory = $true)][object]$Membership)
+    $before = @(ConvertTo-AgentToolList -Value $Membership.before)
+    $target = @(ConvertTo-AgentToolList -Value $Membership.target)
+    if ([int]$Membership.schemaVersion -ne 1 -or
+        @($before | Where-Object { $_ -notin $target }).Count -or
+        @($target | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count) {
+        throw 'WORKFLOW_UPDATE_CLIENT_RECEIPT_INVALID: preserve the exact snapshot and reconcile its recorded client set before repeating update-workflow.'
+    }
+    return $target
+}
+
+function Invoke-WorkflowDevelopmentBranchUpdateCore {
+    param([Parameter(Mandatory = $true)][object]$Source, [object]$LocalPatchPlan = $null,
+        [AllowEmptyCollection()][string[]]$TargetClients)
 
     Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
     if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot ([string]$Source.root)}
     $registeredState = Read-DevBranchState -Name ''
     Assert-WorkflowUpdateDevelopmentBranchRoot -State $registeredState
     $pending = Get-WorkflowUpdatePendingSnapshot
+    $recordClientMembership = $PSBoundParameters.ContainsKey('TargetClients')
     if ($null -ne $pending) {
+        $recordedMembership = Get-ConfigValueFromObject $pending.receipt 'clientMembership' $null
+        if ($null -ne $recordedMembership) {
+            $TargetClients = @(Get-WorkflowUpdateRecordedClientTarget -Membership $recordedMembership)
+            $recordClientMembership = $true
+        }
         if ([string]$pending.receipt.sourceCommit -cne [string]$Source.commit -or
             -not [string]::Equals([string]$pending.receipt.sourceRoot, [string]$Source.root, [StringComparison]::OrdinalIgnoreCase)) {
             # The current rollout owner can recover the immutable old payload
@@ -9536,6 +9595,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
                 }
             }
             $pending = $null
+            if ($recordClientMembership) { $TargetClients = @(ConvertTo-AgentToolList -Value @(@(Get-AgentTargets) + $TargetClients)) }
             Write-Host "Recovered the stopped branch package '$($recordedSource.commit)' through the current update owner; now applying '$($Source.commit)'."
         }
         if ($null -ne $pending -and [string]$pending.receipt.phase -eq 'copying') {
@@ -9558,6 +9618,11 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         if ($conflicts.Count -gt 0) {
             throw "WORKFLOW_UPDATE_BRANCH_WRITE_SET_CONFLICT: '$script:ProjectRoot' has user changes in owned paths: $($conflicts -join ', '). Preserve them and repeat update-workflow after resolving the named paths."
         }
+        if ($recordClientMembership) {
+            $clientConfigState = Get-WorkflowUpdatePathState -RelativePath '.agent-1c/project.json'
+            Read-ProjectConfig
+            $TargetClients = @(ConvertTo-AgentToolList -Value @(@(Get-AgentTargets) + $TargetClients))
+        }
         $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $Source
         $dependencyPlan = Get-WorkflowDependencyPlan -SourceRoot ([string]$Source.root)
         Assert-WorkflowDependencyPlan -Plan $dependencyPlan
@@ -9567,13 +9632,19 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
             if (-not $rulesTarget.isConfigured) { throw "WORKFLOW_UPDATE_BRANCH_RULES_TARGET_INVALID: $($rulesTarget.reason)" }
             Assert-WorkflowUpdateRulesRootReady -SourceRoot ([string]$Source.root)
             $rulesCheckout = Sync-AiRules1cCheckout -RepoOverride $rulesTarget.repo -RefOverride $rulesTarget.ref -CommitOverride $rulesTarget.commit
-            $candidateRulesPaths = @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools @(Get-AgentTargets))
+            $rulesClients = if ($recordClientMembership) { @($TargetClients) } else { @(Get-AgentTargets) }
+            $candidateRulesPaths = @(Get-AiRulesCandidateInstallInventory -Checkout $rulesCheckout -Tools $rulesClients)
         }
+        $clientSnapshotInput = if ($recordClientMembership) { @{Clients=@($TargetClients)} } else { @{} }
         $snapshot = New-WorkflowUpdateRollbackSnapshot `
-            -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths) `
+            -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot ([string]$Source.root) -AiRulesPathsAfter $candidateRulesPaths @clientSnapshotInput) `
             -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
         try {
             $snapshotDetails = @{ dependencyPlan=$dependencyPlan }
+            if ($recordClientMembership) {
+                $snapshotDetails.clientMembership = [ordered]@{ schemaVersion=1; before=@(Get-AgentTargets); target=@($TargetClients)
+                    beforeConfigState=$clientConfigState; rulePaths=@($candidateRulesPaths) }
+            }
             if ($null -ne $LocalPatchPlan) {
                 $snapshotDetails.localPatchRetirement = Invoke-WorkflowLocalPatchStep -Step Bind -Plan $LocalPatchPlan
             }
@@ -9621,7 +9692,28 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-running
         try {
+            $membership = Get-ConfigValueFromObject (Get-WorkflowUpdatePendingSnapshot).receipt 'clientMembership' $null
+            if ($null -ne $membership) {
+                $target = @(Get-WorkflowUpdateRecordedClientTarget -Membership $membership)
+                $current = @(Get-AgentTargets)
+                if (@($current | Where-Object { $_ -notin $target }).Count) {
+                    throw 'WORKFLOW_UPDATE_CLIENT_RECEIPT_INVALID: preserve the exact snapshot and reconcile its recorded client set before repeating update-workflow.'
+                }
+                Initialize-ItlClientModelTiers | Out-Null
+                Set-ProjectAiRulesClients -Clients $target
+                Read-ProjectConfig
+            }
             $fileResult = Invoke-WorkflowPackageFilePostCopy
+            if ($null -ne $membership) {
+                foreach ($relative in @(Get-ConfigValueFromObject $membership 'rulePaths' @())) {
+                    if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative) -PathType Leaf)) {
+                        throw "WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: planned rules file '$relative' is missing. Preserve the snapshot and repeat update-workflow to finish the pinned client set."
+                    }
+                }
+                if (-not (Test-WorkflowRolloutClients -Root $script:ProjectRoot -Clients $target -RequiredClients $target -SourceRoot ([string]$Source.root))) {
+                    throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the snapshot and repeat update-workflow to finish the pinned rules, commands and MCP files before commit.'
+                }
+            }
             Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $snapshot -BeforeCommit ([string](Get-WorkflowUpdatePendingSnapshot).receipt.preUpdateHead) -RequireOriginalIndex
             $ownedPaths = @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore @($fileResult.aiRulesPathsBefore) `
                 -ClientSurfacePathsBefore @($fileResult.clientSurfacePathsBefore)) +
@@ -9748,10 +9840,43 @@ function Resolve-WorkflowUpdateRolloutScope {
     return $null
 }
 
+function Get-WorkflowRolloutClients {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $config = Read-Utf8Text -Path (Join-Path $Root '.agent-1c/project.json') | ConvertFrom-Json -ErrorAction Stop
+    return @(ConvertTo-AgentToolList -Value (Get-ConfigValueFromObject $config 'aiRules.tools' @()))
+}
+
+function Test-WorkflowRolloutClients {
+    param([Parameter(Mandatory = $true)][string]$Root, [AllowEmptyCollection()][string[]]$Clients,
+        [AllowEmptyCollection()][string[]]$RequiredClients, [string]$SourceRoot)
+    try {
+        $actual = @(Get-WorkflowRolloutClients -Root $Root)
+        if ((@($actual | Sort-Object) -join ',') -cne (@($Clients | Sort-Object) -join ',') -or
+            @($RequiredClients | Where-Object { $_ -notin $actual }).Count) { return $false }
+        if ($actual.Count -eq 0) { return $true }
+        return Invoke-InProjectContext -Root $Root -ScriptBlock {
+            $manifest = Read-Utf8Text -Path (Join-Path $script:ProjectRoot '.ai-rules.json') | ConvertFrom-Json -ErrorAction Stop
+            if (@(Get-AiRulesManifestUserModifiedPaths).Count) { return $false }
+            if ((@(ConvertTo-AgentToolList -Value $manifest.tools | Sort-Object) -join ',') -cne (@($Clients | Sort-Object) -join ',')) { return $false }
+            $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+            if ($entries.Count -eq 0) { return $false }
+            $paths = @($entries | ForEach-Object { [string]$_.target }) +
+                @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot -Clients $Clients)
+            foreach ($relative in $paths) {
+                $path = Join-Path $script:ProjectRoot $relative
+                Assert-WorkflowManagedTargetPath -Path $path
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+            }
+            return $true
+        }
+    } catch { return $false }
+}
+
 function Invoke-WorkflowDevelopmentBranchRollout {
     param([Parameter(Mandatory = $true)][object]$Source)
 
     $mainRoot = [string]$script:ProjectRoot
+    $masterClients = @(Get-AgentTargets)
     $reportPath = Join-Path $mainRoot '.agent-1c/snapshots/workflow-update-rollout.json'
     $prior = $null
     if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
@@ -9770,6 +9895,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         $status = [string]$item.eligibility
         $reason = [string]$item.reason
         $commit = ''
+        $appliedClients = @()
         if ($status -eq 'blocked' -and $reason -eq 'workflow-write-set-conflict') {
             try {
                 $patchPlan = Invoke-InProjectContext -Root ([string]$item.root) -ScriptBlock {
@@ -9794,10 +9920,13 @@ function Invoke-WorkflowDevelopmentBranchRollout {
             @($(if (Test-Path -LiteralPath (Join-Path ([string]$item.root) '.agent-1c/snapshots/workflow-update') -PathType Container) {
                 Get-ChildItem -LiteralPath (Join-Path ([string]$item.root) '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*'
             })).Count -eq 0 -and
-            @($item.conflictPaths).Count -eq 0) {
+            @($item.conflictPaths).Count -eq 0 -and
+            $null -ne $earlier[0].PSObject.Properties['clients'] -and
+            (Test-WorkflowRolloutClients -Root ([string]$item.root) -Clients @($earlier[0].clients) -RequiredClients $masterClients -SourceRoot ([string]$Source.root))) {
             $status = 'completed'
             $reason = ''
             $commit = [string]$earlier[0].commit
+            $appliedClients = @($earlier[0].clients)
         }
         if ($status -eq 'eligible') {
             $lease = $null
@@ -9825,7 +9954,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                             if (-not (Get-ConfigValueFromObject -Object $branchPatchPlan -Path 'resuming' -Default $false)) {
                                 Invoke-WorkflowLocalPatchStep -Step Retire -Plan $branchPatchPlan
                             }
-                            $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan
+                            $branchResult = Invoke-WorkflowDevelopmentBranchUpdate -Source $Source -LocalPatchPlan $branchPatchPlan -MasterClients $masterClients
                             $branchResult
                         } catch {
                             $branchError = $_
@@ -9845,6 +9974,12 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                     }
                     $status = [string]$updated.status
                     $commit = [string]$updated.commit
+                    if ($status -eq 'completed') {
+                        $appliedClients = @(Get-WorkflowRolloutClients -Root $branchRoot)
+                        if (-not (Test-WorkflowRolloutClients -Root $branchRoot -Clients $appliedClients -RequiredClients $masterClients -SourceRoot ([string]$Source.root))) {
+                            throw 'WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: preserve the branch files and repeat update-workflow from master to reconcile the recorded clients and their rules, commands and MCP files.'
+                        }
+                    }
                 }
             } catch {
                 $reason = $_.Exception.Message
@@ -9857,14 +9992,14 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         }
         $outcomes.Add([pscustomobject]@{
             root = [string]$item.root; branch = [string]$item.branch
-            status = $status; reason = $reason; commit = $commit
+            status = $status; reason = $reason; commit = $commit; clients = @($appliedClients)
             continuation = Get-WorkflowUpdateBranchContinuation -Status $status -Reason $reason -Default $(if ($status -eq 'blocked' -and [string]$item.eligibility -eq 'eligible') {
                 'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
             } else { [string]$item.continuation })
         })
     }
     $report = [ordered]@{ schemaVersion = 1; sourceCommit = [string]$Source.commit; sourceRoot = [string]$Source.root
-        mainRoot = $mainRoot; updatedAt = (Get-Date).ToString('o'); rolloutScope = $scope; roots = @($outcomes.ToArray()) }
+        mainRoot = $mainRoot; masterClients = @($masterClients); updatedAt = (Get-Date).ToString('o'); rolloutScope = $scope; roots = @($outcomes.ToArray()) }
     Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $report
 }
@@ -9892,6 +10027,12 @@ function Assert-WorkflowDevelopmentBranchRolloutComplete {
     if ($incomplete.Count -gt 0) {
         $details = @($incomplete | ForEach-Object { "$($_.branch)=$($_.status): $($_.reason)" }) -join '; '
         throw "WORKFLOW_UPDATE_BRANCHES_INCOMPLETE: master is updated; repeat update-workflow when the named branches are available or repaired. $details Report: $reportPath"
+    }
+    foreach ($root in @($report.roots)) {
+        if ($null -eq $root.PSObject.Properties['clients'] -or
+            -not (Test-WorkflowRolloutClients -Root ([string]$root.root) -Clients @($root.clients) -RequiredClients @(Get-AgentTargets) -SourceRoot ([string]$report.sourceRoot))) {
+            throw "WORKFLOW_UPDATE_CLIENTS_INCOMPLETE: the report does not prove the current client set in '$($root.branch)'; preserve it and repeat update-workflow from master."
+        }
     }
     return $report
 }

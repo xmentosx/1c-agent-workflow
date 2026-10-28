@@ -17,6 +17,7 @@ Describe 'Git worktree inventory for workflow rollout' {
         [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/snapshots/`n.agent-1c/locks/`n", [Text.UTF8Encoding]::new($false))
         $lock = Join-Path $root '.agent-1c/dependency-lock.json'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lock) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":[]}}', [Text.UTF8Encoding]::new($false))
         $candidate = '2' * 40
         [IO.File]::WriteAllText($lock, ('{"dependencies":{"workflowPackage":{"commit":"' + $candidate + '"}}}'), [Text.UTF8Encoding]::new($false))
         & git -C $root add --all
@@ -215,6 +216,9 @@ Describe 'Sealed branch patch retirement through the rollout owner' {
             [pscustomobject]@{kind='development';root=$branchRoot;branch='itldev/test';eligibility='blocked';reason='workflow-write-set-conflict';conflictPaths=$script:conflicts;head=('a'*40);installedWorkflowCommit=('b'*40);continuation='fixture continuation'}
         }
         Mock Invoke-InProjectContext { param($Root,$ScriptBlock) & $ScriptBlock }
+        Mock Get-WorkflowRolloutClients { @() }
+        Mock Test-WorkflowRolloutClients { $true }
+        Mock Get-AgentTargets { @() }
         Mock Ensure-Agent1cLifecycleLocksIgnored {}
         Mock Get-WorkflowUpdateRootRuntimeBusyReason { '' }
         Mock Invoke-WorkflowLocalPatchStep {
@@ -259,5 +263,305 @@ Describe 'Sealed branch patch retirement through the rollout owner' {
         $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
         $result.roots[0].status | Should -Be 'blocked'
         $script:patchSteps | Should -Be @('Plan','Plan','Retire','Complete')
+    }
+}
+
+Describe 'Additive client membership through the branch rollout transaction' {
+    BeforeAll {
+        $candidate = Join-Path $TestDrive 'Чистый источник клиентов'
+        $templateParent = Join-Path $candidate '.agents/skills/1c-workflow'
+        New-Item -ItemType Directory -Force -Path $templateParent | Out-Null
+        Copy-Item -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/kilo-command-templates') -Destination $templateParent -Recurse
+        . $helperPath -ProjectRoot $candidate -Action help *> $null
+        Invoke-GitAt -Root $candidate -Arguments @('init','-q','-b','develop')
+        Invoke-GitAt -Root $candidate -Arguments @('config','user.name','Client source fixture')
+        Invoke-GitAt -Root $candidate -Arguments @('config','user.email','source@example.invalid')
+        Invoke-GitAt -Root $candidate -Arguments @('config','maintenance.auto','false')
+        Invoke-GitAt -Root $candidate -Arguments @('config','gc.auto','0')
+        Invoke-GitAt -Root $candidate -Arguments @('add','--all')
+        Invoke-GitAt -Root $candidate -Arguments @('commit','-qm','pinned command templates')
+        $script:clientRolloutSource = [pscustomobject]@{root=$candidate;commit=(Get-GitOutputAt -Root $candidate -Arguments @('rev-parse','HEAD')).Trim();repo='fixture';ref='develop';source='path'}
+    }
+    BeforeEach {
+        $root = Join-Path $TestDrive ('Основной проект клиентов ' + [guid]::NewGuid().ToString('N'))
+        $branch1 = $root + '-ветка 1'
+        $branch2 = $root + '-ветка 2'
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root 'src/cf') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"masterBranch":"master","aiRules":{"tools":["codex"],"modelTiersByClient":{"codex":{"light":"keep/codex"},"kilocode":{"light":"keep/kilo"}}}}', $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), ('{"dependencies":{"workflowPackage":{"commit":"' + $script:clientRolloutSource.commit + '"}}}'), $utf8)
+        [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/snapshots/`n.agent-1c/locks/`n.agent-1c/tmp/`n.agent-1c/mcp/`n.agent-1c/client-surface.json`n.mcp.json`n.cursor/mcp.json`n.codex/config.toml`n.kilo/kilo.json`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $root 'src/cf/Модуль с пробелом.bsl'), 'baseline', $utf8)
+        & git -C $root init -q -b master
+        & git -C $root config user.name 'Client rollout fixture'
+        & git -C $root config user.email 'rollout@example.invalid'
+        # Synthetic repositories must not start host-configured background Git
+        # maintenance during commit or retain a maintenance child after cleanup.
+        & git -C $root config maintenance.auto false
+        & git -C $root config gc.auto 0
+        & git -C $root add --all
+        & git -C $root commit -qm baseline
+        & git -C $root worktree add -q -b itldev/one $branch1
+        & git -C $root worktree add -q -b itldev/two $branch2
+        $LASTEXITCODE | Should -Be 0
+        . $helperPath -ProjectRoot $root -Action help *> $null
+        $source = $script:clientRolloutSource
+        $script:rolloutFailure = ''
+        $script:installedClientSets = @()
+        $script:inventoryClientSets = @()
+        $script:realApplyClientPlan = ${function:Apply-WorkflowBranchCommitPlan}
+        Mock Read-DevBranchState { @{devBranch=(Get-CurrentBranch)} }
+        Mock Assert-WorkflowUpdateDevelopmentBranchRoot {}
+        Mock Get-PendingDevBranchMergeTransaction { $null }
+        Mock Resolve-WorkflowUpdateLegacyExecutor { $null }
+        Mock Get-WorkflowDependencyPlan { @{schemaVersion=1} }
+        Mock Assert-WorkflowDependencyPlan {}
+        Mock Get-AiRulesBaselineTarget { @{isConfigured=$true;repo='fixture';ref='fixture';commit=('3'*40)} }
+        Mock Assert-WorkflowUpdateRulesRootReady {}
+        Mock Sync-AiRules1cCheckout { $context.RepoRoot }
+        Mock Get-WorkflowPackageCopyDirectoryPaths { @() }
+        Mock Get-WorkflowPackageCopyFilePaths { @() }
+        Mock Remove-LegacyWorkflowManagedFiles {}
+        Mock Get-WorkflowUpdateEligibleLegacyPaths { @() }
+        Mock Assert-WorkflowUpdateLegacyRetirementSnapshot {}
+        Mock Add-WorkflowDotEnvPolicySnapshotPaths {}
+        Mock Enable-WorkflowExecutionGuardForCurrentRoot {}
+        Mock Set-ItlOnDemandMcpSemanticReloadRequiredAction {}
+        Mock Invoke-WorkflowLocalPatchStep {}
+        Mock Write-ItlOnDemandMcpClientConfig { $null }
+        Mock Sync-ItlUiToolsMcp { $null }
+        Mock Sync-ItlClientRequiredPackage {}
+        Mock Get-AiRulesCandidateInstallInventory {
+            param($Checkout, $Tools)
+            $script:inventoryClientSets += ,@($Tools)
+            foreach ($client in $Tools) { ".fixture-rules/$client.md" }
+        }
+        Mock Invoke-WorkflowPackageFilePostCopy {
+            $clients = @(Get-AgentTargets)
+            $script:installedClientSets += ,@($clients)
+            $pending = Get-WorkflowUpdatePendingSnapshot
+            $planned = @($pending.snapshot.records.relativePath)
+            $files = [ordered]@{}
+            foreach ($client in $clients) {
+                $relative = ".fixture-rules/$client.md"
+                $planned | Should -Contain $relative
+                $files[$relative] = @{installedHash='fixture'}
+                Write-Utf8Text -Path (Join-Path $script:ProjectRoot $relative) -Value "rules for $client"
+                foreach ($expected in @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $source.root -Clients @($client))) {
+                    $planned | Should -Contain $expected
+                }
+                Write-ItlClientMcpEndpoints -Client $client -Owner rollout-fixture -Endpoints @(@{
+                    name='fixture-branch';transport='stdio';command='powershell';args=@('-ProjectRoot',$script:ProjectRoot)
+                }) | Out-Null
+            }
+            Write-Utf8Text -Path (Join-Path $script:ProjectRoot '.ai-rules.json') -Value ((@{tools=$clients;files=$files}) | ConvertTo-Json -Depth 8)
+            Sync-ItlClientSurfaces -SourceRoot $source.root
+            if ($script:rolloutFailure -eq 'omit-rule') {
+                $script:rolloutFailure=''
+                Remove-Item -LiteralPath (Join-Path $script:ProjectRoot '.fixture-rules/cursor.md')
+            }
+            if ($script:rolloutFailure -eq 'post-copy') { $script:rolloutFailure=''; throw 'fixture interruption after client membership changed' }
+            [pscustomobject]@{aiRulesPathsBefore=@();clientSurfacePathsBefore=@()}
+        }
+        Mock Apply-WorkflowBranchCommitPlan {
+            param($Plan,$PendingMergeState)
+            if ($script:rolloutFailure -eq 'before-commit') { $script:rolloutFailure=''; throw 'fixture interruption before commit' }
+            & $script:realApplyClientPlan -Plan $Plan -PendingMergeState $PendingMergeState
+        }
+    }
+
+    It 'invalidates legacy completed and same-package client changes, preserves dirty work and extra clients, then repeats without commits' {
+        $initial = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        @($initial.roots.status) | Should -Be @('completed','completed') -Because ($initial | ConvertTo-Json -Depth 8 -Compress)
+        # Simulate a real schema-1 report produced before client-set evidence existed.
+        foreach ($entry in $initial.roots) { $entry.PSObject.Properties.Remove('clients') }
+        Write-Utf8Text -Path (Join-Path $root '.agent-1c/snapshots/workflow-update-rollout.json') -Value ($initial | ConvertTo-Json -Depth 8)
+        { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit } | Should -Throw '*CLIENTS_INCOMPLETE*repeat update-workflow*'
+        $script:installedClientSets = @()
+        $legacyRetry = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        @($legacyRetry.roots.status) | Should -Be @('completed','completed')
+        $script:installedClientSets.Count | Should -Be 2
+
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            Set-ProjectAiRulesClients -Clients @('codex','kilocode')
+            Invoke-Git @('add','--','.agent-1c/project.json')
+            Invoke-Git @('commit','-qm','branch-local client')
+        }
+        $business = Join-Path $branch1 'src/cf/Модуль с пробелом.bsl'
+        [IO.File]::WriteAllText($business, 'staged business', $utf8)
+        Invoke-GitAt -Root $branch1 -Arguments @('add','--','src/cf/Модуль с пробелом.bsl')
+        (Get-GitOutputAt -Root $branch1 -Arguments @('show',':src/cf/Модуль с пробелом.bsl')).Trim() | Should -Be 'staged business'
+        [IO.File]::WriteAllText($business, 'unstaged business', $utf8)
+        [IO.File]::WriteAllText((Join-Path $branch1 'src/cf/Новый файл.bsl'), 'untracked business', $utf8)
+        $indexBefore = Invoke-InProjectContext -Root $branch1 -ScriptBlock { @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0" }
+        Write-Utf8Text -Path (Join-Path $branch1 '.mcp.json') -Value '{"customSetting":7,"mcpServers":{"foreign":{"url":"https://user.invalid"}}}'
+        Set-ProjectAiRulesClients -Clients @('codex','cursor','claude-code')
+        Read-ProjectConfig
+        Invoke-Git @('add','--','.agent-1c/project.json')
+        Invoke-Git @('commit','-qm','attach master clients')
+        $report = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        @($report.roots.status) | Should -Be @('completed','completed')
+        @($report.roots | Where-Object root -EQ $branch1)[0].clients | Should -Contain 'kilocode'
+        foreach ($branch in @($branch1,$branch2)) {
+            $clients = @(Get-WorkflowRolloutClients -Root $branch)
+            $clients | Should -Contain 'cursor'
+            $clients | Should -Contain 'claude-code'
+            Test-WorkflowRolloutClients -Root $branch -Clients $clients -RequiredClients @('codex','cursor','claude-code') -SourceRoot $source.root | Should -BeTrue
+            $mcp = Get-Content -LiteralPath (Join-Path $branch '.mcp.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $mcp.mcpServers.'fixture-branch'.args | Should -Contain $branch
+            $cursor = Get-Content -LiteralPath (Join-Path $branch '.cursor/mcp.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cursor.mcpServers.'fixture-branch'.args | Should -Contain $branch
+            $config = Get-Content -LiteralPath (Join-Path $branch '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $config.aiRules.modelTiersByClient.codex.light | Should -Be 'keep/codex'
+            $config.aiRules.modelTiersByClient.kilocode.light | Should -Be 'keep/kilo'
+        }
+        $mcp = Get-Content -LiteralPath (Join-Path $branch1 '.mcp.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $mcp.customSetting | Should -Be 7
+        $mcp.mcpServers.foreign.url | Should -Be 'https://user.invalid'
+        [IO.File]::ReadAllText($business) | Should -Be 'unstaged business'
+        [IO.File]::ReadAllText((Join-Path $branch1 'src/cf/Новый файл.bsl')) | Should -Be 'untracked business'
+        (Invoke-InProjectContext -Root $branch1 -ScriptBlock { @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--','src/cf')) -join "`0" }) | Should -BeExactly $indexBefore
+        $heads = @($branch1,$branch2 | ForEach-Object { (Get-GitOutputAt -Root $_ -Arguments @('rev-parse','HEAD')).Trim() })
+        $script:installedClientSets = @()
+        $noOpWatch = [Diagnostics.Stopwatch]::StartNew()
+        Invoke-WorkflowDevelopmentBranchRollout -Source $source | Out-Null
+        $noOpWatch.Stop()
+        Write-Host "Two-root client rollout no-op: $($noOpWatch.ElapsedMilliseconds) ms."
+        Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit | Out-Null
+        $script:installedClientSets.Count | Should -Be 0
+        @($branch1,$branch2 | ForEach-Object { (Get-GitOutputAt -Root $_ -Arguments @('rev-parse','HEAD')).Trim() }) | Should -Be $heads
+        # Missing ignored config must invalidate a current completed report too.
+        Remove-Item -LiteralPath (Join-Path $branch2 '.cursor/mcp.json')
+        { Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit } | Should -Throw '*CLIENTS_INCOMPLETE*'
+        Invoke-WorkflowDevelopmentBranchRollout -Source $source | Out-Null
+        Test-Path -LiteralPath (Join-Path $branch2 '.cursor/mcp.json') | Should -BeTrue
+    }
+
+    It 'finishes the pinned membership after <Phase>, then adds a newly requested client in a separate snapshot' -ForEach @(@{Phase='post-copy'},@{Phase='before-commit'}) {
+        $script:rolloutFailure = $Phase
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') } | Should -Throw '*fixture interruption*'
+            $pending = Get-WorkflowUpdatePendingSnapshot
+            $pending.receipt.clientMembership.target | Should -Be @('codex','cursor')
+            $originalSnapshot = $pending.snapshot.root
+            $before = $pending.receipt.beforePathState | ConvertTo-Json -Depth 8 -Compress
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor','claude-code') | Out-Null
+            @(Get-AgentTargets) | Should -Be @('codex','cursor','claude-code')
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+            $retained = Join-Path (Split-Path $originalSnapshot) ((Split-Path -Leaf $originalSnapshot).Replace('rollback-','completed-'))
+            $oldReceipt = Get-Content -LiteralPath (Join-Path $retained 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $oldReceipt.clientMembership.target | Should -Be @('codex','cursor')
+            ($oldReceipt.beforePathState | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly $before
+            @($oldReceipt.records.relativePath) | Should -Not -Contain '.mcp.json'
+        }
+        @($script:installedClientSets | ForEach-Object { $_ -join ',' }) | Should -Contain 'codex,cursor'
+        $script:installedClientSets[-1] | Should -Be @('codex','cursor','claude-code')
+    }
+
+    It 'recovers a legacy receipt without membership before adding clients' {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            $script:rolloutFailure = 'post-copy'
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source } | Should -Throw '*fixture interruption*'
+            $pending = Get-WorkflowUpdatePendingSnapshot
+            $pending.receipt.PSObject.Properties.Name | Should -Not -Contain 'clientMembership'
+            $patch = @{id='recovered-patch'}
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor','claude-code') -LocalPatchPlan $patch | Out-Null
+            Should -Invoke Invoke-WorkflowLocalPatchStep -Times 0 -Exactly -ParameterFilter { $Step -eq 'Bind' -and $null -ne $Plan }
+            Should -Invoke Invoke-WorkflowLocalPatchStep -Times 1 -Exactly -ParameterFilter { $Step -eq 'Complete' -and $null -ne $Plan }
+            @(Get-AgentTargets) | Should -Be @('codex','cursor','claude-code')
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        }
+        @($script:installedClientSets | ForEach-Object { $_ -join ',' }) | Should -Be @('codex','codex','codex,cursor,claude-code')
+    }
+
+    It 'retains the pinned target when restarting an untouched <Phase> transaction (new package: <NewPackage>)' -ForEach @(
+        @{Phase='prepared';NewPackage=$false},@{Phase='copying';NewPackage=$false},
+        @{Phase='prepared';NewPackage=$true},@{Phase='copying';NewPackage=$true}
+    ) {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot $source.root `
+                -Clients @('codex','cursor') -AiRulesPathsAfter @('.fixture-rules/codex.md','.fixture-rules/cursor.md')) `
+                -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared `
+                -Details @{clientMembership=@{schemaVersion=1;before=@('codex');target=@('codex','cursor')}}
+            if ($Phase -eq 'copying') { Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase copying }
+            if ($NewPackage) {
+                $next = Join-Path $TestDrive ('Следующий источник ' + $Phase)
+                Invoke-GitAt -Root $TestDrive -Arguments @('clone','-q','--shared','--',$source.root,$next)
+                Invoke-GitAt -Root $next -Arguments @('config','user.name','Next client source')
+                Invoke-GitAt -Root $next -Arguments @('config','user.email','next@example.invalid')
+                Invoke-GitAt -Root $next -Arguments @('config','maintenance.auto','false')
+                Invoke-GitAt -Root $next -Arguments @('config','gc.auto','0')
+                Write-Utf8Text -Path (Join-Path $next 'candidate.txt') -Value 'next exact package'
+                Invoke-GitAt -Root $next -Arguments @('add','--','candidate.txt')
+                Invoke-GitAt -Root $next -Arguments @('commit','-qm','next package')
+                $source = [pscustomobject]@{root=$next;commit=(Get-GitOutputAt -Root $next -Arguments @('rev-parse','HEAD')).Trim();repo='fixture';ref='develop';source='path'}
+            }
+            # Cursor was already pinned, even if it is no longer requested by master.
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','claude-code') | Out-Null
+            @(Get-AgentTargets) | Should -Be @('codex','cursor','claude-code')
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        }
+        $script:installedClientSets[0] | Should -Be @('codex','cursor')
+        $script:installedClientSets[-1] | Should -Be @('codex','cursor','claude-code')
+    }
+
+    It 'preserves the empty write-set when rules are skipped and completes the original addition on retry with rules' {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            $SkipAiRules = $true
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') } | Should -Throw '*CLIENTS_REQUIRE_RULES*without -SkipAiRules*'
+            @(Get-AgentTargets) | Should -Be @('codex')
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+            $SkipAiRules = $false
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') | Out-Null
+            @(Get-AgentTargets) | Should -Be @('codex','cursor')
+        }
+    }
+
+    It 'preserves a late MCP edit and the original membership snapshot instead of treating it as completed' {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            $script:rolloutFailure = 'post-copy'
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') } | Should -Throw '*fixture interruption*'
+            $pending = Get-WorkflowUpdatePendingSnapshot
+            $before = [IO.File]::ReadAllText($pending.receiptPath)
+            Write-Utf8Text -Path (Join-Path $script:ProjectRoot '.cursor/mcp.json') -Value '{"mcpServers":{"foreign":{"url":"https://late.invalid"}}}'
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor','claude-code') } | Should -Throw '*WORKFLOW_UPDATE_RECONCILIATION_REQUIRED*'
+            [IO.File]::ReadAllText($pending.receiptPath) | Should -BeExactly $before
+            Read-Utf8Text -Path (Join-Path $script:ProjectRoot '.cursor/mcp.json') | Should -Match 'https://late.invalid'
+            @(Get-AgentTargets) | Should -Not -Contain 'claude-code'
+        }
+    }
+
+    It 'preserves a client added during planning and completes the additive set after the prepare-drift continuation' {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            Mock Get-AiRulesCandidateInstallInventory {
+                param($Checkout,$Tools)
+                Set-ProjectAiRulesClients -Clients @('codex','kilocode')
+                Invoke-Git @('add','--','.agent-1c/project.json')
+                Invoke-Git @('commit','-qm','concurrent branch client')
+                foreach ($client in $Tools) { ".fixture-rules/$client.md" }
+            }
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') } | Should -Throw '*WORKFLOW_UPDATE_PREPARE_DRIFT*repeat update-workflow*'
+            Read-ProjectConfig
+            @(Get-AgentTargets) | Should -Be @('codex','kilocode')
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+            Mock Get-AiRulesCandidateInstallInventory { param($Checkout,$Tools); foreach ($client in $Tools) { ".fixture-rules/$client.md" } }
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') | Out-Null
+            @(Get-AgentTargets) | Should -Be @('codex','kilocode','cursor')
+        }
+    }
+
+    It 'does not commit an incomplete installer result and finishes the pinned inventory on retry' {
+        Invoke-InProjectContext -Root $branch1 -ScriptBlock {
+            $head = Get-CurrentCommit
+            $script:rolloutFailure = 'omit-rule'
+            { Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') } | Should -Throw '*CLIENTS_INCOMPLETE*planned rules file*cursor*'
+            Get-CurrentCommit | Should -BeExactly $head
+            (Get-WorkflowUpdatePendingSnapshot).receipt.phase | Should -Be 'post-copy-failed'
+            Invoke-WorkflowDevelopmentBranchUpdate -Source $source -MasterClients @('codex','cursor') | Out-Null
+            @(Get-AgentTargets) | Should -Be @('codex','cursor')
+            Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.fixture-rules/cursor.md') | Should -BeTrue
+            Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
+        }
     }
 }
