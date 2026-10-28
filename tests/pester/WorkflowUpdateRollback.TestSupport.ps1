@@ -5,7 +5,7 @@
     $repoRoot = $context.RepoRoot
 
     function New-WorkflowRollbackFixture {
-        param([string]$Root, [switch]$PendingInterruption, [switch]$MetadataCachedPackage, [switch]$PackageCache)
+        param([string]$Root, [switch]$PendingInterruption, [switch]$MetadataCachedPackage, [switch]$PackageCache, [string]$Branch = 'master')
         New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c/mcp'), (Join-Path $Root 'src/cf') | Out-Null
         [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".dev.env`n.agent-1c/mcp/`n.agent-1c/snapshots/`n.agent-1c/tmp/`n", [Text.UTF8Encoding]::new($false))
@@ -21,7 +21,7 @@
             [IO.File]::WriteAllBytes((Join-Path $Root ($cacheRoot+'/scripts/__pycache__/tracked.pyc')),[byte[]]@(0,255,13,10))
             [IO.File]::WriteAllBytes((Join-Path $Root ($cacheRoot+'/scripts/__pycache__/untracked.pyc')),[byte[]]@(0,128,10,13))
         }
-        & git -C $Root init -q -b master
+        & git -C $Root init -q -b $Branch
         & git -C $Root config user.name 'Workflow Rollback Test'
         & git -C $Root config user.email 'rollback@example.invalid'
         if ($MetadataCachedPackage) {

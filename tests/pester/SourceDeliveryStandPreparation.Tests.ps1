@@ -274,6 +274,40 @@ if(-not(Test-Path -LiteralPath (Join-Path $ProjectRoot 'installed.txt'))){throw 
         $script:standPreparation.roots+=@('foreign-root')
         { Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt } | Should -Throw '*PREPARATION_CHANGED*'
     }
+    It 'abandons only a failed branch post-copy of another package before the candidate update and does not repeat it on resume' {
+        $updater=@'
+param($ProjectRoot,$SourceRoot,$WorkflowUpdateBranchRootsFile,$Recovery,$SnapshotId)
+$ErrorActionPreference='Stop'
+$order=Join-Path $SourceRoot 'order.txt'
+if($Recovery -ceq 'abandon'){
+    $parent=Join-Path $ProjectRoot '.agent-1c/snapshots/workflow-update'
+    Rename-Item -LiteralPath (Join-Path $parent ('itl-workflow-update-rollback-'+$SnapshotId)) -NewName ('itl-workflow-update-abandoned-'+$SnapshotId)
+    Add-Content -LiteralPath $order -Value ('abandon '+(Split-Path -Leaf $ProjectRoot)+' '+$SnapshotId) -Encoding UTF8
+} else { Add-Content -LiteralPath $order -Value 'update' -Encoding UTF8 }
+'@
+        [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
+        $roots=@{}
+        foreach($case in @(@('defective','post-copy-failed'),@('same','candidate'),@('copying','copying'))) {
+            $branch=Join-Path $TestDrive ('ветка '+$case[0]+' '+[guid]::NewGuid().ToString('N'))
+            $id=[guid]::NewGuid().ToString('N')
+            $snapshot=Join-Path $branch ('.agent-1c/snapshots/workflow-update/itl-workflow-update-rollback-'+$id)
+            [void][IO.Directory]::CreateDirectory($snapshot)
+            $phase=if($case[1] -eq 'candidate'){'post-copy-failed'}else{$case[1]}
+            $source=if($case[1] -eq 'candidate'){'candidate'}else{'defective'}
+            [IO.File]::WriteAllText((Join-Path $snapshot 'transaction.json'),(@{phase=$phase;sourceCommit=$source}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            $roots[$case[0]]=[pscustomobject]@{root=$branch;id=$id}
+        }
+        $preparation=[pscustomobject]@{projectRoot=$script:standRoot;sourceCommit='candidate';roots=@($roots.defective.root,$roots.same.root,$roots.copying.root);requiresWorkflowUpdate=$true;capsules=@()}
+        $attempt=[pscustomobject]@{phase='candidate-built'}
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        $order=Join-Path $script:standCandidate 'order.txt'
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @(('abandon '+(Split-Path -Leaf $roots.defective.root)+' '+$roots.defective.id),'update')
+        @($script:savedAttempt.standPreparation.steps.name) | Should -Be @(('stand-workflow-abandon-'+$roots.defective.id),'stand-workflow-update')
+        $script:savedAttempt.standPreparation.status | Should -Be 'passed'
+        # A resumed preparation finds no pending defective transaction to abandon again.
+        Invoke-DeliveryStandPreparation $script:standCandidate $preparation $attempt
+        @(Get-Content -LiteralPath $order -Encoding UTF8) | Should -Be @(('abandon '+(Split-Path -Leaf $roots.defective.root)+' '+$roots.defective.id),'update','update')
+    }
     It 'keeps preparation before calculation and saving in the actual publisher' {
         $publisher=@($script:publisherAst.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Publish-AccumulatedDevelop'},$false))[0]
         $calls=@($publisher.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst]},$true))

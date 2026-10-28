@@ -77,6 +77,25 @@ function Get-DeliveryStandPreparation {
         requiresStateChange=([bool]$updates.Count -or @($capsules | Where-Object needsAdmission).Count -gt 0)}
 }
 
+function Get-DeliveryStaleBranchUpdates {
+    # The update owner resumes a failed branch post-copy with its recorded
+    # package. For another package that candidate can be the defect, so the
+    # lifecycle abandon owner returns it before this candidate installs.
+    param([string]$CandidateRoot, [object]$Preparation)
+    $package = Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$Preparation.sourceCommit)
+    foreach ($root in @($Preparation.roots | Where-Object { $_ -ine $Preparation.projectRoot })) {
+        $pending = @(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue)
+        # Ambiguous or receipt-less snapshots stay with the update owner's guards.
+        if ($pending.Count -ne 1) { continue }
+        $receiptPath = Join-Path $pending[0].FullName 'transaction.json'
+        if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { continue }
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$receipt.phase -notin @('post-copy-running', 'post-copy-failed') -or
+            (Get-DeliveryWorkflowPackageBase -CandidateRoot $CandidateRoot -Commit ([string]$receipt.sourceCommit)) -ceq $package) { continue }
+        [pscustomobject]@{root=$root;snapshotId=$pending[0].Name.Substring('itl-workflow-update-rollback-'.Length);sourceCommit=[string]$receipt.sourceCommit}
+    }
+}
+
 function Invoke-DeliveryStandOwner {
     param([string]$CandidateRoot, [string]$Name, [string[]]$Arguments, [int]$BudgetSeconds)
     $logs = Join-Path $CandidateRoot 'build/test-results/delivery'
@@ -113,6 +132,10 @@ function Invoke-DeliveryStandPreparation {
     $Attempt | Add-Member -NotePropertyName standPreparation -NotePropertyValue $record -Force
     Write-DevelopPublicationAttempt -Attempt $Attempt
     if ($RequireRelease) { Invoke-DeliveryReleaseStandRecovery -CandidateRoot $CandidateRoot }
+    foreach ($stale in @(Get-DeliveryStaleBranchUpdates -CandidateRoot $CandidateRoot -Preparation $Preparation)) {
+        $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-workflow-abandon-'+$stale.snapshotId) -BudgetSeconds 900 -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/update-installed-workflow.ps1'),'-ProjectRoot',$stale.root,'-SourceRoot',$CandidateRoot,'-Recovery','abandon','-SnapshotId',$stale.snapshotId)
+        Write-DevelopPublicationAttempt -Attempt $Attempt
+    }
     if ($Preparation.requiresWorkflowUpdate) {
         $scopePath = Join-Path $CandidateRoot 'build/test-results/delivery/stand-update-roots.json'
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $scopePath))

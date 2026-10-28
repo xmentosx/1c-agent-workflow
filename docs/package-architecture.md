@@ -282,6 +282,25 @@ live publication acceptance remains outstanding. Rollback stops the new
 composition and retains all existing owner receipts for manual continuation.
 The publication already running at approval time is outside this change.
 
+On 2026-10-28 the user approved abandoning a failed uncommitted branch update.
+Invariant: a defective candidate cannot lock a development branch, because the
+update owner otherwise resumes the recorded post-copy with that same package.
+The reproducer was a stand branch left in `post-copy-failed` by a deferred
+candidate and restored by hand. The lifecycle update transaction owns
+`-Recovery abandon -SnapshotId`: only a development-branch
+`post-copy-running`/`post-copy-failed` receipt at its recorded HEAD and branch,
+without owned staging, unmerged entries or a bound local patch. It reuses the
+reconciliation scope and the atomic owned-path restore; every path must be the
+recorded failed state or its saved before bytes, else reconciliation is required.
+The candidate checkout is not consulted. The snapshot becomes
+`itl-workflow-update-abandoned-<id>` evidence and a repeat is a no-op. Stand
+preparation calls it before its update only for a selected branch whose pending
+post-copy records another package base, and records the step in the same
+publication checkpoint. Master, committed and rollback phases, business bytes,
+completed-update chains, capsules, gates and lock families are unchanged; no
+state migration. Rollback: an older publisher never calls the mode and the
+owner's resume continuation still applies.
+
 The existing database-access coordinator is the authoritative owner for exact
 infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote
 operations. Calling it with an already supported access mode, resource set, and
