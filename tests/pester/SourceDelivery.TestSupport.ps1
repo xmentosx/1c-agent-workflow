@@ -67,6 +67,7 @@ Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-capabilities.log') -Encoding UTF8 -Value $ReleaseCapabilities }
+if ($Mode -eq 'Full' -and $env:ITL_TEST_FAIL_DELIVERY_FULL -eq 'true') { exit 15 }
 if ($Mode -eq 'Full') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null

@@ -609,6 +609,19 @@ function Publish-AccumulatedDevelop {
     $interrupted = Complete-InterruptedDevelopPublication -RemoteBefore $remoteBefore -Entries $entries
     if ($interrupted) { return $interrupted }
     $frozenAttempt = Read-DevelopPublicationAttempt
+    # Only a pinned plan freezes queue membership. A checkpoint that failed
+    # before pinning one holds no qualification, so a re-registered fix must
+    # reach the next candidate; an unchanged queue still resumes its circuit.
+    if ($frozenAttempt -and -not $Replan -and -not $ResumePlan -and
+        -not ($frozenAttempt.PSObject.Properties['planId'] -and [string]$frozenAttempt.planId) -and
+        (Get-DevelopPublicationPhaseRank -Phase ([string]$frozenAttempt.phase)) -eq 0) {
+        $unplannedPath = Get-DevelopPublicationAttemptPath
+        $unplannedArchive = Join-Path (Split-Path -Parent $unplannedPath) 'replaced/unplanned'
+        New-Item -ItemType Directory -Force -Path $unplannedArchive | Out-Null
+        $unplannedArchive = Join-Path $unplannedArchive ((Get-DeliveryFileSha256 -Path $unplannedPath)+'.json')
+        if (-not (Test-Path -LiteralPath $unplannedArchive)) { Copy-Item -LiteralPath $unplannedPath -Destination $unplannedArchive }
+        $frozenAttempt = $null
+    }
     $frozenPlan = $null
     $replacementOriginal = $null
     $replacementArchive = ''

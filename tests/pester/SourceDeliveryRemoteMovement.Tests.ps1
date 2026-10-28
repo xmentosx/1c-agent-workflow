@@ -38,4 +38,28 @@ Describe 'Pre-push remote movement recovery' {
             @(& git -C $fixture.root status --porcelain).Count | Should -Be 0
         } finally { $env:ITL_TEST_FAIL_COMPONENT_FINALIZER=$prior; Remove-DeliveryFixture $fixture }
     }
+    It 'rebuilds a checkpoint that failed before pinning its plan from the re-registered fix' {
+        $fixture=$null; $prior=$env:ITL_TEST_FAIL_DELIVERY_FULL
+        try {
+            $fixture=New-FrozenFixture
+            Set-DeliveryAiRulesLock -Fixture $fixture -CompatibilityStatus 'pending'
+            $broken=Add-FrozenTask $fixture alpha
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $promoter=@('-CompatibilityPromoterScript',('"'+$fixture.promoter+'"'))
+            $env:ITL_TEST_FAIL_DELIVERY_FULL='true'
+            (Invoke-FrozenDelivery $fixture PublishDevelop $promoter -AllowFailure).exitCode | Should -Not -Be 0
+            $attempt=Read-FrozenAttempt $fixture
+            [string]$(if($attempt.PSObject.Properties['planId']){$attempt.planId}) | Should -BeNullOrEmpty
+            @($attempt.queue.head) | Should -Be @($broken)
+            $env:ITL_TEST_FAIL_DELIVERY_FULL=$null
+            $fixed=Add-FrozenTask $fixture fix
+            Invoke-FrozenDelivery $fixture RegisterChange @('-QueueId','alpha') | Out-Null
+            $published=(Invoke-FrozenDelivery $fixture PublishDevelop $promoter).stdout | ConvertFrom-Json
+            & git -C $fixture.root merge-base --is-ancestor $fixed $published.commit
+            $LASTEXITCODE | Should -Be 0
+            @(Get-ChildItem -LiteralPath (Join-Path $fixture.root '.git/itl/publication-attempts/replaced/unplanned') -Filter '*.json').Count | Should -Be 1
+            @((Get-Content -LiteralPath $fixture.modeLog)|Where-Object {$_ -eq 'Full'}).Count | Should -Be 2
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue).Count | Should -Be 0
+        } finally { $env:ITL_TEST_FAIL_DELIVERY_FULL=$prior; Remove-DeliveryFixture $fixture }
+    }
 }
