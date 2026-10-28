@@ -6,8 +6,9 @@
 native authenticated read-only health tick, сохранностью прежних host inputs и
 подготовленным descriptor. [Результат](evidence/common-ops-2026-10-28.md):
 5/5 Python, native healthy, прежние50 containers/protected SHA неизменны.
-Отдельная LAN приёмка выполняется только после firewall checkpoint из runbook:
-один native GET через общий адрес и очередной health tick. Reboot/crash не
+Отдельная LAN приёмка выполнена после согласованного firewall checkpoint:
+один native GET через общий адрес и очередной health tick —
+[PASS](evidence/common-lan-2026-10-28.md). Reboot/crash не
 провоцировались. Это не новая корпусная матрица G5, gate или переоткрытие G3;
 QP5, Gate6, рабочая миграция и публикация не запускаются.
 
