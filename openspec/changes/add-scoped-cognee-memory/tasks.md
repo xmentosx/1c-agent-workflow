@@ -8,8 +8,11 @@
   границы; подтвердить native healthy tick и неизменность прежнего host contract.
 - [x] Подготовить приватный LAN descriptor, инструкцию выдачи общей настройки и
   [точный checkpoint NAT/firewall](../../../vibecoding1c-mcp-host/linux-native-host/COGNEE.ru.md).
-- [ ] После согласования только LAN checkpoint применить exact NAT/firewall и
+- [x] После согласования только LAN checkpoint применить exact NAT/firewall и
   подтвердить native read через общий адрес; не выполнять QP5 этой операцией.
+
+[LAN result](evidence/common-lan-2026-10-28.md): HTTP200 за0.438s на том же
+ordinary principal, затем штатный healthy tick; прочие NAT/MCP firewall неизменны.
 
 [Actual proof и пределы](evidence/common-ops-2026-10-28.md): Docker policy
 настроена, реальный reboot не провоцировался; healthy не квалифицирует поиск

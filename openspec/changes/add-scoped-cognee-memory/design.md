@@ -8,7 +8,9 @@
 read-only healthcheck как диагностику. Нет отдельного supervisor/таймера/очереди,
 новых всегда загружаемых правил или расширения Code/Graph watchdog. Проверки не
 используют модель и не блокируют независимый workflow. [Actual proof](evidence/common-ops-2026-10-28.md)
-отделяет работающий VM API от ещё не согласованного Windows NAT/firewall и QP5.
+отделяет подготовку VM API от QP5. Windows NAT/firewall отдельно согласованы
+и применены: [LAN proof](evidence/common-lan-2026-10-28.md) подтверждает
+native GET через общий адрес и следующий штатный health tick без restart.
 Данные, шесть типов областей и общий ordinary principal сохраняются.
 
 ## Подготовка совместного выпуска, 2026-10-28

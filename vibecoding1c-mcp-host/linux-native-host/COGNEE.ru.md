@@ -16,8 +16,8 @@ Cognee предоставляет native REST API. MCP-инструменты п
   Native Cognee 1.6.5 не дорабатывался; Qwen4096/cache6/pacing off и прежние
   лимиты 2 CPU / 5 GiB RAM+swap сохранены.
 - Подготовленный адрес VM: `http://172.29.204.2:18220/`.
-  Предлагаемый общий адрес: `http://dev-karimov-new.itland.local:18220/`.
-  **LAN NAT/firewall ещё не настроены; общий адрес не объявляется доступным.**
+  Общий адрес: `http://dev-karimov-new.itland.local:18220/`.
+  **LAN NAT/firewall согласованы и применены; native GET через общий адрес прошёл.**
 
 Это подготовка инфраструктуры, не QP5: active provider, bindings, pending,
 client MCP settings и explicit off не меняются. Старые BGE, остановленный
@@ -93,11 +93,11 @@ healthcheck под тем же principal, затем отзывает стары
 Healthcheck не
 переходит на пароль/Bearer и не пытается чинить авторизацию самостоятельно.
 
-## Архитектурный checkpoint LAN — ожидает согласования
+## Архитектурный checkpoint LAN — согласован и выполнен
 
-Причина: VM находится за Windows NAT, порт 18220 не опубликован. Существующие
-Code/Graph доступны через `ITL-MCP-NAT`; их настройки не подходят для нового порта.
-Нужны только две операции на **dev-karimov-new**, без новой Windows-службы:
+Причина: VM находится за Windows NAT; при подготовке порт 18220 не был опубликован.
+После отдельного согласования пользователя выполнены две операции только на
+**dev-karimov-new**, без новой Windows-службы. Их параметры:
 
 ```powershell
 Add-NetNatStaticMapping -NatName 'ITL-MCP-NAT' -Protocol TCP `
@@ -121,6 +121,11 @@ owner, контейнером продолжает владеть Docker; вто
 сценариев, QP5, Gate6 или миграции. Отказ сохраняет прежние MCP и подготовленные
 данные. Откат удаляет только созданные точные mapping/rule; контейнер можно
 намеренно остановить. Томы, старые стенды, ключи и proof не удаляются.
-После согласования фиксируется actual LAN result; до него LAN не считается PASS.
+LAN принят: HTTP200 на том же ordinary principal через общий адрес за0.438s,
+последующий штатный Docker health tick healthy. Прежние5 NAT mappings и
+MCP firewall rule неизменны; клиенты не переключены. Mapping ID5 и exact rule
+сохранены в Windows provisioning receipt. Не повторяйте Add-команды поверх
+этого состояния; используйте сохранённую receipt для проверки/точного отката.
 
-Фактическое исполнение: [отчёт подготовки](../../openspec/changes/add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md).
+Фактическое исполнение: [подготовка](../../openspec/changes/add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md),
+[LAN result](../../openspec/changes/add-scoped-cognee-memory/evidence/common-lan-2026-10-28.md).

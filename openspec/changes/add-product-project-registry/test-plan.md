@@ -5,8 +5,9 @@
 [Единый native/source result](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
 подтверждает отдельный общий контейнер/monitor без изменения business registry,
 local bindings или клиентов. Новый per-project provider/health gate не нужен.
-LAN result ожидает отдельного firewall checkpoint; QP5 setup/reload остаётся
-прежним незавершённым шагом, не выводится из успешного VM healthcheck.
+[LAN result](../add-scoped-cognee-memory/evidence/common-lan-2026-10-28.md)
+после согласования firewall checkpoint — PASS; QP5 setup/reload остаётся
+прежним незавершённым шагом, не выводится из успешного LAN healthcheck.
 
 ## QP0–QP4: actual dependency proof, 2026-10-28
 
