@@ -306,6 +306,15 @@ master) was refused as a business change by both Capture and fork
 continuation. The user approved one shared lifecycle rule: such a claim is the
 update's only for the five scaffold paths and only when that hop's receipt
 owns both states and its backup equals the old commit's blob.
+The user then approved automatic stand selection so that every publisher
+moves off the PM5 stand. Under the operation lock, Plan, DiagnoseFull and the
+three publication actions resolve one stand per clone and fixture from a
+derived path; no registry is stored. A missing stand is built once under a
+per-stand file lock from published `origin/develop` with its baseline
+capsules, and the builder's marker, written last, is the only completion
+proof. A passed stand without the current fixture marker is replaced with a
+warning, an exception to explicit-parameter precedence chosen by the user; a
+failed build directory is refused with a removal continuation.
 
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release
