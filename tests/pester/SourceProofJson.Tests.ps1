@@ -53,7 +53,8 @@ Describe 'Source delivery proof JSON transport' {
         { ConvertFrom-DeliveryProofJson -Json '{"at":true} trailing' } | Should -Throw
     }
 
-    It 'preserves old Core date semantics through its existing Json.NET reader' {
+    # PowerShell 7 is optional; a Desktop-only host has no Core reader to compare.
+    It 'preserves old Core date semantics through its existing Json.NET reader' -Skip:($PSVersionTable.PSEdition -ne 'Core' -and -not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
         if ($PSVersionTable.PSEdition -ne 'Core') {
             . (Join-Path $PSScriptRoot 'TestSupport.ps1')
             $context = Initialize-WorkflowPesterContext
