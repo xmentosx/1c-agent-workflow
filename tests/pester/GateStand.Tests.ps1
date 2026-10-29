@@ -112,6 +112,15 @@ Describe 'Minimal gate stand fixture' {
 }
 
 Describe 'Gate stand builder' {
+    It 'keeps the completion marker out of the stand worktree so Prepare sees a clean seed' {
+        $root = Join-Path $TestDrive ('marker ' + [char]0x0421)
+        [void][IO.Directory]::CreateDirectory($root)
+        & git -C $root init -q
+        Write-GateStandMarker -StandRoot $root -PositiveRoot ($root + '-positive') -FixtureId ('a' * 40)
+        @(& git -C $root status --porcelain --untracked-files=all).Count | Should -Be 0
+        (Read-GateStandMarker -StandRoot $root).fixtureId | Should -Be ('a' * 40)
+    }
+
     It 'refuses a non-empty target before any native work' {
         $root = Join-Path $TestDrive 'stand with space'
         [void][IO.Directory]::CreateDirectory($root)
