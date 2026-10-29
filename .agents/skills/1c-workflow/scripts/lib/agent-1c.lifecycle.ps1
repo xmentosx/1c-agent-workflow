@@ -5113,6 +5113,24 @@ function Get-AiRulesOpenSpecScaffoldPaths {
     )
 }
 
+function Test-WorkflowUpdateScaffoldClaim {
+    # The ai_rules installer generates and claims an OpenSpec scaffold file
+    # only where EXPORT_PATH exposes metadata, so a branch update can take over
+    # the unclaimed file a master init left. Only this hop's own receipt and
+    # Git-pinned backup prove that the replaced bytes were the old commit's.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][object]$Completed, [Parameter(Mandatory = $true)][string]$OldCommit)
+    if ($Path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)) { return $false }
+    $before = ConvertTo-Agent1cHashtable -Object $Completed.receipt.beforePathState
+    $after = ConvertTo-Agent1cHashtable -Object $Completed.receipt.pathState
+    if (-not $before.Contains($Path) -or -not $after.Contains($Path) -or
+        [string]$before[$Path] -notmatch '^file:[a-f0-9]{64}$' -or [string]$after[$Path] -notmatch '^file:[a-f0-9]{64}$') { return $false }
+    $record = @($Completed.snapshot.records | Where-Object relativePath -CEQ $Path)
+    if ($record.Count -ne 1 -or -not $record[0].existed) { return $false }
+    $backupOid = (Get-GitOutput @('hash-object', ('--path=' + $Path), '--', [string]$record[0].backupPath)).Trim()
+    $oldOid = (Get-GitOutput @('rev-parse', ($OldCommit + ':' + $Path))).Trim()
+    return $backupOid -cmatch '^[a-f0-9]{40}$' -and $backupOid -ceq $oldOid
+}
+
 function Get-AiRules1cOpenSpecStatus {
     param([string]$Client = '')
     $requiredStages = [ordered]@{
@@ -16307,7 +16325,8 @@ function Assert-DevBranchForkWorkflowTransition {
             $businessTests = @(@('tests', (Get-VanessaConfiguredFeaturesPath), (Get-YAxUnitTestsPath)) | Where-Object {
                 Test-RepoPathUnderRoot -RepoPath $path -Root $_
             }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $staticMatcher)
-            $newClaimOnExistingPath = $existingNewClaims -ccontains $path
+            $newClaimOnExistingPath = $existingNewClaims -ccontains $path -and
+                -not (Test-WorkflowUpdateScaffoldClaim -Path $path -Completed $completed -OldCommit $plan.oldHead)
             $unknownNewClaim = -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
                 -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $nativeMatcher) -and $path -cnotin $scaffoldPaths
             if ($businessSource -or $businessTests -or

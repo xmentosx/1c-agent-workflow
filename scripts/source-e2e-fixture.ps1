@@ -300,7 +300,8 @@ function Get-SourceFixtureWorkflowUpdateProof {
             if($changedPaths.Count){foreach($path in @(Get-RepositoryGitPathList -RepositoryRoot $Root -Arguments (@('ls-tree','-r','--name-only','-z',$old,'--')+@($changedPaths|ForEach-Object {':(literal)'+$_})))){[void]$existing.Add($path)}}
             foreach($path in $changedPaths){
                 if($path -cmatch '^src/' -or ($path -cmatch '^tests/' -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static)) -or
-                    ($existing.Contains($path) -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher)) -or
+                    ($existing.Contains($path) -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
+                        -not (Test-WorkflowUpdateScaffoldClaim -Path $path -Completed $completed -OldCommit $old)) -or
                     -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)){
                     throw "FIXTURE_WORKFLOW_UPDATE_BUSINESS_CHANGE: '$path' is outside the workflow transition"
                 }
