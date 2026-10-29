@@ -288,6 +288,19 @@ checkpoint; no new state, lock, service or migration. Rollback removes the
 warmup. The same change records one registered stand per publishing clone and
 adds a publisher-to-real-Capture regression after a native lifecycle update.
 
+On 2026-10-29 the user approved replacing the PM5 КОРП gate stand with a stand
+built from a minimal repository configuration fixture for both Develop and
+Release (`openspec/changes/minimal-gate-stand`). Measured publication was about
+100 minutes, dominated by 1C operations whose cost follows configuration size
+(674 MB of sources); no gate assertion depends on PM5 content. The accepted
+support reduction is large-configuration coverage in gates; scenario and stage
+assertions, timeouts and budgets stay unchanged, and configuration-dependent
+expectations move into the stand configuration. One builder composes existing
+owners (infobase creation, configured init, worktrees, Prepare/Capture); the
+stand gets no lifecycle, state, lock or recovery of its own. Proofs never cross
+stands, so the first qualification is cold. The PM5 stand remains for product
+pilots outside gates; rollback points `-E2EProjectRoot` back to it.
+
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release
 recovery, the source-side update-workflow launcher and Capture admission before

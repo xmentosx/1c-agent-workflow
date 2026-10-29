@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ConfigDumpInfo xmlns="http://v8.1c.ru/8.3/xcf/dumpinfo" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" format="Hierarchical" version="2.20">
+	<ConfigVersions>
+		<Metadata name="Catalog.ITLСправочникСДлиннымКириллическимИменемДляПроверкиБюджетаПутей" id="96b85b56-51a4-46fa-8413-16babe474552" configVersion="751aafb16a4a2e4c863955ae4ff4ff8500000000"/>
+		<Metadata name="Catalog.ITLСправочникСДлиннымКириллическимИменемДляПроверкиБюджетаПутей.ObjectModule" id="96b85b56-51a4-46fa-8413-16babe474552.0" configVersion="3c147cf08adaa34c8c9a84eff4676b4b00000000"/>
+		<Metadata name="CommonModule.ITLСерверныйОбщийМодуль" id="9fc77a3f-4814-413b-a43e-f50ad855a6a2" configVersion="0c8bc13b56246744aa64ea8a9210a65500000000"/>
+		<Metadata name="CommonModule.ITLСерверныйОбщийМодуль.Module" id="9fc77a3f-4814-413b-a43e-f50ad855a6a2.0" configVersion="7409a8d3137ae5409ceb10c2031f697900000000"/>
+		<Metadata name="CommonModule.ОбновлениеИнформационнойБазы" id="9a15d83c-c7dc-4224-8766-c44f38893502" configVersion="1d032a6c2c3d0b478385d910559d30ff00000000"/>
+		<Metadata name="CommonModule.ОбновлениеИнформационнойБазы.Module" id="9a15d83c-c7dc-4224-8766-c44f38893502.0" configVersion="25671b8ad6e06e4a8061ebdd0fdac60000000000"/>
+		<Metadata name="CommonModule.ОбновлениеИнформационнойБазыСлужебный" id="4e97716f-ec3b-4e5e-8022-8d637088ab3f" configVersion="8dc6c07341dd424485d0a815b65322a700000000"/>
+		<Metadata name="CommonModule.ОбновлениеИнформационнойБазыСлужебный.Module" id="4e97716f-ec3b-4e5e-8022-8d637088ab3f.0" configVersion="a6af7128ab6b8843aa63e69eacef97b400000000"/>
+		<Metadata name="CommonTemplate.ITLДвоичныйМакетПроверки" id="f3a9483b-94d2-417a-bc18-8d31c09227c9" configVersion="ab12fbfb8302684c95896073d544899a00000000"/>
+		<Metadata name="CommonTemplate.ITLДвоичныйМакетПроверки.Template" id="f3a9483b-94d2-417a-bc18-8d31c09227c9.0" configVersion="502db7d68bdf6e46a30d824dcfdbac6d00000000"/>
+		<Metadata name="Configuration.ITLМинимальнаяКонфигурацияСтендаГейтов" id="ee7b11cf-68a1-4050-beaf-36c6902f37ff" configVersion="94a629a4f9e4ae4bab0e15ba1010ac4400000000"/>
+		<Metadata name="Configuration.ITLМинимальнаяКонфигурацияСтендаГейтов.ParentConfigurations" id="a304455b-ddd4-4589-8393-310c49613f03.4" configVersion="64858de6ff40e745b5973de32e63edb500000000"/>
+		<Metadata name="DataProcessor.ITLОбработкаПроверкиОбработчиковФормы" id="36fe1139-2e09-48c3-91e1-e6116ef29145" configVersion="62bc1011314d924dbf0168c8ff5b478d00000000"/>
+		<Metadata name="DataProcessor.ITLОбработкаПроверкиОбработчиковФормы.Form.ФормаПроверкиОбработчиковСДлиннымИменем" id="694e4d8e-ffbf-4011-a49e-68c720cdc554" configVersion="b5cdcd2918dd034eba8d376b4b253f6f00000000"/>
+		<Metadata name="DataProcessor.ITLОбработкаПроверкиОбработчиковФормы.Form.ФормаПроверкиОбработчиковСДлиннымИменем.Form" id="694e4d8e-ffbf-4011-a49e-68c720cdc554.0" configVersion="bcc5b937f21182468ff120210be92f3600000000"/>
+		<Metadata name="Language.Русский" id="f40d1144-ab2b-4477-80a0-9e8ef0d61b90" configVersion="8fdd727d9d2f214995d84544ade725c000000000"/>
+		<Metadata name="Role.ПолныеПрава" id="de6a9f91-f972-42df-aba6-6a1ca163282e" configVersion="30ed1444263aaa47948454304fd65e5800000000"/>
+		<Metadata name="Role.ПолныеПрава.Rights" id="de6a9f91-f972-42df-aba6-6a1ca163282e.0" configVersion="e28fea3081ca5a4d8aa5095c05cfa5c200000000"/>
+	</ConfigVersions>
+</ConfigDumpInfo>
