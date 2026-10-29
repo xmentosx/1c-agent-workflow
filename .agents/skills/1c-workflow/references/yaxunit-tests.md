@@ -8,7 +8,19 @@ Read this reference before changing non-trivial calculations, parsers, selectors
 
 ## Required decision
 
-Before implementation, identify the changed decision points and risky invariants. Add or update YAxUnit tests when the change can be exercised without a real user journey. At minimum cover:
+Before implementation, identify the changed decision points and risky invariants
+and inspect existing coverage. Choose sufficient proof under
+`verification-change.md`. Add or update YAxUnit tests when they close a material
+gap with proportionate effort, especially for local decisions and boundary
+tables. Being unit-testable alone does not require duplicating sufficient
+existing or one-off proof. Conversely, one successful integration example does
+not establish all changed local decisions. Decide retention separately under
+`verification-suite-selection.md`; preserve existing required tests.
+
+Cover the following cases where applicable to the changed contract and risk,
+using equivalence partitions and existing proof. Do not invent unsupported
+states or large workloads without a relevant risk, or repeat the same matrix
+at another layer without a distinct gap:
 
 - the ordinary representative case;
 - empty input and the smallest valid input;
