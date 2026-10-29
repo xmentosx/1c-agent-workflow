@@ -13,9 +13,9 @@ cycle/workspace/workplace и sealed DB прежние. Первые два enabl
 registry AlreadyApplied передавал узкий preview context с другим полным hash.
 По отдельному разрешению owner исправлен: возвращается applied.context;
 keep-local/default на исходном пилоте прошли, broad/narrow ветка реально достигнута,
-полный hash guard побайтно прежний. Исправленный локальный кандидат регистрируется
-отдельно и ещё не входит в опубликованный ac482; требуется обычная доставка.
-Новых случаев, рабочей миграции и публикации нет. Unconfirmed writes
+полный hash guard побайтно прежний. Исправленный кандидат зарегистрирован,
+вошёл в source f9 и ещё не входит в опубликованный ac482; требуется обычная доставка.
+Новых случаев, рабочей миграции и публикации workflow нет. Unconfirmed writes
 по-прежнему требуют отдельного exact чтения; нового latency SLA нет.
 [Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
 имеют приоритет над историческим «публикация не начата» ниже. Итоговые
@@ -27,17 +27,25 @@ keep-local/default на исходном пилоте прошли, broad/narrow
 2026-10-29 владелец согласовал и подготовлен source-кандидат
 [обязательного выбора опубликованного проекта](../openspec/changes/add-product-project-registry/evidence/required-project-selection-2026-10-29.md)
 при init/первом update: без later/inline create, отдельное создание записи,
-сохранение binding у уже привязанного проекта. Это ещё не установленное поведение
-пилота и не часть опубликованного `ac482`. Следующий штатный native release plan
+сохранение binding у уже привязанного проекта. Source f9 зарегистрирован
+(Targeted 2119/0), затем по отдельному поручению установлен на прежнем PM5/Win11
+стенде. [Исходный native CLI update](../openspec/changes/add-product-project-registry/evidence/registry-homes-native-selection-2026-10-29.md)
+подтвердил отказ без ID до copy, успех с published ID и bound repeat без выбора
+или новых коммитов. База, прежние memory IDs и полный guard сохранены.
+Fresh init/GUI reload не проверялись; f9 не часть опубликованного `ac482`.
+Следующий штатный native release plan
 должен получать явную привязку тестовых roots; старый configured init без project ID
-больше не является допустимым обходом. Новые native проверки здесь не запускаются.
+больше не является допустимым обходом. Новая матрица и дополнительные gates
+этим повтором не добавлены.
 
 Владелец 2026-10-29 согласовал
 [все 44 значения product homes](../openspec/changes/add-product-project-registry/evidence/product-memory-home-review-2026-10-29.md):
 21 область каждого поколения хранится в КОРП, распределение зарплаты — в ERP+PM.
-Согласование получено, данные ещё не опубликованы. Native mappings прочитаны из
-локального provider; live freshness не проверялась. До отдельного поручения
-и публикации данных действующие optional-home ограничения сохраняются.
+После отдельного поручения все 44 home опубликованы в registry main ac4fb781,
+FF push/read-back и 8 contexts passed. На прежнем PM5-пилоте отражены 21 применимая
+home; оба pinned business catalog blobs равны опубликованным. Native mappings
+ранее прочитаны из локального provider; нового backend IDs/currentness или
+product remember/recall proof этот прогон не создаёт. Заметки не мигрировались.
 
 Для будущего выпуска выбран один комплект правил:
 

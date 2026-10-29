@@ -163,6 +163,9 @@ Invoke-Pester, что в scripts/run-pester-shard.ps1; сами тесты не 
 а все принятые auto-stand изменения оставлены. На этой базе полный прежний
 ReleaseGate снова прошёл 12/0, 6020 ms. Ни test assertion, ни код стенда не менялись.
 
-Native переход PM5/клиентский reload этого изменения пока не выполнен;
-исторические G3/G5 и QP5 не объявляются его native приёмкой.
+При регистрации исходного f9 native переход PM5/reload ещё не выполнялся;
+исторические G3/G5 и QP5 его не подменяли. По последующему отдельному поручению
+[исходный native CLI update и bound repeat](registry-homes-native-selection-2026-10-29.md)
+прошли на том же PM5-стенде. Fresh init и интерактивный GUI choice/reload остаются
+непроверенными этим повтором.
 Ignored inputs/results: `build/agent-artifacts/required-project-selection-20261029/`.
