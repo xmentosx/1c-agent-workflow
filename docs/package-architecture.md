@@ -300,6 +300,12 @@ owners (infobase creation, configured init, worktrees, Prepare/Capture); the
 stand gets no lifecycle, state, lock or recovery of its own. Proofs never cross
 stands, so the first qualification is cold. The PM5 stand remains for product
 pilots outside gates; rollback points `-E2EProjectRoot` back to it.
+The first stand publication exposed that a branch update's first ai_rules
+claim on the OpenSpec scaffold file a master init left (EXPORT_PATH is empty on
+master) was refused as a business change by both Capture and fork
+continuation. The user approved one shared lifecycle rule: such a claim is the
+update's only for the five scaffold paths and only when that hop's receipt
+owns both states and its backup equals the old commit's blob.
 
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release

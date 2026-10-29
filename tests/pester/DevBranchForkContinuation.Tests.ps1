@@ -4,9 +4,14 @@
     Describe 'Fork continuation after a completed workflow update' {
         BeforeAll {
             function New-ForkWorkflowFixture {
-                param([string]$Root, [int]$Updates = 1, [string[]]$AdditionalPaths = @())
+                param([string]$Root, [int]$Updates = 1, [string[]]$AdditionalPaths = @(), [string[]]$ExistingPaths = @())
                 New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c'), (Join-Path $Root 'src/cf') | Out-Null
                 $utf8 = [Text.UTF8Encoding]::new($false)
+                # An unclaimed file a master init left in place before any update.
+                foreach ($relative in $ExistingPaths) {
+                    New-Item -ItemType Directory -Force (Split-Path -Parent (Join-Path $Root $relative)) | Out-Null
+                    [IO.File]::WriteAllText((Join-Path $Root $relative), 'placed by init', $utf8)
+                }
                 [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".dev.env`n.agent-1c/snapshots/`n.agent-1c/tmp/`n.agent-1c/dev-branches/`n.agent-1c/fork-history/`n", $utf8)
                 [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', $utf8)
                 [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/dependency-lock.json'), '{"schemaVersion":1,"dependencies":{},"fixture":0}', $utf8)
@@ -183,6 +188,24 @@
                 if($path -cin @(Get-AiRulesOpenSpecScaffoldPaths)){$entries | Should -Not -Contain $path}
             }
             Get-CurrentCommit | Should -Be $fixture.head
+        }
+
+        It 'admits a branch update that first claims an existing unclaimed file in fork and Capture only for the OpenSpec scaffold (<Path>)' -ForEach @(
+            @{ Path = 'openspec/project.md'; Admitted = $true }, @{ Path = 'docs/user-notes.md'; Admitted = $false }
+        ) {
+            $fixture = New-ForkWorkflowFixture -Root (Join-Path $TestDrive "Existing claim $Admitted") -AdditionalPaths @($Path) -ExistingPaths @($Path)
+            $originalEnv = Join-Path $TestDrive "original env $Admitted"
+            [IO.File]::WriteAllText($originalEnv, "CAVEMAN=On`nUSER_SETTING=original`n", [Text.UTF8Encoding]::new($false))
+            . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
+            $fork = { Assert-DevBranchForkWorkflowTransition -OriginalCommit $fixture.anchor -OriginalDependencyLockSha256 $fixture.lockSha }
+            $capture = { & { . (Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1'); Get-SourceFixtureWorkflowUpdateProof -Root $fixture.root -OriginalCommit $fixture.anchor -OriginalEnvPath $originalEnv -ExpectedBranchRef 'refs/heads/itldev/fork' } }
+            if ($Admitted) {
+                $fork | Should -Not -Throw
+                (& $capture).head | Should -Be $fixture.head
+            } else {
+                $fork | Should -Throw '*DEV_BRANCH_FORK_WORKFLOW_BUSINESS_CHANGE*'
+                $capture | Should -Throw '*FIXTURE_WORKFLOW_UPDATE_BUSINESS_CHANGE*'
+            }
         }
 
         It 'resumes the same public fork with updated target settings even after source business advances' {
