@@ -7,10 +7,13 @@
   shortcut оставляет receipt, но подменяет operation context. Memory guard корректен.
 - [x] Учесть успешный исходный disable → enable на прежнем PM5-пилоте:
   native status current/pending[], cycle/workspace/workplace, DB и HEAD сохранены.
-- [ ] Отдельно устранить дефект у existing registry owner: при AlreadyApplied
-  сохранять applied context в operation cache. Схема реестра, resolved settings,
-  права, Cognee и full memory hash не меняются. В текущем прогоне только разбор
-  и исходный повтор; G3/R6/QP-R2 не переоткрываются, новая матрица не добавляется.
+- [x] По отдельному разрешению устранить дефект у existing registry owner:
+  при AlreadyApplied сохранять `applied.context` в operation cache. На том же
+  штатно обновлённом PM5-пилоте подтверждены applied true / preview false,
+  полный guard получил applied hash; keep-local/default enable exit0 и fresh
+  native current/pending[]. Схема, resolved settings, права и Cognee прежние;
+  memory guard целиком побайтно сохранён. Новых случаев/матрицы нет.
+  Финальная регистрация принадлежит helper; позднее исправление ещё не опубликовано.
 
 ## Develop и QP5 пилота, 2026-10-29
 

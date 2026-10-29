@@ -10,10 +10,12 @@ write/read/recall/Codex restart/retire proof сохранён; после дос
 enable без instrumentation и fresh native status current/pending[] прошли,
 cycle/workspace/workplace и sealed DB прежние. Первые два enable guard failures
 [разобраны](../openspec/changes/add-scoped-cognee-memory/evidence/memory-enable-context-2026-10-29.md):
-registry AlreadyApplied сохраняет receipt, но передаёт узкий preview context
-с другим полным hash. Исходный повтор прошёл; точечное runtime-исправление
-этого shortcut до стабильного распространения остаётся отдельным действием.
-В текущем прогоне код не менялся. Unconfirmed writes
+registry AlreadyApplied передавал узкий preview context с другим полным hash.
+По отдельному разрешению owner исправлен: возвращается applied.context;
+keep-local/default на исходном пилоте прошли, broad/narrow ветка реально достигнута,
+полный hash guard побайтно прежний. Исправленный локальный кандидат регистрируется
+отдельно и ещё не входит в опубликованный ac482; требуется обычная доставка.
+Новых случаев, рабочей миграции и публикации нет. Unconfirmed writes
 по-прежнему требуют отдельного exact чтения; нового latency SLA нет.
 [Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
 имеют приоритет над историческим «публикация не начата» ниже. Итоговые

@@ -480,7 +480,9 @@ function Initialize-ItlProductProjectContext {
     if(Test-ItlProductProjectPreviewAlreadyApplied $preview $chosen $Decision){
         $newInputs=Get-ItlProductProjectNoOpInputs $applied.proof -IncludeClientSurfaces:$IncludeClientSurfaces
         if((Get-ItlCatalogHash $cachedInputs) -cne (Get-ItlCatalogHash $newInputs)){$applied['noOpInputs']=$newInputs;Write-ItlProductProjectRecord applied $applied}
-        Set-ItlProductProjectOperationContext $chosen.context;return
+        # A narrower preview did not replace the applied receipt. Nested owners
+        # must retain that receipt's exact context and full hash.
+        Set-ItlProductProjectOperationContext $applied.context;return
     }
     $null=Invoke-ItlProductProjectClientApply -Context $chosen.context -Requests $chosen.requests -ProofRequests $chosen.proofRequests -SavePrivateSelection:$privateChanged -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState
     if($chosen.deferred){Set-ItlProductProjectAppliedContext (Read-ItlProductProjectRecord applied) 'Catalog changes deferred; current local settings were preserved on the prior revision.'}

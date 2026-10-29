@@ -7,11 +7,14 @@
   cache вместо неизменного applied context с `true`; полный memory hash расходится.
 - [x] Повторить исходный disable → enable на том же PM5-пилоте без instrumentation;
   оба exit0, fresh native status current/pending[], прежние IDs/DB/HEAD сохранены.
-- [ ] Отдельно исправить existing registry owner shortcut: переиспользовать
-  authoritative `applied.context`, сохранить полный memory guard. Runtime-код
-  в текущем analysis/replay прогоне не менялся; успешный повтор не устраняет дефект.
+- [x] По отдельному разрешению исправить existing registry owner shortcut:
+  переиспользовать authoritative `applied.context`, сохранить полный memory guard.
+  Штатно обновить тот же пилот и повторить прежние keep-local/default варианты:
+  broad applied true / narrow preview false реально достигнуты, guard получил
+  точный applied hash; оба enable exit0, fresh native current/pending[].
+  Тестовые файлы/случаи не добавлены; регистрация финального head — штатным helper.
 
-[Причина, evidence и границы повтора](evidence/memory-enable-context-2026-10-29.md).
+[Причина, исправление и evidence исходного повтора](evidence/memory-enable-context-2026-10-29.md).
 Новых случаев/gates, рабочей миграции и публикации нет; G3/G5/QP5 не переоткрыты.
 
 ## Develop и QP5 пилота, 2026-10-29
@@ -34,8 +37,9 @@
 
 [Единый фактический отчёт и границы](evidence/pilot-qp5-2026-10-29.md).
 QP5/QP-R2 закрыты для первого PM5/Windows11 пилота после доставки ремонта.
-Первые отказы enable разобраны в разделе выше; причина установлена,
-но runtime-исправление shortcut ещё не выполнено.
+Первые отказы enable разобраны, shortcut исправлен и исходный повтор принят
+на установленном локальном кандидате. В опубликованном ac482 позднего исправления
+ещё нет; публикация текущим прогоном не разрешается.
 Рабочая миграция/master и остальной UNVERIFIED не расширены.
 
 ## Первый пилот, согласован 2026-10-28

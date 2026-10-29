@@ -1,6 +1,11 @@
 # Причина MEMORY_APPLIED_CONTEXT_REQUIRED и исходный повтор
 
-## Граница работы
+Последующим отдельным разрешением исправление выполнено у registry owner;
+прежние native keep-local/default вызовы на том же пилоте прошли. Полный hash
+guard не менялся. Итог этого прогона описан в разделе «Согласованное исправление»
+ниже и имеет приоритет над историческим остатком analysis/replay.
+
+## Граница исходного разбора
 
 Разбор двух сохранённых отказов и повтор того же disable → enable на исходном
 PM5/Windows11 пилоте. Source HEAD `6ac297e9`, установленный workflow `ac482fef`;
@@ -76,7 +81,7 @@ Endpoint registry за время работы обновлял публикац
 проект/продукт пилота не менялись. Отдельная optional degradation `itl-1c-docs`
 в disable log сохранена и не объявлена проверенной или исправленной.
 
-## Остаток перед стабильным выпуском
+## Остаток после исходного разбора
 
 Успешный повтор на уже согласованном контексте не исправляет дефект shortcut.
 Точечное предлагаемое исправление принадлежит registry owner: при подтверждённом
@@ -88,6 +93,56 @@ fetch, Cognee patch, исключения флага из memory hash или д�
 В этом analysis/replay прогоне runtime-исправление не выполнялось. Приёмка G3/G5,
 пилотный QP5 и публикация ac482 не переоткрываются; устранение этого известного
 дефекта остаётся отдельным конкретным действием до стабильного распространения.
+
+## Согласованное исправление и тот же native сценарий
+
+В `Initialize-ItlProductProjectContext`, только в AlreadyApplied shortcut,
+`Set-ItlProductProjectOperationContext $chosen.context` заменён на
+`Set-ItlProductProjectOperationContext $applied.context`. Прежде подтверждённый
+receipt и context теперь остаются единым основанием вложенной memory операции.
+`noOpInputs` по-прежнему обновляет существующий владелец. Новых schema/полей,
+состояний, cache manager, fetch, guards и исключений из hash не добавлено.
+**Весь `agent-1c.memory-context.ps1` побайтно совпадает с версией до исправления.**
+Тестовые файлы, assertions, watchdog и исходные budgets не менялись.
+
+Для чистого payload штатного updater был сохранён локальный runtime commit
+`b088fa0e329634e237a1d3443cd1b94736d3835b`; его thin source bundle сохранён
+как recovery input. Updater получил явный roots manifest только test master
+и исходного Develop-пилота. Release-root, базы, ветки и прежние капсулы не
+сбрасывались; installed memory первоначально отключена тем же владельцем.
+
+После updater подтверждён **широкий applied context с true**, как при исходном
+отказе. Повторён прежний вызов enable с `CatalogDecision=keep-local`:
+
+- Read-only breakpoint в существующей ветке зафиксировал applied true / preview
+  false; hashes различались (`e46dcb47…` и `c7656cae…`). Значит, затронутая ветка
+  реально достигнута, а не пропущена ранним no-op кэшем.
+- Read-only witness перед неизменным полным memory guard показал operation true,
+  applied true и **operationHash = storedHash = appliedHash `e46dcb47…`**.
+  Диагностика не изменяла runtime-код, контексты или результат сравнения.
+- Existing helper завершил keep-local enable exit0. Затем исходный default
+  enable повторён **без instrumentation**, также exit0.
+- Новый stdio-сеанс по тому же installed descriptor: memory_status completed
+  **2.022s**, current/pending[], process exit0. Это прежний setup/status сценарий;
+  remember/reindex, UI/model qualification и новая матрица не добавлялись.
+
+Cycle/workspace/workplace, shared Qwen profile и raw DB SHA `067ee2ac…` сохранены.
+Installed context module совпадает по SHA с исправленным clean source payload;
+memory guard file совпадает по SHA с before. Короткий default повтор не заменяет
+отдельно записанное доказательство прохождения broad/narrow AlreadyApplied.
+
+Итоговые документы добавлены amend только собственного незарегистрированного
+runtime commit; executable bytes относительно native payload не изменялись.
+Final head и единственный Targeted/результат регистрации читаются из штатного
+source-delivery ledger. Source/installed proof и регистрация учитываются отдельно.
+Ни публикация develop/master, ни рабочая миграция этим прогоном не выполняются.
+В опубликованном ac482 этого позднего исправления ещё нет. Для стабильного
+выпуска остаётся доставка зарегистрированного кандидата обычным release owner;
+G3/G5/R6/QP5 и непройденные платформы/frontend не переоцениваются.
+
+Ignored evidence исправления:
+`build/agent-artifacts/memory-applied-context-fix-20261029/`.
+Все прежние analysis/failed/пилотные sealed материалы сохранены.
 
 Ignored evidence: `build/agent-artifacts/memory-enable-context-20261029/`.
 Два исходных failed logs и прежний успешный diagnostic сохранены в sealed
