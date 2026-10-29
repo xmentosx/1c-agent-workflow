@@ -19,6 +19,10 @@ product pilots outside gates.
 
 A stand never points at an external source or production infobase: even a
 read-only Designer dump can update the file container and its event log.
+Its disposable source snapshot stays at `.agent-1c/infobases/source-snapshot`
+inside the stand.
+Capture seals that in-project file source into the capsule and Prepare places
+it in each copy, so a copy's master synchronization dumps its own source.
 
 The Release seed probe creates its own disposable configuration repository inside
 the temporary branch run root when the dedicated stand does not use a repository.

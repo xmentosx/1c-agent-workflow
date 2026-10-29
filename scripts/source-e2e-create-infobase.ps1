@@ -105,6 +105,14 @@ function Remove-SourceQualificationDatabases {
             elseif($item.Name -ieq '1Cv8.1CD'){$files+=$safe}
         }
     }
+    # Prepare records the exact project-side source it placed from the capsule;
+    # other project databases are never disposal targets.
+    $sourceProperty=$claim.PSObject.Properties['sourceInfoBase']
+    if($null -ne $sourceProperty -and [string]$sourceProperty.Value){
+        if(-not ([string]$sourceProperty.Value).StartsWith('project/.agent-1c/',[StringComparison]::Ordinal)){throw 'FIXTURE_DISPOSE_OWNERSHIP_INVALID'}
+        $sourceDatabase=Resolve-QualificationFixtureChild -Root $parent -RelativePath ([string]$sourceProperty.Value+'/1Cv8.1CD')
+        if(Test-Path -LiteralPath $sourceDatabase -PathType Leaf){$files+=$sourceDatabase}
+    }
     $seedCaches=@()
     $seedRoot=Resolve-QualificationFixtureChild -Root $parent -RelativePath 'project/.agent-1c/branch-seed'
     if(Test-Path -LiteralPath $seedRoot -PathType Container){

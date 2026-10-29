@@ -192,6 +192,59 @@ function Get-SourceFixtureContextFiles {
     return $records.ToArray()
 }
 
+function Get-SourceFixtureSourceInfoBase {
+    param([string]$ProjectRoot)
+    # Only an in-project file source is fixture content; an external or server
+    # source stays outside every capsule and copy.
+    $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    $values=@{}
+    foreach($line in @(Read-Utf8Lines -Path (Join-Path $root '.dev.env'))){if($line -match '^(?<key>SOURCE_INFOBASE_(?:PATH|NAME))=(?<value>.*)$'){$values[$Matches.key]=$Matches.value.Trim()}}
+    if(-not $values['SOURCE_INFOBASE_PATH'] -or $values['SOURCE_INFOBASE_NAME']){return $null}
+    $value=$values['SOURCE_INFOBASE_PATH']
+    $path=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($value)){$value}else{Join-Path $root $value})).TrimEnd('\','/')
+    if(-not $path.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){return $null}
+    $relative=$path.Substring($root.Length+1).Replace('\','/')
+    if(-not $relative.StartsWith('.agent-1c/',[StringComparison]::OrdinalIgnoreCase)){return $null}
+    return [pscustomobject]@{path=(Resolve-QualificationFixtureChild -Root $root -RelativePath $relative);relativePath=$relative}
+}
+
+function Save-SourceFixtureSourceInfoBase {
+    param([string]$ProjectRoot,[string]$Capsule)
+    $source=Get-SourceFixtureSourceInfoBase -ProjectRoot $ProjectRoot
+    if($null -eq $source){return $null}
+    $database=Join-Path $source.path '1Cv8.1CD'
+    if(-not (Test-Path -LiteralPath $database -PathType Leaf)){return $null}
+    $artifact='source-infobase.1cd'
+    $destination=Resolve-QualificationFixtureChild -Root $Capsule -RelativePath $artifact
+    # An exclusive handle proves no 1C session or writer holds the source.
+    try{$input=[IO.File]::Open($database,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)}
+    catch [IO.IOException]{throw 'FIXTURE_SOURCE_INFOBASE_BUSY: close every 1C session of the in-project source infobase and repeat Capture.'}
+    try{$output=[IO.File]::Open($destination,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$input.CopyTo($output)}finally{$output.Dispose()}}finally{$input.Dispose()}
+    return [ordered]@{relativePath=$source.relativePath;artifact=$artifact;sha256=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()}
+}
+
+function Get-SourceFixtureSourceInfoBaseRecord {
+    param([object]$Manifest,[string]$Capsule)
+    $property=$Manifest.PSObject.Properties['sourceInfoBase']
+    if($null -eq $property -or $null -eq $property.Value){return $null}
+    $record=$property.Value
+    if(@($Manifest.files|Where-Object {[string]$_.path -ceq [string]$record.artifact -and [string]$_.sha256 -ceq [string]$record.sha256}).Count -ne 1){throw 'FIXTURE_SOURCE_INFOBASE_UNBOUND'}
+    return [pscustomobject]@{relativePath=[string]$record.relativePath;artifactPath=(Resolve-QualificationFixtureChild -Root $Capsule -RelativePath ([string]$record.artifact));sha256=[string]$record.sha256}
+}
+
+function Restore-SourceFixtureSourceInfoBase {
+    param([object]$Record,[string]$TargetProjectRoot)
+    if($null -eq $Record){return}
+    # The installed context already mapped SOURCE_INFOBASE_PATH into the copy.
+    $expected=Get-SourceFixtureSourceInfoBase -ProjectRoot $TargetProjectRoot
+    if($null -eq $expected -or $expected.relativePath -cne $Record.relativePath){throw 'FIXTURE_SOURCE_INFOBASE_TARGET_MISMATCH'}
+    if(Test-Path -LiteralPath $expected.path){throw 'FIXTURE_SOURCE_INFOBASE_TARGET_EXISTS: preserve this attempt; repeat qualification to create a new owned target'}
+    [void][IO.Directory]::CreateDirectory($expected.path)
+    $database=Join-Path $expected.path '1Cv8.1CD'
+    Copy-Item -LiteralPath $Record.artifactPath -Destination $database
+    if((Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Record.sha256){throw 'FIXTURE_SOURCE_INFOBASE_CHANGED'}
+}
+
 function Export-SourceE2EFixtureCapsule {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='')
     $root=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
@@ -235,6 +288,7 @@ function Export-SourceE2EFixtureCapsule {
     Copy-Item -LiteralPath $snapshot -Destination (Join-Path $capsule 'infobase.dt')
     Copy-Item -LiteralPath $statePath -Destination (Join-Path $capsule 'state.json')
     Copy-Item -LiteralPath (Join-Path $root '.dev.env') -Destination (Join-Path $capsule 'master.env')
+    $sourceInfoBase=Save-SourceFixtureSourceInfoBase -ProjectRoot $root -Capsule $capsule
     Copy-Item -LiteralPath (Join-Path $branch '.dev.env') -Destination (Join-Path $capsule 'branch.env')
     Copy-Item -LiteralPath $configPath -Destination (Join-Path $capsule 'release-e2e.json')
     Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('bundle','create',(Join-Path $capsule 'source.bundle'),'refs/heads/master',('refs/heads/itldev/'+$name))+$requiredCommits)|Out-Null
@@ -250,7 +304,7 @@ function Export-SourceE2EFixtureCapsule {
     $files=@(Get-ChildItem -LiteralPath $capsule -Recurse -File|Where-Object {$_.FullName -notlike (Join-Path $capsule 'logs/*')}|ForEach-Object{[ordered]@{path=$_.FullName.Substring($capsule.Length+1).Replace('\','/');sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
     $databasePath=Join-Path ([string]$after.devBranchInfoBasePath) '1Cv8.1CD'
     $databaseSha=(Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $manifest=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';sourceProjectRoot=$root;sourceBranchRoot=$branch;branchName=$name;masterCommit=$masterCommit;branchCommit=$branchCommit;requiredCommits=$requiredCommits;workflowCommit=$workflow;semanticState=$semanticBefore;sourceDatabase=[ordered]@{path=$databasePath;sha256=$databaseSha};files=$files;contextFiles=$context;snapshotDurationMs=$snapshotRun.durationMs;createdAt=[DateTime]::UtcNow.ToString('o')}
+    $manifest=[ordered]@{schemaVersion=1;kind='itl-qualification-fixture';status='sealed';phase=$Phase;infoBaseKind='file';sourceProjectRoot=$root;sourceBranchRoot=$branch;branchName=$name;masterCommit=$masterCommit;branchCommit=$branchCommit;requiredCommits=$requiredCommits;workflowCommit=$workflow;semanticState=$semanticBefore;sourceDatabase=[ordered]@{path=$databasePath;sha256=$databaseSha};sourceInfoBase=$sourceInfoBase;files=$files;contextFiles=$context;snapshotDurationMs=$snapshotRun.durationMs;createdAt=[DateTime]::UtcNow.ToString('o')}
     $manifestPath=Join-Path $capsule 'capsule.json'
     Write-QualificationFixtureJson -Path $manifestPath -Value $manifest
     $sha=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -437,13 +491,15 @@ function New-SourceE2EFixtureProject {
     }
     if((Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('merge-base','--is-ancestor',[string]$manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED: use the capsule captured from a published workflow baseline; preserve the rejected capsule'}
     $capsule=Split-Path -Parent ([string]$descriptor.path)
+    $sourceInfoBase=Get-SourceFixtureSourceInfoBaseRecord -Manifest $manifest -Capsule $capsule
+    $sourceBytes=if($null -ne $sourceInfoBase){[int64](Get-Item -LiteralPath $sourceInfoBase.artifactPath).Length}else{0L}
     $databaseBytes=0L
     if($Phase -eq 'Develop'){
         $databaseBytes=if($sealedAdmission){$DatabaseBudgetBytes}else{[int64](Get-Item -LiteralPath ([string]$manifest.sourceDatabase.path)).Length}
         $spaceOptions=@{}
         if($sealedAdmission){$spaceOptions['Continuation']='Free the reported volume, preserve the capsule and old copies, then repeat the same explicit Prepare with CapsulePath, CapsuleSha256 and DatabaseBudgetBytes.'}
         Assert-SourceE2ESpace -Operation 'prepare qualification copy' -Allocations @(
-            @{path=$ProjectsRoot;bytes=($databaseBytes+(Get-Item -LiteralPath (Join-Path $capsule 'infobase.dt')).Length)},
+            @{path=$ProjectsRoot;bytes=($databaseBytes+$sourceBytes+(Get-Item -LiteralPath (Join-Path $capsule 'infobase.dt')).Length)},
             @{path=[IO.Path]::GetTempPath();bytes=$databaseBytes}) @spaceOptions
     }
     $commit=(Invoke-RepositoryGit -RepositoryRoot $CandidateRoot -Arguments @('rev-parse','HEAD')).stdout.Trim()
@@ -482,6 +538,7 @@ function New-SourceE2EFixtureProject {
     [void][IO.Directory]::CreateDirectory($parent)
     $watch=[Diagnostics.Stopwatch]::StartNew()
     $claim=[ordered]@{schemaVersion=2;kind='itl-qualification-fixture-target';status='materializing';projectRoot=$target;branchRoot=$branch;capsuleSha256=[string]$descriptor.sha256;capsulePath=[string]$descriptor.path;candidateCommit=$commit;phase=$Phase;copyRoot=$parent;projectsRoot=[IO.Path]::GetFullPath($ProjectsRoot).TrimEnd('\','/');workflowCommonGit=(Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot);databaseBytes=$databaseBytes}
+    if($null -ne $sourceInfoBase){$claim['sourceInfoBase']='project/'+$sourceInfoBase.relativePath}
     if($Phase -eq 'Develop'){
         $claim['sourceAdmission']=if($sealedAdmission){'sealed-capsule'}else{'live-seed'}
         $claim['databaseBytesBasis']=if($sealedAdmission){'declared-capacity-budget'}else{'live-seed-file-size'}
@@ -504,6 +561,7 @@ function New-SourceE2EFixtureProject {
     # Origin is the immutable local bundle, never the seed or a publishing remote.
     foreach($item in @($target,$branch)){Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.name','ITL qualification')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.email','qualification@example.invalid')|Out-Null}
     $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
+    Restore-SourceFixtureSourceInfoBase -Record $sourceInfoBase -TargetProjectRoot $target
     $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
     $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $snapshot));Copy-Item -LiteralPath (Join-Path $capsule 'infobase.dt') -Destination $snapshot
