@@ -1,5 +1,20 @@
 # Tasks
 
+## Продуктовые homes: кандидат владельцу, 2026-10-29
+
+- [x] Подготовить [конечную таблицу 44 значений](evidence/product-memory-home-review-2026-10-29.md)
+  по published snapshot `6007bbe0`: business blobs совпали с R6; 21 область
+  каждого поколения → свой КОРП, распределение зарплаты → соответствующий ERP+PM.
+  Доступность/ограничения, MCP, СППР/Mantis, продукты и проекты не изменены.
+- [x] Сопоставить logical labels с 8 existing product mappings локального Qwen
+  provider; native UUID/credentials оставить вне бизнес-реестра и Git-документа.
+- [ ] Получить подтверждение владельца этих 44 home и отдельное поручение
+  публикации данных через существующий registry owner с актуальным publisher tip.
+  В текущем прогоне только предложение: live registry, bindings и Cognee неизменны.
+
+R6/G3 не переоткрываются. Настоящие product read/write пока не разрешаются этой
+таблицей; новая матрица, native проверки и публикация workflow не запускались.
+
 ## Причина memory enable guard, 2026-10-29
 
 - [x] Согласовать с memory [разбор AlreadyApplied](../add-scoped-cognee-memory/evidence/memory-enable-context-2026-10-29.md):
