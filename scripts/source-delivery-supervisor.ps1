@@ -144,6 +144,11 @@ try {
     if ($Action -in @("Cleanup", "PublishDevelop", "PromoteRelease", "ReleaseMaster")) {
         [void](Enter-DeliveryOperation -Action $Action)
     }
+    # Every stand consumer qualifies on this clone's fixture stand; a legacy
+    # stand passed by an older command is replaced with a warning.
+    if ($Action -in @("Plan", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster") -and -not $script:DeliveryCustomGateBoundary) {
+        $E2EProjectRoot = Resolve-DeliveryGateStand -Requested $E2EProjectRoot -AiRulesSource $AiRulesSource -AgentTarget $AgentTarget
+    }
     $result = switch ($Action) {
         "RegisterChange" { Register-SourceChange }
         "Status" {

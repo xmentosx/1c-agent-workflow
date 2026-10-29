@@ -286,3 +286,71 @@ function Invoke-DeliveryReleaseStandRecovery {
         if ($closeError) { throw $closeError }
     }
 }
+
+# One gate stand per clone and fixture (openspec/changes/minimal-gate-stand).
+# Its path is derived, not stored; the builder's marker proves completion.
+function Get-DeliveryGateStandRoot {
+    param([Parameter(Mandatory = $true)][string]$CommonGitDirectory, [Parameter(Mandatory = $true)][string]$FixtureId)
+    $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
+    $clone = Split-Path -Leaf (Split-Path -Parent $common)
+    $parent = if ($env:ITL_GATE_STANDS_ROOT) { [IO.Path]::GetFullPath($env:ITL_GATE_STANDS_ROOT) } else { Join-Path ([IO.Path]::GetPathRoot($common)) 'itl-gate-stands' }
+    # Stand paths always carry whitespace and Cyrillic, like user projects.
+    $word = -join ([char[]](0x0421, 0x0442, 0x0435, 0x043D, 0x0434))
+    return Join-Path $parent ("$clone $word " + $FixtureId.Substring(0, 8))
+}
+
+function Read-DeliveryGateStandMarker {
+    param([string]$StandRoot, [string]$BuilderPath)
+    # The builder's own parameters shadow same-named caller variables.
+    return (& { param($candidateRoot, $builder) . $builder; Read-GateStandMarker -StandRoot $candidateRoot } $StandRoot $BuilderPath)
+}
+
+function Resolve-DeliveryGateStand {
+    param([string]$Requested, [string]$AiRulesSource, [string]$AgentTarget, [int]$BuildTimeoutSeconds = 21600)
+    $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
+    $fixtureId = & { . $builder; Get-GateStandFixtureId -Repository (Split-Path -Parent $PSScriptRoot) }
+    if ($Requested) {
+        $requestedRoot = [IO.Path]::GetFullPath($Requested).TrimEnd('\', '/')
+        $marker = Read-DeliveryGateStandMarker -StandRoot $requestedRoot -BuilderPath $builder
+        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $requestedRoot }
+        Write-Warning "DELIVERY_GATE_STAND_REPLACED: '$requestedRoot' is not a gate stand of the current fixture; this clone's gate stand is used instead. Omit -E2EProjectRoot."
+    }
+    $root = Get-DeliveryGateStandRoot -CommonGitDirectory (Get-DeliveryCommonGitDirectory) -FixtureId $fixtureId
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $root))
+    $lockPath = $root + '.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds($BuildTimeoutSeconds)
+    $lock = $null
+    while ($null -eq $lock) {
+        try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw "DELIVERY_GATE_STAND_BUSY: '$root' is still being built by another operation; repeat the same command after it finishes." }
+            Start-Sleep -Seconds 5
+        }
+    }
+    try {
+        $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
+        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $root }
+        if (Test-Path -LiteralPath $root) {
+            throw "DELIVERY_GATE_STAND_INCOMPLETE: '$root' has no completed build; keep it for diagnosis, then remove it with its '-positive' and worktree siblings and repeat the same command."
+        }
+        $logs = Join-Path (Get-DeliveryCommonGitDirectory) ('itl/gate-stand-logs/' + $fixtureId.Substring(0, 8))
+        [void][IO.Directory]::CreateDirectory($logs)
+        $stdout = Join-Path $logs 'build.stdout.log'; $stderr = Join-Path $logs 'build.stderr.log'
+        $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $builder, '-StandRoot', $root)
+        if ($AiRulesSource) { $arguments += @('-AiRulesSource', $AiRulesSource) }
+        if ($AgentTarget) { $arguments += @('-AgentTarget', $AgentTarget) }
+        Write-Host "Building this clone's gate stand: $root"
+        $job = Start-DeliveryProcess -ArgumentList (@($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) }) -join ' ') `
+            -WorkingDirectory (Split-Path -Parent $PSScriptRoot) -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $errorText = ''
+        try {
+            if (-not $job.process.WaitForExit($BuildTimeoutSeconds * 1000)) { throw "DELIVERY_GATE_STAND_BUILD_TIMEOUT: see $stdout" }
+            $job.process.WaitForExit()
+            if ($job.process.ExitCode -ne 0) { throw "DELIVERY_GATE_STAND_BUILD_FAILED: exit=$($job.process.ExitCode); see $stdout and $stderr, keep '$root' for diagnosis, then remove it with its siblings and repeat the same command." }
+        } catch { $errorText = $_.Exception.Message; throw }
+        finally { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $job.process -PriorErrorMessage $errorText; $job.process.Dispose() }
+        $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
+        if ($null -eq $marker -or [string]$marker.fixtureId -cne $fixtureId) { throw "DELIVERY_GATE_STAND_BUILD_FAILED: '$root' has no completion marker; see $stdout." }
+        return $root
+    } finally { $lock.Dispose() }
+}

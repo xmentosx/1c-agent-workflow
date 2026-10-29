@@ -3,26 +3,19 @@
 ## Dedicated stand setup
 
 Develop and Release qualify on a stand built from the minimal repository
-fixture `tests/fixtures/gate-stand` (no product configuration). Build one per
-publishing clone into new directories whose paths contain whitespace and
-Cyrillic:
-
-```powershell
-.\scripts\new-gate-stand.ps1 `
-  -StandRoot 'D:\Git\itl gate Стенд' `
-  -AiRulesSource <controlled-fork-checkout> `
-  -PlatformPath 'C:\Program Files\1cv8\8.3.27.2130\bin\1cv8.exe'
-```
-
-The builder refuses non-empty targets. It creates each in-stand source snapshot
-from the fixture, runs configured init, creates the Develop
-(`workflow-develop-e2e`) and Release (`workflow-release-e2e`) worktrees, commits
-the Release marker fixture and writes `.agent-1c/release-e2e.json` with the
-configuration-rejection contract. The positive stand (`-PositiveRoot`, default
-`<StandRoot>-positive`) gets its own `golden`/`seed` worktrees. On failure keep
-the directories for diagnosis and repeat on new ones. Pass the stand root as
-`-E2EProjectRoot`; its first qualification is cold. The PM5 stand
-`D:\Git\itl-workflow-e2e-pm5` stays available for product pilots outside gates.
+fixture `tests/fixtures/gate-stand` (no product configuration). Publication
+actions select it themselves: each clone has one stand per fixture at
+`<drive>:\itl-gate-stands\<clone> Стенд <fixture8>` (`ITL_GATE_STANDS_ROOT`
+overrides the parent). A missing stand is built once by
+`scripts/new-gate-stand.ps1` inside the operation, from published
+`origin/develop`, including its baseline capsules; its `.agent-1c/gate-stand.json`
+marker is written last. Omit `-E2EProjectRoot`; a passed stand without the
+current fixture marker, such as the PM5 stand, is replaced with a
+`DELIVERY_GATE_STAND_REPLACED` warning. A directory left by a failed build is
+refused until it is removed with its `-positive` and worktree siblings. The
+builder can also be run directly with `-StandRoot`; it refuses non-empty
+targets. The PM5 stand `D:\Git\itl-workflow-e2e-pm5` stays available for
+product pilots outside gates.
 
 A stand never points at an external source or production infobase: even a
 read-only Designer dump can update the file container and its event log.
@@ -82,8 +75,7 @@ First publish and qualify the exact accumulated development candidate:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot 'D:\Git\itl gate Стенд'
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 This is the only broad check for a batch of ordinary source tasks. It runs one
@@ -103,8 +95,7 @@ release train instead of `PublishDevelop -RequireRelease` followed by
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PromoteRelease `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot 'D:\Git\itl gate Стенд'
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 It runs `Develop`, then `Release`, on one temporary candidate, publishes that
@@ -147,8 +138,7 @@ When that remote development commit is ready for the stable channel, run:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot 'D:\Git\itl gate Стенд'
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 For a GitHub remote, `ReleaseMaster` completes the protected `master` update

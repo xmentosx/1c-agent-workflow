@@ -1,7 +1,68 @@
 BeforeAll {
     $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
     . (Join-Path $script:RepoRoot 'scripts/new-gate-stand.ps1')
+    . (Join-Path $script:RepoRoot 'scripts/source-delivery-release-recovery.ps1')
     $script:FixtureRoot = Join-Path $script:RepoRoot 'tests/fixtures/gate-stand'
+    function Get-DeliveryCommonGitDirectory { throw 'mocked per test' }
+}
+
+Describe 'Per-clone gate stand selection' {
+    BeforeEach {
+        $script:standsRoot = Join-Path $TestDrive ('stands ' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        $env:ITL_GATE_STANDS_ROOT = $script:standsRoot
+        $script:clone = Join-Path $TestDrive 'clone repo'
+        Mock Get-DeliveryCommonGitDirectory { Join-Path $script:clone '.git' }
+        $script:fixtureId = Get-GateStandFixtureId -Repository $script:RepoRoot
+        $script:cloneStand = Get-DeliveryGateStandRoot -CommonGitDirectory (Join-Path $script:clone '.git') -FixtureId $script:fixtureId
+    }
+    AfterEach { Remove-Item Env:ITL_GATE_STANDS_ROOT -ErrorAction SilentlyContinue }
+
+    It 'derives one stand per clone and fixture with whitespace and Cyrillic' {
+        $script:cloneStand | Should -BeLike (Join-Path $script:standsRoot 'clone repo *')
+        $script:cloneStand | Should -Match '\s'
+        $script:cloneStand | Should -Match '[^\x00-\x7F]'
+        $script:cloneStand | Should -BeLike ('* ' + $script:fixtureId.Substring(0, 8))
+    }
+
+    It 'keeps a requested stand of the current fixture and builds nothing' {
+        $requested = Join-Path $TestDrive ('own ' + [char]0x0421)
+        [void][IO.Directory]::CreateDirectory((Join-Path $requested '.agent-1c'))
+        Write-GateStandMarker -StandRoot $requested -PositiveRoot ($requested + '-positive') -FixtureId $script:fixtureId
+        Mock Start-DeliveryProcess { throw 'must not build' }
+        Resolve-DeliveryGateStand -Requested $requested | Should -Be $requested
+    }
+
+    It 'replaces a legacy stand with the completed clone stand and warns' {
+        $legacy = Join-Path $TestDrive 'legacy pm5'
+        [void][IO.Directory]::CreateDirectory((Join-Path $legacy '.agent-1c'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:cloneStand '.agent-1c'))
+        Write-GateStandMarker -StandRoot $script:cloneStand -PositiveRoot ($script:cloneStand + '-positive') -FixtureId $script:fixtureId
+        Mock Start-DeliveryProcess { throw 'must not build' }
+        $output = @(Resolve-DeliveryGateStand -Requested $legacy 3>&1)
+        @($output | Where-Object { $_ -is [string] }) | Should -Be @($script:cloneStand)
+        (@($output | Where-Object { $_ -is [Management.Automation.WarningRecord] }) -join "`n") | Should -Match 'DELIVERY_GATE_STAND_REPLACED'
+    }
+
+    It 'refuses an incomplete clone stand with a continuation instead of reusing or overwriting it' {
+        [void][IO.Directory]::CreateDirectory((Join-Path $script:cloneStand '.agent-1c'))
+        Mock Start-DeliveryProcess { throw 'must not build' }
+        { Resolve-DeliveryGateStand -Requested '' } | Should -Throw '*DELIVERY_GATE_STAND_INCOMPLETE*remove it*repeat the same command*'
+    }
+
+    It 'builds a missing clone stand once through the builder and accepts only its completion marker' {
+        Mock Start-DeliveryProcess {
+            $line = $ArgumentList
+            $line | Should -Match 'new-gate-stand\.ps1'
+            $line | Should -Match ([regex]::Escape($script:cloneStand))
+            [void][IO.Directory]::CreateDirectory((Join-Path $script:cloneStand '.agent-1c'))
+            Write-GateStandMarker -StandRoot $script:cloneStand -PositiveRoot ($script:cloneStand + '-positive') -FixtureId $script:fixtureId
+            [pscustomobject]@{ process = (Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -PassThru); jobHandle = [IntPtr]::Zero }
+        }
+        Resolve-DeliveryGateStand -Requested '' -AiRulesSource 'C:\fork' | Should -Be $script:cloneStand
+        Should -Invoke Start-DeliveryProcess -Times 1 -Exactly
+        Resolve-DeliveryGateStand -Requested '' | Should -Be $script:cloneStand
+        Should -Invoke Start-DeliveryProcess -Times 1 -Exactly
+    }
 }
 
 Describe 'Minimal gate stand fixture' {

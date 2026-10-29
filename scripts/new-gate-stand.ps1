@@ -208,11 +208,47 @@ function Write-GateStandReleaseConfig {
     [IO.File]::WriteAllText((Join-Path $ProjectRoot '.agent-1c/release-e2e.json'), (($Config | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 }
 
+function Get-GateStandFixtureId {
+    param([string]$Repository = $repositoryRoot)
+    # The committed fixture tree identifies a stand; one fixture builds one stand.
+    $id = (& git -C $Repository rev-parse 'HEAD:tests/fixtures/gate-stand').Trim()
+    if ($LASTEXITCODE -ne 0 -or $id -cnotmatch '^[a-f0-9]{40}$') { throw 'GATE_STAND_FIXTURE_UNCOMMITTED: commit tests/fixtures/gate-stand before building a stand.' }
+    return $id
+}
+
+function Get-GateStandMarkerPath { param([string]$StandRoot) return (Join-Path $StandRoot '.agent-1c/gate-stand.json') }
+
+function Read-GateStandMarker {
+    param([string]$StandRoot)
+    $path = Get-GateStandMarkerPath -StandRoot $StandRoot
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { $marker = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { return $null }
+    if ([int]$marker.schemaVersion -ne 1 -or [string]$marker.kind -cne 'itl-gate-stand' -or [string]$marker.fixtureId -cnotmatch '^[a-f0-9]{40}$') { return $null }
+    return $marker
+}
+
+function Write-GateStandMarker {
+    param([string]$StandRoot, [string]$PositiveRoot, [string]$FixtureId)
+    # Written last: its presence means build and baseline capture completed.
+    $marker = [ordered]@{ schemaVersion = 1; kind = 'itl-gate-stand'; fixtureId = $FixtureId; positiveRoot = $PositiveRoot; builtAt = [DateTime]::UtcNow.ToString('o') }
+    [IO.File]::WriteAllText((Get-GateStandMarkerPath -StandRoot $StandRoot), (($marker | ConvertTo-Json) + [Environment]::NewLine), $utf8)
+}
+
+function Resolve-GateStandPlatform {
+    param([string]$Requested, [object]$Fixture)
+    if ($Requested) { return [IO.Path]::GetFullPath($Requested) }
+    if ($env:PLATFORM_PATH) { return $env:PLATFORM_PATH }
+    $default = Join-Path $env:ProgramFiles ('1cv8\' + [string]$Fixture.platformVersion + '\bin\1cv8.exe')
+    if (Test-Path -LiteralPath $default -PathType Leaf) { return $default }
+    throw "GATE_STAND_PLATFORM_REQUIRED: install 1C $($Fixture.platformVersion) or pass -PlatformPath to an 8.3.27+ 1cv8.exe."
+}
+
 if (-not $StandRoot) { return }
 $StandRoot = [IO.Path]::GetFullPath($StandRoot)
 $PositiveRoot = if ($PositiveRoot) { [IO.Path]::GetFullPath($PositiveRoot) } else { $StandRoot + '-positive' }
-$script:Platform = if ($PlatformPath) { [IO.Path]::GetFullPath($PlatformPath) } elseif ($env:PLATFORM_PATH) { $env:PLATFORM_PATH } else { throw 'GATE_STAND_PLATFORM_REQUIRED: pass -PlatformPath to an 8.3.27+ 1cv8.exe.' }
 $fixture = Read-GateStandFixture -Root $fixtureRoot
+$fixtureId = Get-GateStandFixtureId
+$script:Platform = Resolve-GateStandPlatform -Requested $PlatformPath -Fixture $fixture
 foreach ($root in @($StandRoot, $PositiveRoot)) { Assert-GateStandTarget -Path $root }
 $script:LogRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl-gate-stand-logs-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($script:LogRoot)
@@ -237,6 +273,14 @@ $develop = New-GateStandBranch -ProjectRoot $StandRoot -Name 'workflow-develop-e
 $release = New-GateStandBranch -ProjectRoot $StandRoot -Name 'workflow-release-e2e' -Label 'stand'
 Add-GateStandReleaseFixture -Worktree $release -Fixture $fixture
 Write-GateStandReleaseConfig -ProjectRoot $StandRoot -Config (New-GateStandReleaseConfig -DevelopBranch 'workflow-develop-e2e' -DevelopWorktree $develop -ReleaseBranch 'workflow-release-e2e' -ReleaseWorktree $release -Rejection $rejection)
+# Publication preparation never creates baselines; the published install is it.
+$capture = Join-Path $repositoryRoot 'scripts/source-e2e-fixture.ps1'
+foreach ($baseline in @(@('Release', $StandRoot), @('Develop', $StandRoot), @('Develop', $PositiveRoot))) {
+    $output = Join-Path $script:LogRoot ("capture-$($baseline[0])-$($script:Steps.Count).json")
+    Invoke-GateStandChild -Name "capture-$($baseline[0])-$(Split-Path -Leaf $baseline[1])" -WorkingRoot $baseline[1] -ScriptPath $capture `
+        -Arguments @('-Action', 'Capture', '-Phase', $baseline[0], '-ProjectRoot', $baseline[1], '-AgentTarget', $AgentTarget, '-OutputPath', $output) -TimeoutSeconds 900
+}
+Write-GateStandMarker -StandRoot $StandRoot -PositiveRoot $PositiveRoot -FixtureId $fixtureId
 } finally {
     if ($source.temporary) { & git -C $repositoryRoot worktree remove --force $source.root }
 }
