@@ -89,9 +89,13 @@ function Assert-DevelopConfigurationRejection {
         throw 'DEVELOP_NEGATIVE_DIAGNOSTIC_CHANGED: the exact declared finding was not reported in the hashed native log.'
     }
     $state = Get-Content -LiteralPath (Join-Path $Root ('.agent-1c/dev-branches/' + $BranchName + '.json')) -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Only a rejected refresh leaves its merged transaction pending; a
+    # production check merges nothing, so a fresh branch has no such fields.
+    $pendingOperation = if ($state.PSObject.Properties['pendingMergeOperation']) { [string]$state.pendingMergeOperation } else { '' }
+    $pendingStage = if ($state.PSObject.Properties['pendingMergeStage']) { [string]$state.pendingMergeStage } else { '' }
     if ([string]$state.devBranchInfoBasePath -ine [string]$receipt.infoBasePath -or
         [string]$state.infoBaseKind -cne [string]$receipt.infoBaseKind -or
-        [string]$state.pendingMergeOperation -cne 'refresh-dev-branch' -or [string]$state.pendingMergeStage -cne 'merged') {
+        ($ExpectedAction -ceq 'refresh-dev-branch' -and ($pendingOperation -cne 'refresh-dev-branch' -or $pendingStage -cne 'merged'))) {
         throw 'DEVELOP_NEGATIVE_TARGET_OR_CONTINUATION_CHANGED'
     }
     Assert-TrackedClean -Root $Root -Label 'Rejected configuration fixture'
