@@ -48,6 +48,73 @@ Describe 'Pester shard selected-test identity' {
         }
     }
 
+    It 'reuses runtime proof after prose edits but invalidates real document, code and shared inputs' {
+        $root=New-ShardIdentityFixture 'Проверки документации'
+        $runtime='tests/pester/VanessaRuntimeCleanup.Tests.ps1'
+        $guidance='tests/pester/VerificationGuidance.Tests.ps1'
+        $code='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        $prose='.agents/skills/1c-workflow/references/verification-change.md'
+        $document='.agents/skills/1c-workflow/references/yaxunit-tests.md'
+        $support='tests/pester/TestSupport.ps1'
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $production=Get-QualityContractCatalog $RepoRoot
+        # Use the actual owner assignments, with tiny executable consumers.
+        # No native/OneScript dependencies belong to these two fixture tests.
+        $owners=@($production.contracts | Where-Object {$runtime -in $_.tests -or $guidance -in $_.tests})
+        $catalog=@{schemaVersion=1;contracts=$owners}
+        foreach($path in @($code,$prose,$document,$support)) {
+            $target=Join-Path $root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            [IO.File]::WriteAllText($target,'fixture',[Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root $support),"`$script:FixtureSharedValue='fixture'",[Text.UTF8Encoding]::new($false))
+        foreach($test in @($runtime,$guidance)) {
+            $fixtureInput=if($test -eq $runtime){$code}else{$document}
+            $body="Describe 'Actual input consumer' { It 'reads its input' { . (Join-Path `$PSScriptRoot 'TestSupport.ps1'); `$script:FixtureSharedValue | Should -Be 'fixture'; `$root=Split-Path -Parent (Split-Path -Parent `$PSScriptRoot); (Get-Content -LiteralPath (Join-Path `$root '$fixtureInput') -Raw -ErrorAction Stop) | Should -Match 'fixture' } }"
+            [IO.File]::WriteAllText((Join-Path $root $test),$body,[Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($runtime,$guidance)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all;& git -C $root commit -qm 'document consumers'
+        $cold=Invoke-ShardIdentityFixture $root 'out-doc-cold'
+        $cold.executedWorkerCount | Should -Be 2
+        $cold.failed | Should -Be 0
+        [IO.File]::AppendAllText((Join-Path $root $prose),"`nUnrelated agent guidance.")
+        & git -C $root add --all;& git -C $root commit -qm 'prose only'
+        $warm=Invoke-ShardIdentityFixture $root 'out-doc-prose'
+        $warm.reusedWorkerCount | Should -Be 2
+        $warm.executedWorkerCount | Should -Be 0
+        foreach($case in @(
+            @{path=$document;executed=$guidance;reused=$runtime},
+            @{path=$code;executed=$runtime;reused=$guidance}
+        )) {
+            [IO.File]::AppendAllText((Join-Path $root $case.path),"`n# changed fixture input")
+            & git -C $root add --all;& git -C $root commit -qm 'consumed input'
+            $changed=Invoke-ShardIdentityFixture $root ('out-doc-'+[IO.Path]::GetFileNameWithoutExtension($case.path))
+            $changed.executedWorkerCount | Should -Be 1
+            $changed.reusedWorkerCount | Should -Be 1
+            @($changed.workers | Where-Object execution -eq 'executed' | ForEach-Object {Split-Path $_.paths[0] -Leaf}) | Should -Be @((Split-Path $case.executed -Leaf))
+            @($changed.workers | Where-Object execution -eq 'reused' | ForEach-Object {Split-Path $_.paths[0] -Leaf}) | Should -Be @((Split-Path $case.reused -Leaf))
+        }
+        [IO.File]::AppendAllText((Join-Path $root $support),"`n# shared loaded input")
+        & git -C $root add --all;& git -C $root commit -qm 'shared input'
+        $changed=Invoke-ShardIdentityFixture $root 'out-doc-shared'
+        $changed.executedWorkerCount | Should -Be 2
+        $changed.reusedWorkerCount | Should -Be 0
+        # A missing real document must not reuse its previous passing proof.
+        & git -C $root rm -q -- $document
+        & git -C $root commit -qm 'missing consumed document'
+        $output=Join-Path $root 'out-doc-missing'
+        $run=Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+            '-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),
+            '-WorkerCount','1','-SelectionPath',(Join-Path $root 'selection.json'))
+        $run.exitCode | Should -Not -Be 0
+        $result=Get-Content -LiteralPath (Join-Path $output 'pester-shards/summary.json') -Raw | ConvertFrom-Json
+        $result.failed | Should -Be 1
+        $result.reusedWorkerCount | Should -Be 1
+        $result.executedWorkerCount | Should -Be 1
+    }
+
     It 'separates tests with identical owner inputs and reuses each exact result in another worktree' {
         $root = New-ShardIdentityFixture 'Разные тесты'
         $first = Invoke-ShardIdentityFixture $root 'out-first'
