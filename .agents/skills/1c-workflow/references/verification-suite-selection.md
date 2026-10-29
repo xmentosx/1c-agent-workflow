@@ -57,6 +57,15 @@ do not require a UI walkthrough or a new saved suite.
 Schema 1 remains readable and maps existing acceptance/default-fast entries to
 `affected` and existing explicit entries to `explicit`, without deleting tests.
 
+Decide retention separately from current proof sufficiency. Reuse adequate
+existing coverage; retain a new test when expected reuse justifies fixture
+preparation, debugging, loading, execution and maintenance. Explain the choice
+in the existing `retentionReason`, without another report or approval round.
+Neither an integration dependency nor an unchanged formula alone decides
+retention. This choice does not retire existing required suites or approved
+tests. Apply `verification-change.md` for semantic sufficiency and impact;
+valid catalog classification does not itself prove the declared behaviour.
+
 ```json
 {
   "schemaVersion": 2,
@@ -226,13 +235,18 @@ applicability decision. Accepted unchanged master input is excluded. A deleted
 module needs no new decision. Resetting a branch for a new task starts a fresh
 baseline at its reset HEAD.
 
-For each later changed production BSL, the agent first inspects the decision
-points and searches existing YAxUnit and Vanessa coverage. Reuse or strengthen
-a sufficient `default-fast` group; add one focused group only for a contract
-that has no adequate coverage. If unit testing is genuinely inapplicable (for
-example the changed behavior requires a real form or session), put an exact
-`notApplicable` entry in the branch catalog with the current source blob OID
-printed by the inventory and a concrete reason. Example:
+For each later changed production BSL, inspect the changed decisions and
+existing YAxUnit and Vanessa coverage. Reuse or strengthen a sufficient
+`default-fast` group; choose new checks under `yaxunit-tests.md` and
+`verification-change.md`. Where no default-fast group or `notApplicable` is
+declared, the classifier also accepts a sufficient current `one-off` obligation
+whose `inputPaths` cover the production path. This selects current proof, not
+unit-test inapplicability, and does not waive an already required group.
+If unit testing is genuinely inapplicable (for example the changed behavior
+requires a real form or session), put an exact `notApplicable` entry in the
+branch catalog with the current source blob OID printed by the inventory and
+a concrete reason. Judge the changed contract, not the size or general purpose
+of its containing module. Example:
 
 ```json
 {

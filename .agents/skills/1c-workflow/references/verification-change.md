@@ -48,10 +48,29 @@ and uncommitted edits. Each path needs a reason and sufficient current checks.
 Instead of creating a new observation, `checks` may reference an existing
 acceptance `suiteId` or default-fast `groupId`; use its existing obligation id in `checkIds`. A named explicit diagnostic run can supply a current one-off JUnit receipt; diagnostic status alone does not close acceptance.
 
-The agent owns semantic sufficiency and impact analysis. Missing controls need
-inspection of the actual form, not blind scenario rewrites. A product failure
-remains a failure; do not change the expected outcome to make it pass. Unknown
-mutation outcomes and foreign sessions retain their existing recovery rules.
+The agent owns semantic sufficiency and impact analysis. In this same plan,
+choose the least costly sufficient combination of existing or new checks for
+the changed decisions, invariants and material interaction risks. Each added
+check must close an identified gap; do not duplicate a boundary matrix across
+unit, integration and UI layers without a distinct risk. Cost selects the
+method and informs test retention; it never makes incomplete proof sufficient
+or waives approved criteria and independently required checks.
+
+Derive expected results from the agreed outcome and domain contract, not from
+the chosen implementation. Preserve the material preconditions of the reported
+defect or criterion. Observing an internal method proves only its contract,
+unless the remaining path to the required outcome is also established. Separate
+successes do not prove a combination of conditions whose interaction matters.
+Cover combinations required by the defect, criterion or an identified dependency;
+do not invent an exhaustive cross-product. Technical invariants remain useful
+checks, but cannot alone establish the whole user outcome.
+
+Missing controls need inspection of the actual form, not blind scenario rewrites.
+Changing the interaction method must preserve those material conditions. A
+product failure remains a failure; do not change the expected outcome to make
+it pass. Unknown mutation outcomes and foreign sessions retain their existing
+recovery rules. Decide whether to retain a test separately under
+`verification-suite-selection.md`; no additional planning document is required.
 
 ## Execute and accept
 
@@ -59,7 +78,15 @@ Run the normal unfiltered `/itl-check` against the current branch copy. The
 existing runner, applicability, event-log and load checks stay authoritative.
 For a selected one-off observation, use `begin-one-off-proof`, perform the
 authorized check, retain expected/actual evidence, then `complete-one-off-proof`.
-No `.feature` is required for an admissible runtime observation.
+No `.feature` is required for an admissible runtime observation; do not convert
+and rerun a sufficient observation merely to obtain a saved test file.
+
+Complete independent proofs as they become available. Failure of another check
+does not discard them; reuse still requires the existing input, target and
+artifact assessment. Preserve observations from an unfinished connected
+scenario, but do not mark that scenario passed until its required outcome is
+observed under consistent material conditions. After a repair, obtain the
+missing or affected proof rather than manually repeating unaffected observations.
 
 Finish with `complete-verification-change`. It validates current receipts and
 records an immutable accepted increment. A changed input after planning stops

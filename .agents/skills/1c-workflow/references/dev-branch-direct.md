@@ -20,10 +20,10 @@ planningMode=direct
 Reason: <promotion trigger или причина выхода за quick-fix>; scope and solution are clear.
 ```
 
-После реализации действуют релевантные YAxUnit-тесты границ, Vanessa-сценарии интеграции/UI и один финальный fresh passed `/itl-check`. Высокий verification risk усиливает проверки, а не создает proposal автоматически.
+После реализации получите достаточные доказательства по `verification-change.md`: применимые существующие или новые проверки, включая допустимое разовое наблюдение. Итоговую готовность оценивает финальный fresh passed `/itl-check`. Высокий verification risk усиливает необходимые проверки, а не создает proposal или дублирующий набор автоматически.
 
-Финальный `/itl-check` выполняется после последней правки и принадлежит helper: он обновляет копию базы текущей ветки, запускает YAxUnit, Vanessa Automation через `TESTMANAGER -> TESTCLIENT`, читает JUnit и проверяет event-log baseline. Не заменяйте его MCP, headless EPF или `/deploy-and-test`.
+Финальный `/itl-check` выполняется после последней релевантной правки и принадлежит helper: он определяет необходимые обновление копии базы, запуски выбранных YAxUnit и Vanessa Automation через `TESTMANAGER -> TESTCLIENT`, проверку JUnit и event-log baseline, учитывая применимые сохранённые доказательства. Интерактивное MCP-подтверждение не требует дублирующего файла-теста, но не заменяет итоговую helper-оценку. Не заменяйте её headless EPF или `/deploy-and-test`.
 
-Если проверка упала, проанализируйте отчёт Vanessa, лог 1С, event-log evidence и изменённый код; исправьте причину и повторите полный helper-owned цикл. Лимит recovery — три полных неуспешных запуска одной repair session, после чего нужно вернуть blocker diagnostics и не заявлять completion.
+Если проверка упала, проанализируйте отчёт выбранного runner, лог 1С, event-log evidence и изменённый код; исправьте причину и повторите полный helper-owned цикл. Повторные запуски и применимость доказательств определяет helper; не повторяйте вручную незатронутые наблюдения. Лимит recovery — три полных неуспешных запуска одной repair session, после чего нужно вернуть blocker diagnostics и не заявлять completion.
 
 Заявлять проверенную готовность можно только после fresh passed `/itl-check`. Для `/itl-result` при partial/skipped evidence применяйте `verificationPolicy`; такой результат никогда не становится normal fresh pass.
