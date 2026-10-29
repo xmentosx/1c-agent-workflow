@@ -12,10 +12,12 @@
 - [x] После штатного обновления754d4d24 выполнить native memory write/read и
   Codex fresh session на реальном applied snapshot; cycle/база1С сохранены,
   старые pending не replayed; marker retired, final0originals.
-- [ ] QP-R2 delivery: отдельно согласовать новую общую публикацию ремонта и
-  reviewed published Develop baseline с намеренно сохранённой привязкой проекта.
-  Existing owner обнаружил неподтверждённый workflow-only Git hop; capsule
-  не переписываются автоматически. Native proof не заменяет выпускной допуск.
+- [x] QP-R2 delivery: по отдельному разрешению штатно подготовить новый reviewed
+  published Develop baseline с привязкой проекта; сохранить прежние capsule
+  и выпустить общую очередь в develop `ac482fef`, static4141/0/0, native
+  upgrade/fresh passed. Память пилота возвращена, native status current/pending[],
+  прежние cycle/workspace/workplace и sealed DB сохранены. Первые enable guard
+  failures сохранены в едином отчёте; нового исправления кода не заявлено.
 
 Полные source/target cold snapshots сохранены; старый qualification writer
 отключён. Рабочие проекты, master и прежний UNVERIFIED остаются вне допуска.
@@ -66,14 +68,15 @@ G3/R6 закрыты в прежнем контуре; R1–R5 не объявл
 
 - [x] QP-RP. Согласовать proposal/design/specs/tasks/acceptance с выбором Qwen, сохранением данных и управляемым возвратом; подтвердить независимость опубликованного R6.
 - [x] QP-R1. В QP0/2/3 сверить те же stable business IDs/homes/applicability и exact old→new physical mappings; не менять опубликованный SHA ради embedding и не переносить private IDs/ключи в business registry.
-- [ ] QP-R2. В QP4/5 подтвердить existing owner setup/reload/default-on/off и current applied snapshot при смене qualified deployment; старые pending, cycle/workplace IDs и registry-only путь сохраняются.
+- [x] QP-R2. Для согласованного первого PM5/Windows11 пилота QP4/5 подтвердили existing owner setup/reload/default-on/off и current applied snapshot при смене qualified deployment; старые pending, cycle/workplace IDs и registry-only путь сохранены. Native proof, выпуск ac482 и возврат пилота записаны раздельно в едином отчёте; прочий охват остаётся UNVERIFIED.
 - [ ] QP-R3. В будущем QP6 проверить неизменность registry context и current originals после возврата с поздними corrections/deletions; не считать восстановление старого snapshot доказательством текущего состояния.
 
 QP-R1: business SHA/bytes/homes прежние,17новых shared native mappings
 получены от ordinary account для пустого старта; old production IDs отсутствуют.
-QP-R2: часть QP4 выполнена source/native fixture AUTO/off/fresh process,
-5старых local files/2unsent pending byte-preserved. Реальный setup/reload
-обычных клиентов относится к QP5, поэтому общий пункт не закрыт. QP-R3 не начат.
+QP-R2: source/native fixture AUTO/off/fresh process дополнены реальным QP5
+setup/reload, native proof и доставкой ac482 в согласованном пилоте.
+Прежние pending/IDs сохранены; иной platform/frontend охват не принят.
+QP-R3 не начат: обратный перенос поздних данных требует отдельного разрешения.
 
 Эти dependency criteria используют QP-AC1–8 memory owner, не создают второй
 проход qualification. QP5/QP6, Gate6, рабочая миграция и публикация пока

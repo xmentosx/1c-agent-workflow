@@ -12,13 +12,16 @@
 - [x] Зарегистрировать754d4d24 и штатно обновить test master+Develop;
   завершить установленный N1/write/exact/recall/Codex restart/precise retire.
   Unconfirmed сверены без blind replay; final0originals/current/pending[].
-- [ ] Согласовать и выполнить отдельную доставку ремонта: новая общая очередь
-  и reviewed published Develop baseline после намеренной привязки пилота.
-  Старые capsule/данные сохраняются, автоматическая Recapture не допускается.
+- [x] По отдельному разрешению подготовить reviewed published Develop baseline
+  с привязкой пилота и выпустить актуальную общую очередь: `ac482fef`,
+  static4141/0/0, native upgrade/fresh passed; прежние capsule/данные сохранены.
+- [x] Штатно вернуть память пилота, подтвердить исходный enable без instrumentation
+  и fresh native status current/pending[] при прежних cycle/workspace/workplace.
 
 [Единый фактический отчёт и границы](evidence/pilot-qp5-2026-10-29.md).
-Нативный pilot завершён на зарегистрированном ремонте; QP5/QP-R2 открыты до
-его доставки. Рабочая миграция/master и остальной UNVERIFIED не расширены.
+QP5/QP-R2 закрыты для первого PM5/Windows11 пилота после доставки ремонта.
+Первые отказы enable сохранены; их причина не объявлена исправленной.
+Рабочая миграция/master и остальной UNVERIFIED не расширены.
 
 ## Первый пилот, согласован 2026-10-28
 
@@ -79,7 +82,7 @@ User choice Qwen и выполнение QP0–QP4 согласованы.
 - [x] QP2. Подготовить isolated target с сохранённым account UUID (для пустого старта — новый ordinary account без fixture identity) и новыми native dataset namespaces; scope/noteId/local cycle identities неизменны, normal clients не подключать.
 - [x] QP3. Штатно построить4096 индекс из exact current originals, подтвердить native completed/raw/CHUNKS и old→new mappings; не подмешивать384-векторы и не replay unknown writes.
 - [x] QP4. Квалифицировать затронутые existing write/status/fresh-reader/correction/retirement/restore/default-on сценарии и ресурсы на новом профиле, переиспользовать остальное evidence; обновить existing policy admission с сохранённым BGE return path. Source/Targeted отдельно от Gate6.
-- [ ] QP5. Только после отдельного разрешения и требуемой выпускной квалификации: финальное окно/Tf, diff текущих originals, native additions/corrections/deletions, existing owner setup/reload и один normal writer target; explicit off сохранить.
+- [x] QP5. В отдельно разрешённом PM5/Windows11 пилоте выполнены Tf/diff, сохранение данных, existing owner setup/reload и native proof с одним Qwen normal writer target; explicit off остальных установок сохранён. Доставка ремонта ac482 и финальный status подтверждены единым отчётом выше; прочий клиентский/платформенный охват не принят.
 - [ ] QP6. При отдельно разрешённом возврате: до новых writes — прежний комплект; после writes — полный Tr, перенос поздних текущих изменений и удалений в BGE, fresh proof и только затем допуск. При невозможности сверки — сохранить обе стороны и unavailable, без молчаливой потери.
 
 QP0–QP4 выполнены: рабочий старт пустой (0originals/17shared scopes),

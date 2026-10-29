@@ -1,17 +1,20 @@
 # Подготовленный комплект workflow и ai_rules_1c r50
 
-Текущий результат 2026-10-29: согласованный frozen plan штатно опубликовал
-develop `1e5b4acff1c26c2a47eb3cc22cb92fb72bcd7ed6`, static4129/0/0,
-native upgrade/fresh и совместимость12clients passed. Master прежний.
-QP5 настроен на одном тестовом PM5/Windows11; его первый native status
-выявил bounded applied-reader и PS module dependency defects. Ремонт754d4d24
-зарегистрирован/установлен, native write/read/recall/Codex restart/retire прошли;
-final0originals/current/pending[]. Unconfirmed writes подтверждены отдельным
-чтением, прежние guards сохранены. Доставка ремонта и reviewed published
-Develop baseline с намеренной привязкой проекта остаются отдельным допуском.
+Текущий результат 2026-10-29: по отдельному разрешению подготовлен новый
+reviewed Develop baseline с сохранением прежних capsule/данных. Frozen plan
+`9d5014c3` штатно опубликовал исправление памяти и актуальную общую очередь:
+develop `ac482fef1d08d0c93c3932bfd430517d411da020`, static4141/0/0,
+native upgrade/fresh и совместимость ai_rules_1c r50 passed. Master прежний.
+QP5/QP-R2 закрыты для одного тестового PM5/Windows11 пилота: исходный native
+write/read/recall/Codex restart/retire proof сохранён; после доставки штатный
+enable без instrumentation и fresh native status current/pending[] прошли,
+cycle/workspace/workplace и sealed DB прежние. Первые два enable guard failures
+сохранены, их первопричина не объявлена исправленной. Unconfirmed writes
+по-прежнему требуют отдельного exact чтения; нового latency SLA нет.
 [Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
-имеют приоритет над историческим «публикация не начата» ниже; рабочая миграция
-и master не разрешены, QP5 пока не закрыт.
+имеют приоритет над историческим «публикация не начата» ниже. Итоговые
+документы регистрируются отдельно и не включены в уже опубликованный ac482;
+рабочая миграция/master, остальные платформы/frontend и QP6 не выполнялись.
 
 ## Что уже закреплено
 
