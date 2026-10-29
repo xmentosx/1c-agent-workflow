@@ -18,6 +18,8 @@ For PM5 product logic, architecture, workflows, permissions, reports, integratio
 
 Use sibling `itldev/*` worktrees and only the state-proven copied branch infobase. Never load/dump/test against the source infobase. `/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`, and `/deploy-and-test` are ITL bridges that reconcile branch state. On `master` or outside managed `itldev/*`, they stop without mutation.
 
+Source `REPOSITORY_PATH` never requires source lock/commit for local edits or verification in ready unbound branch copies. This overrides generic repository activation. Explicit source operations retain repository discipline; see [repository capture](.agents/skills/1c-workflow/references/branch-lifecycle.md#repository-capture).
+
 Pending extension branches ask Empty/CFE, name, and optional path, then initialize internally there. Never give PowerShell; blocked actions return `EXTENSION_INIT_REQUIRED`.
 
 `ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, `ITL_CHECK_EVENT_LOG`: `auto|manual|off` (`auto`). For algorithms, recovery, or optimization, `yaxunit-tests.md` is mandatory, including its boundary matrix, optimization invariants, test grouping, and benchmark cadence. Integration/UI needs Vanessa; complex changes may need both. Classify changed tests and post-adoption BSL; reuse coverage or justify exact YAxUnit non-applicability per `verification-suite-selection.md`. Resolve gaps yourself before `/itl-check`.

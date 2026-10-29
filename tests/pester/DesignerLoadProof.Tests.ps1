@@ -1,4 +1,4 @@
-Describe "1C Designer load proof invalidation" {
+﻿Describe "1C Designer load proof invalidation" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -293,6 +293,55 @@ Describe "1C Designer load proof invalidation" {
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'loads local edits into a ready unbound branch with configured source storage while source Designer holds its base' {
+        $root = Join-Path $TestDrive 'Локальная ветка с пробелом'
+        $source = Join-Path $root 'Исходная база'
+        $branch = Join-Path $root 'База ветки'
+        $export = Join-Path $root 'src/cf'
+        foreach ($path in @($source, $branch, $export)) { [void][IO.Directory]::CreateDirectory($path) }
+        $sourceDatabase = Join-Path $source '1Cv8.1CD'
+        [IO.File]::WriteAllText($sourceDatabase, '')
+        [IO.File]::WriteAllText((Join-Path $root '.dev.env'), "REPOSITORY_PATH=fixture-source-storage`nSOURCE_USES_REPOSITORY=true`n", [Text.UTF8Encoding]::new($false))
+        $module = Join-Path $export 'Module.bsl'
+        [IO.File]::WriteAllText($module, '// local branch edit', [Text.UTF8Encoding]::new($false))
+        $holder = [IO.File]::Open($sourceDatabase, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $script:BranchLoadCalls = 0
+                function Get-SourceInfoBasePath { throw 'Branch verification must not access source' }
+                function Lock-ConfigRepositoryObjects { throw 'Branch edits must not capture source objects' }
+                function New-RepositoryConnectionArgs { throw 'Branch load must not use source repository credentials' }
+                function Get-ConfigSourceFingerprint {
+                    [pscustomobject]@{ fingerprint='local-edit'; treeObjectId=('a'*40); fileCount=1; absoluteExportPath=$export; repoPath='src/cf' }
+                }
+                function Get-ConfigLoadChangeSet { [pscustomobject]@{files=@('Module.bsl'); currentCommit='head'; absoluteExportPath=$export; requiresFullLoad=$true} }
+                function Get-CurrentCommit { 'head' }
+                function Assert-OneCConfigurationSourceIntegrity {}
+                function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+                function Invoke-ConfigLoadWithFallback {
+                    param($InfoBasePath, $InfoBaseKind, $AbsoluteExportPath)
+                    $InfoBasePath | Should -Be $branch
+                    $InfoBaseKind | Should -Be 'file'
+                    [IO.File]::ReadAllText((Join-Path $AbsoluteExportPath 'Module.bsl')) | Should -Be '// local branch edit'
+                    $script:BranchLoadCalls++
+                    [pscustomobject]@{lastLogPath='branch.log'; loadModeUsed='full'; partialLogPath=''; fullFallbackLogPath=''; configLoadStatus='passed'; partialError=''; fullFallbackError=''}
+                }
+                $statePath = Save-DevBranchState -SafeDevBranchName 'local-edit' -State @{
+                    safeDevBranchName='local-edit'; devBranch='itldev/local-edit'; initializationStatus='ready'
+                    sourceUsesRepository=$true; repositoryUnbound=$true
+                    lastConfigDesignerFingerprint='before-edit'; configLoadStatus='passed'
+                }
+                $load = Load-ConfigFromFiles -InfoBasePath $branch -InfoBaseKind file -State (Read-DevBranchStateFile -Path $statePath) -ExportPath 'src/cf' 6>$null
+                [pscustomobject]@{load=$load; calls=$script:BranchLoadCalls; repository=(Get-EnvValue -Name 'REPOSITORY_PATH'); sourceLocked=(-not (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $source))}
+            }
+            $result.repository | Should -Be 'fixture-source-storage'
+            $result.calls | Should -Be 1
+            $result.load.designerInvoked | Should -BeTrue
+            $result.sourceLocked | Should -BeTrue
+        } finally { $holder.Dispose() }
     }
 
     It "always invokes Designer for an explicit Full load even when the fingerprint matches" {

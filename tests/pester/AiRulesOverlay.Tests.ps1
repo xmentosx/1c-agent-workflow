@@ -249,6 +249,18 @@ Describe "controlled ai_rules_1c release overlay" {
         }
     }
 
+    It "overrides generic repository activation only for ready unbound branch development" {
+        $rules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/references/branch-lifecycle.md') -Raw -Encoding UTF8
+        $rules | Should -Match 'Source `REPOSITORY_PATH` never requires source lock/commit for local edits or verification in ready unbound branch copies'
+        $rules | Should -Match 'overrides generic repository activation'
+        $rules | Should -Match 'Explicit source operations retain repository discipline'
+        $lifecycle | Should -Match 'even while source Designer is open'
+        $lifecycle | Should -Match 'never an automatic prerequisite of branch development, verification, export or merge'
+        $lifecycle | Should -Match 'do not clear repository settings or unbind source'
+        $lifecycle | Should -Match "never bypass another owner's capture"
+    }
+
     It "keeps eligible local BSL fixes on quick-fix without weakening completion" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/USER-RULES.append.md') -Raw -Encoding UTF8

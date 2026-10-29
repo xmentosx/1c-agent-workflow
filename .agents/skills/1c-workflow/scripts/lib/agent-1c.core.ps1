@@ -7109,6 +7109,15 @@ function Test-DesignerInvocationReleased {
         return $false
     }
 
+    # A failed launch must release its own processes, not an unrelated holder
+    # of the same file base. Success keeps the operation's release contract.
+    if ($ProbeContext.launcherExited -and (
+        [int](Get-StateValue -State $ProbeContext -Name 'launcherExitCode' -Default 0) -ne 0 -or
+        (Get-DesignerLogTerminalState -LogPath $LogPath -SuccessPattern '').state -eq 'failure'
+    )) {
+        $RequireInfoBaseRelease = $false
+    }
+
     Set-DesignerInvocationLauncherIdentity -ProbeState $ProbeState -ProbeContext $ProbeContext
     $ProbeState.infoBaseReleaseDatabasePath = if ($RequireInfoBaseRelease -and $InfoBaseKind -eq "file" -and $ProbeState.processesReleaseConfirmed) {
         Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
@@ -7422,6 +7431,7 @@ function Invoke-NativeProcessAndWaitResult {
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 86400)][int]$PostExitProbeSeconds = 0,
+        [ValidateRange(0, 300)][int]$FailurePostExitProbeSeconds = 0,
         [switch]$RequirePostExitProbeOnFailure,
         [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0,
         [string]$StdoutPath = '',
@@ -7493,6 +7503,7 @@ function Invoke-NativeProcessAndWaitResult {
     $launcherExited = $false
     $launcherExitCode = $null
     $launcherExitedAtUtc = $null
+    $effectivePostExitSeconds = $PostExitProbeSeconds
     $postExitProbeTimedOut = $false
     $completionProbeFailed = $false
     $completionProbeErrorType = ""
@@ -7518,7 +7529,10 @@ function Invoke-NativeProcessAndWaitResult {
                     $launcherExitCode = [int]$process.ExitCode
                     $launcherExitedAtUtc = [DateTime]::UtcNow
                     if ($PostExitProbeSeconds -gt 0) {
-                        $postExitProbeDeadlineUtc = $launcherExitedAtUtc.AddSeconds($PostExitProbeSeconds)
+                        if ($launcherExitCode -ne 0 -and $FailurePostExitProbeSeconds -gt 0) {
+                            $effectivePostExitSeconds = [Math]::Min($effectivePostExitSeconds, $FailurePostExitProbeSeconds)
+                        }
+                        $postExitProbeDeadlineUtc = $launcherExitedAtUtc.AddSeconds($effectivePostExitSeconds)
                     }
                 }
             } catch {
@@ -7725,7 +7739,7 @@ function Invoke-NativeProcessAndWaitResult {
         completionProbeErrorType = $completionProbeErrorType
         completionProbeErrorMessage = $completionProbeErrorMessage
         postExitProbeTimedOut = $postExitProbeTimedOut
-        postExitProbeSeconds = $PostExitProbeSeconds
+        postExitProbeSeconds = $effectivePostExitSeconds
         launcherExited = $launcherExited
         launcherExitCode = $launcherExitCode
     }
@@ -8198,6 +8212,7 @@ function Invoke-Designer {
                     -CompletionProbe $completionProbe `
                     -CompletionGraceSeconds $completionGraceSeconds `
                     -PostExitProbeSeconds $postExitProbeSeconds `
+                    -FailurePostExitProbeSeconds (Get-CompletionPostExitTimeoutSeconds) `
                     -RequirePostExitProbeOnFailure `
                     -MaxWorkingSetMb $maxWorkingSetMb
             }
@@ -8264,7 +8279,11 @@ function Invoke-Designer {
         throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail$livenessDetail ownedCleanupAttempted=$($timeoutCleanupState.attempted) ownedCleanupConfirmed=$($timeoutCleanupState.confirmed) ownedProcessIds=$(@($timeoutCleanupState.processIds) -join ',')$cleanupError"
     }
     if ([bool](Get-StateValue -State $result -Name "postExitProbeTimedOut" -Default $false)) {
-        throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$postExitProbeSeconds pid=$($result.processId) log=$logPath"
+        $releaseTimeoutSeconds = Get-StateValue -State $result -Name 'postExitProbeSeconds' -Default $postExitProbeSeconds
+        $failedLauncherExitCode = Get-StateValue -State $result -Name 'launcherExitCode' -Default $result.exitCode
+        $nativeLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ''
+        $nativeDetail = if ($nativeLogState.state -eq 'failure') { " nativeError='$($nativeLogState.detail)'" } else { '' }
+        throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$releaseTimeoutSeconds pid=$($result.processId) log=$logPath launcherExitCode=$failedLauncherExitCode$nativeDetail; owned process release is unconfirmed; finish the named owned activity and repeat the original command."
     }
     $stableArtifactRecovered = $false
     if ($result.exitCode -ne 0 -and
@@ -8285,7 +8304,9 @@ function Invoke-Designer {
         $stableArtifactRecovered = [bool]$recoveredArtifactState.ready
     }
     if ($result.exitCode -ne 0 -and -not $stableArtifactRecovered) {
-        $nativeFailure = [InvalidOperationException]::new("1C Designer failed with exit code $($result.exitCode). Log: $logPath")
+        $nativeLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ''
+        $nativeDetail = if ($nativeLogState.state -eq 'failure') { " Native error: $($nativeLogState.detail)." } else { '' }
+        $nativeFailure = [InvalidOperationException]::new("1C Designer failed with exit code $($result.exitCode).$nativeDetail Log: $logPath")
         # Preserve the failed native verdict. Only the checked-load owner may
         # assess a completed CheckConfig diagnostic result against its baseline.
         $nativeFailure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{

@@ -704,6 +704,114 @@ function Get-DesignerOwnedProcessInventory {
         $result.released | Should -BeTrue
     }
 
+    It 'reports a repository lock refusal with exit <nativeExit> after owned children exit while foreign source Designer remains open' -TestCases @(
+        @{ nativeExit = 1 }, @{ nativeExit = 0 }
+    ) {
+        param($nativeExit)
+        $root = Join-Path $TestDrive ('Отказ захвата с пробелом ' + $nativeExit)
+        $base = Join-Path $root 'Исходная база с пробелом'
+        [void][IO.Directory]::CreateDirectory($base)
+        $platform = Join-Path $root '1cv8.exe'
+        $database = Join-Path $base '1Cv8.1CD'
+        [IO.File]::WriteAllText($platform, '')
+        [IO.File]::WriteAllText($database, '')
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $script:Config = [pscustomobject]@{ platformPath=$platform; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=30; designerDumpStabilitySeconds=0; completionPostExitTimeoutSeconds=12 }
+            $script:LockRefusalPolls = 0
+            $script:PrematureRelease = $false
+            $script:BaseReleaseProbes = 0
+            $script:FixtureBirth = [DateTime]::UtcNow
+            $nativeError = 'Ошибка блокировки информационной базы для конфигурирования.'
+            function Receive-DesignerProcessEnumeration {
+                param($ProbeState, $LogPath)
+                $script:LockRefusalPolls++
+                $processes = @([pscustomobject]@{
+                    Name='1cv8.exe'; ProcessId=96001; ParentProcessId=100; CreationDate=$script:FixtureBirth.AddHours(-1)
+                    CommandLine="DESIGNER /F `"$base`" /Out foreign.log"
+                })
+                if ($script:LockRefusalPolls -le 3) {
+                    $processes += [pscustomobject]@{
+                        Name='1cv8c.exe'; ProcessId=96003; ParentProcessId=96002; CreationDate=$script:FixtureBirth.AddMilliseconds(1)
+                        CommandLine="DESIGNER /F `"$base`" /Out `"$LogPath`""
+                    }
+                }
+                if ($ProbeState.infoBaseReleaseDatabasePath) { $script:BaseReleaseProbes++ }
+                [pscustomobject]@{status='completed'; processes=$processes; infoBaseReleaseChecked=[bool]$ProbeState.infoBaseReleaseDatabasePath; infoBaseReleased=$false}
+            }
+            function Stop-NativeProcessForSafety { throw 'Foreign source Designer must not be stopped' }
+            function Invoke-NativeProcessAndWaitResult {
+                param($FilePath, $Arguments, $CompletionProbe, $FailurePostExitProbeSeconds)
+                $log = $Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
+                [IO.File]::WriteAllText($log, $nativeError, [Text.UTF8Encoding]::new($false))
+                $context = [pscustomobject]@{
+                    launcherExited=$true; launcherExitCode=$nativeExit; processId=96002
+                    processStartTimeUtc=$script:FixtureBirth.ToString('o'); processName='1cv8.exe'
+                    invocationStartedAtUtc=$script:FixtureBirth.ToString('o'); postExitElapsedSeconds=0
+                }
+                $passed = $false
+                # Preserve the production two-second inventory cadence: three
+                # active observations, then fresh empty observations and quiet time.
+                $releaseWatch = [Diagnostics.Stopwatch]::StartNew()
+                while ($releaseWatch.Elapsed.TotalSeconds -lt $FailurePostExitProbeSeconds) {
+                    $context.postExitElapsedSeconds = [int]$releaseWatch.Elapsed.TotalSeconds
+                    $passed = [bool](& $CompletionProbe $context)
+                    if ($passed -and $script:LockRefusalPolls -le 3) { $script:PrematureRelease = $true }
+                    if ($passed) { break }
+                    Start-Sleep -Milliseconds 100
+                }
+                $script:FailureReleaseLimit = $FailurePostExitProbeSeconds
+                $script:RefusalProcessState = $invocationProbeState.lastProcessState
+                [pscustomobject]@{
+                    processId=96002; exitCode=$nativeExit; launcherExited=$true; launcherExitCode=$nativeExit
+                    timedOut=$false; postExitProbeTimedOut=(-not $passed); completedByProbe=$passed
+                    memoryLimitExceeded=$false; memoryMonitorFailed=$false; memoryMonitorError=''
+                    peakWorkingSetMb=0; workingSetLimitMb=0; terminationConfirmed=$true; terminationError=''
+                }
+            }
+            $holder = [IO.File]::Open($database, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try {
+                $message = try {
+                    Invoke-Designer -InfoBasePath $base -InfoBaseKind file -DesignerArgs @('/ConfigurationRepositoryLock','-Objects',(Join-Path $root 'Объекты захвата.xml')) 6>$null | Out-Null
+                    ''
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{
+                    message=$message; premature=$script:PrematureRelease; polls=$script:LockRefusalPolls
+                    baseProbes=$script:BaseReleaseProbes; limit=$script:FailureReleaseLimit
+                    observation=$script:RefusalProcessState
+                    stillLocked=(-not (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $base))
+                }
+            } finally { $holder.Dispose() }
+        }
+        $result.message | Should -Match ([regex]::Escape('Ошибка блокировки информационной базы для конфигурирования.'))
+        $result.observation.querySucceeded | Should -BeTrue -Because $result.observation.detail
+        $result.message | Should -Not -Match 'TIMEOUT|stalled' -Because ($result.observation | ConvertTo-Json -Compress)
+        $result.premature | Should -BeFalse
+        $result.polls | Should -BeGreaterThan 3
+        $result.baseProbes | Should -Be 0
+        $result.stillLocked | Should -BeTrue
+        $result.limit | Should -Be 12
+    }
+
+    It 'bounds failed launcher release confirmation without converting it to success' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $process = [pscustomobject]@{Handle=[IntPtr]123; Id=96004; HasExited=$true; ExitCode=1}
+            $process | Add-Member ScriptMethod Refresh {}
+            function Start-Process { $process }
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $native = Invoke-NativeProcessAndWaitResult -FilePath 'fake.exe' -Arguments @() -TimeoutSeconds 10 `
+                -PostExitProbeSeconds 8 -FailurePostExitProbeSeconds 1 -RequirePostExitProbeOnFailure `
+                -CompletionGraceSeconds 0 -CompletionProbe { $false }
+            [pscustomobject]@{native=$native; seconds=$watch.Elapsed.TotalSeconds}
+        }
+        $result.native.exitCode | Should -Be 1
+        $result.native.postExitProbeTimedOut | Should -BeTrue
+        $result.native.completedByProbe | Should -BeFalse
+        $result.native.postExitProbeSeconds | Should -Be 1
+        $result.seconds | Should -BeLessThan 6
+    }
+
     It "accepts a complete external processor artifact after a nonzero launcher exit" {
         $fixtureRoot = Join-Path $TestDrive "Восстановленная внешняя обработка"
         $basePath = Join-Path $fixtureRoot "base"
