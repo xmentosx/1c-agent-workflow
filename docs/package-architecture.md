@@ -315,6 +315,19 @@ capsules, and the builder's marker, written last, is the only completion
 proof. A passed stand without the current fixture marker is replaced with a
 warning, an exception to explicit-parameter precedence chosen by the user; a
 failed build directory is refused with a removal continuation.
+The Develop upgrade journey then showed that its configuration-rejection
+refresh on PM5 resumed a merged refresh left by an older workflow whose refresh
+ran the production Gate6 profile. The current refresh runs the development
+profile and cannot produce that state, so the pending-refresh precondition was
+legacy evidence: the production-check assertion no longer requires it, the
+refusing-refresh assertion still does. Without it, the continuation refresh
+synchronizes master from the in-project source infobase, which a fixture copy
+did not carry. The user approved that Capture seals the closed `1Cv8.1CD` of a
+file `SOURCE_INFOBASE_PATH` inside the seed project, refusing a busy file, and
+Prepare places it at the mapped path inside the copy, with its bytes in the
+space check; disposal removes it through the same exact-infobase guard. An
+external or server source is never captured, and older capsules keep their
+behaviour. No lock, state or coordinator is added.
 
 On 2026-10-26 the user approved automatic E2E stand preparation in future
 PublishDevelop operations. The existing publisher composes interrupted Release

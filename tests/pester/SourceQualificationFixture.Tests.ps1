@@ -539,6 +539,45 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0 -ParameterFilter {$Action -eq 'release-e2e-restore'}
     }
 
+    It 'seals an in-project file source, places it in each copy and disposes only that copy database' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive ('source ' + [char]0x0418 + 'Б'))
+        $source=Join-Path $seed.project '.agent-1c/infobases/source-snapshot'
+        Write-Utf8Text -Path (Join-Path $source '1Cv8.1CD') -Value 'sealed source database bytes'
+        [IO.File]::AppendAllText((Join-Path $seed.project '.dev.env'),("SOURCE_INFOBASE_NAME=`nSOURCE_INFOBASE_PATH="+$source+"`n"),[Text.UTF8Encoding]::new($false))
+        $handle=[IO.File]::Open((Join-Path $source '1Cv8.1CD'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        try {{ Export-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop }|Should -Throw '*FIXTURE_SOURCE_INFOBASE_BUSY*'} finally {$handle.Dispose()}
+        $projects=Join-Path $TestDrive ('owned source projects ' + [char]0x041F)
+        $copy=New-SourceE2EFixtureProject -ProjectRoot $seed.project -Phase Develop -CandidateRoot $RepoRoot -ProjectsRoot $projects
+        $manifest=Read-QualificationFixtureCapsule -ManifestPath $copy.capsule.path -Sha256 $copy.capsule.sha256
+        $manifest.sourceInfoBase.relativePath|Should -BeExactly '.agent-1c/infobases/source-snapshot'
+        $placed=Join-Path $copy.projectRoot '.agent-1c/infobases/source-snapshot/1Cv8.1CD'
+        (Read-Utf8Text -Path $placed)|Should -BeExactly 'sealed source database bytes'
+        @(Read-Utf8Lines -Path (Join-Path $copy.projectRoot '.dev.env')|Where-Object {$_ -ceq ('SOURCE_INFOBASE_PATH='+(Split-Path -Parent $placed))}).Count|Should -Be 1
+        $parent=Split-Path -Parent $copy.projectRoot
+        $claim=Read-QualificationFixtureJson -Path (Join-Path $parent 'qualification-fixture.json')
+        $claim.sourceInfoBase|Should -BeExactly 'project/.agent-1c/infobases/source-snapshot'
+        $foreign=Join-Path $copy.projectRoot '.agent-1c/infobases/user/1Cv8.1CD'
+        Write-Utf8Text -Path $foreign -Value 'foreign project database bytes'
+        $script:disposalGuardRoot=Join-Path $parent 'custom guard root'
+        Mock Get-OneCExecutionGuardSettings {[pscustomobject]@{root=$script:disposalGuardRoot;python='';waitTimeoutSeconds=5}}
+        $result=Remove-SourceQualificationDatabases -BranchRoot $copy.branchRoot -CandidateCommit ([string]$claim.candidateCommit)
+        @($result.removedDatabases|Where-Object {[string]$_.path -ieq $placed}).Count|Should -Be 1
+        Test-Path -LiteralPath $placed|Should -BeFalse
+        (Read-Utf8Text -Path $foreign)|Should -BeExactly 'foreign project database bytes'
+        (Read-Utf8Text -Path (Join-Path $source '1Cv8.1CD'))|Should -BeExactly 'sealed source database bytes'
+    }
+
+    It 'never seals an external source infobase' {
+        $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'external source')
+        $external=Join-Path $TestDrive 'external source base'
+        Write-Utf8Text -Path (Join-Path $external '1Cv8.1CD') -Value 'external database bytes'
+        [IO.File]::AppendAllText((Join-Path $seed.project '.dev.env'),("SOURCE_INFOBASE_PATH="+$external+"`n"),[Text.UTF8Encoding]::new($false))
+        $capsule=Export-SourceE2EFixtureCapsule -ProjectRoot $seed.project -Phase Develop
+        $manifest=Read-QualificationFixtureCapsule -ManifestPath $capsule.path -Sha256 $capsule.sha256
+        $manifest.sourceInfoBase|Should -BeNullOrEmpty
+        @($manifest.files|Where-Object path -CEQ 'source-infobase.1cd').Count|Should -Be 0
+    }
+
     It 'repeats Develop from the same capsule in a new owned project without capturing another database' {
         $seed=New-QualificationSeed -Root (Join-Path $TestDrive 'repeat')
         $projects=Join-Path $TestDrive 'owned repeated projects'

@@ -8,7 +8,7 @@ actions select it themselves: each clone has one stand per fixture at
 `<drive>:\itl-gate-stands\<clone> Стенд <fixture8>` (`ITL_GATE_STANDS_ROOT`
 overrides the parent). A missing stand is built once by
 `scripts/new-gate-stand.ps1` inside the operation, from published
-`origin/develop`, including its baseline capsules; its `.agent-1c/gate-stand.json`
+`origin/develop`, including its baseline capsules; its `.git/itl/gate-stand.json`
 marker is written last. Omit `-E2EProjectRoot`; a passed stand without the
 current fixture marker, such as the PM5 stand, is replaced with a
 `DELIVERY_GATE_STAND_REPLACED` warning. A directory left by a failed build is
@@ -26,6 +26,10 @@ The Release seed probe creates its own disposable configuration repository insid
 the temporary branch run root when the dedicated stand does not use a repository.
 It binds only the disposable branch infobase, performs the mandatory exact-object
 lock/unlock roundtrip, and restores the helper process environment afterward.
+
+Capture seals the stand's disposable in-stand source snapshot
+(`.agent-1c/infobases/source-snapshot`) into the capsule and Prepare places it
+in each copy, so a copy's master synchronization dumps its own source.
 
 The fixture branch remains dedicated to workflow releases. Reset its disposable
 database from the in-stand source snapshot whenever state may have leaked
