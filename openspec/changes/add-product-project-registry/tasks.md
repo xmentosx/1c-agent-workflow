@@ -2,6 +2,10 @@
 
 ## Обязательная привязка, 2026-10-29
 
+- [x] После отдельного поручения подтвердить [исходные native PM5 сценарии](evidence/registry-homes-native-selection-2026-10-29.md):
+  missing ID отказал до copy; explicit published ID прошёл; bound повтор без ID
+  прошёл без нового выбора/коммитов. Installed f9, база и memory IDs сохранены.
+  Fresh init/GUI reload не входят в этот proof; новую матрицу не добавляли.
 - [x] Согласовать [границу init/update](evidence/required-project-selection-2026-10-29.md):
   опубликованный существующий проект, без later/inline создания; bound без повторного выбора.
 - [x] Реализовать через прежние setup/lifecycle owners и snapshot receipt;
@@ -21,8 +25,8 @@
   Подтверждённый общий docs-блокер source-snapshot исправлен по коду владельца
   стенда; принятые чужие изменения сохранены, assertions не менялись.
   Полный исходный ReleaseGate: 12/0; gate-выпуск или installed PM5 не запускались.
-  Native PM5 переход
-  и публикация этим source-изменением не объявляются выполненными.
+  При регистрации самого f9 native PM5 переход ещё не запускался;
+  последующий CLI proof указан выше, публикация workflow остаётся отдельной.
 
 ## Продуктовые homes: согласование владельца, 2026-10-29
 
@@ -34,11 +38,13 @@
   provider; native UUID/credentials оставить вне бизнес-реестра и Git-документа.
 - [x] Получить подтверждение владельца этих 44 home: сообщение «согласую»
   от 2026-10-29 относится ко всей подготовленной таблице.
-- [ ] Получить отдельное поручение публикации данных через существующий registry
-  owner с актуальным publisher tip; live registry, bindings и Cognee неизменны.
+- [x] По отдельному поручению опубликовать все 44 home через существующий registry
+  data flow поверх publisher tip: ac4fb781, FF push/read-back, schema/references
+  и 8 contexts passed; остальные бизнес-поля и publisher registry.json сохранены.
 
-R6/G3 не переоткрываются. Настоящие product read/write пока не разрешаются этой
-таблицей; новая матрица, native проверки и публикация workflow не запускались.
+R6/G3 не переоткрываются. Данные home опубликованы; фактические product
+remember/recall ими не объявлены проверенными. Native proof ограничен исходным
+PM5 update/bound repeat; новая матрица и публикация workflow не запускались.
 
 ## Причина memory enable guard, 2026-10-29
 

@@ -2,6 +2,10 @@
 
 ## Обязательная project association, 2026-10-29
 
+- [x] Учесть [native исходный PM5 update/bound repeat](../add-product-project-registry/evidence/registry-homes-native-selection-2026-10-29.md)
+  на installed f9: отказ без выбора до copy, успех с published ID и повтор без ID;
+  memory enabled, прежние cycle/workspace/workplace и полный guard сохранены,
+  локальный memory contextHash соответствует applied. Fresh init/GUI не запускались.
 - [x] Согласовать с registry [обязательный выбор опубликованной записи](../add-product-project-registry/evidence/required-project-selection-2026-10-29.md)
   при init/первом update; создание отдельно, отсутствие выбора не включает память.
 - [x] Сохранить default-on/prerequisites, explicit off, шесть scopes и полный
@@ -18,7 +22,9 @@
   Общий docs-блокер source-snapshot устранён без изменения code/tests стенда,
   native Cognee и квалификация PM5 этим исправлением не объявлены.
   Исходный ReleaseGate после docs-исправления прошёл 12/0.
-  native память, рабочая миграция и публикация в этом изменении не запускаются.
+  При регистрации самого f9 native CLI не запускался; последующий повтор
+  зафиксирован выше. Backend product calls, рабочая миграция и workflow публикация
+  этим повтором не выполнялись.
 
 ## Продуктовые homes: согласование по реальному реестру, 2026-10-29
 
@@ -29,11 +35,13 @@
   готовность 8 product mappings; live UUID/currentness этим чтением не объявлены.
 - [x] Получить подтверждение владельца всех 44 home: сообщение «согласую»
   от 2026-10-29; фактическая публикация этим подтверждением не объявляется.
-- [ ] После отдельного разрешения публикации данных
-  применить реальную карту через прежний registry/apply owner и существующие
-  критерии exact IDs/currentness; не дублировать G5/6.6b или вводить новый preflight.
+- [x] По отдельному поручению опубликовать реальную карту в registry main ac4fb781
+  и подтвердить read-back всех 44 home/8 contexts. Прежний native update/apply
+  отразил 21 применимую home в PM5 КОРП context; сохранены publisher revisions,
+  identity и enabled mode. G5/6.6b/native product remember не повторялись:
+  публикация/локальное применение не являются новым backend IDs/currentness proof.
 
-Кандидат не является включением product remember, публикацией или миграцией.
+Публикация home не является прогоном product remember или миграцией заметок.
 Новые области/расширения/datasets и изменения Cognee/ai_rules_1c не добавлены.
 
 ## Разбор двух отказов enable, 2026-10-29
