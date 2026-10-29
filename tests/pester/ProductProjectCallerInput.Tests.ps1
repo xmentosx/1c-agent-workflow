@@ -6,7 +6,7 @@
         . $helper -ProjectRoot $TestDrive -Action help *> $null
     }
     It 'reads <Case> through original capture with cleanup and unchanged parent console mode' -ForEach @(
-        @{Case='later';Questions=1},@{Case='empty';Questions=1},@{Case='new';Questions=3},@{Case='throw';Questions=2},@{Case='unattended';Questions=0}
+        @{Case='later';Questions=1},@{Case='empty';Questions=4},@{Case='new';Questions=1},@{Case='existing';Questions=3},@{Case='throw';Questions=2},@{Case='unattended';Questions=0}
     ) {
         $root=Join-Path $TestDrive ('input Проект '+$Case)
         [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
@@ -27,11 +27,14 @@
             $parent.capture.stdout|Should -Match 'CAPTURE_PIPE_SURVIVED'
             $parent.capture.stderr|Should -BeNullOrEmpty
             $child.readHostKind|Should -Be Cmdlet
-            if($Case -eq 'later'){$child.preferences.associationOffer|Should -Be later}else{$child.preferences|Should -BeNullOrEmpty}
+            $child.preferences|Should -BeNullOrEmpty
             if($Case -ne 'unattended'){$child.detached|Should -BeTrue}
-            if($Case -eq 'empty'){(Read-Utf8Text (Join-Path $root 'answer.json')|ConvertFrom-Json).value|Should -BeExactly ''}
-            if($Case -eq 'throw'){$parent.capture.stdout|Should -Match 'WARNING: Package update completed; catalog association needs a separate continuation: Fixture association failed after input'}
-            if($Case -eq 'new'){
+            if($Case -eq 'later'){$child.error|Should -Match 'CATALOG_PROJECT_UNKNOWN'}
+            if($Case -eq 'new'){$child.error|Should -Match 'CATALOG_PROJECT_CREATE_SEPARATE'}
+            if($Case -eq 'unattended'){$child.error|Should -Match 'CATALOG_PROJECT_REQUIRED'}
+            if($Case -eq 'throw'){$child.error|Should -Match 'Fixture association failed after input'}
+            if($Case -in @('existing','empty')){
+                $child.error|Should -BeNullOrEmpty
                 $nested=Read-Utf8Text (Join-Path $root 'nested.json')|ConvertFrom-Json
                 $nested.name|Should -Be 'Тест Проект PM5';$nested.version|Should -Be PM5
             }

@@ -132,8 +132,9 @@ if($fixture.mode -eq 'catalog-input') {
         Write-Utf8Text -Path (Join-Path $fixture.root 'unexpected-catalog-prompt.txt') -Value 'The hidden helper attempted to prompt.'
         return ''
     }
-    Invoke-ItlProductProjectPostUpdateOffer
-    $inputProof=@{inputRedirected=[Console]::IsInputRedirected;compactInputAvailable=$compactInputAvailable;foregroundInputAvailable=$foregroundInputAvailable;binding=(Get-ItlProductProjectBinding);selection=(Read-ItlProductProjectSetting selection)}
+    $selectionError=''
+    try {Invoke-ItlProductProjectPostUpdateOffer} catch {$selectionError=$_.Exception.Message}
+    $inputProof=@{selectionError=$selectionError;inputRedirected=[Console]::IsInputRedirected;compactInputAvailable=$compactInputAvailable;foregroundInputAvailable=$foregroundInputAvailable;binding=(Get-ItlProductProjectBinding);selection=(Read-ItlProductProjectSetting selection)}
     Write-Utf8Text -Path (Join-Path $fixture.root 'input-proof.json') -Value ($inputProof|ConvertTo-Json -Depth 5)
 }
 if($fixture.mode -eq 'nested') {
@@ -257,7 +258,7 @@ exit 0
         function Remove-FreshCompactFixture { param($Fixture) Remove-Item -LiteralPath $Fixture.root -Recurse -Force }
     }
 
-    It 'skips the catalog offer in an attached hidden console across the original fresh-process boundary' {
+    It 'requires a project without prompting in an attached hidden console across the original fresh-process boundary' {
         $fixture=Invoke-FreshCompactFixture -Mode catalog-input -SilentSeconds 1
         try {
             $fixture.result.exitCode | Should -Be 0 -Because $fixture.result.combinedText
@@ -265,6 +266,7 @@ exit 0
             $proof=Get-Content -LiteralPath (Join-Path $fixture.root 'input-proof.json') -Raw -Encoding UTF8|ConvertFrom-Json
             $proof.inputRedirected|Should -BeFalse
             $proof.compactInputAvailable|Should -BeFalse
+            $proof.selectionError|Should -Match '^CATALOG_PROJECT_REQUIRED:'
             $proof.foregroundInputAvailable|Should -BeTrue
             $proof.binding|Should -BeNullOrEmpty
             $proof.selection|Should -BeNullOrEmpty

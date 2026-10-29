@@ -32,13 +32,15 @@ observation before claiming the tools are active.
 For a catalog project use `vibecoding1c-mcp-status -CatalogAction list` (at most
 10 choices, `-CatalogLimit` up to 50), then `-CatalogAction preview -CatalogProjectId
 <id>` or explicit `vibecoding1c-mcp-select -CatalogAction select -CatalogProjectId
-<id>`. `select -CatalogProjectId new` asks only for missing record data; a denied
-Git publication retains a private request and its stable ID. `-CatalogRecordPath`
-accepts a prepared business record. These actions do not create SPPR/Mantis
+<id>`. Selection requires an existing published record. Prepare a missing project
+separately with `-CatalogAction create`; a denied Git publication retains a private
+request and its stable ID for review, not runtime association. `-CatalogRecordPath`
+accepts a prepared business record for creation. These actions do not create SPPR/Mantis
 objects. `-CatalogAction sync` uses the same startup plan; `context` reports only
 the selected project, role intentions and integration defaults. Missing optional
 links remain deferred. Interactive init chooses the project before unattended
-work; explicit legacy JSON answers retain their PM4/PM5 route.
+work; JSON init requires `projectId` (an existing binding is retained on resume).
+Missing base-family metadata must be completed and published separately.
 
 Bound operations check the catalog once with a 10-second metadata deadline.
 A valid applied context continues offline with a freshness warning. Conflicts
@@ -47,9 +49,15 @@ explicit automated choice. Unattended ambiguity does not choose for the user.
 To install an older incompatible package, first use `-CatalogAction
 restore-compatible` with the current helper. It restores the proven initial
 owned settings/binding and preserves unrelated values; conflicts retain the
-current helper and need resolution. Package update success and subsequent
-choose/new/later association have separate outcomes. Association keeps memory
-off unless a separate compatible memory consumer is explicitly enabled.
+current helper and need resolution. An unbound project must select a published
+project before update copies the package; old `later` preferences do not bypass
+this. Source-side `scripts/update-installed-workflow.ps1` accepts `-CatalogProjectId`
+and optional `-CatalogProfileId`/`-CatalogDecision` for unattended continuation.
+If an older caller already copied the package, the fresh child requires selection
+before file post-copy; failure retains the update snapshot for the same helper's
+resume/recovery. No empty answer or failed association completes the transition.
+Already bound projects do not repeat selection. Association uses memory default-on
+when configured, preserves explicit off, and does not claim native readiness.
 
 For Mantis calls read `context.integrationDefaults`: pass `mantisSearch.filters`
 to the existing search tool; an explicit issue ID can be read globally. Use the

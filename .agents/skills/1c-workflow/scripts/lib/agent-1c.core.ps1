@@ -5175,6 +5175,12 @@ function Prepare-InitProjectSettings {
         return
     }
 
+    . Import-ItlProductProjectSetup
+    $candidate=Resolve-ItlProductProjectInitAnswers $rawAnswers
+    $rawAnswers=ConvertTo-Agent1cHashtable $rawAnswers
+    $rawAnswers['projectId']=$candidate.binding.projectId
+    $rawAnswers['catalogProfileId']=[string](Get-ItlCatalogField $candidate.binding 'profileId' '')
+    $rawAnswers['catalogMode']='catalog'
     $answers = Normalize-InitAnswers -Answers $rawAnswers
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
@@ -5184,6 +5190,15 @@ function Prepare-InitProjectSettings {
 function Prepare-ConfiguredInitProjectSettings {
     Ensure-WorkflowProjectFiles
     Read-ProjectConfig
+
+    . Import-ItlProductProjectSetup
+    if(-not (Get-ItlProductProjectBinding)){
+        $null=Get-ItlProductProjectTransitionSelection
+        $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
+        if($family -and $family -cne $script:PreparedCatalogCandidate.context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: select the matching published project; initialization cannot change the configured family.'}
+        if(-not $family){Set-ProjectBaseConfigurationVersion -Version $script:PreparedCatalogCandidate.context.baseConfigurationVersion}
+        Save-ItlProductProjectInitBinding ([pscustomobject]@{catalogMode='catalog'})
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) {
         Set-ProjectAiRulesClient -Client $AgentTarget

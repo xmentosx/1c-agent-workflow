@@ -1,5 +1,29 @@
 # Tasks
 
+## Обязательная привязка, 2026-10-29
+
+- [x] Согласовать [границу init/update](evidence/required-project-selection-2026-10-29.md):
+  опубликованный существующий проект, без later/inline создания; bound без повторного выбора.
+- [x] Реализовать через прежние setup/lifecycle owners и snapshot receipt;
+  сохранить отдельный create, preview черновиков и штатное recovery.
+- [x] Подтвердить изменённые existing source-регрессии: focused 65/0 и
+  owner/console/compact 63/0; финальный source head проверяет штатная регистрация.
+  Исходные snapshot/package-update после исправления приоритета guards: 8/0,
+  отказ без ID и успешное продолжение на той же временной копии сохранены.
+  Независимая UI-policy оснастка согласована с новой dependency: 45/0,
+  без изменения production guards и её прежних assertions.
+  Audited launcher/bootstrap hashes обновлены после review forwarding-only diff;
+  Go-input 4/0 и broker/cold-cutover 6/0 сохранили отрицательные reuse assertions.
+  Исправлен пустой target source в capability detector по контракту прежних
+  detectors; исходные post-copy diagnostics assertions сохранены.
+  Полный повтор SourceUpgradeHandoff/ProductProjectSetup: 99/0 со штатной
+  Pester error policy; failed результаты сохранены для причинного разбора.
+  Подтверждённый общий docs-блокер source-snapshot исправлен по коду владельца
+  стенда; принятые чужие изменения сохранены, assertions не менялись.
+  Полный исходный ReleaseGate: 12/0; gate-выпуск или installed PM5 не запускались.
+  Native PM5 переход
+  и публикация этим source-изменением не объявляются выполненными.
+
 ## Продуктовые homes: согласование владельца, 2026-10-29
 
 - [x] Подготовить [конечную таблицу 44 значений](evidence/product-memory-home-review-2026-10-29.md)

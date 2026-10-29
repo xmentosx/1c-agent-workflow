@@ -4,6 +4,9 @@ param(
     [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('update', 'status', 'restore', 'reconcile', 'abandon', 'legacy-status', 'legacy-copy')][string]$Recovery = 'update',
     [string]$AgentTarget = '',
+    [string]$CatalogProjectId = '',
+    [string]$CatalogProfileId = '',
+    [ValidateSet('','keep-local','registry','defer')][string]$CatalogDecision = '',
     [string]$LegacySourceRoot = '',
     [string]$SnapshotId = '',
     [string]$ReconciliationFile = '',
@@ -63,6 +66,9 @@ try {
     $global:LASTEXITCODE = 0
     $arguments = @{ ProjectRoot=$project; Action='update-workflow' }
     if ($AgentTarget) { $arguments.AgentTarget = $AgentTarget }
+    if ($CatalogProjectId) { $arguments.CatalogProjectId = $CatalogProjectId }
+    if ($CatalogProfileId) { $arguments.CatalogProfileId = $CatalogProfileId }
+    if ($CatalogDecision) { $arguments.CatalogDecision = $CatalogDecision }
     if ($Recovery -ne 'update') { $arguments.WorkflowUpdateRecovery = $Recovery }
     if ($SnapshotId) { $arguments.WorkflowUpdateSnapshotId = $SnapshotId }
     if ($ReconciliationFile) { $arguments.WorkflowUpdateReconciliationFile = $ReconciliationFile }

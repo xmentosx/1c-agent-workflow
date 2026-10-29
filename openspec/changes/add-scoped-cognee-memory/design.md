@@ -1,5 +1,14 @@
 # Design
 
+## Обязательный выбор проекта, 2026-10-29
+
+[Согласованный registry checkpoint](../add-product-project-registry/evidence/required-project-selection-2026-10-29.md)
+требует опубликованную project association при init/первом update. Создание и
+публикация записи происходят отдельно; later не завершает переход. Memory owner
+и full context hash guard не меняются: default-on только при prerequisites,
+explicit off сохраняется, native readiness и импорт заметок не выводятся из выбора.
+Это уточнение заменяет прежнее описание optional association в исторических разделах.
+
 ## Общее подключение и мониторинг, 2026-10-28
 
 Пользователь разрешил подготовку общего подключения и наблюдение за сервером.

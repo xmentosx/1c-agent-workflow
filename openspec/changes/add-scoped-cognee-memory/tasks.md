@@ -1,5 +1,25 @@
 # Tasks
 
+## Обязательная project association, 2026-10-29
+
+- [x] Согласовать с registry [обязательный выбор опубликованной записи](../add-product-project-registry/evidence/required-project-selection-2026-10-29.md)
+  при init/первом update; создание отдельно, отсутствие выбора не включает память.
+- [x] Сохранить default-on/prerequisites, explicit off, шесть scopes и полный
+  applied context guard; новый memory state/recovery owner не добавлен.
+- [x] Сопоставить фактическую source-проверку registry transition: focused 65/0,
+  owner/console/compact 63/0, исходный snapshot/package-update 8/0 на чистом дереве;
+  полный memory hash guard не изменён.
+  UI-policy dependency fixtures проверены 45/0 без участия native Cognee;
+  reviewed bootstrap/cutover input проверен 6/0 без изменения native admission.
+  Registry capability detector согласован с пустым legacy target source;
+  обязательная привязка актуального пакета и memory hash guard сохранены.
+  SourceUpgradeHandoff/ProductProjectSetup: 99/0, без новых сценариев или
+  изменения прежних post-copy/rollback assertions.
+  Общий docs-блокер source-snapshot устранён без изменения code/tests стенда,
+  native Cognee и квалификация PM5 этим исправлением не объявлены.
+  Исходный ReleaseGate после docs-исправления прошёл 12/0.
+  native память, рабочая миграция и публикация в этом изменении не запускаются.
+
 ## Продуктовые homes: согласование по реальному реестру, 2026-10-29
 
 - [x] Подготовить единый с registry [кандидат 44 home](../add-product-project-registry/evidence/product-memory-home-review-2026-10-29.md):

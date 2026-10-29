@@ -16,6 +16,22 @@
         }
         [IO.File]::WriteAllText((Join-Path $Root '.ai-rules.json'), ((@{version='owned-test-ui';files=$files} | ConvertTo-Json -Depth 8)+"`n"), [Text.UTF8Encoding]::new($false))
     }
+    $uiPolicyCatalogOwnerFixture={
+        # These UI-owner fixtures already stub package/client installers. Supply
+        # the newly required registry owner's successful contract too; do not
+        # disable its production guard or turn these tests into catalog setup.
+        # Real missing-ID rejection + published selection are covered by the
+        # unchanged-root BootstrapUpdate/RequiredCatalogTransition scenario.
+        . Import-ItlProductProjectSetup
+        function Get-ItlProductProjectTransitionSelection {
+            param($RecordedSelection)
+            return @{projectId='ui-policy-fixture';profileId='';catalogRevision=('d'*40);settingsHash=('e'*64)}
+        }
+        function Invoke-ItlProductProjectAssociation {
+            param($Candidate,$Decision,[bool]$AllowPrompt,[switch]$IncludeClientSurfaces)
+            return @{status='configured';projectId='ui-policy-fixture'}
+        }
+    }
 }
 
 Describe 'One-time essential UI policy transition' {
@@ -278,6 +294,7 @@ Describe 'Essential policy update integration' {
         Set-TestUiTestingRulesFixture -Root $root -Supported ($Kind -in @('same-supported','unknown-before','incomplete-before'))
         $result = & {
             . $helperPath -ProjectRoot $root -Action help *> $null
+            . $uiPolicyCatalogOwnerFixture
             foreach ($name in @('Ensure-OneCSessionLimitDotEnv','Ensure-Agent1cLifecycleLocksIgnored','Ensure-GitIgnore',
                 'Ensure-ItlPinnedOpenSpecGitAttributes','Sync-ItlVanessaLibraries','Update-UserRules',
                 'Sync-WorkflowManagedDependencyLockEntries','Install-YAxUnit','Update-RoctupMcp',
@@ -707,6 +724,7 @@ Describe 'Workflow post-copy policy format chain' {
             foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
             try {
                 . $helperPath -ProjectRoot $root -Action help *> $null
+                . $uiPolicyCatalogOwnerFixture
                 foreach ($name in @('Ensure-Agent1cLifecycleLocksIgnored','Ensure-GitIgnore',
                     'Ensure-ItlPinnedOpenSpecGitAttributes','Sync-ItlVanessaLibraries','Update-UserRules',
                     'Sync-WorkflowManagedDependencyLockEntries','Install-YAxUnit','Update-RoctupMcp',

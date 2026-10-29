@@ -373,7 +373,9 @@ function Test-DevelopGoBuildOnlyPath {
             # Scoped stand rollout only adds/forwards an explicit roots-file
             # argument; the abandon recovery mode only adds a validated value.
             # Neither introduces a Go test or README reader.
-            'scripts/update-installed-workflow.ps1'=@('f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af','d9acb246fc18235a3824bb2671ef25158a2822e8d71a26087a07922023e18254')
+            # Catalog selection adds three typed arguments and forwards them
+            # to the same helper; reviewed content still reads no Go input.
+            'scripts/update-installed-workflow.ps1'=@('f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af','d9acb246fc18235a3824bb2671ef25158a2822e8d71a26087a07922023e18254','0112c05de9d755f9351571e4f76376aae8e26689599588fefd075f7b584f3855')
             'scripts/invoke-develop-e2e.ps1'=@('10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e')
             'scripts/develop-configuration-rejection.ps1'=@('5104d1d4df221895d135fcab07e76dfca42178cfb74a6a14031c0cd8570c0ff8','02a82e9c5152cef9fa4a3f48fcc355fd2d04851ba042dbae31140c615cb30036','05a432a05d0662a698bf7e1cb57fa7c09c41a6f5130be5443e889feb7b54b6f6')
             'scripts/source-e2e-workflow-update.ps1'='82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4'

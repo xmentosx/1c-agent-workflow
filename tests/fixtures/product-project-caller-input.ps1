@@ -38,15 +38,24 @@ if($Child){
         Write-Utf8TextAtomic (Join-Path $Root 'answer.json') (@{value=$value}|ConvertTo-Json)
         return $value
     }
-    function Invoke-ItlProductProjectCommand {
-        param($Command,$ProjectId,[switch]$AllowPrompt)
+    function Select-ItlProductProjectCandidate {
+        param($ProjectId,$ProfileId,[bool]$AllowPrompt,$Limit)
+        if(-not $AllowPrompt){throw 'CATALOG_PROJECT_REQUIRED: fixture unattended selection'}
+        if(-not $ProjectId){$ProjectId=Read-InitRequired 'Published project ID (required)'}
+        if($ProjectId -eq 'new'){throw 'CATALOG_PROJECT_CREATE_SEPARATE: fixture creation is separate'}
+        if($ProjectId -ne 'five'){throw 'CATALOG_PROJECT_UNKNOWN: fixture requires five'}
+        return @{binding=@{projectId='five'};context=@{catalogRevision=('a'*40);settingsHash=('b'*64)}}
+    }
+    function Invoke-ItlProductProjectAssociation {
+        param($Candidate,$Decision,[bool]$AllowPrompt,[switch]$IncludeClientSurfaces)
         $name=Read-InitRequired 'Fixture nested project name'
         if($Case -eq 'throw'){throw 'Fixture association failed after input'}
         $version=Read-InitBaseConfigurationVersion
         Write-Utf8TextAtomic (Join-Path $Root 'nested.json') (@{name=$name;version=$version}|ConvertTo-Json)
     }
-    Invoke-ItlProductProjectPostUpdateOffer
-    $result=@{preferences=(Read-ItlProductProjectSetting selection);detached=([CatalogFixtureInput]::GetConsoleCP() -eq 0);readHostKind=(Get-Command Read-Host).CommandType.ToString()}
+    $associationError=''
+    try {Invoke-ItlProductProjectPostUpdateOffer} catch {$associationError=$_.Exception.Message}
+    $result=@{error=$associationError;preferences=(Read-ItlProductProjectSetting selection);detached=([CatalogFixtureInput]::GetConsoleCP() -eq 0);readHostKind=(Get-Command Read-Host).CommandType.ToString()}
     Write-Utf8TextAtomic (Join-Path $Root 'child.json') ($result|ConvertTo-Json -Depth 20)
     Write-Output 'CAPTURE_PIPE_SURVIVED'
     Exit-Agent1cLifecycleOperation
@@ -61,10 +70,10 @@ try {
     if($console -eq [IntPtr]::new(-1)){throw 'Fixture needs its own console'}
     $before=[uint32]0;$null=[CatalogFixtureInput]::GetConsoleMode($console,[ref]$before)
     $script:answerIndex=0
-    $script:fixtureAnswers=@(switch($Case){'later'{@('later')};'empty'{@('')};'new'{@('new','Тест Проект PM5','PM5')};'throw'{@('new','Тест Проект PM5')};default{@()}})
+    $script:fixtureAnswers=@(switch($Case){'later'{@('later')};'empty'{@('','five','Тест Проект PM5','PM5')};'new'{@('new')};'existing'{@('five','Тест Проект PM5','PM5')};'throw'{@('five','Тест Проект PM5')};default{@()}})
     $capture=Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-RepoRoot',$RepoRoot,'-Root',$Root,'-Case',$Case,'-Child','-OperationId',$script:LifecycleOperationId,'-OwnerPid',[string]$PID) -WorkingDirectory $Root -TimeoutSeconds 35 -OnStdoutLine {
         param($line)
-        if($line -match '^Workflow updated\. Associate|^Fixture nested|^Base configuration version'){
+        if($line -match '^Published project ID|^Fixture nested|^Base configuration version'){
             if($script:answerIndex -ge $script:fixtureAnswers.Count){throw 'Unexpected additional prompt'}
             [CatalogFixtureInput]::Answer($console,$script:fixtureAnswers[$script:answerIndex]);$script:answerIndex++
         }

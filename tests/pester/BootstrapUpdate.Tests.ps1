@@ -913,7 +913,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         }
     }
 
-    It "updates workflow package files in a temp project while preserving local runtime state" {
+    It "updates workflow package files in a temp project while preserving local runtime state" -Tag RequiredCatalogTransition {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-workflow-test-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $stdoutPath = Join-Path $tempRoot "stdout.log"
@@ -1090,9 +1090,40 @@ local after
             $env:ITL_ARTIFACT_CACHE_ROOT = $artifactCacheRoot
             $env:VIBECODING1C_MCP_LOCAL_HOME = $mcpLocalHome
             $env:VIBECODING1C_MCP_REGISTRY_REPO = $registryPublisher
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
-            $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
-            $LASTEXITCODE | Should -Be 0 -Because $diagnostic
+            # Preserve the original unbound/v1 reproducer as the required
+            # rejection, then continue that SAME project after publishing its
+            # explicit business record. No inferred project or weakened guard.
+            $beforeTransitionHead=(& git -C $projectRoot rev-parse HEAD).Trim()
+            $rejectedTransition=& {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$HelperPath,'-ProjectRoot',$projectRoot,'-Action','update-workflow','-SkipAiRules') -WorkingDirectory $RepoRoot -TimeoutSeconds 60
+            }
+            [IO.File]::WriteAllText($stdoutPath,[string]$rejectedTransition.stdout,[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($stderrPath,[string]$rejectedTransition.stderr,[Text.UTF8Encoding]::new($false))
+            $rejectedTransition.exitCode | Should -Not -Be 0
+            ((Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8) + (Get-Content -LiteralPath $stderrPath -Raw -Encoding UTF8)) | Should -Match 'CATALOG_PROJECT_REQUIRED'
+            (& git -C $projectRoot rev-parse HEAD).Trim() | Should -Be $beforeTransitionHead
+            (Get-Content -LiteralPath (Join-Path $projectRoot 'AGENT-INSTALL.md') -Raw) | Should -Match 'old install'
+            $catalogRoot=Join-Path $registryPublisher 'catalog'
+            [void][IO.Directory]::CreateDirectory($catalogRoot)
+            @{schemaVersion=1;products=@(@{productId='update-pm5';name='PM5';baseConfigurationVersion='PM5'});projects=@(@{projectId='update-fixture';name='Existing update fixture';productId='update-pm5'});profiles=@();sources=@();instances=@()} |
+                ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $catalogRoot 'catalog.json') -Encoding UTF8
+            @{schemaVersion=1;relations=@();knowledgeAreas=@{}} | ConvertTo-Json -Depth 8 |
+                Set-Content -LiteralPath (Join-Path $catalogRoot 'product-relations.json') -Encoding UTF8
+            @{schemaVersion=2;hosts=@(@{hostId='dev-ermakov';configurations=@();servers=@($spprEndpoint)})} |
+                ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registryPublisher 'registry.json') -Encoding UTF8
+            & git -C $registryPublisher add registry.json catalog
+            & git -C $registryPublisher commit --quiet -m 'publish explicit update project with the same SPPR endpoint'
+            $acceptedTransition=& {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-ExecutionPolicy','Bypass','-File',$HelperPath,'-ProjectRoot',$projectRoot,'-Action','update-workflow','-SkipAiRules','-CatalogProjectId','update-fixture','-CatalogDecision','keep-local') -WorkingDirectory $RepoRoot -TimeoutSeconds 300
+            }
+            [IO.File]::WriteAllText($stdoutPath,[string]$acceptedTransition.stdout,[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($stderrPath,[string]$acceptedTransition.stderr,[Text.UTF8Encoding]::new($false))
+            $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue))
+            $acceptedTransition.exitCode | Should -Be 0 -Because $diagnostic
+            $acceptedTransition.stdout | Should -Match ([regex]::Escape($mcpLocalHome))
+            $diagnostic | Should -Match ([regex]::Escape($mcpLocalHome))
 
             $stdout = Get-Content -Encoding UTF8 -Raw $stdoutPath
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
@@ -1166,7 +1197,8 @@ local after
             # Client MCP settings remain local even though update recovery pins their bytes.
             & git -C $projectRoot check-ignore --quiet -- '.kilo/kilo.json'
             $LASTEXITCODE | Should -Be 0
-            ((Get-Content -LiteralPath (Join-Path $mcpLocalHome 'registry\registry.json') -Raw -Encoding UTF8 | ConvertFrom-Json).servers[0].id) | Should -Be 'sppr'
+            ((Get-Content -LiteralPath (Join-Path $mcpLocalHome 'registry\registry.json') -Raw -Encoding UTF8 | ConvertFrom-Json).hosts[0].servers[0].id) | Should -Be 'sppr'
+            (Get-Content -LiteralPath (Join-Path $projectRoot '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json).productProject.projectId | Should -Be 'update-fixture'
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
 
             $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json

@@ -181,7 +181,9 @@ function Test-DevelopColdCutoverConsumers {
     param([string]$RepositoryRoot,[string]$Commit='')
     if(-not $RepositoryRoot) {return $false}
     $consumers=@{
-        'install-agent-1c-workflow.ps1'=@('1917f4163747d6c1c55e6b9bf69184c3d9d7553a27cde549ce758ad440fbce17')
+        # Reviewed catalog arguments are forwarded only after the unchanged
+        # execution-guard cutover. Bootstrap itself remains an exact input.
+        'install-agent-1c-workflow.ps1'=@('1917f4163747d6c1c55e6b9bf69184c3d9d7553a27cde549ce758ad440fbce17','bd2b47285dffd7193c644abcb87af4ef46c401d7e1a192e33d53cc530d25729c')
         'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e')
     }
     try {

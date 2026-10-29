@@ -78,6 +78,12 @@ Selected context SHALL вычисляться программно без LLM и
 
 ### Requirement: Память включена по умолчанию при готовой привязке
 
+Init и первое обновление unbound проекта SHALL требовать существующую
+опубликованную запись по registry setup contract; «позже», пустой ответ и local
+draft SHALL NOT завершать переход. Создание/публикация записи SHALL выполняться
+отдельно. Это SHALL NOT менять native prerequisites/default-on/explicit off,
+создавать unscoped binding либо добавлять барьер независимым обычным командам.
+
 Managed память SHALL иметь default-on policy после готовой явной project association и настройки общего Cognee. Existing setup owner SHALL автоматически подготовить binding при passed применимых native Q, совместимых helper/fork, applied registry context/native mapping и подтвердить client activation после штатного reload; отдельный memory opt-in/вопрос по каждой области SHALL NOT требоваться. Отсутствующая настройка SHALL означать default-on preference, SHALL NOT доказывать native readiness. Явные TOOL_COGNEE=off, disabled и сохранённый отказ/откладывание памяти SHALL иметь приоритет и сохраняться при update/reload; автоматическое повторное включение SHALL NOT выполняться. TOOL auto/required и eligible provider policy SHALL сохраняться у controlled fork.
 
 Без prerequisites память SHALL сообщать unavailable/unconfigured с continuation, SHALL NOT угадывать project/dataset IDs или посылать unscoped запрос. Failure/partial binding SHALL иметь отдельный статус и прежний pinned resume/owned restore; независимые update/каталог SHALL продолжаться, required memory operation SHALL оставаться incomplete. Unbound legacy/no answer SHALL NOT автоматически ассоциироваться или мигрировать; переход рабочих установок SHALL требовать отдельного разрешения и прежнего setup owner. Disable SHALL сохранять data/IDs/pending; downgrade SHALL использовать compatibility/owned restore. Default-on SHALL NOT означать recall на каждую реплику, импорт старых заметок или автоматическую установку OpenViking/Cognee.

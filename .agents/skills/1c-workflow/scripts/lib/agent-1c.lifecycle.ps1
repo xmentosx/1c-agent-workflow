@@ -9400,16 +9400,26 @@ function Invoke-WorkflowPackageFilePostCopyCore {
     try {
         $script:ItlMcpPreserveUserChanges = $true
         $policyPending = Get-WorkflowUpdatePendingSnapshot
+        . Import-ItlProductProjectSetup
+        $catalogTransition=$null
         $script:ItlOpenCodeOperationConfigPathsMode = if ($null -eq $policyPending -or (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$policyPending.receipt.sourceRoot))) { 'layered' } else { 'legacy-root' }
         Assert-WorkflowUpdateMcpConfigSnapshot -Pending $policyPending
         Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
         Assert-VerificationModelPolicyUpdateSnapshot -Pending $policyPending
-        if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)) { Invoke-VerificationModelPolicyTransition | Out-Null }
         $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
         $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
             Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
         } else { 'unknown' }
         Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
+        if(-not (Get-ItlProductProjectBinding) -and $policyPending -and
+            (Test-ItlProductProjectTransitionSource -SourceRoot ([string]$policyPending.receipt.sourceRoot))){
+            # Admit/recover the original snapshot first. Required selection may
+            # not hide an older owner's diagnostic or alter its receipt before
+            # admission. Package processing still waits for this same selection.
+            $catalogTransition=Get-ItlProductProjectTransitionSelection -RecordedSelection (Get-ConfigValueFromObject $policyPending.receipt 'catalogSelection' $null)
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $policyPending.snapshot -Source ([pscustomobject]@{root=$policyPending.receipt.sourceRoot;commit=$policyPending.receipt.sourceCommit}) -Phase post-copy-running -Details @{catalogSelection=$catalogTransition}
+        }
+        if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)) { Invoke-VerificationModelPolicyTransition | Out-Null }
         Ensure-OneCSessionLimitDotEnv | Out-Null
         $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
         $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
@@ -9452,7 +9462,13 @@ function Invoke-WorkflowPackageFilePostCopyCore {
         # Catalog-only selection does not enter the legacy MCP refresh below.
         # Reconcile it inside file post-copy, after snapshot validation, using
         # this operation's pinned registry and existing client-set writer.
-        if (Get-ConfigValue -Path productProject -Default $null) {
+        if ($catalogTransition) {
+            $associate={Invoke-ItlProductProjectAssociation $script:PreparedCatalogCandidate -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces}
+            if($script:LifecycleOperationIsContinuation -and (Test-InteractiveInputAvailable)){
+                . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
+                & { Invoke-ItlProductProjectCallerInput -Body $associate } | Out-Host
+            }else{& $associate | Out-Host}
+        } elseif (Get-ConfigValue -Path productProject -Default $null) {
             . Import-ItlProductProject
             Initialize-ItlProductProjectContext -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces
         }
@@ -10469,6 +10485,11 @@ function Update-WorkflowPackage {
         $source | Add-Member -NotePropertyName rolloutScope -NotePropertyValue $rolloutScope -Force
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
         if((Get-ConfigValue -Path productProject -Default $null) -or (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpLocalHome) 'memory/binding') -PathType Container)){. Import-ItlProductProject;Assert-ItlProductProjectPackageCompatibility -SourceRoot $source.root}
+        . Import-ItlProductProjectSetup
+        $catalogSelection=$null
+        if(-not (Get-ItlProductProjectBinding) -and (Test-ItlProductProjectTransitionSource -SourceRoot $source.root)){
+            $catalogSelection=Get-ItlProductProjectTransitionSelection
+        }
         $legacyExecutor = Resolve-WorkflowUpdateLegacyExecutor -Source $source
         $previousRolloutPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
         if (Test-Path -LiteralPath $previousRolloutPath -PathType Leaf) {
@@ -10514,6 +10535,7 @@ function Update-WorkflowPackage {
                 -SnapshotParent (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update')
             try {
                 $details = @{dependencyPlan=$dependencyPlan;rolloutScope=$rolloutScope}
+                if($catalogSelection){$details.catalogSelection=$catalogSelection}
                 if ($null -ne $legacyExecutor) {
                     $details.recoveryExecutorRoot = [string]$legacyExecutor.root
                     $details.recoveryExecutorCommit = [string]$legacyExecutor.commit
@@ -10664,11 +10686,9 @@ function Update-WorkflowPackage {
         Set-RunStage -Stage 'workflow-update.partial' -Detail 'Master is complete; some registered development worktrees require a repeated update-workflow.'
         Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit ([string]$rolloutSource.commit) -RolloutScope $rolloutScope | Out-Null
     } else {
+        # Selection/association was required before file post-copy and included
+        # in the existing master commit; no optional post-success prompt.
         Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed in master and eligible development worktrees."
-        # New code must also offer on the FIRST upgrade from a pre-catalog
-        # caller. Input remains with this operation's validated foreground owner.
-        . Import-ItlProductProjectSetup
-        Invoke-ItlProductProjectPostUpdateOffer
     }
 }
 

@@ -9,6 +9,8 @@ param(
     [string]$ResumeRunStatusPath = "",
     [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")]
     [string]$AgentTarget = "",
+    [string]$CatalogProjectId = '',
+    [string]$CatalogProfileId = '',
     [ValidateSet("", "opus5", "sonnet5", "fable5", "gpt56")]
     [string]$AgentModel = "",
     [Nullable[int]]$InitMaxWaitSeconds = $null,
@@ -572,6 +574,8 @@ try {
     }
 
     $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
+    if ($CatalogProjectId) { $initArgs += @('-CatalogProjectId', $CatalogProjectId) }
+    if ($CatalogProfileId) { $initArgs += @('-CatalogProfileId', $CatalogProfileId) }
     if ($AgentTarget) {
         $initArgs += @("-AgentTarget", $AgentTarget)
     }

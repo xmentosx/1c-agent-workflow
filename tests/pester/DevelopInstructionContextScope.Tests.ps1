@@ -49,11 +49,10 @@ Describe 'Consumed native instruction and product inputs' {
 
         Mock Get-DevelopE2EStandStateSha256 {'c'*64}
     }
-    It 'retains binding admission while the disabled post-update offer avoids product work (interactive=<Interactive>)' -TestCases @(@{Interactive=$false},@{Interactive=$true}) {
+    It 'avoids repeated selection and product work for an already bound project (interactive=<Interactive>)' -TestCases @(@{Interactive=$false},@{Interactive=$true}) {
         param($Interactive)
         $definitions=@{}
         foreach($entry in @(
-            @{file='agent-1c.product-project-context.ps1';name='Get-ItlProductProjectBinding'},
             @{file='agent-1c.product-project-ui.ps1';name='Invoke-ItlProductProjectPostUpdateOffer'}
         )) {
             $tokens=$null;$errors=$null
@@ -66,7 +65,7 @@ Describe 'Consumed native instruction and product inputs' {
             $script:LifecycleOperationIsContinuation=$false
             $script:LifecycleOperationTerminalWrittenByContinuation=$false
             foreach($definition in $definitions.Values){. ([scriptblock]::Create($definition))}
-            function Get-ConfigValue {param($Path,$Default);$Path|Should -Be 'productProject';$trace.binding++;return $null}
+            function Get-ItlProductProjectBinding {$trace.binding++;return @{projectId='already-selected'}}
             function Test-InteractiveInputAvailable {return $Interactive}
             function Read-ItlProductProjectSetting {param($Name);$Name|Should -Be 'selection';$trace.settings++;return @{}}
             function Get-ItlCatalogField {return $null}
@@ -79,8 +78,8 @@ Describe 'Consumed native instruction and product inputs' {
             return $trace
         }
         $seen.binding|Should -Be 1
-        $seen.settings|Should -Be ([int]$Interactive)
-        $seen.answers|Should -Be ([int]$Interactive)
+        $seen.settings|Should -Be 0
+        $seen.answers|Should -Be 0
     }
     It 'reuses authenticated scenarios after audited guidance content changes (<Guidance>)' -TestCases @(
         @{Guidance='.agents/skills/1c-workflow/SKILL.md'},

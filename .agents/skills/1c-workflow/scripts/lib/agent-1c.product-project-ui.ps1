@@ -53,31 +53,36 @@ function New-ItlProductProjectDraft {
 
 function Select-ItlProductProjectCandidate {
     param([string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [bool]$AllowPrompt=$false,[int]$Limit=10,[switch]$ReadOnly)
+    if(-not $ProjectId -and -not $AllowPrompt){throw 'CATALOG_PROJECT_REQUIRED: choose an existing published project with -CatalogProjectId (JSON init: projectId), then repeat the same operation. If absent, prepare and publish it through catalog create separately. No project was inferred.'}
     $raw=Read-ItlProductProjectSnapshot
     $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
     $effective=Get-ItlProductProjectEffectiveSnapshot $raw $preferences
     if(-not $ProjectId){
-        if(-not $AllowPrompt){throw 'CATALOG_PROJECT_REQUIRED: select/create the project before unattended initialization; no association or defer was inferred.'}
-        Get-ItlProductProjectChoices $effective.snapshot projects $Limit|Format-Table|Out-Host
-        $ProjectId=Read-InitRequired 'Project ID (or new)'
+        $choices=if($ReadOnly){$effective.snapshot}else{$raw}
+        Get-ItlProductProjectChoices $choices projects $Limit|Format-Table|Out-Host
+        $ProjectId=Read-InitRequired 'Published project ID (required; cancel to stop the transition)'
     }
     if($ProjectId -eq 'new'){
         if($ReadOnly){throw 'CATALOG_PREVIEW_READ_ONLY: use catalog create/select explicitly before previewing a new record.'}
-        $created=New-ItlProductProjectDraft $effective.snapshot -RecordPath $RecordPath -AllowPrompt:$AllowPrompt -Limit $Limit
-        $ProjectId=$created.recordId
-        $raw=Read-ItlProductProjectSnapshot
-        $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
-        $effective=Get-ItlProductProjectEffectiveSnapshot $raw $preferences
+        throw 'CATALOG_PROJECT_CREATE_SEPARATE: select an existing published project. Use catalog create separately, review its inherited settings and project links, publish it, then repeat this operation.'
     }
     $project=Get-ItlCatalogRecord $effective.snapshot.catalog projects $ProjectId
     if(-not $project){throw "CATALOG_PROJECT_UNKNOWN: '$ProjectId' is absent from the validated catalog and retained local drafts."}
     $product=Get-ItlCatalogRecord $effective.snapshot.catalog products $project.productId
+    if(-not $ReadOnly){
+        $related=@($effective.publication.localRecords|Where-Object {($_.collection -eq 'projects' -and $_.recordId -ceq $ProjectId) -or ($_.collection -eq 'products' -and $_.recordId -ceq $project.productId)})
+        if($related.Count -or -not (Get-ItlCatalogRecord $raw.catalog projects $ProjectId)){
+            throw 'CATALOG_PROJECT_NOT_PUBLISHED: retained drafts are available for preview only. Complete catalog create/save publication, then repeat the same selection; drafts and the current installation are preserved.'
+        }
+        # Unrelated retained drafts do not block a published project and are
+        # not silently applied or discarded by its runtime association.
+        $effective=[pscustomobject]@{snapshot=$raw;publication=@{state='published';baseRevision=$raw.catalogRevision;localRecords=@()}}
+        $project=Get-ItlCatalogRecord $raw.catalog projects $ProjectId
+        $product=Get-ItlCatalogRecord $raw.catalog products $project.productId
+    }
     $family=Get-ItlCatalogField $product 'baseConfigurationVersion'
     if(-not $family){
-        if(-not $AllowPrompt -or $ReadOnly){throw 'CATALOG_PRODUCT_FAMILY_REQUIRED: complete the selected product metadata before unattended initialization; PM4/PM5 is never inferred from its ID or name.'}
-        $product=ConvertTo-ItlCatalogCanonicalValue $product;$product['baseConfigurationVersion']=Read-InitBaseConfigurationVersion
-        $null=Save-ItlProductProjectDraft $raw products $product
-        $raw=Read-ItlProductProjectSnapshot;$preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection);$effective=Get-ItlProductProjectEffectiveSnapshot $raw $preferences
+        throw 'CATALOG_PRODUCT_FAMILY_REQUIRED: complete and publish the selected product metadata separately, then repeat this operation; PM4/PM5 is never inferred or edited during selection.'
     }
     $binding=[ordered]@{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId=$ProjectId;productId=$project.productId}
     if($ProfileId){$binding['profileId']=$ProfileId}
@@ -87,12 +92,12 @@ function Select-ItlProductProjectCandidate {
 }
 
 function Invoke-ItlProductProjectAssociation {
-    param([object]$Candidate,[string]$Decision='', [bool]$AllowPrompt=$false)
+    param([object]$Candidate,[string]$Decision='', [bool]$AllowPrompt=$false,[switch]$IncludeClientSurfaces)
     $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
     if($family -and $family -cne $Candidate.context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: association cannot change the current configuration family, initialize or reset the database.'}
     $clients=@(Get-ConfigValue -Path aiRules.tools -Default @()|Where-Object {$_}|Select-Object -Unique)
     if(-not $clients.Count){$clients=@(Get-ItlActiveClient)}
-    $preview=New-ItlProductProjectPreview $Candidate.context $clients
+    $preview=New-ItlProductProjectPreview $Candidate.context $clients -IncludeClientSurfaces:$IncludeClientSurfaces
     if($AllowPrompt){Show-ItlProductProjectPreview $preview|Format-List|Out-Host}
     $chosen=Resolve-ItlProductProjectPreviewDecision $preview -Decision $Decision -AllowPrompt:$AllowPrompt
     $result=Invoke-ItlProductProjectClientApply $chosen.context $chosen.requests -BindProject -DesiredBinding $Candidate.binding -SavePrivateSelection -PrivateSelection $chosen.preferences -ExpectedInputStates $preview.plan.fileStates -ExpectedOwnerState $preview.plan.ownerState -ProofRequests $chosen.proofRequests
@@ -154,10 +159,13 @@ function Resolve-ItlProductProjectInitAnswers {
     param([object]$Answers)
     $id=[string](Get-AnswerValue -Answers $Answers -Names @('projectId','catalogProjectId') -Default '')
     $mode=[string](Get-AnswerValue -Answers $Answers -Names @('catalogMode') -Default '')
-    if(-not $id -and $mode -ne 'catalog'){return $null} # Explicit legacy JSON/config route remains compatible.
-    if($mode -eq 'legacy'){throw 'CATALOG_INIT_MODE_CONFLICT: legacy answers cannot also request a catalog project.'}
-    if(-not $id){throw 'CATALOG_PROJECT_REQUIRED: catalog initialization requires an explicit project ID before unattended work.'}
+    if($id -and $mode -eq 'legacy'){throw 'CATALOG_INIT_MODE_CONFLICT: legacy answers cannot also request a catalog project.'}
     $profile=[string](Get-AnswerValue -Answers $Answers -Names @('catalogProfileId','profileId') -Default '')
+    if(-not $id){
+        $binding=Get-ItlProductProjectBinding
+        if($binding){$id=$binding.projectId;$profile=[string](Get-ItlCatalogField $binding 'profileId' '')}
+    }
+    if(-not $id){throw 'CATALOG_PROJECT_REQUIRED: initialization requires projectId from the published registry. Prepare a missing project separately and repeat the same initialization before native work.'}
     if(-not $script:PreparedCatalogCandidate -or $script:PreparedCatalogCandidate.binding.projectId -cne $id -or [string](Get-ItlCatalogField $script:PreparedCatalogCandidate.binding 'profileId' '') -cne $profile){$script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $id -ProfileId $profile -AllowPrompt:$false}
     return $script:PreparedCatalogCandidate
 }
@@ -181,38 +189,60 @@ function Save-ItlProductProjectInitBinding {
     Set-ItlProductProjectOperationContext $candidate.context
 }
 
-function Invoke-ItlProductProjectPostUpdateOffer {
-    # The updater has already completed its package receipt and commit. A
-    # separate association outcome must never turn that success into failure.
-    if((Get-ItlProductProjectBinding) -or -not (Test-InteractiveInputAvailable)){return}
-    # Intermediate callers may still offer after the child. The existing flag
-    # suppresses a duplicate even after an empty answer (no saved defer).
-    if(-not $script:LifecycleOperationIsContinuation -and $script:LifecycleOperationTerminalWrittenByContinuation){return}
-    $preferences=Read-ItlProductProjectSetting selection
-    if((Get-ItlCatalogField $preferences 'associationOffer') -eq 'later'){return}
-    try{
-        $offer={
-            $answer=[string](Read-InitOptional 'Workflow updated. Associate this local project with the catalog: choose / new / later (empty keeps it unchanged)')
-            switch($answer.Trim().ToLowerInvariant()){
-                'later' {
-                    $desired=ConvertTo-Vibecoding1cMcpHashtable $preferences;$desired['associationOffer']='later'
-                    Set-ItlProductProjectSetting selection $desired $preferences
-                    Write-Host 'Package update completed; catalog association explicitly deferred. Use catalog select when ready.'
-                }
-                'choose' {Invoke-ItlProductProjectCommand select -AllowPrompt:$true}
-                'new' {Invoke-ItlProductProjectCommand select -ProjectId new -AllowPrompt:$true}
-                default {Write-Host 'Package update completed; catalog association unchanged. No consent or defer was recorded.'}
-            }
+function Get-ItlProductProjectTransitionSelection {
+    param([object]$RecordedSelection=$null)
+    if(Get-ItlProductProjectBinding){return $null}
+    $select={
+        $id=[string](Get-ItlCatalogField $RecordedSelection 'projectId' $CatalogProjectId)
+        $profile=[string](Get-ItlCatalogField $RecordedSelection 'profileId' $CatalogProfileId)
+        $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $id -ProfileId $profile -AllowPrompt:(Test-InteractiveInputAvailable) -Limit $CatalogLimit
+        $candidate=$script:PreparedCatalogCandidate
+        $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
+        if($family -and $family -cne $candidate.context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: select a published project matching the installed configuration family, then repeat the same transition. No association or database change was applied; preserve any existing update snapshot.'}
+        $selection=@{projectId=$candidate.binding.projectId;profileId=(Get-ItlCatalogField $candidate.binding 'profileId' '');catalogRevision=$candidate.context.catalogRevision;settingsHash=$candidate.context.settingsHash}
+        if($RecordedSelection -and (Get-ItlCatalogHash $selection) -cne (Get-ItlCatalogHash $RecordedSelection)){
+            throw 'CATALOG_TRANSITION_SELECTION_CHANGED: the recorded project or registry settings changed. Preserve the update snapshot; restore/reconcile it through update-workflow, then repeat selection. No new context was applied.'
         }
-        if($script:LifecycleOperationIsContinuation){
-            . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
-            Invoke-ItlProductProjectCallerInput -Body $offer
-        }else{& $offer}
-    }catch{
-        $message='Package update completed; catalog association needs a separate continuation: '+$_.Exception.Message
-        # After detaching, Windows PowerShell's warning host may retain stale
-        # console handles. The preserved capture pipe remains the output owner.
-        if($script:LifecycleOperationIsContinuation){[Console]::Out.WriteLine('WARNING: '+$message);[Console]::Out.Flush()}
-        else{Write-Warning $message}
+        return $selection
     }
+    Invoke-Vibecoding1cMcpRegistryOperation {
+        if($RecordedSelection){
+            $revision=[string](Get-ItlCatalogField $RecordedSelection 'catalogRevision' '')
+            if($revision -cnotmatch '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'){throw 'CATALOG_TRANSITION_SELECTION_INVALID: preserve the update receipt and recover its exact recorded registry revision through the existing update owner.'}
+            $state=(Get-Variable ItlMcpRegistryOperation -Scope Script).Value
+            if((Get-ItlCatalogField $state 'catalogAttempted' $false) -and $state.catalogSnapshot.catalogRevision -cne $revision){throw 'CATALOG_TRANSITION_SELECTION_CHANGED: this operation already pinned a different registry revision; preserve its snapshot and repeat through the update recovery owner.'}
+            # Reuse the existing operation pin, not whatever tip was published
+            # between pre-copy and the fresh child. Original hash guards remain.
+            $state['catalogPinnedRevision']=$revision
+        }
+        if($script:LifecycleOperationIsContinuation -and (Test-InteractiveInputAvailable)){
+            . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
+            Invoke-ItlProductProjectCallerInput -Body $select
+        }else{& $select}
+    }
+}
+
+function Test-ItlProductProjectTransitionSource {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$SourceRoot)
+    if(-not $SourceRoot){return $false}
+    $path=Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-ui.ps1'
+    if(-not (Test-Path -LiteralPath $path -PathType Leaf)){return $false}
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text $path),[ref]$tokens,[ref]$errors)
+    if(@($errors).Count){throw 'CATALOG_TRANSITION_SOURCE_INVALID: preserve the installation and restore the exact valid workflow source before repeating the update.'}
+    return $null -ne $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-ItlProductProjectTransitionSelection'},$true)
+}
+
+function Invoke-ItlProductProjectPostUpdateOffer {
+    # Compatibility entry for an older caller: this is now a required
+    # association, never a swallowed warning or an accepted "later" outcome.
+    if(Get-ItlProductProjectBinding){return}
+    $null=Get-ItlProductProjectTransitionSelection
+    Invoke-Vibecoding1cMcpRegistryOperation {
+        $apply={Invoke-ItlProductProjectAssociation $script:PreparedCatalogCandidate -Decision $CatalogDecision -AllowPrompt:(Test-InteractiveInputAvailable) -IncludeClientSurfaces}
+        if($script:LifecycleOperationIsContinuation -and (Test-InteractiveInputAvailable)){
+            . (Join-Path $PSScriptRoot 'agent-1c.product-project-console.ps1')
+            Invoke-ItlProductProjectCallerInput -Body $apply
+        }else{& $apply}
+    } | Out-Host
 }

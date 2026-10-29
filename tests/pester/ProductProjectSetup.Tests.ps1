@@ -13,6 +13,8 @@
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}',[Text.UTF8Encoding]::new($false))
         . $HelperPath -ProjectRoot $root -Action help *> $null
         . Import-ItlProductProjectSetup
+        $CatalogProjectId='';$CatalogProfileId='';$CatalogDecision='';$CatalogLimit=10
+        $script:LifecycleOperationIsContinuation=$false
         $snapshot=New-SetupCatalogFixture
         $script:ItlMcpRegistryOperation=@{attempted=$true;snapshot=$snapshot.registry;error=$null;catalogAttempted=$true;catalogSnapshot=$snapshot;catalogError=$null}
         . Import-ItlMemory
@@ -149,9 +151,9 @@
         $null=Invoke-ItlProductProjectRecovery restore
         Test-Path -LiteralPath $path|Should -BeFalse
         (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'restored association').preserved|Should -BeTrue
-        Mock Test-InteractiveInputAvailable {return $true}
-        Mock Read-InitOptional {return 'later'}
-        Invoke-ItlProductProjectPostUpdateOffer
+        # Historical preference remains readable but no longer bypasses the
+        # mandatory transition. This test owns only legacy enrollment isolation.
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
         (Invoke-AiRules1cManagedMcpConfigReconcile -Operation 'explicit later').preserved|Should -BeTrue
         $before=Read-ItlProductProjectSetting selection
         $desired=ConvertTo-ItlCatalogCanonicalValue $before
@@ -219,8 +221,33 @@
     }
     It 'requires explicit association and does not treat unattended or no answer as consent' {
         {Select-ItlProductProjectCandidate -AllowPrompt:$false}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        $InitMode='json'
+        Mock Read-InitAnswersFromJson {return @{baseConfigurationVersion='PM5';sourceUsesRepository=$false}}
+        Mock Save-InitAnswers {throw 'Initialization must not save legacy-only answers'}
+        {Prepare-InitProjectSettings}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        Should -Invoke Save-InitAnswers -Times 0
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
         Test-Path (Get-ItlProductProjectPath applied)|Should -BeFalse
+    }
+    It 'requires selection before package copy and admits the same published choice on retry' {
+        $LifecyclePhase='';$WorkflowUpdateRecovery='';$DependencySelectionFile='';$WorkflowUpdateBranchRootsFile=''
+        Mock Assert-WorkflowPackageUpdateContext {}
+        Mock Get-WorkflowUpdateRootRuntimeBusyReason {return ''}
+        Mock Get-WorkflowUpdatePendingSnapshot {return $null}
+        Mock Resolve-WorkflowPackageSource {return [pscustomobject]@{root=$RepoRoot;commit=('c'*40)}}
+        Mock Resolve-WorkflowUpdateRolloutScope {return $null}
+        Mock Assert-WorkflowSourceOutsideProject {}
+        Mock Resolve-WorkflowUpdateLegacyExecutor {throw 'Published selection admitted before copy'}
+        Mock Copy-WorkflowManagedDirectory {throw 'Unexpected managed copy'}
+        Mock Test-InteractiveInputAvailable {return $false}
+        {Update-WorkflowPackage}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        Should -Invoke Resolve-WorkflowUpdateLegacyExecutor -Times 0
+        $CatalogProjectId='five'
+        {Update-WorkflowPackage}|Should -Throw '*Published selection admitted before copy*'
+        $script:PreparedCatalogCandidate.binding.projectId|Should -Be five
+        Should -Invoke Copy-WorkflowManagedDirectory -Times 0
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -Not -Be absent
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
     }
     It 'limits visible choices and retains stable IDs rather than exposing the full catalog' {
         $choices=@(Get-ItlProductProjectChoices $snapshot projects 1)
@@ -228,11 +255,12 @@
         $choices[0].id|Should -Be five
         $choices[0].PSObject.Properties.Name|Should -Not -Contain roles
     }
-    It 'keeps explicit legacy JSON answers and rejects contradictory catalog mode' {
+    It 'keeps legacy answer decoding but requires registry selection before initialization' {
         $AgentTarget='codex';$AgentModel=''
         $legacy=Normalize-InitAnswers ([pscustomobject]@{baseConfigurationVersion='PM4';sourceUsesRepository=$false})
         $legacy.catalogMode|Should -Be legacy
         $legacy.baseConfigurationVersion|Should -Be PM4
+        {Resolve-ItlProductProjectInitAnswers ([pscustomobject]@{baseConfigurationVersion='PM4';sourceUsesRepository=$false})}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
         {Resolve-ItlProductProjectInitAnswers ([pscustomobject]@{projectId='five';catalogMode='legacy'})}|Should -Throw '*CATALOG_INIT_MODE_CONFLICT*'
         {Resolve-ItlProductProjectInitAnswers ([pscustomobject]@{catalogMode='catalog'})}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
     }
@@ -242,14 +270,15 @@
         Should -Invoke Read-InitBaseConfigurationVersion -Times 0
         {Select-ItlProductProjectCandidate new -ReadOnly -AllowPrompt:$true}|Should -Throw '*CATALOG_PREVIEW_READ_ONLY*'
     }
-    It 'retains a denied project publication with the same ID and resolves its local draft' {
+    It 'retains a denied publication for review but refuses to bind its local draft' {
         Mock Save-ItlCatalogRecord {return @{status='unsubmitted';outcome='permission-denied'}}
         $record=@{projectId='new-project';name='New project';productId='pm5'}
         $saved=Save-ItlProductProjectDraft $snapshot projects $record
         $saved.status|Should -Be unsubmitted
         $again=New-ItlProductProjectDraft $snapshot
         $again.recordId|Should -Be new-project
-        $candidate=Select-ItlProductProjectCandidate new-project
+        {Select-ItlProductProjectCandidate new-project}|Should -Throw '*CATALOG_PROJECT_NOT_PUBLISHED*'
+        $candidate=Select-ItlProductProjectCandidate new-project -ReadOnly
         $candidate.context.catalogPublication.state|Should -Be local-pending
         $candidate.binding.projectId|Should -Be new-project
         Should -Invoke Save-ItlCatalogRecord -Times 2 -Exactly -ParameterFilter {$BaseCommit -ceq ('a'*40)}
@@ -340,31 +369,37 @@
         (Get-ItlProductProjectBinding).projectId|Should -Be five
         (Read-Utf8Text $path)|Should -Match 'manual.invalid'
     }
-    It 'records only explicit later and does not repeat the successful-update offer' {
+    It 'ignores historical later and requires a published selection before completion' {
+        Set-ItlProductProjectSetting selection @{associationOffer='later'} $null
         Mock Test-InteractiveInputAvailable {return $true}
-        Mock Read-InitOptional {return 'later'}
+        Mock Read-InitRequired {return 'five'}
         Invoke-ItlProductProjectPostUpdateOffer
         Invoke-ItlProductProjectPostUpdateOffer
-        (Read-ItlProductProjectSetting selection).associationOffer|Should -Be later
-        Should -Invoke Read-InitOptional -Times 1 -Exactly
-        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        Should -Invoke Read-InitRequired -Times 1 -Exactly
+        (Get-ItlProductProjectBinding).projectId|Should -Be five
+        (Read-ItlProductProjectRecord applied).context.catalogIncludesClientSurfaces|Should -BeTrue
     }
-    It 'records no consent or defer for an empty answer or unattended update' {
+    It 'rejects unattended and absent choices without binding, creation or writes' {
+        $before=Get-ItlMcpFileState $script:ConfigPath
         Mock Test-InteractiveInputAvailable {return $false}
         Mock Read-InitOptional {throw 'Unexpected unattended question'}
-        Invoke-ItlProductProjectPostUpdateOffer
+        {Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
         Should -Invoke Read-InitOptional -Times 0
         Mock Test-InteractiveInputAvailable {return $true}
-        Mock Read-InitOptional {return ''}
-        Invoke-ItlProductProjectPostUpdateOffer
+        Mock Read-InitRequired {throw 'Input cancelled'}
+        {Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*Input cancelled*'
+        Mock Read-InitRequired {return 'later'}
+        {Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*CATALOG_PROJECT_UNKNOWN*'
+        {Select-ItlProductProjectCandidate new -AllowPrompt:$true}|Should -Throw '*CATALOG_PROJECT_CREATE_SEPARATE*'
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        (Get-ItlMcpFileState $script:ConfigPath)|Should -Be $before
     }
     It 'never reads from an unvalidated continuation even if its hidden console reports input available' {
         Mock Test-InteractiveInputAvailable {return $true}
         Mock Read-InitOptional {throw 'Hidden continuation cannot receive foreground input'}
         $script:LifecycleOperationIsContinuation=$true
-        try {Invoke-ItlProductProjectPostUpdateOffer -WarningAction SilentlyContinue} finally {$script:LifecycleOperationIsContinuation=$false}
+        try {{Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*CATALOG_CALLER_INPUT_UNAVAILABLE*'} finally {$script:LifecycleOperationIsContinuation=$false}
         Should -Invoke Read-InitOptional -Times 0
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
     }
@@ -383,21 +418,32 @@
         Should -Invoke Assert-WorkflowDevelopmentBranchRolloutComplete -Times 1 -Exactly
         Should -Invoke Invoke-ItlProductProjectPostUpdateOffer -Times 0 -Exactly
     }
-    It 'does not repeat the intermediate parent hook after an empty child answer' {
+    It 'does not accept a legacy terminal flag as proof of completed association' {
         Mock Test-InteractiveInputAvailable {return $true}
         Mock Read-InitOptional {throw 'Duplicate parent offer'}
         $script:LifecycleOperationTerminalWrittenByContinuation=$true
-        try {Invoke-ItlProductProjectPostUpdateOffer} finally {$script:LifecycleOperationTerminalWrittenByContinuation=$false}
+        try {{Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*Unexpected additional local question*'} finally {$script:LifecycleOperationTerminalWrittenByContinuation=$false}
         Should -Invoke Read-InitOptional -Times 0
         Read-ItlProductProjectSetting selection|Should -BeNullOrEmpty
     }
-    It 'keeps package success separate from a failed association' {
+    It 'propagates association failure and retains exact selection for the same update' {
         Mock Test-InteractiveInputAvailable {return $true}
-        Mock Read-InitOptional {return 'choose'}
-        Mock Invoke-ItlProductProjectCommand {throw 'Fixture association failure'}
-        {Invoke-ItlProductProjectPostUpdateOffer -WarningAction SilentlyContinue}|Should -Not -Throw
-        Should -Invoke Invoke-ItlProductProjectCommand -Times 1 -Exactly
+        Mock Read-InitRequired {return 'five'}
+        Mock Invoke-ItlProductProjectAssociation {throw 'Fixture association failure'}
+        $selected=Get-ItlProductProjectTransitionSelection
+        $selected.catalogRevision|Should -Be ('a'*40)
+        $selected.settingsHash|Should -Not -BeNullOrEmpty
+        $null=Get-ItlProductProjectTransitionSelection -RecordedSelection $selected
+        $script:ItlMcpRegistryOperation.catalogPinnedRevision|Should -Be ('a'*40)
+        $wrongRevision=ConvertTo-ItlCatalogCanonicalValue $selected;$wrongRevision.catalogRevision='b'*40
+        {Get-ItlProductProjectTransitionSelection -RecordedSelection $wrongRevision}|Should -Throw '*CATALOG_TRANSITION_SELECTION_CHANGED*'
+        $changed=ConvertTo-ItlCatalogCanonicalValue $selected;$changed.settingsHash='changed'
+        {Get-ItlProductProjectTransitionSelection -RecordedSelection $changed}|Should -Throw '*CATALOG_TRANSITION_SELECTION_CHANGED*'
+        {Invoke-ItlProductProjectPostUpdateOffer}|Should -Throw '*Fixture association failure*'
+        Should -Invoke Invoke-ItlProductProjectAssociation -Times 1 -Exactly
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        (Test-ItlProductProjectTransitionSource $RepoRoot)|Should -BeTrue
+        (Test-ItlProductProjectTransitionSource '')|Should -BeFalse
     }
     It 'keeps both catalog receipts byte-identical on the first unchanged single-client sync' -Tag StartupReceiptNoOp {
         Write-Utf8TextAtomic $script:ConfigPath '{"aiRules":{"tools":["codex","claude-code"]}}'

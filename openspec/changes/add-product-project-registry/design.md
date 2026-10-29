@@ -1,5 +1,13 @@
 # Design
 
+## Обязательная привязка перед переходом, 2026-10-29
+
+Пользователь согласовал [checkpoint](evidence/required-project-selection-2026-10-29.md):
+init/update без привязки выбирают только существующую опубликованную запись;
+создание отдельно, без later/пустого успешного перехода. Это решение заменяет
+прежнее optional post-update предложение ниже, сохраняя local overrides,
+отложенные необязательные интеграции и existing recovery owners.
+
 ## Общее подключение Cognee, 2026-10-28
 
 [Memory owner](../add-scoped-cognee-memory/evidence/common-ops-2026-10-28.md)
