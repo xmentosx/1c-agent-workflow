@@ -1,23 +1,31 @@
 # Manual release gate
 
-## One-time dedicated stand setup
+## Dedicated stand setup
 
-1. Create `D:\Git\itl-workflow-e2e-pm5` and copy a safe non-production file
-   infobase into the ignored local directory
-   `D:\Git\itl-workflow-e2e-pm5\.agent-1c\infobases\source-snapshot`.
-2. Initialize the project with the normal ITL wizard, but point
-   `SOURCE_INFOBASE_PATH` only at that in-stand snapshot. Never point the
-   dedicated stand at an external source or production infobase: even a
-   read-only Designer dump can update the file container and its event log.
-3. Verify that the original source repository remains clean after init.
-4. Create a dedicated `itldev/workflow-release-e2e` worktree and database copy.
-5. Add and commit a deterministic fixture change plus its Vanessa scenario.
-6. Copy `templates/release-e2e.example.json` to the ignored local file
-   `.agent-1c/release-e2e.json` and record separate `developWorktreePath` and
-   Release `worktreePath` values. They MUST name different disposable
-   `itldev/*` worktrees: Develop refreshes only its own branch, so it cannot
-   replace the generated fixture HEAD recorded by the Release checkpoint.
-7. Run `/itl-check` once manually to prove the stand itself is healthy.
+Develop and Release qualify on a stand built from the minimal repository
+fixture `tests/fixtures/gate-stand` (no product configuration). Build one per
+publishing clone into new directories whose paths contain whitespace and
+Cyrillic:
+
+```powershell
+.\scripts\new-gate-stand.ps1 `
+  -StandRoot 'D:\Git\itl gate Стенд' `
+  -AiRulesSource <controlled-fork-checkout> `
+  -PlatformPath 'C:\Program Files\1cv8\8.3.27.2130\bin\1cv8.exe'
+```
+
+The builder refuses non-empty targets. It creates each in-stand source snapshot
+from the fixture, runs configured init, creates the Develop
+(`workflow-develop-e2e`) and Release (`workflow-release-e2e`) worktrees, commits
+the Release marker fixture and writes `.agent-1c/release-e2e.json` with the
+configuration-rejection contract. The positive stand (`-PositiveRoot`, default
+`<StandRoot>-positive`) gets its own `golden`/`seed` worktrees. On failure keep
+the directories for diagnosis and repeat on new ones. Pass the stand root as
+`-E2EProjectRoot`; its first qualification is cold. The PM5 stand
+`D:\Git\itl-workflow-e2e-pm5` stays available for product pilots outside gates.
+
+A stand never points at an external source or production infobase: even a
+read-only Designer dump can update the file container and its event log.
 
 The Release seed probe creates its own disposable configuration repository inside
 the temporary branch run root when the dedicated stand does not use a repository.
@@ -75,7 +83,7 @@ First publish and qualify the exact accumulated development candidate:
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 This is the only broad check for a batch of ordinary source tasks. It runs one
@@ -96,7 +104,7 @@ release train instead of `PublishDevelop -RequireRelease` followed by
 ```powershell
 .\scripts\source-delivery.ps1 -Action PromoteRelease `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 It runs `Develop`, then `Release`, on one temporary candidate, publishes that
@@ -140,7 +148,7 @@ When that remote development commit is ready for the stable channel, run:
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 For a GitHub remote, `ReleaseMaster` completes the protected `master` update

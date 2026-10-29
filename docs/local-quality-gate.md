@@ -912,7 +912,9 @@ approval. После фиксации automatic preparation повторно н�
 common Git, очередью и lock должен использовать отдельный зарегистрированный
 стенд. Capture ждёт lifecycle locks стенда, но Release/E2E-стадии другой
 публикации между lifecycle-операциями не сериализуются; общий стенд даёт
-ложные отказы вроде `FIXTURE_WORKFLOW_UPDATE_CHAIN_UNPROVEN`.
+ложные отказы вроде `FIXTURE_WORKFLOW_UPDATE_CHAIN_UNPROVEN`. Свой стенд
+собирается из минимальной фикстуры `scripts/new-gate-stand.ps1`
+(`docs/release-checklist.md`); стенд PM5 в гейтах не используется.
 
 Изменение planner/checker, маршрутизации или reuse должно сохранять регрессии
 обоих направлений: изолированная recovery-доработка не запускает `fresh`, общий
@@ -1075,7 +1077,7 @@ verification/export/refresh/cleanup хвост входят в тот же budge
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 Команду запускают в foreground с внешним timeout, покрывающим одобренный plan и
@@ -1381,7 +1383,7 @@ commit и запускает финальный Develop. Прямой promoter �
 ```powershell
 .\scripts\source-delivery.ps1 -Action PromoteRelease `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 Она строит один exact candidate, выполняет `Develop` и `Release`, публикует его в
@@ -1636,7 +1638,7 @@ eligible promotion disposition; the promotion ref may still be required by
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+  -E2EProjectRoot 'D:\Git\itl gate Стенд'
 ```
 
 Очередь должна быть пустой, а локальный `develop` совпадать с

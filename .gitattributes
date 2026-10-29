@@ -13,6 +13,10 @@ third-party/client-mcp/** -text
 third-party/client-mcp/**/Language.xml whitespace=cr-at-eol
 third-party/client-mcp/**/LICENSE.upstream whitespace=cr-at-eol
 tests/fixtures/client-mcp-language/Configuration.xml -text whitespace=cr-at-eol
+# Native Designer dump and stand texts of the minimal gate stand.
+tests/fixtures/gate-stand/** -text whitespace=cr-at-eol
+tests/fixtures/gate-stand/*.md text eol=lf
+tests/fixtures/gate-stand/*.json text eol=lf
 # Exact upstream HTML form and module blobs retain their native bytes.
 tests/fixtures/vanessa-html-forms/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
 

@@ -561,6 +561,22 @@
       ]
     },
     {
+      "id": "gate-stand",
+      "owner": "minimal qualification stand fixture and builder",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/GateStand.Tests.ps1",
+      "paths": [
+        "scripts/new-gate-stand.ps1",
+        "tests/fixtures/gate-stand/**/*",
+        ".agents/skills/1c-workflow/tools/auto-update/source/**/*",
+        "tests/pester/GateStand.Tests.ps1"
+      ],
+      "tests": [
+        "tests/pester/GateStand.Tests.ps1"
+      ]
+    },
+    {
       "id": "pester-cache-compatibility",
       "owner": "Pester scheduler-independent current and legacy cache compatibility",
       "gate": "targeted",
