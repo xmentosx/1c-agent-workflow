@@ -24,11 +24,11 @@ keep-local/default на исходном пилоте прошли, broad/narrow
 
 ## Что уже закреплено
 
-Для оставшегося выбора product homes подготовлен
-[кандидат всех 44 значений](../openspec/changes/add-product-project-registry/evidence/product-memory-home-review-2026-10-29.md):
+Владелец 2026-10-29 согласовал
+[все 44 значения product homes](../openspec/changes/add-product-project-registry/evidence/product-memory-home-review-2026-10-29.md):
 21 область каждого поколения хранится в КОРП, распределение зарплаты — в ERP+PM.
-Это предложение, не согласованные/published home. Native mappings прочитаны из
-локального provider; live freshness не проверялась. До отдельного подтверждения
+Согласование получено, данные ещё не опубликованы. Native mappings прочитаны из
+локального provider; live freshness не проверялась. До отдельного поручения
 и публикации данных действующие optional-home ограничения сохраняются.
 
 Для будущего выпуска выбран один комплект правил:
