@@ -1,5 +1,19 @@
 # Tasks
 
+## Разбор двух отказов enable, 2026-10-29
+
+- [x] По сохранённым context/receipt и коду установить дефект AlreadyApplied:
+  narrower preview с `catalogIncludesClientSurfaces=false` попадает в operation
+  cache вместо неизменного applied context с `true`; полный memory hash расходится.
+- [x] Повторить исходный disable → enable на том же PM5-пилоте без instrumentation;
+  оба exit0, fresh native status current/pending[], прежние IDs/DB/HEAD сохранены.
+- [ ] Отдельно исправить existing registry owner shortcut: переиспользовать
+  authoritative `applied.context`, сохранить полный memory guard. Runtime-код
+  в текущем analysis/replay прогоне не менялся; успешный повтор не устраняет дефект.
+
+[Причина, evidence и границы повтора](evidence/memory-enable-context-2026-10-29.md).
+Новых случаев/gates, рабочей миграции и публикации нет; G3/G5/QP5 не переоткрыты.
+
 ## Develop и QP5 пилота, 2026-10-29
 
 - [x] Выполнить согласованный frozen PublishDevelop: `1e5b4acf`, static4129/0/0,
@@ -20,7 +34,8 @@
 
 [Единый фактический отчёт и границы](evidence/pilot-qp5-2026-10-29.md).
 QP5/QP-R2 закрыты для первого PM5/Windows11 пилота после доставки ремонта.
-Первые отказы enable сохранены; их причина не объявлена исправленной.
+Первые отказы enable разобраны в разделе выше; причина установлена,
+но runtime-исправление shortcut ещё не выполнено.
 Рабочая миграция/master и остальной UNVERIFIED не расширены.
 
 ## Первый пилот, согласован 2026-10-28

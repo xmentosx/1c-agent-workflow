@@ -1,5 +1,17 @@
 # Tasks
 
+## Причина memory enable guard, 2026-10-29
+
+- [x] Согласовать с memory [разбор AlreadyApplied](../add-scoped-cognee-memory/evidence/memory-enable-context-2026-10-29.md):
+  сохранённый applied context включает client surfaces, узкий preview не включает;
+  shortcut оставляет receipt, но подменяет operation context. Memory guard корректен.
+- [x] Учесть успешный исходный disable → enable на прежнем PM5-пилоте:
+  native status current/pending[], cycle/workspace/workplace, DB и HEAD сохранены.
+- [ ] Отдельно устранить дефект у existing registry owner: при AlreadyApplied
+  сохранять applied context в operation cache. Схема реестра, resolved settings,
+  права, Cognee и full memory hash не меняются. В текущем прогоне только разбор
+  и исходный повтор; G3/R6/QP-R2 не переоткрываются, новая матрица не добавляется.
+
 ## Develop и QP5 пилота, 2026-10-29
 
 - [x] Согласовать [единый результат публикации и N1](../add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md):

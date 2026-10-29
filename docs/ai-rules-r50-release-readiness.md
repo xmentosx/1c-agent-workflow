@@ -9,7 +9,11 @@ QP5/QP-R2 закрыты для одного тестового PM5/Windows11 п
 write/read/recall/Codex restart/retire proof сохранён; после доставки штатный
 enable без instrumentation и fresh native status current/pending[] прошли,
 cycle/workspace/workplace и sealed DB прежние. Первые два enable guard failures
-сохранены, их первопричина не объявлена исправленной. Unconfirmed writes
+[разобраны](../openspec/changes/add-scoped-cognee-memory/evidence/memory-enable-context-2026-10-29.md):
+registry AlreadyApplied сохраняет receipt, но передаёт узкий preview context
+с другим полным hash. Исходный повтор прошёл; точечное runtime-исправление
+этого shortcut до стабильного распространения остаётся отдельным действием.
+В текущем прогоне код не менялся. Unconfirmed writes
 по-прежнему требуют отдельного exact чтения; нового latency SLA нет.
 [Единые факты](../openspec/changes/add-scoped-cognee-memory/evidence/pilot-qp5-2026-10-29.md)
 имеют приоритет над историческим «публикация не начата» ниже. Итоговые
