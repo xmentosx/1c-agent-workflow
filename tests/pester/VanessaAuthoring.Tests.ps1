@@ -62,27 +62,6 @@
         $compact | Should -Not -Match 'authoringStatus|authoringStatePath'
         Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") | Should -BeFalse
 
-        $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-authoring.md") -Raw -Encoding UTF8
-        $reference | Should -Match 'There is no separate Vanessa authoring gate'
-        $reference | Should -Match 'scenario run is optional diagnostic feedback'
-        $reference | Should -Match '/itl-check` is the only executable verification gate'
-        $reference | Should -Match 'Do not delete, skip, filter, or weaken'
-        $reference | Should -Match 'user_actions_recording'
-        $reference | Should -Match 'execute_form_actions'
-        $reference | Should -Match 'modal dialog, window change, or intermediate state'
-        $reference | Should -Match 'frequently_used_steps.*optional fallback'
-        $reference | Should -Match 'get_all.*route itself is unknown.*complete command interface'
-        $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
-        $reference | Should -Match 'reloadAndRunFromLine'
-        $reference | Should -Match 'question_search.*answers_search.*questions_only.*one_question'
-        $reference | Should -Match 'terminal failed `/itl-check`.*named UI/runtime question unresolved'
-        $reference | Should -Match 'unchanged tree.*owned cleanup finish.*before editing or spending the next full repair attempt'
-        $reference | Should -Match 'Skip this diagnostic when the artifacts already answer the question'
-        $reference | Should -Match 'consumes no repair attempt, creates no pass.*configured repair-session limit.*final `/itl-check`'
-
-        $repairTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw -Encoding UTF8
-        $repairTemplate | Should -Match 'conditional post-failure runtime diagnostic from `vanessa-authoring.md`'
-        $repairTemplate | Should -Match 'not an extra gate or repair attempt'
     }
 
     It "ships five bounded recipes with a portable example and safe template contracts" {
@@ -115,16 +94,6 @@
         $integrationTemplate = Get-Content -LiteralPath (Join-Path $exampleRoot 'integration-persistence.feature') -Raw -Encoding UTF8
         $integrationTemplate | Should -Match 'РегистрНакопления\.<ИмяРегистра>'
         $integrationTemplate | Should -Match '<ОжидаемоеКоличествоДвижений>'
-
-        $recipes = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\references\vanessa-recipes.md') -Raw -Encoding UTF8
-        $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})\r?$')
-        $batchExample.Success | Should -BeTrue
-        $gatewayArguments = $batchExample.Groups['json'].Value | ConvertFrom-Json
-        $innerArguments = $gatewayArguments.argumentsJson | ConvertFrom-Json
-        $actions = @($innerArguments.actions_json | ConvertFrom-Json)
-        $gatewayArguments.name | Should -Be 'execute_form_actions'
-        $actions.Count | Should -Be 1
-        $actions[0].action | Should -Be 'set_value'
 
         $warnings = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

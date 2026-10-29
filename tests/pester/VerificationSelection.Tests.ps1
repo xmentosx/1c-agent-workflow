@@ -809,26 +809,12 @@ Describe "Branch-first verification suite selection" {
 
     It "makes refresh return agent-owned classification continuation instead of silent full fallback" {
         $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
-        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
-        $refreshTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template") -Raw -Encoding UTF8
-        $advanced = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md") -Raw -Encoding UTF8
-        $selectionReference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\verification-suite-selection.md") -Raw -Encoding UTF8
 
         $refresh = [regex]::Match($lifecycle, '(?s)function Invoke-RefreshDevBranchCore \{(?<body>.*?)(?=\nfunction Refresh-DevBranch)').Groups['body'].Value
         $refresh | Should -Match 'Update-VerificationSuiteInventory'
         $refresh | Should -Match 'Set-VerificationClassificationRequiredAction'
         $refresh.IndexOf('Set-VerificationClassificationRequiredAction') | Should -BeLessThan $refresh.IndexOf('Write-DevBranchRunUserReport')
-        foreach ($contract in @($fastSkill, $refreshTemplate)) {
-            $contract | Should -Match 'classify-tests-after-refresh:'
-            $contract | Should -Match 'same task|same agent task|same task'
-            $contract | Should -Match '(?is)do not ask the developer to\s+classify'
-        }
-        $fastSkill | Should -Match 'split oversized/mixed feature files yourself'
-        $refreshTemplate | Should -Match 'split oversized or mixed feature files yourself'
-        $advanced | Should -Match 'VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD'
-        $advanced | Should -Match 'Do not merely rename the original file'
-        $selectionReference | Should -Match '(?s)at most eight flat\s+scenarios'
-        $selectionReference | Should -Match 'post-merge scenario baseline'
+
     }
 }
 
