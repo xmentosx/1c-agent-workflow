@@ -51,10 +51,18 @@ acceptance `suiteId` or default-fast `groupId`; use its existing obligation id i
 The agent owns semantic sufficiency and impact analysis. In this same plan,
 choose the least costly sufficient combination of existing or new checks for
 the changed decisions, invariants and material interaction risks. Each added
-check must close an identified gap; do not duplicate a boundary matrix across
-unit, integration and UI layers without a distinct risk. Cost selects the
-method and informs test retention; it never makes incomplete proof sufficient
+check must close an identified gap; do not duplicate a boundary matrix within
+or across unit, integration and UI layers without a distinct risk. Cost includes
+fixture preparation, tool interaction, execution and result analysis. It selects
+the method and informs test retention; it never makes incomplete proof sufficient
 or waives approved criteria and independently required checks.
+
+Group cases by an established shared processing path. Exercise its common
+mechanism with representative cases; check the remaining cases for differing
+transformations, constraints and side effects. Repeat a full cycle for a distinct
+risk or requirement, not automatically for each field or variant. Account for
+every required case; sharing one internal handler alone does not establish
+equivalent paths.
 
 Derive expected results from the agreed outcome and domain contract, not from
 the chosen implementation. Preserve the material preconditions of the reported
@@ -80,6 +88,15 @@ For a selected one-off observation, use `begin-one-off-proof`, perform the
 authorized check, retain expected/actual evidence, then `complete-one-off-proof`.
 No `.feature` is required for an admissible runtime observation; do not convert
 and rerun a sufficient observation merely to obtain a saved test file.
+
+Before expanding a large runtime matrix, use the smallest suitable end-to-end
+case to establish the required path, material preconditions and observability
+of the result. If a test hook is needed, establish that it actually fires before
+building further checks around it. Reuse adequate existing evidence; a successful
+early check contributes to acceptance under the same evidence rules, rather than
+becoming an additional mandatory run. Repeated setup or tool failures call for
+reassessing the method, preserving the requirement and material conditions;
+they do not justify weaker assertions or bypassing existing recovery rules.
 
 Complete independent proofs as they become available. Failure of another check
 does not discard them; reuse still requires the existing input, target and
