@@ -25,6 +25,15 @@
             }
         }
     }
+    It 'retains every verification reference required by the native delivery inventory' {
+        $catalog=Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $references=@(($catalog.contracts | Where-Object id -eq 'verification-reference-files').paths)
+        $references.Count | Should -BeGreaterThan 0
+        foreach($reference in $references) {
+            Test-Path -LiteralPath (Join-Path $RepoRoot $reference) -PathType Leaf | Should -BeTrue -Because "$reference is a required installed reference"
+        }
+    }
+
     It "parses the helper modules launcher and installer" {
         $parsePaths = @($HelperPath) + @($HelperModulePaths) + @($LauncherPath, $InstallerPath)
         $HelperModulePaths.Count | Should -BeGreaterThan 0

@@ -657,20 +657,6 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $workflowText | Should -Match "references/vanessa-tests\.md"
 
-        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-tests.md")
-        $vanessaGuideText | Should -Match "Agent reference"
-        $vanessaGuideText | Should -Match "Context Economy"
-        $vanessaGuideText | Should -Match "Do Not"
-        $vanessaGuideText | Should -Match "1-2"
-        $vanessaGuideText | Should -Match "parameterized YAxUnit"
-        $vanessaGuideText | Should -Match "smoke"
-        $vanessaGuideText | Should -Match "tests/features"
-        $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
-        $contextMarker = -join ([char[]](0x041A, 0x043E, 0x043D, 0x0442, 0x0435, 0x043A, 0x0441, 0x0442, 0x003A))
-        $scenarioMarker = -join ([char[]](0x0421, 0x0446, 0x0435, 0x043D, 0x0430, 0x0440, 0x0438, 0x0439, 0x003A))
-        foreach ($marker in @("#language: ru", $featureMarker, $contextMarker, $scenarioMarker)) {
-            $vanessaGuideText | Should -Match ([regex]::Escape($marker))
-        }
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")) | Should -BeFalse
         (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -BeFalse

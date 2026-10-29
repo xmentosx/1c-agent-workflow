@@ -394,11 +394,11 @@
     "routes": {
       "upgrade": {
         "hardSeconds": 5400,
-      "contracts": ["immutable-download", "bootstrap-update", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "verification-repair-session", "clients-rules", "source-qualification-fixture"]
+      "contracts": ["immutable-download", "bootstrap-update", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "verification-reference-files", "verification-repair-session", "clients-rules", "source-qualification-fixture"]
       },
       "fresh": {
         "hardSeconds": 3600,
-      "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "verification-repair-session", "mcp-hosts", "clients-rules", "source-qualification-fixture"]
+      "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "openspec-runtime", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "verification-reference-files", "verification-repair-session", "mcp-hosts", "clients-rules", "source-qualification-fixture"]
       }
     }
   },
@@ -1977,12 +1977,69 @@
       "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
     },
     {
+      "id": "verification-reference-files",
+      "owner": "Verification references: source text and native delivery inventory",
+      "gate": "targeted",
+      "budgetSeconds": 60,
+      "primaryTest": "tests/pester/ParserDocsBudgets.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/references/verification-change.md",
+        ".agents/skills/1c-workflow/references/verification-suite-selection.md",
+        ".agents/skills/1c-workflow/references/yaxunit-tests.md",
+        ".agents/skills/1c-workflow/references/vanessa-tests.md",
+        ".agents/skills/1c-workflow/references/vanessa-authoring.md",
+        ".agents/skills/1c-workflow/references/vanessa-recipes.md"
+      ],
+      "tests": [
+        "tests/pester/ParserDocsBudgets.Tests.ps1"
+      ]
+    },
+    {
+      "id": "verification-guidance",
+      "owner": "Static verification instruction consumers",
+      "gate": "targeted",
+      "budgetSeconds": 30,
+      "primaryTest": "tests/pester/VerificationGuidance.Tests.ps1",
+      "paths": [
+        ".agents/skills/1c-workflow/references/verification-suite-selection.md",
+        ".agents/skills/1c-workflow/references/yaxunit-tests.md",
+        ".agents/skills/1c-workflow/references/vanessa-tests.md",
+        ".agents/skills/1c-workflow/references/vanessa-authoring.md",
+        ".agents/skills/1c-workflow/references/vanessa-recipes.md",
+        "templates/USER-RULES.append.md",
+        "docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md",
+        ".agents/skills/1c-workflow-fast/SKILL.md",
+        ".agents/skills/1c-workflow/references/advanced-actions.md",
+        ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-verify-fix.md.template",
+        ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-refresh.md.template"
+      ],
+      "tests": [
+        "tests/pester/VerificationGuidance.Tests.ps1"
+      ]
+    },
+    {
+      "id": "bootstrap-verification-guide-input",
+      "owner": "Update fixture reads the delivered Vanessa guide",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
+      "paths": [
+        "tests/pester/BootstrapUpdate.Tests.ps1"
+      ],
+      "reuseInputPaths": [
+        ".agents/skills/1c-workflow/references/vanessa-tests.md"
+      ],
+      "tests": [
+        "tests/pester/BootstrapUpdate.Tests.ps1"
+      ]
+    },
+    {
       "id": "yaxunit-verification",
       "owner": "YAxUnit installation and unit verification",
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/YAxUnitVerification.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/references/yaxunit-tests.md"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1"],
       "tests": ["tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/YAxUnitApplicability.Tests.ps1", "tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1"]
     },
     {
@@ -2021,8 +2078,8 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1",
-        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/1c-workflow/references/verification-suite-selection.md",
-        ".agents/skills/1c-workflow/references/verification-change.md", ".agents/skills/1c-workflow/references/vanessa-authoring.md", ".agents/skills/1c-workflow/references/vanessa-recipes.md", ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "scripts/vanessa-build-runtime.ps1", "scripts/run-vanessa-build-runtime.ps1", "third-party/vanessa-automation/*", "tests/fixtures/vanessa-nested-selection/*", "tests/fixtures/vanessa-row-criteria/*", "tests/fixtures/vanessa-client-code/*", "tests/fixtures/vanessa-testclient-ports/*", "tests/fixtures/vanessa-html-forms/*", "tests/fixtures/vanessa-diagnostic-screenshot/*"],
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+        ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "scripts/vanessa-build-runtime.ps1", "scripts/run-vanessa-build-runtime.ps1", "third-party/vanessa-automation/*", "tests/fixtures/vanessa-nested-selection/*", "tests/fixtures/vanessa-row-criteria/*", "tests/fixtures/vanessa-client-code/*", "tests/fixtures/vanessa-testclient-ports/*", "tests/fixtures/vanessa-html-forms/*", "tests/fixtures/vanessa-diagnostic-screenshot/*"],
       "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VerificationAcceptedMaster.Tests.ps1", "tests/pester/VerificationProofReuse.Tests.ps1", "tests/pester/VerificationAggregateAssessment.Tests.ps1", "tests/pester/VerificationChangeModel.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/YAxUnitApplicability.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/DevBranchCheck.Tests.ps1", "tests/pester/DevBranchWorktrees.Tests.ps1", "tests/pester/DevBranchForkContinuation.Tests.ps1", "tests/pester/DevBranchMergeRecovery.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
     },
     {
@@ -2197,6 +2254,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/ParserDocsBudgets.Tests.ps1",
       "paths": ["AGENTS.md", "CONTEXT.md", "README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*", ".agents/skills/grill*/*", ".agents/skills/domain-modeling/*", ".agents/skills/openspec-*/*", "openspec/*"],
+      "reuseInputPaths": ["tests/quality-contracts.json"],
       "tests": ["tests/pester/ParserDocsBudgets.Tests.ps1"]
     },
     {

@@ -272,6 +272,11 @@ evidence. A new report format, service or broad gate is not required.
   they have different inputs. A catalog owner alone does not justify a mixed
   monolith, broad path wildcard or serial execution. Shared process/console
   restrictions need a concrete isolation dependency.
+  Verification references have a separate documentation owner and small text
+  consumers. A prose edit must not select the executable verification owner.
+  Keep actual template/data consumers explicit; never exclude Markdown by
+  extension. Native delivery still binds the reference inventory independently
+  of Pester selection.
 - Cost: inspect actual executed/reused files and the slowest groups from the
   required run. Compare an existing representative baseline when selection,
   execution order or frequent-path cost changes. Do not rerun unchanged checks
@@ -280,6 +285,10 @@ evidence. A new report format, service or broad gate is not required.
 - Reuse: distinguish paths selecting tests from loaded dependencies invalidating
   their results. Keep all real child, fixture, runtime and external inputs bound;
   narrow unrelated invalidation without omitting dependencies. For changes to
+  documentation ownership, move text assertions out of mixed runtime files and
+  retain actual loaded documents on their specific consumer. Moving a reference
+  to the same broad owner's `reuseInputPaths` still invalidates every test in
+  that owner and does not solve cache coupling. For changes to
   identity/cache/continuation, use an existing applicable regression to prove both
   unchanged-input reuse and changed-input rejection. If the parent/child or default
   artifact path changed, exercise that actual boundary with ordinary inputs;
