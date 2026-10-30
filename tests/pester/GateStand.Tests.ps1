@@ -61,6 +61,9 @@ Describe 'Per-clone gate stand selection' {
         Mock Start-DeliveryProcess { throw 'must not build' }
         $output = @(Resolve-DeliveryGateStand -Requested $legacy 3>&1)
         @($output | Where-Object { $_ -is [string] }) | Should -Be @($script:cloneStand)
+        # A completed stand built before owner records is adopted when selected.
+        Get-DeliveryGateStandOwner -StandRoot $script:cloneStand | Should -Be ([IO.Path]::GetFullPath((Join-Path $script:clone '.git')))
+        Get-DeliveryGateStandOwner -StandRoot $legacy | Should -Be ''
         (@($output | Where-Object { $_ -is [Management.Automation.WarningRecord] }) -join "`n") | Should -Match 'DELIVERY_GATE_STAND_REPLACED'
     }
 
@@ -82,6 +85,7 @@ Describe 'Per-clone gate stand selection' {
         }
         Resolve-DeliveryGateStand -Requested '' -AiRulesSource 'C:\fork' | Should -Be $script:cloneStand
         Should -Invoke Start-DeliveryProcess -Times 1 -Exactly
+        Get-DeliveryGateStandOwner -StandRoot $script:cloneStand | Should -Be ([IO.Path]::GetFullPath((Join-Path $script:clone '.git')))
         Resolve-DeliveryGateStand -Requested '' | Should -Be $script:cloneStand
         Should -Invoke Start-DeliveryProcess -Times 1 -Exactly
     }

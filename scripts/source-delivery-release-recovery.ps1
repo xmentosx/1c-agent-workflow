@@ -305,6 +305,27 @@ function Get-DeliveryGateStandRoot {
     return Join-Path $parent ("$clone $word " + $FixtureId.Substring(0, 8))
 }
 
+# The derived root encodes this clone, but a stand cannot name its clone back.
+# The owner record lets cleanup remove only this clone's superseded stands.
+function Get-DeliveryGateStandOwner {
+    param([Parameter(Mandatory = $true)][string]$StandRoot)
+    $path = Join-Path $StandRoot '.git/itl/gate-stand-owner.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+    try { $owner = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { return '' }
+    if ([int]$owner.schemaVersion -ne 1 -or [string]$owner.kind -cne 'itl-gate-stand-owner' -or -not [string]$owner.commonGit) { return '' }
+    return [IO.Path]::GetFullPath([string]$owner.commonGit).TrimEnd('\', '/')
+}
+
+function Set-DeliveryGateStandOwner {
+    param([Parameter(Mandatory = $true)][string]$StandRoot, [Parameter(Mandatory = $true)][string]$CommonGitDirectory)
+    $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
+    if ((Get-DeliveryGateStandOwner -StandRoot $StandRoot) -ieq $common) { return }
+    $path = Join-Path $StandRoot '.git/itl/gate-stand-owner.json'
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+    $record = [ordered]@{ schemaVersion = 1; kind = 'itl-gate-stand-owner'; commonGit = $common }
+    [IO.File]::WriteAllText($path, (($record | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+}
+
 function Read-DeliveryGateStandMarker {
     param([string]$StandRoot, [string]$BuilderPath)
     # The builder's own parameters shadow same-named caller variables.
@@ -321,7 +342,8 @@ function Resolve-DeliveryGateStand {
         if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $requestedRoot }
         Write-Warning "DELIVERY_GATE_STAND_REPLACED: '$requestedRoot' is not a gate stand of the current fixture; this clone's gate stand is used instead. Omit -E2EProjectRoot."
     }
-    $root = Get-DeliveryGateStandRoot -CommonGitDirectory (Get-DeliveryCommonGitDirectory) -FixtureId $fixtureId
+    $common = Get-DeliveryCommonGitDirectory
+    $root = Get-DeliveryGateStandRoot -CommonGitDirectory $common -FixtureId $fixtureId
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $root))
     $lockPath = $root + '.lock'
     $deadline = [DateTime]::UtcNow.AddSeconds($BuildTimeoutSeconds)
@@ -335,7 +357,7 @@ function Resolve-DeliveryGateStand {
     }
     try {
         $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
-        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $root }
+        if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { Set-DeliveryGateStandOwner -StandRoot $root -CommonGitDirectory $common; return $root }
         # The builder starts with the positive twin, so either directory
         # without a completion marker is a failed build.
         if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath ($root + '-positive'))) {
@@ -359,6 +381,7 @@ function Resolve-DeliveryGateStand {
         finally { Close-DeliveryProcessJob -JobHandle $job.jobHandle -Process $job.process -PriorErrorMessage $errorText; $job.process.Dispose() }
         $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
         if ($null -eq $marker -or [string]$marker.fixtureId -cne $fixtureId) { throw "DELIVERY_GATE_STAND_BUILD_FAILED: '$root' has no completion marker; see $stdout." }
+        Set-DeliveryGateStandOwner -StandRoot $root -CommonGitDirectory $common
         return $root
     } finally { $lock.Dispose() }
 }
