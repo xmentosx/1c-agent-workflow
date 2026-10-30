@@ -204,7 +204,7 @@ function Test-DevelopColdCutoverConsumers {
                 $helperText=Get-DevelopJourneySourceProjection $helper $helperText fresh
                 $sha=[Security.Cryptography.SHA256]::Create()
                 try {$helperHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($helperText)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-                if($helperHash -cne 'a547992821bcd7c88f44eb68a7874bcfdc4727688d9d96f147867b22dd21346e') {return $false}
+                if($helperHash -cnotin @('a547992821bcd7c88f44eb68a7874bcfdc4727688d9d96f147867b22dd21346e','626e58491b3cc856f9a0f24b91e353b73750b3fadf34b2e1dadf68f69b06df42')) {return $false}
                 if($hash -cin @('b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')){
                     $catalogHelper='scripts/source-e2e-workflow-update.ps1'
                     $catalogText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $catalogHelper}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $catalogHelper)))}

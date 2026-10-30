@@ -120,7 +120,10 @@ function Get-DevelopVerificationChangeInspection {
     $prefix=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
     $console=[IO.Path]::GetFullPath([string]$summary.logPath)
     if(-not $console.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'DEVELOP_VERIFICATION_CHANGE_TARGET_CHANGED'}
-    $view=[IO.File]::ReadAllText($console,[Text.UTF8Encoding]::new($false,$true))|ConvertFrom-Json -ErrorAction Stop
+    # Catalog startup may log diagnostics before the action payload. Keep the
+    # strict UTF-8 boundary and use the existing terminal JSON reader.
+    $null=[IO.File]::ReadAllText($console,[Text.UTF8Encoding]::new($false,$true))
+    $view=Read-SourceE2ECompactSummary -ProcessResult ([pscustomobject]@{stdout=$console})
     if($view.model -cne 'change' -or $view.status -cne 'planning' -or $view.baseTree -cnotmatch '^[a-f0-9]{40}$' -or $view.tree -cnotmatch '^[a-f0-9]{40}$'){
         throw 'DEVELOP_VERIFICATION_CHANGE_SCOPE_UNSUPPORTED: inspect the current task through its owner.'
     }

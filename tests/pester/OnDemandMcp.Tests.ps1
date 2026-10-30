@@ -1870,6 +1870,42 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It 'proves a State=0 listener only with its live socket and exclusive known owner: <Case>' -TestCases @(
+        @{Case='owned';Expected=$true},@{Case='foreign';Expected=$false},@{Case='unknown-owner';Expected=$false},
+        @{Case='mixed-owner';Expected=$false},@{Case='no-peer-socket-missing';Expected=$false},
+        @{Case='time-wait';Expected=$true},@{Case='closed-only';Expected=$false},
+        @{Case='foreign-connection';Expected=$true},
+        @{Case='classified-and-unclassified';Expected=$false},
+        @{Case='closed';Expected=$false},@{Case='unreadable';Expected=$false}
+    ) {
+        param($Case,$Expected)
+        & {
+            $rows=@([pscustomobject]@{State=0;RemotePort=0;OwningProcess=1234})
+            if($Case -eq 'foreign'){$rows[0].OwningProcess=4321}
+            if($Case -eq 'unknown-owner'){$rows[0].OwningProcess=0}
+            if($Case -eq 'mixed-owner'){$rows+=([pscustomobject]@{State=0;RemotePort=0;OwningProcess=4321})}
+            if($Case -eq 'foreign-connection'){$rows+=([pscustomobject]@{State=5;RemotePort=123;OwningProcess=4321})}
+            if($Case -eq 'classified-and-unclassified'){$rows=@([pscustomobject]@{State='Listen';RemotePort=0;OwningProcess=1234},[pscustomobject]@{State=0;RemotePort=0;OwningProcess=4321})}
+            if($Case -eq 'time-wait'){$rows+=([pscustomobject]@{State=11;RemotePort=123;OwningProcess=0})}
+            if($Case -eq 'closed-only'){$rows=@([pscustomobject]@{State=11;RemotePort=123;OwningProcess=0})}
+            if($Case -eq 'no-peer-socket-missing'){$rows[0].State=5;$rows[0].RemotePort=123}
+            function Get-NetTCPConnection {param($LocalPort,$ErrorAction) if($Case -eq 'unreadable'){throw 'CIM unavailable'};$rows}
+            function Test-TcpPortOpen {param($Port) $Case -ne 'closed'}
+            Test-ItlOnDemandPortOwnedByProcess -Port 4567 -ProcessId 1234 | Should -Be $Expected
+        }
+    }
+
+    It 'retains real listener ownership after the server closed a connection' {
+        $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+        $client=$null;$accepted=$null
+        try {
+            $listener.Start();$port=([Net.IPEndPoint]$listener.LocalEndpoint).Port
+            $client=[Net.Sockets.TcpClient]::new();$client.Connect('127.0.0.1',$port)
+            $accepted=$listener.AcceptTcpClient();$accepted.Dispose();$accepted=$null;$client.Dispose();$client=$null
+            Test-ItlOnDemandPortOwnedByProcess -Port $port -ProcessId $PID | Should -BeTrue
+        } finally {if($accepted){$accepted.Dispose()};if($client){$client.Dispose()};$listener.Stop()}
+    }
+
     It "stops the strictly owned backend process and closes its listening port" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-owned-process-" + [guid]::NewGuid().ToString("N"))
         $child = $null
