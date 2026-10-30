@@ -144,7 +144,7 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
+            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Get-SourceGateHardBudgetSeconds', 'Get-SourceGateSupervisionBudgetSeconds', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
             $identityDefinition = $functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1
             $stopDefinition = $functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1
             $startDefinition = $functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1
@@ -172,6 +172,8 @@ while ($true) { Start-Sleep -Seconds 1 }
                 $stopDefinition.Extent.Text
                 $startDefinition.Extent.Text
                 $closeJobDefinition.Extent.Text
+                ($functions | Where-Object Name -eq 'Get-SourceGateHardBudgetSeconds').Extent.Text
+                ($functions | Where-Object Name -eq 'Get-SourceGateSupervisionBudgetSeconds').Extent.Text
                 $gateDefinition.Extent.Text
                 @'
 function Update-DeliveryOperation {
