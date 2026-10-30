@@ -118,6 +118,13 @@ Describe 'Memory admission remains inside the Pester scheduler' {
     ) {
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes $Free | Should -Be $Expected
     }
+    It 'credits running workers already reflected in the observation: active=<Active> free=<Free>' -ForEach @(
+        @{Active=1;Free=1100MB;Expected=2},@{Active=2;Free=600MB;Expected=2},@{Active=2;Free=1300MB;Expected=3},@{Active=3;Free=8GB;Expected=3},@{Active=2;Free=200MB;Expected=0}
+    ) {
+        Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes $Free -CommitHeadroomBytes 8GB -ActiveWorkers $Active | Should -Be $Expected
+        # Commit headroom remains a total cap and is not credited for running workers.
+        Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 3GB -ActiveWorkers $Active | Should -Be 1
+    }
     It 'defers new workers at critical commit pressure despite ample free physical RAM' {
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 0 | Should -Be 0
         Get-PesterMemoryWorkerLimit -Requested 3 -AvailableBytes 8GB -CommitHeadroomBytes 3GB | Should -Be 1
@@ -157,7 +164,7 @@ Describe 'Memory admission remains inside the Pester scheduler' {
         $green.failed | Should -Be 0
     }
     It 'completes native tasks with memory recovery=<Recovery> and reuses their proof' -ForEach @(
-        @{Recovery='physical';Expected=1;Initial=1},@{Recovery='physical-recovery';Expected=2;Initial=1},@{Recovery='commit-recovery';Expected=2;Initial=0},@{Recovery='commit-serial-recovery';Expected=1;Initial=0}
+        @{Recovery='physical';Expected=1;Initial=1},@{Recovery='physical-incremental';Expected=2;Initial=1},@{Recovery='physical-recovery';Expected=2;Initial=1},@{Recovery='commit-recovery';Expected=2;Initial=0},@{Recovery='commit-serial-recovery';Expected=1;Initial=0}
     ) {
         $root=New-RuntimeProofFixture "Memory admission $Recovery"
         Copy-Item (Join-Path $root 'tests/pester/Runtime.Tests.ps1') (Join-Path $root 'tests/pester/Second.Tests.ps1')
@@ -180,9 +187,11 @@ Describe 'Memory admission remains inside the Pester scheduler' {
         $memory=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-PesterMemorySnapshot'},$true)
         # Substitute only host observation, keeping both original child tests.
         $observation=switch($Recovery) {
-            'physical' {'function Get-PesterMemorySnapshot { return [pscustomobject]@{availableBytes=1300MB;commitHeadroomBytes=8GB} }'}
-            'physical-recovery' {'function Get-PesterMemorySnapshot { if(-not (Get-Variable fixtureMemoryReads -Scope Script -ErrorAction SilentlyContinue)){$script:fixtureMemoryReads=0};$script:fixtureMemoryReads++;return [pscustomobject]@{availableBytes=$(if($script:fixtureMemoryReads -eq 1){1300MB}else{8GB});commitHeadroomBytes=8GB} }'}
-            {$_ -in @('commit-recovery','commit-serial-recovery')} {'function Get-PesterMemorySnapshot { if(-not (Get-Variable fixtureMemoryReads -Scope Script -ErrorAction SilentlyContinue)){$script:fixtureMemoryReads=0};$script:fixtureMemoryReads++;return [pscustomobject]@{availableBytes=8GB;commitHeadroomBytes=$(if($script:fixtureMemoryReads -le 2){0}else{8GB})} }'}
+            # Each running worker consumes host memory: 700 MB leaves no room, 200 MB leaves room for one more.
+            'physical' {'function Get-PesterMemorySnapshot { param([int]$ActiveWorkers=0) return [pscustomobject]@{availableBytes=(1300MB-$ActiveWorkers*700MB);commitHeadroomBytes=8GB;activeWorkers=$ActiveWorkers} }'}
+            'physical-incremental' {'function Get-PesterMemorySnapshot { param([int]$ActiveWorkers=0) return [pscustomobject]@{availableBytes=(1300MB-$ActiveWorkers*200MB);commitHeadroomBytes=8GB;activeWorkers=$ActiveWorkers} }'}
+            'physical-recovery' {'function Get-PesterMemorySnapshot { param([int]$ActiveWorkers=0) if(-not (Get-Variable fixtureMemoryReads -Scope Script -ErrorAction SilentlyContinue)){$script:fixtureMemoryReads=0};$script:fixtureMemoryReads++;return [pscustomobject]@{availableBytes=$(if($script:fixtureMemoryReads -eq 1){1300MB}else{8GB});commitHeadroomBytes=8GB;activeWorkers=$ActiveWorkers} }'}
+            {$_ -in @('commit-recovery','commit-serial-recovery')} {'function Get-PesterMemorySnapshot { param([int]$ActiveWorkers=0) if(-not (Get-Variable fixtureMemoryReads -Scope Script -ErrorAction SilentlyContinue)){$script:fixtureMemoryReads=0};$script:fixtureMemoryReads++;return [pscustomobject]@{availableBytes=8GB;commitHeadroomBytes=$(if($script:fixtureMemoryReads -le 2){0}else{8GB});activeWorkers=$ActiveWorkers} }'}
         }
         $text=$text.Remove($memory.Extent.StartOffset,$memory.Extent.EndOffset-$memory.Extent.StartOffset).Insert($memory.Extent.StartOffset,$observation)
         if($Initial -eq 0) {
