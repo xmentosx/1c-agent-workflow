@@ -833,3 +833,182 @@ shared cross-project knowledge. Outside managed ITL projects, use Cognee-first
         }
     }
 }
+
+Describe 'AI rules cache integrity with disposable Unicode fixtures' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $HelperPath = $context.HelperPath
+        function New-CacheIntegrityFixture {
+            $root = Join-Path $TestDrive ('кэш правила ' + [guid]::NewGuid().ToString('N'))
+            $source = Join-Path $root 'источник правил'
+            $project = Join-Path $root 'проект один'
+            $cache = Join-Path $root 'временный кэш'
+            [void][IO.Directory]::CreateDirectory((Join-Path $source 'content/skills/grill-me/agents'))
+            [void][IO.Directory]::CreateDirectory((Join-Path $project 'templates'))
+            [void][IO.Directory]::CreateDirectory((Join-Path $project '.agent-1c'))
+            [void][IO.Directory]::CreateDirectory($cache)
+            [IO.File]::WriteAllText((Join-Path $source 'content/skills/grill-me/agents/openai.yaml'), 'exact unchanged metadata')
+            [IO.File]::WriteAllText((Join-Path $source '.gitignore'), 'ignored.txt')
+            [IO.File]::WriteAllText((Join-Path $source 'version.txt'), 'r49')
+            [IO.File]::WriteAllText((Join-Path $source 'install.ps1'), @'
+param([string]$Source,[string]$ProjectRoot)
+$ErrorActionPreference = 'Stop'
+$text = [IO.File]::ReadAllText((Join-Path $Source 'content/skills/grill-me/agents/openai.yaml'))
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'installed.yaml'), $text)
+'@)
+            & git -C $source init --quiet
+            & git -C $source add --all
+            & git -C $source -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m r49
+            $old = (& git -C $source rev-parse HEAD).Trim()
+            & git -C $source tag v49
+            [IO.File]::WriteAllText((Join-Path $source 'version.txt'), 'r50')
+            & git -C $source add --all
+            & git -C $source -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m r50
+            $next = (& git -C $source rev-parse HEAD).Trim()
+            & git -C $source tag v50
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.aiRules1c = [pscustomobject]@{ repo=$source; ref='v49'; commit=$old }
+            $lockPath = Join-Path $project 'templates/dependency-lock.json'
+            $lock | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $lockPath -Encoding UTF8
+            '{"aiRules":{"tools":["codex"]}}' | Set-Content -LiteralPath (Join-Path $project '.agent-1c/project.json') -Encoding UTF8
+            [IO.File]::WriteAllText((Join-Path $project 'user.txt'), 'project stays intact')
+            return [pscustomobject]@{root=$root;source=$source;project=$project;cache=$cache;old=$old;next=$next;lock=$lock;lockPath=$lockPath}
+        }
+    }
+    BeforeEach {
+        $savedTemp = $env:TEMP
+        $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
+        Remove-Item Env:ITL_AI_RULES_SOURCE_PATH -ErrorAction SilentlyContinue
+        $fixture = New-CacheIntegrityFixture
+        $env:TEMP = $fixture.cache
+    }
+    AfterEach {
+        $env:TEMP = $savedTemp
+        $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
+    }
+
+    It 'installs complete pinned files after <damage> (advance=<advance>) and preserves diagnostics' -ForEach @(
+        @{damage='deleted';advance=$false}, @{damage='deleted';advance=$true},
+        @{damage='modified';advance=$false}, @{damage='staged';advance=$false},
+        @{damage='untracked';advance=$false}, @{damage='ignored';advance=$false},
+        @{damage='corrupt-index';advance=$false}, @{damage='corrupt-git';advance=$false},
+        @{damage='wrong-origin';advance=$false}, @{damage='skip-worktree';advance=$false},
+        @{damage='assume-unchanged';advance=$false}
+    ) {
+        & {
+            . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+            $first = Sync-AiRules1cCheckout
+            $relative = 'content/skills/grill-me/agents/openai.yaml'
+            $yaml = Join-Path $first.root $relative
+            switch ($damage) {
+                deleted { Remove-Item -LiteralPath $yaml }
+                modified { [IO.File]::WriteAllText($yaml, 'local changed bytes') }
+                staged { [IO.File]::WriteAllText($yaml, 'staged bytes'); Invoke-GitAt -Root $first.root -Arguments @('add', '--all') }
+                untracked { [IO.File]::WriteAllText((Join-Path $first.root 'посторонний файл.txt'), 'untracked bytes') }
+                ignored { [IO.File]::WriteAllText((Join-Path $first.root 'ignored.txt'), 'ignored bytes') }
+                corrupt-index { [IO.File]::WriteAllText((Join-Path $first.root '.git/index'), 'broken index') }
+                corrupt-git { [IO.File]::WriteAllText((Join-Path $first.root '.git/HEAD'), 'broken HEAD') }
+                wrong-origin { Invoke-GitAt -Root $first.root -Arguments @('remote','set-url','origin',(Join-Path $fixture.root 'foreign repository')) }
+                skip-worktree { Invoke-GitAt -Root $first.root -Arguments @('update-index','--skip-worktree',$relative); Remove-Item -LiteralPath $yaml }
+                assume-unchanged { Invoke-GitAt -Root $first.root -Arguments @('update-index','--assume-unchanged',$relative); Remove-Item -LiteralPath $yaml }
+            }
+            $receiptName = if ($damage -eq 'corrupt-git') { 'HEAD' } else { 'fixture-evidence' }
+            if ($receiptName -ne 'HEAD') { [IO.File]::WriteAllText((Join-Path $first.root ('.git/' + $receiptName)), 'preserve diagnostic bytes') }
+            if ($advance) {
+                $fixture.lock.dependencies.aiRules1c.ref = 'v50'
+                $fixture.lock.dependencies.aiRules1c.commit = $fixture.next
+                $fixture.lock | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $fixture.lockPath -Encoding UTF8
+                Read-ProjectConfig
+            }
+            $captured = @(Sync-AiRules1cCheckout 3>&1)
+            $warningMessages = @($captured | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $second = @($captured | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+            [IO.File]::ReadAllText((Join-Path $second.root $relative)) | Should -BeExactly 'exact unchanged metadata'
+            $second.commit | Should -Be $(if ($advance) { $fixture.next } else { $fixture.old })
+            @(Get-GitPathListAt -Root $second.root -Arguments @('status','--porcelain=v1','-z','--untracked-files=all')).Count | Should -Be 0
+            ($warningMessages -join ' ') | Should -Match 'AI_RULES_CACHE_RECOVERED.*expectedCommit=.*diagnostic='
+            $preserved = if ($damage -in @('wrong-origin','corrupt-git')) { $first.root } else {
+                @(Get-ChildItem -LiteralPath $fixture.cache -Directory -Filter 'ai_rules_1c-invalid-*')[0].FullName
+            }
+            [IO.File]::ReadAllText((Join-Path $preserved ('.git/' + $receiptName))) | Should -BeExactly $(if ($receiptName -eq 'HEAD') {'broken HEAD'} else {'preserve diagnostic bytes'})
+            switch ($damage) {
+                { $_ -in @('deleted','skip-worktree','assume-unchanged') } { Test-Path -LiteralPath (Join-Path $preserved $relative) | Should -BeFalse }
+                modified { [IO.File]::ReadAllText((Join-Path $preserved $relative)) | Should -BeExactly 'local changed bytes' }
+                staged { [IO.File]::ReadAllText((Join-Path $preserved $relative)) | Should -BeExactly 'staged bytes' }
+                untracked { [IO.File]::ReadAllText((Join-Path $preserved 'посторонний файл.txt')) | Should -BeExactly 'untracked bytes' }
+                ignored { [IO.File]::ReadAllText((Join-Path $preserved 'ignored.txt')) | Should -BeExactly 'ignored bytes' }
+                corrupt-index { [IO.File]::ReadAllText((Join-Path $preserved '.git/index')) | Should -BeExactly 'broken index' }
+                wrong-origin { (Get-GitOutputAt -Root $preserved -Arguments @('remote','get-url','origin')).Trim() | Should -BeExactly (Join-Path $fixture.root 'foreign repository') }
+            }
+            $install = Invoke-ItlNativeProcessCapture -FilePath 'powershell.exe' -Arguments @('-NoProfile','-File',(Join-Path $second.root 'install.ps1'),'-Source',$second.root,'-ProjectRoot',$fixture.project)
+            $install.exitCode | Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $fixture.project 'installed.yaml')) | Should -BeExactly 'exact unchanged metadata'
+            [IO.File]::ReadAllText((Join-Path $fixture.project 'user.txt')) | Should -BeExactly 'project stays intact'
+            $third = Sync-AiRules1cCheckout
+            [IO.File]::ReadAllText((Join-Path $third.root $relative)) | Should -BeExactly 'exact unchanged metadata'
+        }
+    }
+
+    It 'preserves the damaged cache and project after interrupted preparation and succeeds on retry' {
+        & {
+            . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+            $first = Sync-AiRules1cCheckout
+            Remove-Item -LiteralPath (Join-Path $first.root 'content/skills/grill-me/agents/openai.yaml')
+            $originalGit = (Get-Command Invoke-GitAt).ScriptBlock
+            function Invoke-GitAt {
+                param([string]$Root,[string[]]$Arguments)
+                if ($Arguments -contains 'clone') {
+                    [void][IO.Directory]::CreateDirectory($Arguments[-1])
+                    [IO.File]::WriteAllText((Join-Path $Arguments[-1] 'interrupted.txt'), 'partial preparation')
+                    throw 'fixture interrupted clone'
+                }
+                & $originalGit -Root $Root -Arguments $Arguments
+            }
+            { Sync-AiRules1cCheckout } | Should -Throw '*fixture interrupted clone*repeat the original operation*'
+            Test-Path -LiteralPath (Join-Path $fixture.project 'installed.yaml') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $first.root '.git') | Should -BeTrue
+            Set-Item Function:Invoke-GitAt -Value $originalGit
+            $retried = Sync-AiRules1cCheckout
+            Test-Path -LiteralPath (Join-Path $retried.root 'content/skills/grill-me/agents/openai.yaml') | Should -BeTrue
+            @(Get-ChildItem -LiteralPath $fixture.cache -Recurse -Filter interrupted.txt).Count | Should -Be 1
+        }
+    }
+
+    It 'does not replace a busy damaged cache and succeeds after its Git owner releases it' {
+        & {
+            . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+            $first = Sync-AiRules1cCheckout
+            Remove-Item -LiteralPath (Join-Path $first.root 'content/skills/grill-me/agents/openai.yaml')
+            $lockPath = Join-Path $first.root '.git/index.lock'
+            $handle = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            try {
+                { Sync-AiRules1cCheckout } | Should -Throw '*AI_RULES_CACHE_BUSY*repeat the original operation*'
+                Test-Path -LiteralPath $lockPath | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $fixture.cache -Directory -Filter 'ai_rules_1c-invalid-*').Count | Should -Be 0
+            } finally { $handle.Dispose(); Remove-Item -LiteralPath $lockPath }
+            $retried = Sync-AiRules1cCheckout
+            Test-Path -LiteralPath (Join-Path $retried.root 'content/skills/grill-me/agents/openai.yaml') | Should -BeTrue
+        }
+    }
+
+    It 'rejects a dirty user source without changing it and accepts its clean pinned version' {
+        & {
+            . $HelperPath -ProjectRoot $fixture.project -Action help *> $null
+            Invoke-GitAt -Root $fixture.source -Arguments @('remote','add','origin',$fixture.source)
+            $env:ITL_AI_RULES_SOURCE_PATH = $fixture.source
+            $path = Join-Path $fixture.source 'content/skills/grill-me/agents/openai.yaml'
+            [IO.File]::WriteAllText($path, 'user bytes')
+            $configHash = (Get-FileHash -LiteralPath (Join-Path $fixture.source '.git/config')).Hash
+            { Sync-AiRules1cCheckout } | Should -Throw '*must be a clean controlled-fork checkout*'
+            [IO.File]::ReadAllText($path) | Should -BeExactly 'user bytes'
+            (Get-FileHash -LiteralPath (Join-Path $fixture.source '.git/config')).Hash | Should -Be $configHash
+            Test-Path -LiteralPath (Join-Path $fixture.project 'installed.yaml') | Should -BeFalse
+            Invoke-GitAt -Root $fixture.source -Arguments @('restore','--worktree','--','content/skills/grill-me/agents/openai.yaml')
+            $result = Sync-AiRules1cCheckout
+            $result.commit | Should -Be $fixture.old
+            (Get-FileHash -LiteralPath (Join-Path $fixture.source '.git/config')).Hash | Should -Be $configHash
+        }
+    }
+}

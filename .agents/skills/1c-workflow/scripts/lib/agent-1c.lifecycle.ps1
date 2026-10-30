@@ -5331,6 +5331,40 @@ function Invoke-AiRules1cFetchWithRetry {
     throw $failure
 }
 
+function Get-AiRules1cCacheState {
+    param([string]$Root, [string]$Repo, [string]$ExpectedCommit = '')
+
+    $owned = $false
+    try {
+        # Never relocate a junction, a linked worktree, or a foreign repository.
+        foreach ($path in @($Root, (Join-Path $Root '.git'))) {
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'not a standalone physical checkout'
+            }
+        }
+        $top = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--show-toplevel')).Trim()
+        $gitDir = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--absolute-git-dir')).Trim()
+        if ((Resolve-Agent1cFullPath -Path $top) -ine $Root -or
+            (Resolve-Agent1cFullPath -Path $gitDir) -ine (Join-Path $Root '.git')) { throw 'checkout boundary mismatch' }
+        $origin = (Get-GitOutputAt -Root $Root -Arguments @('remote', 'get-url', 'origin')).Trim()
+        if ((Get-AiRules1cRepositoryIdentity -Repo $origin) -ne (Get-AiRules1cRepositoryIdentity -Repo $Repo)) {
+            throw 'repository identity mismatch'
+        }
+        $owned = $true
+        $headCommit = (Get-GitOutputAt -Root $Root -Arguments @('rev-parse', '--verify', 'HEAD^{commit}')).Trim()
+        if ($ExpectedCommit -and $headCommit -cne $ExpectedCommit) { throw 'HEAD does not match the pinned commit' }
+        $changes = @(Get-GitPathListAt -Root $Root -Arguments @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'))
+        if ($changes.Count) { throw "index/worktree changes: $($changes.Count) records; $(@($changes | Select-Object -First 5) -join '; ')" }
+        # A clean status can hide missing files behind sparse/assume-unchanged bits.
+        $hidden = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '-v', '-z') | Where-Object { -not $_.StartsWith('H ') })
+        if ($hidden.Count) { throw "nonstandard index flags: $($hidden.Count) records" }
+        return [pscustomobject]@{ valid = $true; owned = $true; reason = 'clean complete checkout' }
+    } catch {
+        return [pscustomobject]@{ valid = $false; owned = $owned; reason = $_.Exception.Message }
+    }
+}
+
 function Sync-AiRules1cCheckout {
     param(
         [string]$RepoOverride = "",
@@ -5376,6 +5410,23 @@ function Sync-AiRules1cCheckout {
     $projectCacheKey = Get-StringSha256 -Value $projectCacheIdentity
     $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot ("ai_rules_1c-" + $projectCacheKey))
 
+    $cacheRoot = $rulesDir
+    $cacheState = $null
+    if (Test-Path -LiteralPath $cacheRoot) {
+        $cacheState = Get-AiRules1cCacheState -Root $cacheRoot -Repo $repo
+        if ($cacheState.owned -and (Test-Path -LiteralPath (Join-Path $cacheRoot '.git/index.lock'))) {
+            throw "AI_RULES_CACHE_BUSY: preserve '$cacheRoot' and its Git lock. Wait for the owning Git operation to finish, then repeat the original operation. $(Get-GitIndexLockRecoveryHint -Root $cacheRoot)"
+        }
+        if (-not $cacheState.valid) {
+            # Prepare beside the old copy. Failure/interruption leaves it intact;
+            # no reset/clean, lock removal, or mutation of an unknown directory.
+            $rulesDir = Join-Path $tempRoot ('ai_rules_1c-prepare-' + [guid]::NewGuid().ToString('N'))
+            Write-Warning "AI_RULES_CACHE_INVALID path='$cacheRoot' expectedCommit='$lockedCommit' state='$($cacheState.reason)' replacement='$rulesDir'. Preparing a verified source before installation."
+        }
+    } else {
+        $rulesDir = Join-Path $tempRoot ('ai_rules_1c-prepare-' + [guid]::NewGuid().ToString('N'))
+    }
+
     if (Test-Path -LiteralPath $rulesDir) {
         try {
             $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
@@ -5390,7 +5441,7 @@ function Sync-AiRules1cCheckout {
                 }
             }
         } catch {
-            throw "Failed to update ai_rules_1c in $rulesDir"
+            throw "Failed to update ai_rules_1c in '$rulesDir': $($_.Exception.Message). Preserve the cache and repeat the original operation after resolving the fetch failure."
         }
     } else {
         try {
@@ -5399,7 +5450,7 @@ function Sync-AiRules1cCheckout {
                 Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
             }
         } catch {
-            throw "Failed to clone ai_rules_1c from $repo"
+            throw "Failed to clone ai_rules_1c from '$repo' into '$rulesDir': $($_.Exception.Message). Previous cache '$cacheRoot' is preserved; resolve the source/transport failure and repeat the original operation."
         }
     }
 
@@ -5441,6 +5492,31 @@ function Sync-AiRules1cCheckout {
             $resolvedRef = $originHead
         } catch {
             throw "Failed to checkout latest ai_rules_1c origin HEAD in $rulesDir"
+        }
+    }
+
+    $ready = Get-AiRules1cCacheState -Root $rulesDir -Repo $repo -ExpectedCommit $lockedCommit
+    if (-not $ready.valid) {
+        throw "AI_RULES_SOURCE_NOT_READY: path='$rulesDir' expectedCommit='$lockedCommit' state='$($ready.reason)'. Preserve this diagnostic copy, resolve the source integrity failure and repeat the original operation; this source was not passed to the installer."
+    }
+    if ($rulesDir -ne $cacheRoot) {
+        $diagnostic = $cacheRoot
+        if ($null -ne $cacheState -and $cacheState.owned) {
+            # The existing lifecycle lease covers this project's preparation and
+            # installer reads. Recheck physical ownership before the only move.
+            $beforeMove = Get-AiRules1cCacheState -Root $cacheRoot -Repo $repo
+            $parent = (Resolve-Agent1cFullPath -Path $tempRoot).TrimEnd('\', '/')
+            if ($beforeMove.owned -and (Split-Path -Parent $cacheRoot) -ieq $parent) {
+                $diagnostic = Join-Path $tempRoot ('ai_rules_1c-invalid-' + [guid]::NewGuid().ToString('N'))
+                Move-Item -LiteralPath $cacheRoot -Destination $diagnostic -ErrorAction Stop
+            }
+        }
+        if (-not (Test-Path -LiteralPath $cacheRoot)) {
+            Move-Item -LiteralPath $rulesDir -Destination $cacheRoot -ErrorAction Stop
+            $rulesDir = $cacheRoot
+        }
+        if ($null -ne $cacheState) {
+            Write-Warning "AI_RULES_CACHE_RECOVERED path='$cacheRoot' expectedCommit='$lockedCommit' result='verified source ready' source='$rulesDir' diagnostic='$diagnostic'. Unknown directories remain untouched."
         }
     }
 
