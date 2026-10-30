@@ -136,6 +136,9 @@ does not move stable `master`; only `PromoteRelease` or the explicit command bel
 
 Every publication first retries accumulated cleanup debt and then performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
+failed-registration candidates (`itl-source-register-*`, kept for diagnosis
+seven days after publication cleanup, or until an explicit `-Action Cleanup`;
+a leftover directory only when no repository owns it),
 stale source-delivery test fixtures, disposable fresh/release-seed projects and
 closed seed archives, stale 1C launcher registrations, and managed launcher
 backups in both current and legacy timestamp formats. Configured reusable stands,
