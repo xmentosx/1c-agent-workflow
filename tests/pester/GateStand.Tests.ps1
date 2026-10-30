@@ -18,10 +18,23 @@ Describe 'Per-clone gate stand selection' {
     AfterEach { Remove-Item Env:ITL_GATE_STANDS_ROOT -ErrorAction SilentlyContinue }
 
     It 'derives one stand per clone and fixture with whitespace and Cyrillic' {
-        $script:cloneStand | Should -BeLike (Join-Path $script:standsRoot 'clone repo *')
+        (Split-Path -Parent $script:cloneStand) | Should -Be $script:standsRoot
         $script:cloneStand | Should -Match '\s'
         $script:cloneStand | Should -Match '[^\x00-\x7F]'
         $script:cloneStand | Should -BeLike ('* ' + $script:fixtureId.Substring(0, 8))
+    }
+
+    It 'keeps both default bootstrap roots within 35 characters for a long Unicode clone path' {
+        Remove-Item Env:ITL_GATE_STANDS_ROOT
+        $common = 'C:\Users\xment\OneDrive\' + (-join ([char[]](0x0414,0x043E,0x043A,0x0443,0x043C,0x0435,0x043D,0x0442,0x044B))) + '\1c-agent-workflow\.git'
+        $root = Get-DeliveryGateStandRoot -CommonGitDirectory $common -FixtureId $script:fixtureId
+        $root.Length | Should -BeLessOrEqual 35
+        ($root + '-positive').Length | Should -BeLessOrEqual 35
+        $root | Should -Match '\s'
+        $root | Should -Match '[^\x00-\x7F]'
+        Get-DeliveryGateStandRoot -CommonGitDirectory $common.ToUpperInvariant() -FixtureId $script:fixtureId | Should -Be $root
+        Get-DeliveryGateStandRoot -CommonGitDirectory ('D:' + $common.Substring(2)) -FixtureId $script:fixtureId | Should -Not -Be $root
+        Get-DeliveryGateStandRoot -CommonGitDirectory $common -FixtureId ('f' * 40) | Should -Not -Be $root
     }
 
     It 'keeps a requested stand of the current fixture and builds nothing' {
