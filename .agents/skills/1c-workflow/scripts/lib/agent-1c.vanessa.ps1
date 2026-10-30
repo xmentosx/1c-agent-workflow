@@ -8071,8 +8071,7 @@ function Wait-VanessaDesignerAgentReady {
 
         if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
             try {
-                $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop)
-                $ownerPids = @($listeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+                $ownerPids = @(Get-ItlTcpListenerOwnerPids -Port $Port)
                 if ($ownerPids.Count -eq 1 -and $ownerPids[0] -eq [int]$Process.Id) {
                     $stopwatch.Stop()
                     return [pscustomobject][ordered]@{

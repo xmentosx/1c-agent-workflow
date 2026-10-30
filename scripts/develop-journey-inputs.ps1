@@ -382,7 +382,7 @@ function Test-DevelopGoBuildOnlyPath {
             'scripts/invoke-develop-e2e.ps1'=@('f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')
             # The rejection proof only stops requiring a pending refresh merge
             # on the production path; it reads no Go test or README.
-            'scripts/develop-configuration-rejection.ps1'=@('5104d1d4df221895d135fcab07e76dfca42178cfb74a6a14031c0cd8570c0ff8','02a82e9c5152cef9fa4a3f48fcc355fd2d04851ba042dbae31140c615cb30036','05a432a05d0662a698bf7e1cb57fa7c09c41a6f5130be5443e889feb7b54b6f6','d408e54e85af22783ebf5ad9588442cfaa073aa5d2f7296aced8422ab4242955')
+            'scripts/develop-configuration-rejection.ps1'=@('26f565c76987e8bb531058116f254b53c21261efcd81623f7eba1891270f8075','5104d1d4df221895d135fcab07e76dfca42178cfb74a6a14031c0cd8570c0ff8','02a82e9c5152cef9fa4a3f48fcc355fd2d04851ba042dbae31140c615cb30036','05a432a05d0662a698bf7e1cb57fa7c09c41a6f5130be5443e889feb7b54b6f6','d408e54e85af22783ebf5ad9588442cfaa073aa5d2f7296aced8422ab4242955')
             # Catalog preparation/selection and bootstrap parameter discovery
             # read project settings, configuration XML and the declared script
             # parameters; none consumes Go tests or README data.

@@ -713,10 +713,8 @@ function Test-ItlOnDemandPortOwnedByProcess {
     )
     if ($Port -le 0 -or $ProcessId -le 0) { return $false }
     try {
-        $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop)
-        if ($listeners.Count -eq 0) { return $false }
-        if (@($listeners | Where-Object { [int]$_.OwningProcess -ne $ProcessId }).Count -gt 0) { return $false }
-        return @($listeners | Where-Object { [int]$_.OwningProcess -eq $ProcessId }).Count -gt 0
+        $owners = @(Get-ItlTcpListenerOwnerPids -Port $Port)
+        return $owners.Count -eq 1 -and $owners[0] -eq $ProcessId
     } catch {
         return $false
     }

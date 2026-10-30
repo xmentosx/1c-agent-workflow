@@ -50,7 +50,8 @@
         $functionText | Should -Match 'Complete-OneCNativeOperationOutcome -Record \$nativeRecord -Status \$\(if \(\$operationSucceeded -and \$cleanup\.confirmed\) \{ ''succeeded'' \} else \{ ''failed'' \}\)'
     }
 
-    It "accepts readiness only when the expected live PID owns the listener" {
+    It 'accepts readiness only when the expected live PID owns the listener (State=<ListenerState>)' -TestCases @(@{ListenerState='Listen'},@{ListenerState=0}) {
+        param($ListenerState)
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
@@ -59,7 +60,7 @@
             function Get-NetTCPConnection {
                 [CmdletBinding()]
                 param([string]$State, [int]$LocalPort)
-                return [pscustomobject]@{ OwningProcess = 7311 }
+                return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 7311 }
             }
             $fixtureProcess = [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
@@ -70,7 +71,8 @@
         $result.ownerPids | Should -Be @(7311)
     }
 
-    It "reports a foreign listener instead of accepting a raw open port" {
+    It 'reports a foreign listener instead of accepting a raw open port (State=<ListenerState>)' -TestCases @(@{ListenerState='Listen'},@{ListenerState=0}) {
+        param($ListenerState)
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
@@ -79,7 +81,7 @@
             function Get-NetTCPConnection {
                 [CmdletBinding()]
                 param([string]$State, [int]$LocalPort)
-                return [pscustomobject]@{ OwningProcess = 9901 }
+                return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 9901 }
             }
             $fixtureProcess = [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0

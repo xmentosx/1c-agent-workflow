@@ -467,3 +467,38 @@ Describe 'Negative configuration fixture uses the current change owner before pr
         Should -Invoke Assert-FreshVerificationResult -Times 1
     }
 }
+
+Describe 'Verification inspection console payload' {
+    BeforeAll {
+        function InspectionMetadata {
+            param([ValidateSet('begin-verification-change')][string]$Action)
+        }
+    }
+    BeforeEach {
+        $script:inspectRoot=Join-Path $TestDrive ('inspection '+(-join [char[]](0x041F,0x0443,0x0442,0x044C))+' with spaces')
+        $script:inspectConsole=Join-Path $script:inspectRoot '.agent-1c/runs/inspect/console.log'
+        [void][IO.Directory]::CreateDirectory((Split-Path $script:inspectConsole))
+        $script:inspectionPayload=@{model='change';status='planning';baseTree=('a'*40);tree=('b'*40);changedPaths=@();taskId='';criteria=@();requirementPaths=@()}
+        $summary=Join-Path $script:inspectRoot 'compact.stdout.log'
+        Write-RejectionJson $summary @{action='begin-verification-change';status='succeeded';logPath=$script:inspectConsole}
+        $script:inspectionProcess=[pscustomobject]@{exitCode=0;stdout=$summary}
+        Mock Invoke-InstalledAction {$script:inspectionProcess}
+    }
+    It 'reads the planning payload after the original catalog diagnostics' {
+        $text="Skipping remote vibecoding1c MCP server 'docs': endpoint was not found in registry.`r`nCatalog settings applied. Reload the client/new session.`r`n"+($script:inspectionPayload|ConvertTo-Json -Depth 8 -Compress)+"`r`n"
+        [IO.File]::WriteAllText($script:inspectConsole,$text,[Text.UTF8Encoding]::new($false))
+        $view=Get-DevelopVerificationChangeInspection -Root $script:inspectRoot -Name inspect -HelperCommand (Get-Command InspectionMetadata)
+        $view.model | Should -BeExactly 'change'
+        $view.baseTree | Should -BeExactly ('a'*40)
+        $view.tree | Should -BeExactly ('b'*40)
+    }
+    It 'retains malformed payload, unsupported scope and invalid UTF-8 refusal: <Case>' -TestCases @(@{Case='malformed'},@{Case='scope'},@{Case='utf8'}) {
+        param($Case)
+        $text=$script:inspectionPayload|ConvertTo-Json -Depth 8 -Compress
+        if($Case -eq 'malformed'){$text+="`n{broken"}
+        if($Case -eq 'scope'){$script:inspectionPayload.model='cumulative';$text=$script:inspectionPayload|ConvertTo-Json -Depth 8 -Compress}
+        [IO.File]::WriteAllText($script:inspectConsole,$text,[Text.UTF8Encoding]::new($false))
+        if($Case -eq 'utf8'){[IO.File]::WriteAllBytes($script:inspectConsole,[byte[]](255))}
+        {Get-DevelopVerificationChangeInspection -Root $script:inspectRoot -Name inspect -HelperCommand (Get-Command InspectionMetadata)} | Should -Throw
+    }
+}

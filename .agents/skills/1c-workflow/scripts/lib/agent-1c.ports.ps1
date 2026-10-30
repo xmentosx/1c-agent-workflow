@@ -2,6 +2,27 @@ if (-not (Get-Variable -Name ItlPortRegistryUserScopeWarningPrinted -Scope Scrip
     $script:ItlPortRegistryUserScopeWarningPrinted = $false
 }
 
+function Get-ItlTcpListenerOwnerPids {
+    param([int]$Port)
+    if ($Port -le 0) { return @() }
+    $connections = @(Get-NetTCPConnection -LocalPort $Port -ErrorAction Stop)
+    $listeners = @($connections | Where-Object { [string]$_.State -cin @('Listen','2') })
+    # Windows CIM may report a live loopback listener with raw State=0.
+    # Connected and closing sockets do not own the listener. Only State=0
+    # sockets without a remote peer are candidates, and a live TCP probe is
+    # mandatory. Callers retain their exclusive, known-PID identity check.
+    $unclassifiedListeners = @()
+    foreach ($connection in $connections) {
+        $rawState = if ($connection -is [Microsoft.Management.Infrastructure.CimInstance]) {
+            $connection.CimInstanceProperties['State'].Value
+        } else { Get-ItlPortObjectValue -Object $connection -Name State -Default -1 }
+        if ($null -ne $rawState -and [string]$rawState -ceq '0' -and
+            [int](Get-ItlPortObjectValue -Object $connection -Name RemotePort -Default -1) -eq 0) { $unclassifiedListeners += $connection }
+    }
+    if (-not $listeners.Count -and (-not $unclassifiedListeners.Count -or -not (Test-TcpPortOpen -Port $Port))) { return @() }
+    return @(@($listeners)+@($unclassifiedListeners) | ForEach-Object { [int](Get-ItlPortObjectValue -Object $_ -Name OwningProcess -Default 0) } | Sort-Object -Unique)
+}
+
 function Get-ItlPortObjectValue {
     param(
         [AllowNull()][object]$Object,
