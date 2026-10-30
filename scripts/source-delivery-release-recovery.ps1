@@ -292,10 +292,13 @@ function Invoke-DeliveryReleaseStandRecovery {
 function Get-DeliveryGateStandRoot {
     param([Parameter(Mandatory = $true)][string]$CommonGitDirectory, [Parameter(Mandatory = $true)][string]$FixtureId)
     $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
-    $clone = Split-Path -Leaf (Split-Path -Parent $common)
-    $parent = if ($env:ITL_GATE_STANDS_ROOT) { [IO.Path]::GetFullPath($env:ITL_GATE_STANDS_ROOT) } else { Join-Path ([IO.Path]::GetPathRoot($common)) 'itl-gate-stands' }
-    # Stand paths always carry whitespace and Cyrillic, like user projects.
-    $word = -join ([char[]](0x0421, 0x0442, 0x0435, 0x043D, 0x0434))
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $clone = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($common.ToLowerInvariant())))).Replace('-', '').Substring(0, 8).ToLowerInvariant() }
+    finally { $hash.Dispose() }
+    $parent = if ($env:ITL_GATE_STANDS_ROOT) { [IO.Path]::GetFullPath($env:ITL_GATE_STANDS_ROOT) } else { Join-Path ([IO.Path]::GetPathRoot($common)) 'g' }
+    # Keep the positive root (including '-positive') within bootstrap's 35
+    # characters, retaining whitespace/Cyrillic and per-clone/fixture identity.
+    $word = [string][char]0x0441
     return Join-Path $parent ("$clone $word " + $FixtureId.Substring(0, 8))
 }
 
