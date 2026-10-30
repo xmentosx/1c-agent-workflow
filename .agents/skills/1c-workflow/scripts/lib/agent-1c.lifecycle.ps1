@@ -10037,6 +10037,10 @@ function Test-WorkflowRolloutClients {
 function Invoke-WorkflowDevelopmentBranchRollout {
     param([Parameter(Mandatory = $true)][object]$Source)
 
+    # The parent compact runner still owns this status while a branch performs
+    # synchronous preflight/post-copy work. Reuse its PID-bound heartbeat for
+    # the whole rollout, including the already-current-master resume route.
+    return Invoke-WithRunStatusHeartbeat {
     $mainRoot = [string]$script:ProjectRoot
     $masterClients = @(Get-AgentTargets)
     $reportPath = Join-Path $mainRoot '.agent-1c/snapshots/workflow-update-rollout.json'
@@ -10164,6 +10168,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
         mainRoot = $mainRoot; masterClients = @($masterClients); updatedAt = (Get-Date).ToString('o'); rolloutScope = $scope; roots = @($outcomes.ToArray()) }
     Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $report
+    }
 }
 
 function Assert-WorkflowDevelopmentBranchRolloutComplete {

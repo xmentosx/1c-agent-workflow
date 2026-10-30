@@ -13,7 +13,7 @@
         }
         return $ast
     }
-    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' @('Get-ConfigValueFromObject','Get-Utf8Encoding','Read-Utf8Text','Write-Utf8TextAtomic','ConvertTo-AgentToolList')
+    $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1' @('Get-ConfigValueFromObject','Get-Utf8Encoding','Read-Utf8Text','Write-Utf8TextAtomic','ConvertTo-AgentToolList','Invoke-WithRunStatusHeartbeat')
     $null=Import-StandTestOwner '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1' @('Resolve-WorkflowUpdateRolloutScope','Invoke-WorkflowDevelopmentBranchRollout','Assert-WorkflowDevelopmentBranchRolloutComplete','Get-WorkflowRolloutClients','Test-WorkflowRolloutClients')
     $null=Import-StandTestOwner 'scripts/source-delivery-component.ps1' @('ConvertTo-DeliveryNativeArgument')
     $null=Import-StandTestOwner 'scripts/source-delivery-cleanup.ps1' @('Invoke-PublishDevelopWithCleanup','Add-DeliveryCleanupResults')
