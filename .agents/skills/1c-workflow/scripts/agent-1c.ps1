@@ -288,6 +288,9 @@ function Add-Agent1cReexecArgument {
 function Get-Agent1cReexecArguments {
     $arguments = [System.Collections.Generic.List[string]]::new()
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
+    Add-Agent1cReexecArgument -Arguments $arguments -Name 'CatalogProjectId' -Value $CatalogProjectId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name 'CatalogProfileId' -Value $CatalogProfileId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name 'CatalogDecision' -Value $CatalogDecision
     Add-Agent1cReexecArgument -Arguments $arguments -Name "CleanupDryRun" -Value $CleanupDryRun
     Add-Agent1cReexecArgument -Arguments $arguments -Name "CleanupDiagnosticsOnly" -Value $CleanupDiagnosticsOnly
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DiagnosticCompletionPath" -Value $DiagnosticCompletionPath

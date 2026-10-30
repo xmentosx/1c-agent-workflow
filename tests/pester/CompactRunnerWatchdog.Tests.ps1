@@ -308,7 +308,9 @@ exit 0
 function Read-JsonFile {
     param([string]$Path)
     $observed = Read-JsonFileActual -Path $Path
-    if ($observed -and $observed.stage -eq 'designer-wait' -and -not (Test-Path -LiteralPath ($Path + '.delayed-read'))) {
+    # Read-JsonFile also reads lifecycle records, which deliberately have a
+    # phase rather than a stage. Delay only the original helper status.
+    if ($observed -and (Get-ObjectValue -Object $observed -Name 'stage' -Default '') -eq 'designer-wait' -and -not (Test-Path -LiteralPath ($Path + '.delayed-read'))) {
         [IO.File]::WriteAllText($Path + '.delayed-read', [string]$observed.updatedAt)
         Start-Sleep -Seconds 3
     }

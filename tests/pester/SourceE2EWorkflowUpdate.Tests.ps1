@@ -14,26 +14,33 @@
         $helper=Join-Path $source '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $runner));[void][IO.Directory]::CreateDirectory((Split-Path -Parent $helper))
         [void][IO.Directory]::CreateDirectory((Join-Path $source 'scripts'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $root 'src/cf'))
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"baseConfigurationVersion":"PM5"}',[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root '.dev.env'),"FOREIGN_SETTING=preserve`n",[Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/fixtures/gate-stand/cf/Configuration.xml') -Destination (Join-Path $root 'src/cf/Configuration.xml')
         Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/update-installed-workflow.ps1') -Destination (Join-Path $source 'scripts/update-installed-workflow.ps1')
         $old=@'
 $Arguments=@($args)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../../')).TrimEnd('\','/')
+if('-CatalogProjectId' -cnotin $Arguments -or $Arguments[[array]::IndexOf($Arguments,'-CatalogProjectId')+1] -cne 'itl-gate-qualification'){throw 'CATALOG_PROJECT_REQUIRED: original unbound technical stand needs an explicit published selection'}
 $client=$Arguments[[array]::IndexOf($Arguments,'-AgentTarget')+1]
 [IO.File]::WriteAllText((Join-Path $root 'initial-client.txt'),$client,[Text.UTF8Encoding]::new($false))
 $run=Join-Path $root '.agent-1c/runs/compact-native-boundary';[void][IO.Directory]::CreateDirectory($run)
 $statusPath=Join-Path $run 'status.json'
-$guard=[ordered]@{action='update-workflow';status='failed';stage='workflow-update.post-copy';exitCode=1;blockerRequiresUserDecision=$false;projectRoot=$root;startedAt=[datetime]::UtcNow.ToString('o');errorMessage="VERIFICATION_MODEL_POLICY_LEGACY_SNAPSHOT: retained transaction. Original candidate: '$env:ITL_WORKFLOW_SOURCE_PATH'."}
+$guard=[ordered]@{action='update-workflow';status='failed';stage='workflow-update.post-copy';exitCode=1;blockerRequiresUserDecision=$false;projectRoot=$root;startedAt=[datetime]::UtcNow.ToString('o');errorMessage="CATALOG_PROJECT_REQUIRED: old caller lost explicit selection. Original candidate: '$env:ITL_WORKFLOW_SOURCE_PATH'."}
 [IO.File]::WriteAllText(($statusPath+'.fresh-native.json'),($guard|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 @{action='update-workflow';status='failed';blockerRequiresUserDecision=$false;statusPath=$statusPath}|ConvertTo-Json -Compress
 exit 1
 '@
         $new=@'
-param([string]$ProjectRoot,[string]$Action,[string]$AgentTarget)
+param([string]$ProjectRoot,[string]$Action,[string]$AgentTarget,[string]$CatalogProjectId,[string]$CatalogDecision)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $ErrorActionPreference='Stop'
 if($Action -cne 'update-workflow' -or $env:ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE -cne 'true'){throw 'invalid source-owner handoff'}
+if($CatalogProjectId -cne 'itl-gate-qualification' -or $CatalogDecision -cne 'keep-local'){throw 'catalog choice lost across source-owner handoff'}
 if((Get-Content -LiteralPath (Join-Path $ProjectRoot 'initial-client.txt') -Raw -Encoding UTF8) -cne $AgentTarget){throw 'client changed across handoff'}
 [IO.File]::WriteAllText((Join-Path $ProjectRoot 'source-owner.json'),(@{project=$ProjectRoot;source=$env:ITL_WORKFLOW_SOURCE_PATH;client=$AgentTarget}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 if($env:ITL_TEST_UPDATE_CONTINUATION_FAIL -eq 'true'){exit 7}
@@ -62,6 +69,35 @@ Describe 'Bounded source-owner workflow update continuation' {
             $receipt.project|Should -BeExactly $f.root
             $receipt.source|Should -BeExactly $f.source
             $receipt.client|Should -BeExactly 'codex'
+            # The original project stays unbound before the updater runs. Only
+            # published test data and explicit CLI inputs satisfy the new rule.
+            $settings=Get-Content -LiteralPath (Join-Path $f.root '.agent-1c/project.json') -Raw | ConvertFrom-Json
+            $settings.PSObject.Properties['productProject']|Should -BeNullOrEmpty
+            $publisher=Join-Path $f.root '.agent-1c/mcp/qualification-catalog'
+            (& git -C $publisher rev-parse HEAD).Trim()|Should -Match '^[a-f0-9]{40}$'
+            (Get-Content -LiteralPath (Join-Path $publisher 'catalog/catalog.json') -Raw|ConvertFrom-Json).projects[0].projectId|Should -BeExactly 'itl-gate-qualification'
+            Get-Content -LiteralPath (Join-Path $f.root '.dev.env') -Raw | Should -Match 'FOREIGN_SETTING=preserve'
+            $preview=Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'),'-ProjectRoot',$f.root,'-Action','vibecoding1c-mcp-status','-CatalogAction','preview','-CatalogProjectId','itl-gate-qualification','-AgentTarget','codex') -WorkingDirectory $repoRoot -TimeoutSeconds 60
+            $preview.exitCode|Should -Be 0 -Because ($preview.stdout+$preview.stderr)
+            $beforeEnv=[IO.File]::ReadAllText((Join-Path $f.root '.dev.env'))
+            $settings|Add-Member -NotePropertyName productProject -NotePropertyValue @{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='retained';productId='retained'}
+            [IO.File]::WriteAllText((Join-Path $f.root '.agent-1c/project.json'),($settings|ConvertTo-Json -Depth 5))
+            @(Initialize-SourceE2ECatalog -Root $f.root).Count|Should -Be 0
+            [IO.File]::ReadAllText((Join-Path $f.root '.dev.env'))|Should -BeExactly $beforeEnv
+            $reexec=& {
+                . (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $f.root -Action help -CatalogProjectId 'itl-gate-qualification' -CatalogProfileId 'profile with space' -CatalogDecision keep-local *> $null
+                @(Get-Agent1cReexecArguments)
+            }
+            foreach($pair in @(@('-CatalogProjectId','itl-gate-qualification'),@('-CatalogProfileId','profile with space'),@('-CatalogDecision','keep-local'))){
+                $reexec[[array]::IndexOf($reexec,$pair[0])+1]|Should -BeExactly $pair[1]
+            }
+            . (Join-Path $repoRoot 'scripts/quality-contracts.ps1')
+            $catalog=Get-QualityContractCatalog $repoRoot
+            foreach($journey in @('upgrade','fresh')){
+                $projection=Get-DevelopE2EJourneyContractProjection $catalog $journey
+                $patterns=@($projection.contracts|ForEach-Object {@($_.paths)+@(Get-QualityContractReuseInputPaths $_)})
+                @(Select-QualityPaths -Paths @('tests/fixtures/gate-stand/cf/Configuration.xml') -Pattern $patterns).Count|Should -Be 1
+            }
             $logs=@(Get-ChildItem -LiteralPath $script:outputRoot -Filter '*.stdout.log')
             $logs.Count|Should -Be 2
             ($logs|Get-Content -Encoding UTF8|Out-String)|Should -Match '"status":"failed"'

@@ -9416,7 +9416,13 @@ function Invoke-WorkflowPackageFilePostCopyCore {
             # Admit/recover the original snapshot first. Required selection may
             # not hide an older owner's diagnostic or alter its receipt before
             # admission. Package processing still waits for this same selection.
-            $catalogTransition=Get-ItlProductProjectTransitionSelection -RecordedSelection (Get-ConfigValueFromObject $policyPending.receipt 'catalogSelection' $null)
+            try {$catalogTransition=Get-ItlProductProjectTransitionSelection -RecordedSelection (Get-ConfigValueFromObject $policyPending.receipt 'catalogSelection' $null)}
+            catch {
+                if($_.Exception.Message -cmatch '^CATALOG_PROJECT_REQUIRED:'){
+                    throw "$($_.Exception.Message) Original candidate: '$($policyPending.receipt.sourceRoot)'. Repeat the same source-side update with the explicit published project; preserve the pending snapshot."
+                }
+                throw
+            }
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $policyPending.snapshot -Source ([pscustomobject]@{root=$policyPending.receipt.sourceRoot;commit=$policyPending.receipt.sourceCommit}) -Phase post-copy-running -Details @{catalogSelection=$catalogTransition}
         }
         if (Test-WorkflowSourceVerificationModelPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)) { Invoke-VerificationModelPolicyTransition | Out-Null }

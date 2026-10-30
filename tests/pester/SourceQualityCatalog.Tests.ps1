@@ -236,7 +236,7 @@ Describe 'Source quality catalog contracts' {
         $serialAssignment=$runnerAst.Find({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$serialTestNames'},$true)
         $serialAssignment | Should -Not -BeNullOrEmpty
         . ([scriptblock]::Create($serialAssignment.Extent.Text))
-        @($serialTestNames) | Should -Be @('CompactItlRunner.Tests.ps1','DependencyLocks.Tests.ps1','ReleaseGate.Tests.ps1',
+        @($serialTestNames) | Should -Be @('CompactRunnerWatchdog.Tests.ps1','CompactItlRunner.Tests.ps1','DependencyLocks.Tests.ps1','ReleaseGate.Tests.ps1',
             'ReleaseOrchestration.Tests.ps1','E2EClientSelection.Tests.ps1',
             'ReleaseSnapshotContinuation.Tests.ps1','ReleaseAdmission.Tests.ps1')
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
@@ -867,7 +867,7 @@ Describe 'Catalog selection and qualified consumer inputs' {
         @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test) | Select-Object -ExpandProperty tests) | Should -Be @($test)
     }
 
-    It 'keeps real console interruption serial while extracted compact fixtures use ordinary isolated workers' {
+    It 'keeps console and native deadline assertions serial while other compact fixtures use isolated workers' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog=Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         $names=@('CompactRunnerFreshContinuation','CompactRunnerLongContinuation','CompactRunnerReports','CompactRunnerRouting','CompactRunnerWatchdog')
@@ -880,7 +880,9 @@ Describe 'Catalog selection and qualified consumer inputs' {
         $serialTestNames | Should -Contain 'CompactItlRunner.Tests.ps1'
         foreach($name in $names) {
             $file=$name+'.Tests.ps1';$test='tests/pester/'+$file
-            $serialTestNames | Should -Not -Contain $file
+            if($name -eq 'CompactRunnerWatchdog'){
+                $serialTestNames | Should -Contain $file -Because 'the unchanged wall-time deadline includes native process startup and cleanup'
+            }else{$serialTestNames | Should -Not -Contain $file}
             @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @($test) | Select-Object -ExpandProperty tests) | Should -Be @($test)
             @($catalog.smokeTests) | Should -Not -Contain $test -Because 'the original Compact suite was outside Smoke'
             @(Resolve-QualityContractsForPaths -Catalog $catalog -Paths @('.agents/skills/1c-workflow/scripts/run-itl-command.ps1') | Select-Object -ExpandProperty tests) | Should -Contain $test

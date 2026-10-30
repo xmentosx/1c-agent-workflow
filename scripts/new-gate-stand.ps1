@@ -19,6 +19,7 @@ $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $fixtureRoot = Join-Path $repositoryRoot 'tests/fixtures/gate-stand'
 . (Join-Path $PSScriptRoot 'source-delivery-process.ps1')
 . (Join-Path $PSScriptRoot 'source-delivery-component.ps1')
+. (Join-Path $PSScriptRoot 'source-e2e-workflow-update.ps1')
 
 function Read-GateStandFixture {
     param([string]$Root)
@@ -137,10 +138,11 @@ function Initialize-GateStandProject {
     [void][IO.Directory]::CreateDirectory($ProjectRoot)
     $snapshot = New-GateStandSnapshot -ProjectRoot $ProjectRoot -Fixture $Fixture -Negative:$Negative
     Write-GateStandProject -ProjectRoot $ProjectRoot -Settings (New-GateStandProjectSettings -ProjectRoot $ProjectRoot -SnapshotPath $snapshot.path -Platform $script:Platform -User $snapshot.user -Agent $AgentTarget)
+    $catalogArguments=@(Initialize-SourceE2ECatalog -Root $ProjectRoot -ConfigurationPath (Join-Path $fixtureRoot ($Fixture.configurationPath+'/Configuration.xml')))
     $environment = if ($AiRulesSource) { @{ ITL_AI_RULES_SOURCE_PATH = [IO.Path]::GetFullPath($AiRulesSource) } } else { $null }
     # Monitored bootstrap budget: default init limit plus 300 seconds.
     Invoke-GateStandChild -Name "$Label-init" -WorkingRoot $ProjectRoot -ScriptPath (Join-Path $SourceRoot 'install-agent-1c-workflow.ps1') `
-        -Arguments @('-ProjectRoot', $ProjectRoot, '-SourceRoot', $SourceRoot, '-InitMode', 'configured', '-AgentTarget', $AgentTarget, '-SkipWorkflowSourceFreshnessCheck') `
+        -Arguments (@('-ProjectRoot', $ProjectRoot, '-SourceRoot', $SourceRoot, '-InitMode', 'configured', '-AgentTarget', $AgentTarget, '-SkipWorkflowSourceFreshnessCheck')+$catalogArguments) `
         -TimeoutSeconds 14700 -Environment $environment
 }
 
