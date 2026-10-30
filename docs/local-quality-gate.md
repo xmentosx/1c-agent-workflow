@@ -211,8 +211,9 @@ Implicit Full/Develop/Release Pester uses the catalog's
 `pesterWorkers.qualificationImplicitDefault`, capped by available processors.
 An explicit worker count remains authoritative; legacy catalogs retain their
 previous choice. Implicit admission also accounts for physical and commit memory:
-it allows one worker per available physical GiB, with 2 GiB commit headroom per
-worker below 90% host commit usage (the remote runner's hard guard remains 92%). This
+each new worker needs one available physical GiB beyond the workers already
+running when memory was observed (their memory is already counted), and the total
+needs 2 GiB commit headroom per worker below 90% host commit usage (the remote runner's hard guard remains 92%). This
 only limits this scheduler's children, never other owners or their locks;
 an unavailable memory observation defers implicit admission. Plan uses the observed
 limit, while execution reduces admission under pressure and restores it, up to

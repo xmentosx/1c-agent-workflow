@@ -24,12 +24,13 @@ $workerCountParameterExplicit = $PSBoundParameters.ContainsKey("WorkerCount")
 $reportedRequestedWorkerCount = $(if ($RequestedWorkerCount -gt 0) { $RequestedWorkerCount } else { $WorkerCount })
 
 function Get-PesterMemoryWorkerLimit {
-    param([int]$Requested, [long]$AvailableBytes, [long]$CommitHeadroomBytes = -1)
+    param([int]$Requested, [long]$AvailableBytes, [long]$CommitHeadroomBytes = -1, [int]$ActiveWorkers = 0)
     if ($AvailableBytes -lt 0 -and $CommitHeadroomBytes -lt 0) { return 0 }
     $physical = $Requested
     if ($AvailableBytes -ge 0) {
         if ($AvailableBytes -lt 256MB) { return 0 }
-        $physical = [int][math]::Max(1, [math]::Min($Requested, [math]::Floor($AvailableBytes / 1GB)))
+        # Workers running at observation already hold their memory; each new one needs 1 GiB more.
+        $physical = [int][math]::Max(1, [math]::Min($Requested, $ActiveWorkers + [math]::Floor($AvailableBytes / 1GB)))
     }
     # Admission is deliberately below the remote runner's 92% hard guard:
     # retain 10% host commit headroom and allow 2 GiB per new native worker.
@@ -38,21 +39,24 @@ function Get-PesterMemoryWorkerLimit {
 }
 
 function Get-PesterMemorySnapshot {
+    param([int]$ActiveWorkers = 0)
     if (-not (Get-Variable pesterMemoryObservedAt -Scope Script -ErrorAction SilentlyContinue) -or
         ([DateTime]::UtcNow - $script:pesterMemoryObservedAt).TotalSeconds -ge 2) {
         try {
             $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction Stop
             $headroom = [long][math]::Max(0.0, ([double]$memory.CommitLimit * 0.90 - [double]$memory.CommittedBytes))
-            $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=[long]$memory.AvailableBytes;commitHeadroomBytes=$headroom}
-        } catch { $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=-1L;commitHeadroomBytes=-1L} }
+            $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=[long]$memory.AvailableBytes;commitHeadroomBytes=$headroom;activeWorkers=$ActiveWorkers}
+        } catch { $script:pesterMemorySnapshot = [pscustomobject]@{availableBytes=-1L;commitHeadroomBytes=-1L;activeWorkers=$ActiveWorkers} }
         $script:pesterMemoryObservedAt = [DateTime]::UtcNow
     }
     return $script:pesterMemorySnapshot
 }
 
 function Get-PesterCurrentMemoryWorkerLimit {
-    $snapshot = Get-PesterMemorySnapshot
-    return Get-PesterMemoryWorkerLimit -Requested $WorkerCount -AvailableBytes $snapshot.availableBytes -CommitHeadroomBytes $snapshot.commitHeadroomBytes
+    param([int]$ActiveWorkers = 0)
+    # Credit only workers that existed when the cached observation was taken.
+    $snapshot = Get-PesterMemorySnapshot -ActiveWorkers $ActiveWorkers
+    return Get-PesterMemoryWorkerLimit -Requested $WorkerCount -AvailableBytes $snapshot.availableBytes -CommitHeadroomBytes $snapshot.commitHeadroomBytes -ActiveWorkers $snapshot.activeWorkers
 }
 
 $memoryAdmissionEnabled = $WorkerCountDefaulted -or -not $workerCountParameterExplicit
@@ -1025,7 +1029,7 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count
     while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
         if ($active.Count -gt 0 -and $active[0].preflight -and -not $pendingParallel.Peek().preflight) { break }
         if ($memoryAdmissionEnabled) {
-            $admitted = Get-PesterCurrentMemoryWorkerLimit
+            $admitted = Get-PesterCurrentMemoryWorkerLimit -ActiveWorkers $active.Count
             if ($active.Count -ge $admitted) { $memoryAdmissionReductions++; break }
         }
         $next = $pendingParallel.Dequeue()
