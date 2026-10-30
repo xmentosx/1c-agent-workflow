@@ -1,4 +1,33 @@
-﻿function Get-VerificationSelectionStateRoot {
+﻿function Test-VerificationDiagnosticInputsCurrent {
+    param([string]$ManifestPath, [AllowNull()][object]$State = $null)
+    try {
+        $manifest = Read-Utf8Text -Path $ManifestPath | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.kind -cne 'vanessa-diagnostic-inputs' -or @($manifest.features).Count -eq 0) { return $false }
+        if ($null -ne $State -and [string]$manifest.loadedBaseIdentity -cne (Get-VerificationLoadedBaseIdentity -State $State)) { return $false }
+        foreach ($file in @($manifest.features)) {
+            $path = Resolve-ProjectPath ([string]$file.path)
+            [void](Get-VerificationRepoRelativePath -Path $path)
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$file.sha256) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Sort-VerificationIdentityStrings {
+    param([Parameter(ValueFromPipeline=$true)][AllowEmptyString()][string]$Value, [switch]$Unique)
+    begin { $values = [Collections.Generic.List[string]]::new() }
+    process { $values.Add($Value) }
+    end {
+        $values.Sort([StringComparer]::Ordinal)
+        $previous = $null
+        foreach ($item in $values) {
+            if (-not $Unique -or $null -eq $previous -or -not [string]::Equals($previous, $item, [StringComparison]::Ordinal)) { $item }
+            $previous = $item
+        }
+    }
+}
+
+function Get-VerificationSelectionStateRoot {
     return (Resolve-ProjectPath ".agent-1c/verification-selection")
 }
 
@@ -55,7 +84,7 @@ function Get-VerificationDeclaredInputScopes {
             }
         }
     }
-    return @($scopes | Sort-Object)
+    return @($scopes | Sort-VerificationIdentityStrings)
 }
 
 function Read-VerificationObligationDecisions {
@@ -160,7 +189,7 @@ function Get-VerificationObligationInputIdentity {
         throw 'VERIFICATION_OBLIGATION_TREE_MISSING: exact checked source tree is required for proof identity.'
     }
     $parts = [Collections.Generic.List[string]]::new()
-    foreach ($declared in @($Obligation.inputPaths | ForEach-Object { ([string]$_ -replace '\\', '/').Trim('/') } | Sort-Object -Unique)) {
+    foreach ($declared in @($Obligation.inputPaths | ForEach-Object { ([string]$_ -replace '\\', '/').Trim('/') } | Sort-VerificationIdentityStrings -Unique)) {
         if (-not $declared -or [IO.Path]::IsPathRooted($declared) -or $declared -match '(^|/)\.\.(/|$)|:') {
             throw "VERIFICATION_OBLIGATION_INPUT_INVALID: '$declared' cannot be used for proof identity."
         }
@@ -174,7 +203,7 @@ function Get-VerificationObligationInputIdentity {
             }
             $prefix = $prefix.Substring(0, $slash)
             $matches = @(Get-GitPathList -Arguments @('ls-tree', '-r', '-z', '--name-only', $Treeish, '--', $prefix) |
-                Where-Object { Test-VerificationRepoPathPattern -Path $_ -Pattern $declared } | Sort-Object -Unique)
+                Where-Object { Test-VerificationRepoPathPattern -Path $_ -Pattern $declared } | Sort-VerificationIdentityStrings -Unique)
         } else {
             $matches = @($declared)
         }
@@ -185,7 +214,7 @@ function Get-VerificationObligationInputIdentity {
             $parts.Add("$path=$oid")
         }
     }
-    return (Get-VerificationSelectionSha256 -Text ((@('obligation-inputs-v1') + @($parts)) -join "`n"))
+    return (Get-VerificationSelectionSha256 -Text ((@('obligation-inputs-v2-ordinal') + @($parts)) -join "`n"))
 }
 
 function Get-VerificationCatalogOneOffObligations {
@@ -231,11 +260,11 @@ function Get-VerificationOneOffProofPath {
 function Get-VerificationOneOffObligationHash {
     param([Parameter(Mandatory = $true)][object]$Obligation)
     $parts = @(
-        'one-off-obligation-v1',
+        'one-off-obligation-v2-ordinal',
         "id=$($Obligation.id)",
         "expected=$($Obligation.expectedResult)",
-        "inputs=$(@($Obligation.inputPaths | Sort-Object) -join ',')",
-        "proof=$(@($Obligation.admissibleProof | Sort-Object) -join ',')"
+        "inputs=$(@($Obligation.inputPaths | Sort-VerificationIdentityStrings) -join ',')",
+        "proof=$(@($Obligation.admissibleProof | Sort-VerificationIdentityStrings) -join ',')"
     )
     return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
 }
@@ -265,11 +294,12 @@ function Get-VerificationOneOffCheckerIdentity {
     # invocation settings or a permission expiry. JUnit fixes affect JUnit
     # receipts; unrelated observed-runtime proof does not depend on that parser.
     $names = @('Get-VerificationOneOffProofAssessment', 'Get-VerificationOneOffObligationHash',
-        'Get-VerificationObligationInputIdentity', 'Get-VerificationLoadedBaseIdentity',
+        'Get-VerificationObligationInputIdentity', 'Sort-VerificationIdentityStrings', 'Get-VerificationLoadedBaseIdentity',
         'Get-VerificationRepoRelativePath', 'Get-VerificationCatalogValue')
     if ($ProofType -in @('vanessa-junit', 'yaxunit-junit')) {
         $names += @('Assert-VerificationOneOffJUnitEvidence', 'Assert-VerificationArtifactReferences')
     }
+    if ($ProofType -eq 'vanessa-junit') { $names += 'Test-VerificationDiagnosticInputsCurrent' }
     if ($ProofType -eq 'yaxunit-junit') { $names += 'Get-YAxUnitJunitSummary' }
     if ($ProofType -eq 'event-log') {
         $names += @('Test-DevBranchEventLogAfterVanessa', 'Read-DevBranchEventLogErrors',
@@ -311,7 +341,7 @@ function Get-VerificationOneOffProofAssessment {
             [string]::IsNullOrWhiteSpace([string]$proof.providerId) -or
             [string]::IsNullOrWhiteSpace([string]$proof.runnerVersion) -or
             @($proof.steps).Count -eq 0) {
-            throw 'receipt is incomplete or does not match the declared obligation'
+            throw 'receipt is incomplete, uses an incompatible identity algorithm, or does not match the declared obligation; preserve evidence and use begin-one-off-proof with the current checker, then complete only after assessing the original observations against current inputs, target and artifacts'
         }
         if ([string]$proof.inputIdentity -cne (Get-VerificationObligationInputIdentity -Obligation $Obligation -Treeish $Treeish) -or
             [string]$proof.loadedBaseIdentity -cne (Get-VerificationLoadedBaseIdentity -State $State)) {
@@ -360,6 +390,9 @@ function Get-VerificationOneOffProofAssessment {
                 throw "artifact changed or is missing: $relative"
             }
         }
+        foreach ($artifact in @($proof.artifacts | Where-Object { [IO.Path]::GetFileName([string]$_.path) -ceq 'diagnostic-inputs.json' })) {
+            if (-not (Test-VerificationDiagnosticInputsCurrent -ManifestPath (Resolve-ProjectPath ([string]$artifact.path)) -State $State)) { throw 'Diagnostic feature inputs changed; repeat the original diagnostic and record its current manifest.' }
+        }
         if (@($proof.artifacts).Count -eq 0) { throw 'no observed artifact was retained' }
         if ([string]$proof.proofType -in @('vanessa-junit', 'yaxunit-junit')) {
             $junitPath = Resolve-ProjectPath ([string]$proof.artifacts[0].path)
@@ -391,8 +424,21 @@ function Start-VerificationOneOffProof {
             return [pscustomobject]@{ status = 'passed'; reused = $true; path = $path; obligationId = $ObligationId }
         }
     }
+    # Preserve the exact previous proof before replacing a pending or incompatible record.
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        $archive = Join-Path (Split-Path -Parent $path) ("history/$ObligationId-$sha.json")
+        if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $archive) | Out-Null
+            [IO.File]::Copy($path, $archive, $false)
+        }
+        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha) {
+            throw 'VERIFICATION_ONE_OFF_HISTORY_CHANGED: preserve the existing receipt and restore its exact history bytes before beginning a replacement.'
+        }
+    }
     $draft = [ordered]@{
         schemaVersion = 1
+        identityAlgorithm = 'ordinal-v2'
         status = 'pending'
         obligationId = $ObligationId
         obligationHash = Get-VerificationOneOffObligationHash -Obligation $obligation
@@ -467,8 +513,16 @@ function Complete-VerificationOneOffProof {
     if ($artifacts.Count -eq 0) {
         throw "VERIFICATION_ONE_OFF_ARTIFACT_MISSING: '$id' needs a retained result artifact."
     }
+    if ([string]$evidence.proofType -eq 'vanessa-junit' -and $artifacts.Count -gt 0) {
+        $junit = Resolve-ProjectPath ([string]$artifacts[0].path)
+        $manifest = Join-Path (Split-Path -Parent $junit) 'diagnostic-inputs.json'
+        if ((Test-Path -LiteralPath $manifest -PathType Leaf) -and
+            @($artifacts | Where-Object { (Resolve-ProjectPath ([string]$_.path)) -ceq $manifest }).Count -ne 1) {
+            throw 'VERIFICATION_ONE_OFF_DIAGNOSTIC_MANIFEST_REQUIRED: include the run diagnostic-inputs.json in observed artifactPaths, then repeat complete-one-off-proof.'
+        }
+    }
     $proof = [ordered]@{
-        schemaVersion = 1; status = 'passed'; obligationId = $id
+        schemaVersion = 1; identityAlgorithm = 'ordinal-v2'; status = 'passed'; obligationId = $id
         obligationHash = [string]$draft.obligationHash
         expectedResult = [string]$draft.expectedResult
         inputIdentity = [string]$draft.inputIdentity
@@ -558,7 +612,7 @@ function Get-VerificationScenarioFingerprint {
     $steps = if ($null -ne $Scenario.steps -and $null -ne $Scenario.steps.PSObject.Methods["ToArray"]) { @($Scenario.steps.ToArray()) } else { @($Scenario.steps) }
     $exampleParts = @()
     foreach ($row in $exampleRows) {
-        $exampleParts += (@($row.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "`t")
+        $exampleParts += (@($row.PSObject.Properties.Name | Sort-VerificationIdentityStrings | ForEach-Object { "$_=$($row.PSObject.Properties[$_].Value)" }) -join "`t")
     }
     $parts = @(
         "name=$([string]$Scenario.name)",
@@ -607,7 +661,7 @@ function Get-VerificationScenarioAnalysis {
     })
     foreach ($group in $scopeGroups) {
         if ($group.Count -le $acceptanceLimit) { continue }
-        $paths = @($group.Group.path | Sort-Object -Unique)
+        $paths = @($group.Group.path | Sort-VerificationIdentityStrings -Unique)
         $suiteLabel = if ($group.Group[0].suiteId -eq "__unclassified__") { "unclassified feature" } else { "acceptance suite '$($group.Group[0].suiteId)'" }
         $issues.Add("VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD: $suiteLabel contains $($group.Count) scenarios across '$($paths -join "', '")'; maximum is $acceptanceLimit. The agent must preserve scenario behavior, split coherent owners/cadences into separately selectable feature files and suites, and move diagnostics, A/B checks, profiling, benchmarks, and measurement launchers to purpose='explicit'.")
     }
@@ -753,20 +807,21 @@ function Read-VerificationSuiteCatalog {
                 $issues += "VERIFICATION_CADENCE_SELECTION_PENDING: obligation '$($obligation.id)' has cadence '$($obligation.cadence)' that the current Vanessa selector cannot execute without changing its purpose. Preserve the suite and choose a supported invocation route."
             }
         }
-        foreach ($assignment in @($assignments | Sort-Object path)) {
+        foreach ($path in @($assignments | ForEach-Object { $_.path } | Sort-VerificationIdentityStrings)) {
+            $assignment = @($assignments | Where-Object { $_.path -ceq $path })[0]
             $fingerprintParts.Add("$($assignment.path)=$($assignment.suiteId):$($assignment.purpose):$($assignment.obligationId):$($assignment.cadence)")
         }
         $suiteFingerprints = @($suites.ToArray() | ForEach-Object {
             $suite = $_
-            $assignedPaths = @($assignments.ToArray() | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty path | Sort-Object)
+            $assignedPaths = @($assignments.ToArray() | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty path | Sort-VerificationIdentityStrings)
             $semanticParts = @(
                 "id=$($suite.id)",
                 "purpose=$($suite.purpose)",
                 "always=$([bool]$suite.always)",
-                "features=$(@($suite.featurePaths | Sort-Object) -join ',')",
-                "owners=$(@($suite.ownerPaths | Sort-Object) -join ',')",
+                "features=$(@($suite.featurePaths | Sort-VerificationIdentityStrings) -join ',')",
+                "owners=$(@($suite.ownerPaths | Sort-VerificationIdentityStrings) -join ',')",
                 "assigned=$($assignedPaths -join ',')",
-                "scenarios=$(@($scenarioAnalysis.scenarios | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty fingerprint | Sort-Object) -join ',')"
+                "scenarios=$(@($scenarioAnalysis.scenarios | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty fingerprint | Sort-VerificationIdentityStrings) -join ',')"
             )
             [pscustomobject]@{ id = [string]$suite.id; purpose = [string]$suite.purpose; fingerprint = Get-VerificationSelectionSha256 -Text ($semanticParts -join "`n") }
         })
@@ -1333,7 +1388,7 @@ function Get-VerificationSuiteJUnitCoverage {
     # and optionally prefixes its first relative directory. Resolve cases
     # against every declared suite, including unselected suites: a shared
     # title and scenario cannot establish which source actually ran.
-    $featureRoot = Resolve-ProjectPath (Get-VanessaFeaturesPath)
+    $featureRoot = Resolve-ProjectPath (Get-VanessaVerificationFeaturesPath)
     $bindings = @{}
     foreach ($assignment in @($Catalog.assignments)) {
         $relative = ([string]$assignment.fullPath).Substring($featureRoot.TrimEnd([char[]]@('\','/')).Length).TrimStart([char[]]@('\','/')).Replace('\','/')
@@ -1366,7 +1421,16 @@ function Get-VerificationSuiteJUnitCoverage {
     }
     return @($SelectedSuiteIds | ForEach-Object {
         $id = $_
-        $items = @($bindings.Values | Where-Object suiteId -eq $id | Sort-Object path,line,name)
+        $items = [Collections.Generic.List[object]]::new()
+        foreach ($binding in @($bindings.Values | Where-Object suiteId -eq $id)) { $items.Add($binding) }
+        $items.Sort([Comparison[object]]{
+            param($left, $right)
+            $order = [StringComparer]::Ordinal.Compare([string]$left.path, [string]$right.path)
+            if ($order -ne 0) { return $order }
+            $order = ([int]$left.line).CompareTo([int]$right.line)
+            if ($order -ne 0) { return $order }
+            return [StringComparer]::Ordinal.Compare([string]$left.name, [string]$right.name)
+        })
         $expected = 0; $observed = 0; $issues = @()
         foreach ($item in $items) {
             $expected += $item.expected; $observed += $item.observed
@@ -1514,7 +1578,7 @@ function Get-VerificationCumulativeProofAssessment {
             -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
             throw 'VERIFICATION_LOADED_INPUT_UNVERIFIED: the existing application readiness proof is incomplete.'
         }
-        $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+        $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
         $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $files
         $yaxCatalog = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
         if (-not $catalog.classificationComplete -or -not $yaxCatalog.classificationComplete) {
@@ -1573,7 +1637,7 @@ function Complete-VerificationSelectionProof {
         $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
         $artifacts = @(if ($Status -eq 'passed') { New-VerificationArtifactReferences -Paths @($junit.files | ForEach-Object { [string]$_.path }) })
         if ($Status -eq 'passed') { Assert-VerificationArtifactReferences -Artifacts $artifacts -JUnit }
-        $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+        $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
         if ($Status -eq 'passed' -and [string]$catalog.fingerprint -cne [string]$Plan.catalogFingerprint) {
             throw 'VERIFICATION_CATALOG_CHANGED_DURING_RUN: preserve the JUnit result and repeat the original check against the current declared obligations.'
         }

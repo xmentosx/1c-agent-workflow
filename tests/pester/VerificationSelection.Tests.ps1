@@ -200,6 +200,21 @@ Describe "Branch-first verification suite selection" {
             $pendingAfterInvalid = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
             Write-Utf8TextAtomic -Path $junitPath -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="orders"/></testsuite>'
             $validJunit = Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath
+            $feature=Resolve-ProjectPath 'evidence/diagnostic.feature'
+            Write-Utf8TextAtomic $feature 'Функционал: Проверка'
+            $manifest=Resolve-ProjectPath 'evidence/diagnostic-inputs.json'
+            $inputs=@{schemaVersion=1;kind='vanessa-diagnostic-inputs';loadedBaseIdentity=$script:LoadedBase;features=@(@{path='evidence/diagnostic.feature';sha256=(Get-FileHash $feature).Hash.ToLowerInvariant()})}
+            Write-Utf8TextAtomic $manifest ($inputs|ConvertTo-Json -Depth 6)
+            $diagnostic=Start-VerificationOneOffProof -ObligationId 'orders-result' -Force
+            $junitEvidence.runToken=$diagnostic.runToken
+            Write-Utf8TextAtomic $junitEvidencePath ($junitEvidence|ConvertTo-Json -Depth 8)
+            { Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath } | Should -Throw '*DIAGNOSTIC_MANIFEST_REQUIRED*'
+            $junitEvidence.artifactPaths=@('evidence/junit.xml','evidence/diagnostic-inputs.json')
+            Write-Utf8TextAtomic $junitEvidencePath ($junitEvidence|ConvertTo-Json -Depth 8)
+            Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath | Out-Null
+            (Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)).passed | Should -BeTrue
+            Write-Utf8TextAtomic $feature 'Функционал: Изменён'
+            (Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)).passed | Should -BeFalse
             $tampered = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
             $tampered.actualResult = 'Fabricated result'
             $tamperedAssessment = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState) -Proof $tampered
@@ -1010,5 +1025,33 @@ Describe 'Classification before infobase preparation' {
         $script:PreflightEvents | Should -Contain 'repair-failed'
         $script:PreflightEvents | Should -Not -Contain 'verified'
         $script:PreflightEvents | Should -Not -Contain 'report'
+    }
+}
+
+Describe 'Portable verification proof identities' {
+    It 'preserves exact path case and only removes exact duplicates' {
+        . (Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1')
+        (@('a','A','a','а-б','а.б','а_б') | Sort-VerificationIdentityStrings -Unique) -join '|' | Should -BeExactly 'A|a|а-б|а.б|а_б'
+        (@('a','a') | Sort-VerificationIdentityStrings).Count | Should -Be 2
+        $o=[pscustomobject]@{id='x';expectedResult='42';inputPaths=@('src/cf/а-б','src/cf/а.б');admissibleProof=@('event-log','runtime-observation')}
+        $before=Get-VerificationOneOffObligationHash $o
+        [array]::Reverse($o.inputPaths);[array]::Reverse($o.admissibleProof)
+        Get-VerificationOneOffObligationHash $o | Should -BeExactly $before
+    }
+
+    It 'round-trips production begin/complete/assessment across hosts: <First> <Culture>' -TestCases @(
+        @{First='powershell';Second='pwsh';Culture='ru-RU'},@{First='pwsh';Second='powershell';Culture='ru-RU'},
+        @{First='powershell';Second='pwsh';Culture='en-US'},@{First='pwsh';Second='powershell';Culture='en-US'}
+    ) {
+        param($First,$Second,$Culture)
+        $root=Join-Path $TestDrive ("Между host $First $Culture")
+        [void][IO.Directory]::CreateDirectory($root)
+        $module=Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1'
+        $support=Join-Path $PSScriptRoot 'VerificationHostIdentitySupport.ps1'
+        foreach($step in @(@($First,'begin'),@($Second,'complete'),@($First,'assess'),@($Second,'changed'),@($First,'legacy'),@($Second,'complete'),@($First,'assess'))){
+            $output=@(& $step[0] -NoProfile -NonInteractive -File $support -ModulePath $module -ProjectRoot $root -Phase $step[1] -Culture $Culture 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join ' ')
+            ($output[-1]|ConvertFrom-Json).status | Should -Be passed
+        }
     }
 }

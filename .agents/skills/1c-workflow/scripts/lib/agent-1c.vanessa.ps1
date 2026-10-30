@@ -21,6 +21,13 @@ function Get-VanessaConfiguredFeaturesPath {
     return [string]$value
 }
 
+function Get-VanessaVerificationFeaturesPath {
+    if ($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.featuresPath) {
+        return [string]$script:ActiveAuxiliaryVanessaContext.featuresPath
+    }
+    return (Get-VanessaConfiguredFeaturesPath)
+}
+
 function Get-VanessaFeaturesPath {
     if ($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.featuresPath) {
         return [string]$script:ActiveAuxiliaryVanessaContext.featuresPath
@@ -4813,7 +4820,7 @@ function Get-VerificationFingerprintScopePaths {
     return @(@(
         (Get-ExportPath),
         (Get-ExtensionsPath),
-        (Get-VanessaFeaturesPath),
+        (Get-VanessaVerificationFeaturesPath),
         (Get-YAxUnitTestsPath),
         ".agent-1c/dependency-lock.json",
         "tests/verification-suites.shared.json",
@@ -5203,6 +5210,17 @@ function Confirm-UnverifiedProceed {
     throw "$Operation stopped because fresh complete verification is missing. Resolve the reported pending obligation, run verify-dev-branch if needed, or use the existing explicit unverified override."
 }
 
+function Write-VanessaDiagnosticInputManifest {
+    param([string]$RunDirectory, [string[]]$FeatureFiles, [object]$State)
+    $files = @($FeatureFiles | Sort-VerificationIdentityStrings -Unique | ForEach-Object {
+        [ordered]@{path=Get-VerificationRepoRelativePath -Path $_; sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    $manifest = [ordered]@{schemaVersion=1; kind='vanessa-diagnostic-inputs'; features=$files; filterTags=[string]$VanessaFilterTags; loadedBaseIdentity=Get-VerificationLoadedBaseIdentity -State $State}
+    $path = Join-Path $RunDirectory 'diagnostic-inputs.json'
+    Write-Utf8TextAtomic -Path $path -Value (($manifest | ConvertTo-Json -Depth 6) + "`n")
+    return $path
+}
+
 function Add-VanessaVerificationEvidenceUpdates {
     param(
         [hashtable]$Updates,
@@ -5237,6 +5255,11 @@ function Add-VanessaVerificationEvidenceUpdates {
     $Updates["lastDiagnosticVerificationAt"] = (Get-Date).ToString("o")
     $Updates["lastDiagnosticVerificationReportPath"] = $ReportPath
     $Updates["lastDiagnosticVerificationLogPath"] = $LogPath
+    $manifest = if ($ReportPath) { Join-Path $ReportPath 'diagnostic-inputs.json' } else { '' }
+    if ($manifest -and (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        $Updates['lastDiagnosticVerificationInputs'] = @(New-VerificationArtifactReferences -Paths @($manifest))
+    }
+
 }
 
 function Get-VanessaVerificationRuntimeState {
@@ -5358,6 +5381,10 @@ function Run-DevBranchTests {
     Invoke-DevBranchVanessaRuntimeRelease -State $runtimeState -Reason "Vanessa verification preflight" | Out-Null
 
     $runDirectory = New-VanessaRunDirectory
+    $diagnosticInputManifest = ''
+    if (Test-ItlDiagnosticVerificationScope) {
+        $diagnosticInputManifest = Write-VanessaDiagnosticInputManifest -RunDirectory $runDirectory -FeatureFiles $featureFiles -State $runtimeState
+    }
     $statusPath = Join-Path $runDirectory "status.json"
     $runEventLogCursorPath = Join-Path $runDirectory "event-log-cursor.json"
     $skipEventLogReason = if ($auxiliaryVerification) {
@@ -5623,6 +5650,10 @@ function Run-DevBranchTests {
         $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
     } elseif ($eventLogVerification.status -eq "passed" -and $verification.status -eq "passed") {
         $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
+    }
+    if ($diagnosticInputManifest -and -not (Test-VerificationDiagnosticInputsCurrent -ManifestPath $diagnosticInputManifest -State $runtimeState)) {
+        $verification.status = 'failed'
+        $verification.reason = 'ITL_VANESSA_DIAGNOSTIC_INPUT_CHANGED: preserve this run and repeat the original diagnostic against stable feature files.'
     }
     $updates = @{
         lastVanessaTestAt = (Get-Date).ToString("o")

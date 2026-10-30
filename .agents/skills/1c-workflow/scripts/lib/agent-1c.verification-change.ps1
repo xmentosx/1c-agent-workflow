@@ -66,7 +66,8 @@ function Get-VerificationChangeTarget {
 
 function Get-VerificationChangeCheckerIdentity {
     $parts = @('verification-change-v1')
-    foreach ($command in @(Get-Command -CommandType Function '*-VerificationChange*' | Sort-Object Name)) {
+    foreach ($name in @(Get-Command -CommandType Function '*-VerificationChange*' | Select-Object -ExpandProperty Name | Sort-VerificationIdentityStrings)) {
+        $command = Get-Command -Name $name -CommandType Function
         $parts += "$($command.Name)=$($command.Definition.Replace("`r`n", "`n"))"
     }
     return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
@@ -156,7 +157,8 @@ function Get-VerificationChangeChecks {
     param([Parameter(Mandatory = $true)][object]$Plan)
     $checks = @($Plan.checks)
     if ($checks.Count -eq 0) { throw 'VERIFICATION_CHANGE_CHECKS_MISSING: declare sufficient current checks and their expected results in the impact plan.' }
-    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
+    if (-not $catalog.valid) { throw "VERIFICATION_CHANGE_CATALOG_INVALID: $(@($catalog.issues) -join '; ')" }
     $yax = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
     $result = @()
     foreach ($check in $checks) {
@@ -338,7 +340,7 @@ function Get-VerificationChangeSelectionPlan {
     if ($null -eq $change) { return $Plan }
     Assert-VerificationChangeCurrent -Change $change
     if ($Plan.mode -eq 'classification-required') { return $Plan }
-    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+    $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
     $run = @($Plan.selectedSuiteIds)
     foreach ($decision in @($change.retainedDispositions)) {
         if ($decision.suiteId -notin @($Plan.acceptanceSuiteIds) -or $decision.decision -notin @('run','unaffected') -or -not $decision.reason) {
@@ -375,7 +377,7 @@ function Get-VerificationChangeAssessment {
     param([Parameter(Mandatory = $true)][object]$State, [string]$Fingerprint)
     try {
         $change = Assert-VerificationChangeReady -State $State
-        $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+        $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaVerificationFeaturesPath))
         $selection=Get-VerificationChangeSelectionPlan -Plan (New-VerificationCumulativeSelectionPlan -ApplicationFeatureFiles $files -YAxUnitVerificationPlanned -RequireObservedReceipts)
         if ($selection.mode -eq 'classification-required' -or @($selection.selectedSuiteIds).Count -gt 0) { throw "VERIFICATION_CHANGE_RETAINED_RUN_DUE: $($selection.reason) Resolve classification and run the normal unfiltered check; current plan preparation cannot substitute for its observed retained result." }
         $unaffected = @($change.retainedDispositions | Where-Object decision -eq 'unaffected' | ForEach-Object { [string]$_.suiteId })

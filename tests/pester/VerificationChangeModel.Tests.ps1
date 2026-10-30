@@ -173,7 +173,7 @@ Describe 'Change mode recovery and reuse boundaries' {
             . (Join-Path (Split-Path -Parent $helperPath) 'lib/agent-1c.verification-change.ps1')
             function Read-VerificationChange { [pscustomobject]@{retainedDispositions=@([pscustomobject]@{suiteId='existing';decision='unaffected';reason='Unrelated change'})} }
             function Assert-VerificationChangeCurrent { param($Change) }
-            function Get-VanessaFeaturesPath { 'tests/features' }
+            function Get-VanessaVerificationFeaturesPath { 'tests/features' }
             function Get-VanessaApplicationFeatureFiles { param($FeaturePath) @() }
             function Read-VerificationSuiteCatalog { param($ApplicationFeatureFiles) [pscustomobject]@{suites=@([pscustomobject]@{id='existing';always=($kind -eq 'always')})} }
             $plan=[pscustomobject]@{mode=$(if($kind -eq 'full'){'full'}else{'incremental'});selectedSuiteIds=@('existing');acceptanceSuiteIds=@('existing')}

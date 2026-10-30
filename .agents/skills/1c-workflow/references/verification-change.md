@@ -1,4 +1,4 @@
-# Current change verification
+﻿# Current change verification
 
 `ITL_VERIFICATION_MODEL=change` is the default for new and updated projects.
 `cumulative` selects the previous catalog-wide assessment. Set it in the existing
@@ -138,3 +138,33 @@ before planning; an ignored/unsnapshotted file cannot establish current proof.
 The helper pins the latest accepted tree locally, even before a commit. An
 explicit branch reset retires the active task into history through its existing
 owner; ordinary commits and task labels cannot do so.
+
+## Portable identities and diagnostic runs
+
+Proof input identities use the ordinal-v2 algorithm on Windows PowerShell 5.1
+and PowerShell 7. Canonical string order is ordinal and culture independent.
+Input-file identity deduplicates only exact normalized path strings; case-distinct
+Git paths remain distinct. Obligation hashes retain declared duplicate entries.
+Path matching, suite-id equality and scenario execution order retain their own
+existing contracts; identity sorting does not redefine them.
+
+Older receipts are not automatically accepted under the new algorithm/checker.
+Keep their observations and artifacts. `begin-one-off-proof` preserves the exact
+replaced receipt under `one-off/history/<id>-<sha256>.json`; it then creates a
+current pending proof. Reassess the original observations against current inputs,
+loaded target, checker and artifact bytes before completing it. Repeat only
+observations whose material conditions cannot be established. A draft created
+before the update must be begun again. Retained suites and component receipts
+use their existing normal-check continuation when their checker is incompatible.
+Current impact plans are renewed through `begin-verification-change`, preserving
+pending criteria and the prior accepted base. Historical accepted records keep
+their existing serialization and integrity checks.
+
+A named feature or tag filter selects execution, while the configured feature
+root defines the canonical verification scope and retained catalog. An auxiliary
+contour keeps its own root. Diagnostic runs save `diagnostic-inputs.json` with
+feature SHA-256, tag filter and loaded target; changing a feature during the run
+prevents a passed result. Include this manifest alongside the JUnit file in a
+one-off diagnostic proof's `artifactPaths`. Its bytes and referenced feature
+content are checked during assessment. Diagnostic success alone cannot complete
+ordinary retained coverage or pending task criteria.

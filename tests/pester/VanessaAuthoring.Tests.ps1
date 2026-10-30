@@ -458,3 +458,44 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
+
+Describe 'Diagnostic selector input boundary' {
+    BeforeAll { $helper=Join-Path $PSScriptRoot '../../.agents/skills/1c-workflow/scripts/agent-1c.ps1' }
+    It 'keeps canonical scope and retained catalog separate from execution, including custom and auxiliary roots' {
+        & {
+            . $helper -ProjectRoot $TestDrive -Action help *> $null
+            function Get-VanessaConfiguredFeaturesPath { 'custom/Сценарии' }
+            function Get-VerificationDeclaredInputScopes { @() }
+            $script:ActiveAuxiliaryVanessaContext=$null
+            $VanessaFeaturePath=''
+            $normal=@(Get-VerificationFingerprintScopePaths)
+            $VanessaFeaturePath='build/diagnostic.feature'
+            (@(Get-VerificationFingerprintScopePaths) -join '|') | Should -BeExactly ($normal -join '|')
+            Get-VanessaFeaturesPath | Should -BeExactly 'build/diagnostic.feature'
+            function Get-VanessaApplicationFeatureFiles {param($FeaturePath) $FeaturePath | Should -BeExactly 'custom/Сценарии';@()}
+            function Read-VerificationSuiteCatalog {param($ApplicationFeatureFiles) [pscustomobject]@{valid=$true;obligations=@([pscustomobject]@{id='coverage';suiteId='retained';retention='retained';inputPaths=@('src/cf/**')});suites=@([pscustomobject]@{id='retained';purpose='acceptance'})}}
+            function Read-YAxUnitSuiteCatalog {param($ModuleFiles) [pscustomobject]@{groups=@()}}
+            function Get-YAxUnitModuleFiles { @() }
+            @(Get-VerificationChangeChecks -Plan ([pscustomobject]@{checks=@([pscustomobject]@{suiteId='retained'})}))[0].id | Should -BeExactly coverage
+            $script:ActiveAuxiliaryVanessaContext=[pscustomobject]@{featuresPath='aux/Сценарии'}
+            Get-VanessaVerificationFeaturesPath | Should -BeExactly 'aux/Сценарии'
+        }
+    }
+    It 'records and checks exact diagnostic feature bytes without granting full acceptance' {
+        & {
+            . $helper -ProjectRoot $TestDrive -Action help *> $null
+            $feature=Join-Path $TestDrive 'Временный сценарий.feature'
+            [IO.File]::WriteAllText($feature,'Функционал: Наблюдение',[Text.UTF8Encoding]::new($false))
+            function Get-VerificationLoadedBaseIdentity {param($State) 'target'}
+            $VanessaFilterTags='@focused'
+            $manifest=Write-VanessaDiagnosticInputManifest -RunDirectory $TestDrive -FeatureFiles @($feature) -State ([pscustomobject]@{})
+            Test-VerificationDiagnosticInputsCurrent $manifest | Should -BeTrue
+            $updates=@{}
+            Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status passed -ReportPath $TestDrive
+            @($updates.lastDiagnosticVerificationInputs).Count | Should -Be 1
+            $updates.ContainsKey('lastVerifiedFingerprint') | Should -BeFalse
+            [IO.File]::AppendAllText($feature,' изменён')
+            Test-VerificationDiagnosticInputsCurrent $manifest | Should -BeFalse
+        }
+    }
+}
