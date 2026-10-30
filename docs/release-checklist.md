@@ -10,7 +10,8 @@ overrides the parent; keep both the root and its `-positive` sibling within
 bootstrap's 35-character limit). The clone hash uses its full common Git path,
 and preparation script bytes, so equally named clones stay separate and a
 changed preparation recipe retains the previous stand and its immutable
-capsules for diagnosis. The technical catalog is prepared before bootstrap and
+capsules for diagnosis until cleanup expires it; selection records the owning
+clone in the stand's `.git/itl/gate-stand-owner.json`. The technical catalog is prepared before bootstrap and
 the initial capsules; update only passes its explicit project selection and
 preserves the original environment until the transaction snapshot. A missing stand is built once by
 `scripts/new-gate-stand.ps1` inside the operation, from published
@@ -136,9 +137,14 @@ does not move stable `master`; only `PromoteRelease` or the explicit command bel
 
 Every publication first retries accumulated cleanup debt and then performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
-failed-registration candidates (`itl-source-register-*`, kept for diagnosis
-seven days after publication cleanup, or until an explicit `-Action Cleanup`;
-a leftover directory only when no repository owns it),
+failed-registration candidates (`itl-source-register-*`; the newest two within
+seven days stay for diagnosis, none after an explicit `-Action Cleanup`; a
+leftover directory only when no repository owns it), stable supervisors left by
+an interrupted operation (`itl-source-supervisor-*`) and test artifacts a killed
+Pester shard left in temp (both once idle for an hour), this clone's superseded
+gate stands with their sibling worktrees (the newest one within seven days
+stays, none after an explicit `-Action Cleanup`; only a stand whose
+`.git/itl/gate-stand-owner.json` names this clone),
 stale source-delivery test fixtures, disposable fresh/release-seed projects and
 closed seed archives, stale 1C launcher registrations, and managed launcher
 backups in both current and legacy timestamp formats. Configured reusable stands,
