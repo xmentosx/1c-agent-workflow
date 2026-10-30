@@ -260,8 +260,8 @@ function Invoke-DevelopWorkflowUpdate {
     $updateStarted = [datetime]::UtcNow
     $updateClient = Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
     $update = Invoke-SourceE2EWorkflowUpdate -Root $Root -CandidateRoot $CandidateRoot -AgentTarget $updateClient -TimeoutSeconds $TimeoutSeconds -InstalledOperation {
-        param($Budget)
-        Invoke-InstalledAction -Name 'upgrade-update-workflow-initial' -Root $Root -Action 'update-workflow' -TimeoutSeconds $Budget -AllowFailure
+        param($Budget,$CatalogArguments)
+        Invoke-InstalledAction -Name 'upgrade-update-workflow-initial' -Root $Root -Action 'update-workflow' -AdditionalArguments $CatalogArguments -TimeoutSeconds $Budget -AllowFailure
     } -SourceOperation {
         param($ScriptPath,$Arguments,$Budget)
         Invoke-DevelopProcess -Name 'upgrade-update-workflow-source-continuation' -WorkingRoot $Root -ScriptPath $ScriptPath -Arguments $Arguments -TimeoutSeconds $Budget -AllowFailure
@@ -623,7 +623,8 @@ try {
             [IO.File]::WriteAllText((Join-Path $freshRoot ".dev.env"), (($envLines -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "bootstrap-init-project" -Operation {
-            [void](Invoke-DevelopProcess -Name "fresh-bootstrap-init-project" -WorkingRoot $freshRoot -ScriptPath (Join-Path $CandidateRoot "install-agent-1c-workflow.ps1") -Arguments @("-ProjectRoot", $freshRoot, "-SourceRoot", $CandidateRoot, "-InitMode", "configured", "-AgentTarget", "kilocode", "-SkipWorkflowSourceFreshnessCheck") -TimeoutSeconds 5400)
+            $catalogArguments=@(Initialize-SourceE2ECatalog -Root $freshRoot -ConfigurationPath (Join-Path $freshTemplateRoot 'src/cf/Configuration.xml'))
+            [void](Invoke-DevelopProcess -Name "fresh-bootstrap-init-project" -WorkingRoot $freshRoot -ScriptPath (Join-Path $CandidateRoot "install-agent-1c-workflow.ps1") -Arguments (@("-ProjectRoot", $freshRoot, "-SourceRoot", $CandidateRoot, "-InitMode", "configured", "-AgentTarget", "kilocode", "-SkipWorkflowSourceFreshnessCheck")+$catalogArguments) -TimeoutSeconds 5400)
             Assert-InitializedProject -Root $freshRoot
         })
         $freshHelper = Join-Path $freshRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"

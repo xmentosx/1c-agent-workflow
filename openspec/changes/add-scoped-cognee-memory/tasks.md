@@ -1,5 +1,13 @@
 # Tasks
 
+## Продолжение доставки, 2026-10-30
+
+- [x] Согласовать с registry [ремонт CATALOG_PROJECT_REQUIRED в E2E оснастке](../add-product-project-registry/evidence/catalog-required-delivery-repair-2026-10-30.md):
+  технический каталог без memory homes/endpoints готовит только локальную фикстуру;
+  память пользователя, default-on, полный hash guard и существующие binding не изменены.
+  Регистрация того же QueueId и публикация develop остаются отдельными фактами;
+  native PM5 proof из 2026-10-29 не объявляется полным прогоном нового кандидата.
+
 ## Обязательная project association, 2026-10-29
 
 - [x] Учесть [native исходный PM5 update/bound repeat](../add-product-project-registry/evidence/registry-homes-native-selection-2026-10-29.md)

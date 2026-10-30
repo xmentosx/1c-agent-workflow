@@ -121,8 +121,8 @@ function Invoke-SourceFixtureWorkflowUpdate {
     param([string]$Root, [string]$CandidateRoot, [string]$AgentTarget, [string]$LogRoot, [int]$TimeoutSeconds=3600)
     $updateClient=Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget
     $null=Invoke-SourceE2EWorkflowUpdate -Root $Root -CandidateRoot $CandidateRoot -AgentTarget $updateClient -TimeoutSeconds $TimeoutSeconds -InstalledOperation {
-        param($Budget)
-        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'update-workflow' -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure
+        param($Budget,$CatalogArguments)
+        Invoke-SourceFixtureInstalledAction -Root $Root -Action 'update-workflow' -Arguments $CatalogArguments -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure
     } -SourceOperation {
         param($ScriptPath,$Arguments,$Budget)
         Invoke-SourceFixtureInstalledProcess -Root $Root -Action 'update-workflow-source-continuation' -AgentTarget $updateClient -LogRoot $LogRoot -TimeoutSeconds $Budget -AllowFailure -ScriptPath $ScriptPath -ScriptArguments $Arguments
@@ -561,6 +561,9 @@ function New-SourceE2EFixtureProject {
     # Origin is the immutable local bundle, never the seed or a publishing remote.
     foreach($item in @($target,$branch)){Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.name','ITL qualification')|Out-Null;Invoke-RepositoryGit -RepositoryRoot $item -Arguments @('config','user.email','qualification@example.invalid')|Out-Null}
     $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
+    # Only disposable technical copies receive their published test catalog.
+    # The sealed seed/capsule and existing business bindings stay unchanged.
+    $null=Initialize-SourceE2ECatalog -Root $target -AdditionalRoots @($branch)
     Restore-SourceFixtureSourceInfoBase -Record $sourceInfoBase -TargetProjectRoot $target
     $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
     $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative

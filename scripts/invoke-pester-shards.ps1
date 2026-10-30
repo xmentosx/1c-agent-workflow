@@ -772,7 +772,9 @@ if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 
 # broadcasts within its attached console. Keep it out of the parallel set.
 # DevelopManifestContinuation uses private Temp/Git fixtures and no console
 # interruption. Keep actual console/global boundaries in the serial cohort.
-$serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
+# Native watchdog deadline assertions include process startup/cleanup wall time;
+# running them beside eight cold package fixtures measures host contention.
+$serialTestNames = @("CompactRunnerWatchdog.Tests.ps1", "CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1", "ReleaseOrchestration.Tests.ps1", "E2EClientSelection.Tests.ps1", "ReleaseSnapshotContinuation.Tests.ps1", "ReleaseAdmission.Tests.ps1")
 # These existing short owner checks finish before costly native files start.
 # Keep this scheduling policy beside serial admission; cached files stay reused.
 $preflightTestNames = @("SourceDeliveryAdmission.Tests.ps1", "ReleaseRouting.Tests.ps1")
