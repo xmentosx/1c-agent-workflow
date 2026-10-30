@@ -24,7 +24,8 @@ switch($Phase){
  'complete' {
     $draft=Read-Utf8Text (Get-VerificationOneOffProofPath host-proof)|ConvertFrom-Json
     Write-Utf8TextAtomic (Resolve-ProjectPath 'evidence/actual.txt') '42'
-    $e=@{obligationId='host-proof';runToken=$draft.runToken;expectedResult='Результат 42';status='passed';proofType='runtime-observation';actualResult='42';providerId='fixture';runnerVersion='1';steps=@(@{action='Observe';actual='42'});artifactPaths=@('evidence/actual.txt')}
+    Write-Utf8TextAtomic (Resolve-ProjectPath 'evidence/diagnostic-inputs.json') '{"manual-observation":true}'
+    $e=@{obligationId='host-proof';runToken=$draft.runToken;expectedResult='Результат 42';status='passed';proofType='runtime-observation';actualResult='42';providerId='fixture';runnerVersion='1';steps=@(@{action='Observe';actual='42'});artifactPaths=@('evidence/actual.txt','evidence/diagnostic-inputs.json')}
     Write-Utf8TextAtomic (Resolve-ProjectPath 'evidence/result.json') ($e|ConvertTo-Json -Depth 8)
     Complete-VerificationOneOffProof -EvidencePath 'evidence/result.json' | Out-Null
  }

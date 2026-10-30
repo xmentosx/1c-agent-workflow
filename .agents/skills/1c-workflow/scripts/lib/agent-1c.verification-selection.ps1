@@ -390,7 +390,7 @@ function Get-VerificationOneOffProofAssessment {
                 throw "artifact changed or is missing: $relative"
             }
         }
-        foreach ($artifact in @($proof.artifacts | Where-Object { [IO.Path]::GetFileName([string]$_.path) -ceq 'diagnostic-inputs.json' })) {
+        foreach ($artifact in @($proof.artifacts | Where-Object { [string]$proof.proofType -ceq 'vanessa-junit' -and [IO.Path]::GetFileName([string]$_.path) -ceq 'diagnostic-inputs.json' })) {
             if (-not (Test-VerificationDiagnosticInputsCurrent -ManifestPath (Resolve-ProjectPath ([string]$artifact.path)) -State $State)) { throw 'Diagnostic feature inputs changed; repeat the original diagnostic and record its current manifest.' }
         }
         if (@($proof.artifacts).Count -eq 0) { throw 'no observed artifact was retained' }
