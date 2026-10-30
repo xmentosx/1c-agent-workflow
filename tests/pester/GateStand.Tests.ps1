@@ -64,8 +64,9 @@ Describe 'Per-clone gate stand selection' {
         (@($output | Where-Object { $_ -is [Management.Automation.WarningRecord] }) -join "`n") | Should -Match 'DELIVERY_GATE_STAND_REPLACED'
     }
 
-    It 'refuses an incomplete clone stand with a continuation instead of reusing or overwriting it' {
-        [void][IO.Directory]::CreateDirectory((Join-Path $script:cloneStand '.agent-1c'))
+    It 'refuses an incomplete clone stand with a continuation instead of reusing or overwriting it: <part>' -ForEach @(@{ part = 'stand' }, @{ part = 'positive twin' }) {
+        $partial = if ($part -eq 'stand') { $script:cloneStand } else { $script:cloneStand + '-positive' }
+        [void][IO.Directory]::CreateDirectory((Join-Path $partial '.agent-1c'))
         Mock Start-DeliveryProcess { throw 'must not build' }
         { Resolve-DeliveryGateStand -Requested '' } | Should -Throw '*DELIVERY_GATE_STAND_INCOMPLETE*remove it*repeat the same command*'
     }
@@ -159,6 +160,11 @@ Describe 'Gate stand builder' {
         Write-GateStandMarker -StandRoot $root -PositiveRoot ($root + '-positive') -FixtureId ('a' * 40)
         @(& git -C $root status --porcelain --untracked-files=all).Count | Should -Be 0
         (Read-GateStandMarker -StandRoot $root).fixtureId | Should -Be ('a' * 40)
+    }
+
+    It 'refuses a stand or positive twin beyond the configured-init path budget before any native work' {
+        { Assert-GateStandPathBudget -Path ('C:\g\abcdef12 ' + [char]0x0441 + ' c688c8be-positive') } | Should -Not -Throw
+        { Assert-GateStandPathBudget -Path 'C:\itl-gate-stands\1c-agent-workflow Stand c688c8be-positive' } | Should -Throw '*GATE_STAND_PATH_TOO_LONG*'
     }
 
     It 'refuses a non-empty target before any native work' {

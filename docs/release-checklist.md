@@ -17,10 +17,10 @@ preserves the original environment until the transaction snapshot. A missing sta
 `origin/develop`, including its baseline capsules; its `.git/itl/gate-stand.json`
 marker is written last. Omit `-E2EProjectRoot`; a passed stand without the
 current fixture marker, such as the PM5 stand, is replaced with a
-`DELIVERY_GATE_STAND_REPLACED` warning. A directory left by a failed build is
-refused until it is removed with its `-positive` and worktree siblings. The
-builder can also be run directly with `-StandRoot`; it refuses non-empty
-targets. The PM5 stand `D:\Git\itl-workflow-e2e-pm5` stays available for
+`DELIVERY_GATE_STAND_REPLACED` warning. A stand or `-positive` twin left by a
+failed build is refused until it is removed with its siblings. The builder can
+also be run directly with `-StandRoot`; it refuses non-empty targets and, before
+any native work, a stand or twin longer than bootstrap's 35 characters. The PM5 stand `D:\Git\itl-workflow-e2e-pm5` stays available for
 product pilots outside gates.
 
 A stand never points at an external source or production infobase: even a
