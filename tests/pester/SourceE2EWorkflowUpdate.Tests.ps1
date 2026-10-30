@@ -58,6 +58,35 @@ if($env:ITL_TEST_UPDATE_CONTINUATION_FAIL -eq 'true'){exit 7}
 }
 
 Describe 'Bounded source-owner workflow update continuation' {
+    It 'restores the identical technical catalog payload for a bound copy without changing its binding' {
+        $seed=New-UpdateBoundaryFixture 'catalog dependency seed'
+        $copy=Join-Path $TestDrive 'Восстановленная копия с пробелом'
+        [void][IO.Directory]::CreateDirectory((Join-Path $copy '.agent-1c'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $copy 'src/cf'))
+        Copy-Item (Join-Path $seed.root 'src/cf/Configuration.xml') (Join-Path $copy 'src/cf/Configuration.xml')
+        $settings=Get-Content (Join-Path $seed.root '.agent-1c/project.json') -Raw | ConvertFrom-Json
+        $settings|Add-Member productProject @{schemaVersion=1;requiredCapability='product-project-registry-v1';projectId='itl-gate-qualification';productId='itl-gate-fixture'}
+        $path=Join-Path $copy '.agent-1c/project.json'
+        [IO.File]::WriteAllText($path,($settings|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        $before=(Get-FileHash $path).Hash
+        $publisher=Join-Path $copy '.agent-1c/mcp/qualification-catalog'
+        [IO.File]::WriteAllText((Join-Path $copy '.dev.env'),"FOREIGN_SETTING=preserve`nVIBECODING1C_MCP_REGISTRY_REPO=$publisher`nVIBECODING1C_MCP_REGISTRY_PATH=$publisher`n",[Text.UTF8Encoding]::new($false))
+        @(Initialize-SourceE2ECatalog -Root $copy).Count | Should -Be 0
+        Test-Path $publisher | Should -BeFalse
+        $null=Initialize-SourceE2ECatalog -Root $copy -RestoreQualificationPublisher
+        (Get-FileHash $path).Hash | Should -BeExactly $before
+        foreach($relative in @('registry.json','catalog/catalog.json','catalog/product-relations.json')){
+            (Get-FileHash (Join-Path $publisher $relative)).Hash | Should -BeExactly (Get-FileHash (Join-Path $seed.root ('.agent-1c/mcp/qualification-catalog/'+$relative))).Hash
+        }
+        $preview=Invoke-ItlNativeProcessCapture -FilePath powershell.exe -Arguments @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'),'-ProjectRoot',$copy,'-Action','vibecoding1c-mcp-status','-CatalogAction','preview','-CatalogProjectId','itl-gate-qualification','-AgentTarget','codex') -WorkingDirectory $repoRoot -TimeoutSeconds 60
+        $preview.exitCode | Should -Be 0 -Because ($preview.stdout+$preview.stderr)
+        $settings.productProject.projectId='foreign-business'
+        [IO.File]::WriteAllText($path,($settings|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+        $envBefore=[IO.File]::ReadAllText((Join-Path $copy '.dev.env'))
+        @(Initialize-SourceE2ECatalog -Root $copy -RestoreQualificationPublisher).Count | Should -Be 0
+        [IO.File]::ReadAllText((Join-Path $copy '.dev.env')) | Should -BeExactly $envBefore
+    }
+
     It 'selects the technical project without changing the seed environment or creating a publisher' {
         $root=Join-Path $TestDrive 'catalog seed Кириллица'
         [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))

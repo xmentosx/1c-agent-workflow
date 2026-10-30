@@ -386,7 +386,9 @@ function Test-DevelopGoBuildOnlyPath {
             # Catalog preparation/selection and bootstrap parameter discovery
             # read project settings, configuration XML and the declared script
             # parameters; none consumes Go tests or README data.
-            'scripts/source-e2e-workflow-update.ps1'=@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4','27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')
+            # Restoring the exact technical publisher adds only binding/UUID
+            # checks and the same catalog payload; it adds no Go input reader.
+            'scripts/source-e2e-workflow-update.ps1'=@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4','27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e','51804b1968b8b21fda559e06682812c3cd1c4436c5eeec0077df81909bb36293')
             'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'
         }
         foreach($consumer in $consumers.Keys) {

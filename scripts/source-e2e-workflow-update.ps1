@@ -1,11 +1,16 @@
 function Get-SourceE2ECatalogArguments {
-    param([string]$Root, [string]$ConfigurationPath='')
+    param([string]$Root, [string]$ConfigurationPath='', [switch]$AllowBoundQualificationFixture)
     # Qualification data only: never infer a business-project association. The
     # repository's exact minimal configuration identifies this technical stand.
     $projectPath=Join-Path $Root '.agent-1c/project.json'
     if(-not (Test-Path -LiteralPath $projectPath -PathType Leaf)){return @()}
     $project=Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if($project.PSObject.Properties['productProject'] -and $null -ne $project.productProject){return @()}
+    if($project.PSObject.Properties['productProject'] -and $null -ne $project.productProject){
+        if(-not $AllowBoundQualificationFixture -or
+            [string]$project.productProject.projectId -cne 'itl-gate-qualification' -or
+            [string]$project.productProject.productId -cne 'itl-gate-fixture' -or
+            [string]$project.productProject.requiredCapability -cne 'product-project-registry-v1'){return @()}
+    }
     if(-not $ConfigurationPath){$ConfigurationPath=Join-Path $Root 'src/cf/Configuration.xml'}
     if(-not (Test-Path -LiteralPath $ConfigurationPath -PathType Leaf)){return @()}
     $fixturePath=Join-Path $PSScriptRoot '../tests/fixtures/gate-stand/cf/Configuration.xml'
@@ -16,8 +21,11 @@ function Get-SourceE2ECatalogArguments {
 }
 
 function Initialize-SourceE2ECatalog {
-    param([string]$Root, [string[]]$AdditionalRoots=@(), [string]$ConfigurationPath='')
-    $selection=@(Get-SourceE2ECatalogArguments -Root $Root -ConfigurationPath $ConfigurationPath)
+    param([string]$Root, [string[]]$AdditionalRoots=@(), [string]$ConfigurationPath='', [switch]$RestoreQualificationPublisher)
+    # A technical copy retains its binding but Git does not carry the ignored
+    # publisher. Restore that dependency only for the exact qualification UUID
+    # and binding, without selecting or replacing a business association.
+    $selection=@(Get-SourceE2ECatalogArguments -Root $Root -ConfigurationPath $ConfigurationPath -AllowBoundQualificationFixture:$RestoreQualificationPublisher)
     if(-not $selection.Count){return @()}
     $project=Get-Content -LiteralPath (Join-Path $Root '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $publisher=Join-Path $Root '.agent-1c/mcp/qualification-catalog'
@@ -37,7 +45,9 @@ function Initialize-SourceE2ECatalog {
     }
     foreach($target in @($Root)+@($AdditionalRoots)){
         $settings=Get-Content -LiteralPath (Join-Path $target '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        if($settings.PSObject.Properties['productProject'] -and $null -ne $settings.productProject){continue}
+        if($settings.PSObject.Properties['productProject'] -and $null -ne $settings.productProject){
+            if(-not $RestoreQualificationPublisher -or @(Get-SourceE2ECatalogArguments -Root $target -AllowBoundQualificationFixture).Count -eq 0){continue}
+        }
         $envPath=Join-Path $target '.dev.env'
         $lines=@(if(Test-Path -LiteralPath $envPath){[IO.File]::ReadAllLines($envPath,[Text.Encoding]::UTF8) | Where-Object {$_ -notmatch '^VIBECODING1C_MCP_REGISTRY_(REPO|PATH)='}})
         $lines+=@("VIBECODING1C_MCP_REGISTRY_REPO=$publisher","VIBECODING1C_MCP_REGISTRY_PATH=$publisher")

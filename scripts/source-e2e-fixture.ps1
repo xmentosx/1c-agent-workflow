@@ -563,7 +563,7 @@ function New-SourceE2EFixtureProject {
     $context=Install-QualificationFixtureContext -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256) -TargetProjectRoot $target -TargetBranchRoot $branch
     # Only disposable technical copies receive their published test catalog.
     # The sealed seed/capsule and existing business bindings stay unchanged.
-    $null=Initialize-SourceE2ECatalog -Root $target -AdditionalRoots @($branch)
+    $null=Initialize-SourceE2ECatalog -Root $target -AdditionalRoots @($branch) -RestoreQualificationPublisher
     Restore-SourceFixtureSourceInfoBase -Record $sourceInfoBase -TargetProjectRoot $target
     $snapshotRelative='.agent-1c/snapshots/qualification-fixtures/seed.dt'
     $snapshot=Resolve-QualificationFixtureChild -Root $branch -RelativePath $snapshotRelative

@@ -210,8 +210,11 @@ function Test-DevelopColdCutoverConsumers {
                     $catalogText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $catalogHelper}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $catalogHelper)))}
                     $sha=[Security.Cryptography.SHA256]::Create()
                     try {$catalogHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($catalogText.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-                    $expectedCatalogHash=if($hash -ceq 'f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda'){'8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e'}else{'27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e'}
-                    if($catalogHash -cne $expectedCatalogHash){return $false}
+                    # The bound technical-publisher repair reads only project,
+                    # configuration and catalog data, never retained on-demand
+                    # records; the fresh recipe still starts with a cold root.
+                    $expectedCatalogHashes=if($hash -ceq 'f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda'){@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','51804b1968b8b21fda559e06682812c3cd1c4436c5eeec0077df81909bb36293')}else{@('27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')}
+                    if($catalogHash -cnotin $expectedCatalogHashes){return $false}
                 }
             }
         }
