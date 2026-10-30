@@ -252,6 +252,129 @@ exit 0
         }
     }
 
+    It 'monitors the real branch rollout during <mode> without relaxing its watchdog' -ForEach @(
+        @{mode='silent-live';seconds=125;operationLimit=180;staleLimit=120;expectedStage='complete'},
+        @{mode='operation-timeout';seconds=45;operationLimit=15;staleLimit=120;expectedStage='runner.operation-timeout'},
+        @{mode='lost-heartbeat';seconds=30;operationLimit=60;staleLimit=2;expectedStage='runner.status-stale'},
+        @{mode='helper-exit';seconds=30;operationLimit=60;staleLimit=120;expectedStage='runner.helper-exited'},
+        @{mode='branch-failure';seconds=0;operationLimit=60;staleLimit=120;expectedStage='branch-failed'}
+    ) {
+        $tempRoot = Join-Path $TestDrive ('rollout heartbeat путь ' + $mode)
+        $savedEnvironment = @{}
+        foreach ($name in @('ITL_RUNNER_STATUS_STALE_WARNING_SECONDS','ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS','ITL_RUNNER_OPERATION_TIMEOUT_SECONDS')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            [void][IO.Directory]::CreateDirectory($scriptRoot)
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            $helperPath = Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+            $body = @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$fixtureStatusPath=$RunStatusPath
+. '__HELPER__' -ProjectRoot $ProjectRoot -Action help *> $null
+$script:RunStatusPath=$fixtureStatusPath
+$script:fixtureBranch=Join-Path $ProjectRoot 'ветка один'
+[void][IO.Directory]::CreateDirectory((Join-Path $ProjectRoot '.agent-1c'))
+[void][IO.Directory]::CreateDirectory((Join-Path $script:fixtureBranch '.agent-1c'))
+foreach($root in @($ProjectRoot,$script:fixtureBranch)) {
+    [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}')
+}
+Read-ProjectConfig
+# Keep the real rollout, project-context switch, report and completion check.
+# Only the branch's file/install workload and unrelated admission fixtures vary.
+function Resolve-WorkflowUpdateRolloutScope { return $null }
+function Get-WorkflowUpdateWorktreeInventory {
+    [pscustomobject]@{kind='development';root=$script:fixtureBranch;branch='itldev/branch1';eligibility='eligible';reason='';conflictPaths=@();continuation='';head=('0'*40);installedWorkflowCommit=''}
+}
+function Ensure-Agent1cLifecycleLocksIgnored {}
+function Wait-Agent1cLockSet { [pscustomobject]@{handles=@()} }
+function Get-WorkflowUpdateRootRuntimeBusyReason { return '' }
+function Invoke-WorkflowLocalPatchStep {}
+function Get-WorkflowRolloutClients { return @('codex') }
+function Test-WorkflowRolloutClients { return $true }
+function Invoke-WorkflowDevelopmentBranchUpdate {
+    [IO.File]::WriteAllText((Join-Path $script:ProjectRoot 'nested-entered.txt'), '__MODE__')
+    if('__MODE__' -eq 'helper-exit') { [Environment]::Exit(9) }
+    if('__MODE__' -eq 'branch-failure') { throw 'fixture branch post-copy failed' }
+    if('__MODE__' -eq 'lost-heartbeat') {
+        Get-Job | Stop-Job
+        Remove-Item -LiteralPath ($script:RunStatusPath + '.heartbeat') -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds __SECONDS__
+    $status=Read-Utf8Text -Path $script:RunStatusPath | ConvertFrom-Json
+    $heartbeat=$script:RunStatusPath + '.heartbeat'
+    $observation=[ordered]@{statusAgeSeconds=([DateTimeOffset]::Now-[DateTimeOffset]::Parse($status.updatedAt)).TotalSeconds
+        heartbeatAgeSeconds=([DateTime]::UtcNow-[IO.File]::GetLastWriteTimeUtc($heartbeat)).TotalSeconds
+        heartbeatOwner=[IO.File]::ReadAllText($heartbeat);helperPid=$PID;stage=$status.stage;branchContext=$script:ProjectRoot}
+    Write-Utf8TextAtomic -Path (Join-Path $ProjectRoot 'observation.json') -Value ($observation|ConvertTo-Json)
+    [pscustomobject]@{status='completed';commit=('1'*40)}
+}
+$now=[DateTimeOffset]::Now.ToString('o')
+$payload=[ordered]@{schemaVersion=1;projectRoot=$ProjectRoot;pid=$PID;action='update-workflow';status='running';stage='workflow-update.resume-branches';stageDetail='fixture nested branch post-copy';startedAt=$now;updatedAt=$now;exitCode=$null;errorMessage=''}
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+try {
+    $source=[pscustomobject]@{root=$ProjectRoot;commit=('1'*40)}
+    $report=Invoke-WorkflowDevelopmentBranchRollout -Source $source
+    Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit | Out-Null
+    $payload.status='succeeded';$payload.stage='complete';$payload.exitCode=0
+} catch {
+    $payload.status='failed';$payload.stage='branch-failed';$payload.exitCode=1;$payload.errorMessage=$_.Exception.Message
+}
+$payload.updatedAt=[DateTimeOffset]::Now.ToString('o')
+Write-Utf8TextAtomic -Path $script:RunStatusPath -Value ($payload|ConvertTo-Json)
+exit $payload.exitCode
+'@
+            $body = $body.Replace('__HELPER__', $helperPath.Replace("'", "''")).Replace('__MODE__', $mode).Replace('__SECONDS__', [string]$seconds)
+            # The runner executes Windows PowerShell 5.1, which requires the BOM
+            # to decode Cyrillic script literals as UTF-8 on every host edition.
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), $body, [Text.UTF8Encoding]::new($true))
+            $env:ITL_RUNNER_STATUS_STALE_WARNING_SECONDS = '1'
+            $env:ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS = [string]$staleLimit
+            $env:ITL_RUNNER_OPERATION_TIMEOUT_SECONDS = [string]$operationLimit
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Push-Location $tempRoot
+            try {
+                $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','update-workflow')
+            } finally { Pop-Location }
+            $watch.Stop()
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            if ($summary.stage -ne $expectedStage) {
+                Write-Host ($result.stderr -join "`n")
+                $fixtureLog = Join-Path (Split-Path -Parent $summary.statusPath) 'console.log'
+                if (Test-Path -LiteralPath $fixtureLog) { Write-Host (Get-Content -LiteralPath $fixtureLog -Raw -Encoding UTF8) }
+            }
+            $summary.stage | Should -BeExactly $expectedStage
+            [IO.File]::ReadAllText((Join-Path $tempRoot 'ветка один/nested-entered.txt')) | Should -BeExactly $mode
+            if ($mode -eq 'silent-live') {
+                $result.exitCode | Should -Be 0
+                $summary.status | Should -Be 'succeeded'
+                $watch.Elapsed.TotalSeconds | Should -BeGreaterThan 120
+                $observation = Get-Content -LiteralPath (Join-Path $tempRoot 'ветка один/observation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $observation.statusAgeSeconds | Should -BeGreaterThan 120
+                $observation.heartbeatAgeSeconds | Should -BeLessThan 30
+                $observation.heartbeatOwner | Should -Be ([string]$observation.helperPid)
+                $observation.stage | Should -Be 'workflow-update.resume-branches'
+                $observation.branchContext | Should -BeExactly (Join-Path $tempRoot 'ветка один')
+                ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+                $report = Get-Content -LiteralPath (Join-Path $tempRoot '.agent-1c/snapshots/workflow-update-rollout.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $report.roots[0].status | Should -Be 'completed'
+            } else {
+                $result.exitCode | Should -Not -Be 0
+                $summary.status | Should -Be 'failed'
+                $watch.Elapsed.TotalSeconds | Should -BeLessThan 35
+                if ($mode -eq 'branch-failure') { $summary.error | Should -Match 'fixture branch post-copy failed' }
+                if ($mode -eq 'lost-heartbeat') { $summary.error | Should -Match '^RUNNER_STATUS_STALE\b' }
+                if ($mode -eq 'operation-timeout') { $summary.error | Should -Match '^RUNNER_OPERATION_TIMEOUT\b' }
+            }
+            Test-Path -LiteralPath ($summary.statusPath + '.heartbeat') | Should -BeFalse
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @(Get-Process -Id ([int]$status.pid) -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            foreach ($name in @($savedEnvironment.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+        }
+    }
+
     It "does not slide the action deadline when a phase repeats its remaining budget" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl deadline путь " + [guid]::NewGuid().ToString("N"))
         $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")

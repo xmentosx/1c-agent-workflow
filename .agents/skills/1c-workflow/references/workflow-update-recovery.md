@@ -7,6 +7,16 @@ receipt, reset the project, run an old installer over new client membership, or
 delete the only before snapshot. No infobase load or test run is part of these
 file/settings recovery operations.
 
+## Long development-branch rollout
+
+The parent helper publishes its PID-owned heartbeat throughout development-branch
+rollout, including `workflow-update.resume-branches` when master is already current.
+Silent synchronous preflight/post-copy work can exceed the generic 120-second
+stale-status threshold without losing the parent's liveness signal. This heartbeat
+does not assert task progress or extend the operation deadline; native stall
+checks, helper-exit detection and the hard operation timeout remain authoritative.
+Recovery still belongs to the preserved snapshot and the original update command.
+
 ## Legacy copy without receipt or backup
 
 An old updater can copy a transactional package, remove its temporary backup,
