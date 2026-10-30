@@ -5,6 +5,65 @@
 }
 
 Describe "Local quality gate contract" {
+    It 'selects only documentation consumers for verification reference <Name>' -TestCases @(
+        @{Name='verification-change';Consumer=$false},
+        @{Name='verification-suite-selection';Consumer=$true},
+        @{Name='yaxunit-tests';Consumer=$true},
+        @{Name='vanessa-tests';Consumer=$true},
+        @{Name='vanessa-authoring';Consumer=$true},
+        @{Name='vanessa-recipes';Consumer=$true}
+    ) {
+        param($Name,$Consumer)
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $path='.agents/skills/1c-workflow/references/'+$Name+'.md'
+        $expected=@('tests/pester/ParserDocsBudgets.Tests.ps1')
+        if($Consumer){$expected+='tests/pester/VerificationGuidance.Tests.ps1'}
+        $selected=Resolve-QualityContractsForPaths $catalog @($path)
+        @($selected.tests) | Should -Be $expected
+        @($selected.unknownPaths) | Should -BeNullOrEmpty
+        # Neither a rename (both names) nor a mixed code/doc change is a
+        # docs-only escape from the executable owner's full fallback.
+        $renamed=Resolve-QualityContractsForPaths $catalog @($path,'.agents/skills/1c-workflow/references/renamed-reference.md')
+        @($renamed.tests) | Should -Be $expected
+        $code='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        $runtime=Resolve-QualityContractsForPaths $catalog @($code)
+        @($runtime.tests) | Should -Contain 'tests/pester/DevBranchMergeRecovery.Tests.ps1'
+        @($runtime.tests) | Should -Contain 'tests/pester/VanessaRunnerTopology.Tests.ps1'
+        $mixed=Resolve-QualityContractsForPaths $catalog @($path,$code)
+        @($mixed.tests) | Should -Be @(@($expected)+@($runtime.tests) | Sort-Object -Unique)
+    }
+
+    It 'keeps reference inputs in native qualification and binds each real documentation consumer' {
+        . (Join-Path $RepoRoot 'scripts/git-path-list.ps1')
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $catalog=Get-QualityContractCatalog $RepoRoot
+        $references=@(($catalog.contracts | Where-Object id -eq 'verification-reference-files').paths)
+        $tracked=@(Get-RepositoryGitPathList $RepoRoot @('ls-files','-z','--'))
+        # Reconstruct the former ownership, without consulting a mutable branch.
+        $before=$catalog | ConvertTo-Json -Depth 40 | ConvertFrom-Json
+        ($before.contracts | Where-Object id -eq 'vanessa-verification').paths+=@($references | Where-Object {$_ -notlike '*/yaxunit-tests.md'})
+        ($before.contracts | Where-Object id -eq 'yaxunit-verification').paths+=@($references | Where-Object {$_ -like '*/yaxunit-tests.md'})
+        foreach($journey in @('fresh','upgrade')) {
+            $before.developJourneys.routes.$journey.contracts=@($before.developJourneys.routes.$journey.contracts | Where-Object {$_ -ne 'verification-reference-files'})
+            $old=Get-DevelopE2EJourneyContractProjection $before $journey
+            $new=Get-DevelopE2EJourneyContractProjection $catalog $journey
+            $oldPatterns=@($old.contracts | ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+            $newPatterns=@($new.contracts | ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+            $oldInputs=@(Select-QualityPaths $tracked $oldPatterns | Where-Object {$_ -notlike 'tests/pester/*.Tests.ps1'})
+            $newInputs=@(Select-QualityPaths $tracked $newPatterns | Where-Object {$_ -notlike 'tests/pester/*.Tests.ps1'})
+            @($newInputs | Sort-Object) | Should -Be @($oldInputs | Sort-Object)
+            foreach($reference in $references){$newInputs | Should -Contain $reference}
+        }
+        $consumer=@($catalog.contracts | Where-Object id -eq 'bootstrap-verification-guide-input')[0]
+        @(Get-QualityContractReuseInputPaths $consumer) | Should -Be @('.agents/skills/1c-workflow/references/vanessa-tests.md')
+        @($consumer.tests) | Should -Be @('tests/pester/BootstrapUpdate.Tests.ps1')
+        foreach($test in @('tests/pester/DevBranchWorktrees.Tests.ps1','tests/pester/VanessaRuntimeCleanup.Tests.ps1')) {
+            $patterns=@($catalog.contracts | Where-Object {$test -in $_.tests} | ForEach-Object {@($_.paths);Get-QualityContractReuseInputPaths $_})
+            foreach($reference in $references){@($patterns | Where-Object {$reference -like $_}) | Should -BeNullOrEmpty}
+        }
+    }
+
     It 'retains complete owner fallback when a reviewed baseline gains the stale-pin diagnostic' {
         . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot

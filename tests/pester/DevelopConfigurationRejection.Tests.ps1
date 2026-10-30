@@ -127,6 +127,17 @@ Describe 'Configuration finding is a negative workflow acceptance, never a posit
         $proof.proof.failure | Should -BeExactly $bound.Status.errorMessage
         $fixture.Summary.status | Should -BeExactly 'failed'
     }
+    It 'requires a merged pending refresh only on the refresh path, not on a fresh branch production check' {
+        $fixture=New-RejectionFixture
+        $fixture.Summary.action='check-dev-branch'
+        Write-RejectionJson $fixture.Result.stdout $fixture.Summary
+        # A freshly built gate stand branch has never refreshed or merged.
+        Write-RejectionJson (Join-Path $fixture.Root '.agent-1c/dev-branches/fixture.json') @{ devBranchInfoBasePath=(Join-Path $fixture.Root 'base');infoBaseKind='file' }
+        (Assert-DevelopConfigurationRejection -ProcessResult $fixture.Result -Expected $fixture.Expected -Root $fixture.Root -BranchName fixture -ExpectedAction 'check-dev-branch').status | Should -BeExactly 'passed'
+        $refresh=New-RejectionFixture
+        Write-RejectionJson (Join-Path $refresh.Root '.agent-1c/dev-branches/fixture.json') @{ devBranchInfoBasePath=(Join-Path $refresh.Root 'base');infoBaseKind='file' }
+        {Assert-FixtureRejection $refresh} | Should -Throw '*DEVELOP_NEGATIVE_TARGET_OR_CONTINUATION_CHANGED*'
+    }
     It 'refuses bounded errors without the current terminal status' {
         $fixture=New-RejectionFixture
         $bound=Add-BoundedRejectionStatus $fixture

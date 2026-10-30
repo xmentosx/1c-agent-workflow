@@ -216,7 +216,9 @@ function Get-GateStandFixtureId {
     return $id
 }
 
-function Get-GateStandMarkerPath { param([string]$StandRoot) return (Join-Path $StandRoot '.agent-1c/gate-stand.json') }
+# The marker lives beside the stand's capsules in its Git directory: a worktree
+# file would make the seed dirty and Prepare would refuse it.
+function Get-GateStandMarkerPath { param([string]$StandRoot) return (Join-Path $StandRoot '.git/itl/gate-stand.json') }
 
 function Read-GateStandMarker {
     param([string]$StandRoot)
@@ -231,7 +233,9 @@ function Write-GateStandMarker {
     param([string]$StandRoot, [string]$PositiveRoot, [string]$FixtureId)
     # Written last: its presence means build and baseline capture completed.
     $marker = [ordered]@{ schemaVersion = 1; kind = 'itl-gate-stand'; fixtureId = $FixtureId; positiveRoot = $PositiveRoot; builtAt = [DateTime]::UtcNow.ToString('o') }
-    [IO.File]::WriteAllText((Get-GateStandMarkerPath -StandRoot $StandRoot), (($marker | ConvertTo-Json) + [Environment]::NewLine), $utf8)
+    $path = Get-GateStandMarkerPath -StandRoot $StandRoot
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+    [IO.File]::WriteAllText($path, (($marker | ConvertTo-Json) + [Environment]::NewLine), $utf8)
 }
 
 function Resolve-GateStandPlatform {
