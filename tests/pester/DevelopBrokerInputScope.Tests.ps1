@@ -191,9 +191,10 @@ Describe 'Cold fresh cutover proof' {
         @($selected|Where-Object execution -eq execute|ForEach-Object id)|Should -Be @('install','branch','refresh')
         [IO.File]::WriteAllBytes($lockPath,$lockBytes);$f.binding.paths.ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE=$oldBroker
         & git -C $f.root add --all;& git -C $f.root commit --quiet -m 'restore exact original broker'
-        foreach($case in @('cold-guard','generation','unknown-function','top-level','library-side-effect','library-other-function','lifecycle-live-prefix','runner','bootstrap','historical-sha','unknown-scenario')) {
+        foreach($case in @('cold-guard','generation','unknown-function','top-level','library-side-effect','library-other-function','lifecycle-live-prefix','runner','bootstrap','catalog-helper','historical-sha','unknown-scenario')) {
             foreach($relative in $paths){[IO.File]::WriteAllText((Join-Path $f.root $relative),$original[$relative],[Text.UTF8Encoding]::new($false))}
             $runner=Join-Path $f.root 'scripts/invoke-develop-e2e.ps1';$runnerBytes=[IO.File]::ReadAllBytes($runner)
+            $catalogHelper=Join-Path $f.root 'scripts/source-e2e-workflow-update.ps1';$catalogBytes=[IO.File]::ReadAllBytes($catalogHelper)
             switch($case) {
                 'cold-guard' {[IO.File]::WriteAllText((Join-Path $f.root $cutover),$original[$cutover].Replace('if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }','if ($true) { return }'))}
                 'generation' {[IO.File]::WriteAllText((Join-Path $f.root $cutover),$original[$cutover].Replace("generation='execution-guards-v2'","generation='changed'"))}
@@ -204,6 +205,7 @@ Describe 'Cold fresh cutover proof' {
                 'lifecycle-live-prefix' {[IO.File]::WriteAllText((Join-Path $f.root $paths[3]),$original[$paths[3]].Replace('Join-Path $Root ''.agent-1c/mcp/ondemand''','Join-Path $Root ''.agent-1c/mcp/other'''))}
                 'runner' {[IO.File]::AppendAllText($runner,"`nWrite-Verbose 'changed cold recipe'`n")}
                 'bootstrap' {[IO.File]::AppendAllText((Join-Path $f.root $paths[0]),"`nWrite-Verbose 'changed bootstrap'`n")}
+                'catalog-helper' {[IO.File]::AppendAllText($catalogHelper,"`nGet-ChildItem '.agent-1c/mcp/ondemand' -Recurse`n")}
             }
             $changed=Get-DevelopE2EInputIdentity $f.root fresh $f.catalog $f.stand $f.rules kilocode -ArtifactBinding $f.binding
             $oldProof=$prior.fresh|ConvertTo-Json -Depth 32|ConvertFrom-Json
@@ -211,6 +213,7 @@ Describe 'Cold fresh cutover proof' {
             $scenario=if($case -eq 'unknown-scenario'){@('future-scenario')}else{@('verification')}
             Test-DevelopScenarioEquivalentInput $f.root $oldProof $changed $f.base $scenario $f.catalog|Should -BeFalse -Because $case
             [IO.File]::WriteAllBytes($runner,$runnerBytes)
+            [IO.File]::WriteAllBytes($catalogHelper,$catalogBytes)
         }
     }
 

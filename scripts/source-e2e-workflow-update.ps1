@@ -1,5 +1,5 @@
-function Initialize-SourceE2ECatalog {
-    param([string]$Root, [string[]]$AdditionalRoots=@(), [string]$ConfigurationPath='')
+function Get-SourceE2ECatalogArguments {
+    param([string]$Root, [string]$ConfigurationPath='')
     # Qualification data only: never infer a business-project association. The
     # repository's exact minimal configuration identifies this technical stand.
     $projectPath=Join-Path $Root '.agent-1c/project.json'
@@ -12,6 +12,14 @@ function Initialize-SourceE2ECatalog {
     $actual=[xml](Get-Content -LiteralPath $ConfigurationPath -Raw -Encoding UTF8)
     $fixture=[xml](Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8)
     if([string]$actual.MetaDataObject.Configuration.uuid -cne [string]$fixture.MetaDataObject.Configuration.uuid){return @()}
+    return @('-CatalogProjectId','itl-gate-qualification','-CatalogDecision','keep-local')
+}
+
+function Initialize-SourceE2ECatalog {
+    param([string]$Root, [string[]]$AdditionalRoots=@(), [string]$ConfigurationPath='')
+    $selection=@(Get-SourceE2ECatalogArguments -Root $Root -ConfigurationPath $ConfigurationPath)
+    if(-not $selection.Count){return @()}
+    $project=Get-Content -LiteralPath (Join-Path $Root '.agent-1c/project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $publisher=Join-Path $Root '.agent-1c/mcp/qualification-catalog'
     if(-not (Test-Path -LiteralPath (Join-Path $publisher '.git') -PathType Container)){
         [void][IO.Directory]::CreateDirectory((Join-Path $publisher 'catalog'))
@@ -35,7 +43,15 @@ function Initialize-SourceE2ECatalog {
         $lines+=@("VIBECODING1C_MCP_REGISTRY_REPO=$publisher","VIBECODING1C_MCP_REGISTRY_PATH=$publisher")
         [IO.File]::WriteAllText($envPath,(($lines -join [Environment]::NewLine)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
     }
-    return @('-CatalogProjectId','itl-gate-qualification','-CatalogDecision','keep-local')
+    return $selection
+}
+
+function Get-SourceE2EBootstrapCatalogArguments {
+    param([string]$BootstrapPath, [string[]]$CatalogArguments)
+    $parameters=(Get-Command -Name $BootstrapPath).Parameters
+    for($i=0;$i -lt $CatalogArguments.Count;$i+=2){
+        if($parameters.ContainsKey($CatalogArguments[$i].TrimStart('-'))){$CatalogArguments[$i..($i+1)]}
+    }
 }
 
 function Test-SourceE2ELegacyUpdateEvidence {
@@ -73,7 +89,9 @@ function Invoke-SourceE2EWorkflowUpdate {
     $started = [datetime]::UtcNow
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        $catalogArguments=@(Initialize-SourceE2ECatalog -Root $Root)
+        # Baseline/factory preparation owns registry settings. Updating a seed
+        # only selects its project, leaving the first transaction backup exact.
+        $catalogArguments=@(Get-SourceE2ECatalogArguments -Root $Root)
         $initial = & $InstalledOperation $TimeoutSeconds $catalogArguments
         $continuation = $null
         if ([int]$initial.exitCode -ne 0) {

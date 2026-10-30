@@ -375,15 +375,18 @@ function Test-DevelopGoBuildOnlyPath {
             # Neither introduces a Go test or README reader.
             # Catalog selection adds three typed arguments and forwards them
             # to the same helper; reviewed content still reads no Go input.
-            'scripts/update-installed-workflow.ps1'=@('f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af','d9acb246fc18235a3824bb2671ef25158a2822e8d71a26087a07922023e18254','0112c05de9d755f9351571e4f76376aae8e26689599588fefd075f7b584f3855')
-            # Explicit technical-catalog arguments add no Go input reader.
-            'scripts/invoke-develop-e2e.ps1'=@('10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')
+            # Stand-scoped selection reads only its project/configuration XML.
+            'scripts/update-installed-workflow.ps1'=@('bd4c23855e9255bb112277d33a36c1d2b263860d455dfeb3fd7919b36bd51664','f07f3182a49f119857a37ef84df5cccc9510517f620c242a466333d7114136af','d9acb246fc18235a3824bb2671ef25158a2822e8d71a26087a07922023e18254','0112c05de9d755f9351571e4f76376aae8e26689599588fefd075f7b584f3855')
+            # Technical-catalog arguments and bootstrap parameter discovery add
+            # no Go input reader.
+            'scripts/invoke-develop-e2e.ps1'=@('f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')
             # The rejection proof only stops requiring a pending refresh merge
             # on the production path; it reads no Go test or README.
             'scripts/develop-configuration-rejection.ps1'=@('5104d1d4df221895d135fcab07e76dfca42178cfb74a6a14031c0cd8570c0ff8','02a82e9c5152cef9fa4a3f48fcc355fd2d04851ba042dbae31140c615cb30036','05a432a05d0662a698bf7e1cb57fa7c09c41a6f5130be5443e889feb7b54b6f6','d408e54e85af22783ebf5ad9588442cfaa073aa5d2f7296aced8422ab4242955')
-            # The only new source input is the minimal configuration XML;
-            # its local Git catalog contains no Go test or README data.
-            'scripts/source-e2e-workflow-update.ps1'=@('82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4','27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')
+            # Catalog preparation/selection and bootstrap parameter discovery
+            # read project settings, configuration XML and the declared script
+            # parameters; none consumes Go tests or README data.
+            'scripts/source-e2e-workflow-update.ps1'=@('8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e','82706efbc085410fd34da680a6a09f05db453a7b99ed1ea03731df1818f09ed4','27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e')
             'scripts/Build-ItlOnDemandMcp.ps1'='a300217bd37da53e3ce4a00dde1a371803b0a25baae0818e6ac5ceba50ee56c6'
         }
         foreach($consumer in $consumers.Keys) {

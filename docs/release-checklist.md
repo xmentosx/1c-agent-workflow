@@ -5,10 +5,14 @@
 Develop and Release qualify on a stand built from the minimal repository
 fixture `tests/fixtures/gate-stand` (no product configuration). Publication
 actions select it themselves: each clone has one stand per fixture at
-`<drive>:\g\<clone-path-hash8> с <fixture8>` (`ITL_GATE_STANDS_ROOT`
+`<drive>:\g\<clone-recipe-hash8> с <fixture8>` (`ITL_GATE_STANDS_ROOT`
 overrides the parent; keep both the root and its `-positive` sibling within
 bootstrap's 35-character limit). The clone hash uses its full common Git path,
-so equally named clones stay separate. A missing stand is built once by
+and preparation script bytes, so equally named clones stay separate and a
+changed preparation recipe retains the previous stand and its immutable
+capsules for diagnosis. The technical catalog is prepared before bootstrap and
+the initial capsules; update only passes its explicit project selection and
+preserves the original environment until the transaction snapshot. A missing stand is built once by
 `scripts/new-gate-stand.ps1` inside the operation, from published
 `origin/develop`, including its baseline capsules; its `.git/itl/gate-stand.json`
 marker is written last. Omit `-E2EProjectRoot`; a passed stand without the

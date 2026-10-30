@@ -186,7 +186,9 @@ function Test-DevelopColdCutoverConsumers {
         'install-agent-1c-workflow.ps1'=@('1917f4163747d6c1c55e6b9bf69184c3d9d7553a27cde549ce758ad440fbce17','bd2b47285dffd7193c644abcb87af4ef46c401d7e1a192e33d53cc530d25729c')
         # The reviewed technical catalog writes an empty local Git fixture
         # before bootstrap; it reads no retained on-demand runtime records.
-        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')
+        # Parameter discovery only reads the bootstrap declaration; it still
+        # starts without retained runtime and keeps the exact helper paired.
+        'scripts/invoke-develop-e2e.ps1'=@('ab50bc1388d98b40b4a9dd602d969635889cdb5bb762e3a7dd27e2e5ff11a77d','10c7ead27281f26f760c2ec0ad408b9e6152ed39c2492d4ad9102d36a99eebb9','00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')
     }
     try {
         foreach($path in $consumers.Keys) {
@@ -194,7 +196,7 @@ function Test-DevelopColdCutoverConsumers {
             $sha=[Security.Cryptography.SHA256]::Create()
             try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
             if($hash -cnotin $consumers[$path]) {return $false}
-            if($path -ceq 'scripts/invoke-develop-e2e.ps1' -and $hash -cin @('00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc')) {
+            if($path -ceq 'scripts/invoke-develop-e2e.ps1' -and $hash -cin @('00b1dfc5ea577a96c912453c42f9acb06ba7de5e32a95010d9501c3331c1c62e','b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')) {
                 # The modern recipe plans current-change evidence, but still
                 # registers no diagnostic batch and invokes no explicit cleanup.
                 $helper='scripts/develop-configuration-rejection.ps1'
@@ -203,12 +205,13 @@ function Test-DevelopColdCutoverConsumers {
                 $sha=[Security.Cryptography.SHA256]::Create()
                 try {$helperHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($helperText)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
                 if($helperHash -cne 'a547992821bcd7c88f44eb68a7874bcfdc4727688d9d96f147867b22dd21346e') {return $false}
-                if($hash -ceq 'b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc'){
+                if($hash -cin @('b125e5b0cc18070f26f232193c0a26fe2331926a62edc4b048e196cc8dc7e3bc','f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda')){
                     $catalogHelper='scripts/source-e2e-workflow-update.ps1'
                     $catalogText=if($Commit){Get-DevelopHistoricalSourceText $RepositoryRoot $Commit $catalogHelper}else{[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $catalogHelper)))}
                     $sha=[Security.Cryptography.SHA256]::Create()
                     try {$catalogHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($catalogText.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-                    if($catalogHash -cne '27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e'){return $false}
+                    $expectedCatalogHash=if($hash -ceq 'f212c4b4f3fa9e9764212a3301985984db36a9c4fbc4d9451c4daa13a60d0bda'){'8718186e811cd530c17dbb58dc08b88d3b07c8bf85b18194e98ba6a696e4c92e'}else{'27c8386bb9cd6158b3acd137950f57d22d203625cacc928a8085f8c592d08c7e'}
+                    if($catalogHash -cne $expectedCatalogHash){return $false}
                 }
             }
         }

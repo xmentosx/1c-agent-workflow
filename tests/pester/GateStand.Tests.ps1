@@ -45,6 +45,14 @@ Describe 'Per-clone gate stand selection' {
         Resolve-DeliveryGateStand -Requested $requested | Should -Be $requested
     }
 
+    It 'retains the old stand when the baseline preparation recipe changes' {
+        Mock Get-FileHash { [pscustomobject]@{Hash='a'*64} }
+        $old=Get-DeliveryGateStandRoot -CommonGitDirectory (Join-Path $script:clone '.git') -FixtureId $script:fixtureId
+        Mock Get-FileHash { [pscustomobject]@{Hash='b'*64} }
+        $new=Get-DeliveryGateStandRoot -CommonGitDirectory (Join-Path $script:clone '.git') -FixtureId $script:fixtureId
+        $new | Should -Not -Be $old
+    }
+
     It 'replaces a legacy stand with the completed clone stand and warns' {
         $legacy = Join-Path $TestDrive 'legacy pm5'
         [void][IO.Directory]::CreateDirectory((Join-Path $legacy '.agent-1c'))
@@ -125,6 +133,25 @@ Describe 'Minimal gate stand fixture' {
 }
 
 Describe 'Gate stand builder' {
+    It 'prepares the catalog before bootstrap and passes only supported selection parameters: <SupportsCatalog>' -TestCases @(@{SupportsCatalog=$false},@{SupportsCatalog=$true}) {
+        param($SupportsCatalog)
+        $SourceRoot=Join-Path $TestDrive ('published-'+$SupportsCatalog)
+        [void][IO.Directory]::CreateDirectory($SourceRoot)
+        $extra=if($SupportsCatalog){',[string]$CatalogProjectId'}else{''}
+        Set-Content -LiteralPath (Join-Path $SourceRoot 'install-agent-1c-workflow.ps1') -Value ('param([string]$ProjectRoot,[string]$SourceRoot,[string]$InitMode,[string]$AgentTarget,[switch]$SkipWorkflowSourceFreshnessCheck'+$extra+')')
+        $root=Join-Path $TestDrive ('stand-'+$SupportsCatalog)
+        $script:Platform='C:\platform\1cv8.exe';$script:AgentTarget='kilocode';$script:AiRulesSource=''
+        Mock New-GateStandSnapshot { [pscustomobject]@{path='C:\snapshot';user='svc'} }
+        Mock Invoke-GateStandChild {
+            (Get-Content -LiteralPath (Join-Path $WorkingRoot '.dev.env') -Raw) | Should -Match 'VIBECODING1C_MCP_REGISTRY_REPO=.*qualification-catalog'
+            Test-Path -LiteralPath (Join-Path $WorkingRoot '.agent-1c/mcp/qualification-catalog/.git') | Should -BeTrue
+            $Arguments | Should -Not -Contain '-CatalogDecision'
+            if($SupportsCatalog){$Arguments | Should -Contain '-CatalogProjectId'}else{$Arguments | Should -Not -Contain '-CatalogProjectId'}
+        }
+        Initialize-GateStandProject -ProjectRoot $root -Fixture (Read-GateStandFixture -Root $script:FixtureRoot) -Label 'test'
+        Should -Invoke Invoke-GateStandChild -Times 1 -Exactly
+    }
+
     It 'keeps the completion marker out of the stand worktree so Prepare sees a clean seed' {
         $root = Join-Path $TestDrive ('marker ' + [char]0x0421)
         [void][IO.Directory]::CreateDirectory($root)

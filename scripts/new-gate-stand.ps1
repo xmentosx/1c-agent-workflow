@@ -139,10 +139,14 @@ function Initialize-GateStandProject {
     $snapshot = New-GateStandSnapshot -ProjectRoot $ProjectRoot -Fixture $Fixture -Negative:$Negative
     Write-GateStandProject -ProjectRoot $ProjectRoot -Settings (New-GateStandProjectSettings -ProjectRoot $ProjectRoot -SnapshotPath $snapshot.path -Platform $script:Platform -User $snapshot.user -Agent $AgentTarget)
     $catalogArguments=@(Initialize-SourceE2ECatalog -Root $ProjectRoot -ConfigurationPath (Join-Path $fixtureRoot ($Fixture.configurationPath+'/Configuration.xml')))
+    # The N-1 published bootstrap may predate project selection. Only pass
+    # parameters it declares; CatalogDecision is a helper/update parameter.
+    $bootstrap = Join-Path $SourceRoot 'install-agent-1c-workflow.ps1'
+    $bootstrapCatalogArguments = @(Get-SourceE2EBootstrapCatalogArguments -BootstrapPath $bootstrap -CatalogArguments $catalogArguments)
     $environment = if ($AiRulesSource) { @{ ITL_AI_RULES_SOURCE_PATH = [IO.Path]::GetFullPath($AiRulesSource) } } else { $null }
     # Monitored bootstrap budget: default init limit plus 300 seconds.
-    Invoke-GateStandChild -Name "$Label-init" -WorkingRoot $ProjectRoot -ScriptPath (Join-Path $SourceRoot 'install-agent-1c-workflow.ps1') `
-        -Arguments (@('-ProjectRoot', $ProjectRoot, '-SourceRoot', $SourceRoot, '-InitMode', 'configured', '-AgentTarget', $AgentTarget, '-SkipWorkflowSourceFreshnessCheck')+$catalogArguments) `
+    Invoke-GateStandChild -Name "$Label-init" -WorkingRoot $ProjectRoot -ScriptPath $bootstrap `
+        -Arguments (@('-ProjectRoot', $ProjectRoot, '-SourceRoot', $SourceRoot, '-InitMode', 'configured', '-AgentTarget', $AgentTarget, '-SkipWorkflowSourceFreshnessCheck')+$bootstrapCatalogArguments) `
         -TimeoutSeconds 14700 -Environment $environment
 }
 

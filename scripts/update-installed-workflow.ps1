@@ -60,6 +60,17 @@ if ($LASTEXITCODE -ne 0 -or
 
 $priorSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $priorCleanSource = $env:ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE
+# The published supervisor supplies this explicit stand scope. Resolve only
+# the technical fixture selection here; never initialize or rewrite its env
+# before the lifecycle owner has captured its transaction backup.
+if ($WorkflowUpdateBranchRootsFile -and -not $CatalogProjectId -and $Recovery -eq 'update') {
+    . (Join-Path $PSScriptRoot 'source-e2e-workflow-update.ps1')
+    $standSelection = @(Get-SourceE2ECatalogArguments -Root $project)
+    if ($standSelection.Count) {
+        $CatalogProjectId = $standSelection[1]
+        if (-not $CatalogDecision) { $CatalogDecision = $standSelection[3] }
+    }
+}
 try {
     $env:ITL_WORKFLOW_SOURCE_PATH = $source
     $env:ITL_WORKFLOW_REQUIRE_CLEAN_SOURCE = 'true'

@@ -50,11 +50,54 @@ if($env:ITL_TEST_UPDATE_CONTINUATION_FAIL -eq 'true'){exit 7}
         & git -C $source -c user.name=fixture -c user.email=fixture@example.invalid add .
         & git -C $source -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m fixture
         if($LASTEXITCODE -ne 0){throw 'fixture Git initialization failed'}
+        # As in the real builder, publish fixture settings before sealing the
+        # baseline. The original seed stays unbound until the update owner.
+        $null=Initialize-SourceE2ECatalog -Root $root
         return [pscustomobject]@{root=$root;source=$source}
     }
 }
 
 Describe 'Bounded source-owner workflow update continuation' {
+    It 'selects the technical project without changing the seed environment or creating a publisher' {
+        $root=Join-Path $TestDrive 'catalog seed Кириллица'
+        [void][IO.Directory]::CreateDirectory((Join-Path $root '.agent-1c'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $root 'src/cf'))
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Value '{"baseConfigurationVersion":"test"}'
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/fixtures/gate-stand/cf/Configuration.xml') -Destination (Join-Path $root 'src/cf/Configuration.xml')
+        $envPath=Join-Path $root '.dev.env'
+        [IO.File]::WriteAllText($envPath,"SOURCE_INFOBASE_PATH=C:\Исходная база`r`n",[Text.UTF8Encoding]::new($false))
+        $before=[Convert]::ToBase64String([IO.File]::ReadAllBytes($envPath))
+        @(Get-SourceE2ECatalogArguments -Root $root) | Should -Be @('-CatalogProjectId','itl-gate-qualification','-CatalogDecision','keep-local')
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($envPath)) | Should -BeExactly $before
+        Test-Path -LiteralPath (Join-Path $root '.agent-1c/mcp/qualification-catalog') | Should -BeFalse
+    }
+
+    It 'passes prepared catalog selection through the publication updater before any environment mutation' {
+        $f=New-UpdateBoundaryFixture 'publication catalog'
+        [void][IO.Directory]::CreateDirectory((Join-Path $f.root '.agent-1c'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $f.root 'src/cf'))
+        Set-Content -LiteralPath (Join-Path $f.root '.agent-1c/project.json') -Value '{"baseConfigurationVersion":"test"}'
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/fixtures/gate-stand/cf/Configuration.xml') -Destination (Join-Path $f.root 'src/cf/Configuration.xml')
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/source-e2e-workflow-update.ps1') -Destination (Join-Path $f.source 'scripts/source-e2e-workflow-update.ps1')
+        [void][IO.Directory]::CreateDirectory((Join-Path $f.source 'tests/fixtures/gate-stand/cf'))
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/fixtures/gate-stand/cf/Configuration.xml') -Destination (Join-Path $f.source 'tests/fixtures/gate-stand/cf/Configuration.xml')
+        $null=Initialize-SourceE2ECatalog -Root $f.root
+        $envPath=Join-Path $f.root '.dev.env';$before=(Get-FileHash -LiteralPath $envPath).Hash
+        $stub=@'
+param($ProjectRoot,$Action,$CatalogProjectId,$CatalogDecision,$WorkflowUpdateBranchRootsFile)
+if($Action -cne 'update-workflow' -or $CatalogProjectId -cne 'itl-gate-qualification' -or $CatalogDecision -cne 'keep-local'){throw 'selection not forwarded'}
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'before-transaction.sha'),(Get-FileHash -LiteralPath (Join-Path $ProjectRoot '.dev.env')).Hash)
+'@
+        [IO.File]::WriteAllText((Join-Path $f.source '.agents/skills/1c-workflow/scripts/agent-1c.ps1'),$stub,[Text.UTF8Encoding]::new($true))
+        & git -C $f.source add -A; & git -C $f.source -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'prepared catalog fixture'
+        $script:outputRoot=Join-Path $f.root 'logs';[void][IO.Directory]::CreateDirectory($script:outputRoot)
+        $script:steps=[Collections.Generic.List[object]]::new()
+        $result=Invoke-DevelopProcess -Name 'stand-update' -ScriptPath (Join-Path $f.source 'scripts/update-installed-workflow.ps1') -Arguments @('-ProjectRoot',$f.root,'-SourceRoot',$f.source,'-WorkflowUpdateBranchRootsFile',(Join-Path $f.root 'scope.json')) -WorkingRoot $f.root -TimeoutSeconds 60 -AllowFailure
+        $result.exitCode | Should -Be 0 -Because ((Get-Content -LiteralPath $result.stderr -Raw)-join '')
+        Get-Content -LiteralPath (Join-Path $f.root 'before-transaction.sha') -Raw | Should -BeExactly $before
+        (Get-FileHash -LiteralPath $envPath).Hash | Should -BeExactly $before
+    }
+
     It 'retains the native failed call and completes the same Unicode root, candidate and client through <Caller>' -TestCases @(@{Caller='Develop'},@{Caller='Release'}) {
         param($Caller)
         $f=New-UpdateBoundaryFixture $Caller

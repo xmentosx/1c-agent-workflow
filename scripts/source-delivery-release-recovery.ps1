@@ -293,7 +293,10 @@ function Get-DeliveryGateStandRoot {
     param([Parameter(Mandatory = $true)][string]$CommonGitDirectory, [Parameter(Mandatory = $true)][string]$FixtureId)
     $common = [IO.Path]::GetFullPath($CommonGitDirectory).TrimEnd('\', '/')
     $hash = [Security.Cryptography.SHA256]::Create()
-    try { $clone = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($common.ToLowerInvariant())))).Replace('-', '').Substring(0, 8).ToLowerInvariant() }
+    # A different preparation recipe needs a fresh published baseline. Keep
+    # old stands/capsules intact instead of reusing incompatible environments.
+    $recipe = @('new-gate-stand.ps1','source-e2e-workflow-update.ps1' | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_) -Algorithm SHA256).Hash }) -join ':'
+    try { $clone = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($common.ToLowerInvariant()+':'+$recipe)))).Replace('-', '').Substring(0, 8).ToLowerInvariant() }
     finally { $hash.Dispose() }
     $parent = if ($env:ITL_GATE_STANDS_ROOT) { [IO.Path]::GetFullPath($env:ITL_GATE_STANDS_ROOT) } else { Join-Path ([IO.Path]::GetPathRoot($common)) 'g' }
     # Keep the positive root (including '-positive') within bootstrap's 35

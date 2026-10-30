@@ -624,6 +624,7 @@ try {
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "bootstrap-init-project" -Operation {
             $catalogArguments=@(Initialize-SourceE2ECatalog -Root $freshRoot -ConfigurationPath (Join-Path $freshTemplateRoot 'src/cf/Configuration.xml'))
+            $catalogArguments=@(Get-SourceE2EBootstrapCatalogArguments -BootstrapPath (Join-Path $CandidateRoot 'install-agent-1c-workflow.ps1') -CatalogArguments $catalogArguments)
             [void](Invoke-DevelopProcess -Name "fresh-bootstrap-init-project" -WorkingRoot $freshRoot -ScriptPath (Join-Path $CandidateRoot "install-agent-1c-workflow.ps1") -Arguments (@("-ProjectRoot", $freshRoot, "-SourceRoot", $CandidateRoot, "-InitMode", "configured", "-AgentTarget", "kilocode", "-SkipWorkflowSourceFreshnessCheck")+$catalogArguments) -TimeoutSeconds 5400)
             Assert-InitializedProject -Root $freshRoot
         })
