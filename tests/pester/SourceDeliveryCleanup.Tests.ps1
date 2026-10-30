@@ -433,6 +433,25 @@ Describe 'Source delivery post-success cleanup' {
         Should -Invoke Invoke-DeliveryChannelCleanupSafely -Times 1 -ParameterFilter { $Channel -eq 'Master' -and $Phase -eq 'post-operation' -and $ExpectedCommit -eq ('e' * 40) }
     }
 
+    It 'applies recovery-archive retention after a successful publication and reports its warnings' {
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+        function Read-DevelopPublicationAttempt { $null }
+        function Publish-DevelopDeferringFailingEntries { throw 'must be mocked' }
+        function Invoke-DeliveryRecoveryCleanup { param($OperationAction) throw 'must be mocked' }
+        Mock Invoke-DeliveryChannelCleanupSafely { [pscustomobject]@{ status='completed' } }
+        Mock Publish-DevelopDeferringFailingEntries { [pscustomobject]@{ status='published'; commit=('d' * 40) } }
+        Mock Invoke-DeliveryRecoveryCleanup { [pscustomobject]@{ status='completed'; removedFiles=2; freedBytes=10L; warnings=@(); entries=@() } }
+        $published = Invoke-PublishDevelopWithCleanup
+        $published.recoveryArchives.removedFiles | Should -Be 2
+        $published.PSObject.Properties['deliveryStatus'] | Should -BeNullOrEmpty
+        Should -Invoke Invoke-DeliveryRecoveryCleanup -Times 1 -Exactly -ParameterFilter { $OperationAction -eq 'PublishDevelop' }
+        Mock Invoke-DeliveryRecoveryCleanup { throw 'archive locked' }
+        $warned = Invoke-PublishDevelopWithCleanup 3>$null
+        $warned.status | Should -Be 'published'
+        $warned.deliveryStatus | Should -Be 'completed-with-cleanup-warnings'
+        $warned.recoveryArchives.warnings | Should -Be @('archive locked')
+    }
+
     It 'keeps the master authority lease separate from the delegated cleanup executor identity' {
         $supervisor = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
         $candidate = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8

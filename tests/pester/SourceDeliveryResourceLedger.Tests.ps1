@@ -147,6 +147,41 @@
 }
 
 Describe 'Delivery v3 resource ledger' {
+    It 'releases only Release copies whose capsule left this clone''s gate stand and are not the open attempt''s' {
+        $root = New-LedgerRepository
+        $script:currentStand = Join-Path $TestDrive ('current stand ' + [char]0x0441)
+        $oldStand = Join-Path $TestDrive ('old stand ' + [char]0x0441)
+        function Get-DeliveryGateStandRoot { param($CommonGitDirectory, $FixtureId) $script:currentStand }
+        function Read-DevelopPublicationAttempt { [pscustomobject]@{ schemaVersion=1; candidate=('c' * 40) } }
+        $copies = @{}
+        foreach ($case in @(
+            @{ name='superseded'; stand=$oldStand; capsule=$true; candidate=('a' * 40) },
+            @{ name='current'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40) },
+            @{ name='openAttempt'; stand=$oldStand; capsule=$true; candidate=('c' * 40) },
+            @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=('a' * 40) })) {
+            $copy = Join-Path $TestDrive ("q " + [char]0x041F + "\release-$($case.name)")
+            $branch = Join-Path $copy 'branch'
+            [void][IO.Directory]::CreateDirectory($branch)
+            $capsule = Join-Path $case.stand ".git\itl\qualification-fixtures\release-$($case.name)\capsule.json"
+            if ($case.capsule) { [void][IO.Directory]::CreateDirectory((Split-Path -Parent $capsule)); [IO.File]::WriteAllText($capsule, '{}') }
+            [IO.File]::WriteAllText((Join-Path $copy 'qualification-fixture.json'), (@{ schemaVersion=2; kind='itl-qualification-fixture-target'; phase='Release'; status='ready'; branchRoot=$branch; capsulePath=$capsule; candidateCommit=$case.candidate } | ConvertTo-Json))
+            $copies[$case.name] = @{
+                stand = Register-DeliveryResource -PlanId 'plan' -Kind 'reusable-stand' -Owner 'Release-e2e' -Identity ([ordered]@{ path=$branch; configured=$true }) -State active -RetainUntil ([DateTime]::MaxValue)
+                snapshot = Register-DeliveryResource -PlanId 'plan' -Kind 'release-snapshot' -Owner 'release-e2e' -Identity ([ordered]@{ path=(Join-Path $branch '.agent-1c\runs\release-e2e\r\snapshots\baseline.dt'); worktreePath=$branch }) -State retained
+            }
+        }
+        Update-DeliverySupersededReleaseCopyResources | Should -Be 2
+        $states = @{}; foreach ($resource in (Read-DeliveryResourceLedger).resources) { $states[[string]$resource.resourceId] = [string]$resource.state }
+        foreach ($name in @('superseded', 'capsuleGone')) {
+            $states[$copies[$name].stand] | Should -Be 'removed' -Because $name
+            $states[$copies[$name].snapshot] | Should -Be 'cleanup-pending' -Because $name
+        }
+        foreach ($name in @('current', 'openAttempt')) {
+            $states[$copies[$name].stand] | Should -Be 'active' -Because $name
+            $states[$copies[$name].snapshot] | Should -Be 'retained' -Because $name
+        }
+    }
+
     It 'keeps the disposition call graph read-only and documents the manual CAS boundary' {
         $resourcePath = Join-Path $RepoRoot 'scripts\source-delivery-resources.ps1'
         $tokens = $null

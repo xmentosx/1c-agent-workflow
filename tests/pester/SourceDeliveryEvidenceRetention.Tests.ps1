@@ -104,12 +104,21 @@ Describe 'Source recovery archive retention' {
         (Get-DeliveryRecoveryInventory -IncludeEntries).entries[0].reason | Should -Be 'original-copy-present'
     }
 
-    It 'preserves every archive during a resumable publication, including malformed attempts' {
-        $fixture = New-RecoveryFixture
-        $null = Write-RecoveryGuardJson 'itl/publication-attempts/develop.json' @{phase='failed'}
+    It 'protects only what a resumable publication attempt references and everything when it is unreadable' {
+        $referenced = New-RecoveryFixture
+        $unreferenced = New-RecoveryFixture
+        $attempt = Write-RecoveryGuardJson 'itl/publication-attempts/develop.json' @{phase='failed';cleanup=@{retained=@(@{root=$referenced.copy})}}
         $null = Enter-DeliveryOperation -Action Cleanup
+        $reasons = @{}; foreach ($entry in (Get-DeliveryRecoveryInventory -IncludeEntries).entries) { $reasons[$entry.path] = $entry.reason }
+        $reasons[$referenced.path] | Should -Be 'owner-or-checkpoint-reference'
+        $reasons[$unreferenced.path] | Should -Be 'expired-recovery-payload'
+        [IO.File]::WriteAllText($attempt, 'broken attempt')
         (Invoke-DeliveryRecoveryCleanup).removedFiles | Should -Be 0
-        Test-Path $fixture.payload | Should -BeTrue
+        foreach ($fixture in @($referenced, $unreferenced)) { Test-Path $fixture.payload | Should -BeTrue }
+        $null = Write-RecoveryGuardJson 'itl/publication-attempts/develop.json' @{phase='failed';cleanup=@{retained=@(@{root=$referenced.copy})}}
+        (Invoke-DeliveryRecoveryCleanup).removedFiles | Should -Be 2
+        Test-Path $referenced.payload | Should -BeTrue
+        Test-Path $unreferenced.payload | Should -BeFalse
     }
 
     It 'requires the real manual operation lease and rejects publication leases' {
@@ -119,6 +128,15 @@ Describe 'Source recovery archive retention' {
         { Invoke-DeliveryRecoveryCleanup } | Should -Throw '*manual Cleanup*'
         (Get-DeliveryRecoveryInventory -IncludeEntries).entries[0].reason | Should -Be 'delivery-operation-present'
         Test-Path $fixture.payload | Should -BeTrue
+    }
+
+    It 'lets the owning successful publication apply the same retention after its attempt closed' {
+        $fixture = New-RecoveryFixture
+        { Invoke-DeliveryRecoveryCleanup -OperationAction PublishDevelop } | Should -Throw '*PublishDevelop delivery-operation lease*'
+        $null = Enter-DeliveryOperation -Action PublishDevelop
+        (Invoke-DeliveryRecoveryCleanup -OperationAction PublishDevelop).removedFiles | Should -Be 2
+        Test-Path $fixture.payload | Should -BeFalse
+        Test-Path (Join-Path $fixture.path 'retention.json') | Should -BeTrue
     }
 
     It 'protects nested ledger references to the original copy' {
