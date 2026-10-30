@@ -102,6 +102,40 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
+    It 'removes only expired registration candidates this repository owns or no repository owns' {
+        $container = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup registrations ' + [char]0x041F + ' ' + [guid]::NewGuid().ToString('N'))
+        $temp = Join-Path $container 'temp root'; $root = Join-Path $container 'main repo'; $other = Join-Path $container 'other clone'
+        $ids = @{}; foreach ($name in @('expired', 'fresh', 'foreign', 'orphan', 'otherClone', 'repository')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
+        $path = @{}; foreach ($name in $ids.Keys) { $path[$name] = Join-Path $temp "itl-source-register-$($ids[$name])" }
+        try {
+            [void][IO.Directory]::CreateDirectory($temp)
+            New-CleanupRepository -Root $root
+            New-CleanupRepository -Root $other
+            & git -C $root worktree add --quiet -b "itl/register-$($ids.expired)" $path.expired
+            & git -C $root worktree add --quiet -b "itl/register-$($ids.fresh)" $path.fresh
+            & git -C $root worktree add --quiet -b "user/register-$($ids.foreign)" $path.foreign
+            & git -C $other worktree add --quiet -b "itl/register-$($ids.otherClone)" $path.otherClone
+            [void][IO.Directory]::CreateDirectory((Join-Path $path.orphan 'build'))
+            Set-Content -LiteralPath (Join-Path $path.orphan '.git') -Encoding ASCII -Value ('gitdir: ' + (Join-Path $root '.git\worktrees\gone'))
+            [void][IO.Directory]::CreateDirectory((Join-Path $path.repository '.git'))
+            $old = [DateTime]::UtcNow.AddDays(-8)
+            foreach ($name in @('expired', 'foreign', 'orphan', 'otherClone', 'repository')) { (Get-Item -LiteralPath $path[$name]).LastWriteTimeUtc = $old }
+            $script:Root = $root
+            function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+            $result = Remove-SourceDeliveryStaleRegistrationWorktrees -TempRoot $temp -MinimumAgeHours 168
+            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($path.expired, $path.orphan) | Sort-Object)
+            $result.retained | Should -Be 4
+            foreach ($name in @('fresh', 'foreign', 'otherClone', 'repository')) { Test-Path -LiteralPath $path[$name] | Should -BeTrue -Because $name }
+            @(& git -C $root branch --list "itl/register-$($ids.expired)").Count | Should -Be 0
+            @(& git -C $root branch --list "itl/register-$($ids.fresh)").Count | Should -Be 1
+            @(& git -C $root worktree list --porcelain | Where-Object { $_ -like "worktree *$($ids.expired)" }).Count | Should -Be 0
+        } finally {
+            foreach ($repo in @($root, $other)) { if (Test-Path -LiteralPath $repo) { foreach ($name in $path.Keys) { & git -C $repo worktree remove --force $path[$name] 2>$null } } }
+            Remove-Item -LiteralPath $container -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'preserves active and tracked-dirty generated candidate worktrees' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup protected repo ' + [guid]::NewGuid().ToString('N'))
         $activeId = [guid]::NewGuid().ToString('N'); $dirtyId = [guid]::NewGuid().ToString('N')
@@ -262,6 +296,7 @@ Describe 'Source delivery post-success cleanup' {
     It 'reports cleanup failures as warnings instead of changing publication success' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         Mock Remove-SourceDeliveryStaleCandidateWorktrees { throw 'candidate cleanup unavailable' }
+        Mock Remove-SourceDeliveryStaleRegistrationWorktrees { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
         Mock Remove-SourceDeliveryStaleTestFixtures { [pscustomobject]@{ removedFixtures=0; removedWorktrees=0 } }
         Mock Remove-SourceDeliveryStaleVanessaBuildWork { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
         Mock Remove-SourceDeliveryStaleReleaseRecoveryArtifacts { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
@@ -274,6 +309,7 @@ Describe 'Source delivery post-success cleanup' {
         $result = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $TestDrive
         $result.status | Should -Be 'completed-with-warnings'; @($result.warnings).Count | Should -Be 1; $result.warnings[0] | Should -Match 'candidate cleanup unavailable'
         Should -Invoke Remove-SourceDeliveryCompletedFixtureCopies -Times 1 -Exactly -ParameterFilter {$FreshProjectsRoot -eq $TestDrive}
+        Should -Invoke Remove-SourceDeliveryStaleRegistrationWorktrees -Times 1 -Exactly -ParameterFilter {$MinimumAgeHours -eq 168}
     }
 
     It 'resolves develop and master cleanup executors from their exact remote channel commits' {
