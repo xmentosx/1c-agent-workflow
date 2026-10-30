@@ -67,21 +67,24 @@ function Get-DeliveryRecoveryReferences {
 }
 
 function Get-DeliveryRecoveryGuards {
-    param([string]$CommonGit)
+    param([string]$CommonGit, [ValidateSet('Cleanup', 'PublishDevelop')][string]$OperationAction = 'Cleanup')
     $references = [Collections.Generic.List[string]]::new()
-    # A resumable publication can own inputs outside its live process. Preserve
-    # archives until that existing owner closes the attempt, even after failure.
+    # A resumable publication can own inputs outside its live process. It
+    # protects exactly what its attempt records, like the ledger and plan
+    # checkpoints below; an unreadable attempt still protects every archive.
     $attemptRoot = Join-Path $CommonGit 'itl/publication-attempts'
     if (Test-Path -LiteralPath $attemptRoot) {
-        if (@(Get-ChildItem -LiteralPath $attemptRoot -File -Force -ErrorAction Stop).Count) {
-            return [pscustomobject]@{ reason='publication-attempt-present'; references=@() }
+        foreach ($file in @(Get-ChildItem -LiteralPath $attemptRoot -File -Force -ErrorAction Stop)) {
+            try { $attempt = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json }
+            catch { return [pscustomobject]@{ reason='publication-attempt-unreadable'; references=@() } }
+            foreach ($path in @(Get-DeliveryRecoveryReferences $attempt)) { $references.Add($path) }
         }
     }
     $operation = Get-DeliveryOperationStatus
     if (-not $operation -and (Test-Path -LiteralPath (Join-Path $CommonGit 'itl/delivery-operation'))) {
         return [pscustomobject]@{ reason='delivery-operation-unreadable'; references=@() }
     }
-    if ($operation -and ($operation.action -ne 'Cleanup' -or $operation.ownerPid -ne $PID)) {
+    if ($operation -and ($operation.action -ne $OperationAction -or $operation.ownerPid -ne $PID)) {
         return [pscustomobject]@{ reason='delivery-operation-present'; references=@() }
     }
     $ledgerPath = Join-Path $CommonGit 'itl/resources/v1/ledger.json'
@@ -105,13 +108,13 @@ function Get-DeliveryRecoveryGuards {
 }
 
 function Get-DeliveryRecoveryInventory {
-    param([switch]$IncludeEntries)
+    param([switch]$IncludeEntries, [ValidateSet('Cleanup', 'PublishDevelop')][string]$OperationAction = 'Cleanup')
     $common = Get-DeliveryCommonGitDirectory
     $root = Join-Path $common 'itl/evidence/fixture-cleanup'
     $entries = [Collections.Generic.List[object]]::new()
     $warnings = @()
     $policy = $null
-    try { $policy = Get-DeliveryRecoveryPolicy; $guards = Get-DeliveryRecoveryGuards -CommonGit $common }
+    try { $policy = Get-DeliveryRecoveryPolicy; $guards = Get-DeliveryRecoveryGuards -CommonGit $common -OperationAction $OperationAction }
     catch { $guards = [pscustomobject]@{ reason='guard-unavailable'; references=@() }; $warnings += $_.Exception.Message }
     try { if (Test-Path -LiteralPath $root) {
         # Validate the namespace itself before enumerating children.
@@ -187,16 +190,18 @@ function Write-DeliveryRecoveryReceipt {
 }
 
 function Invoke-DeliveryRecoveryCleanup {
-    [void](Assert-DeliveryManualCleanupLease)
+    # Manual Cleanup, or a successful PublishDevelop after it closed its attempt.
+    param([ValidateSet('Cleanup', 'PublishDevelop')][string]$OperationAction = 'Cleanup')
+    [void](Assert-DeliveryOwnedOperationLease -Action $OperationAction)
     $result = [ordered]@{ status='completed'; removedFiles=0; freedBytes=0L; warnings=@(); entries=@() }
     # Never consume a previously displayed inventory. Recompute under the lease.
-    $inventory = Get-DeliveryRecoveryInventory -IncludeEntries
+    $inventory = Get-DeliveryRecoveryInventory -IncludeEntries -OperationAction $OperationAction
     $result.warnings = @($inventory.warnings)
     foreach ($entry in @($inventory.entries | Where-Object disposition -eq 'eligible')) {
         $streams = @{}
         try {
-            [void](Assert-DeliveryManualCleanupLease)
-            $fresh = Get-DeliveryRecoveryInventory -IncludeEntries
+            [void](Assert-DeliveryOwnedOperationLease -Action $OperationAction)
+            $fresh = Get-DeliveryRecoveryInventory -IncludeEntries -OperationAction $OperationAction
             $current = @($fresh.entries | Where-Object { $_.path -ieq $entry.path -and $_.disposition -eq 'eligible' })
             if ($current.Count -ne 1 -or
                 ($current[0].payloads | ConvertTo-Json -Compress) -cne ($entry.payloads | ConvertTo-Json -Compress) -or
@@ -231,8 +236,8 @@ function Invoke-DeliveryRecoveryCleanup {
                     $record = [pscustomobject]@{ path=$payload.path; bytes=$payload.bytes; sha256=$hash; status='pending'; expiredAt=[DateTime]::UtcNow.ToString('o') }
                     $records += $record
                     Write-DeliveryRecoveryReceipt -Path $receiptPath -Policy $inventory.policy -Files $records
-                    [void](Assert-DeliveryManualCleanupLease)
-                    $guard = Get-DeliveryRecoveryGuards -CommonGit (Get-DeliveryCommonGitDirectory)
+                    [void](Assert-DeliveryOwnedOperationLease -Action $OperationAction)
+                    $guard = Get-DeliveryRecoveryGuards -CommonGit (Get-DeliveryCommonGitDirectory) -OperationAction $OperationAction
                     if ($guard.reason) { throw 'Recovery guard changed; repeat Cleanup.' }
                     if (@($entry.copyRoots | Where-Object { Test-Path -LiteralPath $_ }).Count) { throw 'Original copy reappeared; repeat Cleanup.' }
                     $currentPolicy = Get-DeliveryRecoveryPolicy

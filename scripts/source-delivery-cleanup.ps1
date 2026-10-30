@@ -740,7 +740,17 @@ function Invoke-PublishDevelopWithCleanup {
     try { $published = Publish-DevelopDeferringFailingEntries }
     finally { Remove-Variable -Name DeliveryPreOperationCleanup -Scope Script -ErrorAction SilentlyContinue }
     $post = Invoke-DeliveryChannelCleanupSafely -Channel Develop -Phase post-operation -ExpectedCommit ([string]$published.commit)
-    return Add-DeliveryCleanupResults -Result $published -Runs @($pre, $post)
+    $result = Add-DeliveryCleanupResults -Result $published -Runs @($pre, $post)
+    # Success closed the attempt; apply the recovery-archive retention that
+    # otherwise ran only in manual Cleanup. Best effort, like the sweep above.
+    try { $recovery = Invoke-DeliveryRecoveryCleanup -OperationAction PublishDevelop }
+    catch { $recovery = [pscustomobject]@{ status='completed-with-warnings'; removedFiles=0; freedBytes=0L; warnings=@($_.Exception.Message); entries=@() } }
+    $result | Add-Member -NotePropertyName recoveryArchives -NotePropertyValue $recovery -Force
+    if ([string]$recovery.status -eq 'completed-with-warnings') {
+        Write-Warning "Recovery archive retention: $(@($recovery.warnings) -join '; ')"
+        $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue 'completed-with-cleanup-warnings' -Force
+    }
+    return $result
 }
 
 function Invoke-ReleaseMasterWithCleanup {

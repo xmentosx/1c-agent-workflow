@@ -1,10 +1,15 @@
 # Manual, compare-and-swap cleanup for published source-delivery refs.
 
 function Assert-DeliveryManualCleanupLease {
+    return Assert-DeliveryOwnedOperationLease -Action 'Cleanup'
+}
+
+function Assert-DeliveryOwnedOperationLease {
+    param([Parameter(Mandatory = $true)][ValidateSet('Cleanup', 'PublishDevelop')][string]$Action)
     $activeVariable = Get-Variable -Name ActiveOperation -Scope Script -ErrorAction SilentlyContinue
     $active = if ($activeVariable) { $activeVariable.Value } else { $null }
-    if (-not $active -or [string]$active.action -cne 'Cleanup') {
-        throw 'Ref cleanup requires the active manual Cleanup delivery-operation lease.'
+    if (-not $active -or [string]$active.action -cne $Action) {
+        throw "Cleanup requires the active $(if ($Action -eq 'Cleanup') { 'manual Cleanup' } else { $Action }) delivery-operation lease."
     }
 
     $persisted = Read-DeliveryOperation
@@ -19,10 +24,10 @@ function Assert-DeliveryManualCleanupLease {
     }
     if (-not $persisted -or [int]$persisted.schemaVersion -ne 1 -or
         -not [string]$persisted.id -or [string]$persisted.id -cne [string]$active.id -or
-        [string]$persisted.action -cne 'Cleanup' -or [int]$persisted.ownerPid -ne $PID -or
+        [string]$persisted.action -cne $Action -or [int]$persisted.ownerPid -ne $PID -or
         -not $ownerStartMatches -or
         -not (Test-DeliveryProcessIdentity -ProcessId ([int]$persisted.ownerPid) -StartedAt $persisted.ownerProcessStartedAt)) {
-        throw 'The manual Cleanup delivery-operation lease is missing, changed, or owned by another process.'
+        throw "The $(if ($Action -eq 'Cleanup') { 'manual Cleanup' } else { $Action }) delivery-operation lease is missing, changed, or owned by another process."
     }
     return $persisted
 }

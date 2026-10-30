@@ -153,7 +153,13 @@ cleanup warnings do not rewrite a verified publication as failed. They produce
 `completed-with-cleanup-warnings`, remain in `.git/itl/resources/v1/ledger.json`,
 and are retried by the next publication/release or explicit `-Action Cleanup`.
 Only the newest two failed plans are retained, never beyond seven days; configured
-reusable stands and active plan resources are never removed.
+reusable stands and active plan resources are never removed, except that a Release
+copy whose capsule's stand is no longer this clone's gate stand (or whose capsule
+is gone) can never resume: its reusable-stand record closes, its snapshot and
+capability resources go to their removal adapters, and the copy owner's ordinary
+retention then archives it. The open attempt's candidate keeps its copies. A
+successful `PublishDevelop` also applies the recovery-archive retention of
+`docs/source-recovery-retention.md`.
 
 When that remote development commit is ready for the stable channel, run:
 

@@ -315,6 +315,20 @@ capsules, and the builder's marker, written last, is the only completion
 proof. A passed stand without the current fixture marker is replaced with a
 warning, an exception to explicit-parameter precedence chosen by the user; a
 failed build directory is refused with a removal continuation.
+On 2026-10-30 the user approved closing two retention gaps that left about
+60 GB behind. Recovery archives already had a policy (newest two per phase
+within seven days) but ran only in manual Cleanup and were fully protected by
+any open publication attempt, even a long-failed one. A successful PublishDevelop
+now applies that same owner after closing its attempt, under its own operation
+lease with the unchanged guards, and an open attempt protects only the archives
+it references, like ledger resources and plan checkpoints; an unreadable
+attempt still protects all. Each Release qualification registered its copy as a
+permanent reusable stand, so no copy was ever archived; a copy whose capsule's
+stand is no longer this clone's gate stand can never resume, so the sweep closes
+that record and hands its snapshot and capability resources to their existing
+removal adapters, after which the copy owner's ordinary retention applies.
+Archives without an ownership proof stay for manual removal. No lock, state or
+coordinator is added.
 The Develop upgrade journey then showed that its configuration-rejection
 refresh on PM5 resumed a merged refresh left by an older workflow whose refresh
 ran the production Gate6 profile. The current refresh runs the development

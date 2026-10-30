@@ -1,9 +1,10 @@
 # Хранение архивов исходных qualification-копий
 
-Владелец — существующий source-delivery supervisor. Только ручной
-`scripts/source-delivery.ps1 -Action Cleanup` удаляет просроченные payloads
-в общем Git-каталоге `itl/evidence/fixture-cleanup`. Publication sweeps их не
-удаляют. Дополнительных служб, locks, установленных настроек или фоновых задач нет.
+Владелец — существующий source-delivery supervisor. Просроченные payloads в
+общем Git-каталоге `itl/evidence/fixture-cleanup` удаляет ручной
+`scripts/source-delivery.ps1 -Action Cleanup`, а также успешный `PublishDevelop`
+после того, как закрыл свою attempt, под своей operation lease и с теми же
+guards. Дополнительных служб, locks, установленных настроек или фоновых задач нет.
 
 Предпросмотр без записи:
 
@@ -37,9 +38,10 @@ copyRoot; исходная копия должна отсутствовать. �
 такого proof сохраняются и показываются как `ownership-unverified`. Нельзя
 назначать им владельца только по имени или возрасту.
 
-Любая незакрытая publication attempt, другая delivery operation, ссылка из
-неудалённого ledger resource или plan checkpoint сохраняет архив. Нечитаемое
-состояние, изменившийся inventory/policy, reparse point и открытый reader/writer
+Незакрытая publication attempt сохраняет архивы, на которые она ссылается,
+как ссылки из неудалённого ledger resource или plan checkpoint; нечитаемая
+attempt сохраняет все архивы. Другая delivery operation тоже сохраняет все.
+Нечитаемое состояние, изменившийся inventory/policy, reparse point и открытый reader/writer
 также сохраняют данные. Это warning для уборки, а не новый барьер публикации.
 Продолжение: устранить указанную причину через прежнего владельца и повторить
 тот же Cleanup; не удалять checkpoint или lease ради освобождения места.
