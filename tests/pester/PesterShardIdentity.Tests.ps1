@@ -115,6 +115,41 @@ Describe 'Pester shard selected-test identity' {
         $result.executedWorkerCount | Should -Be 1
     }
 
+    It 'binds cross-host support only to its actual fixture consumer' {
+        $root=New-ShardIdentityFixture 'Граница helper'
+        $consumer='tests/pester/VerificationSelection.Tests.ps1'
+        $independent='tests/pester/VanessaRuntimeCleanup.Tests.ps1'
+        $support='tests/pester/VerificationHostIdentitySupport.ps1'
+        . (Join-Path $RepoRoot 'scripts/quality-contracts.ps1')
+        $production=Get-QualityContractCatalog $RepoRoot
+        $owners=@($production.contracts | Where-Object { $consumer -in $_.tests -or $independent -in $_.tests })
+        $catalog=@{schemaVersion=1;contracts=$owners}
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'),($catalog|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root $support),"`$script:CrossHostInput='fixture'",[Text.UTF8Encoding]::new($false))
+        $body="Describe 'Cross host consumer' { It 'loads actual support' { . (Join-Path `$PSScriptRoot 'VerificationHostIdentitySupport.ps1'); `$script:CrossHostInput | Should -Be 'fixture' } }"
+        [IO.File]::WriteAllText((Join-Path $root $consumer),$body,[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root $independent),"Describe 'Independent consumer' { It 'passes' { `$true | Should -BeTrue } }",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'selection.json'),(@{tests=@($consumer,$independent)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        & git -C $root add --all; & git -C $root commit -qm consumers
+        (Invoke-ShardIdentityFixture $root 'out-cold').executedWorkerCount | Should -Be 2
+        (Invoke-ShardIdentityFixture $root 'out-warm').reusedWorkerCount | Should -Be 2
+        [IO.File]::AppendAllText((Join-Path $root $support),"`n# changed consumed helper")
+        & git -C $root add --all; & git -C $root commit -qm support
+        $changed=Invoke-ShardIdentityFixture $root 'out-support'
+        $changed.executedWorkerCount | Should -Be 1
+        $changed.reusedWorkerCount | Should -Be 1
+        @($changed.workers | Where-Object execution -eq 'executed' | ForEach-Object { Split-Path $_.paths[0] -Leaf }) | Should -Be @('VerificationSelection.Tests.ps1')
+        & git -C $root rm -q -- $support; & git -C $root commit -qm missing-support
+        $output=Join-Path $root 'out-missing'
+        $run=Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1') -Arguments @(
+            '-RepositoryRoot',$root,'-OutputRoot',$output,'-JunitPath',(Join-Path $output 'pester.xml'),
+            '-WorkerCount','1','-SelectionPath',(Join-Path $root 'selection.json'))
+        $run.exitCode | Should -Not -Be 0
+        $missing=Get-Content (Join-Path $output 'pester-shards/summary.json') -Raw | ConvertFrom-Json
+        $missing.failed | Should -Be 1
+        $missing.reusedWorkerCount | Should -Be 1
+    }
+
     It 'separates tests with identical owner inputs and reuses each exact result in another worktree' {
         $root = New-ShardIdentityFixture 'Разные тесты'
         $first = Invoke-ShardIdentityFixture $root 'out-first'
