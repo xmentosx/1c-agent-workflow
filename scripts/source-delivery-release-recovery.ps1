@@ -336,7 +336,9 @@ function Resolve-DeliveryGateStand {
     try {
         $marker = Read-DeliveryGateStandMarker -StandRoot $root -BuilderPath $builder
         if ($null -ne $marker -and [string]$marker.fixtureId -ceq $fixtureId) { return $root }
-        if (Test-Path -LiteralPath $root) {
+        # The builder starts with the positive twin, so either directory
+        # without a completion marker is a failed build.
+        if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath ($root + '-positive'))) {
             throw "DELIVERY_GATE_STAND_INCOMPLETE: '$root' has no completed build; keep it for diagnosis, then remove it with its '-positive' and worktree siblings and repeat the same command."
         }
         $logs = Join-Path (Get-DeliveryCommonGitDirectory) ('itl/gate-stand-logs/' + $fixtureId.Substring(0, 8))

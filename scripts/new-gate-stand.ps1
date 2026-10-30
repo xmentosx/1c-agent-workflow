@@ -44,6 +44,15 @@ function Assert-GateStandTarget {
     }
 }
 
+function Assert-GateStandPathBudget {
+    param([string]$Path)
+    # Configured init refuses a project root longer than 35 characters
+    # (MAX_PATH with long 1C source names); the stand and its positive twin
+    # are both projects, so refuse before any native work.
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    if ($full.Length -gt 35) { throw "GATE_STAND_PATH_TOO_LONG: '$full' has $($full.Length) characters; configured init admits at most 35. Choose a shorter -StandRoot or ITL_GATE_STANDS_ROOT." }
+}
+
 function New-GateStandProjectSettings {
     param([string]$ProjectRoot, [string]$SnapshotPath, [string]$Platform, [string]$User, [string]$Agent)
     $project = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'templates/project.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -259,7 +268,7 @@ $PositiveRoot = if ($PositiveRoot) { [IO.Path]::GetFullPath($PositiveRoot) } els
 $fixture = Read-GateStandFixture -Root $fixtureRoot
 $fixtureId = Get-GateStandFixtureId
 $script:Platform = Resolve-GateStandPlatform -Requested $PlatformPath -Fixture $fixture
-foreach ($root in @($StandRoot, $PositiveRoot)) { Assert-GateStandTarget -Path $root }
+foreach ($root in @($StandRoot, $PositiveRoot)) { Assert-GateStandPathBudget -Path $root; Assert-GateStandTarget -Path $root }
 $script:LogRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl-gate-stand-logs-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($script:LogRoot)
 $script:Steps = New-Object Collections.Generic.List[object]
