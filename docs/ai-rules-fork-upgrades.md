@@ -1,5 +1,27 @@
 # Controlled ai_rules_1c upgrades
 
+## Local source cache integrity
+
+`Sync-AiRules1cCheckout` owns preparation of the per-project temporary rules
+checkout. A matching HEAD alone is insufficient: before reuse and after checkout
+it checks repository identity, physical checkout boundaries, index/worktree state,
+untracked/ignored files and index flags that can hide missing files. The existing
+project lifecycle lease covers preparation and installer reads; no global cache
+lock is added.
+
+An invalid copy is preserved while a fresh pinned source is prepared and checked.
+A recognized physical checkout is then moved to the logged diagnostic directory.
+Foreign, linked or unrecognizable directories remain in place; that invocation
+uses its isolated verified replacement. Preparation failures preserve both copies
+and report how to repeat the original operation. An existing Git index lock is
+never removed or bypassed: wait for its owner and retry. `ITL_AI_RULES_SOURCE_PATH`
+retains its clean-source/origin checks and is never automatically repaired.
+
+On the 2026-10-30 disposable local-Git fixture, three alternating healthy-cache
+runs had median preparation times of 0.40 s before and 0.99 s after these checks.
+This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
+client instructions or tool schemas are added.
+
 ## Current candidate: memory optimization, local r50
 
 The selected candidate is `itl-main-2f640143-r50`, exact commit
