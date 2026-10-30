@@ -102,10 +102,10 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
-    It 'removes only expired registration candidates and supervisors this repository owns or no repository owns' {
+    It 'keeps the newest two unexpired registrations and removes idle supervisors this repository or no repository owns' {
         $container = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup registrations ' + [char]0x041F + ' ' + [guid]::NewGuid().ToString('N'))
         $temp = Join-Path $container 'temp root'; $root = Join-Path $container 'main repo'; $other = Join-Path $container 'other clone'
-        $ids = @{}; foreach ($name in @('expired', 'fresh', 'foreign', 'orphan', 'otherClone', 'repository', 'supervisor', 'branchedSupervisor')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
+        $ids = @{}; foreach ($name in @('expired', 'fresh', 'fresh2', 'fresh3', 'foreign', 'orphan', 'otherClone', 'repository', 'supervisor', 'recentSupervisor', 'branchedSupervisor')) { $ids[$name] = [guid]::NewGuid().ToString('N') }
         $path = @{}; foreach ($name in $ids.Keys) { $path[$name] = Join-Path $temp "itl-source-$(if ($name -like '*upervisor') { 'supervisor' } else { 'register' })-$($ids[$name])" }
         try {
             [void][IO.Directory]::CreateDirectory($temp)
@@ -113,22 +113,27 @@ Describe 'Source delivery post-success cleanup' {
             New-CleanupRepository -Root $other
             & git -C $root worktree add --quiet -b "itl/register-$($ids.expired)" $path.expired
             & git -C $root worktree add --quiet -b "itl/register-$($ids.fresh)" $path.fresh
+            & git -C $root worktree add --quiet -b "itl/register-$($ids.fresh2)" $path.fresh2
+            & git -C $root worktree add --quiet -b "itl/register-$($ids.fresh3)" $path.fresh3
             & git -C $root worktree add --quiet -b "user/register-$($ids.foreign)" $path.foreign
             & git -C $other worktree add --quiet -b "itl/register-$($ids.otherClone)" $path.otherClone
             & git -C $root worktree add --quiet --detach $path.supervisor
+            & git -C $root worktree add --quiet --detach $path.recentSupervisor
             & git -C $root worktree add --quiet -b "itl/supervisor-$($ids.branchedSupervisor)" $path.branchedSupervisor
             [void][IO.Directory]::CreateDirectory((Join-Path $path.orphan 'build'))
             Set-Content -LiteralPath (Join-Path $path.orphan '.git') -Encoding ASCII -Value ('gitdir: ' + (Join-Path $root '.git\worktrees\gone'))
             [void][IO.Directory]::CreateDirectory((Join-Path $path.repository '.git'))
             $old = [DateTime]::UtcNow.AddDays(-8)
             foreach ($name in @('expired', 'foreign', 'orphan', 'otherClone', 'repository', 'supervisor', 'branchedSupervisor')) { (Get-Item -LiteralPath $path[$name]).LastWriteTimeUtc = $old }
+            (Get-Item -LiteralPath $path.fresh2).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-1)
+            (Get-Item -LiteralPath $path.fresh3).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-2)
             $script:Root = $root
             function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
             . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
             $result = Remove-SourceDeliveryStaleOperationWorktrees -TempRoot $temp -MinimumAgeHours 168
-            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($path.expired, $path.orphan, $path.supervisor) | Sort-Object)
-            $result.retained | Should -Be 5
-            foreach ($name in @('fresh', 'foreign', 'otherClone', 'repository', 'branchedSupervisor')) { Test-Path -LiteralPath $path[$name] | Should -BeTrue -Because $name }
+            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($path.expired, $path.orphan, $path.supervisor, $path.fresh3) | Sort-Object)
+            $result.retained | Should -Be 7
+            foreach ($name in @('fresh', 'fresh2', 'foreign', 'otherClone', 'repository', 'recentSupervisor', 'branchedSupervisor')) { Test-Path -LiteralPath $path[$name] | Should -BeTrue -Because $name }
             @(& git -C $root branch --list "itl/register-$($ids.expired)").Count | Should -Be 0
             @(& git -C $root branch --list "itl/register-$($ids.fresh)").Count | Should -Be 1
             @(& git -C $root worktree list --porcelain | Where-Object { $_ -like "worktree *$($ids.expired)" }).Count | Should -Be 0
@@ -138,7 +143,7 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
-    It 'removes only this clone''s expired superseded gate stands with their siblings' {
+    It 'keeps only this clone''s newest unexpired superseded gate stand and removes the rest with their siblings' {
         $container = Join-Path $TestDrive ('stands ' + [char]0x0441)
         $env:ITL_GATE_STANDS_ROOT = $container
         try {
@@ -150,26 +155,27 @@ Describe 'Source delivery post-success cleanup' {
             $fixtureId = & { param($path, $repository) . $path; Get-GateStandFixtureId -Repository $repository } (Join-Path $RepoRoot 'scripts\new-gate-stand.ps1') $RepoRoot
             $current = Get-DeliveryGateStandRoot -CommonGitDirectory $script:cleanupCommon -FixtureId $fixtureId
             $stands = @{}
-            foreach ($name in @('superseded', 'fresh', 'foreign', 'unowned')) { $stands[$name] = Join-Path $container ("$name " + [char]0x0441 + ' 0123abcd') }
+            foreach ($name in @('superseded', 'older', 'fresh', 'foreign', 'unowned')) { $stands[$name] = Join-Path $container ("$name " + [char]0x0441 + ' 0123abcd') }
             foreach ($root in @($current) + @($stands.Values)) {
                 foreach ($path in @($root, ($root + '-positive'), ($root + '-workflow-develop-e2e'))) { [void][IO.Directory]::CreateDirectory((Join-Path $path '.agent-1c')) }
                 [void][IO.File]::WriteAllText(($root + '.lock'), '')
             }
-            foreach ($name in @('superseded', 'fresh')) { Set-DeliveryGateStandOwner -StandRoot $stands[$name] -CommonGitDirectory $script:cleanupCommon }
+            foreach ($name in @('superseded', 'older', 'fresh')) { Set-DeliveryGateStandOwner -StandRoot $stands[$name] -CommonGitDirectory $script:cleanupCommon }
             Set-DeliveryGateStandOwner -StandRoot $current -CommonGitDirectory $script:cleanupCommon
             Set-DeliveryGateStandOwner -StandRoot $stands.foreign -CommonGitDirectory (Join-Path $TestDrive 'other clone\.git')
             foreach ($root in @($current, $stands.superseded, $stands.foreign, $stands.unowned)) { (Get-Item -LiteralPath $root).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-8) }
+            (Get-Item -LiteralPath $stands.older).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-1)
             $result = Remove-SourceDeliverySupersededGateStands -MinimumAgeHours 168
-            @($result.entries | ForEach-Object path) | Should -Be @($stands.superseded)
-            $result.entries[0].directories | Should -Be 3
-            foreach ($suffix in @('', '-positive', '-workflow-develop-e2e', '.lock')) { Test-Path -LiteralPath ($stands.superseded + $suffix) | Should -BeFalse }
+            @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @(@($stands.superseded, $stands.older) | Sort-Object)
+            @($result.entries | ForEach-Object directories) | Should -Be @(3, 3)
+            foreach ($name in @('superseded', 'older')) { foreach ($suffix in @('', '-positive', '-workflow-develop-e2e', '.lock')) { Test-Path -LiteralPath ($stands[$name] + $suffix) | Should -BeFalse } }
             foreach ($root in @($current, $stands.fresh, $stands.foreign, $stands.unowned)) {
                 foreach ($suffix in @('', '-positive', '-workflow-develop-e2e')) { Test-Path -LiteralPath ($root + $suffix) | Should -BeTrue -Because ($root + $suffix) }
             }
         } finally { Remove-Item Env:ITL_GATE_STANDS_ROOT -ErrorAction SilentlyContinue }
     }
 
-    It 'removes only expired test artifacts that an interrupted shard left in temp' {
+    It 'removes only test artifacts an interrupted shard left in temp over an hour ago' {
         $temp = Join-Path $TestDrive ('temp ' + [char]0x0416)
         $id = 'abcdef0123456789abcdef0123456789'
         $old = @((Join-Path $temp "itl-ondemand-owner-$id"), (Join-Path $temp "itl deadline path $id"), (Join-Path $temp "itl-test-powershell-stdout-$id.log"))
@@ -177,9 +183,9 @@ Describe 'Source delivery post-success cleanup' {
         $foreign = @((Join-Path $temp 'itl-ondemand-owner-not-a-test'), (Join-Path $temp "itl-source-register-$id"), (Join-Path $temp "itl-test-powershell-stdout-$id.json"))
         foreach ($path in @($old[0], $old[1], $fresh, $foreign[0], $foreign[1])) { [void][IO.Directory]::CreateDirectory((Join-Path $path 'payload')) }
         foreach ($path in @($old[2], $foreign[2])) { [IO.File]::WriteAllText($path, 'x') }
-        foreach ($path in @($old + $foreign)) { (Get-Item -LiteralPath $path).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-8) }
+        foreach ($path in @($old + $foreign)) { (Get-Item -LiteralPath $path).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-2) }
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
-        $result = Remove-SourceDeliveryInterruptedTestArtifacts -TempRoot $temp -MinimumAgeHours 168
+        $result = Remove-SourceDeliveryInterruptedTestArtifacts -TempRoot $temp
         @($result.entries | ForEach-Object path | Sort-Object) | Should -Be @($old | Sort-Object)
         foreach ($path in @($fresh) + $foreign) { Test-Path -LiteralPath $path | Should -BeTrue -Because $path }
     }
@@ -359,9 +365,10 @@ Describe 'Source delivery post-success cleanup' {
         $result = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $TestDrive
         $result.status | Should -Be 'completed-with-warnings'; @($result.warnings).Count | Should -Be 1; $result.warnings[0] | Should -Match 'candidate cleanup unavailable'
         Should -Invoke Remove-SourceDeliveryCompletedFixtureCopies -Times 1 -Exactly -ParameterFilter {$FreshProjectsRoot -eq $TestDrive}
-        foreach ($step in @('Remove-SourceDeliveryStaleOperationWorktrees', 'Remove-SourceDeliverySupersededGateStands', 'Remove-SourceDeliveryInterruptedTestArtifacts')) {
+        foreach ($step in @('Remove-SourceDeliveryStaleOperationWorktrees', 'Remove-SourceDeliverySupersededGateStands')) {
             Should -Invoke $step -Times 1 -Exactly -ParameterFilter {$MinimumAgeHours -eq 168}
         }
+        Should -Invoke Remove-SourceDeliveryInterruptedTestArtifacts -Times 1 -Exactly -ParameterFilter {$MinimumAgeHours -eq 1}
     }
 
     It 'resolves develop and master cleanup executors from their exact remote channel commits' {

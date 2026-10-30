@@ -137,13 +137,14 @@ does not move stable `master`; only `PromoteRelease` or the explicit command bel
 
 Every publication first retries accumulated cleanup debt and then performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
-failed-registration candidates and interrupted stable supervisors
-(`itl-source-register-*`, `itl-source-supervisor-*`), this clone's superseded
-gate stands with their sibling worktrees, and test artifacts that a killed
-Pester shard left in temp (all kept seven days after publication cleanup, or
-until an explicit `-Action Cleanup`; a leftover worktree directory only when no
-repository owns it, a stand only when its `.git/itl/gate-stand-owner.json`
-names this clone),
+failed-registration candidates (`itl-source-register-*`; the newest two within
+seven days stay for diagnosis, none after an explicit `-Action Cleanup`; a
+leftover directory only when no repository owns it), stable supervisors left by
+an interrupted operation (`itl-source-supervisor-*`) and test artifacts a killed
+Pester shard left in temp (both once idle for an hour), this clone's superseded
+gate stands with their sibling worktrees (the newest one within seven days
+stays, none after an explicit `-Action Cleanup`; only a stand whose
+`.git/itl/gate-stand-owner.json` names this clone),
 stale source-delivery test fixtures, disposable fresh/release-seed projects and
 closed seed archives, stale 1C launcher registrations, and managed launcher
 backups in both current and legacy timestamp formats. Configured reusable stands,

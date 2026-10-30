@@ -175,33 +175,28 @@ function Remove-SourceDeliveryStaleCandidateWorktrees {
 }
 
 function Remove-SourceDeliveryStaleOperationWorktrees {
-    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168)
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168, [int]$KeepRegistrations = 2, [int]$InterruptedAgeHours = 1)
 
     # A failed RegisterChange keeps its candidate only for diagnosis; a repeated
-    # registration always creates a new one. A stable supervisor worktree is
-    # removed by its own operation and survives only an interrupted one. Expired
-    # ones are removed with their exact branch (a supervisor is detached), and a
-    # leftover directory only when no repository still owns it.
+    # registration always creates a new one, so only the newest unexpired ones
+    # stay. A stable supervisor worktree is removed by its own operation; one
+    # left by an interrupted operation has no diagnostic value and goes once it
+    # is idle past the creation window. Removal takes the exact branch (a
+    # supervisor is detached), or a leftover directory no repository owns.
     $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
     $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
     $registered = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $script:Root)) {
         $registered[[IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')] = [string]$worktree.branch
     }
+    $owned = [Collections.Generic.List[object]]::new()
     foreach ($directory in @(Get-ChildItem -LiteralPath $temp -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '^itl-source-(register|supervisor)-[0-9a-f]{32}$' })) {
         $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
         $shortBranch = if ($directory.Name -like 'itl-source-register-*') { 'itl/register-' + $directory.Name.Substring('itl-source-register-'.Length) } else { '' }
-        if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
-            (Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
-        if ($registered.ContainsKey($path)) {
+        if ((Test-SourceDeliveryPathInUse -Path $path) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
+        $isRegistered = $registered.ContainsKey($path)
+        if ($isRegistered) {
             if ($registered[$path] -cne $(if ($shortBranch) { "refs/heads/$shortBranch" } else { '' })) { $retained++; continue }
-            $bytes = Get-SourceDeliveryTreeBytes -Path $path
-            $remove = Invoke-DeliveryGit -Arguments @('worktree', 'remove', '--force', '--force', '--', $path) -AllowFailure
-            if ($remove.exitCode -ne 0) { throw "Unable to remove expired operation worktree '$path': $($remove.stderr.Trim())" }
-            if ($shortBranch) {
-                $delete = Invoke-DeliveryGit -Arguments @('branch', '-D', '--', $shortBranch) -AllowFailure
-                if ($delete.exitCode -ne 0) { throw "Removed expired operation worktree '$path', but could not delete '$shortBranch': $($delete.stderr.Trim())" }
-            }
         } else {
             # Another clone's worktree points its .git file at a live gitdir;
             # a directory .git is a repository. Neither belongs to this cleanup.
@@ -211,7 +206,24 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
                 $pointer = [IO.File]::ReadAllText($dotGit).Trim()
                 if ($pointer -notmatch '^gitdir:\s*(.+)$' -or (Test-Path -LiteralPath $matches[1].Trim())) { $retained++; continue }
             }
-            $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        }
+        $owned.Add([pscustomobject]@{ directory = $directory; path = $path; shortBranch = $shortBranch; registered = $isRegistered }) | Out-Null
+    }
+    $keptRegistrations = @($owned | Where-Object { $_.shortBranch -and (-not (Test-SourceDeliveryArtifactExpired -Item $_.directory -MinimumAgeHours $MinimumAgeHours)) } |
+        Sort-Object { $_.directory.LastWriteTimeUtc } -Descending | Select-Object -First ([Math]::Max(0, $KeepRegistrations)) | ForEach-Object { $_.path })
+    foreach ($entry in $owned) {
+        if ($entry.shortBranch) { if ($keptRegistrations -contains $entry.path) { $retained++; continue } }
+        elseif (-not (Test-SourceDeliveryArtifactExpired -Item $entry.directory -MinimumAgeHours ([Math]::Max(1, $InterruptedAgeHours)))) { $retained++; continue }
+        $path = $entry.path; $shortBranch = $entry.shortBranch
+        $bytes = Get-SourceDeliveryTreeBytes -Path $path
+        if ($entry.registered) {
+            $remove = Invoke-DeliveryGit -Arguments @('worktree', 'remove', '--force', '--force', '--', $path) -AllowFailure
+            if ($remove.exitCode -ne 0) { throw "Unable to remove expired operation worktree '$path': $($remove.stderr.Trim())" }
+            if ($shortBranch) {
+                $delete = Invoke-DeliveryGit -Arguments @('branch', '-D', '--', $shortBranch) -AllowFailure
+                if ($delete.exitCode -ne 0) { throw "Removed expired operation worktree '$path', but could not delete '$shortBranch': $($delete.stderr.Trim())" }
+            }
+        } else {
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
         }
         $freedBytes += $bytes; $removed.Add([pscustomobject]@{ path = $path; bytes = $bytes }) | Out-Null
@@ -220,11 +232,12 @@ function Remove-SourceDeliveryStaleOperationWorktrees {
 }
 
 function Remove-SourceDeliverySupersededGateStands {
-    param([int]$MinimumAgeHours = 168)
+    param([int]$MinimumAgeHours = 168, [int]$KeepSuperseded = 1)
 
     # A fixture or preparation-recipe change derives a new stand and keeps the
-    # old one for diagnosis. Remove this clone's expired superseded stands with
-    # their sibling worktrees and lock; another clone's or an unowned stand stays.
+    # old one for diagnosis. Keep only this clone's newest unexpired superseded
+    # stand; remove the rest with their sibling worktrees and lock. Another
+    # clone's or an unowned stand stays.
     $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
     $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
     $common = [IO.Path]::GetFullPath((Get-DeliveryCommonGitDirectory)).TrimEnd('\', '/')
@@ -233,11 +246,17 @@ function Remove-SourceDeliverySupersededGateStands {
     $parent = Split-Path -Parent $current
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return [pscustomobject]@{ removedStands = 0; retained = 0; freedBytes = 0; entries = @() } }
     $directories = @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction Stop)
-    foreach ($directory in @($directories | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git/itl/gate-stand-owner.json') -PathType Leaf })) {
+    $superseded = @($directories | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git/itl/gate-stand-owner.json') -PathType Leaf } | Where-Object {
+        $candidate = [IO.Path]::GetFullPath($_.FullName).TrimEnd('\')
+        $candidate -ine $current -and (Get-DeliveryGateStandOwner -StandRoot $candidate) -ieq $common
+    })
+    $kept = @($superseded | Where-Object { -not (Test-SourceDeliveryArtifactExpired -Item $_ -MinimumAgeHours $MinimumAgeHours) } |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([Math]::Max(0, $KeepSuperseded)) | ForEach-Object { $_.FullName })
+    $retained += @($directories | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git/itl/gate-stand-owner.json') -PathType Leaf }).Count - $superseded.Count
+    foreach ($directory in $superseded) {
         $root = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
-        if ($root -ieq $current -or (Get-DeliveryGateStandOwner -StandRoot $root) -ine $common) { $retained++; continue }
         $paths = @($root) + @($directories | Where-Object { $_.FullName.StartsWith($root + '-', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [IO.Path]::GetFullPath($_.FullName).TrimEnd('\') })
-        if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
+        if ($kept -contains $directory.FullName -or
             @($paths | Where-Object { (Test-SourceDeliveryPathInUse -Path $_) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $_) }).Count -gt 0) { $retained++; continue }
         $bytes = [int64]0
         foreach ($path in $paths) { $bytes += Get-SourceDeliveryTreeBytes -Path $path }
@@ -250,9 +269,11 @@ function Remove-SourceDeliverySupersededGateStands {
 }
 
 function Remove-SourceDeliveryInterruptedTestArtifacts {
-    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 168)
+    param([string]$TempRoot = ([IO.Path]::GetTempPath()), [int]$MinimumAgeHours = 1)
 
     # Tests remove these in finally; only a killed shard leaves them behind.
+    # A running test's directory is not visible in any command line, so the
+    # age window, longer than any shard, is what protects it.
     $removed = [Collections.Generic.List[object]]::new(); $freedBytes = [int64]0; $retained = 0
     $temp = [IO.Path]::GetFullPath($TempRoot).TrimEnd('\')
     $directoryPattern = '^(itl-(ondemand-(vanessa-profile|owner|shared-binary)|resume-old-status|merge-resume)-[0-9a-f]{32}|itl deadline .+ [0-9a-f]{32})$'
@@ -398,7 +419,7 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
         [pscustomobject]@{ name = 'sourceCandidates'; action = { Remove-SourceDeliveryStaleCandidateWorktrees -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'operationWorktrees'; action = { Remove-SourceDeliveryStaleOperationWorktrees -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'supersededGateStands'; action = { Remove-SourceDeliverySupersededGateStands -MinimumAgeHours $minimumAgeHours } },
-        [pscustomobject]@{ name = 'interruptedTestArtifacts'; action = { Remove-SourceDeliveryInterruptedTestArtifacts -MinimumAgeHours $minimumAgeHours } },
+        [pscustomobject]@{ name = 'interruptedTestArtifacts'; action = { Remove-SourceDeliveryInterruptedTestArtifacts -MinimumAgeHours 1 } },
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },
         [pscustomobject]@{ name = 'vanessaBuildWork'; action = { Remove-SourceDeliveryStaleVanessaBuildWork -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'releaseRecoveryArtifacts'; action = { Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -MinimumAgeHours $minimumAgeHours } },
