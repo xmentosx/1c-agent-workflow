@@ -15,9 +15,9 @@ function Archive-VerificationChangeForReset {
     param([Parameter(Mandatory=$true)][object]$State)
     $path=Get-VerificationChangePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
-    # Only the completed reset owner retires a task; ordinary planning cannot.
-    $archive=[string](Get-StateValue $State 'resetArchivePath' '')
-    if (-not $archive -or -not (Test-Path -LiteralPath $archive -PathType Container)) { throw 'VERIFICATION_CHANGE_RESET_ARCHIVE_MISSING: resume the original reset owner; preserve current acceptance.' }
+    # Only the reset owner, after its exact-master commit, retires a task; ordinary planning cannot.
+    $newHead=[string](Get-StateValue $State 'resetNewHead' '')
+    if ([string](Get-StateValue $State 'resetPhase' '') -cne 'runtime-initializing' -or $newHead -cnotmatch '^[0-9a-f]{40}$') { throw 'VERIFICATION_CHANGE_RESET_OWNER_REQUIRED: resume the original reset owner; preserve current acceptance.' }
     $saved=Join-Path (Get-VerificationSelectionStateRoot) ('changes/reset-' + [string]$State.resetNewHead + '.json')
     Write-Utf8TextAtomic -Path $saved -Value (Read-Utf8Text -Path $path)
     if ((Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) { throw 'VERIFICATION_CHANGE_RESET_ARCHIVE_CHANGED: preserve current acceptance and resume reset.' }

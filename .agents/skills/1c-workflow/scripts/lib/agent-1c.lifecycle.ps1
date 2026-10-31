@@ -7295,8 +7295,8 @@ function Assert-DevelopmentBranchWorktreeContext {
         Assert-CurrentProjectRootMatchesDevBranchState -State $State -Operation $Operation
         $resetStatus = [string](Get-StateValue -State $State -Name "resetStatus" -Default "")
         if ($resetStatus -eq "resetting" -and $Operation -ne "reset-dev-branch") {
-            $archivePath = [string](Get-StateValue -State $State -Name "resetArchivePath" -Default "")
-            throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Archive: $archivePath"
+            $oldHead = [string](Get-StateValue -State $State -Name "resetOldHead" -Default "")
+            throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Previous HEAD: $oldHead"
         }
         $pendingBranchSyncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
         $pendingGroup = [string](Get-StateValue -State $State -Name 'pendingBranchSourceGroupId' -Default '')
@@ -19409,22 +19409,6 @@ function Save-DevBranchCheckpoint {
     return $checkpointCommit
 }
 
-function Get-DevBranchArchiveRoot {
-    $root = Join-Path (Get-MainWorktreePath) ".agent-1c\branch-archives"
-    return (Resolve-Agent1cFullPath -Path $root)
-}
-
-function Assert-PathUnderDevBranchArchiveRoot {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $root = (Get-DevBranchArchiveRoot).TrimEnd("\", "/")
-    $resolved = (Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/")
-    if (-not $resolved.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
-        throw "DEV_BRANCH_ARCHIVE_PATH_OUTSIDE_ROOT: $resolved"
-    }
-    return $resolved
-}
-
 function Get-DevBranchResetMasterSource {
     $mainRoot = Get-MainWorktreePath
     return Invoke-InProjectContext -Root $mainRoot -ScriptBlock {
@@ -19439,107 +19423,6 @@ function Get-DevBranchResetMasterSource {
             configTreeObjectId = [string]$source.treeObjectId
         }
     }
-}
-
-function Assert-DevBranchResetArchiveReady {
-    param(
-        [Parameter(Mandatory = $true)][string]$ArchivePath,
-        [Parameter(Mandatory = $true)][string]$OldHead,
-        [Parameter(Mandatory = $true)][string]$MasterCommit
-    )
-
-    $finalPath = Assert-PathUnderDevBranchArchiveRoot -Path $ArchivePath
-    $manifestPath = Join-Path $finalPath "manifest.json"
-    $verifiedManifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
-    if ([int]$verifiedManifest.schemaVersion -ne 1 -or [string]$verifiedManifest.status -ne "ready" -or
-        [string]$verifiedManifest.oldHead -cne $OldHead -or [string]$verifiedManifest.masterCommit -cne $MasterCommit) {
-        throw "DEV_BRANCH_ARCHIVE_MANIFEST_INVALID: $manifestPath"
-    }
-    $verifiedDtPath = Join-Path $finalPath ([string]$verifiedManifest.dt.path)
-    $verifiedDtHash = (Get-FileHash -LiteralPath $verifiedDtPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($verifiedDtHash -cne [string]$verifiedManifest.dt.sha256 -or
-        (Get-Item -LiteralPath $verifiedDtPath).Length -ne [long]$verifiedManifest.dt.bytes) {
-        throw "DEV_BRANCH_ARCHIVE_DT_VERIFY_FAILED: $verifiedDtPath"
-    }
-    foreach ($record in @($verifiedManifest.files)) {
-        $verifiedFilePath = Resolve-Agent1cFullPath -Path (Join-Path (Join-Path $finalPath "files") ([string]$record.path))
-        if (-not (Test-Path -LiteralPath $verifiedFilePath -PathType Leaf) -or
-            (Get-Item -LiteralPath $verifiedFilePath).Length -ne [long]$record.bytes -or
-            (Get-FileHash -LiteralPath $verifiedFilePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$record.sha256) {
-            throw "DEV_BRANCH_ARCHIVE_FILE_VERIFY_FAILED: $verifiedFilePath"
-        }
-    }
-    return [pscustomobject]@{ archivePath = $finalPath; dtPath = $verifiedDtPath; manifestPath = $manifestPath }
-}
-
-function New-DevBranchResetArchive {
-    param(
-        [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$MasterCommit,
-        [Parameter(Mandatory = $true)][string]$OldHead,
-        [Parameter(Mandatory = $true)][string]$ArchivePath
-    )
-
-    $finalPath = Assert-PathUnderDevBranchArchiveRoot -Path $ArchivePath
-    $partialPath = Assert-PathUnderDevBranchArchiveRoot -Path ($finalPath + ".partial")
-    if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $partialPath -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $finalPath -PathType Container -ErrorAction SilentlyContinue) {
-        return (Assert-DevBranchResetArchiveReady -ArchivePath $finalPath -OldHead $OldHead -MasterCommit $MasterCommit)
-    }
-    New-Item -ItemType Directory -Force -Path (Join-Path $partialPath "files") | Out-Null
-
-    Set-RunStage -Stage "reset.archive-dt" -Detail "Dumping the current development infobase before reset."
-    $dtPath = Join-Path $partialPath "infobase.dt"
-    Invoke-Designer -InfoBasePath ([string]$State.devBranchInfoBasePath) -InfoBaseKind ([string]$State.infoBaseKind) -DesignerArgs @("/DumpIB", $dtPath) | Out-Null
-    if (-not (Test-Path -LiteralPath $dtPath -PathType Leaf) -or (Get-Item -LiteralPath $dtPath).Length -le 0) {
-        throw "DEV_BRANCH_ARCHIVE_DT_EMPTY: $dtPath"
-    }
-
-    Set-RunStage -Stage "reset.archive-files" -Detail "Archiving the non-configuration delta against local master."
-    $changedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMRTUXBD", $MasterCommit, "--"))
-    $deletedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", "--diff-filter=D", $MasterCommit, "--"))
-    $configPaths = @($changedPaths | Where-Object { ([string]$_).Replace("\", "/") -match '^src/(?:cf|cfe)(?:/|$)' })
-    $deletedSet = New-Object "System.Collections.Generic.HashSet[string]" ([StringComparer]::Ordinal)
-    foreach ($path in $deletedPaths) { [void]$deletedSet.Add(([string]$path).Replace("\", "/")) }
-    $fileRecords = @()
-    foreach ($repoPath in @($changedPaths | Sort-Object -Unique)) {
-        $normalized = ([string]$repoPath).Replace("\", "/")
-        if ($normalized -match '^src/(?:cf|cfe)(?:/|$)' -or $deletedSet.Contains($normalized)) { continue }
-        $sourcePath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $repoPath)
-        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { continue }
-        $destination = Resolve-Agent1cFullPath -Path (Join-Path (Join-Path $partialPath "files") $repoPath)
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-        Copy-Item -LiteralPath $sourcePath -Destination $destination -Force
-        $fileRecords += [ordered]@{
-            path = $normalized
-            bytes = (Get-Item -LiteralPath $destination).Length
-            sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-    }
-
-    $manifest = [ordered]@{
-        schemaVersion = 1
-        status = "ready"
-        createdAt = (Get-Date).ToString("o")
-        branch = [string]$State.devBranch
-        oldHead = $OldHead
-        oldTree = (Get-GitOutput @("rev-parse", "$OldHead^{tree}")).Trim()
-        masterCommit = $MasterCommit
-        masterTree = (Get-GitOutput @("rev-parse", "$MasterCommit^{tree}")).Trim()
-        dt = [ordered]@{
-            path = "infobase.dt"
-            bytes = (Get-Item -LiteralPath $dtPath).Length
-            sha256 = (Get-FileHash -LiteralPath $dtPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-        files = @($fileRecords)
-        deletedPaths = @($deletedPaths | ForEach-Object { ([string]$_).Replace("\", "/") } | Where-Object { $_ -notmatch '^src/(?:cf|cfe)(?:/|$)' } | Sort-Object -Unique)
-        excludedConfigurationPaths = @($configPaths | ForEach-Object { ([string]$_).Replace("\", "/") } | Sort-Object -Unique)
-    }
-    Write-Utf8Text -Path (Join-Path $partialPath "manifest.json") -Value (($manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
-    Move-Item -LiteralPath $partialPath -Destination $finalPath
-    return (Assert-DevBranchResetArchiveReady -ArchivePath $finalPath -OldHead $OldHead -MasterCommit $MasterCommit)
 }
 
 function Set-DevBranchTreeToMasterCommit {
@@ -19729,22 +19612,24 @@ function Assert-DevBranchResetResumeInputs {
         }
     }
     $phase = [string](Get-StateValue -State $State -Name 'resetPhase' -Default '')
-    if ($phase -notin @('archive-pending', 'archive-complete', 'git-reset-complete', 'runtime-initializing')) {
+    if ($phase -notin @(Get-DevBranchResetGitPendingPhases) + @('git-reset-complete', 'runtime-initializing')) {
         throw "RESET_DEV_BRANCH_PHASE_INVALID: $phase"
     }
     Assert-CleanGit
     $head = Get-CurrentCommit
     $expectedHead = if ($phase -in @('git-reset-complete', 'runtime-initializing')) { [string]$State.resetNewHead } else { [string]$State.resetOldHead }
     # A crash can fall between the exact-master commit and saving its phase.
-    $committedBeforePhase = $phase -eq 'archive-complete' -and
+    $committedBeforePhase = $phase -in @(Get-DevBranchResetGitPendingPhases) -and
         (Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim() -ceq [string]$State.resetMasterTree
     if ($head -cne $expectedHead -and -not $committedBeforePhase) {
         throw 'RESET_DEV_BRANCH_HEAD_CHANGED: preserve changes made after the interrupted reset.'
     }
-    if ($phase -ne 'archive-pending') {
-        Assert-DevBranchResetArchiveReady -ArchivePath ([string]$State.resetArchivePath) `
-            -OldHead ([string]$State.resetOldHead) -MasterCommit ([string]$State.resetMasterCommit) | Out-Null
-    }
+}
+
+function Get-DevBranchResetGitPendingPhases {
+    # Older workflows journaled archive phases before the Git step. The old HEAD
+    # stays in branch history, so an interrupted reset resumes at the Git step.
+    return @('checkpointed', 'archive-pending', 'archive-complete')
 }
 
 function Assert-DevBranchResetPendingRefresh {
@@ -19818,15 +19703,15 @@ function Reset-DevBranch {
         if ($resetStatus -ne "resetting") {
             $masterSource = $inputs.masterSource
             $oldHead = Get-CurrentCommit
-            $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
             $memoryCycleUpdate=Get-ItlMemoryCycleUpdates $state reserve
             $resetStart=@{
-                resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
+                resetStatus = "resetting"; resetPhase = "checkpointed"; resetStartedAt = (Get-Date).ToString("o")
                 resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
                 resetMasterFingerprint = [string]$masterSource.fingerprint
                 resetSeedIdentity = $inputs.seedIdentity
                 resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
-                resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
+                resetArchivePath = ""; resetArchiveDtPath = ""; resetArchiveManifestPath = ""; resetNewHead = ""
+                resetLeftoverCleanup = $null
                 resetDiscardedRefreshOperation = $discardedRefresh
             }
             foreach($field in $memoryCycleUpdate.Keys){$resetStart[$field]=$memoryCycleUpdate[$field]}
@@ -19840,14 +19725,8 @@ function Reset-DevBranch {
         if (-not (Test-GitCommitExists $masterCommit)) {
             throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
         }
-        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
-        if ($phase -eq "archive-pending") {
-            $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
-            Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
-            $state = Read-DevBranchState -Name $DevBranchName
-            $phase = "archive-complete"
-        }
-        if ($phase -eq "archive-complete") {
+        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "checkpointed")
+        if ($phase -in @(Get-DevBranchResetGitPendingPhases)) {
             Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
             $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
             if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
@@ -19916,7 +19795,10 @@ function Reset-DevBranch {
             Sync-DevBranchContextToDotEnv -State $state
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
-            $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            Set-RunStage -Stage "reset.leftovers" -Detail "Removing the previous task's runtime leftovers from this branch."
+            $leftovers = Invoke-ItlBranchResetLeftoverCleanup -ProjectRoot $script:ProjectRoot -MainRoot (Get-MainWorktreePath) `
+                -SafeBranchName ([string]$state.safeDevBranchName) -StartedAt ([datetime](Get-StateValue -State $state -Name 'resetStartedAt' -Default ([datetime]::UtcNow.ToString('o'))))
+            $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o"); resetLeftoverCleanup = $leftovers }
             $completion['resultTransferBaseline'] = New-DevBranchResultTransferBaseline -State $state -Operation 'reset-dev-branch' -BaseCommit $masterCommit -CompletedHead ([string]$state.resetNewHead) -CompletedAt $completion.resetCompletedAt
             Archive-VerificationChangeForReset -State $state
             Add-PendingDevBranchMergeClearUpdates -Updates $completion
@@ -19932,8 +19814,6 @@ function Reset-DevBranch {
         $completed = Read-DevBranchState -Name $DevBranchName
         $report = [System.Collections.Generic.List[string]]::new()
         $report.Add("## Ветка сброшена для новой доработки")
-        Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
-        Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
         Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
         Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
         Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
@@ -19941,8 +19821,13 @@ function Reset-DevBranch {
         if ($completed.resetDiscardedRefreshOperation) {
             Add-RunUserReportLine -Lines $report -Label "Отброшен сбросом refresh" -Value ([string]$completed.resetDiscardedRefreshOperation)
         }
+        $cleanup = Get-StateValue -State $completed -Name 'resetLeftoverCleanup' -Default $null
+        if ($null -ne $cleanup) {
+            Add-RunUserReportLine -Lines $report -Label "Удалено остатков прошлой задачи" -Value ("{0} ({1:N1} МБ)" -f [int]$cleanup.removedCount, ([double]$cleanup.removedBytes / 1MB))
+            foreach ($left in @($cleanup.leftovers)) { Add-RunUserReportLine -Lines $report -Label "Не удалено" -Value ([string]$left) }
+        }
         $report.Add("")
-        $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
+        $report.Add("Прежняя работа ветки сохранена в истории Git до коммита «Предыдущий HEAD»; архив DT не создаётся.")
         Write-AndSetRunUserReport -Lines $report
     } finally {
         if ($null -ne $seedLease) { $seedLease.Dispose() }

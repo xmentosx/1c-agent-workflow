@@ -5,10 +5,38 @@
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
+    . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1')
     . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.branch-deletion.ps1')
+
+    function New-TestRetentionRepository {
+        param([string]$Path)
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+        & git -C $Path init --quiet
+        & git -C $Path config user.name 'ITL Test'
+        & git -C $Path config user.email 'itl@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $Path 'README.md'), 'fixture', [Text.UTF8Encoding]::new($false))
+        & git -C $Path add README.md
+        & git -C $Path commit --quiet -m 'fixture'
+    }
+
+    function Set-TestTreeAge {
+        # Every directory below counts as a write, so age the whole tree.
+        param([string]$Path, [double]$Days)
+        $time = [datetime]::UtcNow.AddDays(-$Days)
+        foreach ($item in @(Get-ChildItem -LiteralPath $Path -Recurse -Force) + @(Get-Item -LiteralPath $Path -Force)) {
+            if ($item.FullName -notmatch '[\\/]\.git([\\/]|$)') { $item.LastWriteTimeUtc = $time }
+        }
+    }
+
+    function New-TestAgedTree {
+        param([string]$Path, [double]$Days, [string]$FileName = 'x.txt')
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+        [IO.File]::WriteAllText((Join-Path $Path $FileName), 'leftover', [Text.UTF8Encoding]::new($false))
+        Set-TestTreeAge -Path $Path -Days $Days
+    }
 }
 
 Describe 'ITL artifact retention' {
@@ -119,6 +147,8 @@ Describe 'ITL artifact retention' {
         Mock Get-ItlRunArtifactCandidates { return @() }
         Mock Get-ItlAuxiliaryArchiveArtifactCandidates { return @() }
         Mock Get-ItlArchiveArtifactCandidates { return @() }
+        Mock Get-ItlAgentTaskArtifactCandidates { return @() }
+        Mock Get-ItlBranchDumpArtifactCandidates { return @() }
         $plan = Get-ItlArtifactCleanupPlan -ProjectRoot $root -MainRoot $root
         @($plan.entries | Where-Object delete).Count | Should -Be 1
         @($plan.entries | Where-Object delete)[0].path | Should -Be $candidates[1].path
@@ -204,9 +234,139 @@ Describe 'ITL artifact retention' {
         Mock Get-ItlRunArtifactCandidates { return $script:runCandidates }
         Mock Get-ItlAuxiliaryArchiveArtifactCandidates { return @() }
         Mock Get-ItlArchiveArtifactCandidates { return @() }
+        Mock Get-ItlAgentTaskArtifactCandidates { return @() }
+        Mock Get-ItlBranchDumpArtifactCandidates { return @() }
         $plan = Get-ItlArtifactCleanupPlan -ProjectRoot $root -MainRoot $root
         @($plan.entries | Where-Object delete).Count | Should -Be 1
         @($plan.entries | Where-Object delete)[0].path | Should -Be $runs[4].path
+    }
+
+    It 'expires idle agent task folders beyond the newest three and keeps owned, tracked and referenced ones' {
+        $root = Join-Path $TestDrive 'Папки задач агентов с пробелом'
+        New-TestRetentionRepository -Path $root
+        foreach ($name in @('новая 1', 'новая 2', 'новая 3')) { New-TestAgedTree -Path (Join-Path $root "build/$name") -Days 1 }
+        New-TestAgedTree -Path (Join-Path $root 'build/старая a') -Days 10
+        New-TestAgedTree -Path (Join-Path $root 'build/старая b') -Days 20
+        New-TestAgedTree -Path (Join-Path $root 'build/result') -Days 30
+        New-TestAgedTree -Path (Join-Path $root 'build/tracked') -Days 30
+        & git -C $root add -- 'build/tracked' 2>$null
+        & git -C $root commit --quiet -m 'tracked build folder'
+        New-TestAgedTree -Path (Join-Path $root 'build/test-results/давний 1') -Days 15
+        New-TestAgedTree -Path (Join-Path $root 'build/test-results/давний 2') -Days 25
+        New-TestAgedTree -Path (Join-Path $root 'build/test-results/vanessa') -Days 30
+        New-TestAgedTree -Path (Join-Path $root 'build/agent-artifacts/задача со ссылкой') -Days 30
+        New-TestAgedTree -Path (Join-Path $root '.agent-1c/runs/ai-rules-migration-1') -Days 30
+        New-TestAgedTree -Path (Join-Path $root '.agent-1c/runs/helper run') -Days 30
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/runs/helper run/status.json'), '{"status":"succeeded"}', [Text.UTF8Encoding]::new($false))
+        $script:referenced = Join-Path $root 'build/agent-artifacts/задача со ссылкой/x.txt'
+        Mock Get-ConfigValue { param($Path, $Default) $Default }
+        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7; diagnosticDays = 7 } }
+        Mock Get-ItlArtifactProtectedPaths { return @() }
+        Mock Get-ItlDiagnosticRetainedPaths { return @($script:referenced) }
+        foreach ($name in @('Get-ItlResultArtifactCandidates', 'Get-ItlRunArtifactCandidates', 'Get-ItlAuxiliaryArchiveArtifactCandidates', 'Get-ItlArchiveArtifactCandidates')) { Mock $name { return @() } }
+        $plan = Get-ItlArtifactCleanupPlan -ProjectRoot $root -MainRoot $root
+        $agent = @($plan.entries | Where-Object category -eq 'agent-task')
+        @($agent | Where-Object delete | ForEach-Object { Split-Path -Leaf $_.path } | Sort-Object) | Should -Be @('старая a', 'старая b')
+        @($agent | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Not -Contain 'result'
+        @($agent | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Not -Contain 'tracked'
+        @($agent | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Not -Contain 'vanessa'
+        @($agent | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Not -Contain 'helper run'
+        @($agent | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Not -Contain 'ai-rules-migration-1'
+        @($agent | Where-Object { $_.group -eq 'test-results' -and -not $_.delete }).Count | Should -Be 2
+        ($agent | Where-Object { (Split-Path -Leaf $_.path) -eq 'задача со ссылкой' }).reason | Should -Be 'referenced'
+        ($agent | Where-Object { (Split-Path -Leaf $_.path) -eq 'старая b' }).sizeBytes | Should -BeGreaterThan 0
+        Mock Get-ItlDiagnosticRetainedPaths { throw 'unreadable receipt store' }
+        $plan = Get-ItlArtifactCleanupPlan -ProjectRoot $root -MainRoot $root
+        @($plan.entries | Where-Object { $_.category -eq 'agent-task' -and $_.delete }).Count | Should -Be 0
+    }
+
+    It 'treats only a running record with a passed deadline and a dead process as abandoned' {
+        $exited = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-Command', 'exit 0' -WindowStyle Hidden -PassThru
+        $exited.WaitForExit()
+        $past = [datetime]::UtcNow.AddMinutes(-5).ToString('o')
+        $future = [datetime]::UtcNow.AddHours(1).ToString('o')
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'running'; pid = $exited.Id; operationDeadlineUtc = $past }) | Should -BeTrue
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'running'; pid = $exited.Id; operationDeadlineUtc = [datetime]::UtcNow.AddMinutes(-5) }) | Should -BeTrue
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'running'; pid = $PID; operationDeadlineUtc = $past }) | Should -BeFalse
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'running'; pid = $exited.Id; operationDeadlineUtc = $future }) | Should -BeFalse
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'running'; pid = 0; operationDeadlineUtc = $past }) | Should -BeFalse
+        Test-ItlRunStatusAbandoned -Status ([pscustomobject]@{ status = 'succeeded'; pid = $exited.Id; operationDeadlineUtc = $past }) | Should -BeFalse
+        $root = Join-Path $TestDrive 'Брошенные прогоны'
+        foreach ($run in @(@{ name = 'abandoned'; id = $exited.Id }, @{ name = 'live'; id = $PID })) {
+            $folder = Join-Path $root ".agent-1c/runs/$($run.name)"
+            New-Item -ItemType Directory -Force -Path $folder | Out-Null
+            [IO.File]::WriteAllText((Join-Path $folder 'status.json'), ([ordered]@{ status = 'running'; pid = $run.id; operationDeadlineUtc = $past } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        }
+        $script:runRoot = $root
+        Mock Resolve-ProjectPath { param($Path) Join-Path $script:runRoot $Path }
+        Mock Get-VanessaReportsPath { 'build/test-results/vanessa' }
+        Mock Get-YAxUnitReportsPath { 'build/test-results/yaxunit' }
+        @(Get-ItlRunArtifactCandidates -ProjectRoot $root | ForEach-Object { Split-Path -Leaf $_.path }) | Should -Be @('abandoned')
+    }
+
+    It 'expires an interrupted dump transaction after an hour without writes' {
+        $root = Join-Path $TestDrive 'Выгрузка ветки'
+        $old = Join-Path $root '.agent-1c/branch-dumps/20260818-185355-626-c884e1b6931e43cb843c6127452a0562'
+        $fresh = Join-Path $root '.agent-1c/branch-dumps/20261031-100000-000-d884e1b6931e43cb843c6127452a0562'
+        New-TestAgedTree -Path $old -Days 0.1
+        New-TestAgedTree -Path $fresh -Days 0
+        New-TestAgedTree -Path (Join-Path $root '.agent-1c/branch-dumps/unknown') -Days 10
+        Mock Get-ItlArtifactRetentionPolicy { [pscustomobject]@{ enabled = $true; resultKeepCount = 3; archiveKeepCount = 2; runKeepCount = 3; runtimeDays = 7; diagnosticDays = 7 } }
+        Mock Get-ItlArtifactProtectedPaths { return @() }
+        foreach ($name in @('Get-ItlResultArtifactCandidates', 'Get-ItlRunArtifactCandidates', 'Get-ItlAuxiliaryArchiveArtifactCandidates', 'Get-ItlArchiveArtifactCandidates', 'Get-ItlAgentTaskArtifactCandidates')) { Mock $name { return @() } }
+        $dumps = @((Get-ItlArtifactCleanupPlan -ProjectRoot $root -MainRoot $root).entries | Where-Object category -eq 'branch-dump')
+        @($dumps | Where-Object delete).path | Should -Be @($old)
+        ($dumps | Where-Object { $_.path -eq $fresh }).reason | Should -Be 'within-age'
+        @($dumps).Count | Should -Be 2
+    }
+
+    It 'removes only the previous task leftovers when reset recreates the branch' {
+        $root = Join-Path $TestDrive 'Ветка сброса с пробелом'
+        $main = Join-Path $TestDrive 'Основная база'
+        New-TestRetentionRepository -Path $root
+        $removed = @('build/agent-artifacts/задача/tmp/a.txt', 'build/test-results/прогон/r.txt', 'build/старая задача/x.txt',
+            'build/event-log/export-20261030-101010-101/EventLogExport.json', '.agent-1c/runs/old run/status.json', '.agent-1c/tmp/old/x.txt',
+            '.agent-1c/branch-dumps/t/x.txt', '.agent-1c/fork-history/f/x.txt', '.agent-1c/snapshots/gate6-1.dt', '.agent-1c/snapshots/gate6-1.dt.recovery.json', 'logs/1c/x.log')
+        $kept = @('build/test-results/tooling-probe/keep.txt', 'build/test-results/release-e2e/keep.json', 'build/result/r.cf', 'build/tracked/x.txt',
+            '.agent-1c/runs/auto-update/x.txt', '.agent-1c/runs/ai-rules-migration-1/x.txt', '.agent-1c/tmp/tooling-probe/x.txt',
+            '.agent-1c/snapshots/workflow-update/x.txt', '.agent-1c/snapshots/workflow-update-rollout.json', 'handoffs/заметка.md',
+            'build/test-results/доказательство/proof.json')
+        foreach ($relative in $removed + $kept) { New-TestAgedTree -Path (Split-Path -Parent (Join-Path $root $relative)) -Days 1 -FileName (Split-Path -Leaf $relative) }
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/runs/old run/status.json'), '{"status":"succeeded"}', [Text.UTF8Encoding]::new($false))
+        & git -C $root add -f -- 'build/tracked' 2>$null
+        & git -C $root commit --quiet -m 'tracked build folder'
+        $live = Join-Path $root '.agent-1c/runs/live run'
+        New-Item -ItemType Directory -Force -Path $live | Out-Null
+        [IO.File]::WriteAllText((Join-Path $live 'status.json'), ([ordered]@{ status = 'running'; pid = $PID; operationDeadlineUtc = [datetime]::UtcNow.AddHours(1).ToString('o') } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $legacyArchive = Join-Path $main '.agent-1c/branch-archives/ветка/20261009T141019349Z-3570c292'
+        $otherArchive = Join-Path $main '.agent-1c/branch-archives/другая/20261009T141019349Z-3570c292'
+        New-TestAgedTree -Path $legacyArchive -Days 20
+        New-TestAgedTree -Path $otherArchive -Days 20
+        $busy = Join-Path $root 'build/test-results/занят'
+        New-TestAgedTree -Path $busy -Days 1
+        # Only items untouched since reset started belong to the previous task.
+        Set-TestTreeAge -Path $root -Days 1
+        Set-TestTreeAge -Path $main -Days 20
+        $start = [datetime]::UtcNow.AddMinutes(-1)
+        New-TestAgedTree -Path (Join-Path $root 'build/agent-artifacts/during reset') -Days 0
+        $script:proof = Join-Path $root 'build/test-results/доказательство'
+        Mock Get-ConfigValue { param($Path, $Default) $Default }
+        Mock Get-ItlArtifactProtectedPaths { return @($script:proof) }
+        $handle = [IO.File]::Open((Join-Path $busy 'x.txt'), 'Open', 'Read', 'None')
+        try {
+            $report = Invoke-ItlBranchResetLeftoverCleanup -ProjectRoot $root -MainRoot $main -SafeBranchName 'ветка' -StartedAt $start
+        } finally { $handle.Dispose() }
+        foreach ($relative in $removed) { Test-Path -LiteralPath (Join-Path $root $relative) | Should -BeFalse -Because $relative }
+        foreach ($relative in $kept) { Test-Path -LiteralPath (Join-Path $root $relative) | Should -BeTrue -Because $relative }
+        Test-Path -LiteralPath (Join-Path $live 'status.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $root 'build/agent-artifacts/during reset') | Should -BeTrue
+        Test-Path -LiteralPath (Split-Path -Parent $legacyArchive) | Should -BeFalse
+        Test-Path -LiteralPath $otherArchive | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $busy 'x.txt') | Should -BeTrue
+        $report.removedCount | Should -BeGreaterOrEqual $removed.Count
+        $report.removedBytes | Should -BeGreaterThan 0
+        @($report.leftovers | Where-Object { $_ -like "$busy*" }).Count | Should -Be 1
+        @($report.leftovers | Where-Object { $_ -like "$($script:proof)*referenced by workflow evidence*" }).Count | Should -Be 1
     }
 }
 

@@ -209,6 +209,28 @@ new enrollment/invocations; retained originals regenerate derived artifacts.
 Unknown legacy investigations remain untouched. See
 [diagnostic retention](../.agents/skills/1c-workflow/references/artifact-retention.md).
 
+On 2026-10-31 the user approved bounding installed branch leftovers, which had
+reached about 217 GB across PM5 worktrees: 21 reset archives (9.8 GB, about
+0.45 GB DT each) that no command ever restored, about 45 GB of unmarked agent
+task folders, 52 runs still marked `running` after their process died, and a
+0.6 GB source copy kept by every successful transactional dump. The owners
+stay the lifecycle reset and the artifact-retention owner; no lock, state
+machine, prompt, service or migration is added. Reset recreates the branch: it
+writes no archive (previous work stays in Git history behind the reported old
+HEAD; old infobase data is deliberately not kept), resumes legacy archive phases
+at the Git step, and as its last journaled step removes this worktree's
+previous-task runtime untouched since the reset started, keeping live runs,
+helper-owned folders, update/incident snapshots, `handoffs/` and referenced
+evidence. In normal operation unmarked agent task folders follow the run policy
+(newest 3 per group, others after 7 idle days), superseding the 2026-10-22 rule
+that unmarked investigations are never swept; abandoned runs and interrupted
+dumps expire likewise, and a successful dump drops its source copy. Busy, linked
+or failing paths are reported and retried, never a failure. Remote-runner
+`remote-work`, auxiliary contours and `build/result` are unaffected. Canary
+evidence: reset integration runs keep prior work in history, remove planted
+leftovers and resume legacy phases; Release E2E file and server resets assert
+the same. Rollback restores archive creation; nothing needs migration.
+
 The user approved concurrent gate stand stages on 2026-10-28. The invariant
 stays one state machine: the existing gate owner starts upgrade/fresh scenario
 executions before static and, for a Release-requiring PublishDevelop, the

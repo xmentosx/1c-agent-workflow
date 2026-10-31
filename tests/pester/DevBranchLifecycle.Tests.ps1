@@ -2301,14 +2301,14 @@ try {
         }
     }
 
-    It "archives non-config delta resumably and creates a cleanup commit with the exact master tree" {
+    It "keeps branch work only in Git history and creates a cleanup commit with the exact master tree" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-reset-archive с пробелом-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot "docs") | Out-Null
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.name "ITL Test"
             & git -C $tempRoot config user.email "itl@example.invalid"
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value ".agent-1c/branch-archives/"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value ".agent-1c/"
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "master config"
             Set-Content -LiteralPath (Join-Path $tempRoot "docs\удалить меня.txt") -Encoding UTF8 -Value "master file"
             & git -C $tempRoot add --all
@@ -2326,42 +2326,57 @@ try {
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $script:DumpCalls = 0
-                $state = [pscustomobject]@{ devBranch = "itldev/reset"; safeDevBranchName = "reset"; devBranchInfoBasePath = "C:\base"; infoBaseKind = "file" }
+                $script:DesignerCalls = 0
                 function Get-MainWorktreePath { $tempRoot }
-                function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
-                    $script:DumpCalls++
-                    [IO.File]::WriteAllBytes([string]$DesignerArgs[1], [byte[]](1,2,3,4))
-                }
+                function Invoke-Designer { $script:DesignerCalls++ }
                 function Set-RunStage {}
-                $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) "reset") "fixture"
-                $first = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead $oldHead -ArchivePath $archivePath
-                $second = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead $oldHead -ArchivePath $archivePath
-                $manifest = Read-Utf8Text -Path $first.manifestPath | ConvertFrom-Json
                 $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
                 [pscustomobject]@{
-                    first = $first; second = $second; manifest = $manifest; dumpCalls = $script:DumpCalls; newHead = $newHead
+                    designerCalls = $script:DesignerCalls; newHead = $newHead
                     newTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
                     masterTree = (Get-GitOutput @("rev-parse", "$masterCommit^{tree}")).Trim()
                     parent = (Get-GitOutput @("rev-parse", "HEAD^")).Trim()
                     message = (Get-GitOutput @("log", "-1", "--pretty=%s")).Trim()
+                    archiveRootExists = (Test-Path -LiteralPath (Join-Path $tempRoot '.agent-1c/branch-archives'))
                 }
             }
 
-            $result.dumpCalls | Should -Be 1
-            $result.first.archivePath | Should -Be $result.second.archivePath
-            $result.manifest.schemaVersion | Should -Be 1
-            $result.manifest.masterTree | Should -Be $result.masterTree
-            @($result.manifest.files.path) | Should -Contain "openspec/changes/новая спека/spec.md"
-            @($result.manifest.deletedPaths) | Should -Contain "docs/удалить меня.txt"
-            @($result.manifest.excludedConfigurationPaths) | Should -Contain "src/cf/Configuration.xml"
+            $result.designerCalls | Should -Be 0
+            $result.archiveRootExists | Should -BeFalse
             $result.newTree | Should -Be $result.masterTree
             $result.parent | Should -Be $oldHead
             $result.message | Should -Be "chore: reset branch for next change"
+            (& git -C $tempRoot -c core.quotepath=false show "${oldHead}:openspec/changes/новая спека/spec.md").Trim() | Should -Be "branch spec"
+            (& git -C $tempRoot -c core.quotepath=false show "${oldHead}:src/cf/Configuration.xml").Trim() | Should -Be "branch config"
+            Test-Path -LiteralPath (Join-Path $tempRoot "docs\удалить меня.txt") | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $tempRoot "openspec\changes\новая спека\spec.md") | Should -BeFalse
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "resumes a reset journaled at <Phase> at the Git step without any archive" -ForEach @(
+        @{ Phase = "checkpointed" }, @{ Phase = "archive-pending" }, @{ Phase = "archive-complete" }
+    ) {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $identity = [pscustomobject]@{ syncId = "seed-1"; artifactSha256 = ("a" * 64) }
+            function Assert-CleanGit {}
+            function Get-CurrentCommit { "1" * 40 }
+            function Get-GitOutput { "2" * 40 }
+            $state = [pscustomobject]@{
+                resetPhase = $Phase; resetOldHead = ("1" * 40); resetNewHead = ""; resetMasterTree = ("3" * 40)
+                resetSeedIdentity = $identity; resetArchivePath = "C:\missing legacy archive\does-not-exist"
+            }
+            $message = ""
+            try { Assert-DevBranchResetResumeInputs -State $state -SeedIdentity $identity } catch { $message = $_.Exception.Message }
+            $state.resetPhase = "unknown-phase"
+            $invalid = ""
+            try { Assert-DevBranchResetResumeInputs -State $state -SeedIdentity $identity } catch { $invalid = $_.Exception.Message }
+            [pscustomobject]@{ message = $message; invalid = $invalid }
+        }
+        $result.message | Should -BeNullOrEmpty
+        $result.invalid | Should -Match "RESET_DEV_BRANCH_PHASE_INVALID"
     }
 
     It "rejects extension reset before checkpoint or mutation" {

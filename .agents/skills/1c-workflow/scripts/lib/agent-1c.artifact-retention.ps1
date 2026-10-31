@@ -94,6 +94,7 @@ function Get-ItlArtifactProtectedPaths {
                         }
                     }
                 }
+                # A reset journaled by an older workflow may still name its archive.
                 if ([string](Get-StateValue -State $state -Name 'resetStatus' -Default '') -eq 'resetting') {
                     $value = [string](Get-StateValue -State $state -Name 'resetArchivePath' -Default '')
                     if ($value -and [IO.Path]::IsPathRooted($value)) { [void]$paths.Add([IO.Path]::GetFullPath($value)) }
@@ -175,11 +176,174 @@ function Test-ItlArtifactProtected {
 
 function New-ItlArtifactRetentionCandidate {
     param([string]$Category, [string]$Root, [string]$Path, [string]$Group, [datetime]$ModifiedAt,
-        [string]$Companion = '', [string]$ExpectedSha256 = '')
+        [string]$Companion = '', [string]$ExpectedSha256 = '', [long]$SizeBytes = -1)
     return [pscustomobject]@{
         category = $Category; root = $Root; path = $Path; group = $Group
-        modifiedAt = $ModifiedAt; companion = $Companion; expectedSha256 = $ExpectedSha256
+        modifiedAt = $ModifiedAt; companion = $Companion; expectedSha256 = $ExpectedSha256; sizeBytes = $SizeBytes
     }
+}
+
+function Measure-ItlArtifactTree {
+    # One walk that never enters a link: newest write anywhere below, total size,
+    # and whether a reparse point was seen (such trees are never removed).
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $linked = [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    if (-not $item.PSIsContainer -or $linked) {
+        return [pscustomobject]@{ newestUtc = $item.LastWriteTimeUtc; bytes = $(if ($item.PSIsContainer) { [int64]0 } else { [int64]$item.Length }); linked = $linked }
+    }
+    $newest = $item.LastWriteTimeUtc
+    $bytes = [int64]0
+    $pending = New-Object 'System.Collections.Generic.Stack[System.IO.DirectoryInfo]'
+    $pending.Push($item)
+    while ($pending.Count -gt 0) {
+        foreach ($entry in $pending.Pop().GetFileSystemInfos()) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { $linked = $true; continue }
+            if ($entry.LastWriteTimeUtc -gt $newest) { $newest = $entry.LastWriteTimeUtc }
+            if ($entry -is [IO.DirectoryInfo]) { $pending.Push($entry) } else { $bytes += $entry.Length }
+        }
+    }
+    return [pscustomobject]@{ newestUtc = $newest; bytes = $bytes; linked = $linked }
+}
+
+function Get-ItlOwnedBuildFolderNames {
+    # Helper-owned children of build/ and build/test-results; everything else
+    # there is an agent task folder.
+    # diagnostic-runtime belongs to the remote measurement engine and its receipts.
+    $build = @('result', 'test-results', 'agent-artifacts', 'event-log', 'data-mcp-tools-loader', 'tooling-probe', 'diagnostic-runtime')
+    $resultLeaf = Split-Path -Leaf ([string](Get-ConfigValue -Path 'artifactsPath' -Default 'build/result')).TrimEnd('\', '/')
+    if ($resultLeaf) { $build += $resultLeaf }
+    return [pscustomobject]@{ build = @($build | Select-Object -Unique); testResults = @('vanessa', 'yaxunit', 'tooling-probe', 'release-e2e') }
+}
+
+function Test-ItlArtifactPathTracked {
+    # build/ itself is not ignored; a folder with tracked files belongs to the project.
+    param([string]$ProjectRoot, [string]$Path)
+    $relative = [IO.Path]::GetFullPath($Path).Substring([IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/').Length + 1)
+    try { return (@(Get-GitPathListAt -Root $ProjectRoot -Arguments @('ls-files', '-z', '--', $relative)).Count -gt 0) }
+    catch { return $true }
+}
+
+function Test-ItlRunStatusAbandoned {
+    # A running record whose deadline passed and whose process is gone can
+    # never complete; a reused live PID keeps it, which only delays cleanup.
+    param([object]$Status)
+    if ([string]$Status.status -ne 'running') { return $false }
+    $deadline = $Status.operationDeadlineUtc
+    if ($deadline -isnot [datetime]) {
+        $parsed = [datetime]::MinValue
+        if (-not [datetime]::TryParse([string]$deadline, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsed)) { return $false }
+        $deadline = $parsed
+    }
+    if ($deadline.ToUniversalTime() -gt [datetime]::UtcNow) { return $false }
+    $processId = 0
+    if (-not [int]::TryParse([string]$Status.pid, [ref]$processId) -or $processId -le 0) { return $false }
+    return ($null -eq (Get-Process -Id $processId -ErrorAction SilentlyContinue))
+}
+
+function Get-ItlAgentTaskArtifactCandidates {
+    param([string]$ProjectRoot)
+    $owned = Get-ItlOwnedBuildFolderNames
+    $build = Join-Path $ProjectRoot 'build'
+    $specs = @(
+        @{ group = 'build'; root = $build; exclude = $owned.build },
+        @{ group = 'test-results'; root = (Join-Path $build 'test-results'); exclude = $owned.testResults },
+        @{ group = 'agent-artifacts'; root = (Join-Path $build 'agent-artifacts'); exclude = @() },
+        @{ group = 'runs'; root = (Join-Path $ProjectRoot '.agent-1c\runs'); exclude = @() },
+        @{ group = 'tmp'; root = (Join-Path $ProjectRoot '.agent-1c\tmp'); exclude = @('tooling-probe') }
+    )
+    $items = @()
+    foreach ($spec in $specs) {
+        $root = [string]$spec.root
+        if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+            -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { continue }
+        foreach ($folder in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
+            if ($spec.exclude -contains $folder.Name) { continue }
+            # Helper runs carry status.json and keep their own policy.
+            if ($spec.group -eq 'runs' -and ((Test-Path -LiteralPath (Join-Path $folder.FullName 'status.json') -PathType Leaf) -or
+                $folder.Name -match '^(auto-update|ai-rules-migration-)')) { continue }
+            if ($spec.group -eq 'build' -and (Test-ItlArtifactPathTracked -ProjectRoot $ProjectRoot -Path $folder.FullName)) { continue }
+            try { $measure = Measure-ItlArtifactTree -Path $folder.FullName } catch { continue }
+            if ($measure.linked) { continue }
+            $items += New-ItlArtifactRetentionCandidate -Category 'agent-task' -Root $root -Path $folder.FullName -Group ([string]$spec.group) -ModifiedAt $measure.newestUtc -SizeBytes $measure.bytes
+        }
+    }
+    return @($items)
+}
+
+function Get-ItlBranchDumpArtifactCandidates {
+    param([string]$ProjectRoot)
+    $root = Join-Path $ProjectRoot '.agent-1c\branch-dumps'
+    if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+        -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { return @() }
+    $items = @()
+    foreach ($folder in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ($folder.Name -notmatch '^\d{8}-\d{6}-\d{3}-[0-9a-f]{32}$') { continue }
+        try { $measure = Measure-ItlArtifactTree -Path $folder.FullName } catch { continue }
+        if ($measure.linked) { continue }
+        $items += New-ItlArtifactRetentionCandidate -Category 'branch-dump' -Root $root -Path $folder.FullName -Group 'branch-dump' -ModifiedAt $measure.newestUtc -SizeBytes $measure.bytes
+    }
+    return @($items)
+}
+
+function Invoke-ItlBranchResetLeftoverCleanup {
+    # Reset recreates the branch: the previous task's ignored runtime goes. Only
+    # items untouched since the reset started are removed, so reset's own files,
+    # the current run and live runs stay; referenced workflow evidence stays too.
+    param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string]$MainRoot,
+        [Parameter(Mandatory)][string]$SafeBranchName, [Parameter(Mandatory)][datetime]$StartedAt)
+    $before = $StartedAt.ToUniversalTime()
+    $protected = Get-ItlArtifactProtectedPaths -ProjectRoot $ProjectRoot
+    $owned = Get-ItlOwnedBuildFolderNames
+    $build = Join-Path $ProjectRoot 'build'
+    $agentRoot = Join-Path $ProjectRoot '.agent-1c'
+    $targets = New-Object System.Collections.Generic.List[object]
+    $children = {
+        param([string]$Root, [string[]]$Exclude, [switch]$SnapshotFiles)
+        if (Test-Path -LiteralPath $Root -PathType Container) {
+            foreach ($child in @(Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue)) {
+                # Snapshot subtrees (workflow update, incidents) keep their owners.
+                if ($SnapshotFiles -and ($child.PSIsContainer -or $child.Name -notmatch '\.dt($|\.)')) { continue }
+                if ($Exclude -notcontains $child.Name -and $child.Name -notmatch '^ai-rules-migration-') { $targets.Add([pscustomobject]@{ root = $Root; path = $child.FullName }) }
+            }
+        }
+    }
+    & $children $build ($owned.build)
+    & $children (Join-Path $build 'test-results') @('tooling-probe', 'release-e2e')
+    foreach ($name in @('agent-artifacts', 'event-log')) { & $children (Join-Path $build $name) @() }
+    & $children (Join-Path $agentRoot 'runs') @('auto-update')
+    & $children (Join-Path $agentRoot 'tmp') @('tooling-probe')
+    foreach ($name in @('branch-dumps', 'fork-history')) { & $children (Join-Path $agentRoot $name) @() }
+    & $children (Join-Path $agentRoot 'snapshots') @() -SnapshotFiles
+    & $children (Join-Path $ProjectRoot 'logs') @()
+    $archive = Join-Path (Join-Path $MainRoot '.agent-1c\branch-archives') $SafeBranchName
+    if (Test-Path -LiteralPath $archive -PathType Container) { $targets.Add([pscustomobject]@{ root = (Split-Path -Parent $archive); path = $archive }) }
+    $removedCount = 0
+    $removedBytes = [int64]0
+    $leftovers = New-Object System.Collections.Generic.List[string]
+    foreach ($target in $targets) {
+        $path = [string]$target.path
+        try {
+            $statusPath = Join-Path $path 'status.json'
+            if ((Test-Path -LiteralPath $statusPath -PathType Leaf) -and
+                [string]::Equals((Split-Path -Parent $path), (Join-Path $agentRoot 'runs'), [StringComparison]::OrdinalIgnoreCase)) {
+                $status = Read-Utf8Text -Path $statusPath | ConvertFrom-Json
+                if ([string]$status.status -eq 'running' -and -not (Test-ItlRunStatusAbandoned -Status $status)) { continue }
+            }
+            $measure = Measure-ItlArtifactTree -Path $path
+            if ($measure.newestUtc -ge $before) { continue }
+            if ([string]::Equals([string]$target.root, $build, [StringComparison]::OrdinalIgnoreCase) -and
+                (Test-ItlArtifactPathTracked -ProjectRoot $ProjectRoot -Path $path)) { continue }
+            if (Test-ItlArtifactProtected -Path $path -ProtectedPaths $protected) { $leftovers.Add("$path (referenced by workflow evidence)"); continue }
+            if ($measure.linked -or -not (Test-ItlArtifactPathWithoutReparse -Root ([string]$target.root) -Path $path)) { $leftovers.Add("$path (contains a link)"); continue }
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+            $removedCount++
+            $removedBytes += $measure.bytes
+        } catch { $leftovers.Add("$path ($($_.Exception.Message))") }
+    }
+    # Bounded report: the full list stays recoverable by repeating /itl-clean.
+    return [ordered]@{ removedCount = $removedCount; removedBytes = $removedBytes; leftoverCount = $leftovers.Count; leftovers = @($leftovers | Select-Object -First 20) }
 }
 
 function Get-ItlResultArtifactCandidates {
@@ -220,7 +384,8 @@ function Get-ItlRunArtifactCandidates {
     $specs = @(
         @{ category = 'itl-run'; root = (Join-Path $ProjectRoot '.agent-1c\runs'); marker = 'status.json'; pattern = '*' },
         @{ category = 'vanessa'; root = (Resolve-ProjectPath (Get-VanessaReportsPath)); marker = 'status.json'; pattern = 'run-*' },
-        @{ category = 'yaxunit'; root = (Resolve-ProjectPath (Get-YAxUnitReportsPath)); marker = 'junit.xml'; pattern = 'run-*' }
+        @{ category = 'yaxunit'; root = (Resolve-ProjectPath (Get-YAxUnitReportsPath)); marker = 'junit.xml'; pattern = 'run-*' },
+        @{ category = 'event-log'; root = (Resolve-ProjectPath 'build/event-log'); marker = 'EventLogExportParams.json'; pattern = 'export-*' }
     )
     $items = @()
     foreach ($spec in $specs) {
@@ -233,8 +398,10 @@ function Get-ItlRunArtifactCandidates {
             if ($spec.category -eq 'itl-run') {
                 try {
                     $status = Read-Utf8Text -Path (Join-Path $folder.FullName 'status.json') | ConvertFrom-Json
-                    if ([string]$status.status -notin @('succeeded', 'failed', 'cancelled')) { continue }
+                    if ([string]$status.status -notin @('succeeded', 'failed', 'cancelled') -and -not (Test-ItlRunStatusAbandoned -Status $status)) { continue }
                 } catch { continue }
+            } elseif ($spec.category -eq 'event-log') {
+                if ($folder.Name -notmatch '^export-\d{8}-\d{6}-\d{3}$') { continue }
             } elseif ($folder.Name -notmatch '^run-\d{8}-\d{6}-\d{3}$') { continue }
             if (-not (Test-ItlArtifactPathWithoutReparse -Root $root -Path $folder.FullName -Recursive)) { continue }
             $items += New-ItlArtifactRetentionCandidate -Category ([string]$spec.category) -Root $root -Path $folder.FullName -Group ([string]$spec.category) -ModifiedAt $folder.LastWriteTimeUtc
@@ -336,20 +503,32 @@ function Get-ItlArtifactCleanupPlan {
     $candidates += @(Get-ItlRunArtifactCandidates -ProjectRoot $ProjectRoot)
     $candidates += @(Get-ItlAuxiliaryArchiveArtifactCandidates -ProjectRoot $ProjectRoot)
     $candidates += @(Get-ItlWorkflowIncidentArchiveCandidates -ProjectRoot $ProjectRoot)
+    $candidates += @(Get-ItlAgentTaskArtifactCandidates -ProjectRoot $ProjectRoot)
+    $candidates += @(Get-ItlBranchDumpArtifactCandidates -ProjectRoot $ProjectRoot)
     if ([string]::Equals([IO.Path]::GetFullPath($ProjectRoot), [IO.Path]::GetFullPath($MainRoot), [StringComparison]::OrdinalIgnoreCase)) {
         $candidates += @(Get-ItlArchiveArtifactCandidates -MainRoot $MainRoot)
     }
+    # Agent task folders also honor retained dependencies of completion receipts;
+    # an unreadable receipt store keeps every such folder.
+    $retainedDependencies = $null
+    try { $retainedDependencies = @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot) } catch { $retainedDependencies = $null }
     $now = (Get-Date).ToUniversalTime()
+    $ageLimited = @('itl-run', 'vanessa', 'yaxunit', 'event-log', 'agent-task', 'branch-dump')
     $entries = @()
     foreach ($group in @($candidates | Group-Object { "$($_.category)|$($_.group)" })) {
         $ordered = @($group.Group | Sort-Object modifiedAt, path -Descending)
-        $keep = if ($ordered[0].category -eq 'result') { $policy.resultKeepCount } elseif ($ordered[0].category -in @('archive', 'auxiliary-archive')) { $policy.archiveKeepCount } else { $policy.runKeepCount }
+        $category = $ordered[0].category
+        $keep = if ($category -eq 'result') { $policy.resultKeepCount } elseif ($category -in @('archive', 'auxiliary-archive')) { $policy.archiveKeepCount } elseif ($category -eq 'branch-dump') { 0 } else { $policy.runKeepCount }
+        # A dump transaction finishes within one operation; an hour without writes means it was interrupted.
+        $cutoff = if ($category -eq 'branch-dump') { $now.AddHours(-1) } else { $now.AddDays(-$policy.runtimeDays) }
         for ($index = 0; $index -lt $ordered.Count; $index++) {
             $item = $ordered[$index]
-            $expired = ($item.category -in @('itl-run', 'vanessa', 'yaxunit') -and $item.modifiedAt -lt $now.AddDays(-$policy.runtimeDays))
-            $protectedPath = Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $protected
-            $delete = ($index -ge $keep -and (-not ($item.category -in @('itl-run', 'vanessa', 'yaxunit')) -or $expired) -and -not $protectedPath)
-            $entries += [pscustomobject]@{ category = $item.category; group = $item.group; path = $item.path; root = $item.root; companion = $item.companion; expectedSha256 = $item.expectedSha256; modifiedAt = $item.modifiedAt; sizeBytes = (Get-ItlArtifactCandidateSize -Path $item.path); delete = $delete; reason = $(if ($protectedPath) { 'referenced' } elseif ($index -lt $keep) { 'newest' } elseif (-not $expired -and $item.category -in @('itl-run', 'vanessa', 'yaxunit')) { 'within-age' } else { 'expired' }) }
+            $expired = ($category -in $ageLimited -and $item.modifiedAt -lt $cutoff)
+            $protectedPath = (Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $protected) -or
+                ($category -eq 'agent-task' -and ($null -eq $retainedDependencies -or (Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $retainedDependencies)))
+            $delete = ($index -ge $keep -and (-not ($category -in $ageLimited) -or $expired) -and -not $protectedPath)
+            $size = if ($item.sizeBytes -ge 0) { [int64]$item.sizeBytes } else { Get-ItlArtifactCandidateSize -Path $item.path }
+            $entries += [pscustomobject]@{ category = $category; group = $item.group; path = $item.path; root = $item.root; companion = $item.companion; expectedSha256 = $item.expectedSha256; modifiedAt = $item.modifiedAt; sizeBytes = $size; delete = $delete; reason = $(if ($protectedPath) { 'referenced' } elseif ($index -lt $keep) { 'newest' } elseif (-not $expired -and $category -in $ageLimited) { 'within-age' } else { 'expired' }) }
         }
     }
     $entries += @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $ProjectRoot -MinimumAgeDays $policy.diagnosticDays -ProtectedPaths $protected)

@@ -85,7 +85,6 @@ function Invoke-ItlTransactionalBranchDump {
             lastTransactionalDumpAt = $now
             lastTransactionalDumpPath = $relativeTarget
             lastTransactionalDumpKind = $(if ($ObjectPaths.Count -gt 0) { "partial" } else { "full" })
-            lastTransactionalDumpRollbackPath = $(if ($targetMoved) { $backup } else { "" })
             lastTransactionalDumpEvidencePath = $evidencePath
             lastLogPath = $script:LastLogPath
         }
@@ -100,11 +99,15 @@ function Invoke-ItlTransactionalBranchDump {
             infobase = [string]$State.devBranchInfoBasePath
             target = $relativeTarget
             selectedObjects = @($ObjectPaths)
-            rollbackPath = $updates.lastTransactionalDumpRollbackPath
             fingerprint = $fingerprint.fingerprint
             logPath = $script:LastLogPath
         }
         Write-Utf8Text -Path $evidencePath -Value (($evidence | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+        # The previous source tree is in Git; its copy only served the rollback above.
+        if ($targetMoved) {
+            try { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop }
+            catch { Write-Warning "Transactional dump backup left for retention: $backup ($($_.Exception.Message))" }
+        }
         Sync-DevBranchContextToDotEnv -State (Read-DevBranchState -Name $DevBranchName) -AllowIncompleteExtension
         Write-Host "Transactional branch dump completed: $relativeTarget"
         Write-Host "Rollback evidence: $evidencePath"

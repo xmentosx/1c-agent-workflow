@@ -320,7 +320,7 @@ try {
         }
     }
 
-    It "runs reset through <Scenario> with real worktree archives and seed leases" -ForEach @(
+    It "runs reset through <Scenario> with real worktrees, Git-history recovery and seed leases" -ForEach @(
         @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }, @{ Scenario = "updated helper handoff" },
         @{ Scenario = "pending refresh" }
     ) {
@@ -330,7 +330,7 @@ try {
         $branchTwo = Join-Path $tempRoot "ветка two"
         $sourceRoot = Join-Path $tempRoot "source база"
         Initialize-LifecycleLockTestRepository -Path $mainRoot
-        Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/'
+        Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/', 'build/'
         & git -C $mainRoot add .gitignore
         & git -C $mainRoot commit --quiet -m 'ignore runtime'
         if ($Scenario -eq 'updated helper handoff') {
@@ -379,6 +379,16 @@ try {
             New-Item -ItemType Directory -Force -Path (Join-Path $branchOne '.agent-1c') | Out-Null
             $pendingState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Encoding UTF8
         }
+        # Previous-task leftovers that recreating the branch removes, written well before reset starts.
+        $leftovers = @((Join-Path $branchOne 'build/agent-artifacts/задача/tmp/old.txt'), (Join-Path $branchOne '.agent-1c/tmp/old/x.txt'),
+            (Join-Path $mainRoot '.agent-1c/branch-archives/one/20261009T141019349Z-3570c292/infobase.dt'))
+        foreach ($leftover in $leftovers) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $leftover) | Out-Null
+            Set-Content -LiteralPath $leftover -Encoding UTF8 -Value 'previous task'
+        }
+        foreach ($tree in @((Join-Path $branchOne 'build/agent-artifacts/задача'), (Join-Path $branchOne '.agent-1c/tmp/old'), (Join-Path $mainRoot '.agent-1c/branch-archives/one'))) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $tree -Recurse -Force) + @(Get-Item -LiteralPath $tree)) { $item.LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-1) }
+        }
         New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
         [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3, 4))
         New-TestBranchSeedFixture -ProjectRoot $mainRoot -SourceInfoBasePath $sourceRoot
@@ -419,9 +429,9 @@ function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "test-fi
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
 function Invoke-Designer {
     param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
-    if ($DesignerArgs[0] -ne "/DumpIB") { throw "UNEXPECTED_DESIGNER" }
-    Write-Utf8Text -Path $DesignerArgs[1] -Value "archived original infobase"
-    Add-Content -LiteralPath (Join-Path $Root ".agent-1c/dumps.txt") -Value "dump"
+    # Reset keeps prior work in Git history; it never dumps the old infobase.
+    Add-Content -LiteralPath (Join-Path $Root ".agent-1c/designer.txt") -Value ($DesignerArgs -join ' ')
+    throw "UNEXPECTED_DESIGNER"
 }
 function Initialize-DevBranchEventLogBaseline {
     param($State, $SeedBaselinePath)
@@ -453,18 +463,18 @@ function Invoke-Agent1cFreshProcess {
     $writer = Open-BranchSeedLease -Mode write -TimeoutSeconds 1
     $writer.Dispose()
     Write-Utf8Text -Path (Join-Path $Root '.agent-1c/reset-handoff.json') -Value (([ordered]@{
-        helperPath=$ScriptPath;masterCommit=$state.resetMasterCommit;archivePath=$state.resetArchivePath
+        helperPath=$ScriptPath;masterCommit=$state.resetMasterCommit;oldHead=$state.resetOldHead
         seedReaderReleased=$true;databaseRestored=(Test-Path -LiteralPath (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD'))
     }) | ConvertTo-Json)
     # Stop at dispatch so the test can inspect the saved boundary and start an
-    # independent helper process against the same phase, archive and seed.
+    # independent helper process against the same phase, old HEAD and seed.
     throw 'RESET_HANDOFF_DISPATCHED'
 }
 function Set-RunStage {
     param($Stage, $Detail)
     Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
-    if ($Stage -eq "reset.archive-dt") {
-        if (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath)) { throw "MAIN_LOCK_RETAINED_DURING_ARCHIVE" }
+    if ($Stage -eq "reset.git") {
+        if (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath)) { throw "MAIN_LOCK_RETAINED_DURING_BRANCH_RESET" }
         if ($OtherRoot) {
             $nested = Invoke-TestPowerShellFile -FilePath $PSCommandPath -Arguments @(
                 "-HelperPath", $HelperPath, "-SupportPath", $SupportPath, "-Root", $OtherRoot, "-SourceRoot", $SourceRoot)
@@ -505,7 +515,7 @@ try {
             $boundary.databaseRestored | Should -BeFalse
             $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
             $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
-            (Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json).resetArchivePath | Should -Be $boundary.archivePath
+            (Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json).resetOldHead | Should -Be $boundary.oldHead
         } elseif ($Scenario -eq 'pending refresh') {
             $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
             $failed.exitCode | Should -Be 1
@@ -522,7 +532,7 @@ try {
             $failed.combinedText | Should -Match 'RESET_INTERRUPTED'
             $saved = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $saved.resetPhase | Should -Be 'git-reset-complete'
-            # Resume must retain the recorded master and archive even after master moves.
+            # Resume must retain the recorded master and old HEAD even after master moves.
             Set-Content -LiteralPath (Join-Path $mainRoot 'new-master.txt') -Value 'later master'
             & git -C $mainRoot add .
             & git -C $mainRoot commit --quiet -m 'later master'
@@ -539,10 +549,9 @@ try {
             $saved.resetSeedIdentity.artifactSha256 | Should -Be $manifest.artifactSha256
             # Same configuration is insufficient: an independently rebuilt
             # seed may contain different data or a different event-log baseline.
-            foreach ($drift in @('generation', 'database', 'baseline', 'archive', 'dirty source', 'committed source', 'missing pin')) {
+            foreach ($drift in @('generation', 'database', 'baseline', 'dirty source', 'committed source', 'missing pin')) {
                 $artifactBytes = [IO.File]::ReadAllBytes($manifest.artifactPath)
                 $baselineBytes = [IO.File]::ReadAllBytes($manifest.baselinePath)
-                $archiveBytes = [IO.File]::ReadAllBytes($saved.resetArchiveDtPath)
                 $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
                 $statePath = Join-Path $branchOne '.agent-1c/reset-fixture.json'
                 $stateBytes = [IO.File]::ReadAllBytes($statePath)
@@ -564,10 +573,6 @@ try {
                             $changedManifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
                         }
                         'baseline' { [IO.File]::WriteAllText($manifest.baselinePath, '{"signatures":["later"]}') }
-                        'archive' {
-                            [IO.File]::WriteAllText($saved.resetArchiveDtPath, 'damaged original archive')
-                            $expectedError = 'DEV_BRANCH_ARCHIVE_DT_VERIFY_FAILED'
-                        }
                         'dirty source' {
                             [IO.File]::WriteAllText($sourcePath, 'user changes after interruption')
                             $expectedError = 'Git worktree is not clean'
@@ -589,11 +594,9 @@ try {
                     $rejected.exitCode | Should -Be 1 -Because $rejected.combinedText
                     $rejected.combinedText | Should -Match $expectedError -Because $drift
                     Test-Path -LiteralPath (Join-Path $saved.devBranchInfoBasePath '1Cv8.1CD') | Should -BeFalse
-                    @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
                 } finally {
                     [IO.File]::WriteAllBytes($manifest.artifactPath, $artifactBytes)
                     [IO.File]::WriteAllBytes($manifest.baselinePath, $baselineBytes)
-                    [IO.File]::WriteAllBytes($saved.resetArchiveDtPath, $archiveBytes)
                     [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
                     [IO.File]::WriteAllBytes($statePath, $stateBytes)
                     & git -C $branchOne reset --quiet --hard $head
@@ -607,9 +610,16 @@ try {
         $state.resetStatus | Should -Be 'complete'
         $state.resetMasterCommit | Should -Be $masterCommit
         (& git -C $branchOne rev-parse 'HEAD^{tree}').Trim() | Should -Be (& git -C $mainRoot rev-parse "$masterCommit`^{tree}").Trim()
-        @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $branchOne '.agent-1c/designer.txt') | Should -BeFalse
         [IO.File]::ReadAllBytes((Join-Path $state.devBranchInfoBasePath '1Cv8.1CD')) | Should -Be @([byte]1, [byte]2, [byte]3, [byte]4)
-        Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/изменение ветки.txt') | Should -BeTrue
+        # Recovery lives in Git history only: no archive, previous-task leftovers gone.
+        $state.resetArchivePath | Should -BeNullOrEmpty
+        $expectedBranchText = if ($Scenario -eq 'pending refresh') { 'unstaged repair' } else { 'one' }
+        # Set-Content wrote a BOM; compare the text ending only.
+        (& git -C $branchOne show "$($state.resetOldHead):изменение ветки.txt" | Out-String) | Should -Match ([regex]::Escape($expectedBranchText) + '\s*$')
+        foreach ($leftover in $leftovers) { Test-Path -LiteralPath $leftover | Should -BeFalse -Because $leftover }
+        Test-Path -LiteralPath (Join-Path $mainRoot '.agent-1c/branch-archives/one') | Should -BeFalse
+        [int]$state.resetLeftoverCleanup.removedCount | Should -BeGreaterOrEqual 3
         if ($Scenario -eq 'pending refresh') {
             $state.pendingMergeOperation | Should -BeNullOrEmpty
             $state.pendingMergeStage | Should -BeNullOrEmpty
@@ -617,9 +627,9 @@ try {
             $state.pendingRefreshOperation | Should -BeNullOrEmpty
             $state.pendingRefreshMasterCommit | Should -BeNullOrEmpty
             $state.resetDiscardedRefreshOperation | Should -Be 'refresh-dev-branch'
-            Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/handoffs/заметка.txt') | Should -BeTrue
+            (& git -C $branchOne show "$($state.resetOldHead):handoffs/заметка.txt" | Out-String) | Should -Match 'preserve\s*$'
         }
-        if ($Scenario -eq 'interruption and resume') { $state.resetArchivePath | Should -Be $saved.resetArchivePath }
+        if ($Scenario -eq 'interruption and resume') { $state.resetOldHead | Should -Be $saved.resetOldHead }
     }
 
     It "locks branch and master in canonical order for refresh and exposes the same owner from master" {

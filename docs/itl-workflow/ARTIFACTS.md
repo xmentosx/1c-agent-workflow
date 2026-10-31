@@ -93,14 +93,15 @@ and completion-driven enrollment/removal as before. Repeating an unchanged
 completion is safe after deletion; replacement bytes at an old path are not
 silently enrolled again. Changed classifications need a new completion receipt.
 
-After successful `reset`, the existing automatic `clean-artifacts` call retries
-already enrolled disposable files, for example after a reader has closed them.
-Retained proof and recovery remain at their original project paths; existing
-branch-reset archives are untouched. No sweep or automatic adoption of legacy,
-unknown or unfinished task directories occurs. Retention records and completion
-receipts remain small audit/protection records; directories are not recursively
-deleted. Explicit `clean-artifacts` also retries eligible files; `-CleanupDryRun`
-previews already enrolled files without registering a new completion.
+Task directories are also bounded without a receipt: automatic cleanup keeps the
+three most recently written task directories per location and removes any other
+one after seven days without writes, unless current workflow evidence or a
+completion receipt still references it. A successful `reset` recreates the
+branch and removes every previous-task directory, including retained proof and
+recovery files, so hand final deliverables to their project location before
+reset. Explicit `clean-artifacts` also retries eligible files; `-CleanupDryRun`
+previews already enrolled files without registering a new completion. The exact
+groups are in the [retention reference](../../.agents/skills/1c-workflow/references/artifact-retention.md).
 
 Report cleanup leftovers and retained large intermediates with their reasons;
 an unsuccessful removal must not be reported as freed space. Do not edit an
