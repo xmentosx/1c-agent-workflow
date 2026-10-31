@@ -145,6 +145,18 @@ Describe 'Source recovery archive retention' {
         (Get-DeliveryRecoveryInventory -IncludeEntries).entries[0].reason | Should -Be 'owner-or-checkpoint-reference'
     }
 
+    It 'does not treat the roots a pending cleanup sweep scanned as owner references' {
+        # A Release copy blocked in one sweep recorded freshProjectsRoot as its
+        # warning identity; that ancestor of every copy held every archive.
+        $fixture = New-RecoveryFixture
+        $sweep = @{kind='cleanup-sweep';owner='source-delivery-cleanup';state='cleanup-pending';identity=@{phase='post-operation';freshProjectsRoot=$script:Root;e2eProjectRoot=$script:Root;warning='release-snapshot: snapshot is referenced by its Release checkpoint'}}
+        $null = Write-RecoveryGuardJson 'itl/resources/v1/ledger.json' @{schemaVersion=1;resources=@($sweep)}
+        (Get-DeliveryRecoveryInventory -IncludeEntries).entries[0].reason | Should -Be 'expired-recovery-payload'
+        $sweep.kind = 'release-snapshot'
+        $null = Write-RecoveryGuardJson 'itl/resources/v1/ledger.json' @{schemaVersion=1;resources=@($sweep)}
+        (Get-DeliveryRecoveryInventory -IncludeEntries).entries[0].reason | Should -Be 'owner-or-checkpoint-reference'
+    }
+
     It 'protects archive checkpoint references and fails closed on unreadable state' {
         $fixture = New-RecoveryFixture
         $path = Write-RecoveryGuardJson 'itl/plans/v1/old/checkpoint.json' @{archive=$fixture.payload}

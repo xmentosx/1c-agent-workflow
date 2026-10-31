@@ -16,7 +16,7 @@
     function Get-DevelopPublicationAttemptPath { Join-Path (Get-DeliveryCommonGitDirectory) 'itl\publication-attempts\develop.json' }
     function Test-SourceDeliveryPathInUse { param([string]$Path); return $false }
     function Invoke-SourceDeliveryPostSuccessCleanup {
-        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths)
+        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths,[string[]]$SupersededCopies,[string]$Phase)
         [pscustomobject]@{ status='completed'; warnings=@() }
     }
 

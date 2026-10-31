@@ -356,6 +356,37 @@ Describe 'Inactive qualification copy retention during project operations' {
         @(Get-ChildItem -LiteralPath (Join-Path $root 'diagnostics') -Recurse -Filter '*.zip' -ErrorAction SilentlyContinue).Count|Should -Be 0
         Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
     }
+    It 'archives a superseded Release copy with its producer checkpoint once idle for an hour, ahead of the keep count' {
+        # Observed: superseded copies kept FIXTURE_COPY_RESUMABLE forever while
+        # their own checkpoint also blocked removal of their ledger snapshots.
+        $root=Join-Path $TestDrive 'superseded Пример';$copy=New-RecoverableStorageCopy -Root $root -State ready -Phase Release
+        $checkpoint=Join-Path $copy.fixture.branchRoot '.agent-1c/runs/release-e2e/rel-e2e-r8/checkpoint.json'
+        Write-QualificationFixtureJson -Path $checkpoint -Value @{status='failed';lastPassedStage='config-cadence'}
+        Get-ChildItem -LiteralPath $copy.root -Recurse -Force -File | ForEach-Object {
+            $attributes=$_.Attributes
+            try {$_.IsReadOnly=$false;$_.LastWriteTimeUtc=[datetime]::UtcNow.AddHours(-2)}finally{$_.Attributes=$attributes}
+        }
+        (Get-SourceE2ECopyRetentionPlan -ProjectsRoots @($root) -CandidateRoot $RepoRoot).archivePaths.Count|Should -Be 0
+        Mock Invoke-SourceFixtureInstalledAction {throw 'no database to dispose'}
+        $arguments=@{ProjectsRoot=$root;CandidateRoot=$RepoRoot;DiagnosticRoot=(Join-Path $root 'diagnostics')}
+        $kept=Remove-CompletedSourceE2ECopies @arguments
+        $kept.entries[0].reason|Should -Be 'FIXTURE_COPY_NOT_TERMINAL_OR_NOT_OWNED'
+        $result=Remove-CompletedSourceE2ECopies @arguments -SupersededPaths @($copy.root) -ArchiveBudget @{remaining=1}
+        $result.removed|Should -Be 1
+        $result.entries[0].status|Should -BeExactly 'archived-inactive'
+        Test-Path -LiteralPath $copy.root|Should -BeFalse
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip=[IO.Compression.ZipFile]::OpenRead((Join-Path $root ('diagnostics/'+(Split-Path -Leaf $copy.root)+'/recovery.zip')))
+        try {$zip.GetEntry('branch/.agent-1c/runs/release-e2e/rel-e2e-r8/checkpoint.json')|Should -Not -BeNullOrEmpty}finally{$zip.Dispose()}
+        Should -Invoke Invoke-SourceFixtureInstalledAction -Times 0
+    }
+    It 'keeps a superseded Release copy that was active within the last hour' {
+        $root=Join-Path $TestDrive 'superseded active Пример';$copy=New-RecoverableStorageCopy -Root $root -State ready -Phase Release
+        Write-QualificationFixtureJson -Path (Join-Path $copy.fixture.branchRoot '.agent-1c/runs/release-e2e/rel-e2e-r8/checkpoint.json') -Value @{status='running'}
+        $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root -CandidateRoot $RepoRoot -DiagnosticRoot (Join-Path $root 'diagnostics') -SupersededPaths @($copy.root)
+        $result.removed|Should -Be 0;$result.entries[0].reason|Should -BeLike '*FIXTURE_COPY_RECENT_ACTIVITY*'
+        Test-Path -LiteralPath $copy.root|Should -BeTrue
+    }
 }
 
 Describe 'Failed factory and unclosed qualification copy recovery' {

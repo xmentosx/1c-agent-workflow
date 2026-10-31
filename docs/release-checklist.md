@@ -156,8 +156,11 @@ Only the newest two failed plans are retained, never beyond seven days; configur
 reusable stands and active plan resources are never removed, except that a Release
 copy whose capsule's stand is no longer this clone's gate stand (or whose capsule
 is gone) can never resume: its reusable-stand record closes, its snapshot and
-capability resources go to their removal adapters, and the copy owner's ordinary
-retention then archives it. The open attempt's candidate keeps its copies. A
+capability resources go to their removal adapters, and the copy owner archives
+the whole copy, producer checkpoints included, once it has been idle for an hour,
+ahead of the keep count and under the same per-sweep archive limit. The
+archived copy's missing paths then close those resources. The open attempt's
+candidate keeps its copies. A
 successful `PublishDevelop` also applies the recovery-archive retention of
 `docs/source-recovery-retention.md`.
 

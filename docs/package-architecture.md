@@ -329,6 +329,16 @@ that record and hands its snapshot and capability resources to their existing
 removal adapters, after which the copy owner's ordinary retention applies.
 Archives without an ownership proof stay for manual removal. No lock, state or
 coordinator is added.
+The first publications under that rule released nothing. The copy's own
+producer checkpoint still named its snapshots, so both the removal adapters and
+the copy owner kept it as resumable, and the warning sweep record's scanned
+roots (`C:\itlj`) then counted as an owner reference of every recovery archive.
+The sweep now hands the superseded copy roots it derives on every pass, also
+after their records closed, to the copy owner, which archives such a copy whole
+with its checkpoints after an hour of inactivity (keep count does not apply;
+the archive budget, lease, reader and infobase guards do). Missing paths then
+close the resources. Recovery archive guards ignore `cleanup-sweep` records,
+which name scanned roots rather than owned objects.
 The Develop upgrade journey then showed that its configuration-rejection
 refresh on PM5 resumed a merged refresh left by an older workflow whose refresh
 ran the production Gate6 profile. The current refresh runs the development

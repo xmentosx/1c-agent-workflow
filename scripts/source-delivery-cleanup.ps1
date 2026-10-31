@@ -395,23 +395,23 @@ function Remove-SourceDeliveryStaleReleaseSeedArchives {
 }
 
 function Remove-SourceDeliveryCompletedFixtureCopies {
-    param([string]$FreshProjectsRoot,[string[]]$PreservePaths=@())
+    param([string]$FreshProjectsRoot,[string[]]$PreservePaths=@(),[string[]]$SupersededCopies=@())
     # The same copy owner plans retention and archives inactive owned copies.
     # Its lease, reader, ledger, checkpoint, archive and infobase guards still bind.
     & {
-        param($ownerRoot,$copyRoot,$preserved)
+        param($ownerRoot,$copyRoot,$preserved,$superseded)
         . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
         $diagnostics=Join-Path (Get-RepositoryCommonGitDirectory -RepositoryRoot $ownerRoot) 'itl/evidence/fixture-cleanup'
         $settings=Get-SourceE2ECopyRetentionSettings -CandidateRoot $ownerRoot
         $plan=@{archivePaths=@();inactiveBeforeUtc=[datetime]::MinValue}
         if($settings.enabled){$plan=Get-SourceE2ECopyRetentionPlan -ProjectsRoots @(Get-SourceE2EProjectsRoots -ProjectsRoot $copyRoot -IncludeNestedRoots) -CandidateRoot $ownerRoot -RetentionDays $settings.days -KeepCount $settings.keep}
         $budget=@{remaining=$settings.batch}
-        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved -IncludeNestedRoots -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget
-    } $script:Root $FreshProjectsRoot $PreservePaths
+        Remove-CompletedSourceE2ECopies -ProjectsRoot $copyRoot -CandidateRoot $ownerRoot -DiagnosticRoot $diagnostics -IncludeLegacy -PreservePaths $preserved -IncludeNestedRoots -ArchiveReadyPaths $plan.archivePaths -InactiveBeforeUtc $plan.inactiveBeforeUtc -ArchiveBudget $budget -SupersededPaths $superseded
+    } $script:Root $FreshProjectsRoot $PreservePaths $SupersededCopies
 }
 
 function Invoke-SourceDeliveryPostSuccessCleanup {
-    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @(), [ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase = 'post-operation')
+    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @(), [string[]]$SupersededCopies = @(), [ValidateSet('manual', 'pre-operation', 'post-operation')][string]$Phase = 'post-operation')
 
     $report = [ordered]@{ status = 'completed'; warnings = @() }
     $minimumAgeHours = if ($Phase -eq 'manual') { 0 } else { 168 }
@@ -423,7 +423,7 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },
         [pscustomobject]@{ name = 'vanessaBuildWork'; action = { Remove-SourceDeliveryStaleVanessaBuildWork -MinimumAgeHours $minimumAgeHours } },
         [pscustomobject]@{ name = 'releaseRecoveryArtifacts'; action = { Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -MinimumAgeHours $minimumAgeHours } },
-        [pscustomobject]@{ name = 'completedFixtureCopies'; action = { Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
+        [pscustomobject]@{ name = 'completedFixtureCopies'; action = { Remove-SourceDeliveryCompletedFixtureCopies -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths -SupersededCopies $SupersededCopies } },
         [pscustomobject]@{ name = 'freshProjects'; action = { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'freshLauncherEntries'; action = { Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $FreshProjectsRoot } }
     )) {

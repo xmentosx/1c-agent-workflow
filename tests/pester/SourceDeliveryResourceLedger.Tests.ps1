@@ -26,7 +26,7 @@
         Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure
     }
     function Invoke-SourceDeliveryPostSuccessCleanup {
-        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths,[string]$Phase)
+        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths,[string[]]$SupersededCopies,[string]$Phase)
         [pscustomobject]@{ status='completed'; warnings=@() }
     }
     . (Join-Path $RepoRoot 'scripts\git-path-list.ps1')
@@ -173,7 +173,8 @@ Describe 'Delivery v3 resource ledger' {
                 snapshot = Register-DeliveryResource -PlanId 'plan' -Kind 'release-snapshot' -Owner 'release-e2e' -Identity ([ordered]@{ path=(Join-Path $branch '.agent-1c\runs\release-e2e\r\snapshots\baseline.dt'); worktreePath=$branch }) -State retained
             }
         }
-        Update-DeliverySupersededReleaseCopyResources | Should -Be 3
+        $expected = @('superseded', 'capsuleGone', 'legacyClaim' | ForEach-Object { Join-Path $TestDrive ("q " + [char]0x041F + "\release-$_") })
+        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be ($expected | Sort-Object)
         $states = @{}; foreach ($resource in (Read-DeliveryResourceLedger).resources) { $states[[string]$resource.resourceId] = [string]$resource.state }
         foreach ($name in @('superseded', 'capsuleGone', 'legacyClaim')) {
             $states[$copies[$name].stand] | Should -Be 'removed' -Because $name
@@ -183,6 +184,19 @@ Describe 'Delivery v3 resource ledger' {
             $states[$copies[$name].stand] | Should -Be 'active' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'retained' -Because $name
         }
+        # The closed record still names the copy until its owner archives it.
+        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be ($expected | Sort-Object)
+        Remove-Item -LiteralPath $expected[0] -Recurse -Force
+        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be (@($expected | Select-Object -Skip 1) | Sort-Object)
+    }
+
+    It 'hands superseded Release copies from the sweep to the copy owner' {
+        $root = New-LedgerRepository
+        $script:capturedSuperseded = $null
+        Mock Update-DeliverySupersededReleaseCopyResources { @('C:\copy one', 'C:\copy two') }
+        Mock Invoke-SourceDeliveryPostSuccessCleanup { param($FreshProjectsRoot,$E2EProjectRoot,$PreservePaths,$SupersededCopies,$Phase); $script:capturedSuperseded=@($SupersededCopies); [pscustomobject]@{status='completed';warnings=@()} }
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $root | Out-Null
+        $script:capturedSuperseded | Should -Be @('C:\copy one', 'C:\copy two')
     }
 
     It 'keeps the disposition call graph read-only and documents the manual CAS boundary' {

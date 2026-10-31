@@ -1154,8 +1154,10 @@ function Update-DeliverySupersededReleaseCopyResources {
     # A Release copy resumes only from its own capsule and candidate. Once its
     # capsule's stand is no longer this clone's gate stand, or the capsule is
     # gone, it cannot be resumed: its reusable-stand record closes and its
-    # snapshot/capability resources go to their removal adapters, so the copy
-    # owner's ordinary retention may archive the copy. The open attempt's
+    # snapshot/capability resources go to their removal adapters. The copy's own
+    # checkpoint still names those resources, so only archiving the whole copy
+    # releases them; the returned roots let the copy owner do that on this and
+    # every later sweep, after the record has closed. The open attempt's
     # candidate keeps its copies.
     $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
     $fixtureId = & { param($path, $repository) . $path; Get-GateStandFixtureId -Repository $repository } $builder (Split-Path -Parent $PSScriptRoot)
@@ -1165,7 +1167,7 @@ function Update-DeliverySupersededReleaseCopyResources {
     $openCandidate = if ($attempt -and $attempt.PSObject.Properties['candidate']) { [string]$attempt.candidate } else { '' }
     $ledger = Read-DeliveryResourceLedger
     $copies = [Collections.Generic.List[string]]::new()
-    foreach ($resource in @($ledger.resources | Where-Object { [string]$_.kind -eq 'reusable-stand' -and [string]$_.owner -ceq 'Release-e2e' -and [string]$_.state -eq 'active' })) {
+    foreach ($resource in @($ledger.resources | Where-Object { [string]$_.kind -eq 'reusable-stand' -and [string]$_.owner -ceq 'Release-e2e' -and [string]$_.state -in @('active', 'removed') })) {
         if (-not (Test-DeliveryLedgerResourceOwnership -Resource $resource).owned) { continue }
         $branch = [IO.Path]::GetFullPath([string]$resource.identity.path).TrimEnd('\', '/')
         $copy = Split-Path -Parent $branch
@@ -1180,9 +1182,9 @@ function Update-DeliverySupersededReleaseCopyResources {
         $capsule = & $field 'capsulePath'
         $stand = if ($capsule -match '^(.+?)[\\/]\.git[\\/]itl[\\/]qualification-fixtures[\\/]') { [IO.Path]::GetFullPath($matches[1]).TrimEnd('\', '/') } else { '' }
         if ($stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($stands | Where-Object { $_ -ieq $stand }).Count) { continue }
-        $copies.Add($copy) | Out-Null
+        if (-not ($copies -icontains $copy)) { $copies.Add($copy) | Out-Null }
     }
-    if ($copies.Count -eq 0) { return 0 }
+    if ($copies.Count -eq 0) { return @() }
     $now = [DateTime]::UtcNow.ToString('o')
     foreach ($resource in @($ledger.resources | Where-Object { [string]$_.state -in @('active', 'retained') -and $_.identity.PSObject.Properties['path'] })) {
         $path = [IO.Path]::GetFullPath([string]$resource.identity.path).TrimEnd('\', '/')
@@ -1191,7 +1193,7 @@ function Update-DeliverySupersededReleaseCopyResources {
         $resource.updatedAt = $now; $resource.lastError = ''
     }
     [void](Write-DeliveryResourceLedger -Ledger $ledger)
-    return $copies.Count
+    return @($copies)
 }
 
 function Invoke-DeliveryCleanupSweep {
@@ -1203,11 +1205,12 @@ function Invoke-DeliveryCleanupSweep {
     }
     if ($staleActiveChanged) { [void](Write-DeliveryResourceLedger -Ledger $staleActiveLedger) }
     Update-DeliveryFailedPlanRetention
-    try { [void](Update-DeliverySupersededReleaseCopyResources -E2EProjectRoot $E2EProjectRoot) }
+    $supersededCopies = @()
+    try { $supersededCopies = @(Update-DeliverySupersededReleaseCopyResources -E2EProjectRoot $E2EProjectRoot) }
     catch { Write-Warning "Superseded Release copy resources were kept: $($_.Exception.Message)" }
     $before = Read-DeliveryResourceLedger
     $preservePaths = @($before.resources | Where-Object { [string]$_.state -in @("active", "retained") -and $_.identity.PSObject.Properties["path"] } | ForEach-Object { [string]$_.identity.path } | Where-Object { $_ })
-    $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -PreservePaths $preservePaths -Phase $Phase
+    $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -PreservePaths $preservePaths -SupersededCopies $supersededCopies -Phase $Phase
     $ledger = Read-DeliveryResourceLedger
     $attemptedAt = [DateTime]::UtcNow.ToString("o")
     $ledgerWarnings = [Collections.Generic.List[string]]::new()

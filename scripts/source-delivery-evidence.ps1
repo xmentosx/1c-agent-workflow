@@ -92,7 +92,10 @@ function Get-DeliveryRecoveryGuards {
         $ledger = Get-Content -LiteralPath $ledgerPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $ledger.PSObject.Properties['resources'] -or [int]$ledger.schemaVersion -ne 1) { throw 'Unknown resource ledger.' }
         foreach ($resource in @($ledger.resources)) {
-            if ([string]$resource.state -ne 'removed') {
+            # A sweep record names the roots it scanned, not an object it owns;
+            # its ancestor roots would otherwise protect every archive.
+            $kind = $resource.PSObject.Properties['kind']
+            if ([string]$resource.state -ne 'removed' -and -not ($kind -and [string]$kind.Value -ceq 'cleanup-sweep')) {
                 foreach ($path in @(Get-DeliveryRecoveryReferences $resource.identity)) { $references.Add($path) }
             }
         }

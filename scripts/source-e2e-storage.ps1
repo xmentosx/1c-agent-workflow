@@ -147,8 +147,11 @@ function Get-SourceE2EFixtureReaderInventory {
 }
 
 function Remove-SourceE2EFixtureCopy {
-    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive,[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null)
-    $contextArguments=@{}+ $PSBoundParameters;$contextArguments.Remove('InactiveBeforeUtc');$contextArguments.Remove('ArchiveBudget')
+    param([object]$Fixture,[string]$CandidateRoot,[string]$ReportPath,[string]$DiagnosticRoot,[switch]$LegacyCleanup,[string]$ProjectsRoot,[switch]$RecoveryCleanup,[switch]$ArchiveInactive,[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null,[switch]$Superseded)
+    $contextArguments=@{}+ $PSBoundParameters;$contextArguments.Remove('InactiveBeforeUtc');$contextArguments.Remove('ArchiveBudget');$contextArguments.Remove('Superseded')
+    # A superseded Release copy can never resume; its full inactive archive
+    # keeps the producer checkpoints instead of the copy.
+    $checkpointsArchived=$Superseded -and $ArchiveInactive
     $context=Get-SourceE2EFixtureCopyContext @contextArguments
     $parent=$context.parent;$prefix=$context.prefix;$claim=$context.claim;$claimPath=$context.claimPath;$archivedClaim=$context.archivedClaim;$report=$context.report
     if(-not $RecoveryCleanup -and [string]$claim.status -cne 'disposed'){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED: complete the recorded database-owner disposal first'}
@@ -199,8 +202,8 @@ function Remove-SourceE2EFixtureCopy {
                 if($item.PSIsContainer){$directories.Push($item.FullName)}else{
                     if($item.Name -ieq '1Cv8.1CD' -and -not $RecoveryCleanup){throw 'FIXTURE_COPY_DATABASE_NOT_DISPOSED'}
                     $relative=$item.FullName.Substring($prefix.Length).Replace('\','/')
-                    if($relative -match '^(project|branch)/\.agent-1c/.*/checkpoint\.json$'){throw 'FIXTURE_COPY_RESUMABLE: producer checkpoint is still present'}
-                    if($relative -match '^(project|branch)/\.agent-1c/execution-checkpoints/.*\.json$'){
+                    if($relative -match '^(project|branch)/\.agent-1c/.*/checkpoint\.json$' -and -not $checkpointsArchived){throw 'FIXTURE_COPY_RESUMABLE: producer checkpoint is still present'}
+                    if($relative -match '^(project|branch)/\.agent-1c/execution-checkpoints/.*\.json$' -and -not $checkpointsArchived){
                         $checkpoint=Read-QualificationFixtureJson -Path $item.FullName
                         if([string]$checkpoint.status -cne 'resumed'){throw 'FIXTURE_COPY_RESUMABLE: execution checkpoint is not resumed'}
                     }
@@ -348,7 +351,7 @@ function Get-SourceE2ECopyRetentionPlan {
 }
 
 function Remove-CompletedSourceE2ECopies {
-    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot,[switch]$IncludeLegacy,[string[]]$PreservePaths=@(),[switch]$IncludeNestedRoots,[string[]]$ArchiveReadyPaths=@(),[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null)
+    param([string]$ProjectsRoot,[string]$CandidateRoot,[string]$DiagnosticRoot,[switch]$IncludeLegacy,[string[]]$PreservePaths=@(),[switch]$IncludeNestedRoots,[string[]]$ArchiveReadyPaths=@(),[datetime]$InactiveBeforeUtc=[datetime]::MinValue,[hashtable]$ArchiveBudget=$null,[string[]]$SupersededPaths=@())
     $container=Resolve-QualificationFixtureChild -Root $ProjectsRoot -RelativePath 'q Проект'
     if($IncludeNestedRoots){
         # Custom canaries use <FreshProjectsRoot>/<run>/q Проект. Inspect one
@@ -358,7 +361,7 @@ function Remove-CompletedSourceE2ECopies {
         })
         $entries=[Collections.Generic.List[object]]::new();$removed=0;$retained=0;[int64]$bytes=0
         foreach($root in $roots){
-            $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root.path -CandidateRoot $CandidateRoot -DiagnosticRoot $root.diagnostics -IncludeLegacy:$IncludeLegacy -PreservePaths $PreservePaths -ArchiveReadyPaths $ArchiveReadyPaths -InactiveBeforeUtc $InactiveBeforeUtc -ArchiveBudget $ArchiveBudget
+            $result=Remove-CompletedSourceE2ECopies -ProjectsRoot $root.path -CandidateRoot $CandidateRoot -DiagnosticRoot $root.diagnostics -IncludeLegacy:$IncludeLegacy -PreservePaths $PreservePaths -ArchiveReadyPaths $ArchiveReadyPaths -InactiveBeforeUtc $InactiveBeforeUtc -ArchiveBudget $ArchiveBudget -SupersededPaths $SupersededPaths
             $removed+=$result.removed;$retained+=$result.retained;$bytes+=$result.removedBytes
             foreach($entry in $result.entries){$entries.Add($entry)}
         }
@@ -383,14 +386,18 @@ function Remove-CompletedSourceE2ECopies {
                 $archivePending=[string]$proof.kind -ceq 'itl-fixture-copy-cleanup-proof' -and [string]$proof.reason -ceq 'archive-inactive-qualification' -and
                     [string]$proof.copyRoot -ieq $directory.FullName -and [string]$proof.workflowCommonGit -ieq $common -and [string]$proof.candidateCommit -ceq [string]$claim.candidateCommit
             }
-            if($archivePending -or $ArchiveReadyPaths -icontains $directory.FullName){
-                if(-not $archivePending -and $InactiveBeforeUtc -eq [datetime]::MinValue){throw 'FIXTURE_RETENTION_INACTIVITY_REQUIRED'}
+            # A superseded copy has no reuse value: it skips the keep count and
+            # goes once idle for an hour, under the same archive budget.
+            $superseded=$SupersededPaths -icontains $directory.FullName
+            if($archivePending -or $superseded -or $ArchiveReadyPaths -icontains $directory.FullName){
+                $inactiveBefore=if($superseded){[datetime]::UtcNow.AddHours(-1)}else{$InactiveBeforeUtc}
+                if(-not $archivePending -and $inactiveBefore -eq [datetime]::MinValue){throw 'FIXTURE_RETENTION_INACTIVITY_REQUIRED'}
                 if(-not $archivePending -and $null -ne $ArchiveBudget -and $ArchiveBudget.remaining -le 0){throw 'FIXTURE_COPY_ARCHIVE_DEFERRED: this sweep archive limit was reached; next project operation or Cleanup will retry'}
-                $cutoff=if($archivePending){[datetime]::MinValue}else{$InactiveBeforeUtc}
+                $cutoff=if($archivePending){[datetime]::MinValue}else{$inactiveBefore}
                 # Already archived disposal must finish even when this sweep has
                 # no budget for another new archive.
                 $budget=if($archivePending){$null}else{$ArchiveBudget}
-                $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=(Join-Path $directory.FullName 'project')} -CandidateRoot $CandidateRoot -ReportPath $archiveProof -DiagnosticRoot $diagnostics -RecoveryCleanup -ArchiveInactive -ProjectsRoot $ProjectsRoot -InactiveBeforeUtc $cutoff -ArchiveBudget $budget
+                $result=Remove-SourceE2EFixtureCopy -Fixture @{projectRoot=(Join-Path $directory.FullName 'project')} -CandidateRoot $CandidateRoot -ReportPath $archiveProof -DiagnosticRoot $diagnostics -RecoveryCleanup -ArchiveInactive -ProjectsRoot $ProjectsRoot -InactiveBeforeUtc $cutoff -ArchiveBudget $budget -Superseded:$superseded
                 $removed++;$removedBytes+=$result.removedBytes;$entries.Add($result);continue
             }
             $legacy=$IncludeLegacy -and $claim -and [int]$claim.schemaVersion -eq 1 -and [string]$claim.phase -eq 'Develop' -and [string]$claim.status -eq 'disposed'
