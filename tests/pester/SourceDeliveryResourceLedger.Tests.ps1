@@ -158,21 +158,24 @@ Describe 'Delivery v3 resource ledger' {
             @{ name='superseded'; stand=$oldStand; capsule=$true; candidate=('a' * 40) },
             @{ name='current'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40) },
             @{ name='openAttempt'; stand=$oldStand; capsule=$true; candidate=('c' * 40) },
-            @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=('a' * 40) })) {
+            @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=('a' * 40) },
+            @{ name='legacyClaim'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40); legacy=$true })) {
             $copy = Join-Path $TestDrive ("q " + [char]0x041F + "\release-$($case.name)")
             $branch = Join-Path $copy 'branch'
             [void][IO.Directory]::CreateDirectory($branch)
             $capsule = Join-Path $case.stand ".git\itl\qualification-fixtures\release-$($case.name)\capsule.json"
             if ($case.capsule) { [void][IO.Directory]::CreateDirectory((Split-Path -Parent $capsule)); [IO.File]::WriteAllText($capsule, '{}') }
-            [IO.File]::WriteAllText((Join-Path $copy 'qualification-fixture.json'), (@{ schemaVersion=2; kind='itl-qualification-fixture-target'; phase='Release'; status='ready'; branchRoot=$branch; capsulePath=$capsule; candidateCommit=$case.candidate } | ConvertTo-Json))
+            $claim = [ordered]@{ schemaVersion=2; kind='itl-qualification-fixture-target'; phase='Release'; status='ready'; branchRoot=$branch; capsulePath=$capsule; candidateCommit=$case.candidate }
+            if ($case.Contains('legacy')) { $claim.Remove('capsulePath') }
+            [IO.File]::WriteAllText((Join-Path $copy 'qualification-fixture.json'), ($claim | ConvertTo-Json))
             $copies[$case.name] = @{
                 stand = Register-DeliveryResource -PlanId 'plan' -Kind 'reusable-stand' -Owner 'Release-e2e' -Identity ([ordered]@{ path=$branch; configured=$true }) -State active -RetainUntil ([DateTime]::MaxValue)
                 snapshot = Register-DeliveryResource -PlanId 'plan' -Kind 'release-snapshot' -Owner 'release-e2e' -Identity ([ordered]@{ path=(Join-Path $branch '.agent-1c\runs\release-e2e\r\snapshots\baseline.dt'); worktreePath=$branch }) -State retained
             }
         }
-        Update-DeliverySupersededReleaseCopyResources | Should -Be 2
+        Update-DeliverySupersededReleaseCopyResources | Should -Be 3
         $states = @{}; foreach ($resource in (Read-DeliveryResourceLedger).resources) { $states[[string]$resource.resourceId] = [string]$resource.state }
-        foreach ($name in @('superseded', 'capsuleGone')) {
+        foreach ($name in @('superseded', 'capsuleGone', 'legacyClaim')) {
             $states[$copies[$name].stand] | Should -Be 'removed' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'cleanup-pending' -Because $name
         }

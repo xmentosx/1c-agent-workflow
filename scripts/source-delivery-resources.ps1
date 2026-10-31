@@ -1172,9 +1172,12 @@ function Update-DeliverySupersededReleaseCopyResources {
         $claimPath = Join-Path $copy 'qualification-fixture.json'
         if (-not (Test-Path -LiteralPath $claimPath -PathType Leaf)) { continue }
         try { $claim = Get-Content -LiteralPath $claimPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
-        if ([string]$claim.kind -cne 'itl-qualification-fixture-target' -or [string]$claim.phase -cne 'Release' -or
-            [string]$claim.branchRoot -ine $branch -or ($openCandidate -and [string]$claim.candidateCommit -ceq $openCandidate)) { continue }
-        $capsule = [string]$claim.capsulePath
+        $field = { param($name) $property = $claim.PSObject.Properties[$name]; if ($property) { [string]$property.Value } else { '' } }
+        if ((& $field 'kind') -cne 'itl-qualification-fixture-target' -or (& $field 'phase') -cne 'Release' -or
+            (& $field 'branchRoot') -ine $branch -or ($openCandidate -and (& $field 'candidateCommit') -ceq $openCandidate)) { continue }
+        # A claim written before capsule paths were recorded names no capsule
+        # it could resume from.
+        $capsule = & $field 'capsulePath'
         $stand = if ($capsule -match '^(.+?)[\\/]\.git[\\/]itl[\\/]qualification-fixtures[\\/]') { [IO.Path]::GetFullPath($matches[1]).TrimEnd('\', '/') } else { '' }
         if ($stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($stands | Where-Object { $_ -ieq $stand }).Count) { continue }
         $copies.Add($copy) | Out-Null
