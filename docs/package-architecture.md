@@ -339,6 +339,13 @@ with its checkpoints after an hour of inactivity (keep count does not apply;
 the archive budget, lease, reader and infobase guards do). Missing paths then
 close the resources. Recovery archive guards ignore `cleanup-sweep` records,
 which name scanned roots rather than owned objects.
+That pass still found its copies through the closed `reusable-stand` records,
+and ledger compaction archives `removed` records, so the copies stayed while the
+records of their refused snapshots aged into `retained` and protected them. The
+copy owner now proves supersession from each copy's own claim (same common Git
+directory, Release phase, not the open candidate, capsule gone or on a stand
+that is no longer live), and the sweep only closes the records under the copies
+it returns; no ledger record is needed to find a copy.
 The Develop upgrade journey then showed that its configuration-rejection
 refresh on PM5 resumed a merged refresh left by an older workflow whose refresh
 ran the production Gate6 profile. The current refresh runs the development

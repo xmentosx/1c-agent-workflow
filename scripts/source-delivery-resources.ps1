@@ -1150,40 +1150,25 @@ function Register-DeliveryGateResourcesCore {
 }
 
 function Update-DeliverySupersededReleaseCopyResources {
-    param([string]$E2EProjectRoot = '')
-    # A Release copy resumes only from its own capsule and candidate. Once its
-    # capsule's stand is no longer this clone's gate stand, or the capsule is
-    # gone, it cannot be resumed: its reusable-stand record closes and its
-    # snapshot/capability resources go to their removal adapters. The copy's own
-    # checkpoint still names those resources, so only archiving the whole copy
-    # releases them; the returned roots let the copy owner do that on this and
-    # every later sweep, after the record has closed. The open attempt's
-    # candidate keeps its copies.
+    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '')
+    # The copy owner proves from each copy's own claim that it can no longer
+    # resume, so compacted ledger records cannot hide one. Its reusable-stand
+    # record closes and its snapshot/capability resources go to their removal
+    # adapters. The copy's own checkpoint still names those resources, so only
+    # archiving the whole copy releases them; the returned roots let the copy
+    # owner do that on this and every later sweep.
     $builder = Join-Path $PSScriptRoot 'new-gate-stand.ps1'
     $fixtureId = & { param($path, $repository) . $path; Get-GateStandFixtureId -Repository $repository } $builder (Split-Path -Parent $PSScriptRoot)
     $stands = @((Get-DeliveryGateStandRoot -CommonGitDirectory (Get-DeliveryCommonGitDirectory) -FixtureId $fixtureId))
     if ($E2EProjectRoot) { $stands += [IO.Path]::GetFullPath($E2EProjectRoot).TrimEnd('\', '/') }
     $attempt = Read-DevelopPublicationAttempt
     $openCandidate = if ($attempt -and $attempt.PSObject.Properties['candidate']) { [string]$attempt.candidate } else { '' }
+    $copies = @(& {
+        param($ownerRoot, $repository, $projectsRoot, $liveStands, $candidate)
+        . (Join-Path $ownerRoot 'scripts/source-e2e-fixture.ps1')
+        Get-SourceE2ESupersededReleaseCopies -ProjectsRoot $projectsRoot -CandidateRoot $repository -LiveStands $liveStands -OpenCandidate $candidate
+    } (Split-Path -Parent $PSScriptRoot) $script:Root $FreshProjectsRoot $stands $openCandidate)
     $ledger = Read-DeliveryResourceLedger
-    $copies = [Collections.Generic.List[string]]::new()
-    foreach ($resource in @($ledger.resources | Where-Object { [string]$_.kind -eq 'reusable-stand' -and [string]$_.owner -ceq 'Release-e2e' -and [string]$_.state -in @('active', 'removed') })) {
-        if (-not (Test-DeliveryLedgerResourceOwnership -Resource $resource).owned) { continue }
-        $branch = [IO.Path]::GetFullPath([string]$resource.identity.path).TrimEnd('\', '/')
-        $copy = Split-Path -Parent $branch
-        $claimPath = Join-Path $copy 'qualification-fixture.json'
-        if (-not (Test-Path -LiteralPath $claimPath -PathType Leaf)) { continue }
-        try { $claim = Get-Content -LiteralPath $claimPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
-        $field = { param($name) $property = $claim.PSObject.Properties[$name]; if ($property) { [string]$property.Value } else { '' } }
-        if ((& $field 'kind') -cne 'itl-qualification-fixture-target' -or (& $field 'phase') -cne 'Release' -or
-            (& $field 'branchRoot') -ine $branch -or ($openCandidate -and (& $field 'candidateCommit') -ceq $openCandidate)) { continue }
-        # A claim written before capsule paths were recorded names no capsule
-        # it could resume from.
-        $capsule = & $field 'capsulePath'
-        $stand = if ($capsule -match '^(.+?)[\\/]\.git[\\/]itl[\\/]qualification-fixtures[\\/]') { [IO.Path]::GetFullPath($matches[1]).TrimEnd('\', '/') } else { '' }
-        if ($stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($stands | Where-Object { $_ -ieq $stand }).Count) { continue }
-        if (-not ($copies -icontains $copy)) { $copies.Add($copy) | Out-Null }
-    }
     if ($copies.Count -eq 0) { return @() }
     $now = [DateTime]::UtcNow.ToString('o')
     foreach ($resource in @($ledger.resources | Where-Object { [string]$_.state -in @('active', 'retained') -and $_.identity.PSObject.Properties['path'] })) {
@@ -1206,7 +1191,7 @@ function Invoke-DeliveryCleanupSweep {
     if ($staleActiveChanged) { [void](Write-DeliveryResourceLedger -Ledger $staleActiveLedger) }
     Update-DeliveryFailedPlanRetention
     $supersededCopies = @()
-    try { $supersededCopies = @(Update-DeliverySupersededReleaseCopyResources -E2EProjectRoot $E2EProjectRoot) }
+    try { $supersededCopies = @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot) }
     catch { Write-Warning "Superseded Release copy resources were kept: $($_.Exception.Message)" }
     $before = Read-DeliveryResourceLedger
     $preservePaths = @($before.resources | Where-Object { [string]$_.state -in @("active", "retained") -and $_.identity.PSObject.Properties["path"] } | ForEach-Object { [string]$_.identity.path } | Where-Object { $_ })

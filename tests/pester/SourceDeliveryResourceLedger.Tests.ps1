@@ -147,8 +147,10 @@
 }
 
 Describe 'Delivery v3 resource ledger' {
-    It 'releases only Release copies whose capsule left this clone''s gate stand and are not the open attempt''s' {
+    It 'releases Release copies whose own claim shows they cannot resume, even without ledger records' {
         $root = New-LedgerRepository
+        $common = [IO.Path]::GetFullPath((& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim())
+        $fresh = Join-Path $TestDrive ('fresh ' + [char]0x0441 + ' ' + [guid]::NewGuid().ToString('N'))
         $script:currentStand = Join-Path $TestDrive ('current stand ' + [char]0x0441)
         $oldStand = Join-Path $TestDrive ('old stand ' + [char]0x0441)
         function Get-DeliveryGateStandRoot { param($CommonGitDirectory, $FixtureId) $script:currentStand }
@@ -159,37 +161,49 @@ Describe 'Delivery v3 resource ledger' {
             @{ name='current'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40) },
             @{ name='openAttempt'; stand=$oldStand; capsule=$true; candidate=('c' * 40) },
             @{ name='capsuleGone'; stand=$script:currentStand; capsule=$false; candidate=('a' * 40) },
-            @{ name='legacyClaim'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40); legacy=$true })) {
-            $copy = Join-Path $TestDrive ("q " + [char]0x041F + "\release-$($case.name)")
+            @{ name='legacyClaim'; stand=$script:currentStand; capsule=$true; candidate=('a' * 40); legacy=$true },
+            @{ name='compacted'; stand=$oldStand; capsule=$true; candidate=('a' * 40); unrecorded=$true },
+            @{ name='foreign'; stand=$oldStand; capsule=$true; candidate=('a' * 40); foreign=$true },
+            @{ name='nested'; stand=$oldStand; capsule=$true; candidate=('a' * 40); group='canary run' })) {
+            $container = if ($case.Contains('group')) { Join-Path $fresh "$($case.group)\q Проект" } else { Join-Path $fresh 'q Проект' }
+            $copy = Join-Path $container "release-$($case.name)"
             $branch = Join-Path $copy 'branch'
             [void][IO.Directory]::CreateDirectory($branch)
             $capsule = Join-Path $case.stand ".git\itl\qualification-fixtures\release-$($case.name)\capsule.json"
             if ($case.capsule) { [void][IO.Directory]::CreateDirectory((Split-Path -Parent $capsule)); [IO.File]::WriteAllText($capsule, '{}') }
-            $claim = [ordered]@{ schemaVersion=2; kind='itl-qualification-fixture-target'; phase='Release'; status='ready'; branchRoot=$branch; capsulePath=$capsule; candidateCommit=$case.candidate }
+            $claim = [ordered]@{ schemaVersion=2; kind='itl-qualification-fixture-target'; phase='Release'; status='ready'; copyRoot=$copy; branchRoot=$branch
+                workflowCommonGit=$(if ($case.Contains('foreign')) { Join-Path $TestDrive 'other clone\.git' } else { $common }); capsulePath=$capsule; candidateCommit=$case.candidate }
             if ($case.Contains('legacy')) { $claim.Remove('capsulePath') }
-            [IO.File]::WriteAllText((Join-Path $copy 'qualification-fixture.json'), ($claim | ConvertTo-Json))
+            [IO.File]::WriteAllText((Join-Path $copy 'qualification-fixture.json'), ($claim | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+            if ($case.Contains('unrecorded')) { $copies[$case.name] = @{ path=$copy }; continue }
             $copies[$case.name] = @{
+                path = $copy
                 stand = Register-DeliveryResource -PlanId 'plan' -Kind 'reusable-stand' -Owner 'Release-e2e' -Identity ([ordered]@{ path=$branch; configured=$true }) -State active -RetainUntil ([DateTime]::MaxValue)
                 snapshot = Register-DeliveryResource -PlanId 'plan' -Kind 'release-snapshot' -Owner 'release-e2e' -Identity ([ordered]@{ path=(Join-Path $branch '.agent-1c\runs\release-e2e\r\snapshots\baseline.dt'); worktreePath=$branch }) -State retained
             }
         }
-        $expected = @('superseded', 'capsuleGone', 'legacyClaim' | ForEach-Object { Join-Path $TestDrive ("q " + [char]0x041F + "\release-$_") })
-        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be ($expected | Sort-Object)
+        $released = @('superseded', 'capsuleGone', 'legacyClaim', 'compacted', 'nested')
+        $expected = @($released | ForEach-Object { $copies[$_].path } | Sort-Object)
+        @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh) | Sort-Object | Should -Be $expected
         $states = @{}; foreach ($resource in (Read-DeliveryResourceLedger).resources) { $states[[string]$resource.resourceId] = [string]$resource.state }
-        foreach ($name in @('superseded', 'capsuleGone', 'legacyClaim')) {
+        foreach ($name in @('superseded', 'capsuleGone', 'legacyClaim', 'nested')) {
             $states[$copies[$name].stand] | Should -Be 'removed' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'cleanup-pending' -Because $name
         }
-        foreach ($name in @('current', 'openAttempt')) {
+        foreach ($name in @('current', 'openAttempt', 'foreign')) {
             $states[$copies[$name].stand] | Should -Be 'active' -Because $name
             $states[$copies[$name].snapshot] | Should -Be 'retained' -Because $name
         }
-        # The closed record still names the copy until its owner archives it.
-        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be ($expected | Sort-Object)
-        Remove-Item -LiteralPath $expected[0] -Recurse -Force
-        @(Update-DeliverySupersededReleaseCopyResources) | Sort-Object | Should -Be (@($expected | Select-Object -Skip 1) | Sort-Object)
+        # Removal adapters refuse a resource its copy's checkpoint names; a
+        # retained record must not keep the copy away from its owner.
+        $ledger = Read-DeliveryResourceLedger
+        foreach ($resource in @($ledger.resources | Where-Object { [string]$_.resourceId -eq $copies.superseded.snapshot })) { $resource.state = 'retained' }
+        [void](Write-DeliveryResourceLedger -Ledger $ledger)
+        @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh) | Sort-Object | Should -Be $expected
+        @((Read-DeliveryResourceLedger).resources | Where-Object { [string]$_.resourceId -eq $copies.superseded.snapshot }).state | Should -Be 'cleanup-pending'
+        Remove-Item -LiteralPath $copies.superseded.path -Recurse -Force
+        @(Update-DeliverySupersededReleaseCopyResources -FreshProjectsRoot $fresh) | Sort-Object | Should -Be @($expected | Where-Object { $_ -ne $copies.superseded.path })
     }
-
     It 'hands superseded Release copies from the sweep to the copy owner' {
         $root = New-LedgerRepository
         $script:capturedSuperseded = $null

@@ -155,8 +155,8 @@ and are retried by the next publication/release or explicit `-Action Cleanup`.
 Only the newest two failed plans are retained, never beyond seven days; configured
 reusable stands and active plan resources are never removed, except that a Release
 copy whose capsule's stand is no longer this clone's gate stand (or whose capsule
-is gone) can never resume: its reusable-stand record closes, its snapshot and
-capability resources go to their removal adapters, and the copy owner archives
+is gone, as its own claim shows) can never resume: its reusable-stand record
+closes, its snapshot and capability resources go to their removal adapters, and the copy owner archives
 the whole copy, producer checkpoints included, once it has been idle for an hour,
 ahead of the keep count and under the same per-sweep archive limit. The
 archived copy's missing paths then close those resources. The open attempt's

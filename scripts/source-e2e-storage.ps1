@@ -291,6 +291,33 @@ function Get-SourceE2EProjectsRoots {
     }
 }
 
+function Get-SourceE2ESupersededReleaseCopies {
+    param([string]$ProjectsRoot,[string]$CandidateRoot,[string[]]$LiveStands=@(),[string]$OpenCandidate='')
+    # A Release copy resumes only from its own capsule and candidate. Its own
+    # claim proves that: the capsule is gone or sits on a stand that is no
+    # longer live, a claim without a capsule path has none to resume from, and
+    # only the open attempt's candidate keeps its copies.
+    $common=Get-RepositoryCommonGitDirectory -RepositoryRoot $CandidateRoot
+    foreach($root in @(Get-SourceE2EProjectsRoots -ProjectsRoot $ProjectsRoot -IncludeNestedRoots)){
+        $container=Resolve-QualificationFixtureChild -Root $root -RelativePath 'q Проект'
+        if(-not (Test-Path -LiteralPath $container -PathType Container)){continue}
+        foreach($directory in @(Get-ChildItem -LiteralPath $container -Directory -Force)){
+            if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){continue}
+            $claimPath=Join-Path $directory.FullName 'qualification-fixture.json'
+            if(-not (Test-Path -LiteralPath $claimPath -PathType Leaf)){continue}
+            try{$claim=Read-QualificationFixtureJson -Path $claimPath}catch{continue}
+            $field={param($name)$property=$claim.PSObject.Properties[$name];if($property){[string]$property.Value}else{''}}
+            if((& $field 'kind') -cne 'itl-qualification-fixture-target' -or (& $field 'phase') -cne 'Release' -or
+                (& $field 'workflowCommonGit') -ine $common -or (& $field 'copyRoot') -ine $directory.FullName -or
+                ($OpenCandidate -and (& $field 'candidateCommit') -ceq $OpenCandidate)){continue}
+            $capsule=& $field 'capsulePath'
+            $stand=if($capsule -match '^(.+?)[\\/]\.git[\\/]itl[\\/]qualification-fixtures[\\/]'){[IO.Path]::GetFullPath($matches[1]).TrimEnd('\','/')}else{''}
+            if($stand -and (Test-Path -LiteralPath $capsule -PathType Leaf) -and @($LiveStands|Where-Object{$_ -and [IO.Path]::GetFullPath($_).TrimEnd('\','/') -ieq $stand}).Count){continue}
+            $directory.FullName
+        }
+    }
+}
+
 function Get-SourceE2ECopyRetentionSettings {
     param([string]$CandidateRoot)
     $values=@{ITL_SOURCE_FIXTURE_CLEANUP_ENABLED='true';ITL_SOURCE_FIXTURE_RETENTION_DAYS='7';ITL_SOURCE_FIXTURE_KEEP_COUNT='1';ITL_SOURCE_FIXTURE_ARCHIVE_BATCH_SIZE='1'}
