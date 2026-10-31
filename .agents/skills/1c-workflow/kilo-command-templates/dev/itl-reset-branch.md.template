@@ -1,5 +1,5 @@
 ---
-description: Архивировать и очистить текущую ветку для новой доработки
+description: Пересоздать текущую ветку от master для новой доработки
 agent: code
 ---
 
@@ -13,4 +13,4 @@ If the agent shell tool supports `timeout_ms`, run this lifecycle command with `
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action reset-dev-branch
 ```
 
-The helper checkpoints the branch, creates and verifies a resumable archive with the current infobase DT and non-configuration files, creates a normal cleanup commit whose tree exactly equals the current local `master`, and recreates the branch infobase from the matching seed. Repeat the same command after an interrupted reset; do not repair Git, the journal, or the infobase manually. On success with a non-empty `userReport`, return it exactly as Russian Markdown, including the absolute archive and DT paths. On failure, read only the last 80 lines of `logPath`.
+The helper checkpoints the branch, creates a normal cleanup commit whose tree exactly equals the current local `master`, recreates the branch infobase from the matching seed and removes the previous task's ignored runtime. No archive is written; prior work stays in Git history. Repeat the same command after an interrupted reset; do not repair Git, the journal, or the infobase manually. On success with a non-empty `userReport`, return it exactly as Russian Markdown. On failure, read only the last 80 lines of `logPath`.

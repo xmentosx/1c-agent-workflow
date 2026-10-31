@@ -89,7 +89,7 @@ Describe 'Completed agent task artifact cleanup' {
         }
     }
 
-    It 'retries an opened disposable through automatic cleanup after the real reset archive and Git tree replacement' {
+    It 'retries an opened disposable through automatic cleanup after the real reset Git tree replacement' {
         $f = New-AgentTaskFixture 'Сброс ветки'
         [IO.File]::WriteAllText((Join-Path $f.root '.gitignore'), "build/`n.agent-1c/`n")
         [IO.File]::WriteAllText((Join-Path $f.root 'master.txt'), 'master source')
@@ -111,23 +111,16 @@ Describe 'Completed agent task artifact cleanup' {
         $result = & {
             . $context.HelperPath -ProjectRoot $f.root -Action help *> $null
             function Get-MainWorktreePath { return $f.root }
-            function Invoke-Designer {
-                param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
-                [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]](9, 8, 7, 6))
-            }
+            function Invoke-Designer { throw 'UNEXPECTED_DESIGNER' }
             function Set-RunStage {}
             Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion | Out-Null
             $reader = [IO.File]::Open($f.path, 'Open', 'Read', 'Read')
             try { $blocked = Invoke-ItlArtifactCleanup -Automatic -WarningAction SilentlyContinue }
             finally { $reader.Dispose() }
-            $state = [pscustomobject]@{devBranch='itldev/task';safeDevBranchName='task';devBranchInfoBasePath='fixture';infoBaseKind='file'}
-            $archivePath = Join-Path (Get-DevBranchArchiveRoot) 'task/fixture'
-            $archive = New-DevBranchResetArchive -State $state -MasterCommit $master -OldHead $oldHead -ArchivePath $archivePath
-            $archiveHash = (Get-FileHash -LiteralPath $archive.dtPath).Hash
             Set-DevBranchTreeToMasterCommit -MasterCommit $master | Out-Null
             $beforeCleanup = Test-Path -LiteralPath $f.path
             $cleaned = Invoke-ItlArtifactCleanup -Automatic
-            [pscustomobject]@{blocked=$blocked;beforeCleanup=$beforeCleanup;cleaned=$cleaned;archive=$archive;archiveHash=$archiveHash;tree=(Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim();masterTree=(Get-GitOutput @('rev-parse', "$master`^{tree}")).Trim()}
+            [pscustomobject]@{blocked=$blocked;beforeCleanup=$beforeCleanup;cleaned=$cleaned;tree=(Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim();masterTree=(Get-GitOutput @('rev-parse', "$master`^{tree}")).Trim()}
         }
         $result.blocked.failed.Count | Should -Be 1
         $result.beforeCleanup | Should -BeTrue
@@ -135,7 +128,7 @@ Describe 'Completed agent task artifact cleanup' {
         $result.cleaned.removedBytes | Should -Be 6
         $result.tree | Should -Be $result.masterTree
         (Test-Path -LiteralPath $f.path) | Should -BeFalse
-        (Get-FileHash -LiteralPath $result.archive.dtPath).Hash | Should -Be $result.archiveHash
+        (& git -C $f.root show "${oldHead}:branch.txt" | Out-String) | Should -Match 'branch work'
         foreach ($relative in @($f.receipt.retainedPaths) + @($active, "$($f.taskRoot)/tmp/unknown.txt", $f.completion)) {
             (Test-Path -LiteralPath (Join-Path $f.root $relative)) | Should -BeTrue
         }

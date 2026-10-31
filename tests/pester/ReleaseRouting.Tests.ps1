@@ -123,7 +123,8 @@ It "parses the local gate and E2E runner" {
         $e2eText | Should -Match '(?s)\$seedParallelEvidence = Invoke-E2ESeedParallelProof.*?WriteAllText\(\s*\$seedParallelEvidencePath.*?if \(\[string\]\$seedParallelEvidence\.status'
         $e2eText | Should -Match '(?s)serverResetDisposition\.status -eq "unverified".*?status = "unverified".*?passed = \$false'
         $e2eText | Should -Match 'serverResetReason = \[string\]\(Get-E2ERecordValue'
-        $e2eText | Should -Match 'seedParallelServerResetArchivePath = \[string\]\(Get-E2ERecordValue'
+        $e2eText | Should -Match 'seedParallelServerResetLeftoverRemovedCount = \[int\]\(Get-E2ERecordValue'
+        $e2eText | Should -Match '(?s)function Test-E2EResetRecreatedBranch.*?cat-file -e.*?resetArchivePath.*?resetLeftoverCleanup'
         $checkText | Should -Not -Match '-not \[bool\]\$e2eSummary\.seedParallelServerResetPassed -or'
         $checkText | Should -Match 'serverResetStatus -ne "unverified"'
         $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8

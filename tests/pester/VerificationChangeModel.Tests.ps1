@@ -480,11 +480,11 @@ Describe 'Current change proof and whole task acceptance' {
             Write-Utf8TextAtomic -Path (Join-Path $root 'src/cf/current.bsl') -Value 'Changed again'
             { Complete-VerificationChange } | Should -Throw '*VERIFICATION_CHANGE_STALE*'
             (Read-VerificationChange).baseTree | Should -BeExactly $base
-            $script:ChangeTestState|Add-Member resetArchivePath (Join-Path $root 'evidence/reset archive')
+            $script:ChangeTestState|Add-Member resetPhase 'git-reset-complete'
             $script:ChangeTestState|Add-Member resetNewHead ('1'*40)
-            { Archive-VerificationChangeForReset -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_RESET_ARCHIVE_MISSING*'
+            { Archive-VerificationChangeForReset -State $script:ChangeTestState } | Should -Throw '*VERIFICATION_CHANGE_RESET_OWNER_REQUIRED*'
             Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeTrue
-            New-Item -ItemType Directory -Force -Path $script:ChangeTestState.resetArchivePath | Out-Null
+            $script:ChangeTestState.resetPhase='runtime-initializing'
             $oldHash=(Get-FileHash -LiteralPath (Get-VerificationChangePath)).Hash
             Archive-VerificationChangeForReset -State $script:ChangeTestState
             Test-Path -LiteralPath (Get-VerificationChangePath) | Should -BeFalse

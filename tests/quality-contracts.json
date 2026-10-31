@@ -1903,6 +1903,7 @@
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.platform-impact.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.branch-deletion.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.legacy-bridges.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.merge-preservation.ps1",
         ".agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1",
         ".agents/skills/1c-workflow/scripts/workflow-local-patch.ps1",

@@ -65,8 +65,9 @@ trace or a handoff. An analyzer response can expire only as an explicitly
 superseded attempt; its current replacement and dependencies must remain.
 Do not mark an artifact that
 still serves as original test/validation evidence, a live input, an executable
-workaround, a rollback snapshot or unfinished work. No heuristic sweeps old
-unmarked investigations. Preserve raw inputs/outputs and cumulative counters.
+workaround, a rollback snapshot or unfinished work. Preserve raw inputs/outputs
+and cumulative counters. Whole unmarked task folders follow the bounded idle
+rule below, not this per-file enrollment.
 
 Planning reads only bounded individual manifests in their dedicated directory and cheap candidate metadata;
 hashing large files happens at registration and actual removal, not every
@@ -103,11 +104,37 @@ canonical exact file list and retained paths, so a repeated completion reuses
 its original records even after deletion. It cannot adopt replacement bytes at
 an old path. An empty disposable list can register evidence protection alone.
 Deletion rechecks current workflow proof/recovery references as well as the
-retained file hashes. The existing successful-reset cleanup retries registered
-leftovers; it does not enroll unknown or unfinished tasks, move ignored proof
-into the reset archive, or recursively remove the task directory. Small audit
-and protection receipts remain. Disabling automatic cleanup also disables
-completion-driven enrollment/removal; a dry-run does not enroll a new receipt.
+retained file hashes. Small audit and protection receipts remain. Disabling
+automatic cleanup also disables completion-driven enrollment/removal; a dry-run
+does not enroll a new receipt.
+
+Agent task folders are bounded even without a receipt. In the current worktree
+the same owner treats every direct child of `build/agent-artifacts/`,
+`build/test-results/` (except `vanessa`, `yaxunit`, `tooling-probe`,
+`release-e2e`), `build/` (except helper-owned `result`, `test-results`,
+`agent-artifacts`, `event-log`, `data-mcp-tools-loader`, `tooling-probe`,
+`diagnostic-runtime` and folders with Git-tracked files), `.agent-1c/runs/`
+without a helper `status.json` (except `auto-update` and `ai-rules-migration-*`)
+and `.agent-1c/tmp/` (except `tooling-probe`) as one task folder. Per group it
+keeps the `ITL_RUN_ARTIFACT_KEEP_COUNT` (3) folders with the newest write
+anywhere inside; any other folder goes whole, including DT, ETL or recovery
+files, once nothing inside changed for `ITL_RUNTIME_ARTIFACT_RETENTION_DAYS` (7).
+Folders holding current workflow evidence or a retained dependency of a
+completion receipt stay; an unreadable receipt store keeps every such folder.
+Links, busy files and failures are left and retried by the next cleanup.
+Helper `build/event-log/export-*` folders use the same count and age; an ITL
+run whose record still says `running` after its deadline with its process gone
+is abandoned and ages like a completed run; a `.agent-1c/branch-dumps`
+transaction without writes for an hour was interrupted and goes.
+
+A successful `reset-dev-branch` recreates the branch: it writes no archive and
+removes this worktree's previous-task runtime untouched since the reset started
+(the groups above regardless of count or age, also `vanessa`/`yaxunit` reports
+and receipt-retained files, plus `build/event-log`, `.agent-1c/branch-dumps`,
+`.agent-1c/fork-history`, top-level `.agent-1c/snapshots/*.dt*`, `logs/` and
+this branch's legacy main `.agent-1c/branch-archives/<branch>`). It keeps live
+runs, workflow update/incident snapshots, `handoffs/`, `build/result` and
+current workflow evidence, and reports removed counts/bytes and leftovers.
 
 When a branch command finishes a check and adopts its successful replacement,
 the producer can send this completion through that same command (paths below
@@ -132,11 +159,10 @@ including files in older attempts. The helper also retains the replacement
 receipt automatically and hashes it. Enrollment waits seven days by default;
 the next relevant successful branch command performs cleanup locally. No timer,
 external service, directory-wide deletion or verification acceptance change is
-introduced. An ordinary command without a producer receipt only cleans already
-marked files; it cannot infer which arbitrary agent-generated attempts ended.
+introduced. Without a producer receipt, individual files inside a still-active
+task folder are not enrolled; the folder as a whole follows the idle rule above.
 
-Legacy investigations need a separate read-only task/evidence review before
-the producer can enroll individual regenerable files. Unknown completion,
-unknown ownership or a missing original means retain, not a new approval gate
-on the original development task. Reports must distinguish eligible logical
-bytes, compressed storage, actual deletions and filesystem free-space changes.
+Unknown completion, unknown ownership or a missing original means retain, not a
+new approval gate on the original development task. Reports must distinguish
+eligible logical bytes, compressed storage, actual deletions and filesystem
+free-space changes.

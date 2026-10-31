@@ -13,7 +13,7 @@ Describe 'Optional artifact protection consumers' {
                 $callers+=($path+':'+$(if($owner){$owner.Name}else{'<entrypoint>'}))
             }
         }
-        @($callers|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Get-ItlArtifactCleanupPlan','.agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1:Remove-ItlDiagnosticArtifact')
+        @($callers|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Get-ItlArtifactCleanupPlan','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Invoke-ItlBranchResetLeftoverCleanup','.agents/skills/1c-workflow/scripts/lib/agent-1c.diagnostic-retention.ps1:Remove-ItlDiagnosticArtifact')
         Get-DevelopArtifactProtectionProjection '' $RepoRoot -ProbeOnly|Should -BeTrue
     }
     It 'enrolls manifests only through explicit producers and keeps native callers closed' {
@@ -32,7 +32,7 @@ Describe 'Optional artifact protection consumers' {
                 $outside+=($path+':'+$(if($owner){$owner.Name}else{'<entrypoint>'})+':'+$command.GetCommandName())
             }
         }
-        @($outside|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>:Complete-ItlDiagnosticArtifacts','.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>:Invoke-ItlDiagnosticArtifactCleanup','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Get-ItlArtifactCleanupPlan:Get-ItlDiagnosticArtifactPlan','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Invoke-ItlArtifactCleanup:Remove-ItlDiagnosticArtifact')
+        @($outside|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>:Complete-ItlDiagnosticArtifacts','.agents/skills/1c-workflow/scripts/agent-1c.ps1:<entrypoint>:Invoke-ItlDiagnosticArtifactCleanup','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Get-ItlArtifactCleanupPlan:Get-ItlDiagnosticArtifactPlan','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Get-ItlArtifactCleanupPlan:Get-ItlDiagnosticRetainedPaths','.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1:Invoke-ItlArtifactCleanup:Remove-ItlDiagnosticArtifact')
         @($completion|Sort-Object -Unique)|Should -Be @('.agents/skills/1c-workflow/scripts/agent-1c.ps1','.agents/skills/itl-remote-runner/scripts/itl_remote/diagnostic_retention.py')
         @($homes|Sort-Object -Unique)|Should -Be @($module)
     }

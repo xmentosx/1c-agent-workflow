@@ -1204,6 +1204,27 @@ function Restore-E2ESeedMainBranch {
     }
 }
 
+function New-E2EResetLeftoverProbe {
+    # A previous-task agent folder that reset must remove as part of recreating the branch.
+    param([Parameter(Mandatory)][string]$Root)
+    $probe = Join-Path $Root 'build\agent-artifacts\release reset probe\tmp\остаток.txt'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $probe)) | Out-Null
+    [IO.File]::WriteAllText($probe, "previous task leftover`r`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::SetLastWriteTimeUtc($probe, [datetime]::UtcNow.AddMinutes(-5))
+    return (Split-Path -Parent (Split-Path -Parent $probe))
+}
+
+function Test-E2EResetRecreatedBranch {
+    # Reset keeps prior work only in Git history: no archive, no previous-task leftovers.
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][string]$DirtyRelativePath, [Parameter(Mandatory)][string]$LeftoverProbe)
+    & git -C $Root cat-file -e ("{0}:{1}" -f [string]$State.resetOldHead, $DirtyRelativePath) 2>$null
+    $preserved = $LASTEXITCODE -eq 0
+    return ($preserved -and -not [string](Get-E2ERecordValue -Record $State -Name 'resetArchivePath' -Default '') -and
+        -not (Test-Path -LiteralPath $LeftoverProbe) -and
+        [int](Get-E2ERecordValue -Record (Get-E2ERecordValue -Record $State -Name 'resetLeftoverCleanup' -Default $null) -Name 'removedCount' -Default 0) -ge 1)
+}
+
 function Invoke-E2ESeedParallelProof {
     param([string]$MainRoot, [string]$PreflightMasterHead = "")
 
@@ -1258,8 +1279,7 @@ function Invoke-E2ESeedParallelProof {
     $fileResetPassed = $false
     $repositoryLockRoundtripPassed = $false
     $repositoryLockProbePath = ""
-    $resetArchivePath = ""
-    $resetDtPath = ""
+    $resetLeftoverRemovedCount = 0
     $resetOldHead = ""
     $resetNewHead = ""
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()
@@ -1371,24 +1391,20 @@ function Invoke-E2ESeedParallelProof {
         $refreshAllPassed = $true
         $dirtyCheckpointPassed = $true
 
+        $resetLeftoverProbe = New-E2EResetLeftoverProbe -Root $worktreeA
         Invoke-E2EHelperAtRoot -Root $worktreeA -BranchName $nameA -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-reset-file" | Out-Null
         $stateA = Get-E2EBranchStateAtRoot -Root $worktreeA -Name $nameA
-        $resetArchivePath = [string]$stateA.value.resetArchivePath
-        $resetDtPath = [string]$stateA.value.resetArchiveDtPath
         $resetOldHead = [string]$stateA.value.resetOldHead
         $resetNewHead = [string]$stateA.value.resetNewHead
         $masterTree = (& git -C $MainRoot rev-parse "$targetMasterCommit^{tree}").Trim()
         $resetTree = (& git -C $worktreeA rev-parse "HEAD^{tree}").Trim()
-        $archivedDirtyPath = Join-Path (Join-Path $resetArchivePath "files") ($dirtyRelativePath.Replace('/', '\'))
         if ([string]$stateA.value.resetStatus -ne "complete" -or
             [string]$stateA.value.resetMasterCommit -cne $targetMasterCommit -or
             $resetTree -cne $masterTree -or
-            -not (Test-Path -LiteralPath $resetArchivePath -PathType Container) -or
-            -not (Test-Path -LiteralPath $resetDtPath -PathType Leaf) -or
-            -not (Test-Path -LiteralPath ([string]$stateA.value.resetArchiveManifestPath) -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $archivedDirtyPath -PathType Leaf)) {
-            throw "File infobase reset did not preserve its verified archive or restore the exact master tree."
+            -not (Test-E2EResetRecreatedBranch -Root $worktreeA -State $stateA.value -DirtyRelativePath $dirtyRelativePath -LeftoverProbe $resetLeftoverProbe)) {
+            throw "File infobase reset did not keep prior work in Git history, remove previous-task leftovers without an archive, or restore the exact master tree."
         }
+        $resetLeftoverRemovedCount = [int]$stateA.value.resetLeftoverCleanup.removedCount
         $fileResetPassed = $true
 
         $repositoryLockProbePath = New-E2ERepositoryLockProbeCommit -Root $worktreeB -Suffix $suffix
@@ -1434,8 +1450,7 @@ function Invoke-E2ESeedParallelProof {
             repositoryLockRoundtripPassed = $repositoryLockRoundtripPassed
             repositoryLockCleanupPassed = $repositoryLockCleanupPassed
             repositoryLockProbePath = $repositoryLockProbePath
-            resetArchivePath = $resetArchivePath
-            resetDtPath = $resetDtPath
+            resetLeftoverRemovedCount = $resetLeftoverRemovedCount
             resetOldHead = $resetOldHead
             resetNewHead = $resetNewHead
             targetMasterCommit = $targetMasterCommit
@@ -1511,22 +1526,18 @@ function Invoke-E2EServerResetProof {
     $dirtyRelativePath = "tests/release server reset/$dirtyFileName"
     $dirtyPath = Join-Path $ServerWorktreePath ($dirtyRelativePath.Replace('/', '\'))
     [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
-    [IO.File]::WriteAllText($dirtyPath, "server reset archive probe`r`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($dirtyPath, "server reset history probe`r`n", [Text.UTF8Encoding]::new($false))
+    $leftoverProbe = New-E2EResetLeftoverProbe -Root $ServerWorktreePath
     Invoke-E2EHelperAtRoot -Root $ServerWorktreePath -BranchName $ServerDevBranchName -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "server-reset" | Out-Null
     $stateAfter = Get-E2EBranchStateAtRoot -Root $ServerWorktreePath -Name $ServerDevBranchName
     $masterCommit = (& git -C $ServerProjectRoot rev-parse refs/heads/master).Trim()
     $masterTree = (& git -C $ServerProjectRoot rev-parse "$masterCommit^{tree}").Trim()
     $branchTree = (& git -C $ServerWorktreePath rev-parse "HEAD^{tree}").Trim()
-    $archivePath = [string]$stateAfter.value.resetArchivePath
-    $dtPath = [string]$stateAfter.value.resetArchiveDtPath
-    $archivedDirtyPath = Join-Path (Join-Path $archivePath "files") ($dirtyRelativePath.Replace('/', '\'))
     if ([string]$stateAfter.value.resetStatus -ne "complete" -or
         [string]$stateAfter.value.resetMasterCommit -cne $masterCommit -or
         $branchTree -cne $masterTree -or
-        -not (Test-Path -LiteralPath $dtPath -PathType Leaf) -or
-        -not (Test-Path -LiteralPath ([string]$stateAfter.value.resetArchiveManifestPath) -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $archivedDirtyPath -PathType Leaf)) {
-        throw "Server infobase reset did not preserve its verified archive or restore the exact master tree."
+        -not (Test-E2EResetRecreatedBranch -Root $ServerWorktreePath -State $stateAfter.value -DirtyRelativePath $dirtyRelativePath -LeftoverProbe $leftoverProbe)) {
+        throw "Server infobase reset did not keep prior work in Git history, remove previous-task leftovers without an archive, or restore the exact master tree."
     }
     return [ordered]@{
         passed = $true
@@ -1534,8 +1545,7 @@ function Invoke-E2EServerResetProof {
         masterCommit = $masterCommit
         oldHead = [string]$stateAfter.value.resetOldHead
         newHead = [string]$stateAfter.value.resetNewHead
-        archivePath = $archivePath
-        dtPath = $dtPath
+        leftoverRemovedCount = [int]$stateAfter.value.resetLeftoverCleanup.removedCount
         infoBasePath = [string]$stateAfter.value.devBranchInfoBasePath
     }
 }
@@ -2258,8 +2268,7 @@ try {
                     dirtyCheckpointPassed = $true
                     fileResetPassed = $true
                     repositoryLockRoundtripPassed = $true
-                    resetArchivePath = "test-archive"
-                    resetDtPath = "test-archive/infobase.dt"
+                    resetLeftoverRemovedCount = 1
                     resetOldHead = ("2" * 40)
                     resetNewHead = ("3" * 40)
                     targetMasterCommit = ("1" * 40)
@@ -2343,8 +2352,7 @@ try {
                     testFixture = $true
                     status = "passed"
                     passed = $true
-                    archivePath = "test-server-archive"
-                    dtPath = "test-server-archive/infobase.dt"
+                    leftoverRemovedCount = 1
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
             } else {
@@ -3012,10 +3020,8 @@ try {
         seedParallelFileResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.fileResetPassed } else { $false })
         seedParallelRepositoryLockRoundtripPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.repositoryLockRoundtripPassed } else { $false })
         seedParallelServerResetPassed = [bool](Get-E2ERecordValue -Record $serverResetEvidence -Name "passed" -Default $false)
-        seedParallelServerResetArchivePath = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "archivePath" -Default "")
-        seedParallelServerResetDtPath = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "dtPath" -Default "")
-        seedParallelResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetArchivePath } else { "" })
-        seedParallelResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetDtPath } else { "" })
+        seedParallelServerResetLeftoverRemovedCount = [int](Get-E2ERecordValue -Record $serverResetEvidence -Name "leftoverRemovedCount" -Default 0)
+        seedParallelResetLeftoverRemovedCount = $(if ($seedParallelEvidence) { [int](Get-E2ERecordValue -Record $seedParallelEvidence -Name "resetLeftoverRemovedCount" -Default 0) } else { 0 })
         seedParallelLiteRefreshSourceCallCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.liteRefreshSourceCallCount } else { -1 })
         seedParallelBaselineCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.seedBaselineCount } else { 0 })
         roundtripEvidencePath = $roundtripEvidencePath
