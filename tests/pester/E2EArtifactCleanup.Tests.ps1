@@ -125,4 +125,33 @@ It "removes only unconfigured workflow Release E2E worktrees after a passed jour
             Test-Path -LiteralPath $dirty -PathType Container | Should -BeTrue
         } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
     }
+
+    It "removes worktrees retired by stand recovery under any branch name once their retirement aged" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl retired worktrees Проект " + [guid]::NewGuid().ToString("N")); $main = Join-Path $root "main"
+        try {
+            New-Item -ItemType Directory -Force -Path $main | Out-Null; & git -C $main init --quiet; & git -C $main config user.name "ITL Test"; & git -C $main config user.email "itl-test@example.invalid"
+            Set-Content -LiteralPath (Join-Path $main ".gitignore") -Encoding ASCII -Value ".agent-1c/"; Set-Content -LiteralPath (Join-Path $main "README.md") -Encoding ASCII -Value "fixture"
+            & git -C $main add .gitignore README.md; & git -C $main commit --quiet -m init
+            $paths = @{}
+            foreach ($name in @("current", "aged", "fresh", "foreign")) { $paths[$name] = Join-Path $root "rel e2e $name"; & git -C $main worktree add --quiet -b "itldev/rel-e2e-$name" $paths[$name] }
+            $old = [DateTime]::UtcNow.AddDays(-8).ToString("o"); $recent = [DateTime]::UtcNow.AddDays(-1).ToString("o")
+            $retired = @(
+                [ordered]@{ path = $paths.aged; branch = "itldev/rel-e2e-aged"; retiredAt = $old },
+                [ordered]@{ path = $paths.fresh; branch = "itldev/rel-e2e-fresh"; retiredAt = $recent },
+                [ordered]@{ path = $paths.foreign; branch = "itldev/another-branch"; retiredAt = $old },
+                [ordered]@{ path = $paths.current; branch = "itldev/rel-e2e-current"; retiredAt = $old })
+            New-Item -ItemType Directory -Force -Path (Join-Path $main ".agent-1c") | Out-Null
+            [IO.File]::WriteAllText((Join-Path $main ".agent-1c\release-e2e.json"), (([ordered]@{ schemaVersion=1; devBranchName="rel-e2e-current"; worktreePath=$paths.current; retiredWorktrees=$retired } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
+            $cleanup = Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $main
+            @($cleanup.entries | ForEach-Object branch) | Should -Be @("itldev/rel-e2e-aged")
+            Test-Path -LiteralPath $paths.aged | Should -BeFalse
+            & git -C $main show-ref --verify --quiet refs/heads/itldev/rel-e2e-aged; $LASTEXITCODE | Should -Be 1
+            foreach ($name in @("current", "fresh", "foreign")) { Test-Path -LiteralPath $paths[$name] -PathType Container | Should -BeTrue -Because $name }
+            $cleanup = Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $main -MinimumAgeHours 0
+            @($cleanup.entries | ForEach-Object branch) | Should -Be @("itldev/rel-e2e-fresh")
+            Test-Path -LiteralPath $paths.current -PathType Container | Should -BeTrue
+            Test-Path -LiteralPath $paths.foreign -PathType Container | Should -BeTrue
+        } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+    }
 }

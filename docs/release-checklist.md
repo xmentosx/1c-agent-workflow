@@ -68,7 +68,10 @@ The wrapper delegates database and branch creation to the installed
 `fork-dev-branch` helper. It verifies the new branch, fixture marker, clean
 worktree and unsafe-action protection, then atomically switches only the ignored
 `release-e2e.json` Release pointer. The old worktree, checkpoint and a backup
-of the old config remain for diagnosis. If the fork is interrupted, repeat the
+of the old config remain for diagnosis; the old worktree is recorded in
+`retiredWorktrees`, and the stand worktree cleanup of a publication removes it
+with its branch seven days later (an explicit `-Action Cleanup` with the stand
+removes it at once). If the fork is interrupted, repeat the
 same command and branch name; the config remains on the old branch until the
 fork finishes and validates. A worktree that already ran Release is not a safe
 fixture merely because its Git tree is clean.

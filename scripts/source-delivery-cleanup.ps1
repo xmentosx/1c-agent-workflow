@@ -432,7 +432,7 @@ function Invoke-SourceDeliveryPostSuccessCleanup {
     }
     if ($E2EProjectRoot) {
         foreach ($step in @(
-            [pscustomobject]@{ name = 'developStandWorktrees'; action = { Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $E2EProjectRoot } },
+            [pscustomobject]@{ name = 'developStandWorktrees'; action = { Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $E2EProjectRoot -MinimumAgeHours $minimumAgeHours } },
             [pscustomobject]@{ name = 'releaseSeedWorktrees'; action = { Remove-SourceDeliveryStaleReleaseSeeds -ProjectRoot $E2EProjectRoot } },
             [pscustomobject]@{ name = 'releaseSeedArchives'; action = { Remove-SourceDeliveryStaleReleaseSeedArchives -ProjectRoot $E2EProjectRoot } },
             [pscustomobject]@{ name = 'aiRulesMigrationSnapshots'; action = { Remove-SourceDeliveryOldAiRulesMigrationSnapshots -ProjectRoot $E2EProjectRoot -MinimumAgeHours $minimumAgeHours } },

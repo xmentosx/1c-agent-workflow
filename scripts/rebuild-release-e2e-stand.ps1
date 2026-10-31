@@ -105,6 +105,11 @@ if (-not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals(
 }
 $config.devBranchName = $NewDevBranchName
 $config.worktreePath = $newRoot
+# The previous worktree stays for diagnosis; the stand's worktree retention
+# removes it once this recorded retirement has aged.
+$retired = @(if ($config.PSObject.Properties['retiredWorktrees']) { @($config.retiredWorktrees) }) +
+    @([pscustomobject]@{ path = $oldRoot; branch = "itldev/$oldName"; retiredAt = [DateTime]::UtcNow.ToString('o') })
+$config | Add-Member -NotePropertyName retiredWorktrees -NotePropertyValue $retired -Force
 $temporaryPath = Join-Path (Split-Path -Parent $configPath) ("release-e2e." + [guid]::NewGuid().ToString('N') + '.tmp')
 $backupRoot = Join-Path $projectRoot '.agent-1c\runs\release-e2e-stand-recovery'
 New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null

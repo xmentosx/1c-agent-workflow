@@ -447,7 +447,7 @@ function Unlock-DevelopE2EFreshWorktree {
 }
 
 function Remove-DevelopE2EStaleStandWorktrees {
-    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [int]$MinimumAgeHours = 168)
 
     $resolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
     $configPath = Join-Path $resolvedProjectRoot ".agent-1c\release-e2e.json"
@@ -466,12 +466,23 @@ function Remove-DevelopE2EStaleStandWorktrees {
             }
         }
     }
+    # Stand recovery records the worktree it replaced under any branch name;
+    # that worktree goes once its retirement has aged.
+    $agedRetired = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $retiredBefore = [DateTime]::UtcNow.AddHours(-$MinimumAgeHours)
+    foreach ($entry in @(if ($config.PSObject.Properties["retiredWorktrees"]) { @($config.retiredWorktrees) })) {
+        try {
+            $at = $entry.retiredAt
+            if ($at -isnot [datetime]) { $at = [DateTime]::Parse([string]$at, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+            if ($at.ToUniversalTime() -le $retiredBefore) { [void]$agedRetired.Add(([IO.Path]::GetFullPath([string]$entry.path)).TrimEnd('\', '/') + "|refs/heads/" + [string]$entry.branch) }
+        } catch { continue }
+    }
 
     $removed = New-Object System.Collections.Generic.List[object]
     foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolvedProjectRoot)) {
         $path = ([IO.Path]::GetFullPath([string]$worktree.path)).TrimEnd('\', '/')
         $branch = [string]$worktree.branch
-        if ($preservedPaths.Contains($path) -or $branch -notmatch '^refs/heads/itldev/workflow-release-e2e(?:-[A-Za-z0-9._-]+)?$') { continue }
+        if ($preservedPaths.Contains($path) -or ($branch -notmatch '^refs/heads/itldev/workflow-release-e2e(?:-[A-Za-z0-9._-]+)?$' -and -not $agedRetired.Contains("$path|$branch"))) { continue }
         if (Test-Path -LiteralPath $path -PathType Container) {
             $status = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @("status", "--porcelain", "--untracked-files=no")
             if ($status.stdout) { throw "Refusing to remove a stale Develop E2E worktree with tracked changes: $path" }
