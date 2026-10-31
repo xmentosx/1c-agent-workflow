@@ -109,6 +109,9 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state) | Out-Null
                 $newConfig.devBranchName | Should -Be 'rebuilt'
                 $newConfig.worktreePath | Should -Be $target
                 $newConfig.developWorktreePath | Should -Be 'preserved'
+                @($newConfig.retiredWorktrees).Count | Should -Be 1
+                $newConfig.retiredWorktrees[0].path | Should -Be $old
+                $newConfig.retiredWorktrees[0].branch | Should -BeExactly 'itldev/old'
                 (Get-Content -LiteralPath $result.configBackup -Raw -Encoding UTF8 | ConvertFrom-Json).worktreePath | Should -Be $old
                 (Get-FileHash -LiteralPath $result.configBackup).Hash|Should -BeExactly $configHash
                 $result.configBackup | Should -Match '[\\/]\.agent-1c[\\/]runs[\\/]release-e2e-stand-recovery[\\/]'
