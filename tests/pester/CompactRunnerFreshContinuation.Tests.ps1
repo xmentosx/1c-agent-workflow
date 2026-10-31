@@ -102,6 +102,8 @@ $fixtureErrorWriter=[IO.StreamWriter]::new($fixtureErrorStream,[Text.UTF8Encodin
 [Console]::SetError($fixtureErrorWriter)
 try {
     $result=Invoke-Agent1cFreshProcess -ScriptPath (Join-Path $fixture.root 'child.ps1') -ReturnExitStatus
+    # The real post-copy parent wraps a failed child like this.
+    if($fixture.mode -eq 'catalog-blocker' -and $result.exitCode -ne 0){throw "WORKFLOW_UPDATE_POST_COPY_INCOMPLETE: fixture snapshot preserved. $(Import-Agent1cFreshProcessFailure -Result $result -Operation 'Fresh workflow post-copy process')"}
     exit $result.exitCode
 } catch {
     $message=$_.Exception.Message
@@ -136,6 +138,16 @@ if($fixture.mode -eq 'catalog-input') {
     try {Invoke-ItlProductProjectPostUpdateOffer} catch {$selectionError=$_.Exception.Message}
     $inputProof=@{selectionError=$selectionError;inputRedirected=[Console]::IsInputRedirected;compactInputAvailable=$compactInputAvailable;foregroundInputAvailable=$foregroundInputAvailable;binding=(Get-ItlProductProjectBinding);selection=(Read-ItlProductProjectSetting selection)}
     Write-Utf8Text -Path (Join-Path $fixture.root 'input-proof.json') -Value ($inputProof|ConvertTo-Json -Depth 5)
+}
+if($fixture.mode -eq 'catalog-blocker') {
+    . Import-ItlProductProjectSetup
+    try {Invoke-ItlProductProjectPostUpdateOffer} catch {
+        $selectionError=$_.Exception.Message
+        Complete-Agent1cLifecycleOperation -Status failed -ExitCode 1 -ErrorMessage $selectionError
+        Write-RunStatus -Status failed -ExitCode 1 -ErrorMessage $selectionError
+        exit 1
+    }
+    throw 'Unattended catalog selection did not stop.'
 }
 if($fixture.mode -eq 'nested') {
     [IO.File]::WriteAllText((Join-Path $fixture.root 'immediate-child-pid.txt'),[string]$PID,[Text.Encoding]::ASCII)
@@ -198,7 +210,7 @@ exit 0
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS',$(if($DefaultStale){$null}else{'2'}),'Process')
                 [Environment]::SetEnvironmentVariable('ITL_RUNNER_OPERATION_TIMEOUT_SECONDS',[string]$OperationSeconds,'Process')
                 $roundTrip=(Join-Path $root 'параметр с пробелом')+'\'
-                $fixtureSource=if($Mode -eq 'catalog-input'){$context.HelperPath}else{$freshSourceHelper}
+                $fixtureSource=if($Mode -in @('catalog-input','catalog-blocker')){$context.HelperPath}else{$freshSourceHelper}
                 $fixtureEvidence.sourceHelper=$fixtureSource
                 $fixtureEvidence.sourceDirectory=Split-Path -Parent $fixtureSource
                 $invokeArgs=@('--','-Action','update-workflow','-FixtureSource',$fixtureSource,'-Mode',$Mode,'-SilentSeconds',[string]$SilentSeconds,'-RoundTrip',$roundTrip)
@@ -271,6 +283,21 @@ exit 0
             $proof.binding|Should -BeNullOrEmpty
             $proof.selection|Should -BeNullOrEmpty
             Test-Path -LiteralPath (Join-Path $fixture.root 'unexpected-catalog-prompt.txt')|Should -BeFalse
+        } finally { Remove-FreshCompactFixture $fixture }
+    }
+
+    It 'returns the unattended project choice from a failed fresh child as a user decision in the compact summary' {
+        $fixture=Invoke-FreshCompactFixture -Mode catalog-blocker -SilentSeconds 1
+        try {
+            $fixture.result.exitCode | Should -Not -Be 0 -Because $fixture.result.combinedText
+            $fixture.summary.status | Should -Be failed
+            $fixture.summary.error | Should -Match 'Child error: CATALOG_PROJECT_REQUIRED:'
+            $fixture.summary.blockerClassification | Should -BeExactly 'catalog-project-selection'
+            $fixture.summary.blockerRequiresUserDecision | Should -BeTrue
+            $fixture.summary.requiredAction | Should -Match ([regex]::Escape('-CatalogProjectId <id>'))
+            $fixture.summary.nextAction | Should -Match '^catalog-project-selection:'
+            $fixture.summary.blockerAction.parameter | Should -BeExactly '-CatalogProjectId'
+            $fixture.status.blockerClassification | Should -BeExactly 'catalog-project-selection'
         } finally { Remove-FreshCompactFixture $fixture }
     }
 

@@ -229,6 +229,29 @@
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
         Test-Path (Get-ItlProductProjectPath applied)|Should -BeFalse
     }
+    It 'returns only published projects of the installed family as a user decision when it cannot prompt' {
+        [IO.File]::WriteAllText($script:ConfigPath,'{"aiRules":{"tools":["codex"]},"baseConfigurationVersion":"PM5"}',[Text.UTF8Encoding]::new($false))
+        Read-ProjectConfig
+        $snapshot.catalog.products+=@{productId='pm5-prof';name='PM5 ПРОФ';baseConfigurationVersion='PM5'}
+        $snapshot.catalog.projects+=@{projectId='five-prof';name='Пять ПРОФ';productId='pm5-prof'}
+        {Select-ItlProductProjectCandidate -AllowPrompt:$false -Limit 1}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        $script:RunBlockerClassification|Should -BeExactly 'catalog-project-selection'
+        $script:RunBlockerRequiresUserDecision|Should -BeTrue
+        $script:RunBlockerRetryOriginal|Should -BeFalse
+        $script:RunRequiredAction|Should -Match ([regex]::Escape('-CatalogProjectId <id>'))
+        $blocker=$script:RunBlockerAction
+        $blocker.configurationFamily|Should -BeExactly PM5
+        $blocker.choicesUnavailable|Should -BeNullOrEmpty
+        @($blocker.choices).Count|Should -Be 1
+        $blocker.choices[0].id|Should -BeExactly five
+        $blocker.choices[0].productName|Should -BeExactly PM5
+        $blocker.total|Should -Be 2
+        $blocker.truncated|Should -BeTrue
+        {Select-ItlProductProjectCandidate -AllowPrompt:$false}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        @($script:RunBlockerAction.choices|ForEach-Object {$_.id})|Should -Be @('five','five-prof')
+        Get-ItlProductProjectBinding|Should -BeNullOrEmpty
+        Should -Invoke Read-InitRequired -Times 0
+    }
     It 'requires selection before package copy and admits the same published choice on retry' {
         $LifecyclePhase='';$WorkflowUpdateRecovery='';$DependencySelectionFile='';$WorkflowUpdateBranchRootsFile=''
         Mock Assert-WorkflowPackageUpdateContext {}

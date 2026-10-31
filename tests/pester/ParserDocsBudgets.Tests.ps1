@@ -323,9 +323,18 @@
             )) {
                 $updateTemplate | Should -Match ([regex]::Escape($instruction))
             }
-            [System.Text.Encoding]::UTF8.GetByteCount($updateTemplate.Replace("`r`n", "`n")) | Should -BeLessOrEqual 1930
+            # Catalog project selection adds one on-demand continuation:
+            # 1930 -> 2209 LF UTF-8 bytes, +279 (~70 byte/4 proxy tokens) on
+            # all 24 rendered surfaces. Without it an unbound update stops on
+            # a required user choice the agent cannot route back to the user.
+            $catalogSelectionBytes = 0
+            if ($updateTemplate.Contains('blockerClassification=catalog-project-selection')) {
+                $updateTemplate | Should -Match ([regex]::Escape('repeat the same command with `-CatalogProjectId <id>`; never choose one yourself'))
+                $catalogSelectionBytes = 279
+            }
+            [System.Text.Encoding]::UTF8.GetByteCount($updateTemplate.Replace("`r`n", "`n")) | Should -BeLessOrEqual (1930 + $catalogSelectionBytes)
             foreach ($key in $expectedRendered.Keys) {
-                $expectedRendered[$key].maxBytes += 452
+                $expectedRendered[$key].maxBytes += 452 + $catalogSelectionBytes
             }
         }
 

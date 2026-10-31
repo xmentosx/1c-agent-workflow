@@ -58,6 +58,35 @@ Describe 'Legacy dependency handoff uses the existing update snapshot' -Tag G3Do
         $pending.receipt.phase|Should -BeExactly 'post-copy-failed'
         Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
     }
+    It 'surfaces the failed child cause and its user decision instead of a bare exit code' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Child cause с пробелом')
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        $template=ConvertTo-Agent1cHashtable (New-DefaultDependencyLockManifest)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'templates')|Out-Null
+        $template.schemaVersion=1;$template.mode='fresh'
+        Write-Utf8Text (Join-Path $fixture.root 'templates/dependency-lock.json') ($template|ConvertTo-Json -Depth 100)
+        Write-DependencyLockManifest $template
+        $source=[pscustomobject]@{root=$repoRoot;commit=('b'*40);source='path';ref='master';repo='fixture'}
+        $plan=Get-WorkflowDependencyPlan -SourceRoot $fixture.root
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','templates','.agent-1c/project.json','.agent-1c/dependency-lock.json','.dev.env') -SnapshotParent (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update')
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared -Details @{dependencyPlan=$plan}
+        Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-failed
+        Mock Add-WorkflowDotEnvPolicySnapshotPaths {}
+        Mock Invoke-Agent1cFreshProcess {
+            [pscustomobject]@{exitCode=1;terminalStatus=[ordered]@{status='failed';errorMessage='CATALOG_PROJECT_REQUIRED: проект не выбран';errorCategory='';requiredAction='catalog-project-selection: fixture';blockerClassification='catalog-project-selection';blockerRequiresUserDecision=$true;blockerRetryOriginalCommand=$false;blockerAction=[ordered]@{parameter='-CatalogProjectId';choices=@([ordered]@{id='five'})};blockerOwner=[ordered]@{type='user'}}}
+        }
+        $SkipAiRules=$true
+        $script:RunRequiredAction='';$script:RunBlockerClassification='';$script:RunBlockerRequiresUserDecision=$false;$script:RunBlockerAction=$null;$script:RunBlockerOwner=$null
+        {Complete-WorkflowUpdatePostCopyFromSnapshot -Snapshot $snapshot -Source $source}|Should -Throw '*WORKFLOW_UPDATE_POST_COPY_INCOMPLETE*Fresh workflow post-copy process failed with exit code 1*Child error: CATALOG_PROJECT_REQUIRED: проект не выбран*'
+        $script:RunRequiredAction|Should -BeExactly 'catalog-project-selection: fixture'
+        $script:RunBlockerClassification|Should -BeExactly 'catalog-project-selection'
+        $script:RunBlockerRequiresUserDecision|Should -BeTrue
+        $script:RunBlockerAction.choices[0].id|Should -BeExactly five
+        $script:RunBlockerOwner.type|Should -BeExactly user
+        $pending=Get-WorkflowUpdatePendingSnapshot
+        $pending.receipt.phase|Should -BeExactly 'post-copy-failed'
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+    }
     It 'replaces an explicit modern mode exactly once in the child command without changing the parent arguments' {
         $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Legacy child arguments')
         . $helperPath -ProjectRoot $fixture.root -Action help *> $null

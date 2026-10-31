@@ -51,9 +51,34 @@ function New-ItlProductProjectDraft {
     return Save-ItlProductProjectDraft $Snapshot projects $record
 }
 
+function Set-ItlProductProjectSelectionBlocker {
+    # An unattended caller cannot prompt. Return the published choices as a
+    # user decision; the agent asks in chat and repeats with the chosen ID.
+    param([int]$Limit=10)
+    $family=[string](Get-ConfigValue -Path baseConfigurationVersion -Default '')
+    $choices=@();$total=0;$unavailable=''
+    try{
+        $catalog=(Read-ItlProductProjectSnapshot).catalog
+        $matching=@(@((Get-ItlCatalogField $catalog projects @()))|ForEach-Object {
+            $product=Get-ItlCatalogRecord $catalog products ([string](Get-ItlCatalogField $_ 'productId' ''))
+            # Another family is rejected after selection; never offer it.
+            if(-not $family -or [string](Get-ItlCatalogField $product 'baseConfigurationVersion' '') -ceq $family){
+                [ordered]@{id=[string](Get-ItlCatalogField $_ 'projectId' '');name=[string](Get-ItlCatalogField $_ 'name' '');productId=[string](Get-ItlCatalogField $_ 'productId' '');productName=[string](Get-ItlCatalogField $product 'name' '')}
+            }
+        }|Sort-Object {$_.id})
+        $total=$matching.Count;$choices=@($matching|Select-Object -First $Limit)
+    }catch{$unavailable=[string]$_.Exception.Message;if($unavailable.Length -gt 300){$unavailable=$unavailable.Substring(0,300)}}
+    Set-RunFailureContext -RequiredAction 'catalog-project-selection: show blockerAction.choices to the user and ask which published project this installation belongs to; never choose or infer it. Repeat the same command with -CatalogProjectId <id> (JSON init: projectId). If the project is absent, publish it through catalog create separately.'
+    $script:RunBlockerClassification='catalog-project-selection'
+    $script:RunBlockerRequiresUserDecision=$true
+    $script:RunBlockerRetryOriginal=$false
+    $script:RunBlockerAction=[ordered]@{parameter='-CatalogProjectId';configurationFamily=$family;choices=$choices;total=$total;truncated=($total -gt $choices.Count);limitParameter='-CatalogLimit';choicesUnavailable=$unavailable}
+    $script:RunBlockerOwner=[ordered]@{type='user';decision='catalog-project'}
+}
+
 function Select-ItlProductProjectCandidate {
     param([string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [bool]$AllowPrompt=$false,[int]$Limit=10,[switch]$ReadOnly)
-    if(-not $ProjectId -and -not $AllowPrompt){throw 'CATALOG_PROJECT_REQUIRED: choose an existing published project with -CatalogProjectId (JSON init: projectId), then repeat the same operation. If absent, prepare and publish it through catalog create separately. No project was inferred.'}
+    if(-not $ProjectId -and -not $AllowPrompt){Set-ItlProductProjectSelectionBlocker -Limit $Limit;throw 'CATALOG_PROJECT_REQUIRED:choose an existing published project with -CatalogProjectId (JSON init: projectId), then repeat the same operation. If absent, prepare and publish it through catalog create separately. No project was inferred.'}
     $raw=Read-ItlProductProjectSnapshot
     $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
     $effective=Get-ItlProductProjectEffectiveSnapshot $raw $preferences

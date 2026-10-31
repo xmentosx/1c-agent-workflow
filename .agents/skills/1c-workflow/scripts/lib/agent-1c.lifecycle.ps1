@@ -682,6 +682,7 @@ function Publish-Agent1cFreshProcessRunStatus {
             Write-Utf8TextAtomic -Path $Relay.statusPath -Value $terminalText
             $Relay.terminalText = $terminalText
         }
+        $Relay.terminalStatus = $childStatus
         $Relay.terminalForwarded = $true
         return
     }
@@ -760,7 +761,7 @@ function Invoke-Agent1cFreshProcess {
         if ($arguments[$index] -ieq '-Action') { $launchedAction = [string]$arguments[$index + 1] }
     }
     $freshRelay = @{
-        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''
+        statusPath = $statusPath; childStatusPath = $childStatusPath; terminalForwarded = $false; terminalText = ''; terminalStatus = $null
         action = $launchedAction
         monitor = New-NativeWaitRunStatusMonitor -LogPaths @($RunLogPath)
         operationId = $(if ($continuesLifecycleOperation) { $script:LifecycleOperationId } else { '' })
@@ -821,8 +822,34 @@ function Invoke-Agent1cFreshProcess {
         [Console]::Error.WriteLine($message)
         $exitCode = 1
     }
-    if ($ReturnExitStatus) { return [pscustomobject]@{ exitCode = [int]$exitCode } }
+    if ($ReturnExitStatus) { return [pscustomobject]@{ exitCode = [int]$exitCode; terminalStatus = $freshRelay.terminalStatus } }
     exit $exitCode
+}
+
+function Import-Agent1cFreshProcessFailure {
+    # The failed child owns its cause and continuation. Adopt them before the
+    # caller wraps the failure, so the parent terminal status cannot hide them.
+    param([Parameter(Mandatory = $true)][object]$Result, [Parameter(Mandatory = $true)][string]$Operation)
+
+    $terminal = Get-StateValue -State $Result -Name 'terminalStatus'
+    $childError = ''
+    if ($terminal -is [Collections.IDictionary]) {
+        $childError = [string]$terminal['errorMessage']
+        $fields = [ordered]@{
+            errorCategory = 'RunErrorCategory'; requiredAction = 'RunRequiredAction'
+            blockerClassification = 'RunBlockerClassification'; blockerRequiresUserDecision = 'RunBlockerRequiresUserDecision'
+            blockerRetryOriginalCommand = 'RunBlockerRetryOriginal'; blockerAction = 'RunBlockerAction'; blockerOwner = 'RunBlockerOwner'
+        }
+        foreach ($field in $fields.Keys) {
+            $value = $terminal[$field]
+            if ($null -ne $value -and -not ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) -and -not ($value -is [bool] -and -not $value)) {
+                Set-Variable -Name $fields[$field] -Scope Script -Value $value
+            }
+        }
+    }
+    $message = "$Operation failed with exit code $($Result.exitCode); its original terminal operation evidence is retained."
+    if ($childError) { $message += " Child error: $childError" }
+    return $message
 }
 
 function Restart-Agent1cFromMainWorktreeIfNeeded {
@@ -8702,7 +8729,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
         } finally {
             if ($legacyDependencyWire) { [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', $previousDependencyMode, 'Process') }
         }
-        if ([int]$child.exitCode -ne 0) { throw "Fresh workflow post-copy process failed with exit code $($child.exitCode); its original terminal operation evidence is retained." }
+        if ([int]$child.exitCode -ne 0) { throw (Import-Agent1cFreshProcessFailure -Result $child -Operation 'Fresh workflow post-copy process') }
         if ($masterOnly) {
             $current = Get-WorkflowUpdatePendingSnapshot
             if ($null -ne $current) { Assert-WorkflowLegacyRecoveryMasterProof -Receipt $current.receipt }
