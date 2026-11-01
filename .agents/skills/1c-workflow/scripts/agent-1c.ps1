@@ -16,7 +16,7 @@ param(
     [string]$CatalogRecordPath='',
     [ValidateSet('', 'keep-local', 'registry', 'defer')]
     [string]$CatalogDecision = '',
-    [ValidateSet("", "status", "restore", "reconcile", "legacy-status", "legacy-copy")]
+    [ValidateSet("", "status", "restore", "reconcile", "abandon", "legacy-status", "legacy-copy")]
     [string]$WorkflowUpdateRecovery = "",
     [string]$WorkflowUpdateLegacySourceRoot = "",
     [string]$WorkflowUpdateSnapshotId = "",

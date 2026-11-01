@@ -380,7 +380,7 @@ Describe 'Additive client membership through the branch rollout transaction' {
         $script:installedClientSets = @()
         $legacyRetry = Invoke-WorkflowDevelopmentBranchRollout -Source $source
         @($legacyRetry.roots.status) | Should -Be @('completed','completed')
-        $script:installedClientSets.Count | Should -Be 2
+        $script:installedClientSets.Count | Should -Be 0 -Because 'the retained terminal capsules independently prove the exact current files and required clients even when the aggregate report has no client evidence'
 
         Invoke-InProjectContext -Root $branch1 -ScriptBlock {
             Set-ProjectAiRulesClients -Clients @('codex','kilocode')
