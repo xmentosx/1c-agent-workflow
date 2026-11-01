@@ -39,7 +39,7 @@ if($Child){
         return $value
     }
     function Select-ItlProductProjectCandidate {
-        param($ProjectId,$ProfileId,[bool]$AllowPrompt,$Limit)
+        param($ProjectId,$ProfileId,[bool]$AllowPrompt)
         if(-not $AllowPrompt){throw 'CATALOG_PROJECT_REQUIRED: fixture unattended selection'}
         if(-not $ProjectId){$ProjectId=Read-InitRequired 'Published project ID (required)'}
         if($ProjectId -eq 'new'){throw 'CATALOG_PROJECT_CREATE_SEPARATE: fixture creation is separate'}

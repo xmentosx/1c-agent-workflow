@@ -29,9 +29,9 @@ the retained operation before continuing; never delete its IDs or ownership
 records. Configuration success still requires client reload/new-session
 observation before claiming the tools are active.
 
-For a catalog project use `vibecoding1c-mcp-status -CatalogAction list` (at most
-10 choices, `-CatalogLimit` up to 50), then `-CatalogAction preview -CatalogProjectId
-<id>` or explicit `vibecoding1c-mcp-select -CatalogAction select -CatalogProjectId
+For a catalog project use `vibecoding1c-mcp-status -CatalogAction list` (lists every
+published project with its product; `familyMatch=false` marks a family other
+than the installed one), then `-CatalogAction preview -CatalogProjectId <id>` or explicit `vibecoding1c-mcp-select -CatalogAction select -CatalogProjectId
 <id>`. Selection requires an existing published record. Prepare a missing project
 separately with `-CatalogAction create`; a denied Git publication retains a private
 request and its stable ID for review, not runtime association. `-CatalogRecordPath`

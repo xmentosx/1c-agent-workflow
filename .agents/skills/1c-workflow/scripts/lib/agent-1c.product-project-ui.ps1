@@ -1,8 +1,22 @@
 ﻿# Explicit setup/authoring UI. Ordinary startup never loads this leaf.
 function Get-ItlProductProjectChoices {
-    param([object]$Snapshot,[ValidateSet('projects','products')][string]$Collection='projects',[int]$Limit=10)
-    $field=Get-ItlCatalogRecordKey $Collection
-    return @($Snapshot.catalog.$Collection|Sort-Object -Property $field|Select-Object -First $Limit|ForEach-Object {[pscustomobject]@{id=(Get-ItlCatalogField $_ $field);name=$_.name;productId=(Get-ItlCatalogField $_ 'productId')}})
+    # One owner for every visible catalog list: the wizard console, the list
+    # command and the unattended blocker show the same complete records.
+    param([object]$Snapshot,[ValidateSet('projects','products')][string]$Collection='projects',[string]$Family='')
+    $catalog=$Snapshot.catalog
+    if($Collection -eq 'products'){
+        return @(@((Get-ItlCatalogField $catalog products @()))|ForEach-Object {
+            [pscustomobject][ordered]@{id=[string](Get-ItlCatalogField $_ 'productId' '');name=[string](Get-ItlCatalogField $_ 'name' '');family=[string](Get-ItlCatalogField $_ 'baseConfigurationVersion' '')}
+        }|Sort-Object id)
+    }
+    return @(@((Get-ItlCatalogField $catalog projects @()))|ForEach-Object {
+        $product=Get-ItlCatalogRecord $catalog products ([string](Get-ItlCatalogField $_ 'productId' ''))
+        $choice=[ordered]@{id=[string](Get-ItlCatalogField $_ 'projectId' '');name=[string](Get-ItlCatalogField $_ 'name' '');productId=[string](Get-ItlCatalogField $_ 'productId' '');productName=[string](Get-ItlCatalogField $product 'name' '');family=[string](Get-ItlCatalogField $product 'baseConfigurationVersion' '')}
+        # Another family stays visible but marked: selecting it is rejected
+        # after selection, not hidden here.
+        if($Family){$choice['familyMatch']=$choice.family -ceq $Family}
+        [pscustomobject]$choice
+    }|Sort-Object @{Expression={$null -ne $_.PSObject.Properties['familyMatch'] -and -not $_.familyMatch}},@{Expression={$_.id}})
 }
 
 function Save-ItlProductProjectDraft {
@@ -35,7 +49,7 @@ function Save-ItlProductProjectDraft {
 }
 
 function New-ItlProductProjectDraft {
-    param([object]$Snapshot,[string]$RecordPath='', [bool]$AllowPrompt=$false,[int]$Limit=10)
+    param([object]$Snapshot,[string]$RecordPath='', [bool]$AllowPrompt=$false)
     $preferences=Read-ItlProductProjectSetting selection
     $existing=@(ConvertTo-Vibecoding1cMcpArray (Get-ItlCatalogField $preferences 'pendingCatalogRecords' @())|Where-Object {$_.collection -eq 'projects' -and $_.status -ne 'saved'})
     if(-not $RecordPath -and $existing.Count){return Save-ItlProductProjectDraft $Snapshot projects $existing[0].record}
@@ -44,7 +58,7 @@ function New-ItlProductProjectDraft {
     if(-not (Get-ItlCatalogField $record 'name')){if(-not $AllowPrompt){throw 'CATALOG_PROJECT_NAME_REQUIRED: provide a project record with its name.'};$record['name']=Read-InitRequired 'Project name'}
     if(-not (Get-ItlCatalogField $record 'productId')){
         if(-not $AllowPrompt){throw 'CATALOG_PRODUCT_REQUIRED: choose the base product explicitly; no ID is inferred from the local directory or MCP endpoint.'}
-        Get-ItlProductProjectChoices $Snapshot products $Limit|Format-Table|Out-Host
+        Get-ItlProductProjectChoices $Snapshot products|Format-Table|Out-Host
         $record['productId']=Read-InitRequired 'Base product ID'
     }
     if(Get-ItlCatalogRecord $Snapshot.catalog projects $record.projectId){throw 'CATALOG_PROJECT_EXISTS: create cannot replace an existing project; select its ID or use explicit catalog editing.'}
@@ -54,37 +68,26 @@ function New-ItlProductProjectDraft {
 function Set-ItlProductProjectSelectionBlocker {
     # An unattended caller cannot prompt. Return the published choices as a
     # user decision; the agent asks in chat and repeats with the chosen ID.
-    param([int]$Limit=10)
     $family=[string](Get-ConfigValue -Path baseConfigurationVersion -Default '')
-    $choices=@();$total=0;$unavailable=''
-    try{
-        $catalog=(Read-ItlProductProjectSnapshot).catalog
-        # The user sees the whole registry. Another family stays visible but
-        # marked: selecting it is rejected after selection, not hidden here.
-        $published=@(@((Get-ItlCatalogField $catalog projects @()))|ForEach-Object {
-            $product=Get-ItlCatalogRecord $catalog products ([string](Get-ItlCatalogField $_ 'productId' ''))
-            $productFamily=[string](Get-ItlCatalogField $product 'baseConfigurationVersion' '')
-            [ordered]@{id=[string](Get-ItlCatalogField $_ 'projectId' '');name=[string](Get-ItlCatalogField $_ 'name' '');productId=[string](Get-ItlCatalogField $_ 'productId' '');productName=[string](Get-ItlCatalogField $product 'name' '');family=$productFamily;familyMatch=(-not $family -or $productFamily -ceq $family)}
-        }|Sort-Object @{Expression={-not $_.familyMatch}},@{Expression={$_.id}})
-        $total=$published.Count;$choices=@($published|Select-Object -First $Limit)
-    }catch{$unavailable=[string]$_.Exception.Message;if($unavailable.Length -gt 300){$unavailable=$unavailable.Substring(0,300)}}
+    $choices=@();$unavailable=''
+    try{$choices=@(Get-ItlProductProjectChoices (Read-ItlProductProjectSnapshot) projects -Family $family)}catch{$unavailable=[string]$_.Exception.Message;if($unavailable.Length -gt 300){$unavailable=$unavailable.Substring(0,300)}}
     Set-RunFailureContext -RequiredAction 'catalog-project-selection: show every blockerAction.choices entry to the user in the message text and ask which published project this installation belongs to; never choose, infer or shorten the list. familyMatch=false marks another configuration family, which this installation cannot switch to. Repeat the same command with -CatalogProjectId <id> (JSON init: projectId). If the project is absent, publish it through catalog create separately.'
     $script:RunBlockerClassification='catalog-project-selection'
     $script:RunBlockerRequiresUserDecision=$true
     $script:RunBlockerRetryOriginal=$false
-    $script:RunBlockerAction=[ordered]@{parameter='-CatalogProjectId';configurationFamily=$family;choices=$choices;total=$total;truncated=($total -gt $choices.Count);limitParameter='-CatalogLimit';choicesUnavailable=$unavailable}
+    $script:RunBlockerAction=[ordered]@{parameter='-CatalogProjectId';configurationFamily=$family;choices=$choices;choicesUnavailable=$unavailable}
     $script:RunBlockerOwner=[ordered]@{type='user';decision='catalog-project'}
 }
 
 function Select-ItlProductProjectCandidate {
-    param([string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [bool]$AllowPrompt=$false,[int]$Limit=10,[switch]$ReadOnly)
-    if(-not $ProjectId -and -not $AllowPrompt){Set-ItlProductProjectSelectionBlocker -Limit $Limit;throw 'CATALOG_PROJECT_REQUIRED:choose an existing published project with -CatalogProjectId (JSON init: projectId), then repeat the same operation. If absent, prepare and publish it through catalog create separately. No project was inferred.'}
+    param([string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [bool]$AllowPrompt=$false,[switch]$ReadOnly)
+    if(-not $ProjectId -and -not $AllowPrompt){Set-ItlProductProjectSelectionBlocker;throw 'CATALOG_PROJECT_REQUIRED: choose an existing published project with -CatalogProjectId (JSON init: projectId), then repeat the same operation. If absent, prepare and publish it through catalog create separately. No project was inferred.'}
     $raw=Read-ItlProductProjectSnapshot
     $preferences=ConvertTo-Vibecoding1cMcpHashtable (Read-ItlProductProjectSetting selection)
     $effective=Get-ItlProductProjectEffectiveSnapshot $raw $preferences
     if(-not $ProjectId){
         $choices=if($ReadOnly){$effective.snapshot}else{$raw}
-        Get-ItlProductProjectChoices $choices projects $Limit|Format-Table|Out-Host
+        Get-ItlProductProjectChoices $choices projects -Family ([string](Get-ConfigValue -Path baseConfigurationVersion -Default ''))|Format-Table|Out-Host
         $ProjectId=Read-InitRequired 'Published project ID (required; cancel to stop the transition)'
     }
     if($ProjectId -eq 'new'){
@@ -133,7 +136,7 @@ function Invoke-ItlProductProjectAssociation {
 }
 
 function Invoke-ItlProductProjectCommand {
-    param([ValidateSet('list','preview','select','create','sync','context')][string]$Mode,[string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [string]$Decision='', [int]$Limit=10,[bool]$AllowPrompt=$false,[switch]$AsJson)
+    param([ValidateSet('list','preview','select','create','sync','context')][string]$Mode,[string]$ProjectId='', [string]$ProfileId='', [string]$RecordPath='', [string]$Decision='', [bool]$AllowPrompt=$false,[switch]$AsJson)
     if($Mode -eq 'context'){
         $applied=Read-ItlProductProjectRecord applied
         if(-not $applied){$report=[pscustomobject]@{status='unbound';continuation='Use catalog select/preview explicitly.'}}
@@ -160,11 +163,11 @@ function Invoke-ItlProductProjectCommand {
         if($Mode -eq 'list'){
             $raw=Read-ItlProductProjectSnapshot
             $effective=Get-ItlProductProjectEffectiveSnapshot $raw (Read-ItlProductProjectSetting selection)
-            Get-ItlProductProjectChoices $effective.snapshot projects $Limit
+            Get-ItlProductProjectChoices $effective.snapshot projects -Family ([string](Get-ConfigValue -Path baseConfigurationVersion -Default ''))
             return
         }
-        if($Mode -eq 'create'){New-ItlProductProjectDraft (Read-ItlProductProjectSnapshot) -RecordPath $RecordPath -AllowPrompt:$AllowPrompt -Limit $Limit;return}
-        $candidate=Select-ItlProductProjectCandidate -ProjectId $ProjectId -ProfileId $ProfileId -RecordPath $RecordPath -AllowPrompt:$AllowPrompt -Limit $Limit -ReadOnly:($Mode -eq 'preview')
+        if($Mode -eq 'create'){New-ItlProductProjectDraft (Read-ItlProductProjectSnapshot) -RecordPath $RecordPath -AllowPrompt:$AllowPrompt;return}
+        $candidate=Select-ItlProductProjectCandidate -ProjectId $ProjectId -ProfileId $ProfileId -RecordPath $RecordPath -AllowPrompt:$AllowPrompt -ReadOnly:($Mode -eq 'preview')
         if($Mode -eq 'preview'){
             $clients=@(Get-ConfigValue -Path aiRules.tools -Default @()|Where-Object {$_})
             if(-not $clients.Count){$clients=@(Get-ItlActiveClient)}
@@ -176,7 +179,7 @@ function Invoke-ItlProductProjectCommand {
 }
 
 function Read-ItlProductProjectInitFamily {
-    $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -AllowPrompt:$true -Limit $CatalogLimit
+    $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $CatalogProjectId -ProfileId $CatalogProfileId -RecordPath $CatalogRecordPath -AllowPrompt:$true
     return $script:PreparedCatalogCandidate.context.baseConfigurationVersion
 }
 
@@ -220,7 +223,7 @@ function Get-ItlProductProjectTransitionSelection {
     $select={
         $id=[string](Get-ItlCatalogField $RecordedSelection 'projectId' $CatalogProjectId)
         $profile=[string](Get-ItlCatalogField $RecordedSelection 'profileId' $CatalogProfileId)
-        $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $id -ProfileId $profile -AllowPrompt:(Test-InteractiveInputAvailable) -Limit $CatalogLimit
+        $script:PreparedCatalogCandidate=Select-ItlProductProjectCandidate -ProjectId $id -ProfileId $profile -AllowPrompt:(Test-InteractiveInputAvailable)
         $candidate=$script:PreparedCatalogCandidate
         $family=Get-ConfigValue -Path baseConfigurationVersion -Default ''
         if($family -and $family -cne $candidate.context.baseConfigurationVersion){throw 'CATALOG_PRODUCT_FAMILY_CHANGED: select a published project matching the installed configuration family, then repeat the same transition. No association or database change was applied; preserve any existing update snapshot.'}

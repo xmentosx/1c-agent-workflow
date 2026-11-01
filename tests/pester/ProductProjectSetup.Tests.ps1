@@ -13,7 +13,7 @@
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{"aiRules":{"tools":["codex"]}}',[Text.UTF8Encoding]::new($false))
         . $HelperPath -ProjectRoot $root -Action help *> $null
         . Import-ItlProductProjectSetup
-        $CatalogProjectId='';$CatalogProfileId='';$CatalogDecision='';$CatalogLimit=10
+        $CatalogProjectId='';$CatalogProfileId='';$CatalogDecision=''
         $script:LifecycleOperationIsContinuation=$false
         $snapshot=New-SetupCatalogFixture
         $script:ItlMcpRegistryOperation=@{attempted=$true;snapshot=$snapshot.registry;error=$null;catalogAttempted=$true;catalogSnapshot=$snapshot;catalogError=$null}
@@ -234,26 +234,20 @@
         Read-ProjectConfig
         $snapshot.catalog.products+=@{productId='pm5-prof';name='PM5 ПРОФ';baseConfigurationVersion='PM5'}
         $snapshot.catalog.projects+=@{projectId='five-prof';name='Пять ПРОФ';productId='pm5-prof'}
-        {Select-ItlProductProjectCandidate -AllowPrompt:$false -Limit 1}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
+        {Select-ItlProductProjectCandidate -AllowPrompt:$false}|Should -Throw '*CATALOG_PROJECT_REQUIRED: choose*'
         $script:RunBlockerClassification|Should -BeExactly 'catalog-project-selection'
         $script:RunBlockerRequiresUserDecision|Should -BeTrue
         $script:RunBlockerRetryOriginal|Should -BeFalse
         $script:RunRequiredAction|Should -Match ([regex]::Escape('-CatalogProjectId <id>'))
+        $script:RunRequiredAction|Should -Match 'never choose, infer or shorten the list'
         $blocker=$script:RunBlockerAction
         $blocker.configurationFamily|Should -BeExactly PM5
         $blocker.choicesUnavailable|Should -BeNullOrEmpty
-        @($blocker.choices).Count|Should -Be 1
-        $blocker.choices[0].id|Should -BeExactly five
+        @($blocker.Keys)|Should -Not -Contain truncated
+        @($blocker.choices|ForEach-Object {$_.id})|Should -Be @('five','five-prof','four')
+        @($blocker.choices|ForEach-Object {$_.familyMatch})|Should -Be @($true,$true,$false)
         $blocker.choices[0].productName|Should -BeExactly PM5
-        $blocker.choices[0].familyMatch|Should -BeTrue
-        $blocker.total|Should -Be 3
-        $blocker.truncated|Should -BeTrue
-        $script:RunRequiredAction|Should -Match 'never choose, infer or shorten the list'
-        {Select-ItlProductProjectCandidate -AllowPrompt:$false}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
-        @($script:RunBlockerAction.choices|ForEach-Object {$_.id})|Should -Be @('five','five-prof','four')
-        @($script:RunBlockerAction.choices|ForEach-Object {$_.familyMatch})|Should -Be @($true,$true,$false)
-        $script:RunBlockerAction.choices[2].family|Should -BeExactly PM4
-        $script:RunBlockerAction.truncated|Should -BeFalse
+        $blocker.choices[2].family|Should -BeExactly PM4
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
         Should -Invoke Read-InitRequired -Times 0
     }
@@ -277,11 +271,24 @@
         (Get-ItlMcpFileState $script:ConfigPath)|Should -Not -Be absent
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
     }
-    It 'limits visible choices and retains stable IDs rather than exposing the full catalog' {
-        $choices=@(Get-ItlProductProjectChoices $snapshot projects 1)
-        $choices.Count|Should -Be 1
-        $choices[0].id|Should -Be five
-        $choices[0].PSObject.Properties.Name|Should -Not -Contain roles
+    # The owner decided on 2026-11-01 that a selection list is never cut: the
+    # former 10-choice limit hid published projects from the person choosing.
+    It 'lists every published record with stable IDs and its product, without internal fields' {
+        $snapshot.catalog.projects[1].roles=@{code=@{mode='own'}}
+        $snapshot.catalog.projects+=@(1..11|ForEach-Object {@{projectId=('extra-{0:d2}' -f $_);name=('Extra {0}' -f $_);productId='pm5'}})
+        $choices=@(Get-ItlProductProjectChoices $snapshot projects)
+        $choices.Count|Should -Be 13
+        $choices[0].id|Should -Be extra-01
+        ($choices|Where-Object id -eq five).productName|Should -BeExactly PM5
+        ($choices|Where-Object id -eq four).family|Should -BeExactly PM4
+        $choices[0].PSObject.Properties.Name|Should -Not -Contain familyMatch
+        foreach($choice in $choices){$choice.PSObject.Properties.Name|Should -Not -Contain roles}
+        $marked=@(Get-ItlProductProjectChoices $snapshot projects -Family PM4)
+        $marked[0].id|Should -Be four
+        @($marked|Where-Object familyMatch).Count|Should -Be 1
+        $products=@(Get-ItlProductProjectChoices $snapshot products)
+        @($products|ForEach-Object {$_.id})|Should -Be @('pm4','pm5')
+        $products[1].family|Should -BeExactly PM5
     }
     It 'keeps legacy answer decoding but requires registry selection before initialization' {
         $AgentTarget='codex';$AgentModel=''
