@@ -42,7 +42,8 @@
     "executionPath=quick-fix|full-cycle",
     "planningMode=direct|OpenSpec",
     "templatesearch",
-    "check_1c_logic"
+    "check_1c_logic",
+    "## Completion and repeated obstacles"
   ],
   "pathDecisions": [
     {
@@ -111,11 +112,11 @@
     {
       "path": "AGENTS.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
       "upstreamSha256": "6a84cd58486067933ed6c5abb014be33a52fc3a7919e16b558075a1f272a9530",
       "baselineSha256": "5522a96f7f8c67f90e30955e4b1fdafc10b8e4cee6b290b4ca36bdb4c8b923af",
-      "resultSha256": "5522a96f7f8c67f90e30955e4b1fdafc10b8e4cee6b290b4ca36bdb4c8b923af"
+      "resultSha256": "741a6cd0536edd8d478755f7237d82b0cc0c07b7e0145ab2d221a967eb8ee84e"
     },
     {
       "path": "content/agents/code-reviewer.md",
@@ -984,11 +985,11 @@
     {
       "path": "content/rules/model-adaptation.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
       "upstreamSha256": "f4a4f141adebc770eaea3099249db6a5522207564b991704029e936e9e26b269",
       "baselineSha256": "02f87dc86f4cb9e3d2cbac86cdd621a89890557ab862b977d3b52aa10c4a8218",
-      "resultSha256": "02f87dc86f4cb9e3d2cbac86cdd621a89890557ab862b977d3b52aa10c4a8218"
+      "resultSha256": "ee26722f70490931675c75e77c77ec5bfb7d81ec4f2f6941bdab53b60e7fafdb"
     },
     {
       "path": "content/rules/orchestrator-economy.md",
@@ -1110,11 +1111,11 @@
     {
       "path": "content/rules/verification-gates.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Accepted D13 / EV8a-EV8c: small partial main-CF skips the platform ladder only with complete exact saved-input MCP proof; managed legacy structural continuation retains native failure and strict default gates. Previous decision: Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R44: assess AI findings before blocking or editing; auto failure continues with compensation and unverified AI evidence, required capabilities and confirmed defects remain binding. Retain raw evidence, no blind replay, fresh applicable correction proof and host delivery authority; qualify saved-case decisions and installed routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Accepted D13 / EV8a-EV8c: small partial main-CF skips the platform ladder only with complete exact saved-input MCP proof; managed legacy structural continuation retains native failure and strict default gates. Previous decision: Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. AI continuation: remove mandatory additional-call approval and allocation ledger for ordinary authorized tasks; preserve fresh confirmation, explicit user limits, one unchanged-input recovery, findings and host repair ownership. Default 2/3 counts are diagnostic checkpoints. Installed r36 update and fresh installation must deliver identical client policy. R44: assess AI findings before blocking or editing; auto failure continues with compensation and unverified AI evidence, required capabilities and confirmed defects remain binding. Retain raw evidence, no blind replay, fresh applicable correction proof and host delivery authority; qualify saved-case decisions and installed routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
       "upstreamSha256": "60e2abee5a6c2ca01de3dc4b59f8dbe0a4deacf0694ce34491aa216995765f64",
       "baselineSha256": "04c0704e3b7992c255dbc3fae9eba4411ed688e9cc5c5c75ad8bc04da124390c",
-      "resultSha256": "04c0704e3b7992c255dbc3fae9eba4411ed688e9cc5c5c75ad8bc04da124390c"
+      "resultSha256": "f38542c5c1328e9c5fd5e3b34912a9bd0437c2d5cf2120497afe742842c147a0"
     },
     {
       "path": "content/rules/verification-policy.md",
@@ -2488,10 +2489,10 @@
       "path": "tests/WorkflowHardening.Tests.ps1",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in.",
+      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "8c941cb5c787ad14b3c1d4c24ba707a3f5429ceb76655676ad66576bc85876f0",
-      "resultSha256": "fc0ee8005007a7274ae91ddab123e8f05610b21404a8ff8a180f66b982173c4f"
+      "resultSha256": "a52bab151ffb3ee5161a1184bc105d23c3e0ce363c17e5a22f88d0c7a23e3bb4"
     },
     {
       "path": "tools/apply-openspec-downstream-overlay.ps1",
@@ -2704,10 +2705,10 @@
       "path": "tools/validate-rules.ps1",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R49: full-cycle set grows from 141300 to 143908 normalized UTF-8 bytes (+2608, about 652 tokens); preserve mandatory scoped-memory boundaries, raise only hot-path ceiling 140 to 141 KiB, root/start limits unchanged.",
+      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R49: full-cycle set grows from 141300 to 143908 normalized UTF-8 bytes (+2608, about 652 tokens); preserve mandatory scoped-memory boundaries, raise only hot-path ceiling 140 to 141 KiB, root/start limits unchanged. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
       "upstreamSha256": "8004df5e36718b44ecf29c8c3a26d12abc155900fdd8d9d6d00216b062f4467a",
       "baselineSha256": "6394a4c1435e40360d08adff2e3ef9efc1e15f0ea17d5b4066687ca7648f1e6d",
-      "resultSha256": "78a8556f27da6f35ec0df6bd18935a537d1919c0c47e8dffd3e07d1c1651ae2d"
+      "resultSha256": "a8de00178101a13396a9665e9992efe95f5f11022ffbf45fa965b7971ab3d833"
     },
     {
       "path": "USER-RULES.md",
@@ -2717,6 +2718,33 @@
       "upstreamSha256": "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
       "baselineSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3",
       "resultSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3"
+    },
+    {
+      "path": "content/rules/model-fable5.md",
+      "requirementId": "ITL-MODEL-NEUTRAL-COMPLETION-001",
+      "disposition": "resolved",
+      "reason": "R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "upstreamSha256": "988b12a06539b68e53be483fe18bb7510f5d7479d3575f4d5839d62bbaec0f68",
+      "baselineSha256": "988b12a06539b68e53be483fe18bb7510f5d7479d3575f4d5839d62bbaec0f68",
+      "resultSha256": "012ba6ce510f4d7efdd20226e394f871d82aaa31ea49d3eeb3f63a284006da73"
+    },
+    {
+      "path": "content/rules/model-gpt6.md",
+      "requirementId": "ITL-MODEL-NEUTRAL-COMPLETION-001",
+      "disposition": "resolved",
+      "reason": "R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "upstreamSha256": "95b6b2548357543b7626b95b30fb2658acc5f31dde03d2eca54ba99ddb019c6f",
+      "baselineSha256": "95b6b2548357543b7626b95b30fb2658acc5f31dde03d2eca54ba99ddb019c6f",
+      "resultSha256": "0abfbe3c496a5e170b7a12637064c24024922dfb14188af8aeffed4243cc720b"
+    },
+    {
+      "path": "content/rules/model-sonnet5.md",
+      "requirementId": "ITL-MODEL-NEUTRAL-COMPLETION-001",
+      "disposition": "resolved",
+      "reason": "R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "upstreamSha256": "a45c668827a5b0ec9cbc15eae261e32e42ce68f3e071ce42e1e4e815629bef92",
+      "baselineSha256": "a45c668827a5b0ec9cbc15eae261e32e42ce68f3e071ce42e1e4e815629bef92",
+      "resultSha256": "cdd36062bb7b902e9d812a9847a4ca3eb017352944a7d996e2fe850c67fffafc"
     }
   ],
   "targetComposition": "append-upstream",

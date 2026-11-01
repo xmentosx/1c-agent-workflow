@@ -28,7 +28,19 @@ replacing the upstream process, coding, MCP, memory, or OpenSpec rules.
 - For the upstream validation route above, obtain standalone `syntaxcheck` / `syntaxcheck_file` evidence first; Gate 1 remains mandatory;
   Gate 2 prefers `check_1c_logic` when exposed and otherwise uses
   `check_1c_code`. `verification-policy.md` selects which gates run. A Code
-  Checker syntax section never substitutes for `syntaxcheck_file` evidence.
+  Checker syntax section never substitutes for standalone `syntaxcheck` /
+  `syntaxcheck_file` evidence.
 - Keep project corrections in project memory. Shared `remember` is only for
   verified cross-project knowledge; `templatesearch` remains available for
   code templates. Do not turn on a new shared-memory provider implicitly.
+
+## Completion and repeated obstacles
+
+Authorized work ends when the deliverable and every check its task path
+selects have run, or each remaining check has a stated blocker, user limit or
+absent tool. A finished sub-item, a check you can run yourself or a tight
+context window (hand off instead) is not a stopping point; end earlier only at
+a `CONFUSION` fork, a confirmation-gated action or input only the user has.
+When the same obstacle survives two attempts without new evidence, change the
+route (another tool or entry point, the code path instead of the UI) or report
+the blocker with its raw errors; rewording an attempt is not a new route.

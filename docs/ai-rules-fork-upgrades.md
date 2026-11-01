@@ -22,9 +22,34 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: memory optimization, local r50
+## Current candidate: model-neutral completion, local r51
 
-The selected candidate is `itl-main-2f640143-r50`, exact commit
+The selected candidate is `itl-main-2f640143-r51`, exact commit
+`ce865ff710bb2fe5532e130b45ef89fc72588c37`, continuing r50 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385` (upstream `main` has
+since moved; that intake is a separate audit). The 2026-11-01 PM5 follow-through
+report showed agents on unprofiled models (Grok, DeepSeek, Kimi, unprofiled GPT)
+ending turns after each sub-item with runnable gates, `/itl-check` and UI
+confirmation unrun, and rewriting one Vanessa scenario about fifteen times. The
+completion contract existed only in the gpt6/fable5/sonnet5 profiles.
+
+The exact upstream root stays untouched. The ITL appendix now owns
+`## Completion and repeated obstacles` (required target anchor): the legitimate
+stopping points and the two-attempt route change. The three profiles keep their
+model-specific technique with a pointer, and `model-adaptation` §5 names the
+shared owner. Gate 1 states that a fragment checked as text is interim and that,
+without the file tool, final evidence is the complete saved module text. The
+installed `USER-RULES` block limits `pending verification` to an off, blocked or
+user-excluded run, and the Vanessa skill points to the shared route change. The
+fork full-cycle set grows 144,351 -> 144,957 normalized bytes (+606, about 152
+tokens at bytes/4); its ceiling moves 141 -> 142 KiB with the measurement in
+`tools/validate-rules.ps1`. `compatibilityStatus` is `pending` until the
+publication owner qualifies the exact pin. The scoped-memory policy names the
+same commit; memory rule bytes are unchanged.
+
+## Earlier memory optimization candidate, local r50
+
+The earlier candidate is `itl-main-2f640143-r50`, exact commit
 `a2cbdcef52316db426acedc852f495564189f1ca`, upstream unchanged at
 `2f640143756ecd01fed42100e412632aa9082385`. The dependency lock, project
 template and scoped-memory policy already agree. Version selection is complete;
