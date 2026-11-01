@@ -162,14 +162,33 @@ function Get-ItlArtifactProtectedPaths {
     return $paths
 }
 
+function New-ItlArtifactProtectionIndex {
+    # Protected paths plus all their ancestors: one lookup per path level
+    # replaces a scan of every protected path for every candidate.
+    param([object]$ProtectedPaths)
+    $exact = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $ancestors = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($protected in @($ProtectedPaths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$protected)) { continue }
+        $saved = [IO.Path]::GetFullPath([string]$protected).TrimEnd('\', '/')
+        if (-not $exact.Add($saved)) { continue }
+        $parent = [IO.Path]::GetDirectoryName($saved)
+        while ($parent -and $ancestors.Add($parent.TrimEnd('\', '/'))) { $parent = [IO.Path]::GetDirectoryName($parent) }
+    }
+    return [pscustomobject]@{ itlProtectionIndex = $true; exact = $exact; ancestors = $ancestors }
+}
+
 function Test-ItlArtifactProtected {
+    # A path is protected when it is, lies inside, or contains protected
+    # evidence. Loops pass an index built once by New-ItlArtifactProtectionIndex.
     param([string]$Path, [object]$ProtectedPaths)
+    $index = if ($null -ne $ProtectedPaths -and $null -ne $ProtectedPaths.PSObject.Properties['itlProtectionIndex']) { $ProtectedPaths } else { New-ItlArtifactProtectionIndex -ProtectedPaths $ProtectedPaths }
     $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    foreach ($protected in $ProtectedPaths) {
-        $saved = ([string]$protected).TrimEnd('\', '/')
-        if ([string]::Equals($full, $saved, [StringComparison]::OrdinalIgnoreCase) -or
-            (Test-ItlArtifactPathInside -Root $full -Path $saved) -or
-            (Test-ItlArtifactPathInside -Root $saved -Path $full)) { return $true }
+    if ($index.exact.Contains($full) -or $index.ancestors.Contains($full)) { return $true }
+    $parent = [IO.Path]::GetDirectoryName($full)
+    while ($parent) {
+        if ($index.exact.Contains($parent.TrimEnd('\', '/'))) { return $true }
+        $parent = [IO.Path]::GetDirectoryName($parent)
     }
     return $false
 }
@@ -294,7 +313,7 @@ function Invoke-ItlBranchResetLeftoverCleanup {
     param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string]$MainRoot,
         [Parameter(Mandatory)][string]$SafeBranchName, [Parameter(Mandatory)][datetime]$StartedAt)
     $before = $StartedAt.ToUniversalTime()
-    $protected = Get-ItlArtifactProtectedPaths -ProjectRoot $ProjectRoot
+    $protected = New-ItlArtifactProtectionIndex -ProtectedPaths (Get-ItlArtifactProtectedPaths -ProjectRoot $ProjectRoot)
     $owned = Get-ItlOwnedBuildFolderNames
     $build = Join-Path $ProjectRoot 'build'
     $agentRoot = Join-Path $ProjectRoot '.agent-1c'
@@ -511,7 +530,8 @@ function Get-ItlArtifactCleanupPlan {
     # Agent task folders also honor retained dependencies of completion receipts;
     # an unreadable receipt store keeps every such folder.
     $retainedDependencies = $null
-    try { $retainedDependencies = @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot) } catch { $retainedDependencies = $null }
+    try { $retainedDependencies = New-ItlArtifactProtectionIndex -ProtectedPaths @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot) } catch { $retainedDependencies = $null }
+    $protectedIndex = New-ItlArtifactProtectionIndex -ProtectedPaths $protected
     $now = (Get-Date).ToUniversalTime()
     $ageLimited = @('itl-run', 'vanessa', 'yaxunit', 'event-log', 'agent-task', 'branch-dump')
     $entries = @()
@@ -524,7 +544,7 @@ function Get-ItlArtifactCleanupPlan {
         for ($index = 0; $index -lt $ordered.Count; $index++) {
             $item = $ordered[$index]
             $expired = ($category -in $ageLimited -and $item.modifiedAt -lt $cutoff)
-            $protectedPath = (Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $protected) -or
+            $protectedPath = (Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $protectedIndex) -or
                 ($category -eq 'agent-task' -and ($null -eq $retainedDependencies -or (Test-ItlArtifactProtected -Path $item.path -ProtectedPaths $retainedDependencies)))
             $delete = ($index -ge $keep -and (-not ($category -in $ageLimited) -or $expired) -and -not $protectedPath)
             $size = if ($item.sizeBytes -ge 0) { [int64]$item.sizeBytes } else { Get-ItlArtifactCandidateSize -Path $item.path }
@@ -549,17 +569,24 @@ function Show-ItlArtifactFootprint {
 }
 
 function Invoke-ItlArtifactCleanup {
-    param([switch]$DryRun, [switch]$Automatic)
-    $plan = Get-ItlArtifactCleanupPlan
-    if ($Automatic -and -not $plan.policy.enabled) { return }
+    # Automatic cleanup is optional after the action: it stops removing at its
+    # deadline and leaves the rest to /itl-clean instead of delaying the result.
+    # The heartbeat keeps the finished action from looking stalled to the runner.
+    param([switch]$DryRun, [switch]$Automatic, [object]$DeadlineUtc = $null)
+    if ($Automatic -and -not (Get-ItlArtifactRetentionPolicy).enabled) { return }
+    if ($Automatic -and $null -eq $DeadlineUtc) { $DeadlineUtc = [datetime]::UtcNow.AddSeconds(30) }
+    $plan = if ($Automatic) { Invoke-WithRunStatusHeartbeat { Get-ItlArtifactCleanupPlan } } else { Get-ItlArtifactCleanupPlan }
     $removed = [int64]0
     $removedPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $failed = @()
+    $deferred = 0
+    $diagnosticCache = @{}
     foreach ($entry in @($plan.entries | Where-Object delete)) {
         if ($DryRun) { continue }
+        if ($null -ne $DeadlineUtc -and [datetime]::UtcNow -ge $DeadlineUtc.ToUniversalTime()) { $deferred++; continue }
         try {
             if ($entry.category -eq 'diagnostic') {
-                Remove-ItlDiagnosticArtifact -Entry $entry
+                Remove-ItlDiagnosticArtifact -Entry $entry -Cache $diagnosticCache
                 $removed += $entry.sizeBytes
                 [void]$removedPaths.Add([string]$entry.path)
                 continue
@@ -581,6 +608,7 @@ function Invoke-ItlArtifactCleanup {
         foreach ($entry in $eligible) { Write-Host "  $(if ($DryRun) { 'would remove' } elseif ($removedPaths.Contains([string]$entry.path)) { 'removed' } else { 'left' }): $($entry.path)" }
     }
     foreach ($issue in $failed) { Write-Warning "ITL artifact cleanup left: $issue" }
+    if ($deferred -gt 0) { Write-Warning "ITL artifact cleanup deferred $deferred eligible artifact(s) at its time budget; /itl-clean removes them." }
     if ($failed.Count -gt 0 -and -not $Automatic) { throw "ITL_ARTIFACT_CLEANUP_INCOMPLETE: $($failed.Count) artifact(s) left; see warnings above." }
-    return [pscustomobject]@{ candidates = $plan.entries.Count; eligible = $eligible.Count; removedBytes = $removed; failed = @($failed) }
+    return [pscustomobject]@{ candidates = $plan.entries.Count; eligible = $eligible.Count; removedBytes = $removed; failed = @($failed); deferred = $deferred }
 }

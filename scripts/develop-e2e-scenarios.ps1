@@ -314,7 +314,7 @@ function Get-DevelopColdDiagnosticProjection {
     if($ProbeOnly) {return $true}
     $sha=[Security.Cryptography.SHA256]::Create()
     try {$hash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text.Replace("`r`n","`n"))))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-    if($hash -cnotin @('998444b79b4fcca47bc95a672f058d81e00d7af327444cc0e9c833e0a47ae349','87b42915c8a9f7b68254625adc048994add6df6fe0a6a7d664703ed61603d415')) {return $null}
+    if($hash -cnotin @('998444b79b4fcca47bc95a672f058d81e00d7af327444cc0e9c833e0a47ae349','87b42915c8a9f7b68254625adc048994add6df6fe0a6a7d664703ed61603d415','c47de9dfa139c1668b1f28c98044ef47e68f5723c7b10ea4920157fb63fe44eb')) {return $null}
     return 'cold-root-without-diagnostic-manifests'
 }
 

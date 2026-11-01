@@ -182,7 +182,7 @@ function Get-ItlDiagnosticArtifactPlan {
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
     $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
     if (-not (Test-Path -LiteralPath $root -PathType Container) -or -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { return @() }
-    $ProtectedPaths = @($ProtectedPaths) + @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot)
+    $ProtectedPaths = New-ItlArtifactProtectionIndex -ProtectedPaths (@($ProtectedPaths) + @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot))
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Filter '*.json')) {
         try {
@@ -234,7 +234,9 @@ function Get-ItlDiagnosticRetainedPaths {
 }
 
 function Remove-ItlDiagnosticArtifact {
-    param([Parameter(Mandatory)][object]$Entry)
+    # Cache: one cleanup pass re-reads protection and re-hashes retained
+    # originals once per manifest instead of once per listed file.
+    param([Parameter(Mandatory)][object]$Entry, [hashtable]$Cache = $null)
     if (-not (Test-ItlArtifactPathWithoutReparse -Root $Entry.root -Path $Entry.diagnosticManifest) -or
         (Get-FileHash -LiteralPath $Entry.diagnosticManifest -Algorithm SHA256).Hash -ine $Entry.diagnosticManifestSha256) { throw 'Diagnostic manifest changed.' }
     $manifest = [IO.File]::ReadAllText($Entry.diagnosticManifest, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -245,18 +247,32 @@ function Remove-ItlDiagnosticArtifact {
         $attempt = Get-ItlSupersededAttemptContext -ProjectRoot $Entry.root -Receipt $manifest
         if (-not (Test-ItlArtifactPathInside -Root $attempt.root -Path $path)) { throw 'Disposable file is outside its completed attempt.' }
     }
+    $key = "$($Entry.diagnosticManifest)|$($Entry.diagnosticManifestSha256)"
+    $checked = if ($null -ne $Cache) { $Cache[$key] } else { $null }
+    if ($null -eq $checked) {
+        $checked = [pscustomobject]@{ error = ''; protected = $null; retainedDependencies = $null
+            originals = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)) }
+        try {
+            if ($manifest.kind -eq 'agent-task-temp') { $checked.protected = New-ItlArtifactProtectionIndex -ProtectedPaths @(Get-ItlArtifactProtectedPaths -ProjectRoot $Entry.root) }
+            $checked.retainedDependencies = New-ItlArtifactProtectionIndex -ProtectedPaths @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $Entry.root)
+            foreach ($source in @($manifest.retained)) {
+                $original = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $Entry.root -RelativePath $source.path
+                if ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -ine $source.sha256) { throw 'Retained diagnostic original changed or is missing.' }
+                [void]$checked.originals.Add($original)
+            }
+        } catch { $checked.error = $_.Exception.Message }
+        if ($null -ne $Cache) { $Cache[$key] = $checked }
+    }
     if ($manifest.kind -eq 'agent-task-temp') {
         $task = Get-ItlAgentTaskArtifactContext -ProjectRoot $Entry.root -Receipt $manifest -CompletionPath $manifest.completionPath
         Assert-ItlAgentTaskDisposablePath -ProjectRoot $Entry.root -Context $task -RelativePath $record[0].path | Out-Null
-        if (Test-ItlArtifactProtected -Path $path -ProtectedPaths @(Get-ItlArtifactProtectedPaths -ProjectRoot $Entry.root)) { throw 'Agent task target is current workflow evidence or recovery data.' }
+        if ($checked.error) { throw $checked.error }
+        if (Test-ItlArtifactProtected -Path $path -ProtectedPaths $checked.protected) { throw 'Agent task target is current workflow evidence or recovery data.' }
     }
     if ($path -ine $Entry.path) { throw 'Diagnostic target differs from its manifest.' }
-    if (Test-ItlArtifactProtected -Path $path -ProtectedPaths @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $Entry.root)) { throw 'Diagnostic target is a retained dependency.' }
-    foreach ($source in @($manifest.retained)) {
-        $original = Resolve-ItlDiagnosticArtifactPath -ProjectRoot $Entry.root -RelativePath $source.path
-        if ($original -ieq $path) { throw 'Diagnostic target is also retained.' }
-        if ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -ine $source.sha256) { throw 'Retained diagnostic original changed or is missing.' }
-    }
+    if ($checked.error) { throw $checked.error }
+    if (Test-ItlArtifactProtected -Path $path -ProtectedPaths $checked.retainedDependencies) { throw 'Diagnostic target is a retained dependency.' }
+    if ($checked.originals.Contains($path)) { throw 'Diagnostic target is also retained.' }
     if (-not ('ItlDiagnosticFileDeletion' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -298,10 +314,10 @@ function Invoke-ItlDiagnosticArtifactCleanup {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot, [ValidateRange(0, 3650)][int]$MinimumAgeDays = 7, [switch]$DryRun, [object]$ProtectedPaths = @())
     $plan = @(Get-ItlDiagnosticArtifactPlan -ProjectRoot $ProjectRoot -MinimumAgeDays $MinimumAgeDays -ProtectedPaths $ProtectedPaths)
-    $removed = [long]0; $failed = @()
+    $removed = [long]0; $failed = @(); $cache = @{}
     foreach ($entry in $plan) {
         if ($DryRun) { continue }
-        try { Remove-ItlDiagnosticArtifact -Entry $entry; $removed += $entry.sizeBytes }
+        try { Remove-ItlDiagnosticArtifact -Entry $entry -Cache $cache; $removed += $entry.sizeBytes }
         catch { $failed += [pscustomobject]@{ path = $entry.path; error = $_.Exception.Message } }
     }
     return [pscustomobject]@{ entries = $plan; removedBytes = $removed; failed = $failed; dryRun = [bool]$DryRun }
