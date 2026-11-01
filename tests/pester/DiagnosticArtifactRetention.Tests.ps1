@@ -481,3 +481,91 @@ Describe 'Producer-owned diagnostic retention' {
         (Test-Path -LiteralPath (Join-Path $f.root $kept)) | Should -BeTrue
     }
 }
+
+Describe 'Bounded automatic artifact cleanup' {
+    BeforeAll {
+        $script:RealProtectionIndex = ${function:New-ItlArtifactProtectionIndex}
+        $script:RealRetainedPaths = ${function:Get-ItlDiagnosticRetainedPaths}
+        function New-BatchCleanupFixture {
+            # 257 disposable files enroll as two manifests; the extra receipt adds
+            # a large retained-dependency set, as on a long-lived branch worktree.
+            param([string]$Name)
+            $f = New-AgentTaskFixture $Name
+            $f.receipt.disposablePaths = @(1..257 | ForEach-Object {
+                $relative = "$($f.taskRoot)/tmp/part-$_.txt"
+                [IO.File]::WriteAllText((Join-Path $f.root $relative), 'disposable')
+                $relative
+            })
+            [IO.File]::WriteAllText((Join-Path $f.root $f.completion), ($f.receipt | ConvertTo-Json))
+            Complete-ItlDiagnosticArtifacts -ProjectRoot $f.root -CompletionPath $f.completion | Out-Null
+            foreach ($batch in 1..12) {
+                $retained = @(1..250 | ForEach-Object { [ordered]@{ path = "build/agent-artifacts/old-$batch/evidence/item-$_.json"; sha256 = ('0' * 64) } })
+                $other = [ordered]@{ schemaVersion = 1; projectRoot = $f.root; status = 'running'; retained = $retained }
+                [IO.File]::WriteAllText((Join-Path $f.root ('.agent-1c/diagnostic-artifacts/' + ('{0:x32}' -f $batch) + '.json')), ($other | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
+            }
+            $script:ProjectRoot = $f.root
+            return $f
+        }
+    }
+    BeforeEach {
+        Mock Get-EnvValue { param($Name, $Default) return $Default }
+        Mock Get-MainWorktreePath { return $script:ProjectRoot }
+        Mock Get-ItlArtifactProtectedPaths { return @() }
+        Mock Get-ItlResultArtifactCandidates { return @() }
+        Mock Get-ItlRunArtifactCandidates { return @() }
+        Mock Get-ItlAuxiliaryArchiveArtifactCandidates { return @() }
+        Mock Get-ItlWorkflowIncidentArchiveCandidates { return @() }
+        Mock Get-ItlArchiveArtifactCandidates { return @() }
+    }
+
+    It 'matches the exact, inside and containing protection relation for <Case>' -TestCases @(
+        @{ Case = 'the same file'; Protected = 'build/a/b.json'; Probe = 'build/a/b.json'; Expected = $true },
+        @{ Case = 'another case and a trailing slash'; Protected = 'BUILD/A/'; Probe = 'build/a'; Expected = $true },
+        @{ Case = 'a file inside a protected folder'; Protected = 'build/a'; Probe = 'build/a/c/d.txt'; Expected = $true },
+        @{ Case = 'a folder containing protected evidence'; Protected = 'build/a/c/d.txt'; Probe = 'build'; Expected = $true },
+        @{ Case = 'a sibling sharing a name prefix'; Protected = 'build/a'; Probe = 'build/ab/d.txt'; Expected = $false },
+        @{ Case = 'an unrelated folder'; Protected = 'build/a/c'; Probe = 'build/x'; Expected = $false }
+    ) {
+        param($Protected, $Probe, $Expected)
+        $root = Join-Path $TestDrive 'Индекс защиты с пробелами'
+        $saved = @((Join-Path $root $Protected), (Join-Path $root 'other/item.json'))
+        $index = New-ItlArtifactProtectionIndex -ProtectedPaths $saved
+        (Test-ItlArtifactProtected -Path (Join-Path $root $Probe) -ProtectedPaths $index) | Should -Be $Expected
+        (Test-ItlArtifactProtected -Path (Join-Path $root $Probe) -ProtectedPaths $saved) | Should -Be $Expected
+    }
+
+    It 'builds protection and reads retained dependencies once per pass and manifest, not per file' {
+        $f = New-BatchCleanupFixture 'Объём'
+        Mock New-ItlArtifactProtectionIndex { & $script:RealProtectionIndex -ProtectedPaths $ProtectedPaths }
+        Mock Get-ItlDiagnosticRetainedPaths { & $script:RealRetainedPaths -ProjectRoot $ProjectRoot }
+        $result = Invoke-ItlArtifactCleanup -Automatic -DeadlineUtc ([datetime]::UtcNow.AddHours(1))
+        $result.failed.Count | Should -Be 0
+        $result.removedBytes | Should -Be (257 * 'disposable'.Length)
+        # Cleanup plan, diagnostic plan, and one recheck for each of the two manifests.
+        Should -Invoke Get-ItlDiagnosticRetainedPaths -Times 4 -Exactly
+        Should -Invoke New-ItlArtifactProtectionIndex -Times 7 -Exactly
+        @(Get-ChildItem -LiteralPath (Join-Path $f.root "$($f.taskRoot)/tmp") -Filter 'part-*').Count | Should -Be 0
+        foreach ($relative in @($f.receipt.retainedPaths) + @("$($f.taskRoot)/tmp/unknown.txt", $f.completion)) {
+            (Test-Path -LiteralPath (Join-Path $f.root $relative)) | Should -BeTrue
+        }
+    }
+
+    It 'defers removal at its deadline without failing the finished action' {
+        $f = New-BatchCleanupFixture 'Бюджет'
+        $output = @(Invoke-ItlArtifactCleanup -Automatic -DeadlineUtc ([datetime]::UtcNow.AddMinutes(-1)) 3>&1)
+        $warnings = @($output | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+        $result = @($output | Where-Object { $_ -isnot [Management.Automation.WarningRecord] })[0]
+        $result.deferred | Should -Be 257
+        $result.removedBytes | Should -Be 0
+        @($warnings | Where-Object { [string]$_ -like '*deferred 257*/itl-clean*' }).Count | Should -Be 1
+        @(Get-ChildItem -LiteralPath (Join-Path $f.root "$($f.taskRoot)/tmp") -Filter 'part-*').Count | Should -Be 257
+        (Invoke-ItlArtifactCleanup).removedBytes | Should -Be (257 * 'disposable'.Length)
+    }
+
+    It 'does not build a cleanup plan when automatic cleanup is disabled' {
+        Mock Get-EnvValue { param($Name, $Default) if ($Name -eq 'ITL_ARTIFACT_CLEANUP_ENABLED') { return 'false' }; return $Default }
+        Mock Get-ItlArtifactCleanupPlan { throw 'UNEXPECTED_CLEANUP_PLAN' }
+        Invoke-ItlArtifactCleanup -Automatic | Should -BeNullOrEmpty
+        Should -Invoke Get-ItlArtifactCleanupPlan -Times 0 -Exactly
+    }
+}
