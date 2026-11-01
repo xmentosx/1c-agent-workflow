@@ -631,6 +631,7 @@
                     $adapted[$client][$fileName] | Should -Match 'userReportOmitted=true'
                     $adapted[$client][$fileName] | Should -Match 'full absolute `userReportPath`'
                     $adapted[$client][$fileName] | Should -Match 'userReportSource=status-json'
+                    $adapted[$client][$fileName] | Should -Match 'If `blockerActionOmitted=true`, read the full `blockerAction` from `blockerActionPath`'
                 }
                 $adapted[$client]["itl-result.md"] | Should -Match 'verbatim as one uninterrupted block'
                 $adapted[$client]["itl-result.md"] | Should -Match '## Итог задачи'

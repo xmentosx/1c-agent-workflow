@@ -1280,6 +1280,8 @@ $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 $userReportOmitted = $false
 $userReportPath = ""
 $userReportSource = "inline"
+$blockerActionOmitted = $false
+$blockerActionPath = ""
 if ($summaryText.Length -gt 4000) {
     $summary.error = Limit-Text -Value $summary.error -Length 400
     $summary.stageDetail = Limit-Text -Value $summary.stageDetail -Length 300
@@ -1369,6 +1371,22 @@ if ($summaryText.Length -gt 4000) {
         statusPath = $statusPath
     }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+    if ($summaryText.Length -gt 4000 -and $null -ne $blockerAction) {
+        # A user decision may carry a complete choice list. Move it whole to a
+        # file instead of letting the last level drop the blocker it belongs to.
+        $blockerActionOmitted = $true
+        $blockerActionPath = Resolve-NormalizedPath -Path (Join-Path $runDirectory "blocker-action.json")
+        try {
+            Write-JsonFileAtomic -Path $blockerActionPath -Value $blockerAction
+        } catch {
+            # status.json already holds the complete blockerAction property.
+            $blockerActionPath = Resolve-NormalizedPath -Path $statusPath
+        }
+        $summary.blockerAction = $null
+        $summary["blockerActionOmitted"] = $true
+        $summary["blockerActionPath"] = $blockerActionPath
+        $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+    }
 }
 if ($summaryText.Length -gt 4000) {
     $summary = if ($userReportOmitted) {
@@ -1385,7 +1403,26 @@ if ($summaryText.Length -gt 4000) {
             statusPath = $statusPath
         }
     }
+    if ($blockerClassification) {
+        # The agent cannot continue a blocker it cannot see; these few fields
+        # stay in every level while large content stays in its file.
+        $summary["requiredAction"] = Limit-Text -Value $requiredAction -Length 240
+        $summary["blockerClassification"] = Limit-Text -Value $blockerClassification -Length 120
+        $summary["blockerRequiresUserDecision"] = $blockerRequiresUserDecision
+        $summary["blockerActionOmitted"] = $blockerActionOmitted
+        $summary["blockerActionPath"] = $blockerActionPath
+        $summary["statusPath"] = $statusPath
+    }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+}
+if ($blockerActionOmitted) {
+    try {
+        Set-ObjectValue -Object $status -Name "blockerActionOmitted" -Value $true
+        Set-ObjectValue -Object $status -Name "blockerActionPath" -Value $blockerActionPath
+        Write-JsonFileAtomic -Path $statusPath -Value $status
+    } catch {
+        [Console]::Error.WriteLine("ITL compact summary warning: could not add blocker action artifact metadata to status.json: $($_.Exception.Message)")
+    }
 }
 if ($userReportOmitted) {
     try {
