@@ -59,16 +59,16 @@ function Set-ItlProductProjectSelectionBlocker {
     $choices=@();$total=0;$unavailable=''
     try{
         $catalog=(Read-ItlProductProjectSnapshot).catalog
-        $matching=@(@((Get-ItlCatalogField $catalog projects @()))|ForEach-Object {
+        # The user sees the whole registry. Another family stays visible but
+        # marked: selecting it is rejected after selection, not hidden here.
+        $published=@(@((Get-ItlCatalogField $catalog projects @()))|ForEach-Object {
             $product=Get-ItlCatalogRecord $catalog products ([string](Get-ItlCatalogField $_ 'productId' ''))
-            # Another family is rejected after selection; never offer it.
-            if(-not $family -or [string](Get-ItlCatalogField $product 'baseConfigurationVersion' '') -ceq $family){
-                [ordered]@{id=[string](Get-ItlCatalogField $_ 'projectId' '');name=[string](Get-ItlCatalogField $_ 'name' '');productId=[string](Get-ItlCatalogField $_ 'productId' '');productName=[string](Get-ItlCatalogField $product 'name' '')}
-            }
-        }|Sort-Object {$_.id})
-        $total=$matching.Count;$choices=@($matching|Select-Object -First $Limit)
+            $productFamily=[string](Get-ItlCatalogField $product 'baseConfigurationVersion' '')
+            [ordered]@{id=[string](Get-ItlCatalogField $_ 'projectId' '');name=[string](Get-ItlCatalogField $_ 'name' '');productId=[string](Get-ItlCatalogField $_ 'productId' '');productName=[string](Get-ItlCatalogField $product 'name' '');family=$productFamily;familyMatch=(-not $family -or $productFamily -ceq $family)}
+        }|Sort-Object @{Expression={-not $_.familyMatch}},@{Expression={$_.id}})
+        $total=$published.Count;$choices=@($published|Select-Object -First $Limit)
     }catch{$unavailable=[string]$_.Exception.Message;if($unavailable.Length -gt 300){$unavailable=$unavailable.Substring(0,300)}}
-    Set-RunFailureContext -RequiredAction 'catalog-project-selection: show blockerAction.choices to the user and ask which published project this installation belongs to; never choose or infer it. Repeat the same command with -CatalogProjectId <id> (JSON init: projectId). If the project is absent, publish it through catalog create separately.'
+    Set-RunFailureContext -RequiredAction 'catalog-project-selection: show every blockerAction.choices entry to the user in the message text and ask which published project this installation belongs to; never choose, infer or shorten the list. familyMatch=false marks another configuration family, which this installation cannot switch to. Repeat the same command with -CatalogProjectId <id> (JSON init: projectId). If the project is absent, publish it through catalog create separately.'
     $script:RunBlockerClassification='catalog-project-selection'
     $script:RunBlockerRequiresUserDecision=$true
     $script:RunBlockerRetryOriginal=$false

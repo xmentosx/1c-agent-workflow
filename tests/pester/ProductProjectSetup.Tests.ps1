@@ -229,7 +229,7 @@
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
         Test-Path (Get-ItlProductProjectPath applied)|Should -BeFalse
     }
-    It 'returns only published projects of the installed family as a user decision when it cannot prompt' {
+    It 'returns every published project, installed family first, as a user decision when it cannot prompt' {
         [IO.File]::WriteAllText($script:ConfigPath,'{"aiRules":{"tools":["codex"]},"baseConfigurationVersion":"PM5"}',[Text.UTF8Encoding]::new($false))
         Read-ProjectConfig
         $snapshot.catalog.products+=@{productId='pm5-prof';name='PM5 ПРОФ';baseConfigurationVersion='PM5'}
@@ -245,10 +245,15 @@
         @($blocker.choices).Count|Should -Be 1
         $blocker.choices[0].id|Should -BeExactly five
         $blocker.choices[0].productName|Should -BeExactly PM5
-        $blocker.total|Should -Be 2
+        $blocker.choices[0].familyMatch|Should -BeTrue
+        $blocker.total|Should -Be 3
         $blocker.truncated|Should -BeTrue
+        $script:RunRequiredAction|Should -Match 'never choose, infer or shorten the list'
         {Select-ItlProductProjectCandidate -AllowPrompt:$false}|Should -Throw '*CATALOG_PROJECT_REQUIRED*'
-        @($script:RunBlockerAction.choices|ForEach-Object {$_.id})|Should -Be @('five','five-prof')
+        @($script:RunBlockerAction.choices|ForEach-Object {$_.id})|Should -Be @('five','five-prof','four')
+        @($script:RunBlockerAction.choices|ForEach-Object {$_.familyMatch})|Should -Be @($true,$true,$false)
+        $script:RunBlockerAction.choices[2].family|Should -BeExactly PM4
+        $script:RunBlockerAction.truncated|Should -BeFalse
         Get-ItlProductProjectBinding|Should -BeNullOrEmpty
         Should -Invoke Read-InitRequired -Times 0
     }
