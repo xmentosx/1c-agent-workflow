@@ -17,7 +17,7 @@ param(
     [ValidateRange(1,50)][int]$CatalogLimit=10,
     [ValidateSet('', 'keep-local', 'registry', 'defer')]
     [string]$CatalogDecision = '',
-    [ValidateSet("", "status", "restore", "reconcile", "legacy-status", "legacy-copy")]
+    [ValidateSet("", "status", "restore", "reconcile", "abandon", "legacy-status", "legacy-copy")]
     [string]$WorkflowUpdateRecovery = "",
     [string]$WorkflowUpdateLegacySourceRoot = "",
     [string]$WorkflowUpdateSnapshotId = "",

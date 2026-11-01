@@ -133,3 +133,94 @@ Describe 'Workflow update receipt detail recovery' {
         }
     }
 }
+
+Describe 'Completed branch capsules survive an interrupted aggregate rollout' {
+    It 'admits only parent-exact JSON values and the known diagnostic ignore append during a pending merge' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Происхождение манифеста с пробелом')
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            foreach ($path in @('.ai-rules.json','.agent-1c/dependency-lock.json')) {
+                Test-WorkflowUpdateMergeParentMetadata -RelativePath $path -Current '{"updatedAt":"known","entry":{"hash":"abc"}}' -Parent '{ "entry": { "hash": "abc" }, "updatedAt": "known" }' | Should -BeTrue
+                Test-WorkflowUpdateMergeParentMetadata -RelativePath $path -Current '{"updatedAt":"unknown","entry":{"hash":"abc"}}' -Parent '{"updatedAt":"known","entry":{"hash":"abc"}}' | Should -BeFalse
+                Test-WorkflowUpdateMergeParentMetadata -RelativePath $path -Current '{"updatedAt":"known","entry":{"hash":"forged"}}' -Parent '{"updatedAt":"known","entry":{"hash":"abc"}}' | Should -BeFalse
+            }
+            Test-WorkflowUpdateMergeParentMetadata -RelativePath '.gitignore' -Current ".dev.env`r`nbuild/agent-artifacts/`r`n" -Parent ".dev.env`n" | Should -BeTrue
+            Test-WorkflowUpdateMergeParentMetadata -RelativePath '.gitignore' -Current ".dev.env`n!secrets`n" -Parent ".dev.env`n" | Should -BeFalse
+            $branch='{"updatedAt":"branch","files":{"rule":{"installedHash":"abc"}},"foreignFiles":{"codex":["old"]}}'|ConvertFrom-Json
+            $target='{"updatedAt":"target","files":{"rule":{"installedHash":"abc"}},"foreignFiles":{"codex":["new"]}}'|ConvertFrom-Json
+            $candidate='{"updatedAt":"branch","files":{"rule":{"installedHash":"abc"}},"foreignFiles":{"codex":["old","new"]}}'|ConvertFrom-Json
+            Test-WorkflowUpdateManifestParentUnion -Candidate $candidate -Branch $branch -Target $target | Should -BeTrue
+            $candidate.files.rule.installedHash='forged'
+            Test-WorkflowUpdateManifestParentUnion -Candidate $candidate -Branch $branch -Target $target | Should -BeFalse
+            @($branch.foreignFiles.codex) | Should -Be @('old')
+            $candidate.files.rule.installedHash='abc'
+            $candidate.foreignFiles.codex=@('old')
+            Test-WorkflowUpdateManifestParentUnion -Candidate $candidate -Branch $branch -Target $target | Should -BeFalse
+            $branch.foreignFiles.codex=@('.agents/skills/itl-new-config-branch/SKILL.md')
+            $target.foreignFiles.codex=@()
+            $candidate.foreignFiles.codex=@()
+            Test-WorkflowUpdateManifestParentUnion -Candidate $candidate -Branch $branch -Target $target | Should -BeTrue
+        }
+    }
+    It 'proves a completed branch without a global report and leaves all bytes and HEAD unchanged' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Завершённая ветка с пробелом') -Branch 'itldev/complete'
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            Mock Test-WorkflowRolloutClients { $true }
+            $before=Get-CurrentCommit
+            $packageHash=(Get-FileHash -LiteralPath (Join-Path $fixture.root 'AGENT-INSTALL.md')).Hash
+            $packageTime=(Get-Item -LiteralPath (Join-Path $fixture.root 'AGENT-INSTALL.md')).LastWriteTimeUtc
+            $proof=Get-WorkflowDevelopmentBranchCompletedProof -Source ([pscustomobject]@{commit=('b'*40);root=$repoRoot}) -MasterClients @('codex')
+            $proof.status | Should -BeExactly 'completed'
+            $proof.commit | Should -BeExactly $before
+            $proof.completedSnapshotId | Should -BeExactly $fixture.id
+            (Get-FileHash -LiteralPath (Join-Path $fixture.root 'AGENT-INSTALL.md')).Hash | Should -BeExactly $packageHash
+            (Get-Item -LiteralPath (Join-Path $fixture.root 'AGENT-INSTALL.md')).LastWriteTimeUtc | Should -Be $packageTime
+            Get-CurrentCommit | Should -BeExactly $before
+            Test-Path -LiteralPath (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update-rollout.json') | Should -BeFalse
+        }
+    }
+
+    It 'refuses changed completed bytes instead of silently recopying them' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Поздняя правка завершённой ветки') -Branch 'itldev/changed'
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'AGENT-INSTALL.md'),'later user edit',[Text.UTF8Encoding]::new($false))
+            {Get-WorkflowDevelopmentBranchCompletedProof -Source ([pscustomobject]@{commit=('b'*40);root=$repoRoot}) -MasterClients @('codex')} | Should -Throw '*WORKFLOW_UPDATE_RECONCILIATION_REQUIRED*'
+            [IO.File]::ReadAllText((Join-Path $fixture.root 'AGENT-INSTALL.md')) | Should -BeExactly 'later user edit'
+        }
+    }
+
+    It 'does not treat a pin, another HEAD or pending post-copy as completed' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Незавершённая ветка с пробелом') -Branch 'itldev/pending' -PendingInterruption
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            Get-WorkflowDevelopmentBranchCompletedProof -Source ([pscustomobject]@{commit=('b'*40);root=$repoRoot}) -MasterClients @('codex') | Should -BeNullOrEmpty
+        }
+        $complete=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Другой HEAD с пробелом') -Branch 'itldev/later'
+        & {
+            . $helperPath -ProjectRoot $complete.root -Action help *> $null
+            Invoke-Git @('commit','--allow-empty','-qm','later business checkpoint')
+            Get-WorkflowDevelopmentBranchCompletedProof -Source ([pscustomobject]@{commit=('b'*40);root=$repoRoot}) -MasterClients @('codex') | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'persists a partial report before interruption and never admits it as aggregate completion' {
+        $fixture=New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Частичный отчёт с пробелом')
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $source=[pscustomobject]@{commit=('b'*40);root=$repoRoot}
+            $outcome=[pscustomobject]@{root='first';branch='itldev/first';status='completed';commit=Get-CurrentCommit;clients=@('codex')}
+            $report=Save-WorkflowDevelopmentBranchRolloutReport -Source $source -MasterClients @('codex') -Scope $null -Outcomes @($outcome) -ExpectedRoots @('first','second')
+            $report.inventoryComplete | Should -BeFalse
+            $saved=Get-Content -LiteralPath (Join-Path $fixture.root '.agent-1c/snapshots/workflow-update-rollout.json') -Raw | ConvertFrom-Json
+            @($saved.roots).Count | Should -Be 1
+            $saved.roots[0].status | Should -BeExactly 'completed'
+            {Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit} | Should -Throw '*WORKFLOW_UPDATE_BRANCH_REPORT_INCOMPLETE*'
+            Save-WorkflowDevelopmentBranchRolloutReport -Source $source -MasterClients @('codex') -Scope $null -Outcomes @() -ExpectedRoots @() | Out-Null
+            $empty = Assert-WorkflowDevelopmentBranchRolloutComplete -SourceCommit $source.commit
+            $empty.inventoryComplete | Should -BeTrue
+            @($empty.roots).Count | Should -Be 0
+        }
+    }
+}

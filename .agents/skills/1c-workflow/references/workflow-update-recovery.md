@@ -17,6 +17,17 @@ does not assert task progress or extend the operation deadline; native stall
 checks, helper-exit detection and the hard operation timeout remain authoritative.
 Recovery still belongs to the preserved snapshot and the original update command.
 
+Rollout saves its existing report after every classified root. An interrupted
+report cannot establish aggregate completion. On restart, a branch with no pending
+update can also prove completion from its retained terminal capsule: exact source
+commit, HEAD, verified before backups, current owned bytes and required client
+files must agree. This recovers older interrupted rollouts that did not save an
+aggregate report, without copying package files or rewriting settings again.
+A matching dependency pin alone remains insufficient. Changed completed bytes
+stop for their existing reconciliation instead of being silently recopied.
+Keep the original transaction scope; completed roots are inspected without
+replaying installation, while unfinished roots retain their original owner.
+
 ## Legacy copy without receipt or backup
 
 An old updater can copy a transactional package, remove its temporary backup,

@@ -8821,6 +8821,57 @@ function Get-WorkflowUpdateRootRuntimeBusyReason {
     return ''
 }
 
+function Test-WorkflowUpdateMergeParentMetadata {
+    param([string]$RelativePath, [string]$Current, [string]$Parent)
+    if ($RelativePath -in @('.ai-rules.json','.agent-1c/dependency-lock.json')) {
+        # Unlike dependency compatibility, provenance preserves timestamps and
+        # every value. Only JSON whitespace and object property order differ.
+        $left = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue ($Current | ConvertFrom-Json)) -Depth 100 -Compress
+        $right = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue ($Parent | ConvertFrom-Json)) -Depth 100 -Compress
+        return $left -ceq $right
+    }
+    if ($RelativePath -eq '.gitignore') {
+        $left = ($Current -replace "`r`n","`n").TrimEnd("`n")
+        $right = ($Parent -replace "`r`n","`n").TrimEnd("`n")
+        return $left -ceq ($right + "`n" + 'build/agent-artifacts/')
+    }
+    return $false
+}
+
+function Test-WorkflowUpdateManifestParentUnion {
+    param([object]$Candidate, [object]$Branch, [object]$Target)
+    $current = ConvertTo-ItlMcpSemanticCanonicalValue $Candidate
+    $parents = @((ConvertTo-ItlMcpSemanticCanonicalValue $Branch), (ConvertTo-ItlMcpSemanticCanonicalValue $Target))
+    $clients = @($parents[0].foreignFiles.Keys + $parents[1].foreignFiles.Keys | Sort-Object -Unique)
+    $union = [ordered]@{}
+    foreach ($client in $clients) {
+        $known = @(@($parents[0].foreignFiles[$client]) + @($parents[1].foreignFiles[$client]) | Where-Object { $null -ne $_ } | Sort-Object -Unique)
+        if (-not $current.foreignFiles.Contains($client)) { return $false }
+        $current.foreignFiles[$client] = @($current.foreignFiles[$client] | Sort-Object -Unique)
+        if (@($current.foreignFiles[$client] | Where-Object { $_ -cnotin $known }).Count) { return $false }
+        $missing = @($known | Where-Object { $_ -cnotin $current.foreignFiles[$client] })
+        if ($missing.Count) {
+            # A development surface retires master-only commands. Derive that
+            # exact set from the existing template producer, never a path prefix.
+            $adapter = Get-ItlClientAdapter -Client $client
+            $retired = @(foreach ($template in Get-ChildItem -LiteralPath (Join-Path $script:Agent1cScriptRoot '../kilo-command-templates/master') -File -Filter 'itl*.md.template') {
+                $relative = Get-ItlCommandRelativePath -Adapter $adapter -FileName $template.Name.Substring(0,$template.Name.Length-9)
+                $relative
+                if ($client -eq 'codex') { $relative.Replace('/SKILL.md','/agents/openai.yaml') }
+            })
+            if (@($missing | Where-Object { $_ -cnotin $retired }).Count) { return $false }
+        }
+        $union[$client] = $current.foreignFiles[$client]
+    }
+    $actual = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue $current) -Depth 100 -Compress
+    foreach ($parent in $parents) {
+        $parent.foreignFiles = $union
+        $expected = ConvertTo-Json -InputObject (ConvertTo-ItlMcpSemanticCanonicalValue $parent) -Depth 100 -Compress
+        if ($actual -ceq $expected) { return $true }
+    }
+    return $false
+}
+
 function Get-WorkflowUpdateRootWriteSetConflicts {
     param([Parameter(Mandatory = $true)][string]$Root)
 
@@ -8902,13 +8953,22 @@ function Get-WorkflowUpdateRootWriteSetConflicts {
                         foreach ($parent in @($original, $pending.targetCommit)) {
                             $records = @(Get-GitPathListAt -Root $Root -Arguments @('ls-tree', '-r', '-z', $parent, '--', $literal))
                             if ($records.Count -eq 1 -and $records[0] -match '^(\d+) blob ([a-f0-9]{40})\t' -and
-                                $Matches[1] -ceq $mode -and $Matches[2] -ceq $blob) { $parentMatch = $true }
+                                $Matches[1] -ceq $mode) {
+                                if ($Matches[2] -ceq $blob) { $parentMatch = $true }
+                                elseif (Test-WorkflowUpdateMergeParentMetadata -RelativePath $relative -Current (Read-Utf8Text -Path (Join-Path $Root $relative)) -Parent ((Get-GitOutputAt -Root $Root -Arguments @('show', "${parent}:$relative")) -join "`n")) { $parentMatch = $true }
+                            }
                         }
                         if ($parentMatch) { [void]$mergeOwned.Add($relative); continue }
+                        if ($relative -ceq '.agent-1c/dependency-lock.json' -and
+                            (Invoke-InProjectContext -Root $Root -ScriptBlock { Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $original -TargetCommit $pending.targetCommit })) {
+                            [void]$mergeOwned.Add($relative)
+                            continue
+                        }
                         if ($relative -ceq '.ai-rules.json') {
                             $branchManifest = Get-GitOutputAt -Root $Root -Arguments @('show', "${original}:.ai-rules.json") | ConvertFrom-Json
                             $targetManifest = Get-GitOutputAt -Root $Root -Arguments @('show', "$($pending.targetCommit):.ai-rules.json") | ConvertFrom-Json
-                            if (Test-AiRulesPendingMergeManifestProvenance -Root $Root -Candidate $rulesManifest -Branch $branchManifest -Target $targetManifest) {
+                            if ((Test-WorkflowUpdateManifestParentUnion -Candidate $rulesManifest -Branch $branchManifest -Target $targetManifest) -or
+                                (Test-AiRulesPendingMergeManifestProvenance -Root $Root -Candidate $rulesManifest -Branch $branchManifest -Target $targetManifest)) {
                                 [void]$mergeOwned.Add($relative)
                             }
                         }
@@ -10061,6 +10121,59 @@ function Test-WorkflowRolloutClients {
     } catch { return $false }
 }
 
+function Get-WorkflowDevelopmentBranchCompletedProof {
+    param([Parameter(Mandatory = $true)][object]$Source, [string[]]$MasterClients)
+
+    # A pin can be written before post-copy. Only the update owner's terminal
+    # capsule, exact HEAD, backups, current bytes and client set prove completion.
+    if ($null -ne (Get-WorkflowUpdatePendingSnapshot)) { return $null }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return $null }
+    $head = Get-CurrentCommit
+    foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*' | Sort-Object LastWriteTime -Descending)) {
+        $saved = Read-WorkflowUpdateSnapshot -SnapshotRoot $directory.FullName -Completed
+        if ([string]$saved.receipt.sourceCommit -cne [string]$Source.commit -or
+            [string]$saved.receipt.completedHead -cne $head) { continue }
+        $id = $directory.Name.Substring('itl-workflow-update-completed-'.Length)
+        $qualified = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+        $clients = @(Get-WorkflowRolloutClients -Root $script:ProjectRoot)
+        if (@($MasterClients | Where-Object { $_ -notin $clients }).Count) { return $null }
+        $clientPaths = @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot ([string]$Source.root) -Clients $clients)
+        $missing = @($qualified.snapshot.records | Where-Object {
+            $_.relativePath -cin $clientPaths -and
+            [string]$qualified.receipt.pathState.PSObject.Properties[[string]$_.relativePath].Value -like 'file:*' -and
+            -not (Test-Path -LiteralPath $_.targetPath -PathType Leaf)
+        } | ForEach-Object relativePath)
+        if ($missing.Count) {
+            foreach ($record in @($qualified.snapshot.records | Where-Object { $_.relativePath -cnotin $missing })) {
+                $expected = [string]$qualified.receipt.pathState.PSObject.Properties[[string]$record.relativePath].Value
+                if ((Get-WorkflowUpdatePathState -RelativePath $record.relativePath) -cne $expected) {
+                    Assert-WorkflowUpdateSnapshotCurrentState -Pending $qualified
+                }
+            }
+            return $null
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $qualified
+        if (-not (Test-WorkflowRolloutClients -Root $script:ProjectRoot -Clients $clients -RequiredClients $MasterClients -SourceRoot ([string]$Source.root))) {
+            return $null
+        }
+        Write-Host "Workflow branch $(Get-CurrentBranch): already completed; verified retained capsule $id; no package or settings writes."
+        return [pscustomobject]@{status='completed';commit=$head;completedSnapshotId=$id}
+    }
+    return $null
+}
+
+function Save-WorkflowDevelopmentBranchRolloutReport {
+    param([object]$Source, [string[]]$MasterClients, [object]$Scope,
+        [AllowEmptyCollection()][object[]]$Outcomes, [AllowEmptyCollection()][string[]]$ExpectedRoots)
+    $report = [ordered]@{schemaVersion=1;sourceCommit=[string]$Source.commit;sourceRoot=[string]$Source.root
+        mainRoot=[string]$script:ProjectRoot;masterClients=@($MasterClients);updatedAt=(Get-Date).ToString('o')
+        rolloutScope=$Scope;inventoryComplete=($Outcomes.Count -eq $ExpectedRoots.Count);expectedRoots=@($ExpectedRoots);roots=@($Outcomes)}
+    $reportPath = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update-rollout.json'
+    Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return $report
+}
+
 function Invoke-WorkflowDevelopmentBranchRollout {
     param([Parameter(Mandatory = $true)][object]$Source)
 
@@ -10137,6 +10250,8 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                     $reason = $runtimeBusy
                 } else {
                     $updated = Invoke-InProjectContext -Root $branchRoot -ScriptBlock {
+                        $completedProof = Get-WorkflowDevelopmentBranchCompletedProof -Source $Source -MasterClients $masterClients
+                        if ($null -ne $completedProof) { return $completedProof }
                         # Revalidate under the branch lease. The existing patch
                         # owner preserves exact before/after bytes and staging.
                         $branchPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow-branch' -Source $Source
@@ -10190,10 +10305,9 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                 'Inspect the reported branch failure and its preserved snapshot, then repeat update-workflow from master.'
             } else { [string]$item.continuation })
         })
+        Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes @($outcomes.ToArray()) -ExpectedRoots @($inventory | Where-Object kind -EQ development | ForEach-Object root) | Out-Null
     }
-    $report = [ordered]@{ schemaVersion = 1; sourceCommit = [string]$Source.commit; sourceRoot = [string]$Source.root
-        mainRoot = $mainRoot; masterClients = @($masterClients); updatedAt = (Get-Date).ToString('o'); rolloutScope = $scope; roots = @($outcomes.ToArray()) }
-    Write-Utf8TextAtomic -Path $reportPath -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    $report = Save-WorkflowDevelopmentBranchRolloutReport -Source $Source -MasterClients $masterClients -Scope $scope -Outcomes @($outcomes.ToArray()) -ExpectedRoots @($inventory | Where-Object kind -EQ development | ForEach-Object root)
     return $report
     }
 }
@@ -10209,6 +10323,11 @@ function Assert-WorkflowDevelopmentBranchRolloutComplete {
     if ([int]$report.schemaVersion -ne 1 -or [string]$report.sourceCommit -cne $SourceCommit -or
         [string]$report.mainRoot -cne [string]$script:ProjectRoot) {
         throw "WORKFLOW_UPDATE_BRANCH_REPORT_INVALID: source or root identity differs at $reportPath"
+    }
+    if ($null -ne $report.PSObject.Properties['inventoryComplete'] -and
+        (-not [bool]$report.inventoryComplete -or
+         (@($report.roots | ForEach-Object root | Sort-Object) -join "`0") -cne (@($report.expectedRoots | Sort-Object) -join "`0"))) {
+        throw 'WORKFLOW_UPDATE_BRANCH_REPORT_INCOMPLETE: repeat update-workflow to classify the remaining roots; retained completed roots are verified without replaying their installation.'
     }
     $actualScope = Get-ConfigValueFromObject $report 'rolloutScope' $null
     if (($actualScope | ConvertTo-Json -Depth 8 -Compress) -ine ($RolloutScope | ConvertTo-Json -Depth 8 -Compress)) {
