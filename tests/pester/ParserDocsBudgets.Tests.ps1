@@ -300,6 +300,15 @@
             $expectedRendered[$key].maxBytes += $(if ($key -eq 'master/opencode') { 496 } else { 518 })
         }
 
+        # The shared routine contract adds one transport sentence for an
+        # externalized blockerAction: +151 UTF-8 bytes (~38 byte/4 proxy
+        # tokens) per routine file, i.e. one invocation loads +151 bytes;
+        # surfaces grow by 10 files (+1510) on master and 13 (+1963) on dev.
+        # Without it a large user decision would be invisible to the agent.
+        foreach ($key in $expectedRendered.Keys) {
+            $expectedRendered[$key].maxBytes += $(if ($key -like 'master/*') { 1510 } else { 1963 })
+        }
+
         # Additive client-membership rollout changes only itl-update-workflow:
         # 1478 -> 1930 LF UTF-8 bytes, +452 on all 24 rendered surfaces.
         # The command is loaded on demand; root instructions and file counts

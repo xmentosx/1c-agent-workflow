@@ -124,6 +124,50 @@ exit 1
         }
     }
 
+    It "keeps a user-decision blocker in the bounded summary and moves its complete choice list to a file" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl выбор проекта с пробелом ' + [guid]::NewGuid().ToString('N'))
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            [IO.File]::WriteAllText((Join-Path $scriptRoot 'agent-1c.ps1'), @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$choices = @(1..60 | ForEach-Object { [ordered]@{ id=('project-{0:d2}' -f $_); name=('Разработка проекта номер {0}' -f $_); productId='pm5-corp'; productName='PM5 КОРП'; family='PM5'; familyMatch=$true } })
+$required = 'catalog-project-selection: show every blockerAction.choices entry to the user in the message text; repeat with -CatalogProjectId <id>.'
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='workflow-update.post-copy'; stageDetail='selection required'; errorMessage='CATALOG_PROJECT_REQUIRED: choose an existing published project.'; errorCategory='runner'; requiredAction=$required; exitCode=1; lastLogPath=''
+    blockerClassification='catalog-project-selection'; blockerRequiresUserDecision=$true; blockerRetryOriginalCommand=$false
+    blockerAction=[ordered]@{ parameter='-CatalogProjectId'; configurationFamily='PM5'; choices=$choices; choicesUnavailable='' }; blockerOwner=[ordered]@{ type='user'; decision='catalog-project' } }
+[IO.File]::WriteAllText($RunStatusPath,($payload | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
+exit 1
+'@, [Text.UTF8Encoding]::new($true))
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--', '-Action', 'update-workflow')
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 1
+            $text = $processResult.stdout -join "`n"
+            $text.Length | Should -BeLessOrEqual 4000
+            $summary = $text | ConvertFrom-Json
+            $summary.blockerClassification | Should -BeExactly 'catalog-project-selection'
+            $summary.blockerRequiresUserDecision | Should -BeTrue
+            $summary.requiredAction | Should -Match ([regex]::Escape('-CatalogProjectId <id>'))
+            $summary.nextAction | Should -Match '^catalog-project-selection:'
+            $summary.blockerActionOmitted | Should -BeTrue
+            $summary.blockerAction | Should -BeNullOrEmpty
+            [IO.Path]::IsPathRooted([string]$summary.blockerActionPath) | Should -BeTrue
+            [string]$summary.blockerActionPath | Should -Match 'blocker-action\.json$'
+            $action = Get-Content -LiteralPath $summary.blockerActionPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($action.choices).Count | Should -Be 60
+            $action.choices[59].name | Should -BeExactly 'Разработка проекта номер 60'
+            $action.choices[0].productName | Should -BeExactly 'PM5 КОРП'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.blockerActionOmitted | Should -BeTrue
+            @($status.blockerAction.choices).Count | Should -Be 60
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
     It "preserves semantic success and exposes an absolute report file for every long-report action" {
         foreach ($action in @("export-dev-branch-result", "lock-config-repository-objects", "update-workflow", "refresh-all-dev-branches")) {
             $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl long report путь с пробелом " + $action + "-" + [guid]::NewGuid().ToString("N"))
