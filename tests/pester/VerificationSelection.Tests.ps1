@@ -101,6 +101,7 @@ Describe "Branch-first verification suite selection" {
         $result.oneOff.classificationComplete | Should -BeTrue
         $result.oneOffAssessment.passed | Should -BeFalse
         $result.oneOffAssessment.issue | Should -Match 'VERIFICATION_ONE_OFF_PROOF_PENDING'
+        $result.oneOffAssessment.issue | Should -BeLike '*-Action begin-one-off-proof -VerificationObligationId orders-observed*-Action complete-one-off-proof*'
         $result.handoff.classificationComplete | Should -BeTrue
         $result.handoff.obligations[0].cadence | Should -Be 'handoff'
         $result.handoff.suites[0].purpose | Should -Be 'acceptance'

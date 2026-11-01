@@ -4,7 +4,7 @@ Read this together with `vanessa-tests.md` only while creating, editing, or diag
 
 ## Flow
 
-There is no separate Vanessa authoring gate. Use the pre-registered `itl-vanessa-ui` facade only when it shortens test development or resolves a concrete runtime question. Static code, metadata, local libraries, and existing scenarios come first.
+There is no separate Vanessa authoring gate. Use the pre-registered `itl-vanessa-ui` facade only when it shortens test development or resolves a concrete runtime question; a one-off `runtime-observation` from `verification-change.md` is such a question. Static code, metadata, local libraries, and existing scenarios come first.
 
 Before a runtime MCP call, make the copied branch infobase current when configuration or extension sources changed. `update-dev-branch-base` compares the source fingerprint and skips Designer/Enterprise when the infobase is already current. A `.feature`-only edit does not require an infobase update. On `ITL_INFOBASE_APPLICATION_NOT_READY`, run that helper once and repeat the original MCP call once; do not add a `run_scenario` retry.
 

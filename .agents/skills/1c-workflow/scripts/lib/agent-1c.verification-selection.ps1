@@ -325,7 +325,7 @@ function Get-VerificationOneOffProofAssessment {
         [AllowNull()][object]$Proof = $null
     )
     $path = Get-VerificationOneOffProofPath -ObligationId ([string]$Obligation.id)
-    $issue = "VERIFICATION_ONE_OFF_PROOF_PENDING: obligation '$($Obligation.id)' needs complete observed evidence."
+    $issue = "VERIFICATION_ONE_OFF_PROOF_PENDING: obligation '$($Obligation.id)' needs complete observed evidence. Next step: -Action begin-one-off-proof -VerificationObligationId $($Obligation.id), perform the declared check, then -Action complete-one-off-proof -VerificationEvidencePath <evidence.json>."
     if ($null -eq $Proof -and -not (Test-Path -LiteralPath $path -PathType Leaf)) {
         return [pscustomobject]@{ passed = $false; issue = $issue; path = $path }
     }
@@ -899,6 +899,17 @@ function Get-VerificationSelectionChangedPaths {
     return $changed
 }
 
+function Get-VerificationOwnerPaths {
+    # Workflow-owned verification code: a change selects the complete acceptance set.
+    return @(
+        '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
+        '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1',
+        '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1',
+        '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1',
+        '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1'
+    )
+}
+
 function Get-VerificationAcceptedMasterInput {
     param([string[]]$ChangedPaths, [string]$CurrentTree)
 
@@ -1248,13 +1259,7 @@ function New-VerificationCumulativeSelectionPlan {
             $fullReasons.Add("The pinned verification runtime changed; the complete acceptance set is required.")
             continue
         }
-        if ($changedPath -in @(
-            '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1',
-            '.agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1',
-            '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1',
-            '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-change.ps1',
-            '.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1'
-        )) {
+        if ($changedPath -in @(Get-VerificationOwnerPaths)) {
             $fullReasons.Add("The verification owner changed at '$changedPath'; the complete acceptance set is required.")
             continue
         }

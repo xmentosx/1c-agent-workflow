@@ -217,6 +217,34 @@ Describe 'Change mode recovery and reuse boundaries' {
             (Get-VerificationState -State $script:ChangeTestState).isFreshPassed | Should -BeTrue
         }
     }
+    It 'covers unchanged master imports and verification-owner updates without impact decisions, but not a branch edit of an import' {
+        $root=Join-Path $TestDrive 'Импорт из master с пробелами'; New-ChangeFixture $root
+        $owner='.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1'
+        & git -C $root checkout -q -b itldev/change
+        [IO.File]::WriteAllText((Join-Path $root 'src/cf/current.bsl'),'Branch fix',[Text.UTF8Encoding]::new($false))
+        & git -C $root commit -qam 'branch fix'
+        & git -C $root checkout -q master
+        [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Master change',[Text.UTF8Encoding]::new($false))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $root $owner)) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root $owner),'# updated workflow owner',[Text.UTF8Encoding]::new($false))
+        & git -C $root add -- .; & git -C $root commit -qm 'master change and workflow update'
+        & git -C $root checkout -q itldev/change
+        & git -C $root merge -q --no-edit master
+        $LASTEXITCODE | Should -Be 0
+        Enter-ChangeFixture $root {
+            $script:ChangeTestState.lastConfigDesignerFingerprint=(Get-ConfigSourceFingerprint -ExportPath 'src/cf').fingerprint
+            $preview=Start-VerificationChange
+            @($preview.changedPaths) | Should -Be @('src/cf/current.bsl')
+            @($preview.systemCoveredPaths.importedPaths) | Should -Be @('src/cf/other.bsl')
+            @($preview.systemCoveredPaths.verificationOwnerPaths) | Should -Be @($owner)
+            $file=Write-CurrentPlan
+            $change=Start-VerificationChange -EvidencePath $file
+            @($change.systemInput.importedPaths) | Should -Be @('src/cf/other.bsl')
+            @((Read-VerificationChange).systemInput.verificationOwnerPaths) | Should -Be @($owner)
+            [IO.File]::WriteAllText((Join-Path $root 'src/cf/other.bsl'),'Branch edit of the import',[Text.UTF8Encoding]::new($false))
+            { Start-VerificationChange -EvidencePath $file } | Should -Throw "*VERIFICATION_CHANGE_PATH_PENDING: 'src/cf/other.bsl'*"
+        }
+    }
     It 'keeps task remainder when switching mode and rejects changed observations and target generations' {
         $root=Join-Path $TestDrive 'Режим не скрывает остаток'; New-ChangeFixture $root
         Enter-ChangeFixture $root {

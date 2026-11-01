@@ -45,6 +45,9 @@ source in this same runtime record. Do not invent an OpenSpec change.
 
 Use actual project paths and the helper's exact path list, including deletions
 and uncommitted edits. Each path needs a reason and sufficient current checks.
+Paths the helper reports under `systemCoveredPaths` (unchanged imports from the
+accepted master ancestor and workflow-owned verification code) need no entry: the
+normal check runs the complete existing acceptance set for them.
 Instead of creating a new observation, `checks` may reference an existing
 acceptance `suiteId` or default-fast `groupId`; use its existing obligation id in `checkIds`. A named explicit diagnostic run can supply a current one-off JUnit receipt; diagnostic status alone does not close acceptance.
 
@@ -88,6 +91,11 @@ For a selected one-off observation, use `begin-one-off-proof`, perform the
 authorized check, retain expected/actual evidence, then `complete-one-off-proof`.
 No `.feature` is required for an admissible runtime observation; do not convert
 and rerun a sufficient observation merely to obtain a saved test file.
+Declare a one-off check only with a concrete way to perform it in this session;
+for managed-form UI that is the attached `itl-vanessa-ui` form actions (observe,
+act, verify). Do not offer an unconfigured or unattached client as the route. A
+`partial` result whose pending one-off checks the agent can perform is the next
+step of the same task, not its final answer.
 
 Before expanding a large runtime matrix, use the smallest suitable end-to-end
 case to establish the required path, material preconditions and observability

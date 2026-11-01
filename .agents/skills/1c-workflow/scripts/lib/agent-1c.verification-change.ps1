@@ -43,6 +43,8 @@ function Get-VerificationChangeScopeIdentity {
     $value=[ordered]@{taskId=$Change.taskId;baseTree=$Change.baseTree;tree=$Change.tree;targetIdentity=$Change.targetIdentity;checkerIdentity=$Change.checkerIdentity;checks=@($Change.checks);paths=@($Change.paths);criteria=$criteria;requirements=@($Change.requirements);planArtifact=$Change.planArtifact;retainedDispositions=@($Change.retainedDispositions);inheritedEvidence=@(Get-VerificationCatalogValue -Value $Change -Name inheritedEvidence -Default @());priorAcceptedArtifact=(Get-VerificationCatalogValue -Value $Change -Name priorAcceptedArtifact -Default $null)}
     $unbound=[string](Get-VerificationCatalogValue -Value $Change -Name unboundTargetIdentity -Default '')
     if ($unbound) { $value.unboundTargetIdentity=$unbound }
+    $system=Get-VerificationCatalogValue -Value $Change -Name systemInput -Default $null
+    if ($null -ne $system) { $value.systemInput=[ordered]@{acceptedMasterCommit=[string]$system.acceptedMasterCommit;importedPaths=@($system.importedPaths);verificationOwnerPaths=@($system.verificationOwnerPaths)} }
     return (Get-VerificationSelectionSha256 -Text ($value|ConvertTo-Json -Depth 16 -Compress))
 }
 
@@ -77,7 +79,7 @@ function Assert-VerificationChangeCurrent {
     param([Parameter(Mandatory = $true)][object]$Change)
     if ([string]$Change.tree -cne (Get-VerificationSelectionEffectiveTree) -or
         [string]$Change.checkerIdentity -cne (Get-VerificationChangeCheckerIdentity)) {
-        throw 'VERIFICATION_CHANGE_STALE: source or its assessor changed. Preserve evidence, update the impact plan with begin-verification-change, then repeat the original command; the accepted base is unchanged.'
+        throw "VERIFICATION_CHANGE_STALE: source or its assessor changed. Preserve evidence, update the impact plan '$([string]$Change.planArtifact.path)' with begin-verification-change -VerificationEvidencePath, then repeat the original command; accepted master input and verification-owner paths need no new decision, and the accepted base is unchanged."
     }
     if (@($Change.requirements).Count -gt 0) { Assert-VerificationArtifactReferences -Artifacts @($Change.requirements) }
     Assert-VerificationArtifactReferences -Artifacts @($Change.planArtifact)
@@ -190,6 +192,20 @@ function Get-VerificationChangeChecks {
     return $result
 }
 
+function Get-VerificationChangeSystemInput {
+    # Accepted master imports and workflow-owned verification code are not branch
+    # work: the selector already requires the complete existing acceptance set
+    # for them, so the impact plan needs no per-path decision.
+    param([string[]]$ChangedPaths, [string]$CurrentTree)
+    $master = Get-VerificationAcceptedMasterInput -ChangedPaths $ChangedPaths -CurrentTree $CurrentTree
+    $owners = @($ChangedPaths | Where-Object { $_ -cin @(Get-VerificationOwnerPaths) })
+    $imported = @($master.importedPaths)
+    return [pscustomobject][ordered]@{
+        acceptedMasterCommit = $(if ($imported.Count -gt 0) { [string]$master.acceptedCommit } else { '' })
+        importedPaths = $imported; verificationOwnerPaths = $owners; paths = @($imported + $owners)
+    }
+}
+
 function Start-VerificationChange {
     param([string]$EvidencePath = '')
     if ((Get-VerificationModel) -cne 'change') { throw 'VERIFICATION_CHANGE_MODEL: select ITL_VERIFICATION_MODEL=change before preparing a change plan.' }
@@ -199,9 +215,12 @@ function Start-VerificationChange {
         $previous = Read-VerificationChange
         $base = Get-VerificationChangeBaseTree -State $state -Previous $previous
         $tree = Get-VerificationSelectionEffectiveTree
+        $changed = @(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+        $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
         return [pscustomobject]@{
             model='change';status='planning';baseTree=$base;tree=$tree
-            changedPaths=@(Get-VerificationSelectionChangedPaths -BaseTree $base -CurrentTree $tree)
+            changedPaths=@($changed | Where-Object { $_ -cnotin $system.paths })
+            systemCoveredPaths=[pscustomobject]@{acceptedMasterCommit=$system.acceptedMasterCommit;importedPaths=$system.importedPaths;verificationOwnerPaths=$system.verificationOwnerPaths;reason='No impact decision: the normal check runs the complete existing acceptance set for these paths.'}
             taskId=(Get-VerificationCatalogValue -Value $previous -Name taskId -Default '')
             criteria=@(Get-VerificationCatalogValue -Value $previous -Name criteria -Default @())
             requirementPaths=@(Get-VerificationCatalogValue -Value $previous -Name requirements -Default @() | ForEach-Object path)
@@ -228,8 +247,10 @@ function Start-VerificationChange {
         }
     }
     $coverage = @($plan.paths)
+    $system = Get-VerificationChangeSystemInput -ChangedPaths $changed -CurrentTree $tree
     foreach ($path in $changed) {
         $entry = @($coverage | Where-Object { [string]$_.path -ceq $path })
+        if ($entry.Count -eq 0 -and $path -cin $system.paths) { continue }
         if ($entry.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$entry[0].reason)) {
             throw "VERIFICATION_CHANGE_PATH_PENDING: '$path' needs one impact decision, reason and sufficient checkIds; update the plan and repeat begin-verification-change."
         }
@@ -329,6 +350,9 @@ function Start-VerificationChange {
         throw 'VERIFICATION_CHANGE_CHECK_PENDING: preserve pending checks and failures when updating the impact plan.'
     }
     if (-not $target.identity) { $value | Add-Member -NotePropertyName unboundTargetIdentity -NotePropertyValue $target.unbound }
+    if (@($system.paths).Count -gt 0) {
+        $value | Add-Member -NotePropertyName systemInput -NotePropertyValue ([pscustomobject][ordered]@{acceptedMasterCommit=$system.acceptedMasterCommit;importedPaths=@($system.importedPaths);verificationOwnerPaths=@($system.verificationOwnerPaths)})
+    }
     $value | Add-Member -NotePropertyName scopeIdentity -NotePropertyValue (Get-VerificationChangeScopeIdentity -Change $value)
     Write-Utf8TextAtomic -Path (Get-VerificationChangePath) -Value (($value | ConvertTo-Json -Depth 16) + "`n")
     return $value

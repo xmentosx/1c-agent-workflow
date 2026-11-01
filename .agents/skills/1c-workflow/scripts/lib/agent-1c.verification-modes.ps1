@@ -664,7 +664,7 @@ function Invoke-ItlVerificationCycle {
             }
             $oneOffIssues = @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
             if ($oneOffIssues.Count -gt 0) {
-                Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial."
+                Write-Host "[WARN] Retained verification completed, but one-off proof is still pending: $($oneOffIssues -join '; '). Result readiness remains partial until the agent performs each named one-off check on this loaded infobase; it is the next step, not a final result."
             }
         }
     }
