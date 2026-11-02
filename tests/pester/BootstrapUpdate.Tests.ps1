@@ -2130,6 +2130,86 @@ exit 0
         }
     }
 
+    # 2026-11-02: the entrypoint's startup catalog apply rewrote .kilo/kilo.json
+    # before the pre-copy snapshot. Unit tests called Update-WorkflowPackage
+    # directly, so only the stand Capture chain proof (the previous receipt's
+    # after-state against this before-state) saw the unrecorded write.
+    It "changes no managed path from the update entrypoint startup to its recorded before-state" -Tag G3UpdateTransactionClosure {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl закрытие транзакции " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.kilo') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $tempRoot '.kilo/kilo.json'), '{"mcp":{}}', [Text.UTF8Encoding]::new($false))
+            $tokens = $null; $errors = $null
+            $entrypoint = [Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$errors)
+            $startup = $entrypoint.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if(-not $InternalOnDemandOperation -and -not $CatalogAction') }, $true)
+            $startup | Should -Not -BeNullOrEmpty
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $savedGetConfig = ${function:Get-ConfigValue}
+                function Get-ConfigValue {
+                    param([string]$Path,$Default)
+                    if ($Path -eq 'productProject') { return @{projectId='fixture';productId='corp'} }
+                    & $savedGetConfig @PSBoundParameters
+                }
+                # The real startup disposition; its catalog writers are replaced below.
+                . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.product-project-context.ps1')
+                function Import-ItlProductProject {}
+                function Assert-ItlProductProjectPackageCompatibility { param([string]$SourceRoot) }
+                function Get-ItlProductProjectBinding { Get-ConfigValue -Path productProject -Default $null }
+                # Any catalog/client writer in this window is outside the transaction.
+                function Initialize-ItlProductProjectContext {
+                    param($Decision,[switch]$AllowPrompt,[switch]$IncludeClientSurfaces)
+                    Write-Utf8TextAtomic (Join-Path $script:ProjectRoot '.kilo/kilo.json') '{"mcp":{"catalog-code":{"url":"https://fixture.invalid/mcp"}}}'
+                }
+                function Assert-WorkflowPackageUpdateContext {}
+                function Assert-WorkflowTrackedGitClean {}
+                function Assert-WorkflowUpdateCommitIdentity {}
+                function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
+                function Assert-WorkflowSourceOutsideProject {}
+                function Assert-WorkflowSourceAiRulesInstallable {}
+                function Get-WorkflowDependencyPlan {
+                    param([string]$SourceRoot)
+                    $plan = New-WorkflowDependencyPlan -Template (New-DefaultDependencyLockManifest) -Manifest (Read-DependencyLockManifest)
+                    $plan | Add-Member workflowTransition $true
+                    $plan | Add-Member inputLockExists $false
+                    $plan | Add-Member inputLockSha256 ''
+                    return $plan
+                }
+                function Get-AgentTargets { @('kilocode') }
+                function Get-AiRulesBaselineTarget { param([string]$TemplateRoot); [pscustomobject]@{isConfigured=$true;repo='repo';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
+                function Sync-AiRules1cCheckout { [pscustomobject]@{root='C:\fork';ref='itl-test';commit='1111111111111111111111111111111111111111'} }
+                function Get-AiRulesCandidateInstallInventory { param([object]$Checkout,[string[]]$Tools); @() }
+                function Get-WorkflowUpdateSnapshotRelativePaths { param([string]$SourceRoot,[string[]]$AiRulesPathsAfter); @(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) + @('.agent-1c/dependency-lock.json','.kilo/kilo.json','.dev.env') }
+                function Copy-WorkflowManagedDirectory { param($SourceRoot, $RelativePath) }
+                function Copy-WorkflowManagedFile { param($SourceRoot, $RelativePath) }
+                function Update-WorkflowPackageLockEntry {}
+                function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); throw "reexec-stop" }
+
+                $entry = [ordered]@{}
+                foreach ($path in @(Get-WorkflowUpdateSnapshotRelativePaths -SourceRoot 'C:\source')) {
+                    $relative = ConvertTo-WorkflowUpdateRepoPath -Path $path
+                    $entry[$relative] = Get-WorkflowUpdatePathState -RelativePath $relative
+                }
+                # The real entrypoint startup block, then the real pre-copy, in one process.
+                $Action = 'update-workflow'; $LifecyclePhase = 'pre-copy'
+                $InternalOnDemandOperation = ''; $CatalogAction = ''; $WorkflowUpdateRecovery = ''; $CatalogDecision = ''
+                & ([scriptblock]::Create($startup.Extent.Text))
+                $preError = ''
+                try { Update-WorkflowPackage *> $null } catch { $preError = $_.Exception.Message }
+                $pending = Get-WorkflowUpdatePendingSnapshot
+                [pscustomobject]@{ preError = $preError; entry = $entry; before = $(if ($pending) { ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState }) }
+            }
+            $result.preError | Should -Match 'reexec-stop'
+            $result.before | Should -Not -BeNullOrEmpty
+            foreach ($path in @($result.entry.Keys)) {
+                $result.before.Contains($path) | Should -BeTrue -Because "'$path' belongs to the update write set"
+                [string]$result.before[$path] | Should -BeExactly ([string]$result.entry[$path]) -Because "'$path' must be unchanged between update entry and its snapshot"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keeps source planning outside the installed update allowlist while retaining fork ownership" {
         $projectRoot = Join-Path $TestDrive 'planning inventory путь'
         New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null

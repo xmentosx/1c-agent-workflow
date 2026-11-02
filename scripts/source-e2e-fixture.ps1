@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('','Capture','Prepare','DisposeCopy')][string]$Action='',
+    [ValidateSet('','Capture','Verify','Prepare','DisposeCopy')][string]$Action='',
     [string]$ProjectRoot='',
     [ValidateSet('Develop','Release')][string]$Phase='Develop',
     [string]$CandidateRoot='',
@@ -381,6 +381,40 @@ function Get-SourceFixtureWorkflowUpdateProof {
     }
 }
 
+function Get-SourceFixtureSeedWorkflowProof {
+    param([string]$ProjectRoot,[object]$Descriptor,[object]$Manifest)
+    $capsule=Split-Path -Parent ([string]$Descriptor.path)
+    if((Get-RepositoryCommonGitDirectory -RepositoryRoot $ProjectRoot) -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot ([string]$Manifest.sourceBranchRoot))){throw 'FIXTURE_SEED_NOT_REGISTERED'}
+    $workflowRepository=Split-Path -Parent $PSScriptRoot
+    if((Invoke-RepositoryGit -RepositoryRoot $workflowRepository -Arguments @('merge-base','--is-ancestor',[string]$Manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED'}
+    return [ordered]@{capsuleSha256=[string]$Descriptor.sha256;master=(Get-SourceFixtureWorkflowUpdateProof -Root $ProjectRoot -OriginalCommit ([string]$Manifest.masterCommit) -OriginalEnvPath (Join-Path $capsule 'master.env') -ExpectedBranchRef 'refs/heads/master');branch=(Get-SourceFixtureWorkflowUpdateProof -Root ([string]$Manifest.sourceBranchRoot) -OriginalCommit ([string]$Manifest.branchCommit) -OriginalEnvPath (Join-Path $capsule 'branch.env') -ExpectedBranchRef ('refs/heads/itldev/'+[string]$Manifest.branchName))}
+}
+
+function Test-SourceE2EFixtureWorkflowChain {
+    # Read-only Capture chain proof before a stand update. A write to a managed
+    # path outside an update transaction can still be returned exactly here;
+    # once the next update completes over it, its receipt records the written
+    # bytes as before-state and the gap stays in the seed history.
+    param([string]$ProjectRoot,[ValidateSet('Develop','Release')][string]$Phase)
+    $ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
+    $config=ConvertFrom-DeliveryProofJson -Json (Read-Utf8Text -Path (Join-Path $ProjectRoot '.agent-1c/release-e2e.json'))
+    $property=$config.PSObject.Properties['qualificationFixtures']
+    if(-not $property -or -not $property.Value.PSObject.Properties[$Phase]){throw 'FIXTURE_EXISTING_CAPSULE_REQUIRED: capture a published baseline first'}
+    $descriptor=$property.Value.$Phase
+    $manifest=Read-QualificationFixtureCapsule -ManifestPath ([string]$descriptor.path) -Sha256 ([string]$descriptor.sha256)
+    $standLease=Enter-SourceFixtureStandLease -Roots @($ProjectRoot,[string]$manifest.sourceBranchRoot)
+    try {
+        try {$proof=Get-SourceFixtureSeedWorkflowProof -ProjectRoot $ProjectRoot -Descriptor $descriptor -Manifest $manifest}
+        catch {
+            if($_.Exception.Message -clike 'FIXTURE_WORKFLOW_UPDATE_PATH_CHANGED:*'){
+                throw "$($_.Exception.Message). No stand update ran: return that path to the state its last completed update recorded and repeat the same PublishDevelop; a write that cannot be returned exactly needs a reviewed Capture -Recapture."
+            }
+            throw
+        }
+        return [ordered]@{phase=$Phase;capsuleSha256=[string]$descriptor.sha256;proof=$proof}
+    } finally {foreach($handle in @($standLease.handles)){$handle.stream.Dispose()}}
+}
+
 function Get-SourceE2EFixtureCapsule {
     param([string]$ProjectRoot, [ValidateSet('Develop','Release')][string]$Phase, [string]$AgentTarget='', [switch]$Recapture,[switch]$AcknowledgeWorkflowUpdate)
     $ProjectRoot=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\','/')
@@ -399,10 +433,7 @@ function Get-SourceE2EFixtureCapsule {
         $workflowContinued=$AcknowledgeWorkflowUpdate -or $null -ne $admission
         $proof=$null
         if($workflowContinued){
-            if((Get-RepositoryCommonGitDirectory -RepositoryRoot $ProjectRoot) -ine (Get-RepositoryCommonGitDirectory -RepositoryRoot ([string]$manifest.sourceBranchRoot))){throw 'FIXTURE_SEED_NOT_REGISTERED'}
-            $workflowRepository=Split-Path -Parent $PSScriptRoot
-            if((Invoke-RepositoryGit -RepositoryRoot $workflowRepository -Arguments @('merge-base','--is-ancestor',[string]$manifest.workflowCommit,'refs/remotes/origin/develop') -AllowFailure).exitCode -ne 0){throw 'FIXTURE_BASELINE_NOT_PUBLISHED'}
-            $proof=[ordered]@{capsuleSha256=[string]$descriptor.sha256;master=(Get-SourceFixtureWorkflowUpdateProof -Root $ProjectRoot -OriginalCommit ([string]$manifest.masterCommit) -OriginalEnvPath (Join-Path $capsule 'master.env') -ExpectedBranchRef 'refs/heads/master');branch=(Get-SourceFixtureWorkflowUpdateProof -Root ([string]$manifest.sourceBranchRoot) -OriginalCommit ([string]$manifest.branchCommit) -OriginalEnvPath (Join-Path $capsule 'branch.env') -ExpectedBranchRef ('refs/heads/itldev/'+[string]$manifest.branchName))}
+            $proof=Get-SourceFixtureSeedWorkflowProof -ProjectRoot $ProjectRoot -Descriptor $descriptor -Manifest $manifest
             if(-not $AcknowledgeWorkflowUpdate -and (ConvertTo-DeliveryProofJson -InputObject $proof -Depth 32 -Compress) -cne (ConvertTo-DeliveryProofJson -InputObject $admission.Value -Depth 32 -Compress)){throw 'FIXTURE_SEED_CHANGED: a new workflow transition needs explicit Capture -AcknowledgeWorkflowUpdate'}
         }
         $seedState=Read-QualificationFixtureJson -Path (Join-Path ([string]$manifest.sourceBranchRoot) ('.agent-1c/dev-branches/'+[string]$manifest.branchName+'.json'))
@@ -631,6 +662,7 @@ if($Action){
         $result=Remove-SourceE2EFixtureCopy -Fixture $fixture -CandidateRoot $CandidateRoot -ReportPath $TerminalReportPath -DiagnosticRoot $DiagnosticRoot
     }
     elseif($Action -eq 'Capture'){$result=Get-SourceE2EFixtureCapsule -ProjectRoot $ProjectRoot -Phase $Phase -AgentTarget $AgentTarget -Recapture:$Recapture -AcknowledgeWorkflowUpdate:$AcknowledgeWorkflowUpdate}
+    elseif($Action -eq 'Verify'){$result=Test-SourceE2EFixtureWorkflowChain -ProjectRoot $ProjectRoot -Phase $Phase}
     else{$result=New-SourceE2EFixtureProject -ProjectRoot $ProjectRoot -Phase $Phase -CandidateRoot $CandidateRoot -ProjectsRoot $FreshProjectsRoot -AgentTarget $AgentTarget -AiRulesSource $AiRulesSource -ReceiptPath $OutputPath -CapsulePath $CapsulePath -CapsuleSha256 $CapsuleSha256 -DatabaseBudgetBytes $DatabaseBudgetBytes}
     Write-QualificationFixtureJson -Path $OutputPath -Value $result
 }

@@ -226,6 +226,8 @@ param($Action,$ProjectRoot,$Phase,$AgentTarget,[switch]$AcknowledgeWorkflowUpdat
 $ErrorActionPreference='Stop'
 # Mirrors the real fixture owner's operation contract.
 if(-not $ProjectRoot -or -not $OutputPath){throw 'Fixture operation requires -ProjectRoot and -OutputPath'}
+# The read-only chain preflight precedes the update; Capture admits it after.
+if($Action -ceq 'Verify'){Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'verify' -Encoding UTF8;return}
 if($Action -cne 'Capture' -or -not $AcknowledgeWorkflowUpdate){throw 'wrong owner invocation'}
 Add-Content -LiteralPath (Join-Path $ProjectRoot 'order.txt') -Value 'capture' -Encoding UTF8
 if(Test-Path -LiteralPath (Join-Path $ProjectRoot 'business-drift.txt')){throw 'FIXTURE_SEED_CHANGED'}
@@ -259,7 +261,7 @@ Start-Sleep -Seconds 300
             [IO.File]::WriteAllText((Join-Path $script:standCandidate 'scripts/update-installed-workflow.ps1'),$updater,[Text.UTF8Encoding]::new($true))
             $attempt=[pscustomobject]@{phase='candidate-built'}
             Invoke-DeliveryStandPreparation $script:standCandidate $script:standPreparation $attempt
-            @(Get-Content $script:order) | Should -Be @('update','capture')
+            @(Get-Content $script:order) | Should -Be @('verify','update','capture')
             $started=Get-Content -LiteralPath (Join-Path $script:standCandidate 'prewarm.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $started.repositoryRoot | Should -Be $script:standCandidate
             $started.aiRulesSource | Should -Be $rules
@@ -286,7 +288,7 @@ Start-Sleep -Seconds 300
         $standReadyBeforePlan=$false
         Mock Invoke-DeliveryReleaseStandRecovery { Add-Content -LiteralPath $script:order -Value 'recovery' -Encoding UTF8 }
         & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
-        @(Get-Content $script:order) | Should -Be @('recovery','update','capture','readiness')
+        @(Get-Content $script:order) | Should -Be @('recovery','verify','update','capture','readiness')
         $script:savedAttempt.standPreparation.status | Should -Be 'passed'
         # The fixture double above is only as strict as the real owner it mirrors.
         [IO.File]::ReadAllText((Join-Path $RepoRoot 'scripts/source-e2e-fixture.ps1')) | Should -Match ([regex]::Escape('Fixture operation requires -ProjectRoot and -OutputPath'))
@@ -299,11 +301,11 @@ Start-Sleep -Seconds 300
         { Assert-DeliveryQualityPlanMayRun $plan } | Should -Not -Throw
         $priorAttempt=[pscustomobject]@{planId=$plan.planId};$frozenPlan=$plan
         & ([scriptblock]::Create($script:prepareDecision.Extent.Text))
-        @(Get-Content $script:order) | Should -HaveCount 4
+        @(Get-Content $script:order) | Should -HaveCount 5
         $plan.planId='unexpected-stand-change'
         Mock Get-DeliveryPlanRoot { $TestDrive }
         { Assert-DeliveryQualityPlanMayRun $plan } | Should -Throw '*DELIVERY_RESUME_PLAN_MISMATCH*'
-        @(Get-Content $script:order) | Should -HaveCount 4
+        @(Get-Content $script:order) | Should -HaveCount 5
     }
     It 'preserves the unplanned checkpoint and immutable capsule on owner rejection; the same scope can continue' {
         [IO.File]::WriteAllText((Join-Path $script:standRoot 'business-drift.txt'),'unexpected')
