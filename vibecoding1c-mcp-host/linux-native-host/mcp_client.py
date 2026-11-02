@@ -28,9 +28,25 @@ class Client:
             text = response.read().decode('utf-8')
         if not text:
             return {}
-        if text.startswith(('event:', 'data:')):
-            text = next(line[5:].strip() for line in text.splitlines() if line.startswith('data:'))
-        result = json.loads(text)
+        if text.lstrip().startswith('{'):
+            result = json.loads(text)
+        else:
+            # SSE may start with heartbeat comments, empty ping events or
+            # notifications. Only the response for this request completes it.
+            result = None
+            for block in text.replace('\r\n', '\n').split('\n\n'):
+                data = '\n'.join(line[5:].lstrip(' ') for line in block.splitlines()
+                                 if line.startswith('data:'))
+                if not data:
+                    continue
+                value = json.loads(data)
+                if value.get('id') == self.sequence:
+                    result = value
+                    break
+            if result is None:
+                raise RuntimeError('MCP stream has no matching response')
+        if result.get('id') != self.sequence:
+            raise RuntimeError('MCP response id does not match the request')
         if 'error' in result:
             raise RuntimeError('MCP protocol error: ' + json.dumps(result['error'], ensure_ascii=False))
         return result.get('result', {})

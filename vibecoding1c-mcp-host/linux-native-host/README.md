@@ -101,6 +101,26 @@ skipped. Disabled optional
 Graph lanes are allowed; failed required lanes, empty Code indexes, local
 embedding fallback and an unhealthy remote provider fail acceptance.
 
+For an effective Code `GENERATION_RETENTION_COUNT=1`, the same refresh owner
+waits for former reader pins to release, then requests one native
+`reindex(force=false)` pass against the unchanged deployed input. This lets
+native GC collect the predecessor after the reader switched to the published
+generation. The host deletes no generation itself and performs no extra restart.
+The measured ERP unchanged pass on dev-karimov-new took 84 seconds, preserved
+the published generation and released its 22 GiB predecessor. Other retention
+settings keep the existing single pass. SSE heartbeat comments, empty ping
+events and unrelated notifications do not complete a native status request;
+the client requires the matching JSON-RPC response and never replays a tool call.
+
+`codeRetention` in the existing refresh state records the source/publication
+binding and request intent before dispatch. `--wait-existing` observes that
+same pass, including after a lost reply; it does not send the request again.
+Completion requires a newly observed native run and unchanged publication/input.
+If the pass cannot be proved, preserve the original state and inspect/resume
+it, or explicitly rerun the normal guarded task. Unexpected publication/input
+changes and native/Graph errors remain failures. Native pins and unfinished work
+remain protected.
+
 The metadata generator's documented exit code 1 means completed with warnings;
 other nonzero codes fail refresh, matching the Windows host owner. The report
 and its diagnostics are retained, and missing or empty reports fail acceptance.
