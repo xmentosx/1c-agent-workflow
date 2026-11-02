@@ -245,7 +245,7 @@
         $brokers|Should -Contain 'repair-connections'
         foreach($action in $actions){
             $actual=Get-ItlProductProjectStartupDisposition $action
-            $actual|Should -BeIn @('diagnostic','bootstrap','inherited-runtime','project-operation')
+            $actual|Should -BeIn @('diagnostic','bootstrap','inherited-runtime','inherited-update','project-operation')
             if($actual -eq 'project-operation'){(Test-Agent1cActionRequiresLifecycleLock $action)|Should -BeTrue}
         }
         foreach($broker in $brokers){(Get-ItlProductProjectStartupDisposition 'status' '' $broker)|Should -Be inherited-broker}
@@ -253,9 +253,13 @@
         (Get-ItlProductProjectStartupDisposition 'vibecoding1c-mcp-select' 'restore')|Should -Be explicit-recovery
         (Get-ItlProductProjectStartupDisposition 'update-workflow' '' '' 'restore')|Should -Be explicit-recovery
     }
-    It 'keeps catalog startup under the update owner in the fresh post-copy dispatcher' -Tag G3PostCopyStartup -ForEach @(
-        @{Case='normal update';Requested='update-workflow';Phase='';Expected=1},
-        @{Case='pre-copy update';Requested='update-workflow';Phase='pre-copy';Expected=1},
+    # A pre-copy startup apply rewrote .kilo/kilo.json before the update
+    # snapshot; the qualification seed chain then rejected the unrecorded write
+    # (FIXTURE_WORKFLOW_UPDATE_PATH_CHANGED). Every update phase defers to
+    # the post-copy owner, whose reconciliation is covered by G3PostCopyCatalog.
+    It 'keeps catalog startup under the update owner in every update phase' -Tag G3PostCopyStartup -ForEach @(
+        @{Case='normal update';Requested='update-workflow';Phase='';Expected=0},
+        @{Case='pre-copy update';Requested='update-workflow';Phase='pre-copy';Expected=0},
         @{Case='fresh post-copy';Requested='update-workflow';Phase='post-copy';Expected=0},
         @{Case='ordinary action';Requested='sync-client-mcp';Phase='';Expected=1}
     ) {
