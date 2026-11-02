@@ -8,6 +8,22 @@
 }
 
 Describe 'HostNativeTransport component regressions' {
+    It 'round trips explicit UTF-16 child output with a whitespace and Cyrillic path' {
+        $root=Join-Path $TestDrive 'WSL путь с пробелом'
+        New-Item -ItemType Directory -Path $root -Force|Out-Null
+        $configPath=Join-Path $root 'host.json'
+        @{schemaVersion=1;stateRoot=$root}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        $child=Join-Path $root 'вывод.ps1'
+        [IO.File]::WriteAllText($child,'param([string]$Value); [Console]::OutputEncoding=[Text.Encoding]::Unicode; [Console]::WriteLine($Value)',[Text.UTF8Encoding]::new($false))
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $engine=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            $result=Invoke-ProcessWithTimeout -FilePath $engine -Arguments @('-NoProfile','-File',$child,$root) -NativeOutputEncoding ([Text.Encoding]::Unicode) -TimeoutSec 15 -Description 'WSL UTF-16 transport'
+            $result.exitCode|Should -Be 0
+            $result.lines[0]|Should -BeExactly $root
+        }
+    }
+
     It "round trips Python Unicode evidence through the host child-process helper" -Tag BookStackQwen {
         $root = Join-Path $TestDrive "документы с пробелом"
         New-Item -ItemType Directory -Path $root -Force | Out-Null

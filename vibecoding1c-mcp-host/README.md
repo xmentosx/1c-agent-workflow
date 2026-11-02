@@ -176,7 +176,18 @@ The watchdog probes the Windows Docker Engine directly through its named-pipe `/
 without loading Docker CLI plugins. A timed-out native command terminates its complete child
 process tree. If the engine is unavailable, the watchdog uses the bounded Docker Desktop CLI
 `status` plus `start` or `restart`, then waits for the engine before reconciling containers. A probe
-timeout while Docker Desktop reports `running` is retried but does not trigger a destructive restart.
+timeout while Docker Desktop reports `running` allows a 30-second Engine recovery grace period.
+If Engine remains unavailable, the same owner performs a bounded Desktop restart: `running`
+does not prove Engine health. Recovery attempts are recorded before invoking Desktop in the
+existing `watchdog-state.json` and are spaced at least five minutes apart, including failed or
+interrupted attempts. Cooldown does not block reconciliation when Engine is already healthy.
+If bounded Desktop recovery still leaves Engine unavailable, the same owner may force-stop Desktop,
+reset the WSL VM and start Desktop only when `docker-desktop` is its sole running distribution.
+It checks the UTF-16 WSL inventory again immediately before shutdown; another running distribution
+or an unreadable inventory forbids VM reset. Finish that independent WSL work before repeating
+`watchdog-run`. Engine readiness and normal MCP reconciliation remain required afterward.
+This failure-only fallback adds bounded stop/start, a 45-second WSL command and one configured
+Engine readiness wait; the healthy path does not run WSL commands or add client context.
 If the daemon disappears after that initial probe during any tracked Docker operation, the
 watchdog performs one bounded Docker Desktop recovery and retries the complete tracked
 reconciliation. A failed retry remains bounded; the next scheduled watchdog interval tries again.

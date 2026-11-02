@@ -1682,7 +1682,7 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "does not restart a reported-running Docker Desktop after a probe timeout" {
+    It "keeps Docker Desktop running when Engine recovers during the timeout grace period" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-probe-timeout-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         try {
@@ -1698,6 +1698,11 @@ services:
                     return [pscustomobject]@{ available = $false; failureKind = "probe-timeout"; message = "fixture plugin timeout" }
                 }
                 function Get-DockerDesktopRuntimeStatus { return "running" }
+                function Wait-DockerDaemonAvailable {
+                    param([int]$TimeoutSec, [int]$PollSeconds)
+                    $TimeoutSec | Should -Be 30
+                    return $true
+                }
                 function Invoke-DockerCommandChecked {
                     param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
                     $script:ProbeTimeoutDockerCalls++
@@ -1709,12 +1714,150 @@ services:
                     dockerDesktopPollSeconds = 3
                 }
 
-                { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw "*refusing to restart*"
-                $script:ProbeTimeoutCalls | Should -Be 2
+                (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'probe-recovered'
+                $script:ProbeTimeoutCalls | Should -Be 1
                 $script:ProbeTimeoutDockerCalls | Should -Be 0
                 Remove-Variable -Scope Script -Name ProbeTimeoutCalls,ProbeTimeoutDockerCalls -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "restarts a reported-running Desktop after sustained Engine timeout and verifies recovery" {
+        $root = Join-Path $TestDrive 'watchdog устойчивый отказ'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $configPath = Join-Path $root 'host.json'
+        @{ schemaVersion=1; stateRoot=$root; watchdog=@{ enabled=$true } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $settings = Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath)
+            $script:RecoveryWaits = 0
+            $script:RecoveryCommands = 0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine does not answer /_ping' } }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable {
+                param([int]$TimeoutSec, [int]$PollSeconds)
+                $script:RecoveryWaits++
+                if ($script:RecoveryWaits -eq 1) { $TimeoutSec | Should -Be 30; return $false }
+                $TimeoutSec | Should -Be $settings.dockerDesktopRecoveryTimeoutSeconds
+                return $true
+            }
+            function Invoke-DockerCommandChecked {
+                param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                ($Arguments -join ' ') | Should -Be 'desktop restart --timeout 90'
+                # The receipt must exist before Docker is touched.
+                (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).action | Should -Be 'restart'
+                $script:RecoveryCommands++
+            }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart'
+            $script:RecoveryWaits | Should -Be 2
+            $script:RecoveryCommands | Should -Be 1
+            Remove-Variable -Scope Script -Name RecoveryWaits,RecoveryCommands
+        }
+    }
+
+    It "retains recovery cooldown across watchdog results and permits the next bounded attempt after expiry" {
+        $root = Join-Path $TestDrive 'watchdog пауза восстановления'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $configPath = Join-Path $root 'host.json'
+        @{ schemaVersion=1; stateRoot=$root; watchdog=@{ enabled=$true } } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = Read-JsonFile $configPath
+            $settings = Get-McpHostWatchdogSettings -Config $config
+            $script:CooldownCommands = 0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine remains unreachable' } }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable { return $false }
+            function Invoke-DockerCommandChecked { $script:CooldownCommands++; throw 'fixture restart failed' }
+            function Invoke-DockerCommandCapture { return 'fixture Desktop log' }
+            function Repair-DockerDesktopWslBackend { return $false }
+            { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw '*did not restore Docker Engine availability*'
+            $script:CooldownCommands | Should -Be 1
+            $receipt = Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath
+            foreach ($status in @('failed','skipped','disabled','succeeded')) {
+                Write-McpHostWatchdogRunState -Config $config -StartedAt (Get-Date).ToString('o') -Status $status
+                (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).lastAttemptAt | Should -Be $receipt.lastAttemptAt
+            }
+            # A new scheduled run observes the persisted receipt, even after failure.
+            $settings = Get-McpHostWatchdogSettings -Config $config
+            { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw '*cooldown*next scheduled watchdog run*'
+            $script:CooldownCommands | Should -Be 1
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$true; failureKind='none'; message='Engine answered' } }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'already-available'
+            $state = Read-JsonFile $settings.dockerDesktopRecoveryStatePath
+            $state.dockerDesktopRecovery.lastAttemptAt = [DateTimeOffset]::UtcNow.AddSeconds(-301).ToString('o')
+            Write-JsonFile -Path $settings.dockerDesktopRecoveryStatePath -Value $state
+            function Get-DockerDaemonProbe { return [pscustomobject]@{ available=$false; failureKind='probe-timeout'; message='Engine still unreachable' } }
+            $script:CooldownWaits = 0
+            function Wait-DockerDaemonAvailable { $script:CooldownWaits++; return ($script:CooldownWaits -eq 2) }
+            function Invoke-DockerCommandChecked { $script:CooldownCommands++ }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart'
+            $script:CooldownCommands | Should -Be 2
+            (Read-McpHostDockerRecoveryState $settings.dockerDesktopRecoveryStatePath).lastAttemptAt | Should -Not -Be $receipt.lastAttemptAt
+            Remove-Variable -Scope Script -Name CooldownCommands,CooldownWaits
+        }
+    }
+
+    It "recovers the original Engine timeout when Desktop restart also leaves its WSL backend unavailable" {
+        $configPath = Join-Path $TestDrive 'wsl-recovery.json'
+        @{ schemaVersion=1; stateRoot=(Join-Path $TestDrive 'WSL восстановление') } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $settings=Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath)
+            $script:WslRecoveryCalls=New-Object 'Collections.Generic.List[string]'
+            $script:WslRecoveryWaits=0
+            function Get-DockerDaemonProbe { return [pscustomobject]@{available=$false;failureKind='probe-timeout';message='no route to Engine'} }
+            function Get-DockerDesktopRuntimeStatus { return 'running' }
+            function Wait-DockerDaemonAvailable { $script:WslRecoveryWaits++; return ($script:WslRecoveryWaits -eq 3) }
+            function Invoke-DockerCommandChecked { param([string[]]$Arguments); $script:WslRecoveryCalls.Add(($Arguments -join ' ')) }
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                $FilePath | Should -Be 'wsl.exe'
+                $NativeOutputEncoding.WebName | Should -Be 'utf-16'
+                $script:WslRecoveryCalls.Add(($Arguments -join ' '))
+                if($Arguments[0] -eq '--list'){return [pscustomobject]@{exitCode=0;lines=@('docker-desktop')}}
+                ($Arguments -join ' ') | Should -Be '--shutdown'
+                return [pscustomobject]@{exitCode=0;lines=@('Операция успешно завершена.')}
+            }
+            (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be 'restart-wsl'
+            @($script:WslRecoveryCalls) | Should -Be @('desktop restart --timeout 90','--list --running --quiet','desktop stop --force --timeout 90','--list --running --quiet','--shutdown','desktop start --timeout 90')
+            $script:WslRecoveryWaits | Should -Be 3
+            Remove-Variable -Scope Script -Name WslRecoveryCalls,WslRecoveryWaits
+        }
+    }
+
+    It "does not reset other WSL distributions when Docker has no running WSL backend" {
+        $configPath=Join-Path $TestDrive 'other-wsl.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                ($Arguments -join ' ') | Should -Be '--list --running --quiet'
+                return [pscustomobject]@{exitCode=0;lines=@('Ubuntu','docker-desktop')}
+            }
+            function Invoke-DockerCommandChecked { throw 'Desktop must not be touched' }
+            (Repair-DockerDesktopWslBackend -Settings (Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath))) | Should -BeFalse
+        }
+    }
+
+    It "vetoes WSL VM shutdown when an independent distribution appears during Desktop stop" {
+        $configPath=Join-Path $TestDrive 'wsl-race.json'
+        @{schemaVersion=1;stateRoot=$TestDrive}|ConvertTo-Json|Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:WslInventoryCalls=0
+            function Invoke-ProcessWithTimeout {
+                param($FilePath,$Arguments,$NativeOutputEncoding,$TimeoutSec,$Description)
+                ($Arguments -join ' ')|Should -Be '--list --running --quiet'
+                $script:WslInventoryCalls++
+                return [pscustomobject]@{exitCode=0;lines=$(if($script:WslInventoryCalls -eq 1){@('docker-desktop')}else{@('Ubuntu')})}
+            }
+            function Invoke-DockerCommandChecked {param($Arguments); ($Arguments -join ' ')|Should -Be 'desktop stop --force --timeout 90'}
+            {Repair-DockerDesktopWslBackend -Settings (Get-McpHostWatchdogSettings -Config (Read-JsonFile $configPath))}|Should -Throw '*Another WSL distribution*shutdown was cancelled*'
+            $script:WslInventoryCalls|Should -Be 2
+            Remove-Variable -Scope Script -Name WslInventoryCalls
+        }
     }
 
     It "terminates the complete child process tree after a native command timeout" {
