@@ -1,5 +1,6 @@
 """Refresh native Code and Graph from a read-only Windows export share."""
 import argparse
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -92,7 +93,7 @@ def wait_ready(url, deadline):
     raise RuntimeError('MCP did not become ready before the deadline')
 
 
-def container_identity(host, name, config_id):
+def container_identity(host, name, config_id, *, include_definition=False):
     if name not in host['containers']:
         raise ValueError('Indexing container is not allowlisted')
     item = json.loads(command(['docker', 'inspect', name]))[0]
@@ -101,10 +102,66 @@ def container_identity(host, name, config_id):
             or labels.get('itland.mcp.config') != config_id
             or not re.fullmatch('[0-9a-f]{64}', item.get('Id', ''))):
         raise ValueError('Indexing container ownership mismatch')
-    return item['Id']
+    return item if include_definition else item['Id']
 
 
-def wait_indexes(item, job, status, status_path, data_root):
+def retention_one(container):
+    return 'GENERATION_RETENTION_COUNT=1' in (container.get('Config', {}).get('Env') or [])
+
+
+def finish_code_retention(client, code, item, status, status_path, phase):
+    """Delegate one unchanged pass to native GC after the former reader releases."""
+    marker = status.get('codeRetention')
+    if not marker and phase != 'completed':
+        return False
+    generation = code['data']['generation']
+    published = generation['published']['generation_id']
+    fingerprint = input_fingerprint(Path(item['sourcePath']), Path(item['metadataPath']) / 'Report.txt')
+    if fingerprint != status['inputFingerprint']:
+        raise RuntimeError('Deployed input changed before native retention; rerun normal refresh')
+    if marker:
+        if marker['phase'] not in ('requesting', 'waiting', 'completed'):
+            raise RuntimeError('Unknown native retention phase; preserve and inspect the original state')
+        if marker['generation'] != published or marker['inputFingerprint'] != fingerprint:
+            raise RuntimeError('Native retention publication/input changed; preserve the original request')
+        if marker['phase'] == 'completed':
+            return True
+        activity = code['data']['indexing']
+        try:
+            fresh_run = (datetime.fromisoformat(activity['started_at'].replace('Z', '+00:00'))
+                         > datetime.fromisoformat(marker['beforeStartedAt'].replace('Z', '+00:00')))
+        except (KeyError, AttributeError, ValueError, TypeError):
+            fresh_run = False
+        if phase == 'completed' and fresh_run:
+            marker.update(phase='completed', completedAt=time.time(), observedStartedAt=activity['started_at'])
+            write_status(status_path, status)
+            return True
+        # An interrupted/lost reply is never replayed. --wait-existing observes
+        # the same pass; a new normal refresh remains the explicit continuation.
+        return False
+    if phase != 'completed' or generation['lease']['held'] or generation.get('in_flight'):
+        return False
+    if set(generation['pinned']) - {published}:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(code['data']['indexing']['started_at'].replace('Z', '+00:00'))
+        if timestamp.tzinfo is None:
+            raise ValueError('Native timestamp has no timezone')
+    except (KeyError, AttributeError, ValueError, TypeError):
+        raise RuntimeError('Native run timestamp unavailable; inspect status before resuming --wait-existing')
+    marker = {'phase': 'requesting', 'generation': published, 'inputFingerprint': fingerprint,
+              'beforeStartedAt': code['data']['indexing'].get('started_at'), 'requestedAt': time.time()}
+    status['codeRetention'] = marker
+    write_status(status_path, status)
+    response = client.call('reindex', {'force': False})
+    if response.get('status') not in ('success', 'writer_busy'):
+        raise RuntimeError('Native unchanged retention pass was not accepted; preserve its request')
+    marker.update(phase='waiting', responseStatus=response['status'])
+    write_status(status_path, status)
+    return False
+
+
+def wait_indexes(item, job, status, status_path, data_root, *, retain_one=False):
     deadline = time.monotonic() + job.get('timeoutSeconds', 43200)
     clients = {kind: wait_ready(item[kind + 'Url'], deadline) for kind in ('code', 'graph')}
     while time.monotonic() < deadline:
@@ -113,6 +170,8 @@ def wait_indexes(item, job, status, status_path, data_root):
         write_status(data_root / 'refresh-state' / (item['configId'] + '-code.json'), code)
         write_status(data_root / 'refresh-state' / (item['configId'] + '-graph.json'), graph)
         phases = {'code': code_phase(code), 'graph': graph_phase(graph)}
+        if retain_one and not finish_code_retention(clients['code'], code, item, status, status_path, phases['code']):
+            phases['code'] = 'running'
         status['phases'] = phases; write_status(status_path, status)
         if set(phases.values()) == {'completed'}:
             status.update(state='succeeded', stage='completed', indexedAt=time.time(), completedAt=time.time(),
@@ -120,6 +179,9 @@ def wait_indexes(item, job, status, status_path, data_root):
             write_status(status_path, status)
             return status
         time.sleep(job.get('pollSeconds', 30))
+    if retain_one and status.get('codeRetention', {}).get('phase') != 'completed':
+        raise RuntimeError('Native retention pass not observed before deadline; preserve codeRetention and inspect/resume '
+                           '--wait-existing without replaying its request, or start a new normal refresh')
     raise RuntimeError('Native indexing exceeded its configured deadline')
 
 
@@ -146,13 +208,13 @@ def refresh(host, job, config_id, force=False, wait_existing=False):
             raise ValueError('Existing indexing cannot be continued; rerun the normal refresh')
         if input_fingerprint(source, metadata / 'Report.txt') != previous.get('inputFingerprint'):
             raise ValueError('Deployed indexing input changed; rerun the normal refresh')
-        for kind in ('code', 'graph'):
-            container_identity(host, item[kind + 'Container'], config_id)
+        owned = [container_identity(host, item[kind + 'Container'], config_id, include_definition=True)
+                 for kind in ('code', 'graph')]
         status = dict(previous, state='running', resumedAt=time.time())
         status.pop('error', None); status.pop('completedAt', None)
         write_status(status_path, status)
         try:
-            return wait_indexes(item, job, status, status_path, data_root)
+            return wait_indexes(item, job, status, status_path, data_root, retain_one=retention_one(owned[0]))
         except Exception as error:
             status.update(state='failed', error=str(error), completedAt=time.time())
             write_status(status_path, status)
@@ -190,7 +252,9 @@ def refresh(host, job, config_id, force=False, wait_existing=False):
                 write_status(status_path, status)
                 return status
             # Validate both identities before stopping either service. Neo4j is preserved.
-            identities = [container_identity(host, item[kind + 'Container'], config_id) for kind in ('code', 'graph')]
+            owned = [container_identity(host, item[kind + 'Container'], config_id, include_definition=True)
+                     for kind in ('code', 'graph')]
+            identities = [container['Id'] for container in owned]
             status['stage'] = 'deploy-export'; write_status(status_path, status)
             command(['docker', 'stop', '--time', '60', *identities], timeout=150)
             try:
@@ -207,7 +271,7 @@ def refresh(host, job, config_id, force=False, wait_existing=False):
                 command(['docker', 'start', *identities], timeout=120)
         status['stage'] = 'index-code-and-graph'; write_status(status_path, status)
         # Native startup refreshes the new source incrementally; no database reset.
-        return wait_indexes(item, job, status, status_path, data_root)
+        return wait_indexes(item, job, status, status_path, data_root, retain_one=retention_one(owned[0]))
     except Exception as error:
         status.update(state='failed', error=str(error), completedAt=time.time())
         write_status(status_path, status)

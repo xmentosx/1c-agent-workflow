@@ -36,7 +36,7 @@ class RefreshBoundaryTests(unittest.TestCase):
             clients['graph-url'].call.return_value = graph
             with patch('refresh.command', side_effect=AssertionError('must not mutate Docker')), \
                  patch('refresh.run_metadata_generator', side_effect=AssertionError('must not regenerate report')), \
-                 patch('refresh.container_identity', return_value='owned') as identities, \
+                 patch('refresh.container_identity', return_value={'Id': 'owned', 'Config': {'Env': []}}) as identities, \
                  patch('refresh.wait_ready', side_effect=lambda url, deadline: clients[url]):
                 result = refresh({'containers': ['code', 'graph']}, job, 'erp', wait_existing=True)
                 self.assertEqual(result['state'], 'succeeded')
