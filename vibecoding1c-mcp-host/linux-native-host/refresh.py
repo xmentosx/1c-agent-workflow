@@ -149,6 +149,10 @@ def finish_code_retention(client, code, item, status, status_path, phase):
             raise ValueError('Native timestamp has no timezone')
     except (KeyError, AttributeError, ValueError, TypeError):
         raise RuntimeError('Native run timestamp unavailable; inspect status before resuming --wait-existing')
+    # Native timestamps have second precision. Give even a tiny unchanged pass
+    # a distinguishable start, rather than waiting forever for a same-second run.
+    if timestamp.timestamp() >= int(time.time()):
+        return False
     marker = {'phase': 'requesting', 'generation': published, 'inputFingerprint': fingerprint,
               'beforeStartedAt': code['data']['indexing'].get('started_at'), 'requestedAt': time.time()}
     status['codeRetention'] = marker
