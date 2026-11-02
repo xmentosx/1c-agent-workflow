@@ -44,6 +44,7 @@
     "tests/pester/HostToolsProxy.Tests.ps1": ["node","windows"],
     "tests/pester/HostBookStack.Tests.ps1": ["python-package-dependencies"],
     "tests/pester/HostMantis.Tests.ps1": ["python-mantis","windows"],
+    "tests/pester/HostStorageRetention.Tests.ps1": ["python-mantis","windows"],
     "tests/pester/HostSppr.Tests.ps1": ["python-package-dependencies"],
     "tests/pester/HostSourceRuntime.Tests.ps1": ["fresh-python-dependencies"],
     "tests/pester/ChatGptBridge.Tests.ps1": ["python-chatgpt","windows"],
@@ -2160,6 +2161,16 @@
       "paths": ["chatgpt/*", ".agents/skills/1c-workflow/chatgpt/*", "install-agent-1c-workflow.ps1", "tests/pester/ChatGptInstall.Tests.ps1"],
       "reuseInputPaths": ["templates/*"],
       "tests": ["tests/pester/ChatGptInstall.Tests.ps1"]
+    },
+    {
+      "id": "host-storage-retention",
+      "owner": "Windows MCP storage admission, accepted snapshot retention and detached reclaim",
+      "gate": "targeted",
+      "budgetSeconds": 90,
+      "primaryTest": "tests/pester/HostStorageRetention.Tests.ps1",
+      "paths": ["vibecoding1c-mcp-host/storage-retention.ps1", "vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1", "vibecoding1c-mcp-host/beta-cutover.ps1", "vibecoding1c-mcp-host/host.config.example.json", "tests/pester/HostStorageRetention.Tests.ps1", "docs/mcp-storage-retention.md", "vibecoding1c-mcp-host/mantis-ticket-mcp/storage-owner-repair.py", "tests/python/qualify_mantis_storage_owner.py"],
+      "reuseInputPaths": ["vibecoding1c-mcp-host/*.ps1", "vibecoding1c-mcp-host/host.config.example.json", "vibecoding1c-mcp-host/mantis-ticket-mcp/storage-owner-repair.py", "tests/python/qualify_mantis_storage_owner.py"],
+      "tests": ["tests/pester/HostStorageRetention.Tests.ps1"]
     },
     {
       "id": "host-native-transport",

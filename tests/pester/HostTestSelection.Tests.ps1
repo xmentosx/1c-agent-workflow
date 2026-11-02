@@ -46,6 +46,7 @@ Describe 'Independent host component source verification' {
             'tests/pester/HostNativeTransport.Tests.ps1',
             'tests/pester/HostSourceRuntime.Tests.ps1',
             'tests/pester/HostSppr.Tests.ps1',
+            'tests/pester/HostStorageRetention.Tests.ps1',
             'tests/pester/HostTestSelection.Tests.ps1',
             'tests/pester/HostTooling.Tests.ps1',
             'tests/pester/OnDemandGo.Tests.ps1',

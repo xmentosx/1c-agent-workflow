@@ -45,6 +45,7 @@
     "timeoutSeconds": 20
   },
   "mantisTicketServer": {
+    "image": "",
     "baseUrl": "http://mantis.itland.local",
     "attachmentCachePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/attachments",
     "statePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/index",
@@ -97,6 +98,22 @@
       "commandTimeoutSeconds": 90,
       "pollSeconds": 5
     }
+  },
+  "storageRetention": {
+    "enabled": false,
+    "lowSpaceGiB": 50,
+    "reserveGiB": 20,
+    "cacheTargetGiB": 10,
+    "cacheUnusedDays": 7,
+    "minimumAgeDays": 14,
+    "keepAccepted": 2,
+    "cleanupIntervalHours": 24,
+    "compactEnabled": false,
+    "compactDay": "Sunday",
+    "compactAt": "03:30",
+    "compactWindowMinutes": 30,
+    "compactMinimumGiB": 10,
+    "vhdPath": ""
   },
   "nightlyIndex": {
     "enabled": false,

@@ -194,6 +194,12 @@ path as the deciding evidence. Approval covers that stated boundary. A newly
 affected owner, resource class, administrative prerequisite, or installed
 migration is a scope change; implementation details inside the boundary are not.
 
+On 2026-11-02 the user approved [Windows MCP storage retention](mcp-storage-retention.md),
+including conditional Sunday 03:30 detached VHD compaction on dev-ermakov. The
+existing host lease/scheduler delegates eligibility to native owners; current,
+rollback, pinned, unfinished, failed and unclassified legacy data stays protected.
+No new service, elevation or global WSL reset authority is introduced.
+
 The user approved producer-marked diagnostic retention on 2026-10-22. The
 existing artifact-retention owner consumes immutable completion receipts for
 individual native temporary files and derived XML/ETLX, preserving original

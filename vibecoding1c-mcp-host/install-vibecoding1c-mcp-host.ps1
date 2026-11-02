@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config", "storage-status", "storage-plan", "storage-run")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -11,7 +11,8 @@ param(
     [switch]$NativeEndpoint,
     [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0,
     [switch]$DryRun,
-    [switch]$RecreateBookStack
+    [switch]$RecreateBookStack,
+    [switch]$StorageOnlineOnly
 )
 
 Set-StrictMode -Version Latest
@@ -33,6 +34,7 @@ $script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP h
 if ($RecreateBookStack -and ($Action -ne "start" -or $ServerId -ne "bookstack" -or $ConfigId)) {
     throw "RecreateBookStack requires -Action start -ServerId bookstack without ConfigId; it preserves the prepared cache."
 }
+if ($StorageOnlineOnly -and $Action -ne 'storage-run') { throw 'StorageOnlineOnly requires storage-run.' }
 $script:WatchdogTaskPath = "\"
 
 function Read-Text {
@@ -54,7 +56,10 @@ function Write-Text {
 
 function Read-JsonFile {
     param([string]$Path)
-    return (Read-Text -Path $Path | ConvertFrom-Json)
+    if ((Microsoft.PowerShell.Core\Get-Command ConvertFrom-Json -CommandType Cmdlet).Parameters.ContainsKey('DateKind')) {
+        return (Read-Text -Path $Path | Microsoft.PowerShell.Utility\ConvertFrom-Json -DateKind String)
+    }
+    return (Read-Text -Path $Path | Microsoft.PowerShell.Utility\ConvertFrom-Json)
 }
 
 function Write-JsonFile {
@@ -328,7 +333,9 @@ function Enter-McpHostMaintenanceLock {
             $stream.SetLength(0)
             $stream.Write($payload, 0, $payload.Length)
             $stream.Flush()
-            return [pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+            $lease=[pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+            $script:McpHostMaintenanceLease=$lease
+            return $lease
         } catch [System.IO.IOException] {
             if ((Get-Date) -ge $deadline) {
                 return [pscustomobject]@{ acquired = $false; stream = $null; path = $lockPath }
@@ -1053,7 +1060,7 @@ function Read-DistributionManifest {
             $server | Add-Member -NotePropertyName manifestPath -NotePropertyValue $ManifestPath -Force
         }
     }
-    return (Add-HostVirtualServersToManifest -Manifest $manifest)
+    return (Add-HostVirtualServersToManifest -Manifest $manifest -Config $Config)
 }
 
 function Get-TrackedHostServerForIdentity {
@@ -1140,11 +1147,12 @@ function Get-BookStackProductDocsServerDefinition {
 }
 
 function Get-MantisTicketServerDefinition {
+    param([object]$Config = $null)
     return [pscustomobject][ordered]@{
         id = "mantis"
         title = "Mantis ticket context"
         scope = "global"
-        image = "itl/mantis-ticket-mcp:local"
+        image = [string](Get-ObjectValue (Get-ObjectValue $Config 'mantisTicketServer' $null) 'image' 'itl/mantis-ticket-mcp:local')
         internalPort = 8000
         mcpNameTemplate = "itl-mantis-ticket-mcp"
         containerNameTemplate = "itl-mantis-ticket-mcp"
@@ -1173,7 +1181,7 @@ function Get-MantisTicketServerDefinition {
 }
 
 function Add-HostVirtualServersToManifest {
-    param([object]$Manifest)
+    param([object]$Manifest, [object]$Config = $null)
     $manifestHash = Convert-ToHash -Object $Manifest
     $servers = @(As-Array (Get-ObjectValue -Object $manifestHash -Name "servers" -Default @()))
     $hasBookStack = $false
@@ -1185,13 +1193,15 @@ function Add-HostVirtualServersToManifest {
         }
         if ($id -eq "mantis") {
             $hasMantis = $true
+            $pinnedImage=[string](Get-ObjectValue (Get-ObjectValue $Config 'mantisTicketServer' $null) 'image' '')
+            if ($pinnedImage) { $server.image=$pinnedImage }
         }
     }
     if (-not $hasBookStack) {
         $servers += Get-BookStackProductDocsServerDefinition
     }
     if (-not $hasMantis) {
-        $servers += Get-MantisTicketServerDefinition
+        $servers += Get-MantisTicketServerDefinition -Config $Config
     }
     if (@($servers | Where-Object { [string](Get-ObjectValue -Object $_ -Name 'id' -Default '') -eq 'sppr' }).Count -eq 0) {
         $servers += Get-SpprServerDefinition
@@ -2542,6 +2552,9 @@ function Start-DockerServer {
         [switch]$PreparedBetaImage
     )
     $containerName = [string]$Runtime.containerName
+    if ($ForceResetDatabase -and (Get-McpStorageSettings $Config).enabled -and (Get-HostContainerPublishState $containerName) -ne 'missing') {
+        Assert-McpStorageAdmission -Config $Config -PeakBytes (Get-McpStorageMountedPeak -ContainerName $containerName -Copies 2)
+    }
     $bookStackPrepared = $false
     if ($Recreate -and [string]$Server.id -eq "bookstack" -and -not $ForceResetDatabase) {
         $preparedEnv = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState
@@ -2611,7 +2624,11 @@ function Start-DockerServer {
             }
             Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
         } finally {
-            foreach ($key in $previousSecrets.Keys) { [Environment]::SetEnvironmentVariable($key, $previousSecrets[$key], "Process") }
+            foreach ($key in $previousSecrets.Keys) {
+                $previousValue=$previousSecrets[$key]
+                if ($null -eq $previousValue) { $previousValue=[NullString]::Value }
+                [Environment]::SetEnvironmentVariable($key, $previousValue, "Process")
+            }
         }
     }
     if (-not $DryRun) { Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime }
@@ -2689,6 +2706,12 @@ function Start-ComposeServer {
         [switch]$ForceResetDatabase
     )
     $distributionRoot = Get-DistributionRoot -Config $Config
+    if ($ForceResetDatabase -and (Get-McpStorageSettings $Config).enabled -and (Get-HostContainerPublishState $Runtime.containerName) -ne 'missing') {
+        $helperImage=@(Invoke-DockerCommandCapture -Arguments @('inspect','--format','{{.Image}}',[string]$Runtime.containerName) -TimeoutSec 15 -Description 'bind current Graph allocation estimator')[0]
+        $peak=Get-McpStorageMountedPeak -ContainerName ([string]$Runtime.containerName) -Copies 2
+        $peak+=Get-McpStorageMountedPeak -ContainerName ([string]$Runtime.containerName+'-neo4j') -HelperImage $helperImage -Copies 2
+        Assert-McpStorageAdmission -Config $Config -PeakBytes $peak
+    }
     Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $sourceCompose = Join-Path $distributionRoot ([string](Get-ObjectValue -Object $Server -Name "composePath" -Default ""))
     if (-not (Test-Path -LiteralPath $sourceCompose -PathType Leaf)) {
@@ -3683,6 +3706,7 @@ function Invoke-McpHostWatchdogRunCore {
         $dockerRecoveryAttemptActive = $true
         [void]$dockerRecoveryEvents.Add((Repair-DockerDesktopAvailability -Settings $settings))
         $dockerRecoveryAttemptActive = $false
+        Invoke-McpHostStorageMaintenance -Config $Config
         $daemonRecoveryRetries = 0
         $graphRepairMessage = ""
         while ($true) {
@@ -4433,6 +4457,7 @@ function Invoke-McpHostNightlyIndexRunCore {
         $selected += $configuration
     }
     if ($selected.Count -eq 0) { throw "No configurations matched nightlyIndex.configIds." }
+    Assert-McpStorageAdmission -Config $Config
     if ($settings.configIds.Count -gt 0) {
         $selectedIds = @($selected | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") })
         $missing = @($settings.configIds | Where-Object { $selectedIds -notcontains $_ })
@@ -5121,6 +5146,18 @@ function Start-HostServers {
 }
 
 function Invoke-GraphCpuEmbeddingModelMigration {
+    param([object]$Config, [string]$TargetConfigId)
+    if (-not (Get-McpStorageSettings $Config).enabled -or (Test-McpStorageLeaseHeld $Config)) {
+        Invoke-GraphCpuEmbeddingModelMigrationCore -Config $Config -TargetConfigId $TargetConfigId
+        return
+    }
+    $lease=Enter-McpHostMaintenanceLock -Config $Config -Operation 'graph-cpu-migrate-model' -WaitSeconds 0
+    if (-not $lease.acquired) { throw 'Host maintenance is active; repeat graph-cpu-migrate-model after it completes.' }
+    try { Invoke-GraphCpuEmbeddingModelMigrationCore -Config $Config -TargetConfigId $TargetConfigId }
+    finally { Exit-McpHostMaintenanceLock $lease }
+}
+
+function Invoke-GraphCpuEmbeddingModelMigrationCore {
     param(
         [object]$Config,
         [string]$TargetConfigId
@@ -5157,6 +5194,10 @@ function Invoke-GraphCpuEmbeddingModelMigration {
         return
     }
 
+    if ((Get-McpStorageSettings $Config).enabled) {
+        $helperImage=@(Invoke-DockerCommandCapture -Arguments @('inspect','--format','{{.Image}}',$containerName) -TimeoutSec 15 -Description 'bind migration capacity estimator')[0]
+        Assert-McpStorageAdmission -Config $Config -PeakBytes (Get-McpStorageMountedPeak -ContainerName ($containerName+'-neo4j') -HelperImage $helperImage)
+    }
     $migrationScript = @'
 import json
 import os
@@ -5252,6 +5293,18 @@ finally:
 }
 
 function Invoke-HostReindex {
+    param([object]$Config, [string]$TargetConfigId = '', [string]$TargetServerId = '')
+    if (-not (Get-McpStorageSettings $Config).enabled -or (Test-McpStorageLeaseHeld $Config)) {
+        Invoke-HostReindexCore -Config $Config -TargetConfigId $TargetConfigId -TargetServerId $TargetServerId
+        return
+    }
+    $lease=Enter-McpHostMaintenanceLock -Config $Config -Operation 'reindex' -WaitSeconds 0
+    if (-not $lease.acquired) { throw 'Host maintenance is active; repeat reindex after it completes. Serving runtimes remain unchanged.' }
+    try { Invoke-HostReindexCore -Config $Config -TargetConfigId $TargetConfigId -TargetServerId $TargetServerId }
+    finally { Exit-McpHostMaintenanceLock $lease }
+}
+
+function Invoke-HostReindexCore {
     param(
         [object]$Config,
         [string]$TargetConfigId = "",
@@ -5763,8 +5816,25 @@ function Show-HostStatus {
 . (Join-Path $PSScriptRoot "owner-repair.ps1")
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 . (Join-Path $PSScriptRoot "sppr-host.ps1")
+. (Join-Path $PSScriptRoot "storage-retention.ps1")
 $config = Read-HostConfig
 switch ($Action) {
+    "storage-status" {
+        $record=Get-McpStorageRecord $config
+        @{settings=(Get-McpStorageSettings $config);record=$record;freeBytes=(Get-McpStorageFreeBytes $config);protectedLegacyCount=@(Get-McpStorageLegacySnapshots $config $record).Count}|ConvertTo-Json -Depth 12
+    }
+    "storage-plan" {
+        $settings=Get-McpStorageSettings $config
+        $record=Get-McpStorageRecord $config
+        $legacy=@(Get-McpStorageLegacySnapshots $config $record)
+        @{freeBytes=(Get-McpStorageFreeBytes $config);cache=@(Get-McpStorageCachePlan $settings);retirement=@(Get-McpStorageRetirementPlan $config $settings $record);protectedLegacyCount=$legacy.Count;protectedLegacy=@($legacy|Select-Object -First 256)}|ConvertTo-Json -Depth 12
+    }
+    "storage-run" {
+        if(Test-McpHostNightlyPriorityLockActive $config){throw 'Nightly indexing is active; repeat storage-run after it completes'}
+        $lease=Enter-McpHostMaintenanceLock -Config $config -Operation 'storage-retention' -WaitSeconds 0
+        if(-not $lease.acquired){throw 'Host maintenance is active; repeat storage-run after it completes'}
+        try{Invoke-McpHostStorageMaintenance -Config $config -OnlineOnly:$StorageOnlineOnly -Force}finally{Exit-McpHostMaintenanceLock $lease}
+    }
     "bookstack-direct" {
         if ($ConfigId -or ($ServerId -and $ServerId -ne "bookstack")) { throw "bookstack-direct accepts only global BookStack." }
         Enable-BookStackDirectEndpoint -Config $config

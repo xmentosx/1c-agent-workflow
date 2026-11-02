@@ -11,6 +11,8 @@ For `dev-karimov-new` Linux VM upgrades, the durable owner is [the private distr
 For native Code/Graph on a dedicated Linux VM with systemd recovery, see
 [the Linux host backend](linux-native-host/README.md).
 For the SPPR Docker reader, Windows collector and project client connection, see [SPPR operations](sppr-mcp/README.md).
+For opt-in Windows capacity checks, accepted snapshot retention and scheduled
+Docker VHD reclaim, see [storage retention](../docs/mcp-storage-retention.md).
 The canonical upstream MCP behavior and environment contract is documented at [OneRPA MCP servers for 1C](https://docs.onerpa.ru/mcp-servery-1c).
 
 ## Setup

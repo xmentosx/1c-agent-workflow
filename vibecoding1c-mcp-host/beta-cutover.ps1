@@ -673,12 +673,12 @@ function Assert-BetaToolsContract {
 }
 
 function Get-BetaConfigurationIndexActivity {
-    param([string]$ServerId, [string]$Url, [switch]$ExactEndpoint)
+    param([string]$ServerId, [string]$Url, [switch]$ExactEndpoint, [int]$TimeoutSec = 120)
     if ($ServerId -notin @("code", "graph")) { return $null }
     $connection = Open-HostMcpConnection -Url $Url -ExactEndpoint:$ExactEndpoint
     try {
         $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
-        $result = Invoke-HostMcpTool -Connection $connection -Name $tool
+        $result = Invoke-HostMcpTool -Connection $connection -Name $tool -TimeoutSec $TimeoutSec
         if ($ServerId -eq "graph") { return (ConvertFrom-GraphIndexStatus -Result $result) }
         $payload = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
         if ($null -eq $payload) { throw "'$ServerId' index status has no structuredContent." }
@@ -1051,6 +1051,11 @@ function Invoke-BetaCutover {
         $oldStopped = $false
         $stateChanged = $false
         try {
+            if ((Get-McpStorageSettings $Config).enabled -and -not $ForwardOnly) {
+                $snapshotPeak=Get-McpStorageMountedPeak -ContainerName ([string]$context.old.containerName)
+                if ($context.serverId -eq 'graph') { $snapshotPeak+=Get-McpStorageMountedPeak -ContainerName ([string]$context.old.containerName+'-neo4j') -HelperImage ([string]$context.runtime.image) }
+                Assert-McpStorageAdmission -Config $Config -PeakBytes $snapshotPeak
+            }
             $oldStopped = $true
             Stop-StableForBetaCutover -Context $context
             if ($ForwardOnly) {
@@ -1107,6 +1112,23 @@ function Invoke-BetaCutover {
             if ($TargetServerId -eq "docs") {
                 Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url) -NativeResponse:$nativePublic -ExactEndpoint
             }
+            if ((Get-McpStorageSettings $Config).enabled -and $retainedIndex -and -not $ForwardOnly) {
+                Invoke-DockerCommandChecked -Arguments @('restart',[string]$context.runtime.containerName) -TimeoutSec 180 -Description 'control restart before retention acceptance'
+                Wait-BetaCandidateReady -Context $context
+                $restartedTools=@(Get-HostMcpToolsList -Url ([string]$context.runtime.url) -ExactEndpoint)
+                Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $oldPublicTools -BetaTools $restartedTools -CheckOutputs
+                if ($TargetServerId -eq 'code') {
+                    $restarted=Get-BetaConfigurationIndexActivity -ServerId code -Url ([string]$context.runtime.url) -ExactEndpoint
+                    $restarted|Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName $context.runtime.containerName -Activity $restarted) -Force
+                    $restarted|Add-Member -NotePropertyName formInventory -NotePropertyValue (Get-BetaCodeFormInventory -ContainerName $context.runtime.containerName -Activity $restarted) -Force
+                    Assert-RetainedCodeIdentity -OldActivity $betaIndexActivity -NewActivity $restarted
+                }
+                if ($TargetServerId -eq 'graph') {
+                    $restarted=Get-BetaConfigurationIndexActivity -ServerId graph -Url ([string]$context.runtime.url) -ExactEndpoint
+                    if ($restarted.running) { throw 'Control restart left Graph indexing active; retain the snapshot' }
+                }
+                $context|Add-Member -NotePropertyName storageRestartQualified -NotePropertyValue $true -Force
+            }
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force
             $publishedRuntime = Convert-ToHash -Object $context.runtime
@@ -1114,6 +1136,8 @@ function Invoke-BetaCutover {
             Update-HostStateServers -Config $Config -ServerStates @($publishedRuntime)
             $stateChanged = $true
             Publish-Registry -Config $Config
+            try { Add-McpStorageAcceptance -Config $Config -Context $context }
+            catch { Write-Warning "Accepted runtime remains serving; retention enrollment failed, so its data stays protected: $($_.Exception.Message)" }
             $backup = [string](Get-ObjectValue -Object $context.runtime -Name "proxyBackupName" -Default "")
             if ($backup) { Invoke-DockerCommandChecked -Arguments @("rm", "-f", $backup) -TimeoutSec 120 -Description "remove qualified old tools proxy backup" }
             Write-Host "Beta cutover complete: server=$TargetServerId configId=$TargetConfigId publicName=$($context.runtime.name) publicUrl=$($context.runtime.url) oldContainer=$($context.old.containerName) betaContainer=$($context.runtime.containerName) oldData=retained"
