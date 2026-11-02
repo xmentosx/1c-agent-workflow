@@ -6797,10 +6797,20 @@ function Move-WorkflowManagedPathAtomic {
     # Windows PowerShell Move-Item falls back to copy-and-delete when a rename
     # is refused, which strips a directory whose child is another process's
     # working directory. A rename either moves the whole item or nothing.
-    if (Test-Path -LiteralPath $SourcePath -PathType Container -ErrorAction SilentlyContinue) {
-        [IO.Directory]::Move($SourcePath, $DestinationPath)
-    } else {
-        [IO.File]::Move($SourcePath, $DestinationPath)
+    # Scanners briefly hold freshly written files, so a refusal is retried
+    # for a bounded time; a live holder still fails after the budget.
+    $isDirectory = Test-Path -LiteralPath $SourcePath -PathType Container -ErrorAction SilentlyContinue
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $delayMilliseconds = 50
+    while ($true) {
+        try {
+            if ($isDirectory) { [IO.Directory]::Move($SourcePath, $DestinationPath) } else { [IO.File]::Move($SourcePath, $DestinationPath) }
+            return
+        } catch {
+            if (-not (Test-WorkflowUpdatePathInUseError -Exception $_.Exception) -or [DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds $delayMilliseconds
+            $delayMilliseconds = [Math]::Min(1000, $delayMilliseconds * 2)
+        }
     }
 }
 
