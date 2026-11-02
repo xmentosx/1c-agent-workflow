@@ -257,6 +257,14 @@ Describe 'Sealed branch patch retirement through the rollout owner' {
         $script:patchSteps | Should -Be @('Plan','Plan','Retire','Undo')
     }
 
+    It 'defers a branch whose package path a live branch process holds after an unchanged rollback' {
+        Mock Invoke-WorkflowDevelopmentBranchUpdate { throw "WORKFLOW_UPDATE_BRANCH_PATH_IN_USE: '$branchRoot\.agents\skills\itl-remote-runner' is held. The branch package files were restored unchanged." }
+        $result = Invoke-WorkflowDevelopmentBranchRollout -Source $source
+        $result.roots[0].status | Should -Be 'deferred'
+        $result.roots[0].continuation | Should -BeLike 'Stop the branch process that holds the named path*repeat update-workflow from master.'
+        $script:patchSteps | Should -Be @('Plan','Plan','Retire','Undo')
+    }
+
     It 'retains the patch archive once copying succeeded and post-copy needs recovery' {
         Mock Invoke-WorkflowDevelopmentBranchUpdate { throw 'post-copy fixture failure' }
         Mock Get-DependencyLockEntry { @{commit=('c'*40)} }

@@ -73,7 +73,10 @@ function Start-ItlExecutionGuardHost {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $Python
     $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B','-X','utf8','-u','-m','itl_remote.execution_guard_host')
-    $start.WorkingDirectory = $PSScriptRoot
+    # The host lives as long as the guarded execution. Its working directory
+    # must stay outside the package so update-workflow can rename it meanwhile;
+    # PYTHONPATH below already resolves the module.
+    $start.WorkingDirectory = Split-Path -Parent $Python
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true

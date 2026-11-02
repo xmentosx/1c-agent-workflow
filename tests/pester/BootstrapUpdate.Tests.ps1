@@ -3794,4 +3794,38 @@ Describe 'Managed package Python runtime cache boundary' -Tag 'PackageContent' {
             (Get-WorkflowUpdatePathState -RelativePath $fixture.relative) | Should -BeExactly $before
         } finally { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
     }
+
+    It 'leaves a package directory held as a live working directory intact through copy and rollback' {
+        $fixture=New-PackageCacheFixture -Root (Join-Path $TestDrive 'Занятый каталог пакета с пробелом')
+        $other='.agents/skills/itl-remote-agent'
+        foreach ($base in @($fixture.source,$fixture.target)) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $base $other) | Out-Null
+            [IO.File]::WriteAllText((Join-Path $base ($other+'/SKILL.md')), $(if ($base -eq $fixture.source) {'new agent'} else {'old agent'}), [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllBytes((Join-Path $fixture.source ($fixture.relative+'/scripts/module.py')), [byte[]]@(35,32,110,101,119))
+        . $helperPath -ProjectRoot $fixture.target -Action help *> $null
+        $beforeRunner=Get-WorkflowUpdatePathState -RelativePath $fixture.relative
+        $beforeOther=Get-WorkflowUpdatePathState -RelativePath $other
+        $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @($other,$fixture.relative)
+        $start=[Diagnostics.ProcessStartInfo]::new('powershell.exe','-NoProfile -NonInteractive -Command Start-Sleep -Seconds 120')
+        $start.WorkingDirectory=Join-Path $fixture.target ($fixture.relative+'/scripts')
+        $start.UseShellExecute=$false; $start.CreateNoWindow=$true
+        $holder=[Diagnostics.Process]::Start($start)
+        try {
+            Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $other *> $null
+            Get-WorkflowUpdatePathState -RelativePath $other | Should -Not -BeExactly $beforeOther
+            $copyError=$null
+            try { Copy-WorkflowManagedDirectory -SourceRoot $fixture.source -RelativePath $fixture.relative *> $null } catch { $copyError=$_.Exception }
+            $copyError | Should -Not -BeNullOrEmpty
+            Test-WorkflowUpdatePathInUseError -Exception $copyError | Should -BeTrue
+            Get-WorkflowUpdatePathState -RelativePath $fixture.relative | Should -BeExactly $beforeRunner
+            Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            Get-WorkflowUpdatePathState -RelativePath $fixture.relative | Should -BeExactly $beforeRunner
+            Get-WorkflowUpdatePathState -RelativePath $other | Should -BeExactly $beforeOther
+            @(Get-ChildItem -LiteralPath (Join-Path $fixture.target '.agent-1c/tmp') -Force) | Should -HaveCount 0
+        } finally {
+            $holder.Kill(); $holder.WaitForExit()
+            Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+        }
+    }
 }
