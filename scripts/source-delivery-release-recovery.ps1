@@ -205,6 +205,19 @@ function Invoke-DeliveryStandPreparationOwners {
         Write-DevelopPublicationAttempt -Attempt $Attempt
     }
     if ($Preparation.requiresWorkflowUpdate) {
+        # Capture rejects an out-of-transaction write to a managed path only after
+        # the update, when the new receipt has already recorded it as before-state.
+        # The same read-only proof runs first, while the write can still be returned.
+        # A pending transaction stays with the update owner's own state checks.
+        $pending = @(@($Preparation.projectRoot) + @($Preparation.roots) | Where-Object {
+            @(Get-ChildItem -LiteralPath (Join-Path $_ '.agent-1c/snapshots/workflow-update') -Directory -Filter 'itl-workflow-update-rollback-*' -ErrorAction SilentlyContinue).Count })
+        if (-not $pending.Count) {
+            foreach ($capsule in $Preparation.capsules) {
+                $chainReport = Join-Path $CandidateRoot ('build/test-results/delivery/stand-chain-preflight-'+$capsule.phase+'.json')
+                $record.steps += Invoke-DeliveryStandOwner -CandidateRoot $CandidateRoot -Name ('stand-chain-preflight-'+$capsule.phase) -BudgetSeconds 900 -Arguments @('-File',(Join-Path $CandidateRoot 'scripts/source-e2e-fixture.ps1'),'-Action','Verify','-ProjectRoot',$Preparation.projectRoot,'-Phase',$capsule.phase,'-OutputPath',$chainReport)
+                Write-DevelopPublicationAttempt -Attempt $Attempt
+            }
+        }
         $scopePath = Join-Path $CandidateRoot 'build/test-results/delivery/stand-update-roots.json'
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $scopePath))
         [IO.File]::WriteAllText($scopePath, ([ordered]@{schemaVersion=1;projectRoot=$Preparation.projectRoot;sourceCommit=$Preparation.sourceCommit;roots=@($Preparation.roots)} | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))

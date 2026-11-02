@@ -293,7 +293,8 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
     $source=[pscustomobject]@{root=$SourceRoot;commit=('c'*40);ref='develop';repo='fixture';source='path'}
     $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.dev.env') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
     Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
-    [IO.File]::WriteAllText((Join-Path $root 'AGENT-INSTALL.md'),'candidate package',[Text.UTF8Encoding]::new($false))
+    # Each run installs a distinct package, so every update is one Git hop.
+    [IO.File]::WriteAllText((Join-Path $root 'AGENT-INSTALL.md'),('candidate package '+[guid]::NewGuid().ToString('N')),[Text.UTF8Encoding]::new($false))
     [IO.File]::AppendAllText((Join-Path $root '.dev.env'),"WORKFLOW_FIXTURE_VALUE=candidate`n",[Text.UTF8Encoding]::new($false))
     Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('add','--','AGENT-INSTALL.md')|Out-Null
     Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('commit','-m','candidate workflow update')|Out-Null
@@ -316,7 +317,7 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
                 $attempt=[pscustomobject]@{phase='candidate-built'}
                 Invoke-DeliveryStandPreparation $candidate $preparation $attempt
                 $attempt.standPreparation.status|Should -Be 'passed'
-                @($attempt.standPreparation.steps.name)|Should -Be @('stand-workflow-update','stand-capture-Develop')
+                @($attempt.standPreparation.steps.name)|Should -Be @('stand-chain-preflight-Develop','stand-workflow-update','stand-capture-Develop')
                 $admission=(Read-QualificationFixtureJson -Path $configPath).qualificationFixtures.Develop.workflowUpdateAdmission
                 # The publisher's next plan treats these exact heads as admitted.
                 $admission.master.head|Should -Be (Invoke-RepositoryGit -RepositoryRoot $seed.project -Arguments @('rev-parse','HEAD')).stdout.Trim()
@@ -332,6 +333,30 @@ foreach($root in @($ProjectRoot)+@($scope.roots)){
                 Invoke-DeliveryStandPreparation $candidate $preparation $resumed
                 @($resumed.standPreparation.steps.name)|Should -Be @('stand-capture-Develop')
                 (Get-FileHash -LiteralPath $configPath).Hash|Should -Be $configSha
+                # 2026-11-02: a pre-snapshot client write let the update complete
+                # over an unrecorded change; only the following Capture rejected
+                # it, and the gap stayed in seed history until a manual Recapture.
+                # Before the next update the same proof rejects such a write
+                # while the recorded bytes can still be returned.
+                $preparation.requiresWorkflowUpdate=$true
+                $envPath=Join-Path $seed.project '.dev.env'
+                $recorded=[IO.File]::ReadAllBytes($envPath)
+                [IO.File]::AppendAllText($envPath,"OUT_OF_TRANSACTION=written`n",[Text.UTF8Encoding]::new($false))
+                $completedParent=Join-Path $seed.project '.agent-1c/snapshots/workflow-update'
+                $completedBefore=@(Get-ChildItem -LiteralPath $completedParent -Directory -Filter 'itl-workflow-update-completed-*').Count
+                $drifted=[pscustomobject]@{phase='candidate-built'}
+                {Invoke-DeliveryStandPreparation $candidate $preparation $drifted}|Should -Throw '*DELIVERY_STAND_PREPARATION_FAILED: stand-chain-preflight-Develop*'
+                @($drifted.standPreparation.steps).Count|Should -Be 0
+                $rejection=(Get-Content -LiteralPath (Join-Path $candidate 'build/test-results/delivery/stand-chain-preflight-Develop.stderr.log') -Raw -Encoding UTF8) -replace '\s+',''
+                $rejection|Should -BeLike "*FIXTURE_WORKFLOW_UPDATE_PATH_CHANGED:'.dev.env'*Nostandupdateran*"
+                @(Get-ChildItem -LiteralPath $completedParent -Directory -Filter 'itl-workflow-update-completed-*').Count|Should -Be $completedBefore
+                (Get-FileHash -LiteralPath $configPath).Hash|Should -Be $configSha
+                # The continuation returns the recorded bytes and repeats the same preparation.
+                [IO.File]::WriteAllBytes($envPath,$recorded)
+                Invoke-DeliveryStandPreparation $candidate $preparation $drifted
+                $drifted.standPreparation.status|Should -Be 'passed'
+                @($drifted.standPreparation.steps.name)|Should -Be @('stand-chain-preflight-Develop','stand-workflow-update','stand-capture-Develop')
+                @((Read-QualificationFixtureJson -Path $configPath).qualificationFixtures.Develop.workflowUpdateAdmission.master.receipts).Count|Should -Be 2
             }
         } finally {
             Invoke-RepositoryGit -RepositoryRoot $RepoRoot -Arguments @('worktree','remove','--force',$candidate) -AllowFailure|Out-Null

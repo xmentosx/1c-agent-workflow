@@ -394,7 +394,10 @@ The lifecycle transaction retains the exact root/source scope across post-copy
 and recovery. Normal update-workflow still rolls out all development roots.
 The same publication checkpoint records preparation and its owner logs; no new
 coordinator, registry, lock family, service or machine prerequisite is added.
-Update waits at most 3600 seconds, each Capture 900 seconds; interrupted Release
+Before an update, Capture's own chain proof runs read-only per capsule, so an
+out-of-transaction managed-path write is rejected while it can still be returned
+instead of becoming permanent seed history; a pending transaction stays with the
+update owner. Update waits at most 3600 seconds, each Capture or preflight 900 seconds; interrupted Release
 recovery retains its existing 7800-second allowance. Cancellation uses the
 existing owned child/job cleanup. Retry continues the unplanned checkpoint and
 the original lifecycle receipt; once a plan exists, unexpected drift still
