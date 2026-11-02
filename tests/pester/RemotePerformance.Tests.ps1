@@ -22,6 +22,33 @@ Describe 'Portable remote execution and performance' {
     }
 }
 
+Describe 'Execution guard host outside the managed package' {
+    BeforeAll {
+        $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        # The copied runner resolves these through its absent sibling package.
+        foreach ($name in @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.immutable-download.ps1')) {
+            . (Join-Path $repo ".agents/skills/1c-workflow/scripts/lib/$name")
+        }
+    }
+    It 'keeps a live guard host from pinning the package directory that update-workflow renames' {
+        $package = Join-Path $TestDrive 'Пакет с пробелом/itl-remote-runner'
+        New-Item -ItemType Directory -Force -Path $package | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repo '.agents/skills/itl-remote-runner/scripts') -Destination $package -Recurse
+        . (Join-Path $package 'scripts/ExecutionGuard.ps1')
+        $request = [ordered]@{schemaVersion=1;root=(Join-Path $TestDrive 'Охрана запусков');
+            bases=@([pscustomobject]@{kind='file';path=(Join-Path $TestDrive 'База с пробелом')});
+            operation='1c-process';executionId=[guid]::NewGuid().ToString('N');timeout=10;cancelPath='';phaseDeadline=$null}
+        $owner = Start-ItlExecutionGuardHost -Request $request
+        try {
+            $moved = $package + ' перенесён'
+            [IO.Directory]::Move($package, $moved)
+            [IO.Directory]::Move($moved, $package)
+        } finally {
+            Complete-ItlExecutionGuardHost -Owner $owner -Result succeeded | Out-Null
+        }
+    }
+}
+
 
 
 Describe 'Read-only target source capture boundary' {

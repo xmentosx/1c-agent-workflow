@@ -6767,14 +6767,14 @@ function Invoke-WorkflowManagedPathReplace {
             Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Force -ErrorAction Stop
         }
         if (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) {
-            Move-Item -LiteralPath $TargetPath -Destination $backupPath -ErrorAction Stop
+            Move-WorkflowManagedPathAtomic -SourcePath $TargetPath -DestinationPath $backupPath
             $movedAside = $true
         }
         try {
-            Move-Item -LiteralPath $stagingPath -Destination $TargetPath -ErrorAction Stop
+            Move-WorkflowManagedPathAtomic -SourcePath $stagingPath -DestinationPath $TargetPath
         } catch {
             if ($movedAside -and -not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $backupPath -ErrorAction SilentlyContinue)) {
-                Move-Item -LiteralPath $backupPath -Destination $TargetPath -ErrorAction Stop
+                Move-WorkflowManagedPathAtomic -SourcePath $backupPath -DestinationPath $TargetPath
                 $movedAside = $false
             }
             throw
@@ -6784,8 +6784,49 @@ function Invoke-WorkflowManagedPathReplace {
         }
     } finally {
         Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $stagingRoot
-        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $backupRoot
+        # A moved-aside original that could not return stays as the only copy.
+        if (-not $movedAside -or (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue)) {
+            Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $backupRoot
+        }
     }
+}
+
+function Move-WorkflowManagedPathAtomic {
+    param([Parameter(Mandatory = $true)][string]$SourcePath, [Parameter(Mandatory = $true)][string]$DestinationPath)
+
+    # Windows PowerShell Move-Item falls back to copy-and-delete when a rename
+    # is refused, which strips a directory whose child is another process's
+    # working directory. A rename either moves the whole item or nothing.
+    if (Test-Path -LiteralPath $SourcePath -PathType Container -ErrorAction SilentlyContinue) {
+        [IO.Directory]::Move($SourcePath, $DestinationPath)
+    } else {
+        [IO.File]::Move($SourcePath, $DestinationPath)
+    }
+}
+
+function Remove-WorkflowManagedPathAtomic {
+    param([Parameter(Mandatory = $true)][string]$TargetPath)
+
+    Assert-WorkflowManagedTargetPath -Path $TargetPath
+    if (-not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue)) { return }
+    $removalRoot = New-WorkflowUpdateCopyStagingRoot
+    try {
+        Move-WorkflowManagedPathAtomic -SourcePath $TargetPath -DestinationPath (Join-Path $removalRoot (Split-Path -Leaf $TargetPath))
+    } finally {
+        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $removalRoot
+    }
+}
+
+function Test-WorkflowUpdatePathInUseError {
+    param([AllowNull()][Exception]$Exception)
+
+    for ($current = $Exception; $null -ne $current; $current = $current.InnerException) {
+        # Access denied (5), sharing (32) and lock (33) violations: a rename
+        # refused because a live process holds the item or a descendant.
+        if (($current -is [IO.IOException] -or $current -is [UnauthorizedAccessException]) -and
+            ($current.HResult -band 0xFFFF) -in @(5, 32, 33)) { return $true }
+    }
+    return $false
 }
 
 function Assert-WorkflowUpdateWriteSetPathNoReparse {
@@ -6923,20 +6964,16 @@ function Restore-WorkflowUpdateRollbackSnapshot {
 
     foreach ($record in @($Snapshot.records)) {
         Assert-WorkflowManagedTargetPath -Path $record.targetPath
-        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath ([string]$record.relativePath)
-        if (Test-Path -LiteralPath $record.targetPath -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $record.targetPath -Recurse -Force -ErrorAction Stop
-        }
+        $relative = [string]$record.relativePath
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        # A path the failed step never replaced keeps its bytes and its live
+        # handles; every other path returns through the same rename owner.
+        $before = $(if ($record.existed) { Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath ([string]$record.backupPath) } else { 'absent' })
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -ceq $before) { continue }
         if ($record.existed) {
-            $parent = Split-Path -Parent $record.targetPath
-            if ($parent) {
-                New-Item -ItemType Directory -Force -Path $parent | Out-Null
-            }
-            if ($record.wasDirectory) {
-                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Recurse -Force
-            } else {
-                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Force
-            }
+            Invoke-WorkflowManagedPathReplace -SourcePath ([string]$record.backupPath) -TargetPath ([string]$record.targetPath) -Directory:([bool]$record.wasDirectory)
+        } else {
+            Remove-WorkflowManagedPathAtomic -TargetPath ([string]$record.targetPath)
         }
     }
 
@@ -8334,8 +8371,8 @@ function Restore-WorkflowUpdateOwnedPaths {
         }
         if ($record.existed) {
             Invoke-WorkflowManagedPathReplace -SourcePath ([string]$record.backupPath) -TargetPath ([string]$record.targetPath) -Directory:([bool]$record.wasDirectory)
-        } elseif (Test-Path -LiteralPath $record.targetPath) {
-            Remove-Item -LiteralPath $record.targetPath -Recurse -Force -ErrorAction Stop
+        } else {
+            Remove-WorkflowManagedPathAtomic -TargetPath ([string]$record.targetPath)
         }
     }
 }
@@ -9922,7 +9959,8 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase copy-complete
             $copyCompleted = $true
         } catch {
-            $copyError = $_.Exception.Message
+            $copyException = $_.Exception
+            $copyError = $copyException.Message
             try {
                 Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
                 $rollbackSucceeded = $true
@@ -9930,6 +9968,9 @@ function Invoke-WorkflowDevelopmentBranchUpdateCore {
                 throw "WORKFLOW_UPDATE_BRANCH_COPY_ROLLBACK_FAILED: $copyError Rollback: $($_.Exception.Message)"
             } finally {
                 if ($rollbackSucceeded) { Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot }
+            }
+            if (Test-WorkflowUpdatePathInUseError -Exception $copyException) {
+                throw "WORKFLOW_UPDATE_BRANCH_PATH_IN_USE: $copyError The branch package files were restored unchanged."
             }
             throw
         }
@@ -10048,6 +10089,9 @@ function Assert-WorkflowUpdateRulesRootReady {
 function Get-WorkflowUpdateBranchContinuation {
     param([Parameter(Mandatory = $true)][string]$Status, [string]$Reason, [string]$Default)
     if ($Status -eq 'completed') { return 'Repeat the original pending lifecycle command separately if one was stopped.' }
+    if ($Reason -match '^WORKFLOW_UPDATE_BRANCH_PATH_IN_USE') {
+        return 'Stop the branch process that holds the named path through its owner (its facade session or 1C client), then repeat update-workflow from master.'
+    }
     if ($Status -eq 'deferred') { return 'Let the active owner finish or restore the unavailable worktree, then repeat update-workflow from master.' }
     if ($Reason -match 'WORKFLOW_UPDATE_BRANCH_POST_COPY_INCOMPLETE|WORKFLOW_UPDATE_BRANCH_COMMIT_RECEIPT_MISSING') {
         return 'Preserve the branch snapshot and repeat update-workflow from master to resume this exact candidate. If that candidate itself is defective, first run scripts/update-installed-workflow.ps1 -ProjectRoot <branch root> -Recovery abandon -SnapshotId <pending id> from a clean compatible source.'
@@ -10291,7 +10335,7 @@ function Invoke-WorkflowDevelopmentBranchRollout {
                 }
             } catch {
                 $reason = $_.Exception.Message
-                $status = if ($reason -match '^LIFECYCLE_LOCK_WAIT_TIMEOUT') { 'deferred' } else { 'blocked' }
+                $status = if ($reason -match '^(?:LIFECYCLE_LOCK_WAIT_TIMEOUT|WORKFLOW_UPDATE_BRANCH_PATH_IN_USE)') { 'deferred' } else { 'blocked' }
             } finally {
                 if ($null -ne $lease) {
                     foreach ($handle in @($lease.handles)) { $handle.stream.Dispose() }
