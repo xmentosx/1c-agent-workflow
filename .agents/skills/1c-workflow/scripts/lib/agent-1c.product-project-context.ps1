@@ -83,9 +83,11 @@ function Get-ItlProductProjectStartupDisposition {
     param([string]$RequestedAction,[string]$CatalogMode='', [string]$BrokerOperation='', [string]$WorkflowRecovery='', [string]$WorkflowPhase='')
     if($BrokerOperation){return 'inherited-broker'}
     if($CatalogMode -or $WorkflowRecovery){return 'explicit-recovery'}
-    # The fresh update child must validate the recorded snapshot before any
-    # catalog writer. File post-copy already owns client reconciliation.
-    if($RequestedAction -eq 'update-workflow' -and $WorkflowPhase -eq 'post-copy'){return 'inherited-update'}
+    # File post-copy owns client reconciliation inside the update transaction.
+    # A startup write in either phase would change client files outside its
+    # recorded before/after path state: pre-copy before the snapshot, and the
+    # fresh child before validating it.
+    if($RequestedAction -eq 'update-workflow'){return 'inherited-update'}
     if($RequestedAction -eq 'init-project'){return 'bootstrap'}
     # These runtime owners intentionally do not acquire a new lifecycle guard.
     if($RequestedAction -in @('start-vanessa-profile','stop-vanessa-profile')){return 'inherited-runtime'}
