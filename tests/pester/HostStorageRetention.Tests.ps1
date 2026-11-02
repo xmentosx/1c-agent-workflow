@@ -77,6 +77,14 @@ Describe 'MCP storage owner retention' {
         $script:CachePrunes|Should -Be 0
     }
 
+    It 'treats a native empty cache plan as successful collection without Docker mutation' {
+        function Get-McpStorageCachePlan {param($Settings);return @()}
+        function Invoke-McpStorageDocker {throw 'An empty plan must not invoke Docker'}
+        $result=Invoke-McpStorageCacheCollection (Get-McpStorageSettings @{}) (Get-McpStorageCachePlan (Get-McpStorageSettings @{}))
+        $result.candidates|Should -Be 0
+        $result.removed|Should -Be 0
+    }
+
     It 'uses native age filtering with old human JSON and modern byte JSON: <Size>' -ForEach @(@{Size='13GB'},@{Size='13000000000'}) {
         param($Size)
         $script:AgeFiltered=$false;$script:CacheFixtureSize=$Size

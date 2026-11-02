@@ -164,7 +164,7 @@ function Get-McpStorageCachePlan {
 
 function Invoke-McpStorageCacheCollection {
     param($Settings,$Plan)
-    if(-not @($Plan).Count){return @{candidates=0;removed=0}}
+    if($null -eq $Plan -or -not @($Plan).Count){return @{candidates=0;removed=0}}
     $ids=@($Plan|ForEach-Object {$_.ID})
     $filter='id~=^('+($ids -join '|')+')$'
     $age='until='+([int]$Settings.cacheUnusedDays*24)+'h'
