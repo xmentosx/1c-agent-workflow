@@ -511,9 +511,29 @@ Describe "Source develop queue and delivery" {
             $expectedTree = (& git -C $exactRoot rev-parse 'HEAD^{tree}').Trim(); $qualificationPath = Join-Path $exactRoot 'build\test-results\qualification\full.json'; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $qualificationPath) | Out-Null
             $qualification = [ordered]@{ kind='itl-ai-rules-full-qualification'; status='passed'; reusable=$true; repository=[ordered]@{commit=$expected;tree=$expectedTree;worktreeClean=$true} }; [IO.File]::WriteAllText($qualificationPath, ($qualification | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $root 'README.md'), "stale`n", [Text.UTF8Encoding]::new($false)); & git -C $root add README.md; & git -C $root commit --quiet -m stale; & git -C $root remote add origin 'https://example.invalid/ai_rules_1c.git'
+            $script:Root = Join-Path $TestDrive "workflow source путь"; New-Item -ItemType Directory -Force -Path $script:Root | Out-Null; & git -C $script:Root init --quiet
             $script:DeliveryRequestedAiRulesSource = $root; $script:AiRulesSource = $root; $lock = [pscustomobject]@{ repo='https://example.invalid/ai_rules_1c.git'; commit=$expected; ref=$tag }
             (Resolve-DeliveryAiRulesSource -Lock $lock) | Should -Be ([IO.Path]::GetFullPath($exactRoot))
             $script:AiRulesSource | Should -Be ([IO.Path]::GetFullPath($exactRoot))
+            (Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments @('config', '--local', '--get', 'itl.aiRulesSource')).stdout.Trim() | Should -BeExactly ([IO.Path]::GetFullPath($root))
+
+            # A later publication without the parameter reuses the remembered checkout.
+            $script:DeliveryRequestedAiRulesSource = ''; $script:AiRulesSource = ''
+            (Resolve-DeliveryAiRulesSource -Lock $lock) | Should -Be ([IO.Path]::GetFullPath($exactRoot))
+
+            Remove-Item -LiteralPath $exactRoot -Recurse -Force; & git -C $root worktree prune; Remove-Item -LiteralPath $root -Recurse -Force
+            { Resolve-DeliveryAiRulesSource -Lock $lock } | Should -Throw "*remembered itl.aiRulesSource '$([IO.Path]::GetFullPath($root))' no longer exists*"
+        }
+    }
+
+    It "requires an explicit ai_rules source when none was remembered" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Resolve-DeliveryAiRulesSource')) { Invoke-Expression $definition.Extent.Text }
+            . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
+            $script:Root = Join-Path $TestDrive "workflow без памяти"; New-Item -ItemType Directory -Force -Path $script:Root | Out-Null; & git -C $script:Root init --quiet
+            $script:DeliveryRequestedAiRulesSource = ''
+            { Resolve-DeliveryAiRulesSource -Lock ([pscustomobject]@{ repo='https://example.invalid/ai_rules_1c.git'; commit=('a' * 40) }) } |
+                Should -Throw 'Owned ai_rules_1c publication requires -AiRulesSource pointing to a checkout of the locked repository. An accepted checkout*'
         }
     }
 

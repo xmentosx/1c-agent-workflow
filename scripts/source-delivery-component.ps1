@@ -375,14 +375,27 @@ function Test-DeliveryAiRulesQualificationFile {
 
 function Resolve-DeliveryAiRulesSource {
     param([object]$Lock)
-    $requested = if ($script:DeliveryRequestedAiRulesSource) { [IO.Path]::GetFullPath($script:DeliveryRequestedAiRulesSource) } else { "" }
+    # An accepted fork checkout is remembered in the shared repository config, so
+    # a later publication from any worktree or session finds it without the
+    # parameter. ITL_AI_RULES_SOURCE_PATH is not reused: it also redirects the
+    # ai_rules clone of every installed project's update-workflow.
+    $explicit = [bool]$script:DeliveryRequestedAiRulesSource
+    $requested = if ($explicit) {
+        [IO.Path]::GetFullPath($script:DeliveryRequestedAiRulesSource)
+    } else {
+        (Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments @("config", "--local", "--get", "itl.aiRulesSource") -AllowFailure).stdout.Trim()
+    }
     if (-not $requested -or -not (Test-Path -LiteralPath $requested -PathType Container)) {
-        throw "Owned ai_rules_1c publication requires explicit -AiRulesSource pointing to a checkout of the locked repository."
+        $remembered = if ($explicit -or -not $requested) { "" } else { " The remembered itl.aiRulesSource '$requested' no longer exists." }
+        throw "Owned ai_rules_1c publication requires -AiRulesSource pointing to a checkout of the locked repository.$remembered An accepted checkout is remembered in local Git config itl.aiRulesSource for later publications."
     }
     $expected = ([string]$Lock.commit).ToLowerInvariant()
     $origin = (Invoke-WorktreeGit -Root $requested -Arguments @("remote", "get-url", "origin")).stdout.Trim()
     if ((ConvertTo-DeliveryRepositoryIdentity -Url $origin) -cne (ConvertTo-DeliveryRepositoryIdentity -Url ([string]$Lock.repo))) {
         throw "ai_rules_1c source origin does not match the canonical lock repository."
+    }
+    if ($explicit) {
+        [void](Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments @("config", "--local", "itl.aiRulesSource", $requested) -AllowFailure)
     }
     $treeResult = Invoke-WorktreeGit -Root $requested -Arguments @("rev-parse", "$expected^{tree}") -AllowFailure
     $expectedTree = $treeResult.stdout.Trim().ToLowerInvariant()

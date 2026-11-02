@@ -1092,9 +1092,15 @@ verification/export/refresh/cleanup хвост входят в тот же budge
 проверки и условия успеха сохраняются.
 
 ```powershell
-.\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
+.\scripts\source-delivery.ps1 -Action PublishDevelop -AiRulesSource <fork>
 ```
+
+`<fork>` — локальный checkout контролируемого форка с origin из lock. Принятый
+checkout запоминается в локальном Git config `itl.aiRulesSource` общего
+репозитория, поэтому последующие публикации из любого worktree или сессии
+запускаются без параметра; явный `-AiRulesSource` заменяет запомненный путь.
+`ITL_AI_RULES_SOURCE_PATH` для этого не используется: переменная перенаправляет
+также ai_rules clone в `update-workflow` установленных проектов.
 
 Команду запускают в foreground с внешним timeout, покрывающим одобренный plan и
 запас на сборку кандидата, push и удалённую сверку. Не следует выбирать timeout
@@ -1212,7 +1218,7 @@ URL перечитывается и сверяется с SHA lock: локаль
 После прерванного push та же сверка по lock опубликованного commit обязательна
 перед очисткой очереди и ответом `dependenciesInstallable=true`.
 Совпавшие remote identities проверяются без мутации; отсутствующий rules branch/tag
-публикуется после Develop из явного clean `-AiRulesSource`, а отсутствующий Vanessa
+публикуется после Develop из clean `-AiRulesSource` или запомненного `itl.aiRulesSource`, а отсутствующий Vanessa
 или on-demand asset автоматически добавляет в тот же запуск только требуемые
 Release capabilities. Для Vanessa это `extension-smoke` с `config-cadence`, для
 `itl-ondemand-mcp` — `ondemand-mcp`; явный `-RequireRelease` по-прежнему означает
