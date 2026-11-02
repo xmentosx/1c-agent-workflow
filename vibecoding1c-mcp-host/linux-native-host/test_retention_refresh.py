@@ -95,6 +95,21 @@ class RetentionCompletion(unittest.TestCase):
         self.assertFalse(owner.finish_code_retention(self.client, code, self.item, self.status, self.path, 'running'))
         self.client.call.assert_not_called()
 
+    def test_same_second_waits_before_dispatch_then_a_tiny_pass_can_complete(self):
+        from datetime import datetime
+        initial = datetime.fromisoformat(self.code['data']['indexing']['started_at'].replace('Z', '+00:00')).timestamp()
+        self.client.call.return_value = {'status': 'success'}
+        with patch.object(owner.time, 'time', return_value=initial + 0.8):
+            self.assertFalse(owner.finish_code_retention(self.client, self.code, self.item, self.status, self.path, 'completed'))
+        self.client.call.assert_not_called(); self.assertNotIn('codeRetention', self.status)
+        with patch.object(owner.time, 'time', return_value=initial + 1.1):
+            self.assertFalse(owner.finish_code_retention(self.client, self.code, self.item, self.status, self.path, 'completed'))
+        self.client.call.assert_called_once_with('reindex', {'force': False})
+        fresh = copy.deepcopy(self.code)
+        fresh['data']['indexing']['started_at'] = datetime.fromtimestamp(initial + 1, tz=datetime.fromisoformat('2026-01-01T00:00:00+00:00').tzinfo).isoformat()
+        self.assertTrue(owner.finish_code_retention(self.client, fresh, self.item, self.status, self.path, 'completed'))
+        self.client.call.assert_called_once()
+
     def test_changed_publication_preserves_original_intent(self):
         self.request_marker()
         code = self.completed_pass(); code['data']['generation']['published']['generation_id'] = 'unexpected'
