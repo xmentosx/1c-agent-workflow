@@ -645,6 +645,39 @@ function Get-DockerDesktopRuntimeStatus {
     return "unknown"
 }
 
+function Get-RunningMcpHostWslDistributions {
+    # WSL emits UTF-16, independently of the host's UTF-8 console transport.
+    $running = Invoke-ProcessWithTimeout -FilePath "wsl.exe" -Arguments @("--list", "--running", "--quiet") -NativeOutputEncoding ([Text.Encoding]::Unicode) -TimeoutSec 15 -Description "identify Docker-owned WSL backend"
+    if ($running.exitCode -ne 0) { throw "Could not identify running WSL distributions; refusing VM shutdown." }
+    return @($running.lines | ForEach-Object { $_.Trim([char]0, [char]32) } | Where-Object { $_ })
+}
+
+function Repair-DockerDesktopWslBackend {
+    param([object]$Settings)
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
+    $running = @(Get-RunningMcpHostWslDistributions)
+    if ($running.Count -ne 1 -or $running[0] -ne "docker-desktop") {
+        Write-Warning "WSL VM recovery requires docker-desktop to be the only running distribution; retain other WSL work and resolve it before repeating watchdog-run."
+        return $false
+    }
+    Write-Warning "Desktop restart did not restore Engine; recovering the WSL VM used exclusively by docker-desktop."
+    try {
+        Invoke-DockerCommandChecked -Arguments @("desktop", "stop", "--force", "--timeout", [string]$Settings.dockerDesktopCommandTimeoutSeconds) -TimeoutSec ($Settings.dockerDesktopCommandTimeoutSeconds + 30) -Description "stop unresponsive Desktop before Docker-owned WSL recovery"
+    } catch { Write-Warning "Desktop stop did not complete; Engine remains unavailable. $($_.Exception.Message)" }
+    # Desktop stop may leave no running distribution. Recheck immediately before
+    # shutdown so a newly observed independent distribution vetoes the reset.
+    if (@(Get-RunningMcpHostWslDistributions | Where-Object { $_ -ne "docker-desktop" }).Count -gt 0) {
+        throw "Another WSL distribution started before VM recovery; VM shutdown was cancelled. Retain that work and repeat watchdog-run after it finishes."
+    }
+    $terminated = Invoke-ProcessWithTimeout -FilePath "wsl.exe" -Arguments @("--shutdown") -NativeOutputEncoding ([Text.Encoding]::Unicode) -TimeoutSec 45 -Description "recover WSL VM used exclusively by Docker"
+    if ($terminated.exitCode -ne 0) { throw "Docker-only WSL VM shutdown failed; Engine recovery is not verified." }
+    try {
+        Invoke-DockerCommandChecked -Arguments @("desktop", "start", "--timeout", [string]$Settings.dockerDesktopCommandTimeoutSeconds) -TimeoutSec ($Settings.dockerDesktopCommandTimeoutSeconds + 30) -Description "start Desktop after Docker-owned WSL recovery"
+    } catch { Write-Warning "Desktop start did not complete; checking Engine readiness. $($_.Exception.Message)" }
+    return (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds)
+}
+
 function Repair-DockerDesktopAvailability {
     param([object]$Settings)
 
@@ -658,12 +691,14 @@ function Repair-DockerDesktopAvailability {
 
     $desktopStatus = Get-DockerDesktopRuntimeStatus
     if ([string]$initialProbe.failureKind -eq "probe-timeout" -and $desktopStatus -eq "running") {
-        Write-Warning "Docker Engine probe timed out while Docker Desktop reports running; retrying the probe without restarting Docker Desktop. $($initialProbe.message)"
-        $retryProbe = Get-DockerDaemonProbe
-        if ($retryProbe.available) { return "probe-recovered" }
-        throw "Docker Engine probe timed out while Docker Desktop reports running; refusing to restart a reported-running Docker Desktop instance. Initial probe: $($initialProbe.message) Retry: $($retryProbe.message)"
+        Write-Warning "Docker Engine probe timed out while Docker Desktop reports running; allowing 30 seconds for transient recovery before a bounded restart. $($initialProbe.message)"
+        if (Wait-DockerDaemonAvailable -TimeoutSec 30 -PollSeconds $Settings.dockerDesktopPollSeconds) {
+            return "probe-recovered"
+        }
+        Write-Warning "Docker Engine remains unavailable after the grace period; Docker Desktop running status does not prove Engine availability."
     }
     $desktopAction = $(if ($desktopStatus -eq "stopped") { "start" } else { "restart" })
+    Register-McpHostDockerRecoveryAttempt -Settings $Settings -DesktopAction $desktopAction
     Write-Host "Docker Engine is unavailable; running bounded Docker Desktop $desktopAction (reported status: $desktopStatus)."
     $commandFailure = ""
     try {
@@ -678,6 +713,10 @@ function Repair-DockerDesktopAvailability {
     if (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds) {
         Write-Host "Docker Desktop recovery completed; Docker Engine ping is available."
         return $desktopAction
+    }
+    if (Repair-DockerDesktopWslBackend -Settings $Settings) {
+        Write-Host "Docker Desktop recovery completed after resetting its WSL backend; Docker Engine ping is available."
+        return "restart-wsl"
     }
 
     $logTail = ""
@@ -753,7 +792,8 @@ function Invoke-ProcessWithTimeout {
         [string]$FilePath,
         [string[]]$Arguments,
         [int]$TimeoutSec = 300,
-        [string]$Description = ""
+        [string]$Description = "",
+        [Text.Encoding]$NativeOutputEncoding = [Text.Encoding]::UTF8
     )
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $FilePath
@@ -762,8 +802,8 @@ function Invoke-ProcessWithTimeout {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.StandardOutputEncoding = $script:Utf8NoBom
-    $startInfo.StandardErrorEncoding = $script:Utf8NoBom
+    $startInfo.StandardOutputEncoding = $NativeOutputEncoding
+    $startInfo.StandardErrorEncoding = $NativeOutputEncoding
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     try {
@@ -3553,12 +3593,52 @@ function Get-McpHostWatchdogSettings {
         dockerDesktopRecoveryTimeoutSeconds = $dockerDesktopRecoveryTimeoutSeconds
         dockerDesktopCommandTimeoutSeconds = $dockerDesktopCommandTimeoutSeconds
         dockerDesktopPollSeconds = $dockerDesktopPollSeconds
+        dockerDesktopRecoveryStatePath = Get-McpHostWatchdogStatePath -Config $Config
     }
 }
 
 function Get-McpHostWatchdogStatePath {
     param([object]$Config)
     return (Join-Path (Get-StateRoot -Config $Config) "watchdog-state.json")
+}
+
+function Read-McpHostDockerRecoveryState {
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    return (Get-ObjectValue -Object (Read-JsonFile -Path $Path) -Name "dockerDesktopRecovery" -Default $null)
+}
+
+function Register-McpHostDockerRecoveryAttempt {
+    param([object]$Settings, [string]$DesktopAction)
+
+    # The existing locked watchdog owns both recovery and its cooldown receipt.
+    # Persist before the command so interruption cannot create a restart loop.
+    $path = [string](Get-ObjectValue -Object $Settings -Name "dockerDesktopRecoveryStatePath" -Default "")
+    if (-not $path) { return }
+    $previous = Read-McpHostDockerRecoveryState -Path $path
+    $now = [DateTimeOffset]::UtcNow
+    $lastAttempt = [DateTimeOffset]::MinValue
+    $lastAttemptValue = Get-ObjectValue -Object $previous -Name "lastAttemptAt" -Default ""
+    # PowerShell 7 may deserialize ISO timestamps as DateTime; string casting
+    # would discard its UTC kind and move the cooldown by the local UTC offset.
+    $hasLastAttempt = if ($lastAttemptValue -is [DateTime] -or $lastAttemptValue -is [DateTimeOffset]) {
+        $lastAttempt = [DateTimeOffset]$lastAttemptValue
+        $true
+    } else { [DateTimeOffset]::TryParse([string]$lastAttemptValue, [ref]$lastAttempt) }
+    if ($hasLastAttempt) {
+        $remaining = 300 - ($now - $lastAttempt).TotalSeconds
+        if ($remaining -gt 0) {
+            throw "Docker Desktop recovery cooldown is active until $($lastAttempt.AddSeconds(300).ToString('o')); Engine is still unavailable. The next scheduled watchdog run will retry after the cooldown."
+        }
+    }
+    $state = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-JsonFile -Path $path } else { [pscustomobject]@{ schemaVersion = 1 } }
+    $state | Add-Member -NotePropertyName dockerDesktopRecovery -NotePropertyValue ([ordered]@{
+        lastAttemptAt = $now.ToString("o")
+        action = $DesktopAction
+        nextAttemptAt = $now.AddSeconds(300).ToString("o")
+    }) -Force
+    Write-JsonFile -Path $path -Value $state
 }
 
 function Write-McpHostWatchdogRunState {
@@ -3577,6 +3657,8 @@ function Write-McpHostWatchdogRunState {
         status = $Status
         message = $Message
     }
+    $recovery = Read-McpHostDockerRecoveryState -Path (Get-McpHostWatchdogStatePath -Config $Config)
+    if ($null -ne $recovery) { $state["dockerDesktopRecovery"] = $recovery }
     $proofCache = Get-Variable -Name DirectEndpointProofCache -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $proofCache -and $null -ne $proofCache.Value) {
         $state["endpointProofs"] = @($proofCache.Value.Values)
