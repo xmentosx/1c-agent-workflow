@@ -224,10 +224,10 @@ ladder as a second deployment owner in the same run.
 A code review in a managed project, including `/ponytail-review`, takes its scope from `get-review-scope` and passes it as the explicit scope. Run it from the development branch worktree through the compact runner:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action get-review-scope -Purpose review
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action get-review-scope -ReviewPurpose review
 ```
 
-- **Purpose** is required. `self` is the author's self-review: Soft gate C in full-cycle, the final OpenSpec apply review, review of code changed in this session, and an `arch-reviewer` or `/ponytail-review` invoked in this session. `review` is a separately requested review. A requested review of code this session changed is a self-review: say so and recommend a separate chat.
+- **ReviewPurpose** is required. `self` is the author's self-review: Soft gate C in full-cycle, the final OpenSpec apply review, review of code changed in this session, and an `arch-reviewer` or `/ponytail-review` invoked in this session. `review` is a separately requested review. A requested review of code this session changed is a self-review: say so and recommend a separate chat.
 - **Scope:** every file that differs from the branch scope base (item 7 of `EXPORT_DEV_BRANCH_RESULT`): committed, staged, unstaged and non-ignored untracked, deletions included, renames as delete plus add. Every review covers the whole branch work.
 - **Report:** `stageDetail` carries the base, provenance and counts per kind; the full report is normally in `userReportPath`. Read its header and the needed sections by range, not the whole file: subject objects per dump root (full/partial, unparsed paths), subject files, tests, requirement sources, unclassified (grouped with counts when large). Excluded files are only counted.
 - **Kinds, first match wins:** `ConfigDumpInfo.xml` (always excluded) → excluded: ITL-managed paths of the base, `HEAD` and the static set, and `.agent-1c/diagnostic-artifacts` → subject: `src/cf`, `src/cfe`, except the project tests extension `src/cfe/<YAXUNIT_TESTS_EXTENSION_NAME>` → requirement sources: `openspec/changes`, `docs`, `handoffs` → tests: Vanessa features, YAxUnit test sources, suite catalogs and obligation `inputPaths` outside `src` → unclassified.

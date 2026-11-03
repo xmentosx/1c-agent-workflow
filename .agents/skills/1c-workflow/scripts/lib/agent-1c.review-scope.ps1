@@ -155,7 +155,7 @@ function Get-ReviewScope {
     param([ValidateSet('', 'review', 'self')][string]$ReviewPurpose = '')
 
     if (-not $ReviewPurpose) {
-        throw "REVIEW_SCOPE_PURPOSE_REQUIRED: pass -Purpose review (a separately requested review) or -Purpose self (the author's self-review)."
+        throw "REVIEW_SCOPE_PURPOSE_REQUIRED: pass -ReviewPurpose review (a separately requested review) or -ReviewPurpose self (the author's self-review)."
     }
     $refusal = $null
     try {

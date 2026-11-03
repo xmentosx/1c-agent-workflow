@@ -404,7 +404,7 @@
                 $runs = @(foreach ($index in 1, 2) {
                     $statusPath = Join-Path $TestDrive "review-status-$index-$([guid]::NewGuid().ToString('N')).json"
                     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $HelperPath + '"'), '-ProjectRoot', ('"' + $fixture.root + '"'),
-                        '-Action', 'get-review-scope', '-Purpose', 'review', '-RunStatusPath', ('"' + $statusPath + '"'))
+                        '-Action', 'get-review-scope', '-ReviewPurpose', 'review', '-RunStatusPath', ('"' + $statusPath + '"'))
                     [pscustomobject]@{ statusPath = $statusPath; process = Start-Process -FilePath powershell -ArgumentList $arguments -PassThru -WindowStyle Hidden }
                 })
                 foreach ($run in $runs) {
@@ -505,7 +505,7 @@
         $fixture = New-ReviewRepository 'вне ветки'
         & {
             . $HelperPath -ProjectRoot $fixture.root -Action help *> $null
-            { Get-ReviewScope } | Should -Throw '*REVIEW_SCOPE_PURPOSE_REQUIRED*-Purpose review*-Purpose self*'
+            { Get-ReviewScope } | Should -Throw '*REVIEW_SCOPE_PURPOSE_REQUIRED*-ReviewPurpose review*-ReviewPurpose self*'
             Invoke-ReviewGit $fixture.root checkout --quiet master | Out-Null
             Write-ReviewFile $fixture.root 'src/cf/CommonModules/Общий модуль/Ext/Module.bsl' 'local edit'
             { Get-ReviewScope -ReviewPurpose review } | Should -Throw '*REVIEW_SCOPE_DEVELOPMENT_BRANCH_REQUIRED*itldev/*review-criteria.md -> Scope*'
@@ -515,8 +515,8 @@
             Get-ReviewKind $self 'subject' | Should -Be @('src/cf/CommonModules/Общий модуль/Ext/Module.bsl')
         }
         $agent = Get-Content -Raw -Encoding UTF8 $HelperPath
-        $agent | Should -Match '\[ValidateSet\("", "review", "self"\)\]\s*\[string\]\$Purpose'
-        $agent | Should -Match '"get-review-scope" \{ Invoke-ReviewScopeAction -ReviewPurpose \$Purpose \}'
+        $agent | Should -Match '\[ValidateSet\("", "review", "self"\)\]\s*\[string\]\$ReviewPurpose'
+        $agent | Should -Match '"get-review-scope" \{ Invoke-ReviewScopeAction -ReviewPurpose \$ReviewPurpose \}'
         (Get-Content -Raw (Join-Path (Split-Path -Parent $HelperPath) 'run-itl-command.ps1')) | Should -Match '"get-review-scope"'
         $overlay = (Get-Content -Raw -Encoding UTF8 (Join-Path $context.RepoRoot 'templates/ai-rules-overlay/AGENTS.md')) -replace '\s+', ' '
         $overlay | Should -Match ([regex]::Escape('For a code review, including `/ponytail-review`, take the scope from the helper action `get-review-scope`'))

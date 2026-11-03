@@ -111,7 +111,7 @@ param(
     [string]$Client = "",
     [string]$Mode = "status",
     [ValidateSet("", "review", "self")]
-    [string]$Purpose = "",
+    [string]$ReviewPurpose = "",
     [ValidateSet("run", "analyze", "compare")]
     [string]$BenchmarkMode = "analyze",
     [string]$BenchmarkModel = "",
@@ -358,7 +358,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentModel" -Value $AgentModel
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "Purpose" -Value $Purpose
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ReviewPurpose" -Value $ReviewPurpose
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
     if ($ResultPurpose -eq 'production') { Add-Agent1cReexecArgument -Arguments $arguments -Name 'ResultPurpose' -Value $ResultPurpose }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
@@ -679,7 +679,7 @@ try {
         "reset-dev-branch" { Reset-DevBranch }
         "lock-config-repository-objects" { Lock-ConfigRepositoryObjects }
         "export-dev-branch-result" { Export-DevBranchResult }
-        "get-review-scope" { Invoke-ReviewScopeAction -ReviewPurpose $Purpose }
+        "get-review-scope" { Invoke-ReviewScopeAction -ReviewPurpose $ReviewPurpose }
         "close-dev-branch" { Close-DevBranch }
         "switch-master" { Switch-Master }
         "switch-dev-branch" { Switch-DevBranch }

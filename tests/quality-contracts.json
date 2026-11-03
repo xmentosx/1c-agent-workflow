@@ -2438,7 +2438,7 @@
       "VerificationRepairMaxAttempts": "repair-session",
       "VerificationRepairGrantSource": "repair-session",
       "CleanupDryRun": "core",
-      "Purpose": "review-scope",
+      "ReviewPurpose": "review-scope",
       "ConfirmBranchDeletion": "core",
       "AuxiliaryContourName": "auxiliary",
       "AuxiliaryDisplayName": "auxiliary",
