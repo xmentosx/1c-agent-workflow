@@ -6813,7 +6813,12 @@ Describe 'Completed lifecycle transfer baseline' {
             [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Первый модуль/Ext/Module.bsl'), 'own committed change')
             Invoke-Git @('add','src/cf'); Invoke-Git @('commit','--quiet','-m','own-change')
             $state | Add-Member lastConfigBaseUpdatedCommit (Get-CurrentCommit)
-            Invoke-Git @('update-ref','refs/heads/master',(Get-CurrentCommit))
+            # Master only moves forward (sync-master); a rewritten master is the
+            # separate DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED regression.
+            Invoke-Git @('checkout','--quiet','master')
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'master-note.txt'), 'master moved forward')
+            Invoke-Git @('add','master-note.txt'); Invoke-Git @('commit','--quiet','-m','master-forward')
+            Invoke-Git @('checkout','--quiet','itldev/transfer-baseline')
             [IO.File]::WriteAllText((Join-Path $fixture.root 'src/cf/CommonModules/Второй модуль/Ext/Module.bsl'), 'own staged change')
             Invoke-Git @('add','src/cf')
             $result = Get-ConfigRepositoryTransferPlan -ExportPath src/cf -State $state

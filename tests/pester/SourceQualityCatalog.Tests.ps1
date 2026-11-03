@@ -442,13 +442,17 @@ Describe 'Source quality catalog contracts' {
         $callerInputConsumer = 'tests/pester/ProductProjectCallerInput.Tests.ps1'
         $registryConsumers = @($registrySetupConsumers + @($callerInputConsumer))
         $autonomyConsumer = 'tests/pester/LifecycleGitContinuation.Tests.ps1'
+        # Review scope reads the lifecycle-owned transfer scope base; its regression
+        # is one explicit lifecycle addition, outside the historical counts.
+        $reviewScopeConsumer = 'tests/pester/ReviewScope.Tests.ps1'
         # Keep the historical 57/80 cohort. The third registry consumer proves
         # native input independently of setup; account for its own owner/budget
         # rather than changing the historical counts or dropping its selection.
         # The concurrent snapshot regression is another explicit addition.
-        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer }).Count | Should -Be 57
-        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer}).Count | Should -Be 80
-        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count)
+        @($selection.tests | Where-Object { $_ -notin $splitWorkflowConsumers -and $_ -notin $gate6Tests -and $_ -notin $splitHostConsumers -and $_ -notin $splitReleaseConsumers -and $_ -notin $readinessConsumers -and $_ -notin $compactConsumers -and $_ -notin $lifecycleConsumers -and $_ -ne $qualificationConsumer -and $_ -ne $gitTransportConsumer -and $_ -ne $classificationConsumer -and $_ -notin $registryConsumers -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer }).Count | Should -Be 57
+        @($selection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $reviewScopeConsumer}).Count | Should -Be 80
+        @($selection.tests).Count | Should -Be (80 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + 1)
+        @($selection.tests) | Should -Contain $reviewScopeConsumer
         @($selection.tests) | Should -Contain $changeModelConsumer
         @($selection.tests) | Should -Contain $standPreparationConsumer
         foreach ($owner in @($catalog.contracts | Where-Object { $_.tests -contains 'tests/pester/ReleaseGate.Tests.ps1' })) {
@@ -530,8 +534,11 @@ Describe 'Source quality catalog contracts' {
         # Reserve 180s for this additional consumer; keep every historical cohort,
         # its observed timings and all runtime/hard watchdogs unchanged.
         $changeModelSeconds = 180.0
+        # review-scope/ReviewScope.Tests.ps1: 15 cases, ~45s in WinPS 5.1 with two
+        # real helper processes; reserve 60s for this explicit lifecycle addition.
+        $reviewScopeSeconds = 60.0
         [double]$changeModelOwner.budgetSeconds | Should -BeGreaterOrEqual $changeModelSeconds
-        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds
+        $estimatedCriticalPath = $preludeSeconds + $parallelSpanSeconds + $oldCompactSeconds + $newCompactPassedSeconds + $dependencySeconds + [double]$trackedTimings.files.'RepositoryGitTransport.Tests.ps1' + [double]$trackedTimings.files.'ToolingReadiness.Tests.ps1' + $registryBudgetReserve + $productionPreparationSeconds + $snapshotSeconds + $changeModelSeconds + $reviewScopeSeconds
         $estimatedCriticalPath | Should -BeGreaterThan 1200
         ([double]$catalog.budgets.targetedHardSeconds - $estimatedCriticalPath) | Should -BeGreaterThan 120
         # Catalog-only changes now select static catalog proof. An explicitly
@@ -547,8 +554,8 @@ Describe 'Source quality catalog contracts' {
         # remain unchanged, and the exact added selection is checked below. The
         # fork binding asserts over catalog entries, so it is a catalog consumer.
         $catalogInvariantConsumer = 'tests/pester/DevelopForkConsumerInventory.Tests.ps1'
-        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer}).Count | Should -Be 84
-        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1)
+        @($currentSelection.tests|Where-Object {$_ -notin $splitWorkflowConsumers -and $_ -notin $splitIncrementalConsumers -and $_ -notin $registryConsumers -and $_ -ne $productionPreparationConsumer -and $_ -ne $autonomyConsumer -and $_ -ne $snapshotConsumer -and $_ -ne $changeModelConsumer -and $_ -ne $checkConsumer -and $_ -ne $routingConsumer -and $_ -ne $standPreparationConsumer -and $_ -ne $catalogInvariantConsumer -and $_ -ne $reviewScopeConsumer}).Count | Should -Be 84
+        @($currentSelection.tests).Count | Should -Be (84 + $registryConsumers.Count + 6 + $splitWorkflowConsumers.Count + $splitIncrementalConsumers.Count + 1 + 1)
         @($currentSelection.tests | Where-Object { $_ -notin $selection.tests -and $_ -notin $splitIncrementalConsumers }) | Should -Be @(
             $catalogInvariantConsumer,
             "tests/pester/HostTestSelection.Tests.ps1",

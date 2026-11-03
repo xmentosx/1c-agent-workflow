@@ -695,7 +695,11 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "internal-ondemand-complete-test-client-close",
         "internal-ondemand-stop"
     )
+    # Review scope only reads branch state and Git; a review in another chat on
+    # the same worktree must not wait for the author's check or publication.
+    $branchScopeReadActions = @("get-review-scope")
     if ($readOnlyActions -contains $RequestedAction) { return $false }
+    if ($branchScopeReadActions -contains $RequestedAction) { return $false }
     if ($facadeExecutionActions -contains $RequestedAction) { return $false }
     # These writes are admitted by the selected store's scoped file leases;
     # a project lifecycle lock would serialize unrelated external changes.

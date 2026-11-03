@@ -113,19 +113,19 @@
       "path": "AGENTS.md",
       "requirementId": "ITL-AI-RULES-R42",
       "disposition": "resolved",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. The ITL appendix routes code review, including /ponytail-review, to get-review-scope instead of the local delta (+264 bytes).",
       "upstreamSha256": "6a84cd58486067933ed6c5abb014be33a52fc3a7919e16b558075a1f272a9530",
       "baselineSha256": "5522a96f7f8c67f90e30955e4b1fdafc10b8e4cee6b290b4ca36bdb4c8b923af",
-      "resultSha256": "741a6cd0536edd8d478755f7237d82b0cc0c07b7e0145ab2d221a967eb8ee84e"
+      "resultSha256": "df2b1b509fd7eb84305f588e5e06b5188554a2be1b79987c165cb1c201219afd"
     },
     {
       "path": "content/agents/code-reviewer.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Previous resolved: Keep the r31 standalone syntax and logic-only CodeChecker route consistent at this call site. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Previous resolved: Keep the r31 standalone syntax and logic-only CodeChecker route consistent at this call site. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Reduced to role, gate, inputs and tools; criteria and report by review-criteria.md; scope prepared by the parent, not the uncommitted diff.",
       "upstreamSha256": "95d4097f3624aa148d0e0a2e57a3b2d36224113540aaf8f4da90dc5e0ed27d02",
       "baselineSha256": "48f2c42df1ff885c5f0f53883c486ad14e5121c29c33214656665ee3e0a31b73",
-      "resultSha256": "48f2c42df1ff885c5f0f53883c486ad14e5121c29c33214656665ee3e0a31b73"
+      "resultSha256": "e7327d2f5a25ebcf6489d096f853020a843bf39dfda57f3fddeaa245a0dd4a2e"
     },
     {
       "path": "content/agents/developer.md",
@@ -1031,10 +1031,10 @@
       "path": "content/rules/sdd-integrations.md",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
+      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R47: expose material scope costs and require executable risk-based acceptance without new documents or weaker approved coverage. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Apply step 3 keeps its trigger and points to review-criteria.md; design.md covers the Plan check.",
       "upstreamSha256": "0c4dda48f15addc69b08c27060b0109292f47263f012a9a16519ceb9fb93439e",
       "baselineSha256": "f18f30484abccbdda49e24a28a82f2df55a146baf2964a6430d87a91bb647528",
-      "resultSha256": "cea3e4dd47584ca89225e0d881659d6c6c6354fedc1dd480da0f0ae788ff6e91"
+      "resultSha256": "dfba60bf7548569e2f4c5e7a53dec105cdcdb5619f3d82e6dc8dc13dedd045ba"
     },
     {
       "path": "content/rules/subagent-core.md",
@@ -1048,11 +1048,11 @@
     {
       "path": "content/rules/subagents.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. reviewer-risk template reviews by review-criteria.md with its scope contract.",
       "upstreamSha256": "14259e04afdcdc5eeeca9e0dcbfc3b9ead008b4a6ae915b23b9f56514119e306",
       "baselineSha256": "a88487403635a62431a51c965afa25f7b2cd77642c5fcb32127f0e9ec6de5d44",
-      "resultSha256": "a88487403635a62431a51c965afa25f7b2cd77642c5fcb32127f0e9ec6de5d44"
+      "resultSha256": "50f920744db698571395820b789d64c67b23173e589f1bfde04785d4537bfb59"
     },
     {
       "path": "content/rules/support-feedback.md",
@@ -1075,11 +1075,11 @@
     {
       "path": "content/rules/tooling-playbooks.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Code Review step 0 loads review-criteria.md; Writing New Code owns the conditional Plan check (integration point, reuse result, C5 tasks, CONFUSION on a forced workaround).",
       "upstreamSha256": "f790b738553fa248b61ff5e32f7e1fdcc78ac18f842e29b3d2a6e392efe8703e",
       "baselineSha256": "fce7adaac0b0d4d1d85493816b4865562e29b86962bffcf25cbbfeeac40382c9",
-      "resultSha256": "fce7adaac0b0d4d1d85493816b4865562e29b86962bffcf25cbbfeeac40382c9"
+      "resultSha256": "82f23733dfc4b44cfc73249cb65a6986e62632d4b990d45ed33e5c1931b39a72"
     },
     {
       "path": "content/rules/ui-testing-tools.md",
@@ -1103,10 +1103,10 @@
       "path": "content/rules/verification-delivery.md",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root.",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Soft gate C keeps triggers and points to review-criteria.md; a separately requested review only reports.",
       "upstreamSha256": "92c9734c33d5db396e39d6ca2698e8e24e04f0a8b913aaf11d9c792c75291e89",
       "baselineSha256": "7400ebb69da8f87529e754379a1d69c5e44a8e0c4fa1ea91f1e106c357125879",
-      "resultSha256": "2270f1eafaf0d0b5bfae4bd417b06861a84d9608e3f71714d0df34c9843f380e"
+      "resultSha256": "1f5d1ae89db7b4a74e5d4cbf153ee4a5b001595a04fb5e051a04176504aad15d"
     },
     {
       "path": "content/rules/verification-gates.md",
@@ -2218,11 +2218,11 @@
     {
       "path": "README.md",
       "requirementId": "ITL-AI-RULES-R42",
-      "disposition": "carry-forward",
-      "reason": "Preserve prior release guidance and document the r31 standalone syntax plus logic-only CodeChecker route. Replace upstream main plugin-install guidance with the immutable ITL controlled-fork route and read-only ensure contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 resolved: retain immutable controlled-fork and read-only plugin ensure routing; document project-local Codex Agent Skills and all six canonical OpenSpec phases, Caveman auto/session-full behavior, independent per-client model maps and the explicit reviewer gate. Adopt essential UI default with independent saved Vanessa, preserve physical TOOL_QA identity, and describe metadata-first bounded managed ROCTUP without claiming parser or live-client proof from placement. Document the authoritative current context ceilings and measured c1 delta rather than stale 11/124/28 KiB values; no mandatory safety meaning is removed to satisfy a budget. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline.",
+      "disposition": "resolved",
+      "reason": "Preserve prior release guidance and document the r31 standalone syntax plus logic-only CodeChecker route. Replace upstream main plugin-install guidance with the immutable ITL controlled-fork route and read-only ensure contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 resolved: retain immutable controlled-fork and read-only plugin ensure routing; document project-local Codex Agent Skills and all six canonical OpenSpec phases, Caveman auto/session-full behavior, independent per-client model maps and the explicit reviewer gate. Adopt essential UI default with independent saved Vanessa, preserve physical TOOL_QA identity, and describe metadata-first bounded managed ROCTUP without claiming parser or live-client proof from placement. Document the authoritative current context ceilings and measured c1 delta rather than stale 11/124/28 KiB values; no mandatory safety meaning is removed to satisfy a budget. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Lists review-criteria.md.",
       "upstreamSha256": "bd606687c4613615b64cd9d05349d0a794c74558cf5f96de7627e922dcc3f35e",
       "baselineSha256": "b9630587fb30e0fdf040bec46cd49ca311b6d9dd0f495d674468a3f34ace5c62",
-      "resultSha256": "b9630587fb30e0fdf040bec46cd49ca311b6d9dd0f495d674468a3f34ace5c62"
+      "resultSha256": "a0df57e19bff7f3266d9a31b563f196d766279379616da47bb9d7d0e384fda9b"
     },
     {
       "path": "scripts/check.ps1",
@@ -2489,10 +2489,10 @@
       "path": "tests/WorkflowHardening.Tests.ps1",
       "requirementId": "ITL-SCOPED-MEMORY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "reason": "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions; additionally assert the placed-once memory.md agrees with the managed ITL provider boundary. R42: carry-forward against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. G4: conditional qualified scoped frontend; preserve legacy/standalone policy and strict root criteria; templates are shared, not project-isolated. No installed copy or release pin changed. R49: compose this exact memory result with r48; installer pin and scoped-memory policy bind the combined fork. R50/MO: existing cases retain scope/off/strict-root assertions and assert approved default-on/routing instead of obsolete opt-in. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Regression: every review entry point routes to review-criteria.md, none limits scope to the uncommitted diff, the plan check has one owner and the hot-path set includes the file.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "8c941cb5c787ad14b3c1d4c24ba707a3f5429ceb76655676ad66576bc85876f0",
-      "resultSha256": "a52bab151ffb3ee5161a1184bc105d23c3e0ce363c17e5a22f88d0c7a23e3bb4"
+      "resultSha256": "620eef695b6dff6d7eee706dbd2322b8733375fc35937ea66c1cf89eb8d21362"
     },
     {
       "path": "tools/apply-openspec-downstream-overlay.ps1",
@@ -2705,10 +2705,10 @@
       "path": "tools/validate-rules.ps1",
       "requirementId": "ITL-PROPORTIONATE-ACCEPTANCE-001",
       "disposition": "resolved",
-      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R49: full-cycle set grows from 141300 to 143908 normalized UTF-8 bytes (+2608, about 652 tokens); preserve mandatory scoped-memory boundaries, raise only hot-path ceiling 140 to 141 KiB, root/start limits unchanged. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module.",
+      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures. R42: resolved against published r41; retain managed ITL ownership and on-demand routing. R46: preserve the exact prepared r45/r44 owner behavior against the new upstream baseline. R48: proportionate expected-vs-actual task proof, conditional UI/user-path observation and affected agreed-mockup comparison; retain provider/user restrictions, helper readiness, optional suite retention and bounded polish. The existing context budget records the measured 3216-byte full-cycle increase without changing the always-on root. R49: full-cycle set grows from 141300 to 143908 normalized UTF-8 bytes (+2608, about 652 tokens); preserve mandatory scoped-memory boundaries, raise only hot-path ceiling 140 to 141 KiB, root/start limits unchanged. R51: completion, legitimate stopping points and the two-attempt route change are model-neutral in the ITL root appendix; profiles keep model-specific technique with a pointer; Gate 1 final text evidence is the complete saved module. R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. review-criteria.md joins the full-cycle set; measured 144,957 -> 154,528 normalized bytes; ceiling 142 -> 151 KiB; root and start ceilings unchanged.",
       "upstreamSha256": "8004df5e36718b44ecf29c8c3a26d12abc155900fdd8d9d6d00216b062f4467a",
       "baselineSha256": "6394a4c1435e40360d08adff2e3ef9efc1e15f0ea17d5b4066687ca7648f1e6d",
-      "resultSha256": "a8de00178101a13396a9665e9992efe95f5f11022ffbf45fa965b7971ab3d833"
+      "resultSha256": "665773d3f772587a6e0b174d25612981083b617b222227260502d925b488aa29"
     },
     {
       "path": "USER-RULES.md",
@@ -2745,6 +2745,42 @@
       "upstreamSha256": "a45c668827a5b0ec9cbc15eae261e32e42ce68f3e071ce42e1e4e815629bef92",
       "baselineSha256": "a45c668827a5b0ec9cbc15eae261e32e42ce68f3e071ce42e1e4e815629bef92",
       "resultSha256": "cdd36062bb7b902e9d812a9847a4ca3eb017352944a7d996e2fe850c67fffafc"
+    },
+    {
+      "path": "content/rules/review-criteria.md",
+      "requirementId": "ITL-REVIEW-CRITERIA-001",
+      "disposition": "downstream-only",
+      "reason": "R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. One owner of scope, 1C criteria (C2 reuse, C3 integration with copied/switch-method rule, C4 proposals, C5 end-user readiness, C6 over-complexity), verdict and confidence, second opinion, report, actions by role and evidence. Mapping: Soft gate C, Stage 4b and OpenSpec apply step 3 check lists and the tooling-playbooks Code Review content -> What to check; code-reviewer Confidence Scoring and Output Format -> Verdict and confidence / Report (Positive Findings kept); Cross-provider Review -> Second opinion; readability, error handling, module regions, compilation directives -> What to check; generic bugs/NULL/races advice intentionally not carried.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "<absent>",
+      "resultSha256": "015929c5d141ce0c3ec11ed4411c70970aeca47d5f8a1a0abda22977de32f947"
+    },
+    {
+      "path": "content/rules/subagent-pipeline.md",
+      "requirementId": "ITL-REVIEW-CRITERIA-001",
+      "disposition": "resolved",
+      "reason": "R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Stage 2 acceptance points to the Plan check; Stage 4b keeps launch conditions and points to review-criteria.md.",
+      "upstreamSha256": "1e174a6eb75b9917ee861932d19d87a734b407491cd7981ad507d61bcdd3fb37",
+      "baselineSha256": "1e174a6eb75b9917ee861932d19d87a734b407491cd7981ad507d61bcdd3fb37",
+      "resultSha256": "c4ce15e589a8de73f876b10eeae92f6b2173fcdb0a61132ae2df4e86444c0646"
+    },
+    {
+      "path": "content/agents/arch-reviewer.md",
+      "requirementId": "ITL-REVIEW-CRITERIA-001",
+      "disposition": "resolved",
+      "reason": "R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. Input method 4 takes the parent-prepared change scope per review-criteria.md instead of the uncommitted diff.",
+      "upstreamSha256": "23bf20672758da007589c55245653eb46f930cc9bba3d551dc72aa1532fc99da",
+      "baselineSha256": "23bf20672758da007589c55245653eb46f930cc9bba3d551dc72aa1532fc99da",
+      "resultSha256": "0905c132b83bb4f536af2df9f3c5a151a3595f06757153d85e2096b7c6604da8"
+    },
+    {
+      "path": "content/agents/planner.md",
+      "requirementId": "ITL-REVIEW-CRITERIA-001",
+      "disposition": "resolved",
+      "reason": "R52 ITL-REVIEW-CRITERIA-001: make the change-review contract effective without the reviewer subagent; review scope comes from the project (ITL get-review-scope), else a user-named base, else CONFUSION. The minimal/extend line points to the Plan check.",
+      "upstreamSha256": "f16b3f24d110e0420e2380e2866add7d5381b7f84ea52580a599388757e4f137",
+      "baselineSha256": "f16b3f24d110e0420e2380e2866add7d5381b7f84ea52580a599388757e4f137",
+      "resultSha256": "8d060b9702f5dd6b4fa0460d5a022e70b72047f5e6f2b8f1370abcbabc4bba7c"
     }
   ],
   "targetComposition": "append-upstream",

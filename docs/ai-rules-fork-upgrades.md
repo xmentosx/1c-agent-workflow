@@ -22,9 +22,33 @@ runs had median preparation times of 0.40 s before and 0.99 s after these checks
 This is local filesystem/Git evidence, not a remote fetch estimate. No always-on
 client instructions or tool schemas are added.
 
-## Current candidate: model-neutral completion, local r51
+## Current candidate: change-review criteria and scope, local r52
 
-The selected candidate is `itl-main-2f640143-r51`, exact commit
+The selected candidate is `itl-main-2f640143-r52`, exact commit
+`6dff08fee894e1ba8ff5508781c6174bb511c894`, continuing r51 with upstream
+unchanged at `2f640143756ecd01fed42100e412632aa9082385`. The review checklist,
+verdict and report lived only in `1c-code-reviewer`, which the reviewer model
+gate disables without an explicit `analysis` model, and review scope was the
+uncommitted diff; PM5 reviews missed committed branch work and new modules.
+
+`content/rules/review-criteria.md` is now the one owner of scope, 1C criteria
+(reuse, integration into the existing process, architecture proposals,
+end-user readiness, over-complexity), verdict, second opinion, report and
+actions by role. Soft gate C, Stage 4b and OpenSpec apply keep their triggers
+and point to it; `tooling-playbooks → Writing New Code` owns one conditional
+plan check. The ITL appendix adds one line routing a code review, including
+`/ponytail-review`, to the ITL helper action `get-review-scope`, which returns
+everything that differs from the branch transfer scope base by file kind. The
+fork full-cycle set grows 144,957 -> 154,528 normalized bytes (+9,571, about
+2,393 tokens at bytes/4); its ceiling moves 142 -> 151 KiB with the measurement
+in `tools/validate-rules.ps1`. Root 13,742 and subagent start 31,558 stay within
+their unchanged ceilings. `compatibilityStatus` is `pending` until the
+publication owner qualifies the exact pin. The scoped-memory policy names the
+same commit; memory rule bytes are unchanged.
+
+## Earlier candidate: model-neutral completion, local r51
+
+The earlier candidate is `itl-main-2f640143-r51`, exact commit
 `ce865ff710bb2fe5532e130b45ef89fc72588c37`, continuing r50 with upstream
 unchanged at `2f640143756ecd01fed42100e412632aa9082385` (upstream `main` has
 since moved; that intake is a separate audit). The 2026-11-01 PM5 follow-through
