@@ -4449,12 +4449,46 @@ function Get-DevBranchResultTransferBaseCommit {
     return [string](Get-DevBranchResultTransferBaseline -State $State).commit
 }
 
+function Get-DevBranchTransferScopeBaseline {
+    param([AllowNull()][object]$State = $null)
+
+    # Scope owner for review, /itl-result and repository lock. Verification and
+    # production keep the recorded proof: a manual master merge has not been
+    # checked in the branch infobase and does not change its loaded tree.
+    $baseline = Get-DevBranchResultTransferBaseline -State $State
+    if (-not ([string]$baseline.provenance).StartsWith('lifecycle:', [StringComparison]::Ordinal)) { return $baseline }
+    $recorded = [string]$baseline.commit
+    $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+    $mergeBase = if ($masterCommit) { (Get-GitOutput @('merge-base', 'HEAD', $masterCommit)).Trim() } else { '' }
+    if (-not $mergeBase -or (Test-GitCommitIsAncestor -Ancestor $mergeBase -Descendant $recorded)) { return $baseline }
+    if (Test-GitCommitIsAncestor -Ancestor $recorded -Descendant $mergeBase) {
+        return [pscustomobject]@{ commit = $mergeBase; provenance = 'merge-base-after-manual-merge'; completedAt = [string]$baseline.completedAt; recordedCommit = $recorded }
+    }
+    $continuation = 'Run /itl-refresh in this worktree to record a new branch base, then repeat the original command.'
+    if ([string]$baseline.provenance -ceq 'lifecycle:fork-dev-branch') {
+        throw "DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED: master was merged into the fork branch without /itl-refresh; the recorded fork base '$recorded' and merge-base '$mergeBase' are unrelated. $continuation"
+    }
+    throw "DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED: the recorded base '$recorded' and merge-base '$mergeBase' with master are unrelated; master was probably rewritten. $continuation"
+}
+
+function Get-DevBranchTransferScopeUnavailable {
+    param([string]$Message)
+
+    if ([string]$Message -cmatch '^(?<code>DEV_BRANCH_MANUAL_MERGE_REFRESH_REQUIRED|DEV_BRANCH_TRANSFER_SCOPE_BASE_DIVERGED): (?<reason>.*)$') {
+        return [pscustomobject]@{ code = [string]$Matches.code; reason = [string]$Matches.reason }
+    }
+    return $null
+}
+
 function Get-ConfigRepositoryTransferPlan {
     param(
         [string]$ExportPath,
         [string]$BaseCommit = "",
         [AllowNull()][object]$State = $null,
-        [switch]$ForRepositoryLock
+        [switch]$ForRepositoryLock,
+        # Report-only callers receive an object-less plan instead of the two
+        # scope-base codes; lock and Release E2E still fail on them.
+        [switch]$ForReport
     )
 
     $normalizedExportPath = ([string]$ExportPath).Replace("\", "/").Trim("/")
@@ -4463,7 +4497,22 @@ function Get-ConfigRepositoryTransferPlan {
     }
     $baseProvenance = 'explicit-base'
     if (-not $BaseCommit) {
-        $baseline = Get-DevBranchResultTransferBaseline -State $State
+        try {
+            $baseline = Get-DevBranchTransferScopeBaseline -State $State
+        } catch {
+            $unavailable = Get-DevBranchTransferScopeUnavailable -Message $_.Exception.Message
+            if (-not $ForReport -or $null -eq $unavailable) { throw }
+            return [pscustomobject]@{
+                baseCommit = ''
+                baseProvenance = ''
+                exportPath = $normalizedExportPath
+                items = @()
+                unresolvedPaths = @()
+                unavailableCode = $unavailable.code
+                unavailableReason = $unavailable.reason
+                unavailableContinuation = 'Run /itl-refresh, then repeat /itl-result if the object list is needed.'
+            }
+        }
         $BaseCommit = [string]$baseline.commit
         $baseProvenance = [string]$baseline.provenance
     }
@@ -4648,6 +4697,13 @@ function Add-ConfigRepositoryTransferPlanRunUserReportLines {
     $unresolved = @($Plan.unresolvedPaths)
     $Lines.Add("")
     $Lines.Add("## Перенос в хранилище конфигурации")
+    $unavailableCode = [string](Get-StateValue -State $Plan -Name 'unavailableCode' -Default '')
+    if ($unavailableCode) {
+        Add-RunUserReportLine -Lines $Lines -Label "Объекты для переноса" -Value "WARN: список не построен ($unavailableCode)"
+        Add-RunUserReportLine -Lines $Lines -Label "Причина" -Value ([string]$Plan.unavailableReason)
+        Add-RunUserReportLine -Lines $Lines -Label "Продолжение" -Value "выполните /itl-refresh и повторите /itl-result, если нужен список объектов"
+        return
+    }
     Add-RunUserReportLine -Lines $Lines -Label "База сравнения" -Value ([string]$Plan.baseCommit)
     Add-RunUserReportLine -Lines $Lines -Label "Происхождение базы" -Value ([string](Get-StateValue -State $Plan -Name 'baseProvenance' -Default 'legacy:merge-base-master-no-lifecycle-proof'))
     if (($full.Count + $partial.Count + $unresolved.Count) -eq 0) {
@@ -21273,7 +21329,10 @@ function Export-DevBranchResult {
 
     $kind = Get-DevBranchKind -State $state
     $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
-    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath -State $state
+    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath -State $state -ForReport
+    if ([string](Get-StateValue -State $repositoryTransferPlan -Name 'unavailableCode' -Default '')) {
+        Write-Warning "WARN $($repositoryTransferPlan.unavailableCode): the configuration repository object list is omitted from the report; the result export continues. $($repositoryTransferPlan.unavailableContinuation)"
+    }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $loadExportPath)
     try {
     if ($kind -eq "extension") {

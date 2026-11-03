@@ -1,5 +1,11 @@
 # Immutable producer receipts feed the existing artifact-retention owner.
 # Directory age, task/chat inactivity and naming never establish disposability.
+function Get-ItlDiagnosticArtifactReceiptRoot {
+    # Project-relative root of the disposable diagnostic receipts; review scope
+    # excludes the same tree.
+    return '.agent-1c/diagnostic-artifacts'
+}
+
 function Resolve-ItlDiagnosticArtifactPath {
     param([string]$ProjectRoot, [string]$RelativePath, [string]$Kind = '')
     if (-not $RelativePath -or [IO.Path]::IsPathRooted($RelativePath) -or $RelativePath.Contains(':')) { throw 'Diagnostic path must be project-relative.' }
@@ -99,7 +105,7 @@ function Register-ItlDiagnosticArtifacts {
     $task = if ($Kind -eq 'agent-task-temp') { Get-ItlAgentTaskArtifactContext -ProjectRoot $ProjectRoot -Receipt $receipt -CompletionPath $TerminalReceipt } else { $null }
     $retainedPaths = @($TerminalReceipt) + $RetainedPath
     if ($null -ne $attempt) { $retainedPaths += $attempt.successor }
-    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
+    $root = Join-Path $ProjectRoot (Get-ItlDiagnosticArtifactReceiptRoot)
     $path = ''
     $completionHash = ''
     if ($null -ne $task) {
@@ -180,7 +186,7 @@ function Complete-ItlDiagnosticArtifacts {
 function Get-ItlDiagnosticArtifactPlan {
     param([string]$ProjectRoot, [ValidateRange(0, 3650)][int]$MinimumAgeDays = 7, [object]$ProtectedPaths = @())
     $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
-    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
+    $root = Join-Path $ProjectRoot (Get-ItlDiagnosticArtifactReceiptRoot)
     if (-not (Test-Path -LiteralPath $root -PathType Container) -or -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { return @() }
     $ProtectedPaths = New-ItlArtifactProtectionIndex -ProtectedPaths (@($ProtectedPaths) + @(Get-ItlDiagnosticRetainedPaths -ProjectRoot $ProjectRoot))
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -215,7 +221,7 @@ function Get-ItlDiagnosticArtifactPlan {
 
 function Get-ItlDiagnosticRetainedPaths {
     param([string]$ProjectRoot)
-    $root = Join-Path $ProjectRoot '.agent-1c/diagnostic-artifacts'
+    $root = Join-Path $ProjectRoot (Get-ItlDiagnosticArtifactReceiptRoot)
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { return }
     foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Filter '*.json')) {
         if ($file.BaseName -notmatch '^[a-f0-9]{32}$') { continue }

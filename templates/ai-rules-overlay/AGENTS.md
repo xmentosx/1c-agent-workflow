@@ -21,6 +21,10 @@ replacing the upstream process, coding, MCP, memory, or OpenSpec rules.
   replace that delta. Read the matching on-demand ITL rule before changing a
   managed form (`content/rules/itl-managed-form-context.md`) or using
   project-specific architecture facts.
+- For a code review, including `/ponytail-review`, take the scope from the
+  helper action `get-review-scope` (see
+  `.agents/skills/1c-workflow/references/verification-result.md#review-scope`),
+  not from the local delta above, and pass it as the explicit scope.
 - An installed ITL project's completion and export status come from its
   helper-owned evidence assessment. A syntax result or a file preview alone
   cannot establish loaded infobase behavior. Preserve exact raw findings and

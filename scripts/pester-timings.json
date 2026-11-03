@@ -58,6 +58,7 @@
     "DesignerMemoryGuard.Tests.ps1": 5.1,
     "DevBranchLifecycle.Tests.ps1": 323,
     "DevBranchCheck.Tests.ps1": 30,
+    "ReviewScope.Tests.ps1": 50,
     "DevBranchWorktrees.Tests.ps1": 218.0,
     "DevBranchForkContinuation.Tests.ps1": 298,
     "DevBranchMergeRecovery.Tests.ps1": 463,

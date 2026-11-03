@@ -147,6 +147,7 @@ refresh-all-dev-branches
 reset-dev-branch
 lock-config-repository-objects
 export-dev-branch-result
+get-review-scope
 close-dev-branch
 delete-dev-branch
 switch-master
