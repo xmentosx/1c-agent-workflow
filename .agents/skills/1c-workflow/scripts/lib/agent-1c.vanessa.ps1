@@ -5301,6 +5301,10 @@ function Run-DevBranchTests {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "check-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
+    if (-not $script:ActiveAuxiliaryVanessaContext) {
+        # Scenarios call project test-extension code; auxiliary bases do not load it.
+        $state = Ensure-ProjectTestsReady -State $state -TrustCurrentProof:(Test-ItlDiagnosticVerificationScope)
+    }
     $state = Assert-DevBranchApplicationReady -State $state -Operation "Vanessa verification"
     Sync-DevBranchContextToDotEnv -State $state
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state

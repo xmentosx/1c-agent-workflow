@@ -1193,6 +1193,42 @@ Describe "ITL on-demand MCP facade" {
         $runtime.statuses | Should -Be @("starting", "process-started", "readiness")
     }
 
+    It "prepares changed project tests before the Vanessa UI TestClient target starts, except for an auxiliary target=<Auxiliary>" -TestCases @(
+        @{ Auxiliary = $false }, @{ Auxiliary = $true }
+    ) {
+        param($Auxiliary)
+        $result = & {
+            $script:mcpOrder = [Collections.Generic.List[string]]::new()
+            $state = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "D:\Проект с пробелом\база"; infoBaseKind = "file"; unsafeActionProtectionConfirmed = $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { return $state }
+            function Assert-DevBranchApplicationReady { param([object]$State); return $State }
+            function Get-AuxiliaryContour { return [pscustomobject]@{ name = "exchange"; baseMode = "attached-readonly" } }
+            function Get-AuxiliaryContourConnection { return [pscustomobject]@{ kind = "file"; path = "D:\Контур\база"; user = ""; password = "" } }
+            function Assert-InfoBaseAvailable {}
+            function Read-ItlOnDemandRuntimeState { return $null }
+            function Get-ItlOnDemandPortFamily { return "vanessa-mcp" }
+            function Get-ItlOnDemandPortKey { return "vanessa-key" }
+            function New-ItlManagedPortLeaseToken { return "lease-token" }
+            function Ensure-VanessaMcpInstalled { $script:mcpOrder.Add('vanessa-tooling'); return $state }
+            function Ensure-ProjectTestsReady {
+                param([object]$State, [switch]$TrustCurrentProof)
+                $script:mcpOrder.Add("project-tests:trust=$([bool]$TrustCurrentProof)")
+                return $State
+            }
+            function Ensure-VanessaServiceInfoBase { throw "stop-after-test-preparation" }
+
+            $message = ""
+            try {
+                Start-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId ("c" * 32) -CatalogSha256 ("d" * 64) -AuxiliaryContour $(if ($Auxiliary) { "exchange" } else { "" }) | Out-Null
+            } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ message = $message; order = @($script:mcpOrder) }
+        }
+
+        $result.message | Should -Match "stop-after-test-preparation"
+        if ($Auxiliary) { $result.order | Should -Be @('vanessa-tooling') }
+        else { $result.order | Should -Be @('vanessa-tooling', 'project-tests:trust=True') }
+    }
+
     It "records the refreshed Vanessa installation proof on the first backend start" {
         $result = & {
             $script:firstRuntimeState = $null

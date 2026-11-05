@@ -56,6 +56,33 @@ Run all `purpose=default-fast` groups together in one normal YAxUnit session. Th
 
 Put tests in the hierarchical test extension configured by `yaxunit.testsPath` (default `tests/yaxunit`). Register them from exported `ИсполняемыеСценарии`. Prefer testing a deterministic server/common-module function. If important logic is buried in a form or long procedure, extract the narrow pure calculation or decision into a suitable common module without changing its public behavior. Do not expose broad production APIs solely for tests and do not copy the algorithm into the test.
 
+By default tests check the configuration exactly as stored in the repository:
+the test extension contains no `&Перед`, `&После`, `&Вместо` or
+`&ИзменениеИКонтроль`. Assert results from outside (written data, user-visible
+state, effective rights) and reproduce failures the way users meet them: rights,
+a lock held by a second session, invalid data. If a requirement cannot be proven
+without an interceptor, do not add one yourself; ask the user, naming the
+requirement, why outside proof is insufficient, the target method, what will
+break the interceptor, and the alternative without one. Once permitted, prefer,
+in this order (a preference, not a ban):
+
+- an exported method over an internal one;
+- `&Перед`/`&После` for a procedure that needs code only before or after the call;
+- `&Вместо` only for a function, a needed result, catching the original
+  exception, a mock or a fault simulation; it calls `ПродолжитьВызов` with the
+  same parameters and returns its result, skipping the original only in a branch
+  the test itself enabled;
+- `&ИзменениеИКонтроль` only to insert into the middle of a method; every edit of
+  that method then requires updating the test copy.
+
+Simulate only a failure that is really possible at that boundary; enable the
+substitution in its own test only and remove it when the test completes. Mock
+only an external boundary and keep at least one scenario that crosses it
+unmocked. When a platform transaction already guarantees all-or-nothing, an
+artificial fault test is unnecessary; a failure through rights suffices.
+Interceptor mechanics and `ПродолжитьВызов` semantics follow the controlled-fork
+standard `extension-patterns`.
+
 Use Vanessa instead of YAxUnit when the assertion depends on a form, command visibility, permissions in an actual session, document/register persistence, exchange, background jobs, or a multi-object user workflow. Complex changes commonly need both layers: a boundary matrix in YAxUnit and one or two representative Vanessa scenarios.
 
 ## Execution contract
@@ -81,6 +108,16 @@ native results as environment diagnostics; their aggregate failure does not
 block this installation or claim a clean environment. Malformed/unknown native
 completion still blocks. This policy does not apply to production extension
 loads or qualify other extensions. JUnit failures remain failures.
+
+Every run that executes test-extension code (YAxUnit, any Vanessa run including
+named or filtered scenarios, and the Vanessa UI MCP TestClient) first passes the
+same readiness owner: changed test sources reload, and one check prepares them
+once. Loading changed sources prints a `WARN` for each `&Вместо` without
+`ПродолжитьВызов`; it does not block. When the test extension adopts
+configuration objects and the loaded configuration changed since its proof,
+`/CheckCanApplyConfigurationExtensions` runs without reload. On
+`ITL_PROJECT_TESTS_NOT_APPLICABLE` no test starts: correct the listed
+interceptors in the test sources, then repeat the original command.
 
 An old content-only receipt is rechecked under the existing exact-base guard and
 owned runtime drain. If SafeMode is already off, no extension reload or setter

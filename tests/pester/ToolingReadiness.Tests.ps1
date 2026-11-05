@@ -512,6 +512,7 @@ Describe "Primary verification failure classification" {
         Mock Get-YAxUnitExtensionName { 'YAXUNIT' }
         Mock Get-YAxUnitTestsExtensionName { 'tests' }
         Mock Get-YAxUnitPinnedEntry { [pscustomobject]@{sha256='pin'} }
+        Mock Get-ConfigSourceFingerprint { [pscustomobject]@{fingerprint='source'} }
         Mock Ensure-YAxUnitExtensions { throw 'ITL_YAXUNIT_REPORT_MISSING: primary cause' }
         Mock Update-DevBranchState { throw 'secondary write failure' }
         { Invoke-YAxUnitVerification -State ([pscustomobject]@{devBranchName='branch'}) } | Should -Throw '*ITL_YAXUNIT_REPORT_MISSING: primary cause*'
@@ -1021,5 +1022,191 @@ Describe 'repair extension normal wrapper integration' {
                 finally { Close-DeliveryProcessJob -JobHandle $item.child.jobHandle -Process $item.child.process; $item.child.process.Dispose() }
             }
         }
+    }
+}
+
+Describe 'Project tests readiness owner' {
+    BeforeAll {
+        $script:readinessFixtures = Join-Path $context.RepoRoot 'tests\fixtures\project-tests-readiness'
+        function Add-ReadinessAdoptedObject {
+            $directory = Join-Path $script:readinessTests 'CommonModules'
+            [IO.File]::WriteAllText((Join-Path $directory 'МодельПланов.xml'), "<MetaDataObject><CommonModule><InternalInfo/><Properties><ObjectBelonging>Adopted</ObjectBelonging><Name>МодельПланов</Name></Properties></CommonModule></MetaDataObject>", [Text.UTF8Encoding]::new($true))
+        }
+    }
+    BeforeEach {
+        $script:savedReadinessRoot = $script:ProjectRoot
+        $script:ProjectRoot = Join-Path $TestDrive ('Проект ITL ' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        $script:readinessTests = Join-Path $script:ProjectRoot 'tests\yaxunit'
+        $moduleDirectory = Join-Path $script:readinessTests 'CommonModules\ТестПерехватчики\Ext'
+        New-Item -ItemType Directory -Force -Path $moduleDirectory | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:readinessFixtures 'Module.bsl') -Destination (Join-Path $moduleDirectory 'Module.bsl')
+        [IO.File]::WriteAllText((Join-Path $script:readinessTests 'Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>ПМ5Тесты</Name></Properties></Configuration></MetaDataObject>', [Text.UTF8Encoding]::new($true))
+        $script:ProjectTestsReadinessKey = $null
+        $script:readinessSource = 'source'
+        $script:applicabilityResult = 0
+        $script:readinessState = [pscustomobject]@{
+            devBranchName = 'branch'; infoBaseKind = 'file'; devBranchInfoBasePath = 'C:\Тест базы\branch'
+            toolingInfoBaseGeneration = 'generation'; lastConfigDesignerFingerprint = 'config-new'
+            yaxunitInstallationProof = [pscustomobject]@{
+                schemaVersion = 1; generation = 'generation'; infoBaseKey = 'base-key'; engineSha256 = 'pinned-sha'
+                engineName = 'YAXUNIT'; testsName = 'ПМ5Тесты'; engineRuntimeHash = 'engine-hash'; testsRuntimeHash = 'tests-hash'
+                testsFingerprint = 'source'; testsAdoptedObjects = $false; configurationFingerprint = 'config-old'
+            }
+        }
+        Mock Get-YAxUnitProjectTestsSafeModeOptIn { $false }
+        Mock Get-YAxUnitTestsPath { 'tests/yaxunit' }
+        Mock Get-YAxUnitExtensionName { 'YAXUNIT' }
+        Mock Get-YAxUnitTestsExtensionName { 'ПМ5Тесты' }
+        Mock Get-PlatformCheckProfile { 'development' }
+        Mock Ensure-DevBranchToolingGeneration { param($State) $State }
+        Mock Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = $script:readinessSource } }
+        Mock Get-YAxUnitPinnedEntry { [pscustomobject]@{ sha256 = 'pinned-sha'; version = '25.12' } }
+        Mock Install-YAxUnit { 'C:\Кеш тестов\YAxUnit.cfe' }
+        Mock Get-OneCInfoBaseIdentity { [pscustomobject]@{ key = 'base-key' } }
+        Mock Get-ToolingRuntimeExtensions { @((New-ReadyToolingRuntime YAXUNIT engine-hash), (New-ReadyToolingRuntime ПМ5Тесты tests-hash)) }
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+        Mock Invoke-GuardedCfeExtensionApply {}
+        Mock Invoke-ConfigLoadDesignerAttempt {}
+        Mock Install-ItlOnDemandMcp {}
+        Mock Set-VanessaMcpExtensionUnsafeMode {}
+        Mock Invoke-Enterprise { throw 'tests must not start' }
+        Mock Update-DevBranchState {
+            param($State, $Updates)
+            foreach ($key in $Updates.Keys) { $script:readinessState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+        }
+        Mock Read-DevBranchState { $script:readinessState }
+        Mock Invoke-Designer {
+            param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
+            $DesignerArgs[0] | Should -BeExactly '/CheckCanApplyConfigurationExtensions'
+            $DesignerArgs[1] | Should -BeExactly '-Extension'
+            $DesignerArgs[2] | Should -BeExactly 'ПМ5Тесты'
+            $DesignerArgs[3] | Should -BeExactly '/DumpResult'
+            [IO.File]::WriteAllText($DesignerArgs[4], [string]$script:applicabilityResult)
+            $log = Join-Path (Split-Path -Parent $DesignerArgs[4]) ('designer ' + [guid]::NewGuid().ToString('N') + '.log')
+            if ($script:applicabilityResult -eq 0) {
+                [IO.File]::WriteAllText($log, '')
+                $script:LastLogPath = $log
+                return
+            }
+            Copy-Item -LiteralPath (Join-Path $script:readinessFixtures 'applicability-20261103.out.txt') -Destination $log
+            $failure = [InvalidOperationException]::new("1C Designer failed with exit code 1. Log: $log")
+            $failure.Data['ItlDesignerBatchResult'] = [pscustomobject]@{ exitCode = 1; logPath = $log; operation = $DesignerArgs[0]; infoBaseKind = $InfoBaseKind; infoBasePath = $InfoBasePath; ownedProcessesReleased = $true }
+            throw $failure
+        }
+    }
+    AfterEach {
+        $script:ProjectRoot = $script:savedReadinessRoot
+        $script:ProjectTestsReadinessKey = $null
+    }
+
+    It 'reloads changed test sources for a named Vanessa run and warns only about &Вместо without ПродолжитьВызов' {
+        $script:readinessSource = 'edited'
+        $output = @(& { Ensure-ProjectTestsReady -State $script:readinessState -TrustCurrentProof | Out-Null } 6>&1 | ForEach-Object { [string]$_ })
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly -ParameterFilter { $DesignerArgs[0] -eq '/LoadConfigFromFiles' -and $ValidationPurpose -eq 'project-tests' }
+        $warnings = @($output | Where-Object { $_ -like '*ITL_PROJECT_TESTS_INSTEAD_WITHOUT_PROCEED*' })
+        $warnings.Count | Should -Be 2
+        $warnings[0] | Should -BeLike '*file=tests/yaxunit/CommonModules/ТестПерехватчики/Ext/Module.bsl; line=26; method=ТестПрочитатьСнимок; target=ПрочитатьСнимок*'
+        $warnings[1] | Should -BeLike '*line=36; method=ТестОпределитьРезультат; target=ОпределитьРезультат*'
+        ($output -join "`n") | Should -Not -Match 'ТестРассчитатьИтог|ТестЗаписатьПакет'
+        $script:readinessState.yaxunitInstallationProof.testsFingerprint | Should -BeExactly 'edited'
+        $script:readinessState.yaxunitInstallationProof.testsAdoptedObjects | Should -BeFalse
+        $script:readinessState.yaxunitInstallationProof.configurationFingerprint | Should -BeExactly 'config-new'
+    }
+
+    It 'returns early for an unchanged named Vanessa run without probe, Designer or reload' {
+        Ensure-ProjectTestsReady -State $script:readinessState -TrustCurrentProof | Out-Null
+        Should -Invoke Get-ToolingRuntimeExtensions -Times 0 -Exactly
+        Should -Invoke Install-YAxUnit -Times 0 -Exactly
+        Should -Invoke Invoke-Designer -Times 0 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+    }
+
+    It 'prepares once when YAxUnit and Vanessa run in one check and again only after a source change' {
+        Ensure-ProjectTestsReady -State $script:readinessState | Out-Null
+        Ensure-ProjectTestsReady -State $script:readinessState | Out-Null
+        Should -Invoke Get-ToolingRuntimeExtensions -Times 1 -Exactly
+        $script:readinessSource = 'edited-between-runs'
+        Ensure-ProjectTestsReady -State $script:readinessState | Out-Null
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly
+    }
+
+    It 'does not check applicability without adopted objects after a configuration change' {
+        $script:readinessState.yaxunitInstallationProof.PSObject.Properties.Remove('testsAdoptedObjects')
+        Ensure-YAxUnitExtensions -State $script:readinessState | Out-Null
+        Should -Invoke Invoke-Designer -Times 0 -Exactly
+        $script:readinessState.yaxunitInstallationProof.testsAdoptedObjects | Should -BeFalse
+    }
+
+    It 'checks applicability once without reload after a configuration change for <Name>' -TestCases @(
+        @{ Name = 'a recorded configuration'; Loaded = 'config-new'; Recorded = 'config-old'; Legacy = $false }
+        @{ Name = 'an empty loaded fingerprint'; Loaded = ''; Recorded = ''; Legacy = $false }
+        @{ Name = 'an old proof without the new fields'; Loaded = 'config-new'; Recorded = ''; Legacy = $true }
+    ) {
+        param($Loaded, $Recorded, $Legacy)
+        Add-ReadinessAdoptedObject
+        $script:readinessState.lastConfigDesignerFingerprint = $Loaded
+        $proof = $script:readinessState.yaxunitInstallationProof
+        if ($Legacy) { foreach ($name in 'testsAdoptedObjects', 'configurationFingerprint') { $proof.PSObject.Properties.Remove($name) } }
+        else { $proof.testsAdoptedObjects = $true; $proof.configurationFingerprint = $Recorded }
+        Ensure-YAxUnitExtensions -State $script:readinessState | Out-Null
+        Should -Invoke Invoke-Designer -Times 1 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 0 -Exactly
+        $script:readinessState.yaxunitInstallationProof.testsAdoptedObjects | Should -BeTrue
+        $script:readinessState.yaxunitInstallationProof.configurationFingerprint | Should -BeExactly $Loaded
+        $script:readinessState.yaxunitInstallationProof.testsRuntimeHash | Should -BeExactly 'tests-hash'
+        if ($Loaded) {
+            Ensure-YAxUnitExtensions -State $script:readinessState | Out-Null
+            Should -Invoke Invoke-Designer -Times 1 -Exactly
+        }
+    }
+
+    It 'stops before tests with the methods from the 2026-11-03 applicability log and continues after the interceptor fix' {
+        Add-ReadinessAdoptedObject
+        $script:readinessState.yaxunitInstallationProof.testsAdoptedObjects = $true
+        $script:applicabilityResult = 1
+        $failure = $null
+        try { Invoke-YAxUnitVerification -State $script:readinessState | Out-Null } catch { $failure = $_.Exception.Message }
+        $failure | Should -Match '^ITL_PROJECT_TESTS_NOT_APPLICABLE:'
+        $failure | Should -Match ([regex]::Escape('methods=ТестПередКонтролемОбычнойЗаписи, ТестПослеЗаписиДанныхКопии, ТестПередСлияниемКопииПланов'))
+        $failure | Should -Match ([regex]::Escape('является процедурой, а метод расширяемой конфигурации является функцией'))
+        Should -Invoke Invoke-Enterprise -Times 0 -Exactly
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 0 -Exactly
+        $script:readinessState.yaxunitInstallationProof.configurationFingerprint | Should -BeExactly 'config-old'
+        $route = Get-WorkflowVerificationFailureContext -Message $failure
+        $route.category | Should -BeExactly 'test-fixture'
+        $route.requiredAction | Should -BeExactly '/itl-verify-fix'
+
+        # Continuation: correcting the interceptors changes the test sources;
+        # the ordinary checked reload owns applicability for the new snapshot.
+        $script:readinessSource = 'interceptors-fixed'
+        Ensure-ProjectTestsReady -State $script:readinessState | Out-Null
+        Should -Invoke Invoke-ConfigLoadDesignerAttempt -Times 1 -Exactly
+        Should -Invoke Invoke-Designer -Times 1 -Exactly
+        $script:readinessState.yaxunitInstallationProof.testsFingerprint | Should -BeExactly 'interceptors-fixed'
+        $script:readinessState.yaxunitInstallationProof.configurationFingerprint | Should -BeExactly 'config-new'
+    }
+
+    It 'runs project tests readiness before Vanessa application readiness (diagnostic=<Diagnostic>, auxiliary=<Auxiliary>)' -TestCases @(
+        @{ Diagnostic = $true; Auxiliary = $false; Calls = 1 }
+        @{ Diagnostic = $false; Auxiliary = $false; Calls = 1 }
+        @{ Diagnostic = $true; Auxiliary = $true; Calls = 0 }
+    ) {
+        param($Diagnostic, $Auxiliary, $Calls)
+        $script:runOrder = [Collections.Generic.List[string]]::new()
+        $script:diagnosticScope = $Diagnostic
+        $previousAuxiliary = $script:ActiveAuxiliaryVanessaContext
+        try {
+            $script:ActiveAuxiliaryVanessaContext = $(if ($Auxiliary) { [pscustomobject]@{ contour = [pscustomobject]@{ name = 'exchange' } } } else { $null })
+            Mock Test-ItlDiagnosticVerificationScope { $script:diagnosticScope }
+            Mock Assert-DevelopmentBranchWorktreeContext {}
+            Mock Assert-DevBranchExtensionInitialized {}
+            Mock Ensure-ProjectTestsReady { param($State, [switch]$TrustCurrentProof) $script:runOrder.Add("tests:$([bool]$TrustCurrentProof)"); $State }
+            Mock Assert-DevBranchApplicationReady { $script:runOrder.Add('application'); throw 'stop-after-application-readiness' }
+            { Run-DevBranchTests } | Should -Throw '*stop-after-application-readiness*'
+        } finally { $script:ActiveAuxiliaryVanessaContext = $previousAuxiliary }
+        Should -Invoke Ensure-ProjectTestsReady -Times $Calls -Exactly
+        if ($Calls) { $script:runOrder | Should -Be @("tests:$Diagnostic", 'application') }
+        else { $script:runOrder | Should -Be @('application') }
     }
 }
