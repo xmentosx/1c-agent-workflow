@@ -36,3 +36,11 @@ third-party/vanessa-automation/1.2.043.42-itl-r8/ITL-NOTICE.txt text eol=lf
 third-party/vanessa-automation/1.2.043.42-itl-r8/LICENSE.upstream -text whitespace=cr-at-eol
 tests/fixtures/vanessa-diagnostic-screenshot/*.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-diagnostic-screenshot/provenance.json text eol=lf
+# Verbatim PM5 artifacts (2026-11-03) for the verification-diagnostics regressions.
+tests/fixtures/vanessa-verification-diagnostics/*.lgp -text
+tests/fixtures/vanessa-verification-diagnostics/*.lgf -text
+tests/fixtures/vanessa-verification-diagnostics/*.xml -text
+tests/fixtures/vanessa-verification-diagnostics/event-log-new-errors-*.json -text
+tests/fixtures/vanessa-verification-diagnostics/provenance.json text eol=lf
+tests/fixtures/gate6-extension-findings/*.out.txt -text
+tests/fixtures/gate6-extension-findings/provenance.json text eol=lf

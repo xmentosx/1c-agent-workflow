@@ -281,3 +281,61 @@ function Compare-ItlPlatformStructuralDiagnostics {
         issues=@($issues.ToArray())
     }
 }
+
+function ConvertTo-ItlGate6ExtensionFindingGroups {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [string]$TestsExtensionName = '',
+        [string[]]$RepositoryExtensionNames = @()
+    )
+    # Output-only grouping of native module findings by their owning
+    # extension. A header "{<extension> <object>(row,col)}:" names an
+    # extension, "{<object>(row,col)}:" the configuration. Indented lines
+    # continue the previous finding; other unattributed lines stay general.
+    $repository = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @($RepositoryExtensionNames)) { if (-not [string]::IsNullOrWhiteSpace($name)) { [void]$repository.Add($name.Trim()) } }
+    $tests = 0; $configuration = 0; $unattributed = 0
+    $repositoryCounts = [ordered]@{}; $outsideCounts = [ordered]@{}
+    $informational = '(?i)^(?:ошибок не обнаружено|синтаксических ошибок не обнаружено!?|проверка(?: конфигурации| модулей)? завершена\.?|(?:ошибок|предупреждений)\s*:\s*0\b.*|соединение с хранилищем конфигурации не установлено)$'
+    foreach ($rawLine in @(([string]$Text).TrimStart([char]0xFEFF) -split '\r\n|\n|\r')) {
+        if ([string]::IsNullOrWhiteSpace($rawLine) -or $rawLine -match '^[ \t]') { continue }
+        $line = $rawLine.Trim()
+        $extensionMatch = [regex]::Match($line, '^\{(?<extension>[^\s{}.]+) [^{}]+\}:')
+        if ($extensionMatch.Success) {
+            $extension = $extensionMatch.Groups['extension'].Value
+            if ($TestsExtensionName -and [string]::Equals($extension, $TestsExtensionName, [StringComparison]::OrdinalIgnoreCase)) { $tests++ }
+            elseif ($repository.Contains($extension)) { $repositoryCounts[$extension] = 1 + [int]$repositoryCounts[$extension] }
+            else { $outsideCounts[$extension] = 1 + [int]$outsideCounts[$extension] }
+            continue
+        }
+        if ($line -match '^\{[^\s{}]+\}:') { $configuration++; continue }
+        if ($line -match $informational) { continue }
+        $unattributed++
+    }
+    $outsideTotal = 0
+    foreach ($key in $outsideCounts.Keys) { $outsideTotal += [int]$outsideCounts[$key] }
+    return [pscustomobject][ordered]@{
+        tests=$tests
+        repository=@($repositoryCounts.Keys | ForEach-Object { [pscustomobject]@{name=$_;count=[int]$repositoryCounts[$_]} })
+        configuration=$configuration
+        outsideRepository=@($outsideCounts.Keys | ForEach-Object { [pscustomobject]@{name=$_;count=[int]$outsideCounts[$_]} })
+        outsideRepositoryCount=$outsideTotal
+        unattributed=$unattributed
+    }
+}
+
+function Format-ItlGate6ExtensionFindingGroups {
+    param([Parameter(Mandatory=$true)][object]$Groups, [string]$TestsExtensionName = 'tests', [string]$LogPath = '')
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add("findings in $($TestsExtensionName): $($Groups.tests)")
+    if (@($Groups.repository).Count -gt 0) {
+        $lines.Add('findings in repository extensions: ' + ((@($Groups.repository | ForEach-Object { "$($_.name)=$($_.count)" })) -join ', '))
+    }
+    if ([int]$Groups.configuration -gt 0) { $lines.Add("findings in the configuration: $($Groups.configuration)") }
+    if (@($Groups.outsideRepository).Count -gt 0) {
+        $lines.Add('extensions outside the repository: ' + ((@($Groups.outsideRepository | ForEach-Object { "$($_.name)=$($_.count)" })) -join ', ') +
+            "; findings: $($Groups.outsideRepositoryCount); log=$LogPath")
+    }
+    if ([int]$Groups.unattributed -gt 0) { $lines.Add("findings not attributable to an extension: $($Groups.unattributed); log=$LogPath") }
+    return @($lines.ToArray())
+}
