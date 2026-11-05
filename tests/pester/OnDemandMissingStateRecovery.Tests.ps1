@@ -4,6 +4,7 @@
     . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
     $actualOwnershipProof=(Get-Command Get-ItlOnDemandProcessOwnershipProof).ScriptBlock
     $actualChildProof=(Get-Command Get-ItlOnDemandOwnedTestClientProcesses).ScriptBlock
+    $actualPortOwnership=(Get-Command Get-ItlOnDemandPortOwnership).ScriptBlock
 }
 
 Describe 'Cross-family retained cleanup on isolated native processes' {
@@ -391,6 +392,7 @@ Describe 'Retained on-demand launch evidence recovery' {
         Mock Wait-ItlOnDemandProcessExit { $true }
         Mock Test-TcpPortOpen { $false }
         Mock Test-ItlOnDemandPortOwnedByProcess { $false }
+        Mock Get-ItlOnDemandPortOwnership { [pscustomobject]@{decision='absent';status='absent';owners=@();diagnostic='decision=absent fixture'} }
         Mock Release-ItlOnDemandManagedPortLease { param($Family,$Key,$LeaseToken) $script:sequence.Add("release-$LeaseToken") }
         Mock Start-ItlOnDemandBackendInstance {
             param($Family,$InstanceId)
@@ -438,10 +440,15 @@ Describe 'Retained on-demand launch evidence recovery' {
             if ($Port -eq 48151) { return -not $script:sequence.Contains('stop-102') }
             return $false
         }
-        Mock Test-ItlOnDemandPortOwnedByProcess { param($Port,$ProcessId) ($Port -eq 9874 -and $ProcessId -eq 101) -or ($Port -eq 48151 -and $ProcessId -eq 102) }
+        Mock Get-ItlOnDemandPortOwnership {
+            param($Port,$ProcessId,$RetryUntil,[switch]$TestClient)
+            $owned=($Port -eq 9874 -and $ProcessId -eq 101 -and -not $TestClient) -or ($Port -eq 48151 -and $ProcessId -eq 102 -and $TestClient)
+            [pscustomobject]@{decision=$(if($owned){'owned'}else{'foreign'});status='proven';owners=@($ProcessId);diagnostic='fixture'}
+        }
         $result=Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected
         $result.instanceId | Should -Be ('b'*32)
-        Should -Invoke Test-ItlOnDemandPortOwnedByProcess -Times 2 -Exactly
+        Should -Invoke Get-ItlOnDemandPortOwnership -Times 2 -Exactly
+        Should -Invoke Get-ItlOnDemandPortOwnership -Times 2 -Exactly -ParameterFilter { $null -ne $RetryUntil }
         $script:sequence[-1] | Should -Be start
     }
 
@@ -449,6 +456,11 @@ Describe 'Retained on-demand launch evidence recovery' {
         param($Port)
         $script:foreignPort=$Port
         Mock Test-TcpPortOpen { param($Port) $Port -eq $script:foreignPort }
+        Mock Get-ItlOnDemandPortOwnership {
+            param($Port)
+            if($Port -eq $script:foreignPort){return [pscustomobject]@{decision='foreign';status='proven';owners=@(999);diagnostic='decision=foreign fixture'}}
+            [pscustomobject]@{decision='absent';status='absent';owners=@();diagnostic='decision=absent fixture'}
+        }
         { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED*'
         Should -Invoke Stop-Process -Times 0 -Exactly
         Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
@@ -463,6 +475,7 @@ Describe 'Retained on-demand launch evidence recovery' {
             Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
             Mock Test-TcpPortOpen { $true }
             Mock Test-ItlOnDemandPortOwnedByProcess { param($Port,$ProcessId) $Port -eq 9874 -and $ProcessId -eq 101 }
+            Mock Get-ItlOnDemandPortOwnership { param($Port,$ProcessId) [pscustomobject]@{decision=$(if($Port -eq 9874 -and $ProcessId -eq 101){'owned'}else{'foreign'});status='proven';owners=@(101);diagnostic='fixture'} }
         }
         { Recover-ItlOnDemandBackendInstance -Family vanessa-ui -InstanceId ('a'*32) -ReplacementInstanceId ('b'*32) -ExpectedPid 101 -ExpectedPort 9874 -CatalogSha256 ('c'*64) -Invocation $script:invocation -ExpectedBackend $script:expected } | Should -Throw '*ITL_ONDEMAND_RECOVERY_NOT_QUIESCENT*'
         Should -Invoke Stop-Process -Times 0 -Exactly
@@ -688,5 +701,150 @@ Describe 'Retained on-demand launch evidence recovery' {
         }
         Should -Invoke Stop-Process -Times 0 -Exactly -ParameterFilter { $Id -in @(201,202) }
         Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly -ParameterFilter { $Key -like 'peer-*' }
+    }
+}
+
+Describe 'On-demand port ownership recovery contract' {
+    BeforeEach {
+        $script:savedRoot=$script:ProjectRoot
+        $script:ProjectRoot=Join-Path $TestDrive ('Владелец порта с пробелом '+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
+        $script:ownership='owned'
+        $script:ownershipCalls=[Collections.Generic.List[object]]::new()
+        $script:stops=[Collections.Generic.List[int]]::new()
+        $script:processAlive=$true
+        $script:record=[pscustomobject]@{
+            schemaVersion=4;status='readiness';family='roctup';instanceId=('e'*32);pid=24208;port=6003;catalogSha256=('c'*64)
+            processStartTime='2026-11-03T01:00:00.0000000Z';executablePath='C:\Платформа теста\1cv8c.exe'
+            ownershipMarkers=@('C:\База ROCTUP','port=6003');infoBaseKind='file';infoBasePath='C:\Целевая база'
+            managerInfoBaseKind='file';managerInfoBasePath='C:\Целевая база';portFamily='roctup-mcp';portKey='roctup-key';portLeaseToken='roctup-token'
+            testClientPid=0;testClientPort=0;readiness='tcp-port-owner-verified';readinessAt='2026-11-03T01:00:00.0000000Z';portOwnerPidVerified=$true
+        }
+        function Save-OwnershipFixtureState { param([object]$State) Invoke-WithItlOnDemandRuntimeMutation -Family $State.family -InstanceIds @($State.instanceId) -OwnerFunction Write-ItlOnDemandRuntimeState -OwnerArguments @{RuntimeState=$State} | Out-Null }
+        Save-OwnershipFixtureState $script:record
+        Mock Get-ItlOnDemandPortOwnership {
+            param($Port,$ProcessId,$RetryUntil,[switch]$TestClient)
+            $script:ownershipCalls.Add([pscustomobject]@{port=$Port;pid=$ProcessId;retry=$RetryUntil})
+            $status=$(if($script:ownership -in @('owned','foreign')){'proven'}else{$script:ownership})
+            [pscustomobject]@{decision=$script:ownership;status=$status;owners=@();diagnostic="decision=$($script:ownership) expectedPid=$ProcessId status=$status source=none address=127.0.0.1:$Port rows(state/pid/remote)=[0/24208/0] connection=timeout attempts=12 elapsedMs=3010"}
+        }
+        Mock Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$script:processAlive;failedPredicate='';expected='';actual=''} }
+        Mock Test-ItlOnDemandOwnedProcess { $script:processAlive }
+        Mock Get-Process { param($Id) if($script:processAlive -and [int](@($Id)[0]) -eq 24208){[pscustomobject]@{Id=24208;StartTime=[datetime]'2026-11-03T01:00:00Z'}} }
+        Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
+        Mock Stop-Process { param($Id) $script:stops.Add([int](@($Id)[0])); $script:processAlive=$false }
+        Mock Wait-ItlOnDemandProcessExit { -not $script:processAlive }
+        Mock Test-TcpPortOpen { $script:processAlive }
+        Mock Release-ItlOnDemandManagedPortLease {}
+        Mock Set-ItlOnDemandManagedPortLeaseStatus {}
+        Mock Get-ItlOnDemandManagedPortLeaseMatches { [pscustomobject]@{port=6003;pid=24208} }
+    }
+    AfterEach { $script:ProjectRoot=$script:savedRoot }
+
+    It 'marks an unproven mark-running start-unconfirmed and owned recovery restarts it' {
+        Mock Start-ItlOnDemandBackendInstance { param($Family,$InstanceId) [pscustomobject]@{family=$Family;instanceId=$InstanceId;pid=24300;port=6004;status='readiness'} }
+        $script:ownership='unknown'
+        { Confirm-ItlOnDemandBackendRunning -Family roctup -InstanceId ('e'*32) -ExpectedPid 24208 -ExpectedPort 6003 -CatalogSha256 ('c'*64) } |
+            Should -Throw '*ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port 6003*start-unconfirmed*Port evidence: decision=unknown*rows(state/pid/remote)=*attempts=12 elapsedMs=*'
+        @($script:ownershipCalls | Where-Object { $null -ne $_.retry }).Count | Should -Be 1
+        $marked=Read-ItlOnDemandRuntimeState roctup ('e'*32)
+        $marked.status | Should -Be 'start-unconfirmed'
+        $marked.pid | Should -Be 24208
+        $health=Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $marked
+        $health.stale | Should -BeTrue
+        $health.status | Should -Be 'owned-start-unconfirmed'
+        $replacement=Recover-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -ReplacementInstanceId ('f'*32) -ExpectedPid 24208 -ExpectedPort 6003 -CatalogSha256 ('c'*64)
+        $replacement.instanceId | Should -Be ('f'*32)
+        $replacement.status | Should -Be 'readiness'
+        @($script:stops) | Should -Be @(24208)
+        Read-ItlOnDemandRuntimeState roctup ('e'*32) | Should -BeNullOrEmpty
+    }
+
+    It 'never treats readiness without the marker as stale, whatever its age, and keeps a backend on a transient probe failure' {
+        Mock Start-ItlOnDemandBackendInstance { throw 'a healthy backend must not be restarted' }
+        $script:ownership='unknown'
+        $current=Read-ItlOnDemandRuntimeState roctup ('e'*32)
+        ([DateTime]::UtcNow - [DateTimeOffset]::Parse($current.readinessAt).UtcDateTime).TotalHours | Should -BeGreaterThan 24
+        $health=Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $current
+        $health.stale | Should -BeFalse
+        $health.status | Should -Be 'owned-pid-port-unverified'
+        $health.portDiagnostic | Should -Match 'decision=unknown'
+        { Recover-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -ReplacementInstanceId ('f'*32) -ExpectedPid 24208 -ExpectedPort 6003 -CatalogSha256 ('c'*64) } |
+            Should -Throw '*ITL_ONDEMAND_RECOVERY_NOT_STALE: status=owned-pid-port-unverified*Port evidence: decision=unknown*'
+        $script:ownership='owned'
+        (Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $current).status | Should -Be 'healthy'
+        $script:stops.Count | Should -Be 0
+        (Read-ItlOnDemandRuntimeState roctup ('e'*32)).status | Should -Be 'readiness'
+        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0 -Exactly
+    }
+
+    It 'keeps the process on an unknown stop owner and its continuation completes the original call' {
+        $script:ownership='unknown'
+        $message=''
+        try { Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record | Out-Null } catch { $message=$_.Exception.Message }
+        $message | Should -Match '^ITL_ONDEMAND_STOP_PORT_OWNER_UNVERIFIED: backend port 6003 owner could not be proven for PID 24208; no process was stopped'
+        $message | Should -Match 'start-unconfirmed'
+        $message | Should -Match 'call itl_recover_connection again'
+        $message | Should -Match 'refresh-dev-branch-lite'
+        $message | Should -Match 'Port evidence: decision=unknown .*source=none .*attempts=12'
+        $message | Should -Not -Match 'STOP_PORT_OWNER_CHANGED'
+        $script:stops.Count | Should -Be 0
+        $script:processAlive | Should -BeTrue
+        (Read-ItlOnDemandRuntimeState roctup ('e'*32)).status | Should -Be 'start-unconfirmed'
+        Should -Invoke Release-ItlOnDemandManagedPortLease -Times 0 -Exactly
+
+        # itl_recover_connection: the same exact owned stop, then a fresh start
+        # and protocol confirmation for the original call.
+        $script:ownership='owned'
+        (Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record).status | Should -Be 'stopped'
+        @($script:stops) | Should -Be @(24208)
+        $fresh=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $fresh.pid=24300
+        Save-OwnershipFixtureState $fresh
+        $script:processAlive=$true
+        $confirmed=Confirm-ItlOnDemandBackendRunning -Family roctup -InstanceId ('e'*32) -ExpectedPid 24300 -ExpectedPort 6003 -CatalogSha256 ('c'*64)
+        $confirmed.status | Should -Be 'running'
+        (Read-ItlOnDemandRuntimeState roctup ('e'*32)).status | Should -Be 'running'
+    }
+
+    It 'preserves a proven foreign listener with the distinct changed-owner code' {
+        $script:ownership='foreign'
+        { Stop-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -StrictOwnership -ExpectedRuntimeState $script:record } | Should -Throw 'ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign manager listener. Port evidence: decision=foreign*'
+        $script:stops.Count | Should -Be 0
+        (Read-ItlOnDemandRuntimeState roctup ('e'*32)).status | Should -Be 'readiness'
+    }
+
+    It 'never returns a start-unconfirmed instance to the broker on ensure' {
+        Mock Read-CurrentDevBranchStateForRoctupMcp { [pscustomobject]@{devBranchInfoBasePath='C:\Целевая база';infoBaseKind='file'} }
+        Mock Assert-DevBranchApplicationReady { param($State) $State }
+        Mock Stop-ItlOnDemandBackendInstance { throw 'STOP-BEFORE-FRESH-START' }
+        $marked=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $marked.status='start-unconfirmed'
+        Save-OwnershipFixtureState $marked
+        { Start-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -CatalogSha256 ('c'*64) } | Should -Throw '*STOP-BEFORE-FRESH-START*'
+        Should -Invoke Get-ItlOnDemandPortOwnership -Times 0 -Exactly
+        Save-OwnershipFixtureState $script:record
+        $reused=Start-ItlOnDemandBackendInstance -Family roctup -InstanceId ('e'*32) -CatalogSha256 ('c'*64)
+        $reused.status | Should -Be 'readiness'
+        $reused.pid | Should -Be 24208
+    }
+
+    It 'skips an unknown peer listener after one observation without retry delay' {
+        Mock Get-ItlOnDemandPortOwnership { param($Port,$ProcessId,$RetryUntil,[switch]$TestClient) & $actualPortOwnership -Port $Port -ProcessId $ProcessId -RetryUntil $RetryUntil -TestClient:$TestClient }
+        Mock Get-ItlTcpListenerOwnership {
+            param($Port,$Address,$RetryUntil,$ConnectTimeoutMilliseconds,$FallbackSource)
+            $script:ownershipCalls.Add([pscustomobject]@{port=$Port;retry=$RetryUntil})
+            [pscustomobject]@{status='unknown';owners=@();source='none';attempts=1;elapsedMs=0;diagnostic='status=unknown'}
+        }
+        Mock Start-Sleep {}
+        $peer=$script:record|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $peer.instanceId=('d'*32);$peer.pid=24209;$peer.port=6005;$peer.status='running'
+        Mock Get-ItlOnDemandRuntimeInstances { $peer }
+        $stopping=[pscustomobject]@{family='vanessa-ui';instanceId=('a'*32)}
+        Test-ItlOnDemandPeerSessionOwnership -ProcessId 24209 -Base ([pscustomobject]@{kind='file';path='C:\Целевая база'}) -StoppingRuntime $stopping | Should -BeFalse
+        $script:ownershipCalls.Count | Should -Be 1
+        $script:ownershipCalls[0].port | Should -Be 6005
+        $script:ownershipCalls[0].retry | Should -BeNullOrEmpty
+        Should -Invoke Start-Sleep -Times 0 -Exactly
     }
 }

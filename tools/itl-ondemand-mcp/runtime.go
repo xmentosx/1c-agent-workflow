@@ -185,6 +185,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 				}
 				if _, err := r.recoverLocked(ctx, r.session, previous, r.backend); err != nil {
 					current := r.instanceID
+					r.writeLifecycleEvidenceLocked(toolName, "recovery", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
 					r.mu.Unlock()
 					return recoveryAction(toolName, previous, current, false, "not-started", err), nil
 				}
@@ -198,20 +199,25 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	}
 	if err := r.ensureLocked(ctx); err != nil {
 		diff := r.mismatch
-		r.mu.Unlock()
+		code := "ITL_ONDEMAND_START_FAILED"
 		if diff != nil {
-			return toolError("ITL_ONDEMAND_CATALOG_MISMATCH", "backend tool catalog changed", diff), nil
+			code = "ITL_ONDEMAND_CATALOG_MISMATCH"
 		}
-		for _, code := range []string{
+		for _, candidate := range []string{
 			"ITL_ONDEMAND_BACKEND_VERSION_MISMATCH",
 			"ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED",
 			"ITL_VANESSA_EXT_NOT_READY",
 		} {
-			if strings.Contains(err.Error(), code) {
-				return toolError(code, err.Error(), nil), nil
+			if diff == nil && strings.Contains(err.Error(), candidate) {
+				code = candidate
 			}
 		}
-		return toolError("ITL_ONDEMAND_START_FAILED", err.Error(), nil), nil
+		r.writeLifecycleEvidenceLocked(toolName, "start", code, err)
+		r.mu.Unlock()
+		if diff != nil {
+			return toolError(code, "backend tool catalog changed", diff), nil
+		}
+		return toolError(code, err.Error(), nil), nil
 	}
 	if r.mismatch != nil {
 		diff := r.mismatch
@@ -264,6 +270,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
 		if recoveryErr != nil {
 			currentInstanceID := r.instanceID
+			r.writeLifecycleEvidenceLocked(toolName, "recovery", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", recoveryErr)
 			r.completeCallLocked()
 			r.mu.Unlock()
 			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, "unknown", recoveryErr), nil
@@ -472,7 +479,26 @@ func recoveryAction(toolName, previousInstanceID, instanceID string, backendReco
 		message = "owned connection recovery could not be completed; no previous tool operation was replayed"
 		details["action"] = ownerRecoveryTool
 	}
+	if reason != nil {
+		message += "; reason: " + recoveryReasonSummary(reason)
+	}
 	return toolError("ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", message, details)
+}
+
+const recoveryReasonLimit = 600
+
+// The full reason stays in details.reason; the visible text starts at the
+// first workflow code (for example RECOVERY_NOT_STALE status=...) and is bounded.
+func recoveryReasonSummary(reason error) string {
+	text := evidenceWhitespace.ReplaceAllString(strings.TrimSpace(reason.Error()), " ")
+	if index := strings.Index(text, "ITL_"); index > 0 {
+		text = text[index:]
+	}
+	runes := []rune(text)
+	if len(runes) > recoveryReasonLimit {
+		text = string(runes[:recoveryReasonLimit-3]) + "..."
+	}
+	return text
 }
 
 func recoveredResult(result *mcp.CallToolResult, recovery *recoveryResult) *mcp.CallToolResult {
@@ -607,6 +633,15 @@ var (
 )
 
 func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
+	return redactedEvidenceMessage(result, err, 240)
+}
+
+// Lifecycle diagnostics carry port-owner evidence and joined cleanup errors.
+func resultEvidenceMessageLimited(err error, limit int) string {
+	return redactedEvidenceMessage(nil, err, limit)
+}
+
+func redactedEvidenceMessage(result *mcp.CallToolResult, err error, limit int) string {
 	message := ""
 	if err != nil {
 		message = err.Error()
@@ -625,8 +660,8 @@ func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
 	message = evidenceURLSecretQuery.ReplaceAllString(message, "$1[redacted]")
 	message = evidenceConfiguration.ReplaceAllString(message, "[configuration redacted]")
 	runes := []rune(message)
-	if len(runes) > 240 {
-		message = string(runes[:237]) + "..."
+	if len(runes) > limit {
+		message = string(runes[:limit-3]) + "..."
 	}
 	return message
 }
@@ -667,8 +702,7 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	r.backend = info
 	r.idleActivityUnresolved = false
 	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
-		r.stopBrokerAfterFailure(ctx)
-		return err
+		return errors.Join(err, r.stopBrokerAfterFailure(ctx))
 	}
 	if r.family == "vanessa-ui" {
 		r.testClientState = testClientNotStarted
@@ -706,22 +740,19 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	session, err := client.Connect(ctx, transport, nil)
 	err = completePhase(err)
 	if err != nil {
-		r.stopBrokerAfterFailure(ctx)
-		return fmt.Errorf("connect backend MCP: %w", err)
+		return errors.Join(fmt.Errorf("connect backend MCP: %w", err), r.stopBrokerAfterFailure(ctx))
 	}
 	completePhase = r.backendPhase(ctx, "catalog-verify")
 	_, diff, err := r.waitForCatalog(ctx, session)
 	err = completePhase(err)
 	if err != nil {
 		_ = session.Close()
-		r.stopBrokerAfterFailure(ctx)
-		return fmt.Errorf("list backend tools: %w", err)
+		return errors.Join(fmt.Errorf("list backend tools: %w", err), r.stopBrokerAfterFailure(ctx))
 	}
 	if !diff.empty() {
 		r.mismatch = diff
 		_ = session.Close()
-		r.stopBrokerAfterFailure(ctx)
-		return fmt.Errorf("ITL_ONDEMAND_CATALOG_MISMATCH: added=%v removed=%v changed=%v", diff.Added, diff.Removed, diff.Changed)
+		return errors.Join(fmt.Errorf("ITL_ONDEMAND_CATALOG_MISMATCH: added=%v removed=%v changed=%v", diff.Added, diff.Removed, diff.Changed), r.stopBrokerAfterFailure(ctx))
 	}
 	r.session = session
 	r.mismatch = nil
@@ -729,9 +760,9 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err := completePhase(r.preflightVanessa(ctx, session)); err != nil {
 		r.session = nil
 		_ = session.Close()
-		r.stopBrokerAfterFailure(ctx)
+		stopErr := r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
-		return err
+		return errors.Join(err, stopErr)
 	}
 	completePhase = r.backendPhase(ctx, "mark-running")
 	confirmed, err := r.broker.MarkRunning(ctx, info)
@@ -739,9 +770,9 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err != nil {
 		r.session = nil
 		_ = session.Close()
-		r.stopBrokerAfterFailure(ctx)
+		stopErr := r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
-		return fmt.Errorf("confirm backend protocol readiness: %w", err)
+		return errors.Join(fmt.Errorf("confirm backend protocol readiness: %w", err), stopErr)
 	}
 	info = confirmed
 	r.backend = confirmed
@@ -1488,13 +1519,12 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	if r.suppressEvidence {
 		return
 	}
-	if backend == nil || r.catalog == nil {
+	if r.catalog == nil {
 		return
 	}
-	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		r.logger.Error("create evidence directory", "error", err)
-		return
+	if backend == nil {
+		// Lifecycle failures happen before or after a backend exists.
+		backend = &backendInfo{}
 	}
 	argumentsRaw, _ := json.Marshal(arguments)
 	argumentsHash := sha256.Sum256(argumentsRaw)
@@ -1524,6 +1554,15 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	} else if r.executionOwner != nil {
 		entry["executionId"] = r.executionOwner.Proof.ID
 	}
+	r.appendEvidenceLocked(instanceID, entry)
+}
+
+func (r *runtime) appendEvidenceLocked(instanceID string, entry map[string]any) {
+	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		r.logger.Error("create evidence directory", "error", err)
+		return
+	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, instanceID+".evidence.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -1531,6 +1570,37 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		_, _ = file.Write(append(raw, '\n'))
 		_ = file.Close()
 	}
+}
+
+var lifecyclePhasePattern = regexp.MustCompile(`phase=([a-z-]+)`)
+
+const lifecycleEvidenceMessageLimit = 2000
+
+// Start, mark-running, stop and recovery failures are recorded for the
+// instance even when no backend was established. phase is the failed backend
+// phase when known, otherwise the lifecycle step.
+func (r *runtime) writeLifecycleEvidenceLocked(toolName, step, code string, failure error) {
+	if r.suppressEvidence || r.catalog == nil || failure == nil {
+		return
+	}
+	phase := step
+	if match := lifecyclePhasePattern.FindStringSubmatch(failure.Error()); match != nil {
+		phase = match[1]
+	}
+	message := resultEvidenceMessageLimited(failure, lifecycleEvidenceMessageLimit)
+	entry := map[string]any{
+		"schemaVersion": 3, "family": r.family, "instanceId": r.instanceID,
+		"catalogSha256": r.catalog.SHA256, "tool": toolName, "outcome": "failed",
+		"lifecycleStep": step, "phase": phase, "resultCode": code, "resultMessage": message,
+		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if r.backend != nil {
+		entry["backendVersion"], entry["logPath"] = r.backend.BackendVersion, r.backend.LogPath
+	}
+	if r.executionOwner != nil {
+		entry["executionId"] = r.executionOwner.Proof.ID
+	}
+	r.appendEvidenceLocked(r.instanceID, entry)
 }
 
 func (r *runtime) authoringEvidenceContextLocked(toolName string, arguments any, outcome string) (string, string, int) {

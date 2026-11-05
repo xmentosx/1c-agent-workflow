@@ -62,6 +62,8 @@
                 param([string]$State, [int]$LocalPort)
                 return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 7311 }
             }
+            # A State=0 listener is proven through the server side of an own connection.
+            function Get-ItlTcpConnectionProbe { [pscustomobject]@{ outcome = 'connected'; localPort = 50001; owners = @(7311); rows = @(); error = '' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -83,6 +85,7 @@
                 param([string]$State, [int]$LocalPort)
                 return [pscustomobject]@{ State=$ListenerState;RemotePort=0;OwningProcess = 9901 }
             }
+            function Get-ItlTcpConnectionProbe { [pscustomobject]@{ outcome = 'connected'; localPort = 50002; owners = @(9901); rows = @(); error = '' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -98,6 +101,7 @@
             $script:fixtureStartTime=[DateTime]::UtcNow.AddSeconds(-5)
             function Get-Process { [pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime.AddMilliseconds(1)} }
             function Test-TcpPortOpen { throw 'must reject identity before checking the listener' }
+            function Get-ItlTcpListenerOwnership { throw 'must reject identity before checking the listener' }
             $process=[pscustomobject]@{Id=7312;StartTime=$script:fixtureStartTime;HasExited=$false}
             $readiness=Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
             $cleanup=Stop-VanessaDesignerAgentOwnedProcess -Process $process -ExpectedStartTime $script:fixtureStartTime
@@ -158,6 +162,7 @@
             $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
             function Get-Process { return [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime } }
             function Test-TcpPortOpen { return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); diagnostic = 'status=absent fixture' } }
             $fixtureProcess = [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime; HasExited = $false }
             Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
         }
@@ -165,6 +170,21 @@
         $result.ready | Should -BeFalse
         $result.status | Should -Be "timeout"
         $result.processAlive | Should -BeTrue
+    }
+
+    It "keeps polling an unknown listener owner and reports inspection failure with evidence" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7315; StartTime = $script:fixtureStartTime } }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'unknown'; owners = @(); diagnostic = 'status=unknown source=none error=CIM unavailable' } }
+            $fixtureProcess = [pscustomobject]@{ Id = 7315; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "listener-inspection-failed"
+        $result.detail | Should -Match "CIM unavailable"
     }
 
     It "redacts secrets from the Designer Agent log tail" {

@@ -300,12 +300,12 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.26"
+        $manifest.facadeVersion | Should -Be "0.4.27"
         $manifest.minimumFacadeVersion | Should -Be "0.4.17"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
         $databaseRuntimeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\database_runtime.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.26"'
+        $mainSource | Should -Match 'const version = "0\.4\.27"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -333,10 +333,10 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.139"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.26"
-        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.26"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.26/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "47234ea81544095a182f73a6d500008866b11f652c259284a4b015772be8af60"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.27"
+        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.27"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.27/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "86fc00d12632e14a811fb9518a869f17c0b03273c2bf139e97dcb5dc87cb5714"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -557,13 +557,13 @@ Describe "ITL on-demand MCP facade" {
             }
             $mismatch | Should -Match "DEPENDENCY_SELECTION_REQUIRED"
 
-            $lock.dependencies.itlOndemandMcp.version = "0.4.26"
+            $lock.dependencies.itlOndemandMcp.version = "0.4.27"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
             $resolved = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.26\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.27\$($lock.dependencies.itlOndemandMcp.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -596,7 +596,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.26"
+                $version = "0.4.27"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $cacheBytes = [byte[]](1, 2, 3, 4)
                 $sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($cacheBytes)))).Replace('-', '').ToLowerInvariant()
@@ -617,7 +617,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.26\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.27\$($result.sha256)\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -649,13 +649,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.26"
+                        version = "0.4.27"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.26\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.27\$cachedSha256\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -691,7 +691,7 @@ Describe "ITL on-demand MCP facade" {
                 function Get-WorkflowDependencyEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.26"
+                        version = "0.4.27"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $sourceSha256
@@ -1173,7 +1173,7 @@ Describe "ITL on-demand MCP facade" {
             }
             function Wait-RoctupMcpPort { return $true }
             function Write-ItlRoctupStartupFailureDiagnostic { throw 'successful start must not collect diagnostics' }
-            function Test-ItlOnDemandPortOwnedByProcess { return $true }
+            function Get-ItlOnDemandPortOwnership { [pscustomobject]@{ decision = 'owned'; status = 'proven'; owners = @(); diagnostic = 'decision=owned fixture' } }
             function Set-ItlOnDemandManagedPortLeaseStatus {}
             function Get-Process { return [pscustomobject]@{ Id = 76001; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
             function Resolve-Agent1cFullPath { param([string]$Path) return $Path }
@@ -1318,7 +1318,7 @@ Describe "ITL on-demand MCP facade" {
             }
             function Read-ItlOnDemandRuntimeState { return $runtime }
             function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" } }
-            function Test-ItlOnDemandPortOwnedByProcess { return $true }
+            function Get-ItlOnDemandPortOwnership { [pscustomobject]@{ decision = 'owned'; status = 'proven'; owners = @(); diagnostic = 'decision=owned fixture' } }
             function Write-ItlOnDemandRuntimeState { param([object]$RuntimeState); $script:confirmationEvents += "runtime"; $script:written = $RuntimeState; return "runtime.json" }
             function Set-ItlOnDemandManagedPortLeaseStatus { param($Family, $Key, $LeaseToken, $Status, $ProcessId); $script:confirmationEvents += "lease"; $script:allocationStatus = "$LeaseToken/$Status" }
             $confirmed = Confirm-ItlOnDemandBackendRunning -Family "roctup" -InstanceId ("5" * 32) -ExpectedPid 76003 -ExpectedPort 48003 -CatalogSha256 ("b" * 64)
@@ -1487,7 +1487,7 @@ Describe "ITL on-demand MCP facade" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
             function Get-Process { return $null }
-            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=absent fixture' } }
             function Test-ItlOnDemandOwnedProcess { return $false }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41001; port = 48101 })
         }
@@ -1501,7 +1501,7 @@ Describe "ITL on-demand MCP facade" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
             function Get-Process { return [pscustomobject]@{ Id = 41002 } }
-            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=absent fixture' } }
             function Test-ItlOnDemandOwnedProcess { return $true }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41002; port = 48102 })
         }
@@ -1516,7 +1516,7 @@ Describe "ITL on-demand MCP facade" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
             function Get-Process { return [pscustomobject]@{ Id = 41003 } }
-            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=absent fixture' } }
             function Test-ItlOnDemandOwnedProcess { return $false }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41003; port = 48103 })
         }
@@ -1527,7 +1527,7 @@ Describe "ITL on-demand MCP facade" {
     It "does not classify a missing PID with an open startup port as stale" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
-            function Test-TcpPortOpen { return $true }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'proven'; owners = @(4321); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=proven fixture' } }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ status = "starting"; pid = 0; port = 48109 })
         }
         $health.stale | Should -BeFalse
@@ -1538,7 +1538,7 @@ Describe "ITL on-demand MCP facade" {
     It "retains a recent starting registration with no PID while launch may still be in progress" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
-            function Test-TcpPortOpen { return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=absent fixture' } }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{
                 status = "starting"
                 startingAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -1554,7 +1554,7 @@ Describe "ITL on-demand MCP facade" {
     It "classifies an expired starting registration stale only after PID absence and closed port are proven" {
         $health = & {
             function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
-            function Test-TcpPortOpen { return $false }
+            function Get-ItlTcpListenerOwnership { [pscustomobject]@{ status = 'absent'; owners = @(); source = 'connection'; attempts = 1; elapsedMs = 0; diagnostic = 'status=absent fixture' } }
             Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{
                 status = "starting"
                 startingAt = (Get-Date).ToUniversalTime().AddMinutes(-10).ToString("o")
@@ -1870,28 +1870,93 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
-    It 'proves a State=0 listener only with its live socket and exclusive known owner: <Case>' -TestCases @(
-        @{Case='owned';Expected=$true},@{Case='foreign';Expected=$false},@{Case='unknown-owner';Expected=$false},
-        @{Case='mixed-owner';Expected=$false},@{Case='no-peer-socket-missing';Expected=$false},
-        @{Case='time-wait';Expected=$true},@{Case='closed-only';Expected=$false},
-        @{Case='foreign-connection';Expected=$true},
-        @{Case='classified-and-unclassified';Expected=$false},
-        @{Case='closed';Expected=$false},@{Case='unreadable';Expected=$false}
+    It 'answers listener ownership as proven, absent or unknown from rows and the own connection: <Case>' -TestCases @(
+        @{Case='state0-connection-owned';Expected=$true;Status='proven'},
+        @{Case='state0-server-row-missing';Expected=$false;Status='unknown'},
+        @{Case='foreign-connection-owner';Expected=$false;Status='proven'},
+        @{Case='mixed-connection-owner';Expected=$false;Status='proven'},
+        @{Case='listen-owned';Expected=$true;Status='proven'},
+        @{Case='listen-mixed-owner';Expected=$false;Status='proven'},
+        @{Case='listen-zero-owner-connection-owned';Expected=$true;Status='proven'},
+        @{Case='refused';Expected=$false;Status='absent'},
+        @{Case='timeout-without-listener-rows';Expected=$false;Status='absent'},
+        @{Case='timeout-with-state0-row';Expected=$false;Status='unknown'},
+        @{Case='unreadable';Expected=$false;Status='unknown'}
     ) {
-        param($Case,$Expected)
+        param($Case,$Expected,$Status)
         & {
             $rows=@([pscustomobject]@{State=0;RemotePort=0;OwningProcess=1234})
-            if($Case -eq 'foreign'){$rows[0].OwningProcess=4321}
-            if($Case -eq 'unknown-owner'){$rows[0].OwningProcess=0}
-            if($Case -eq 'mixed-owner'){$rows+=([pscustomobject]@{State=0;RemotePort=0;OwningProcess=4321})}
-            if($Case -eq 'foreign-connection'){$rows+=([pscustomobject]@{State=5;RemotePort=123;OwningProcess=4321})}
-            if($Case -eq 'classified-and-unclassified'){$rows=@([pscustomobject]@{State='Listen';RemotePort=0;OwningProcess=1234},[pscustomobject]@{State=0;RemotePort=0;OwningProcess=4321})}
-            if($Case -eq 'time-wait'){$rows+=([pscustomobject]@{State=11;RemotePort=123;OwningProcess=0})}
-            if($Case -eq 'closed-only'){$rows=@([pscustomobject]@{State=11;RemotePort=123;OwningProcess=0})}
-            if($Case -eq 'no-peer-socket-missing'){$rows[0].State=5;$rows[0].RemotePort=123}
-            function Get-NetTCPConnection {param($LocalPort,$ErrorAction) if($Case -eq 'unreadable'){throw 'CIM unavailable'};$rows}
-            function Test-TcpPortOpen {param($Port) $Case -ne 'closed'}
+            $probe=[pscustomobject]@{outcome='connected';localPort=50123;owners=@(1234);rows=@();error=''}
+            switch ($Case) {
+                'state0-server-row-missing' { $probe.owners=@(); $probe.error='server-side-row-missing' }
+                'foreign-connection-owner' { $probe.owners=@(4321) }
+                'mixed-connection-owner' { $probe.owners=@(1234,4321) }
+                'listen-owned' { $rows=@([pscustomobject]@{State='Listen';RemotePort=0;OwningProcess=1234}); $probe=$null }
+                'listen-mixed-owner' { $rows=@([pscustomobject]@{State='Listen';RemotePort=0;OwningProcess=1234},[pscustomobject]@{State=2;RemotePort=0;OwningProcess=4321}); $probe=$null }
+                'listen-zero-owner-connection-owned' { $rows=@([pscustomobject]@{State='Listen';RemotePort=0;OwningProcess=0}) }
+                'refused' { $rows=@(); $probe.outcome='refused'; $probe.owners=@() }
+                'timeout-without-listener-rows' { $rows=@([pscustomobject]@{State=11;RemotePort=123;OwningProcess=0}); $probe.outcome='timeout'; $probe.owners=@() }
+                'timeout-with-state0-row' { $probe.outcome='timeout'; $probe.owners=@() }
+            }
+            # Script-scope fixtures: implementation locals must not shadow them.
+            $script:probeFixture=$probe
+            $script:rowsFixture=$rows
+            $script:caseFixture=$Case
+            function Get-NetTCPConnection {param($LocalPort,$RemotePort,$ErrorAction) if($script:caseFixture -eq 'unreadable'){throw 'CIM unavailable'};$script:rowsFixture}
+            function Get-ItlTcpConnectionProbe { if($null -eq $script:probeFixture){throw 'a classified listener must not need a connection'}; $script:probeFixture }
             Test-ItlOnDemandPortOwnedByProcess -Port 4567 -ProcessId 1234 | Should -Be $Expected
+            $ownership=Get-ItlTcpListenerOwnership -Port 4567
+            $ownership.status | Should -Be $Status
+            $ownership.diagnostic | Should -Match "status=$Status .*rows\(state/pid/remote\)=.*attempts=1 elapsedMs="
+            if ($Case -like 'state0-*' -or $Case -like '*connection*') { $ownership.diagnostic | Should -Match 'connection=' }
+        }
+    }
+
+    It 'retries an unknown owner within one caller budget and never turns it into a verdict' {
+        & {
+            $script:tableCalls=0
+            function Get-NetTCPConnection {param($LocalPort,$ErrorAction) $script:tableCalls++; if($script:tableCalls -eq 1){throw 'CIM transient failure'}; [pscustomobject]@{State=0;RemotePort=0;OwningProcess=1234}}
+            function Get-ItlTcpConnectionProbe { [pscustomobject]@{outcome='connected';localPort=50124;owners=@(1234);rows=@();error=''} }
+            $recovered=Get-ItlOnDemandPortOwnership -Port 4567 -ProcessId 1234 -RetryUntil (New-ItlPortOwnershipDeadline -BudgetMilliseconds 3000)
+            $recovered.decision | Should -Be 'owned'
+            $script:tableCalls | Should -Be 2
+            $recovered.diagnostic | Should -Match 'source=connection .*attempts=2'
+
+            function Get-NetTCPConnection {param($LocalPort,$ErrorAction) throw 'CIM unavailable'}
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            $exhausted=Get-ItlOnDemandPortOwnership -Port 4567 -ProcessId 1234 -RetryUntil (New-ItlPortOwnershipDeadline -BudgetMilliseconds 900)
+            $watch.Stop()
+            $exhausted.decision | Should -Be 'unknown'
+            $exhausted.diagnostic | Should -Match 'status=unknown .*attempts=[2-9].*error=CIM unavailable'
+            $watch.ElapsedMilliseconds | Should -BeLessThan 3000
+            Test-ItlOnDemandPortOwnedByProcess -Port 4567 -ProcessId 1234 | Should -BeFalse
+
+            $script:singleCalls=0
+            function Get-NetTCPConnection {param($LocalPort,$ErrorAction) $script:singleCalls++; throw 'CIM unavailable'}
+            (Get-ItlOnDemandPortOwnership -Port 4567 -ProcessId 1234).decision | Should -Be 'unknown'
+            $script:singleCalls | Should -Be 1
+        }
+    }
+
+    It 'proves a real hidden-or-listed loopback listener through the shared probe' {
+        $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+        try {
+            $listener.Start();$port=([Net.IPEndPoint]$listener.LocalEndpoint).Port
+            $ownership=Get-ItlOnDemandPortOwnership -Port $port -ProcessId $PID -RetryUntil (New-ItlPortOwnershipDeadline)
+            $ownership.decision | Should -Be 'owned'
+            $ownership.diagnostic | Should -Match 'source=(listen|connection)'
+            (Get-ItlOnDemandPortOwnership -Port $port -ProcessId ($PID+100000)).decision | Should -Be 'foreign'
+        } finally { $listener.Stop() }
+        (Get-ItlOnDemandPortOwnership -Port $port -ProcessId $PID -RetryUntil (New-ItlPortOwnershipDeadline)).decision | Should -Be 'absent'
+    }
+
+    It 'keeps the previous State=0 source for TestClient ports' {
+        & {
+            function Get-NetTCPConnection {param($LocalPort,$RemotePort,$ErrorAction) [pscustomobject]@{State=0;RemotePort=0;OwningProcess=1234}}
+            function Get-ItlTcpConnectionProbe {param($Address,$Port,$TimeoutMilliseconds,[switch]$ResolveServerOwner) if($ResolveServerOwner){throw 'TestClient ports keep the legacy source'}; [pscustomobject]@{outcome='connected';localPort=50125;owners=@();rows=@();error=''} }
+            $client=Get-ItlOnDemandPortOwnership -Port 48151 -ProcessId 1234 -TestClient
+            $client.decision | Should -Be 'owned'
+            $client.diagnostic | Should -Match 'source=legacy-state0'
         }
     }
 

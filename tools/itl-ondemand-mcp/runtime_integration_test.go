@@ -32,6 +32,7 @@ type fakeBroker struct {
 	stops             int
 	stopFailures      int
 	testClientErr     error
+	markErr           error
 }
 
 func (b *fakeBroker) Ensure(context.Context) (*backendInfo, error) {
@@ -97,6 +98,9 @@ func (b *fakeBroker) MarkRunning(_ context.Context, previous *backendInfo) (*bac
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.marks++
+	if b.markErr != nil {
+		return nil, b.markErr
+	}
 	copy := *previous
 	copy.Status = "running"
 	b.info = &copy
@@ -1792,5 +1796,94 @@ func TestRuntimeForwardsCancellationToBackend(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("facade call did not return after cancellation")
+	}
+}
+
+func readEvidenceEntries(t *testing.T, rt *runtime, instanceID string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", rt.family, instanceID+".evidence.jsonl"))
+	if err != nil {
+		t.Fatalf("evidence was not written: %v", err)
+	}
+	var entries []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("invalid evidence line %q: %v", line, err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// A failed mark-running proof must not hide the failed cleanup, must leave
+// lifecycle evidence without a backend, and itl_recover_connection must then
+// make the original call succeed.
+func TestFailedMarkRunningKeepsCleanupErrorEvidenceAndRecoversTheOriginalCall(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	instanceID := "0123456789abcdef0123456789abcdef"
+	portEvidence := "Port evidence: decision=unknown expectedPid=24208 status=unknown source=none address=127.0.0.1:6003 rows(state/pid/remote)=[0/24208/0] connection=timeout attempts=12 elapsedMs=3010"
+	broker := &fakeBroker{info: &backendInfo{InstanceID: instanceID, URL: backend.URL, PID: 24208, Port: 6003, Status: "readiness"},
+		markErr:      fmt.Errorf("backend broker mark-running failed: exit status 1: ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port 6003 is not proven to be owned by backend PID 24208; the instance is marked start-unconfirmed for owned recovery. %s", portEvidence),
+		stopFailures: 1}
+	rt, session := newFacadeSession(t, tools, broker, time.Minute, nil)
+	writeRuntimeMarker(t, rt, instanceID)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "original"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_ONDEMAND_START_FAILED")
+	text := resultText(result)
+	for _, wanted := range []string{"phase=mark-running", "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED", "cleanup after failed backend start", "simulated broker stop failure"} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("start failure text lost %q: %s", wanted, text)
+		}
+	}
+	if !rt.cleanupUnconfirmed || rt.backend != nil {
+		t.Fatalf("failed cleanup must retain the resource owner: cleanupUnconfirmed=%v backend=%v", rt.cleanupUnconfirmed, rt.backend)
+	}
+	entries := readEvidenceEntries(t, rt, instanceID)
+	last := entries[len(entries)-1]
+	if last["lifecycleStep"] != "start" || last["phase"] != "mark-running" || last["resultCode"] != "ITL_ONDEMAND_START_FAILED" || last["outcome"] != "failed" {
+		t.Fatalf("unexpected lifecycle evidence: %#v", last)
+	}
+	message, _ := last["resultMessage"].(string)
+	if !strings.Contains(message, "source=none") || !strings.Contains(message, "simulated broker stop failure") {
+		t.Fatalf("evidence lost port or cleanup diagnostics: %s", message)
+	}
+
+	broker.mu.Lock()
+	broker.markErr = nil
+	broker.mu.Unlock()
+	recovered := rt.recoverConnection(context.Background(), nil, map[string]any{})
+	if recovered.IsError {
+		t.Fatalf("continuation failed: %s", resultText(recovered))
+	}
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "original"}})
+	if err != nil || result.IsError {
+		t.Fatalf("original call did not succeed after recovery: %v %s", err, resultText(result))
+	}
+	if _, stops := broker.counts(); stops != 2 || broker.markCount() != 2 {
+		t.Fatalf("unexpected lifecycle: stops=%d marks=%d", stops, broker.markCount())
+	}
+}
+
+func TestRecoveryActionTextCarriesABoundedReason(t *testing.T) {
+	reason := fmt.Errorf("backend broker recover failed: elapsedMs=812 budgetMs=600000: exit status 1: ITL_ONDEMAND_RECOVERY_NOT_STALE: status=owned-pid-port-unverified pidAlive=True portOpen=False owned=True. Port evidence: %s", strings.Repeat("x", 4000))
+	result := recoveryAction(ownerRecoveryTool, "a", "a", false, "not-started", reason)
+	text := resultText(result)
+	if !strings.Contains(text, "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED") || !strings.Contains(text, "reason: ITL_ONDEMAND_RECOVERY_NOT_STALE: status=owned-pid-port-unverified") {
+		t.Fatalf("visible text lacks the reason: %s", text)
+	}
+	if len([]rune(text)) > 900 {
+		t.Fatalf("visible reason is not bounded: %d", len([]rune(text)))
+	}
+	details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+	if details["reason"] != reason.Error() {
+		t.Fatal("structured details must keep the complete reason")
+	}
+	if plain := resultText(recoveryAction("echo", "a", "b", true, "unknown", nil)); strings.Contains(plain, "reason:") {
+		t.Fatalf("no reason must not be invented: %s", plain)
 	}
 }

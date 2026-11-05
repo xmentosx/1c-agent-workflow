@@ -624,7 +624,7 @@ function Complete-ItlOnDemandTestClientCloseCore {
     $childPid=[int](Get-StateValue $state 'testClientPid' 0)
     $children=@(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $state -ExactStart -RegisteredOnly)
     if ($childPid -gt 0 -and $null -ne (Get-Process -Id $childPid -ErrorAction SilentlyContinue) -and $children.Count -ne 1) { throw 'ITL_ONDEMAND_OWNERSHIP_MISMATCH: original TestClient identity changed; no process was stopped.' }
-    if ((Test-TcpPortOpen -Port ([int]$state.testClientPort)) -and ($children.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$state.testClientPort) -ProcessId $childPid))) { throw 'ITL_ONDEMAND_OWNERSHIP_MISMATCH: original TestClient listener is foreign.' }
+    if ((Test-TcpPortOpen -Port ([int]$state.testClientPort)) -and ($children.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$state.testClientPort) -ProcessId $childPid -TestClient))) { throw 'ITL_ONDEMAND_OWNERSHIP_MISMATCH: original TestClient listener is foreign.' }
     foreach ($child in $children) {
         if ($child.process -is [Diagnostics.Process]) {
             $null=$child.process.Handle
@@ -706,18 +706,59 @@ function Test-ItlOnDemandOwnedProcess {
     return [bool](Get-ItlOnDemandProcessOwnershipProof -RuntimeState $RuntimeState).owned
 }
 
+function Get-ItlOnDemandPortOwnership {
+    param(
+        [int]$Port,
+        [int]$ProcessId,
+        [AllowNull()][Nullable[datetime]]$RetryUntil = $null,
+        [switch]$TestClient
+    )
+    # owned: exactly the expected PID; foreign: another proven owner set;
+    # absent: no listener; unknown: never owned and never "not owned".
+    $source = $(if ($TestClient) { 'legacy-state0' } else { 'connection' })
+    try { $observation = Get-ItlTcpListenerOwnership -Port $Port -RetryUntil $RetryUntil -FallbackSource $source }
+    catch { $observation = [pscustomobject]@{ status = 'unknown'; owners = @(); diagnostic = "status=unknown error=$($_.Exception.Message)" } }
+    $owners = @($observation.owners)
+    $decision = switch ([string]$observation.status) {
+        'proven' { if ($ProcessId -gt 0 -and $owners.Count -eq 1 -and $owners[0] -eq $ProcessId) { 'owned' } else { 'foreign' } }
+        'absent' { 'absent' }
+        default { 'unknown' }
+    }
+    return [pscustomobject]@{ decision = $decision; status = [string]$observation.status; owners = $owners
+        diagnostic = "decision=$decision expectedPid=$ProcessId $($observation.diagnostic)" }
+}
+
 function Test-ItlOnDemandPortOwnedByProcess {
     param(
         [int]$Port,
-        [int]$ProcessId
+        [int]$ProcessId,
+        [AllowNull()][Nullable[datetime]]$RetryUntil = $null,
+        [switch]$TestClient
     )
     if ($Port -le 0 -or $ProcessId -le 0) { return $false }
+    return (Get-ItlOnDemandPortOwnership -Port $Port -ProcessId $ProcessId -RetryUntil $RetryUntil -TestClient:$TestClient).decision -eq 'owned'
+}
+
+$script:ItlOnDemandPortOwnerContinuation = 'Continue: call itl_recover_connection again; each attempt re-proves the listener owner and completes the exact owned stop and restart. If the owner still cannot be proven, run the branch runtime lifecycle owner (agent-1c.ps1 -Action refresh-dev-branch-lite), whose strict drain repeats the same stop; never stop the PID manually.'
+
+function Set-ItlOnDemandStartUnconfirmed {
+    param([object]$RuntimeState)
+    # Positive launch-failure marker under the caller's mutation owner. Health
+    # reports it as stale so owned recovery can restart the instance.
     try {
-        $owners = @(Get-ItlTcpListenerOwnerPids -Port $Port)
-        return $owners.Count -eq 1 -and $owners[0] -eq $ProcessId
+        $marked = Set-ItlOnDemandRuntimeStateValues -RuntimeState $RuntimeState -Values ([ordered]@{ status = 'start-unconfirmed' })
+        Write-ItlOnDemandRuntimeState -RuntimeState $marked | Out-Null
+        return 'the instance is marked start-unconfirmed for owned recovery'
     } catch {
-        return $false
+        return "start-unconfirmed could not be recorded: $($_.Exception.Message)"
     }
+}
+
+function New-ItlOnDemandStopPortOwnerUnverifiedMessage {
+    param([string]$Listener, [int]$Port, [int]$ProcessId, [object]$Ownership, [string]$Marker = '')
+    $text = "ITL_ONDEMAND_STOP_PORT_OWNER_UNVERIFIED: $Listener port $Port owner could not be proven for PID $ProcessId; no process was stopped and state and leases were retained"
+    if ($Marker) { $text += "; $Marker" }
+    return "$text. $script:ItlOnDemandPortOwnerContinuation Port evidence: $($Ownership.diagnostic)"
 }
 
 function Get-ItlOnDemandManagedPortLeaseMatches {
@@ -854,7 +895,7 @@ function Test-ItlOnDemandPeerSessionOwnership {
             if ($child) {
                 if (@($peer.testClientOwnershipMarkers).Count -lt 2) { continue }
                 $children = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $peer -ExactStart -RegisteredOnly | Where-Object { [int]$_.process.Id -eq $ProcessId })
-                if ($children.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$peer.testClientPort) -ProcessId $ProcessId)) { continue }
+                if ($children.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$peer.testClientPort) -ProcessId $ProcessId -TestClient)) { continue }
             }
             # Re-read after process inspection. Replaced registrations/leases
             # cannot turn an unknown same-base session into a proven peer.
@@ -877,7 +918,7 @@ function Test-ItlOnDemandRetainedCleanupComplete {
             $null -ne (Read-ItlOnDemandRuntimeState -Family $RuntimeState.family -InstanceId $RuntimeState.instanceId)) { return $false }
         $specs=@([pscustomobject]@{pid=[int]$RuntimeState.pid;port=[int]$RuntimeState.port;family=$RuntimeState.portFamily;key=$RuntimeState.portKey;token=$RuntimeState.portLeaseToken})
         if ([string]$RuntimeState.family -ceq 'vanessa-ui') {
-            $specs += [pscustomobject]@{pid=[int](Get-StateValue $RuntimeState 'testClientPid' 0);port=[int]$RuntimeState.testClientPort;family=$RuntimeState.testClientPortFamily;key=$RuntimeState.testClientPortKey;token=$RuntimeState.testClientPortLeaseToken}
+            $specs += [pscustomobject]@{pid=[int](Get-StateValue $RuntimeState 'testClientPid' 0);port=[int]$RuntimeState.testClientPort;family=$RuntimeState.testClientPortFamily;key=$RuntimeState.testClientPortKey;token=$RuntimeState.testClientPortLeaseToken;testClient=$true}
         }
         $peers=@(Get-ItlOnDemandRuntimeInstances -Strict)
         foreach ($spec in $specs) {
@@ -888,13 +929,14 @@ function Test-ItlOnDemandRetainedCleanupComplete {
             $owners=@()
             foreach ($peer in $peers) {
                 if ([string]$peer.family -ceq [string]$RuntimeState.family -and [string]$peer.instanceId -ceq [string]$RuntimeState.instanceId) { continue }
-                $peerSpecs=@([pscustomobject]@{pid=[int]$peer.pid;port=[int]$peer.port;family=$peer.portFamily;key=$peer.portKey;token=$peer.portLeaseToken;kind=$peer.managerInfoBaseKind;path=$peer.managerInfoBasePath})
+                $peerSpecs=@([pscustomobject]@{pid=[int]$peer.pid;port=[int]$peer.port;family=$peer.portFamily;key=$peer.portKey;token=$peer.portLeaseToken;kind=$peer.managerInfoBaseKind;path=$peer.managerInfoBasePath;testClient=$false})
                 if ([string]$peer.family -ceq 'vanessa-ui') {
-                    $peerSpecs += [pscustomobject]@{pid=[int](Get-StateValue $peer 'testClientPid' 0);port=[int]$peer.testClientPort;family=$peer.testClientPortFamily;key=$peer.testClientPortKey;token=$peer.testClientPortLeaseToken;kind=$peer.infoBaseKind;path=$peer.infoBasePath}
+                    $peerSpecs += [pscustomobject]@{pid=[int](Get-StateValue $peer 'testClientPid' 0);port=[int]$peer.testClientPort;family=$peer.testClientPortFamily;key=$peer.testClientPortKey;token=$peer.testClientPortLeaseToken;kind=$peer.infoBaseKind;path=$peer.infoBasePath;testClient=$true}
                 }
                 foreach ($candidate in $peerSpecs) {
                     if ($candidate.port -ne $spec.port -or $candidate.pid -le 0 -or -not $candidate.token) { continue }
-                    if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $candidate.port -ProcessId $candidate.pid)) { continue }
+                    # Classification loop: one observation, no retries; unknown leaves the candidate untouched.
+                    if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $candidate.port -ProcessId $candidate.pid -TestClient:([bool]$candidate.testClient))) { continue }
                     $base=[pscustomobject]@{kind=$candidate.kind;path=$candidate.path}
                     if (-not (Test-ItlOnDemandPeerSessionOwnership -ProcessId $candidate.pid -Base $base -StoppingRuntime $RuntimeState)) { continue }
                     $leases=@(Get-ItlOnDemandManagedPortLeaseMatches -Family $candidate.family -Key $candidate.key -LeaseToken $candidate.token)
@@ -965,16 +1007,22 @@ function Stop-ItlOnDemandBackendInstanceCore {
         if ($null -ne $testClientProcess -and $ownedChildren.Count -eq 0) {
             throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership expected='registered exact child' actual='unverified' pid=$testClientPid family=$Family instanceId=$InstanceId."
         }
+        # One owner-proof retry budget for every port of this stop.
+        $portDeadline = New-ItlPortOwnershipDeadline
         if ($retained) {
             $backendPort=[int](Get-StateValue $runtimeState 'port' 0)
-            if ((Test-TcpPortOpen -Port $backendPort) -and
-                -not (Test-ItlOnDemandPortOwnedByProcess -Port $backendPort -ProcessId $managerPid)) {
-                throw 'ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original backend listener is not owned by the proven process; preserve it and continue through its lifecycle owner.'
+            $backendOwnership = Get-ItlOnDemandPortOwnership -Port $backendPort -ProcessId $managerPid -RetryUntil $portDeadline
+            if ($backendOwnership.decision -eq 'foreign') {
+                throw "ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original backend listener is not owned by the proven process; preserve it and continue through its lifecycle owner. Port evidence: $($backendOwnership.diagnostic)"
             }
+            if ($backendOwnership.decision -eq 'unknown') { throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener backend -Port $backendPort -ProcessId $managerPid -Ownership $backendOwnership) }
             $clientPort=[int](Get-StateValue $runtimeState 'testClientPort' 0)
-            if ($testClientPid -gt 0 -and $clientPort -gt 0 -and (Test-TcpPortOpen -Port $clientPort) -and
-                -not (Test-ItlOnDemandPortOwnedByProcess -Port $clientPort -ProcessId $testClientPid)) {
-                throw 'ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original TestClient listener has an unproven owner; no process was stopped.'
+            if ($testClientPid -gt 0 -and $clientPort -gt 0) {
+                $clientOwnership = Get-ItlOnDemandPortOwnership -Port $clientPort -ProcessId $testClientPid -RetryUntil $portDeadline -TestClient
+                if ($clientOwnership.decision -eq 'foreign') {
+                    throw "ITL_ONDEMAND_RECOVERY_PORT_OWNER_CHANGED: original TestClient listener has an unproven owner; no process was stopped. Port evidence: $($clientOwnership.diagnostic)"
+                }
+                if ($clientOwnership.decision -eq 'unknown') { throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener TestClient -Port $clientPort -ProcessId $testClientPid -Ownership $clientOwnership) }
             }
             if ($testClientPid -le 0 -and [int](Get-StateValue $runtimeState 'testClientPort' 0) -gt 0 -and
                 (Test-TcpPortOpen -Port ([int]$runtimeState.testClientPort))) {
@@ -992,8 +1040,23 @@ function Stop-ItlOnDemandBackendInstanceCore {
             }
         }
         if ($null -ne $ExpectedRuntimeState) {
-            if ((Test-TcpPortOpen -Port ([int]$runtimeState.port)) -and -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$runtimeState.port) -ProcessId $managerPid)) { throw 'ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign manager listener.' }
-            if ([int]$runtimeState.testClientPort -gt 0 -and (Test-TcpPortOpen -Port ([int]$runtimeState.testClientPort)) -and ($ownedChildren.Count -ne 1 -or -not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$runtimeState.testClientPort) -ProcessId $testClientPid))) { throw 'ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign TestClient listener.' }
+            $managerPort = [int]$runtimeState.port
+            $managerPortOwnership = Get-ItlOnDemandPortOwnership -Port $managerPort -ProcessId $managerPid -RetryUntil $portDeadline
+            if ($managerPortOwnership.decision -eq 'foreign') { throw "ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign manager listener. Port evidence: $($managerPortOwnership.diagnostic)" }
+            if ($managerPortOwnership.decision -eq 'unknown') {
+                # Our live process could not be tied to its port: keep it and mark the failed launch.
+                $marker = $(if ($claimedPath -and $ownedManager) { Set-ItlOnDemandStartUnconfirmed -RuntimeState $runtimeState } else { '' })
+                throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener backend -Port $managerPort -ProcessId $managerPid -Ownership $managerPortOwnership -Marker $marker)
+            }
+            $ownedClientPort = [int]$runtimeState.testClientPort
+            if ($ownedClientPort -gt 0) {
+                $clientPortOwnership = Get-ItlOnDemandPortOwnership -Port $ownedClientPort -ProcessId $testClientPid -RetryUntil $portDeadline -TestClient
+                if ($clientPortOwnership.decision -eq 'unknown') {
+                    $marker = $(if ($claimedPath -and $ownedManager) { Set-ItlOnDemandStartUnconfirmed -RuntimeState $runtimeState } else { '' })
+                    throw (New-ItlOnDemandStopPortOwnerUnverifiedMessage -Listener TestClient -Port $ownedClientPort -ProcessId $testClientPid -Ownership $clientPortOwnership -Marker $marker)
+                }
+                if ($clientPortOwnership.decision -ne 'absent' -and ($ownedChildren.Count -ne 1 -or $clientPortOwnership.decision -ne 'owned')) { throw "ITL_ONDEMAND_STOP_PORT_OWNER_CHANGED: preserve the foreign TestClient listener. Port evidence: $($clientPortOwnership.diagnostic)" }
+            }
         }
         foreach ($child in $ownedChildren) {
             if ($child.process -is [Diagnostics.Process]) {
@@ -1058,7 +1121,11 @@ function Get-ItlOnDemandBackendRuntimeHealth {
     if ($port -le 0) {
         return [pscustomobject]@{ stale = $false; status = "invalid-registration"; pidAlive = $false; portOpen = $false; owned = $false }
     }
-    $portOpen = Test-TcpPortOpen -Port $port
+    $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $processId -RetryUntil (New-ItlPortOwnershipDeadline)
+    # unknown is neither open nor closed and never makes an instance stale.
+    $portOpen = $portOwnership.status -eq 'proven'
+    $portClosed = $portOwnership.status -eq 'absent'
+    $portDiagnostic = [string]$portOwnership.diagnostic
     if ($processId -le 0) {
         $runtimeStatus = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "status" -Default "")
         $startingAtText = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "startingAt" -Default "")
@@ -1067,28 +1134,35 @@ function Get-ItlOnDemandBackendRuntimeHealth {
         $startingRegistrationUnexpired = $runtimeStatus -eq "starting" -and
             (-not $startingAtKnown -or ((Get-Date).ToUniversalTime() - $startingAt.ToUniversalTime()).TotalSeconds -lt 300)
         return [pscustomobject]@{
-            stale = -not $portOpen -and -not $startingRegistrationUnexpired
-            status = $(if ($portOpen) { "startup-port-open-ownership-unverified" } elseif ($startingRegistrationUnexpired) { "startup-registration-unexpired" } else { "startup-no-process-port-closed" })
-            pidAlive = $false; portOpen = $portOpen; owned = $false
+            stale = $portClosed -and -not $startingRegistrationUnexpired
+            status = $(if ($portOpen) { "startup-port-open-ownership-unverified" } elseif ($startingRegistrationUnexpired) { "startup-registration-unexpired" } elseif (-not $portClosed) { "startup-port-unverified" } else { "startup-no-process-port-closed" })
+            pidAlive = $false; portOpen = $portOpen; owned = $false; portDiagnostic = $portDiagnostic
         }
     }
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     $pidAlive = $null -ne $process
     if (-not $pidAlive) {
         return [pscustomobject]@{
-            stale = -not $portOpen
-            status = $(if ($portOpen) { "pid-dead-port-open" } else { "pid-dead" })
-            pidAlive = $false; portOpen = $portOpen; owned = $false
+            stale = $portClosed
+            status = $(if ($portOpen) { "pid-dead-port-open" } elseif (-not $portClosed) { "pid-dead-port-unverified" } else { "pid-dead" })
+            pidAlive = $false; portOpen = $portOpen; owned = $false; portDiagnostic = $portDiagnostic
         }
     }
     $owned = Test-ItlOnDemandOwnedProcess -RuntimeState $RuntimeState
     if (-not $owned) {
-        return [pscustomobject]@{ stale = $false; status = "ownership-unverified"; pidAlive = $true; portOpen = $portOpen; owned = $false }
+        return [pscustomobject]@{ stale = $false; status = "ownership-unverified"; pidAlive = $true; portOpen = $portOpen; owned = $false; portDiagnostic = $portDiagnostic }
+    }
+    # Positive launch-failure marker only; a long readiness alone is never stale.
+    if ([string](Get-StateValue $RuntimeState 'status' '') -ceq 'start-unconfirmed') {
+        return [pscustomobject]@{ stale = $true; status = "owned-start-unconfirmed"; pidAlive = $true; portOpen = $portOpen; owned = $true; portDiagnostic = $portDiagnostic }
+    }
+    if ($portClosed) {
+        return [pscustomobject]@{ stale = $true; status = "owned-pid-port-unavailable"; pidAlive = $true; portOpen = $false; owned = $true; portDiagnostic = $portDiagnostic }
     }
     if (-not $portOpen) {
-        return [pscustomobject]@{ stale = $true; status = "owned-pid-port-unavailable"; pidAlive = $true; portOpen = $false; owned = $true }
+        return [pscustomobject]@{ stale = $false; status = "owned-pid-port-unverified"; pidAlive = $true; portOpen = $false; owned = $true; portDiagnostic = $portDiagnostic }
     }
-    return [pscustomobject]@{ stale = $false; status = "healthy"; pidAlive = $true; portOpen = $true; owned = $true }
+    return [pscustomobject]@{ stale = $false; status = "healthy"; pidAlive = $true; portOpen = $true; owned = $true; portDiagnostic = $portDiagnostic }
 }
 
 function Get-ItlOnDemandRetainedLaunchState {
@@ -1213,7 +1287,7 @@ function Recover-ItlOnDemandBackendInstanceCore {
     }
     $health = Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $runtimeState
     if (-not $health.stale) {
-        throw "ITL_ONDEMAND_RECOVERY_NOT_STALE: status=$($health.status) pidAlive=$($health.pidAlive) portOpen=$($health.portOpen) owned=$($health.owned)."
+        throw "ITL_ONDEMAND_RECOVERY_NOT_STALE: status=$($health.status) pidAlive=$($health.pidAlive) portOpen=$($health.portOpen) owned=$($health.owned). Port evidence: $($health.portDiagnostic)"
     }
     Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership | Out-Null
     return (Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $ReplacementInstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour -ServiceAdmissionPlan $ServiceAdmissionPlan)
@@ -1244,8 +1318,12 @@ function Confirm-ItlOnDemandBackendRunningCore {
     if (-not [bool]$ownership.owned) {
         throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=$($ownership.failedPredicate) expected='$($ownership.expected)' actual='$($ownership.actual)' pid=$ExpectedPid family=$Family instanceId=$InstanceId; state and leases were retained."
     }
-    if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $ExpectedPort -ProcessId $ExpectedPid)) {
-        throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $ExpectedPort is not proven to be owned by backend PID $ExpectedPid; state and leases were retained."
+    $portOwnership = Get-ItlOnDemandPortOwnership -Port $ExpectedPort -ProcessId $ExpectedPid -RetryUntil (New-ItlPortOwnershipDeadline)
+    if ($portOwnership.decision -ne 'owned') {
+        # The process is ours but the launch is unconfirmed: record the positive
+        # marker before failing so health and owned recovery can restart it.
+        $marker = Set-ItlOnDemandStartUnconfirmed -RuntimeState $runtimeState
+        throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $ExpectedPort is not proven to be owned by backend PID $ExpectedPid; state and leases were retained; $marker. Port evidence: $($portOwnership.diagnostic)"
     }
     $runningState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{
         status = "running"
@@ -1763,9 +1841,13 @@ function Start-ItlOnDemandBackendInstanceCore {
         $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand $Family backend start"
     }
     $existing = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
-    if ($null -ne $existing -and (Test-ItlOnDemandOwnedProcess -RuntimeState $existing) -and (Test-TcpPortOpen -Port ([int]$existing.port))) {
-        if (-not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$existing.port) -ProcessId ([int]$existing.pid))) {
-            throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: registered backend port is not owned by its PID; state and leases were retained."
+    $existingOwnership = $null
+    if ($null -ne $existing -and [string](Get-StateValue $existing 'status' '') -cne 'start-unconfirmed' -and (Test-ItlOnDemandOwnedProcess -RuntimeState $existing)) {
+        $existingOwnership = Get-ItlOnDemandPortOwnership -Port ([int]$existing.port) -ProcessId ([int]$existing.pid) -RetryUntil (New-ItlPortOwnershipDeadline)
+    }
+    if ($null -ne $existingOwnership -and $existingOwnership.decision -ne 'absent') {
+        if ($existingOwnership.decision -ne 'owned') {
+            throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: registered backend port is not owned by its PID; state and leases were retained. Port evidence: $($existingOwnership.diagnostic)"
         }
         if ([string]$existing.status -ne "running") {
             $existing = Set-ItlOnDemandRuntimeStateValues -RuntimeState $existing -Values ([ordered]@{
@@ -1902,8 +1984,9 @@ function Start-ItlOnDemandBackendInstanceCore {
         $ready = $(if ($Family -eq "roctup") { Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30 } else { Wait-VanessaMcpPort -Port $port -TimeoutSeconds 120 })
         if (-not $ready) { throw "$Family on-demand MCP did not open port $port. Log: $($result.logPath)" }
         $startupStage = 'port-owner'
-        if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $port -ProcessId $result.process.Id)) {
-            throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $port is not proven to be owned by backend PID $($result.process.Id)."
+        $portOwnership = Get-ItlOnDemandPortOwnership -Port $port -ProcessId $result.process.Id -RetryUntil (New-ItlPortOwnershipDeadline)
+        if ($portOwnership.decision -ne 'owned') {
+            throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $port is not proven to be owned by backend PID $($result.process.Id). Port evidence: $($portOwnership.diagnostic)"
         }
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{
             status = "readiness"

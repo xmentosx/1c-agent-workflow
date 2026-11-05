@@ -161,7 +161,9 @@ func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		_ = b.Stop(preserveExecutionInvocation(ctx, cleanupCtx))
+		if stopErr := b.Stop(preserveExecutionInvocation(ctx, cleanupCtx)); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("cleanup after failed backend start: %w", stopErr))
+		}
 		return nil, err
 	}
 	b.lastBackend = info

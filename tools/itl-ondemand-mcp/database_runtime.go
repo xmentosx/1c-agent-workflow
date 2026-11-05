@@ -303,10 +303,15 @@ func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
 	return nil
 }
 
-func (r *runtime) stopBrokerAfterFailure(ctx context.Context) {
+// Returns the owned cleanup failure so the caller reports it with the start
+// failure; cleanupUnconfirmed already retains the resource owner.
+func (r *runtime) stopBrokerAfterFailure(ctx context.Context) error {
 	cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_ = r.stopDatabaseBackendLocked(preserveExecutionInvocation(ctx, cleanup), true)
+	if err := r.stopDatabaseBackendLocked(preserveExecutionInvocation(ctx, cleanup), true); err != nil {
+		return fmt.Errorf("cleanup after failed backend start: %w", err)
+	}
+	return nil
 }
 
 // A transport error or deadline leaves the inner side effect uncertain. Stop

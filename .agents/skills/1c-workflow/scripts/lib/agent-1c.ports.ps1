@@ -2,25 +2,146 @@ if (-not (Get-Variable -Name ItlPortRegistryUserScopeWarningPrinted -Scope Scrip
     $script:ItlPortRegistryUserScopeWarningPrinted = $false
 }
 
-function Get-ItlTcpListenerOwnerPids {
-    param([int]$Port)
-    if ($Port -le 0) { return @() }
-    $connections = @(Get-NetTCPConnection -LocalPort $Port -ErrorAction Stop)
-    $listeners = @($connections | Where-Object { [string]$_.State -cin @('Listen','2') })
-    # Windows CIM may report a live loopback listener with raw State=0.
-    # Connected and closing sockets do not own the listener. Only State=0
-    # sockets without a remote peer are candidates, and a live TCP probe is
-    # mandatory. Callers retain their exclusive, known-PID identity check.
-    $unclassifiedListeners = @()
-    foreach ($connection in $connections) {
-        $rawState = if ($connection -is [Microsoft.Management.Infrastructure.CimInstance]) {
-            $connection.CimInstanceProperties['State'].Value
-        } else { Get-ItlPortObjectValue -Object $connection -Name State -Default -1 }
-        if ($null -ne $rawState -and [string]$rawState -ceq '0' -and
-            [int](Get-ItlPortObjectValue -Object $connection -Name RemotePort -Default -1) -eq 0) { $unclassifiedListeners += $connection }
+function New-ItlPortOwnershipDeadline {
+    param([int]$BudgetMilliseconds = 3000)
+    # One retry budget per caller operation, shared by all of its ports.
+    return [DateTime]::UtcNow.AddMilliseconds([Math]::Max(0, $BudgetMilliseconds))
+}
+
+function ConvertTo-ItlTcpRowSummary {
+    param([object]$Row)
+    $rawState = if ($Row -is [Microsoft.Management.Infrastructure.CimInstance]) {
+        $Row.CimInstanceProperties['State'].Value
+    } else { Get-ItlPortObjectValue -Object $Row -Name State -Default '' }
+    return [pscustomobject]@{
+        state = [string]$rawState
+        pid = [int](Get-ItlPortObjectValue -Object $Row -Name OwningProcess -Default 0)
+        remotePort = [int](Get-ItlPortObjectValue -Object $Row -Name RemotePort -Default 0)
     }
-    if (-not $listeners.Count -and (-not $unclassifiedListeners.Count -or -not (Test-TcpPortOpen -Port $Port))) { return @() }
-    return @(@($listeners)+@($unclassifiedListeners) | ForEach-Object { [int](Get-ItlPortObjectValue -Object $_ -Name OwningProcess -Default 0) } | Sort-Object -Unique)
+}
+
+function Get-ItlTcpConnectionProbe {
+    param(
+        [string]$Address = '127.0.0.1',
+        [int]$Port,
+        [int]$TimeoutMilliseconds = 500,
+        [switch]$ResolveServerOwner
+    )
+    # Own connect probe. A refused Windows loopback connect may take about two
+    # seconds, so a timeout alone never proves absence.
+    $result = [ordered]@{ outcome = 'error'; localPort = 0; owners = @(); rows = @(); error = '' }
+    $client = $null
+    try {
+        $ip = $null
+        if (-not [Net.IPAddress]::TryParse($Address, [ref]$ip)) { $ip = @([Net.Dns]::GetHostAddresses($Address))[0] }
+        $client = New-Object System.Net.Sockets.TcpClient ($ip.AddressFamily)
+        $async = $client.BeginConnect($ip, $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)) {
+            $result.outcome = 'timeout'
+            return [pscustomobject]$result
+        }
+        try { $client.EndConnect($async) } catch {
+            $socketError = $_.Exception
+            while ($null -ne $socketError -and $socketError -isnot [Net.Sockets.SocketException]) { $socketError = $socketError.InnerException }
+            if ($null -ne $socketError -and $socketError.SocketErrorCode -eq [Net.Sockets.SocketError]::ConnectionRefused) { $result.outcome = 'refused' }
+            else { $result.error = $_.Exception.Message }
+            return [pscustomobject]$result
+        }
+        $result.outcome = 'connected'
+        $result.localPort = ([Net.IPEndPoint]$client.Client.LocalEndPoint).Port
+        if ($ResolveServerOwner) {
+            # The accepted (or backlog) server side of this exact connection is
+            # owned by the listener process even when the listener row is hidden.
+            $rows = @()
+            try {
+                $rows = @(Get-NetTCPConnection -LocalPort $Port -RemotePort $result.localPort -ErrorAction Stop |
+                    Where-Object { [int](Get-ItlPortObjectValue -Object $_ -Name RemotePort -Default 0) -eq $result.localPort })
+            } catch {
+                $result.error = $(if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { 'server-side-row-missing' } else { $_.Exception.Message })
+            }
+            $result.rows = @($rows | ForEach-Object { ConvertTo-ItlTcpRowSummary -Row $_ })
+            $result.owners = @($result.rows | ForEach-Object { $_.pid } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+            if (-not $result.owners.Count -and -not $result.error) { $result.error = 'server-side-owner-missing' }
+        }
+        return [pscustomobject]$result
+    } catch {
+        $result.error = $_.Exception.Message
+        return [pscustomobject]$result
+    } finally {
+        if ($null -ne $client) { $client.Close() }
+    }
+}
+
+function Get-ItlTcpListenerOwnershipAttempt {
+    param([int]$Port, [string]$Address, [int]$ConnectTimeoutMilliseconds, [string]$FallbackSource)
+    $rows = @()
+    $tableError = ''
+    try { $rows = @(Get-NetTCPConnection -LocalPort $Port -ErrorAction Stop) } catch {
+        if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { $tableError = $_.Exception.Message }
+    }
+    $summaries = @($rows | ForEach-Object { ConvertTo-ItlTcpRowSummary -Row $_ })
+    $attempt = [ordered]@{ status = 'unknown'; owners = @(); source = 'none'; rows = $summaries; connection = ''; error = $tableError }
+    $listeners = @($summaries | Where-Object { $_.state -cin @('Listen','2') })
+    # A row without a real owner PID (seen on some builds) proves nothing.
+    if (-not $tableError -and $listeners.Count -and -not @($listeners | Where-Object { $_.pid -le 0 }).Count) {
+        $attempt.status = 'proven'; $attempt.source = 'listen'
+        $attempt.owners = @($listeners | ForEach-Object { $_.pid } | Sort-Object -Unique)
+        return [pscustomobject]$attempt
+    }
+    # Some Windows builds report live listeners only with raw State=0.
+    $candidates = @($summaries | Where-Object { $_.state -ceq '0' -and $_.remotePort -eq 0 })
+    $probe = Get-ItlTcpConnectionProbe -Address $Address -Port $Port -TimeoutMilliseconds $ConnectTimeoutMilliseconds -ResolveServerOwner:($FallbackSource -eq 'connection' -and -not $tableError)
+    $attempt.connection = [string]$probe.outcome
+    if ($probe.localPort) { $attempt.connection += ":local=$($probe.localPort)" }
+    if (@($probe.owners).Count) { $attempt.connection += ":pid=$(@($probe.owners) -join '+')" }
+    if ($probe.error) { $attempt.error = (@($attempt.error, $probe.error) | Where-Object { $_ }) -join '; ' }
+    if ($probe.outcome -eq 'refused' -or ($probe.outcome -eq 'timeout' -and -not $tableError -and -not $candidates.Count -and -not $listeners.Count)) {
+        $attempt.status = 'absent'; $attempt.source = 'connection'
+        return [pscustomobject]$attempt
+    }
+    if ($probe.outcome -ne 'connected' -or $tableError) { return [pscustomobject]$attempt }
+    if ($FallbackSource -eq 'connection') {
+        if (@($probe.owners).Count) { $attempt.status = 'proven'; $attempt.source = 'connection'; $attempt.owners = @($probe.owners) }
+    } elseif ($candidates.Count -and -not @($candidates | Where-Object { $_.pid -le 0 }).Count) {
+        # TestClient ports keep the previous State=0 source with a live probe.
+        $attempt.status = 'proven'; $attempt.source = 'legacy-state0'
+        $attempt.owners = @($candidates | ForEach-Object { $_.pid } | Sort-Object -Unique)
+    }
+    return [pscustomobject]$attempt
+}
+
+function Get-ItlTcpListenerOwnership {
+    param(
+        [int]$Port,
+        [string]$Address = '127.0.0.1',
+        [AllowNull()][Nullable[datetime]]$RetryUntil = $null,
+        [int]$ConnectTimeoutMilliseconds = 500,
+        [ValidateSet('connection','legacy-state0')][string]$FallbackSource = 'connection'
+    )
+    # Sole answer to "who listens on this port": proven | absent | unknown.
+    # A table failure, or a connect timeout while listener evidence exists, is
+    # unknown; callers never treat unknown as owned or as not owned.
+    if ($Port -le 0) { return [pscustomobject]@{ status = 'absent'; owners = @(); source = 'none'; attempts = 0; elapsedMs = 0; diagnostic = 'status=absent port=0' } }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $attempts = 0
+    $pauseMilliseconds = 250
+    do {
+        $attempts++
+        $attempt = Get-ItlTcpListenerOwnershipAttempt -Port $Port -Address $Address -ConnectTimeoutMilliseconds $ConnectTimeoutMilliseconds -FallbackSource $FallbackSource
+        if ($attempt.status -ne 'unknown' -or $null -eq $RetryUntil -or
+            [DateTime]::UtcNow.AddMilliseconds($pauseMilliseconds) -ge ([datetime]$RetryUntil).ToUniversalTime()) { break }
+        Start-Sleep -Milliseconds $pauseMilliseconds
+    } while ($true)
+    $watch.Stop()
+    $rowText = (@($attempt.rows | Select-Object -First 6 | ForEach-Object { "$($_.state)/$($_.pid)/$($_.remotePort)" }) -join ',')
+    if (@($attempt.rows).Count -gt 6) { $rowText += ",+$(@($attempt.rows).Count - 6)" }
+    $diagnostic = "status=$($attempt.status) source=$($attempt.source) address=${Address}:$Port owners=$(@($attempt.owners) -join '+') rows(state/pid/remote)=[$rowText] connection=$($attempt.connection) attempts=$attempts elapsedMs=$($watch.ElapsedMilliseconds)"
+    if ($attempt.error) { $diagnostic += " error=$($attempt.error)" }
+    if ($diagnostic.Length -gt 600) { $diagnostic = $diagnostic.Substring(0, 597) + '...' }
+    return [pscustomobject]@{
+        status = [string]$attempt.status; owners = @($attempt.owners); source = [string]$attempt.source
+        attempts = $attempts; elapsedMs = [int]$watch.ElapsedMilliseconds; diagnostic = $diagnostic
+    }
 }
 
 function Get-ItlPortObjectValue {

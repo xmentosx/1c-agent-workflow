@@ -29,7 +29,11 @@ func (r *runtime) recoverConnection(ctx context.Context, meta mcp.Meta, argument
 	// caller deadline. Cleanup/admission/cold readiness consume that one budget;
 	// recovery must neither truncate it to one minute nor restart it.
 	if err := r.stopWithMeta(ctx, meta); err != nil {
-		return recoveryAction(ownerRecoveryTool, r.instanceID, r.instanceID, false, "not-started", err)
+		r.mu.Lock()
+		r.writeLifecycleEvidenceLocked(ownerRecoveryTool, "stop", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
+		id := r.instanceID
+		r.mu.Unlock()
+		return recoveryAction(ownerRecoveryTool, id, id, false, "not-started", err)
 	}
 	ctx, finish, err := r.beginDatabaseCall(ctx, meta)
 	if err != nil {
@@ -42,6 +46,8 @@ func (r *runtime) recoverConnection(ctx context.Context, meta mcp.Meta, argument
 	id := r.instanceID
 	if err == nil {
 		r.completeCallLocked()
+	} else {
+		r.writeLifecycleEvidenceLocked(ownerRecoveryTool, "start", "ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", err)
 	}
 	r.mu.Unlock()
 	terminal, message := "succeeded", ""

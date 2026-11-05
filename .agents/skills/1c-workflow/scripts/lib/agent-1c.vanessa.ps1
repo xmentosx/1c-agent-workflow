@@ -8100,50 +8100,51 @@ function Wait-VanessaDesignerAgentReady {
             }
         }
 
-        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
-            try {
-                $ownerPids = @(Get-ItlTcpListenerOwnerPids -Port $Port)
-                if ($ownerPids.Count -eq 1 -and $ownerPids[0] -eq [int]$Process.Id) {
-                    $stopwatch.Stop()
-                    return [pscustomobject][ordered]@{
-                        ready = $true
-                        status = "ready"
-                        processAlive = $true
-                        exitCode = $null
-                        ownerPids = @($ownerPids)
-                        elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-                        detail = "Designer Agent owns the expected listener."
-                    }
-                }
-                $stopwatch.Stop()
+        # The readiness loop is the retry budget: unknown keeps polling and is
+        # never accepted or reported as a foreign owner.
+        $ownership = Get-ItlTcpListenerOwnership -Port $Port
+        if ($ownership.status -eq 'proven') {
+            $ownerPids = @($ownership.owners)
+            $stopwatch.Stop()
+            if ($ownerPids.Count -eq 1 -and $ownerPids[0] -eq [int]$Process.Id) {
                 return [pscustomobject][ordered]@{
-                    ready = $false
-                    status = "owner-mismatch"
+                    ready = $true
+                    status = "ready"
                     processAlive = $true
                     exitCode = $null
                     ownerPids = @($ownerPids)
                     elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-                    detail = "Expected TCP port is not owned exclusively by the Designer Agent PID."
-                }
-            } catch {
-                $stopwatch.Stop()
-                return [pscustomobject][ordered]@{
-                    ready = $false
-                    status = "listener-inspection-failed"
-                    processAlive = $true
-                    exitCode = $null
-                    ownerPids = @()
-                    elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-                    detail = "TCP listener ownership could not be verified: $($_.Exception.Message)"
+                    detail = "Designer Agent owns the expected listener."
                 }
             }
+            return [pscustomobject][ordered]@{
+                ready = $false
+                status = "owner-mismatch"
+                processAlive = $true
+                exitCode = $null
+                ownerPids = @($ownerPids)
+                elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                detail = "Expected TCP port is not owned exclusively by the Designer Agent PID. $($ownership.diagnostic)"
+            }
         }
+        $lastUnknownOwnership = $(if ($ownership.status -eq 'unknown') { $ownership } else { $null })
 
         if ((Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 500
     } while ($true)
 
     $stopwatch.Stop()
+    if ($null -ne $lastUnknownOwnership) {
+        return [pscustomobject][ordered]@{
+            ready = $false
+            status = "listener-inspection-failed"
+            processAlive = $true
+            exitCode = $null
+            ownerPids = @()
+            elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            detail = "TCP listener ownership could not be verified: $($lastUnknownOwnership.diagnostic)"
+        }
+    }
     return [pscustomobject][ordered]@{
         ready = $false
         status = "timeout"
